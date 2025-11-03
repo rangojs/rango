@@ -1,0 +1,507 @@
+:root {
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #242424;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  font-weight: 500;
+  color: #646cff;
+  text-decoration: inherit;
+}
+a:hover {
+  color: #535bf2;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+h1 {
+  font-size: 3.2em;
+  line-height: 1.1;
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  background-color: #1a1a1a;
+  cursor: pointer;
+  transition: border-color 0.25s;
+}
+button:hover {
+  border-color: #646cff;
+}
+button:focus,
+button:focus-visible {
+  outline: 4px auto -webkit-focus-ring-color;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color: #213547;
+    background-color: #ffffff;
+  }
+  a:hover {
+    color: #747bff;
+  }
+  button {
+    background-color: #f9f9f9;
+  }
+}
+
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 1rem;
+}
+
+.read-the-docs {
+  color: #888;
+  text-align: left;
+}
+
+/* Homepage styles */
+.homepage {
+  padding: 2rem;
+  margin: 2rem auto;
+  max-width: 800px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.homepage h2 {
+  color: #61dafb;
+  margin-bottom: 1rem;
+}
+
+.homepage .timestamp {
+  color: #888;
+  font-size: 0.9rem;
+  margin-bottom: 1.5rem;
+}
+
+.server-info {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+}
+
+.server-info h3 {
+  color: #fff;
+  font-size: 1.1rem;
+  margin-bottom: 0.5rem;
+}
+
+.server-info p {
+  color: #bbb;
+  margin: 0.25rem 0;
+  font-family: monospace;
+}
+
+.content-list {
+  margin-bottom: 1.5rem;
+}
+
+.content-list h3 {
+  color: #fff;
+  margin-bottom: 1rem;
+}
+
+.content-list ul {
+  list-style: none;
+  padding: 0;
+}
+
+.content-list li {
+  background: rgba(97, 218, 251, 0.05);
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  border-radius: 8px;
+  border-left: 3px solid #61dafb;
+}
+
+.content-list li strong {
+  color: #61dafb;
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.content-list li p {
+  color: #ccc;
+  margin: 0;
+}
+
+.rsc-features {
+  background: rgba(100, 255, 100, 0.05);
+  padding: 1rem;
+  border-radius: 8px;
+  border: 1px solid rgba(100, 255, 100, 0.2);
+}
+
+.rsc-features h3 {
+  color: #6f6;
+  margin-bottom: 0.75rem;
+}
+
+.rsc-features ul {
+  list-style: none;
+  padding: 0;
+}
+
+.rsc-features li {
+  color: #afa;
+  padding: 0.25rem 0;
+}
+
+.homepage-loading {
+  padding: 2rem;
+  text-align: center;
+  color: #888;
+}
+
+/* Advanced RSC Example styles */
+.advanced-example {
+  padding: 2rem;
+  margin: 2rem auto;
+  max-width: 800px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.advanced-example h2 {
+  color: #ff6b6b;
+  margin-bottom: 1.5rem;
+}
+
+.api-data, .db-data {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+}
+
+.api-data h3, .db-data h3 {
+  color: #ffd93d;
+  margin-bottom: 1rem;
+}
+
+.github-info p {
+  color: #ccc;
+  margin: 0.5rem 0;
+}
+
+.github-info a {
+  color: #61dafb;
+}
+
+.records-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1rem;
+}
+
+.records-table th {
+  background: rgba(97, 218, 251, 0.1);
+  color: #61dafb;
+  padding: 0.75rem;
+  text-align: left;
+  border-bottom: 2px solid rgba(97, 218, 251, 0.3);
+}
+
+.records-table td {
+  padding: 0.75rem;
+  color: #ccc;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.records-table tr:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.advantages {
+  background: rgba(100, 255, 100, 0.05);
+  padding: 1rem;
+  border-radius: 8px;
+  border: 1px solid rgba(100, 255, 100, 0.2);
+}
+
+.advantages h3 {
+  color: #6f6;
+  margin-bottom: 0.75rem;
+}
+
+.advantages ul {
+  list-style: none;
+  padding: 0;
+}
+
+.advantages li {
+  color: #afa;
+  padding: 0.25rem 0;
+}
+
+.loading {
+  padding: 2rem;
+  text-align: center;
+  color: #888;
+}
+
+/* Navigation Links */
+.navigation-links {
+  margin: 2rem 0;
+  padding: 1.5rem;
+  background: rgba(97, 218, 251, 0.05);
+  border-radius: 12px;
+  border: 1px solid rgba(97, 218, 251, 0.2);
+}
+
+.navigation-links h3 {
+  color: #61dafb;
+  margin-bottom: 1rem;
+}
+
+.nav-button {
+  display: inline-block;
+  padding: 0.75rem 1.5rem;
+  background: #61dafb;
+  color: #1a1a1a;
+  border-radius: 8px;
+  text-decoration: none;
+  font-weight: 500;
+  transition: all 0.3s;
+}
+
+.nav-button:hover {
+  background: #4fa8c5;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(97, 218, 251, 0.3);
+}
+
+/* My Test Page Styles */
+.my-test-page {
+  padding: 2rem;
+  max-width: 800px;
+  margin: 0 auto;
+  background: #242424;
+  min-height: 100vh;
+}
+
+.my-test-page h1 {
+  color: #ff6b6b;
+  margin-bottom: 1.5rem;
+  font-size: 2.5rem;
+}
+
+.test-content {
+  color: #ccc;
+  font-size: 1.2rem;
+  margin-bottom: 2rem;
+}
+
+.test-info {
+  background: rgba(255, 255, 255, 0.05);
+  padding: 1.5rem;
+  border-radius: 8px;
+  margin-bottom: 2rem;
+}
+
+.test-info p {
+  color: #bbb;
+  margin: 0.5rem 0;
+}
+
+.test-info h3 {
+  color: #61dafb;
+  margin: 1rem 0;
+}
+
+.test-info ul {
+  list-style: none;
+  padding: 0;
+}
+
+.test-info li {
+  color: #6f6;
+  padding: 0.25rem 0;
+}
+
+.my-test-page .navigation {
+  margin-top: 2rem;
+}
+
+.my-test-page .navigation a {
+  display: inline-block;
+  padding: 0.75rem 1.5rem;
+  background: rgba(100, 100, 255, 0.2);
+  color: #88f;
+  border-radius: 8px;
+  text-decoration: none;
+  border: 1px solid rgba(100, 100, 255, 0.4);
+  transition: all 0.3s;
+}
+
+.my-test-page .navigation a:hover {
+  background: rgba(100, 100, 255, 0.3);
+  transform: translateX(-4px);
+}
+
+/* Dynamic RSC Loader Styles */
+.dynamic-rsc-loader {
+  padding: 1.5rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.dynamic-rsc-loader h3 {
+  color: #ffd93d;
+  margin-bottom: 1rem;
+}
+
+.loader-controls {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.path-input {
+  flex: 1;
+  padding: 0.5rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  color: #fff;
+  font-family: monospace;
+}
+
+.loader-controls button {
+  padding: 0.5rem 1.5rem;
+  background: #ffd93d;
+  color: #1a1a1a;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.3s;
+}
+
+.loader-controls button:hover:not(:disabled) {
+  background: #ffcc00;
+}
+
+.loader-controls button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.loader-hints {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 1rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+}
+
+.loader-hints p {
+  color: #888;
+  margin-bottom: 0.5rem;
+}
+
+.loader-hints ul {
+  list-style: none;
+  padding: 0;
+}
+
+.loader-hints li {
+  color: #aaa;
+  padding: 0.25rem 0;
+}
+
+.loader-hints code {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.125rem 0.25rem;
+  border-radius: 2px;
+  color: #61dafb;
+}
+
+.error-message {
+  background: rgba(255, 0, 0, 0.1);
+  border: 1px solid rgba(255, 0, 0, 0.3);
+  padding: 1rem;
+  border-radius: 4px;
+  color: #ff6b6b;
+  margin-top: 1rem;
+}
+
+.loaded-content {
+  margin-top: 1.5rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding-top: 1.5rem;
+}
+
+.loaded-content h4 {
+  color: #6f6;
+  margin-bottom: 1rem;
+}
+
+.content-frame {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 1.5rem;
+  max-height: 400px;
+  overflow-y: auto;
+}
