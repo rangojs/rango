@@ -9,6 +9,7 @@ import {
 import type { ReactFormState } from "react-dom/client";
 import { router } from "../routes.tsx";
 import { Storage } from "./entry.storage.ts";
+import type { Segment } from "./entry.browser.tsx";
 // The schema of payload which is serialized into RSC stream on rsc environment
 // and deserialized on ssr/client environments.
 export type RscPayload = {
@@ -23,8 +24,10 @@ export type RscPayload = {
   // Metadata for partial rendering
   metadata?: {
     pathname: string;
+    segments: Segment[];
     startIndex?: number;
     preservedLayouts?: string[];
+    isPartial?: boolean; // Flag to indicate partial response with segments in root
   };
 };
 
@@ -75,40 +78,63 @@ async function _handler(request: Request): Promise<Response> {
   const isPartialRequest = url.searchParams.has("_rsc_partial");
   const previousPathname = url.searchParams.get("_rsc_prev");
 
-  console.log(`\n[Entry.RSC] ==================== REQUEST ====================`);
+  console.log(
+    `\n[Entry.RSC] ==================== REQUEST ====================`
+  );
   console.log(`[Entry.RSC] URL: ${url.pathname}${url.search}`);
   console.log(`[Entry.RSC] Method: ${request.method}`);
   console.log(`[Entry.RSC] Is partial: ${isPartialRequest}`);
-  console.log(`[Entry.RSC] Previous path: ${previousPathname || 'N/A'}`);
+  console.log(`[Entry.RSC] Previous path: ${previousPathname || "N/A"}`);
 
   let component: React.ReactNode;
   let metadata: RscPayload["metadata"];
 
-  if (isPartialRequest && previousPathname) {
+  if (isPartialRequest) {
     console.log(`[Entry.RSC] >>> Attempting PARTIAL render`);
-    // Partial rendering - only render changed segments
+    // Partial rendering - send only changed segments
     const partialResult = await router.matchPartial(request, previousPathname);
     if (partialResult) {
-      component = partialResult.component;
+      // For partial rendering, send segments as the root
+      component = partialResult.segments.at(0)?.component || null;
       metadata = {
         pathname: url.pathname,
         startIndex: partialResult.startIndex,
         preservedLayouts: partialResult.preservedLayouts,
+        isPartial: true, // Flag to indicate this is a partial response
+        segments: partialResult.segments,
       };
       console.log(`[Entry.RSC] ✓ Partial render successful`);
       console.log(`[Entry.RSC]   Start index: ${partialResult.startIndex}`);
-      console.log(`[Entry.RSC]   Preserved layouts:`, partialResult.preservedLayouts);
+      console.log(
+        `[Entry.RSC]   Preserved layouts:`,
+        partialResult.preservedLayouts
+      );
+      console.log(
+        `[Entry.RSC]   Segments sent:`,
+        partialResult.segments.length
+      );
+      partialResult.segments.forEach((seg) => {
+        console.log(
+          `[Entry.RSC]     - Index ${seg.index}: ${seg.pattern} (${
+            seg.isLayout ? "layout" : "page"
+          })`
+        );
+      });
     } else {
       // Fallback to full render if partial match fails
-      console.log(`[Entry.RSC] ⚠️ Partial render failed, falling back to full render`);
-      component = await router.match(request);
-      metadata = { pathname: url.pathname };
+      console.log(
+        `[Entry.RSC] ⚠️ Partial render failed, falling back to full render`
+      );
+      let [_component, segments] = await router.match(request);
+      component = _component;
+      metadata = { pathname: url.pathname, segments };
     }
   } else {
     // Full page render using the router
     console.log(`[Entry.RSC] >>> Performing FULL render`);
-    component = await router.match(request);
-    metadata = { pathname: url.pathname };
+    const [_component, segments] = await router.match(request);
+    component = _component;
+    metadata = { pathname: url.pathname, segments };
   }
 
   // Handle 404
@@ -125,7 +151,10 @@ async function _handler(request: Request): Promise<Response> {
     );
   } else {
     console.log(`[Entry.RSC] ✓ Component ready for rendering`);
-    console.log(`[Entry.RSC]   Component type:`, component?.type?.name || typeof component);
+    console.log(
+      `[Entry.RSC]   Component type:`,
+      component?.type?.name || typeof component
+    );
   }
 
   const rscPayload: RscPayload = {
@@ -136,7 +165,9 @@ async function _handler(request: Request): Promise<Response> {
   };
 
   console.log(`[Entry.RSC] RSC Payload metadata:`, metadata);
-  console.log(`[Entry.RSC] ==================== END REQUEST ====================\n`);
+  console.log(
+    `[Entry.RSC] ==================== END REQUEST ====================\n`
+  );
   const rscOptions = { temporaryReferences };
   const rscStream = renderToReadableStream<RscPayload>(rscPayload, rscOptions);
 

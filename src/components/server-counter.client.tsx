@@ -16,7 +16,7 @@ export const ServerCounterClient = ({
   };
 
   return (
-    <form action={CallServerCounter} method="post">
+    <form action={CallServerCounter}>
       <button type="submit">{children}</button>
     </form>
   );

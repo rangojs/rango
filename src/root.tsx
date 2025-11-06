@@ -13,7 +13,7 @@ import { ServerCounterClient } from "./components/server-counter.client.tsx";
 
 export function Root(props: { url: URL }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <meta charSet="UTF-8" />
         <link rel="icon" type="image/svg+xml" href="/vite.svg" />

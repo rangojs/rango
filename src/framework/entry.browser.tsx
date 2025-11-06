@@ -10,6 +10,13 @@ import React from "react";
 import { hydrateRoot } from "react-dom/client";
 import { rscStream } from "rsc-html-stream/client";
 import type { RscPayload } from "./entry.rsc";
+import { OutletProvider } from "./router/Outlet";
+export type Segment = {
+  index: number;
+  pattern: string;
+  component: React.ReactNode;
+  isLayout: boolean;
+};
 
 async function main() {
   // stash `setPayload` function to trigger re-rendering
@@ -19,6 +26,36 @@ async function main() {
   // Track current pathname for partial rendering
   let currentPathname = window.location.pathname;
 
+  // Track current segments for partial updates
+  let currentSegments: Array<Segment> = [];
+
+  // Function to reconstruct tree from segments - returns [tree, segments]
+  function reconstructTreeFromSegments(
+    segments: Array<Segment>
+  ): [React.ReactNode] {
+    if (!segments || segments.length === 0) {
+      return [null];
+    }
+
+    // Build tree from innermost (last) to outermost (first)
+    let tree: React.ReactNode = null;
+
+    // Start from the last segment (innermost - usually the page)
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i];
+      console.log("segment >", i, segment, { segments });
+
+      tree = React.createElement(
+        OutletProvider,
+        { content: tree, key: `outlet-${segment.index}` },
+        segment.component
+      );
+    }
+
+    console.log(`[Browser] Tree reconstruction complete`);
+    return [tree];
+  }
+
   // deserialize RSC stream back to React VDOM for CSR
   console.log(`[Browser] ============ INITIAL LOAD ============`);
   console.log(`[Browser] Path: ${window.location.pathname}`);
@@ -27,8 +64,13 @@ async function main() {
     // initial RSC stream is injected in SSR stream as <script>...FLIGHT_DATA...</script>
     rscStream
   );
+  currentSegments = initialPayload.metadata?.segments || [];
 
-  console.log(`[Browser] Initial payload metadata:`, initialPayload.metadata);
+  console.log(
+    `[Browser] Initial payload metadata:`,
+    initialPayload.metadata,
+    initialPayload
+  );
   console.log(`[Browser] ============ END INITIAL LOAD ============\n`);
 
   // browser root component to (re-)render RSC payload as state
@@ -89,23 +131,76 @@ async function main() {
     console.log(`[Browser] ✓ Response received in ${fetchTime}ms`);
 
     // Log what we received
-    if (payload.metadata?.startIndex !== undefined) {
-      console.log(`[Browser] Received PARTIAL payload:`);
+    if (payload.metadata?.isPartial) {
+      console.log(`[Browser] Received PARTIAL payload with segments:`);
       console.log(`[Browser]   Start index: ${payload.metadata.startIndex}`);
       console.log(
         `[Browser]   Preserved layouts:`,
         payload.metadata.preservedLayouts
       );
-      console.log(`[Browser] ⚠️ WARNING: Partial rendering merge not implemented!`);
-      console.log(`[Browser] ⚠️ This will cause layouts to be lost. Using full payload instead.`);
-      // TODO: Implement proper partial payload merging
-      // For now, we're replacing the entire tree which loses preserved layouts
-      // The correct implementation would:
-      // 1. Keep the existing layout wrappers from initialPayload or current state
-      // 2. Only replace the changed portion starting from startIndex
-      // 3. Reconstruct the component tree with preserved layouts wrapping new content
+
+      // The root is now an array of segments
+      if (Array.isArray(payload.metadata.segments)) {
+        console.log(
+          `[Browser] ✓ Segments array received: ${payload.metadata.segments.length} segments`
+        );
+        payload.metadata.segments.forEach((seg: Segment) => {
+          console.log(
+            `[Browser]     - Index ${seg.index}: ${seg.pattern} (${
+              seg.isLayout ? "layout" : "page"
+            })`
+          );
+        });
+
+        // Merge segments with existing ones
+        console.log(
+          `[Browser] Current segments before merge:`,
+          currentSegments
+        );
+
+        // Start with existing segments up to startIndex
+        const preservedSegments = currentSegments.filter(
+          (s) => s.index < payload.metadata.startIndex
+        );
+        console.log(
+          `[Browser] Preserving ${preservedSegments.length} segments before index ${payload.metadata.startIndex}`
+        );
+
+        // Add new segments
+        const newSegments = [
+          ...preservedSegments,
+          ...payload.metadata.segments,
+        ];
+
+        // Sort by index to ensure correct order
+        newSegments.sort((a, b) => b.index - a.index);
+
+        // Update current segments
+        currentSegments = newSegments;
+        console.log(
+          `[Browser] Current segments after merge: `,
+          currentSegments
+        );
+
+        // Reconstruct tree from segments
+        const [reconstructedTree] =
+          reconstructTreeFromSegments(currentSegments);
+
+        // Update payload with reconstructed tree
+        payload.root = reconstructedTree;
+        console.log(`[Browser] ✓ Tree reconstructed and payload updated`, {
+          reconstructedTree,
+        });
+      }
+    } else if (payload.metadata?.startIndex !== undefined) {
+      console.log(`[Browser] Received backwards-compatible PARTIAL payload`);
+      console.log(`[Browser]   Start index: ${payload.metadata.startIndex}`);
     } else {
       console.log(`[Browser] Received FULL payload`);
+      // For full payloads, reset segments
+      // If this is a partial request with segments in root but no isPartial flag
+
+      payload.root = payload.root;
     }
 
     setPayload(payload);
