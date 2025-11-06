@@ -27,7 +27,8 @@ async function main() {
     const [payload, setPayload_] = React.useState(initialPayload);
 
     React.useEffect(() => {
-      setPayload = (v) => React.startTransition(() => setPayload_(v));
+      setPayload = setPayload_;
+      // setPayload = (v) => React.startTransition(() => setPayload_(v));
     }, [setPayload_]);
 
     // re-fetch/render on client side navigation
@@ -48,8 +49,8 @@ async function main() {
 
   // register a handler which will be internally called by React
   // on server function request after hydration.
-  setServerCallback(async (id, args) => {
-    console.log("setServerCallback", { id, args });
+  setServerCallback(async (id, args, ...rest) => {
+    console.log("setServerCallback", { id, args, rest });
 
     const url = new URL(window.location.href);
     const temporaryReferences = createTemporaryReferenceSet();
@@ -63,17 +64,18 @@ async function main() {
       }),
       { temporaryReferences }
     );
+    console.log("payload", payload);
+    console.log("payload.returnValue", payload.returnValue);
     setPayload(payload);
-    console.log("res", payload);
 
     return payload.returnValue;
   });
 
-  callServer(async (...args: any[]) => {
-    console.log("callServer", { args });
+  // callServer(async (...args: any[]) => {
+  //   console.log("callServer", { args });
 
-    const url = new URL(window.location.href);
-  });
+  //   const url = new URL(window.location.href);
+  // });
 
   // hydration
   const browserRoot = (

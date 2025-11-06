@@ -8,6 +8,8 @@ import { ClientCounter } from "./client.tsx";
 // import { Suspense } from "react";
 import { Partial } from "./components/partial.server.tsx";
 import { DynamicRscLoader } from "./DynamicRscLoader.tsx";
+import { TempAwaitText } from "./components/tempAwaitText.tsx";
+import { ServerCounterClient } from "./components/server-counter.client.tsx";
 
 export function Root(props: { url: URL }) {
   return (
@@ -39,8 +41,12 @@ function App(props: { url: URL }) {
           <img src={reactLogo} className="logo react" alt="React logo" />
         </a>
       </div>
+      <TempAwaitText
+        promise={new Promise((res) => setTimeout(() => res("root"), 10000))}
+      />
+      <Partial path={props.url.pathname} />
       <h1>Vite + RSC</h1>
-      <Partial path="/my-test" />
+      {/* <Partial path="/my-test" /> */}
       {/* Navigation to test RSC routing */}
       <div className="navigation-links">
         <h3>RSC Route Testing:</h3>
@@ -58,14 +64,9 @@ function App(props: { url: URL }) {
       </div>
 
       <div className="card">
-        <form
-          action={async () => {
-            "use server";
-            updateServerCounter(1);
-          }}
-        >
-          <button>Server Counter: {getServerCounter()}</button>
-        </form>
+        <ServerCounterClient>
+          Server Counter: {getServerCounter()}
+        </ServerCounterClient>
       </div>
       <div className="card">Request URL: {props.url?.href}</div>
       <ul className="read-the-docs">

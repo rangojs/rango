@@ -9,7 +9,7 @@ import {
 import type { ReactFormState } from "react-dom/client";
 import { Root } from "../root.tsx";
 import { MyTestPage } from "../MyTestPage.tsx";
-
+import { Storage } from "./entry.storage.ts";
 // The schema of payload which is serialized into RSC stream on rsc environment
 // and deserialized on ssr/client environments.
 export type RscPayload = {
@@ -27,6 +27,11 @@ export type RscPayload = {
 // however, how server entries are executed can be customized by registering
 // own server handler e.g. `@cloudflare/vite-plugin`.
 export default async function handler(request: Request): Promise<Response> {
+  const streams = [];
+
+  return await Storage.run(streams, () => _handler(request));
+}
+async function _handler(request: Request): Promise<Response> {
   // handle server function request
   const isAction = request.method === "POST";
   let returnValue: unknown | undefined;
@@ -70,6 +75,9 @@ export default async function handler(request: Request): Promise<Response> {
     // Default to Root component for all other routes
     component = <Root url={url} />;
   }
+  // if (isAction) {
+  //   component = <>Nothing</>;
+  // }
 
   const rscPayload: RscPayload = {
     root: component,
@@ -103,11 +111,15 @@ export default async function handler(request: Request): Promise<Response> {
   const ssrEntryModule = await import.meta.viteRsc.loadModule<
     typeof import("./entry.ssr.tsx")
   >("ssr", "index");
-  const htmlStream = await ssrEntryModule.renderHTML(rscStream, {
-    formState,
-    // allow quick simulation of javscript disabled browser
-    debugNojs: url.searchParams.has("__nojs"),
-  });
+  const htmlStream = await ssrEntryModule.renderHTML(
+    rscStream,
+    {
+      formState,
+      // allow quick simulation of javscript disabled browser
+      debugNojs: url.searchParams.has("__nojs"),
+    },
+    Storage.getStore()
+  );
 
   // respond html
   return new Response(htmlStream, {

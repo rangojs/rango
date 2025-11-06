@@ -8,13 +8,17 @@ import {
 } from "./myTestActions.tsx";
 import { TempAwaitText } from "./components/tempAwaitText.tsx";
 import { Partial } from "./components/partial.server.tsx";
+import { startTransition, useActionState } from "react";
+import { ServerCounterClient } from "./components/server-counter.client.tsx";
+import { getServerCounter } from "./action.tsx";
+import { Storage } from "./framework/entry.storage.ts";
 
 // This is a dedicated RSC component for the /my-test route
 export async function MyTestPage() {
   // Increment visit counter on page load
   await incrementTestPageVisits();
   const _pending = new Promise<string>((res) =>
-    setTimeout(() => res("resolved at server"), 10000)
+    setTimeout(() => res("resolved at server"), 6000)
   ); // simulate delay
   // Get current stats and messages
   const stats = await getTestPageStats();
@@ -37,11 +41,21 @@ export async function MyTestPage() {
     ],
     randomNumber: Math.floor(Math.random() * 1000),
   };
+  // const [state, submitAction, isPending] = useActionState(
+  //   incrementTestPageVisits,
+  //   {
+  //     error: null,
+  //   }
+  // );
+  // console.log("state", { state, submitAction, isPending });
 
   return (
     <div className="my-test-page">
       <h1>{testData.pageTitle}</h1>
       <TempAwaitText promise={_pending} />
+      <ServerCounterClient>
+        Server Counter: {getServerCounter()}
+      </ServerCounterClient>
       <p className="test-content">{testData.content}</p>
       Page Visit Stats
       <div className="stats-section">
@@ -59,7 +73,8 @@ export async function MyTestPage() {
         <form
           action={async () => {
             "use server";
-            incrementTestPageVisits(`User-${Date.now()}`);
+            const result = await incrementTestPageVisits(`User-${Date.now()}`);
+            console.log("result", result);
           }}
         >
           <button type="submit">👋 Record My Visit</button>

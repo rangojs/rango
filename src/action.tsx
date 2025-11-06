@@ -8,4 +8,5 @@ export async function getServerCounter() {
 
 export const updateServerCounter = async (change: number) => {
   serverCounter += change;
+  return serverCounter;
 };
