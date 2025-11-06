@@ -1,0 +1,702 @@
+/** @jsx jsx */
+/** @jsxImportSource hono/jsx */
+
+import { Hono } from 'hono';
+import { jsx, Fragment } from 'hono/jsx';
+import { html } from 'hono/html';
+import { cors } from 'hono/cors';
+import { logger } from 'hono/logger';
+import { prettyJSON } from 'hono/pretty-json';
+import { secureHeaders } from 'hono/secure-headers';
+import { etag } from 'hono/etag';
+import { compress } from 'hono/compress';
+import { serve } from '@hono/node-server';
+
+// Create main app
+const app = new Hono();
+
+// Global middleware
+app.use('*', logger());
+app.use('*', cors());
+app.use('*', secureHeaders());
+app.use('*', etag());
+app.use('*', compress());
+
+// ==========================================
+// LAYOUT COMPONENTS WITH JSX
+// ==========================================
+
+// Main Layout Component
+const MainLayout = ({ children, title, user, currentPath }) => (
+    <html lang="en">
+        <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>{title || 'E-Commerce Site'}</title>
+            <style>{`
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                body { font-family: system-ui, -apple-system, sans-serif; }
+                .header { background: #333; color: white; padding: 1rem; }
+                .nav { background: #555; padding: 0.5rem; }
+                .nav a { color: white; text-decoration: none; padding: 0.5rem 1rem; display: inline-block; }
+                .nav a:hover { background: #777; }
+                .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+                .footer { background: #333; color: white; padding: 2rem; text-align: center; margin-top: 2rem; }
+            `}</style>
+        </head>
+        <body>
+            <header class="header">
+                <div class="container">
+                    <h1>E-Commerce Store</h1>
+                    {user ? <span>Welcome, {user.name}</span> : <a href="/auth/login">Login</a>}
+                </div>
+            </header>
+            <nav class="nav">
+                <div class="container">
+                    <a href="/" class={currentPath === '/' ? 'active' : ''}>Home</a>
+                    <a href="/products" class={currentPath?.startsWith('/products') ? 'active' : ''}>Products</a>
+                    <a href="/articles" class={currentPath?.startsWith('/articles') ? 'active' : ''}>Articles</a>
+                    <a href="/blog" class={currentPath?.startsWith('/blog') ? 'active' : ''}>Blog</a>
+                    <a href="/account/profile" class={currentPath?.startsWith('/account') ? 'active' : ''}>Account</a>
+                    <a href="/checkout/cart" class={currentPath?.startsWith('/checkout') ? 'active' : ''}>Cart</a>
+                </div>
+            </nav>
+            <main class="container">
+                {children}
+            </main>
+            <footer class="footer">
+                <p>&copy; 2024 E-Commerce Store. All rights reserved.</p>
+            </footer>
+        </body>
+    </html>
+);
+
+// Account Layout Component
+const AccountLayout = ({ children, title, user, currentPath, activeSection }) => (
+    <html lang="en">
+        <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>{title || 'My Account'}</title>
+            <style>{`
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                body { font-family: system-ui, -apple-system, sans-serif; }
+                .header { background: #2c3e50; color: white; padding: 1rem; }
+                .dashboard { display: flex; min-height: calc(100vh - 60px); }
+                .sidebar { width: 250px; background: #34495e; padding: 1rem; }
+                .sidebar a { color: white; text-decoration: none; display: block; padding: 0.75rem; margin: 0.25rem 0; border-radius: 4px; }
+                .sidebar a:hover, .sidebar a.active { background: #2c3e50; }
+                .main-content { flex: 1; padding: 2rem; }
+                .card { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem; }
+            `}</style>
+        </head>
+        <body>
+            <header class="header">
+                <div style="max-width: 1400px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center;">
+                    <h1>My Account</h1>
+                    <div>
+                        <span>Hello, {user?.name || 'User'}</span>
+                        <a href="/auth/logout" style="color: white; margin-left: 1rem;">Logout</a>
+                    </div>
+                </div>
+            </header>
+            <div class="dashboard">
+                <aside class="sidebar">
+                    <a href="/account/profile" class={activeSection === 'profile' ? 'active' : ''}>Profile</a>
+                    <a href="/account/orders" class={activeSection === 'orders' ? 'active' : ''}>My Orders</a>
+                    <a href="/account/addresses" class={activeSection === 'addresses' ? 'active' : ''}>Addresses</a>
+                    <a href="/account/cards" class={activeSection === 'cards' ? 'active' : ''}>Payment Methods</a>
+                    <a href="/account/favourites" class={activeSection === 'favourites' ? 'active' : ''}>Favourites</a>
+                    <a href="/" style="margin-top: 2rem;">← Back to Store</a>
+                </aside>
+                <main class="main-content">
+                    {children}
+                </main>
+            </div>
+        </body>
+    </html>
+);
+
+// Checkout Layout Component
+const CheckoutLayout = ({ children, title, step }) => (
+    <html lang="en">
+        <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>{title || 'Checkout'}</title>
+            <style>{`
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                body { font-family: system-ui, -apple-system, sans-serif; background: #f5f5f5; }
+                .checkout-header { background: white; border-bottom: 2px solid #ddd; padding: 1rem; }
+                .checkout-header h1 { text-align: center; color: #333; }
+                .progress { display: flex; justify-content: center; margin: 2rem 0; }
+                .progress-step { padding: 0.5rem 2rem; background: #ddd; margin: 0 0.25rem; border-radius: 20px; }
+                .progress-step.active { background: #4CAF50; color: white; }
+                .checkout-content { max-width: 800px; margin: 0 auto; padding: 2rem; }
+                .checkout-card { background: white; border-radius: 8px; padding: 2rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+            `}</style>
+        </head>
+        <body>
+            <header class="checkout-header">
+                <h1>Secure Checkout</h1>
+            </header>
+            <div class="progress">
+                <span class={`progress-step ${step === 'cart' ? 'active' : ''}`}>Cart</span>
+                <span class={`progress-step ${step === 'shipping' ? 'active' : ''}`}>Shipping</span>
+                <span class={`progress-step ${step === 'payment' ? 'active' : ''}`}>Payment</span>
+                <span class={`progress-step ${step === 'review' ? 'active' : ''}`}>Review</span>
+                <span class={`progress-step ${step === 'complete' ? 'active' : ''}`}>Complete</span>
+            </div>
+            <div class="checkout-content">
+                <div class="checkout-card">
+                    {children}
+                </div>
+            </div>
+        </body>
+    </html>
+);
+
+// Content Layout Component
+const ContentLayout = ({ children, title, contentType }) => (
+    <html lang="en">
+        <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>{title || 'Content'}</title>
+            <style>{`
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                body { font-family: Georgia, serif; line-height: 1.6; }
+                .content-header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 3rem 1rem; text-align: center; }
+                .content-nav { background: #333; padding: 1rem; text-align: center; }
+                .content-nav a { color: white; text-decoration: none; padding: 0.5rem 1rem; margin: 0 0.5rem; }
+                .content-nav a:hover { text-decoration: underline; }
+                .content-main { max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+                .article { margin-bottom: 2rem; padding-bottom: 2rem; border-bottom: 1px solid #ddd; }
+                h1 { font-size: 2.5rem; margin-bottom: 1rem; }
+                h2 { font-size: 1.8rem; margin: 2rem 0 1rem; }
+            `}</style>
+        </head>
+        <body>
+            <header class="content-header">
+                <h1>{contentType === 'article' ? 'Articles' : 'Blog'}</h1>
+                <p>{contentType === 'article' ? 'Expert insights and guides' : 'Latest news and updates'}</p>
+            </header>
+            <nav class="content-nav">
+                <a href="/">Home</a>
+                <a href="/articles">Articles</a>
+                <a href="/blog">Blog</a>
+            </nav>
+            <main class="content-main">
+                {children}
+            </main>
+        </body>
+    </html>
+);
+
+// Minimal Layout Component
+const MinimalLayout = ({ children, title }) => (
+    <html lang="en">
+        <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>{title || 'Authentication'}</title>
+            <style>{`
+                * { margin: 0; padding: 0; box-sizing: border-box; }
+                body { font-family: system-ui, -apple-system, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+                .auth-container { background: white; border-radius: 8px; padding: 2rem; width: 100%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+                h2 { margin-bottom: 1.5rem; text-align: center; color: #333; }
+                .form-group { margin-bottom: 1rem; }
+                label { display: block; margin-bottom: 0.5rem; color: #555; }
+                input { width: 100%; padding: 0.75rem; border: 1px solid #ddd; border-radius: 4px; font-size: 1rem; }
+                button { width: 100%; padding: 0.75rem; background: #667eea; color: white; border: none; border-radius: 4px; font-size: 1rem; cursor: pointer; }
+                button:hover { background: #5a67d8; }
+                .auth-links { margin-top: 1rem; text-align: center; }
+                .auth-links a { color: #667eea; text-decoration: none; }
+            `}</style>
+        </head>
+        <body>
+            <div class="auth-container">
+                {children}
+            </div>
+        </body>
+    </html>
+);
+
+// Layout middleware factory
+const withLayout = (LayoutComponent) => {
+    return async (c, next) => {
+        c.set('Layout', LayoutComponent);
+        await next();
+    };
+};
+
+// Helper function to render with layout
+const renderWithLayout = (c, children, layoutProps = {}) => {
+    const Layout = c.get('Layout') || MainLayout;
+    const user = c.get('user');
+    const currentPath = c.req.path;
+
+    return c.html(
+        <Layout {...layoutProps} user={user} currentPath={currentPath}>
+            {children}
+        </Layout>
+    );
+};
+
+// Auth middleware
+const requireAuth = async (c, next) => {
+    const user = c.get('user');
+    if (!user) {
+        return c.redirect('/auth/login');
+    }
+    await next();
+};
+
+// ==========================================
+// PUBLIC ROUTES (Main Layout)
+// ==========================================
+const publicRouter = new Hono();
+
+publicRouter.use('*', withLayout(MainLayout));
+
+publicRouter.get('/', async (c) => {
+    return renderWithLayout(c,
+        <div>
+            <h1>Welcome to Our Store</h1>
+            <section style="margin: 2rem 0;">
+                <h2>Featured Products</h2>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin-top: 1rem;">
+                    {[1, 2, 3, 4].map(i => (
+                        <div style="border: 1px solid #ddd; padding: 1rem; border-radius: 8px;">
+                            <h3>Product {i}</h3>
+                            <p>Amazing product description here</p>
+                            <p style="font-weight: bold; color: #667eea;">$99.99</p>
+                            <a href={`/products/${i}`} style="color: #667eea;">View Details →</a>
+                        </div>
+                    ))}
+                </div>
+            </section>
+        </div>,
+        { title: 'Homepage' }
+    );
+});
+
+publicRouter.get('/search', async (c) => {
+    const query = c.req.query('q');
+    return renderWithLayout(c,
+        <div>
+            <h1>Search Results</h1>
+            {query && <p>Showing results for: <strong>{query}</strong></p>}
+            <div style="margin-top: 2rem;">
+                <p>No results found. Try a different search term.</p>
+            </div>
+        </div>,
+        { title: 'Search' }
+    );
+});
+
+// ==========================================
+// PRODUCT ROUTES (Main Layout)
+// ==========================================
+const productRouter = new Hono();
+
+productRouter.use('*', withLayout(MainLayout));
+
+productRouter.get('/', async (c) => {
+    return renderWithLayout(c,
+        <div>
+            <h1>All Products</h1>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin-top: 2rem;">
+                {[1, 2, 3, 4, 5, 6].map(i => (
+                    <div style="border: 1px solid #ddd; padding: 1rem; border-radius: 8px;">
+                        <h3>Product {i}</h3>
+                        <p>Product description</p>
+                        <p style="font-weight: bold; color: #667eea;">$99.99</p>
+                        <a href={`/products/${i}`} style="color: #667eea;">View Details →</a>
+                    </div>
+                ))}
+            </div>
+        </div>,
+        { title: 'Products' }
+    );
+});
+
+productRouter.get('/:id', async (c) => {
+    const productId = c.req.param('id');
+    return renderWithLayout(c,
+        <div>
+            <h1>Product {productId}</h1>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 2rem;">
+                <div style="background: #f5f5f5; padding: 2rem; border-radius: 8px;">
+                    <p>Product Image Placeholder</p>
+                </div>
+                <div>
+                    <h2>Amazing Product</h2>
+                    <p style="font-size: 2rem; color: #667eea; margin: 1rem 0;">$99.99</p>
+                    <p>This is an amazing product that you'll love. It has all the features you need and more!</p>
+                    <button style="padding: 1rem 2rem; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; margin-top: 1rem;">
+                        Add to Cart
+                    </button>
+                </div>
+            </div>
+        </div>,
+        { title: `Product ${productId}` }
+    );
+});
+
+// ==========================================
+// ACCOUNT ROUTES (Account Layout)
+// ==========================================
+const accountRouter = new Hono();
+
+accountRouter.use('*', withLayout(AccountLayout));
+accountRouter.use('*', requireAuth);
+
+accountRouter.get('/profile', async (c) => {
+    return renderWithLayout(c,
+        <div class="card">
+            <h2>Profile Information</h2>
+            <form style="margin-top: 1rem;">
+                <div style="margin-bottom: 1rem;">
+                    <label>Name</label>
+                    <input type="text" value="John Doe" style="width: 100%; padding: 0.5rem;" />
+                </div>
+                <div style="margin-bottom: 1rem;">
+                    <label>Email</label>
+                    <input type="email" value="john@example.com" style="width: 100%; padding: 0.5rem;" />
+                </div>
+                <button type="submit" style="padding: 0.75rem 2rem; background: #2c3e50; color: white; border: none; border-radius: 4px;">
+                    Update Profile
+                </button>
+            </form>
+        </div>,
+        { title: 'My Profile', activeSection: 'profile' }
+    );
+});
+
+accountRouter.get('/orders', async (c) => {
+    return renderWithLayout(c,
+        <div class="card">
+            <h2>Order History</h2>
+            <div style="margin-top: 1rem;">
+                {[1, 2, 3].map(i => (
+                    <div style="border: 1px solid #ddd; padding: 1rem; margin-bottom: 1rem; border-radius: 4px;">
+                        <h3>Order #{1000 + i}</h3>
+                        <p>Date: {new Date().toLocaleDateString()}</p>
+                        <p>Status: Delivered</p>
+                        <p>Total: $299.99</p>
+                        <a href={`/account/orders/${1000 + i}`} style="color: #2c3e50;">View Details →</a>
+                    </div>
+                ))}
+            </div>
+        </div>,
+        { title: 'My Orders', activeSection: 'orders' }
+    );
+});
+
+accountRouter.get('/addresses', async (c) => {
+    return renderWithLayout(c,
+        <div class="card">
+            <h2>My Addresses</h2>
+            <button style="padding: 0.75rem 2rem; background: #2c3e50; color: white; border: none; border-radius: 4px; margin: 1rem 0;">
+                Add New Address
+            </button>
+            <div>
+                <div style="border: 1px solid #ddd; padding: 1rem; margin-bottom: 1rem; border-radius: 4px;">
+                    <h3>Home</h3>
+                    <p>123 Main Street</p>
+                    <p>New York, NY 10001</p>
+                </div>
+            </div>
+        </div>,
+        { title: 'My Addresses', activeSection: 'addresses' }
+    );
+});
+
+// Additional account routes (cards, favourites, etc.)
+accountRouter.get('/cards', async (c) => {
+    return renderWithLayout(c,
+        <div class="card">
+            <h2>Payment Methods</h2>
+            <p>No payment methods saved.</p>
+        </div>,
+        { title: 'Payment Methods', activeSection: 'cards' }
+    );
+});
+
+accountRouter.get('/favourites', async (c) => {
+    return renderWithLayout(c,
+        <div class="card">
+            <h2>My Favourites</h2>
+            <p>No favourites yet.</p>
+        </div>,
+        { title: 'My Favourites', activeSection: 'favourites' }
+    );
+});
+
+// API endpoints for account actions
+accountRouter.post('/addresses', async (c) => {
+    const body = await c.req.json();
+    return c.json({ success: true, message: 'Address added', data: body });
+});
+
+accountRouter.delete('/addresses/:id', async (c) => {
+    const id = c.req.param('id');
+    return c.json({ success: true, message: `Address ${id} deleted` });
+});
+
+// ==========================================
+// CHECKOUT ROUTES (Checkout Layout)
+// ==========================================
+const checkoutRouter = new Hono();
+
+checkoutRouter.use('*', withLayout(CheckoutLayout));
+
+checkoutRouter.get('/cart', async (c) => {
+    return renderWithLayout(c,
+        <div>
+            <h2>Shopping Cart</h2>
+            <div style="margin-top: 1rem;">
+                <div style="border-bottom: 1px solid #ddd; padding: 1rem 0;">
+                    <h3>Product 1</h3>
+                    <p>Quantity: 1 | Price: $99.99</p>
+                </div>
+                <div style="margin-top: 1rem; text-align: right;">
+                    <p style="font-size: 1.5rem;">Total: $99.99</p>
+                    <button style="padding: 1rem 2rem; background: #4CAF50; color: white; border: none; border-radius: 4px; margin-top: 1rem;">
+                        Proceed to Checkout
+                    </button>
+                </div>
+            </div>
+        </div>,
+        { title: 'Shopping Cart', step: 'cart' }
+    );
+});
+
+checkoutRouter.get('/', async (c) => {
+    return renderWithLayout(c,
+        <div>
+            <h2>Review Your Order</h2>
+            <p>Please review your order before completing purchase.</p>
+        </div>,
+        { title: 'Checkout', step: 'review' }
+    );
+});
+
+checkoutRouter.get('/success', async (c) => {
+    return renderWithLayout(c,
+        <div style="text-align: center;">
+            <h2 style="color: #4CAF50;">Order Successful!</h2>
+            <p style="margin: 1rem 0;">Thank you for your order.</p>
+            <p>Order #12345 has been confirmed.</p>
+            <a href="/" style="display: inline-block; margin-top: 2rem; padding: 1rem 2rem; background: #4CAF50; color: white; text-decoration: none; border-radius: 4px;">
+                Continue Shopping
+            </a>
+        </div>,
+        { title: 'Order Complete', step: 'complete' }
+    );
+});
+
+// ==========================================
+// CONTENT ROUTES (Content Layout)
+// ==========================================
+const articlesRouter = new Hono();
+const blogRouter = new Hono();
+
+articlesRouter.use('*', withLayout(ContentLayout));
+
+articlesRouter.get('/', async (c) => {
+    return renderWithLayout(c,
+        <div>
+            <h1>Latest Articles</h1>
+            {[1, 2, 3].map(i => (
+                <article class="article">
+                    <h2>Article Title {i}</h2>
+                    <p>Published on {new Date().toLocaleDateString()}</p>
+                    <p>This is a preview of the article content. It provides valuable insights...</p>
+                    <a href={`/articles/article-${i}`} style="color: #667eea;">Read More →</a>
+                </article>
+            ))}
+        </div>,
+        { title: 'Articles', contentType: 'article' }
+    );
+});
+
+blogRouter.use('*', withLayout(ContentLayout));
+
+blogRouter.get('/', async (c) => {
+    return renderWithLayout(c,
+        <div>
+            <h1>Blog Posts</h1>
+            {[1, 2, 3].map(i => (
+                <article class="article">
+                    <h2>Blog Post {i}</h2>
+                    <p>Posted on {new Date().toLocaleDateString()}</p>
+                    <p>Exciting news and updates from our team...</p>
+                    <a href={`/blog/post-${i}`} style="color: #667eea;">Read More →</a>
+                </article>
+            ))}
+        </div>,
+        { title: 'Blog', contentType: 'blog' }
+    );
+});
+
+// ==========================================
+// AUTH ROUTES (Minimal Layout)
+// ==========================================
+const authRouter = new Hono();
+
+authRouter.use('*', withLayout(MinimalLayout));
+
+authRouter.get('/login', async (c) => {
+    return renderWithLayout(c,
+        <Fragment>
+            <h2>Login</h2>
+            <form method="post" action="/auth/login">
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" name="email" required />
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" name="password" required />
+                </div>
+                <button type="submit">Login</button>
+            </form>
+            <div class="auth-links">
+                <a href="/auth/register">Create Account</a> |
+                <a href="/auth/forgot-password"> Forgot Password?</a>
+            </div>
+        </Fragment>,
+        { title: 'Login' }
+    );
+});
+
+authRouter.get('/register', async (c) => {
+    return renderWithLayout(c,
+        <Fragment>
+            <h2>Create Account</h2>
+            <form method="post" action="/auth/register">
+                <div class="form-group">
+                    <label>Name</label>
+                    <input type="text" name="name" required />
+                </div>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" name="email" required />
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" name="password" required />
+                </div>
+                <button type="submit">Register</button>
+            </form>
+            <div class="auth-links">
+                <a href="/auth/login">Already have an account? Login</a>
+            </div>
+        </Fragment>,
+        { title: 'Register' }
+    );
+});
+
+authRouter.post('/login', async (c) => {
+    // Handle login logic
+    return c.redirect('/account/profile');
+});
+
+authRouter.post('/register', async (c) => {
+    // Handle registration logic
+    return c.redirect('/account/profile');
+});
+
+// ==========================================
+// API ROUTES (No Layout - Pure JSON)
+// ==========================================
+const apiRouter = new Hono();
+const apiV1 = new Hono();
+
+apiV1.get('/status', (c) => {
+    return c.json({
+        status: 'ok',
+        timestamp: new Date().toISOString()
+    });
+});
+
+apiV1.get('/products', async (c) => {
+    return c.json({
+        products: [
+            { id: 1, name: 'Product 1', price: 99.99 },
+            { id: 2, name: 'Product 2', price: 149.99 }
+        ]
+    });
+});
+
+apiRouter.route('/v1', apiV1);
+
+// ==========================================
+// MOUNT ALL ROUTERS
+// ==========================================
+app.route('/', publicRouter);
+app.route('/products', productRouter);
+app.route('/account', accountRouter);
+app.route('/checkout', checkoutRouter);
+app.route('/articles', articlesRouter);
+app.route('/blog', blogRouter);
+app.route('/auth', authRouter);
+app.route('/api', apiRouter);
+
+// ==========================================
+// ERROR HANDLING
+// ==========================================
+app.notFound((c) => {
+    return c.html(
+        <MinimalLayout title="404 - Not Found">
+            <h2>404 - Page Not Found</h2>
+            <p style="text-align: center; margin: 1rem 0;">
+                The page you are looking for does not exist.
+            </p>
+            <div style="text-align: center; margin-top: 2rem;">
+                <a href="/" style="color: #667eea;">Go Home</a>
+            </div>
+        </MinimalLayout>
+    );
+});
+
+app.onError((err, c) => {
+    console.error('Error:', err);
+    return c.html(
+        <MinimalLayout title="Error">
+            <h2>Something went wrong</h2>
+            <p style="text-align: center; margin: 1rem 0;">
+                {process.env.NODE_ENV === 'development' ? err.message : 'An error occurred'}
+            </p>
+            <div style="text-align: center; margin-top: 2rem;">
+                <a href="/" style="color: #667eea;">Go Home</a>
+            </div>
+        </MinimalLayout>
+    );
+});
+
+// ==========================================
+// SERVER STARTUP
+// ==========================================
+const port = process.env.PORT || 3000;
+
+serve({
+    fetch: app.fetch,
+    port
+}, (info) => {
+    console.log(`🚀 Server running on http://localhost:${info.port}`);
+    console.log('Using Hono JSX for rendering');
+    console.log('Available routes:');
+    console.log('  - / (Homepage)');
+    console.log('  - /products');
+    console.log('  - /account/*');
+    console.log('  - /checkout/*');
+    console.log('  - /articles/*');
+    console.log('  - /blog/*');
+    console.log('  - /auth/*');
+    console.log('  - /api/v1/*');
+});
+
+export default app;

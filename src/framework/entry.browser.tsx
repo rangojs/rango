@@ -16,11 +16,20 @@ async function main() {
   // from outside of `BrowserRoot` component (e.g. server function call, navigation, hmr)
   let setPayload: (v: RscPayload) => void;
 
+  // Track current pathname for partial rendering
+  let currentPathname = window.location.pathname;
+
   // deserialize RSC stream back to React VDOM for CSR
+  console.log(`[Browser] ============ INITIAL LOAD ============`);
+  console.log(`[Browser] Path: ${window.location.pathname}`);
+
   const initialPayload = await createFromReadableStream<RscPayload>(
     // initial RSC stream is injected in SSR stream as <script>...FLIGHT_DATA...</script>
     rscStream
   );
+
+  console.log(`[Browser] Initial payload metadata:`, initialPayload.metadata);
+  console.log(`[Browser] ============ END INITIAL LOAD ============\n`);
 
   // browser root component to (re-)render RSC payload as state
   function BrowserRoot() {
@@ -40,11 +49,69 @@ async function main() {
   }
 
   // re-fetch RSC and trigger re-rendering
-  async function fetchRscPayload() {
-    const payload = await createFromFetch<RscPayload>(
-      fetch(window.location.href)
-    );
+  async function fetchRscPayload(targetUrl?: string) {
+    const url = targetUrl || window.location.href;
+    const targetPathname = new URL(url, window.location.origin).pathname;
+
+    console.log(`\n[Browser] ============ NAVIGATION ============`);
+    console.log(`[Browser] From: ${currentPathname}`);
+    console.log(`[Browser] To: ${targetPathname}`);
+
+    // Build fetch URL with partial rendering params
+    const fetchUrl = new URL(url, window.location.origin);
+
+    // Only attempt partial rendering if we have metadata from initial payload
+    const shouldAttemptPartial =
+      currentPathname !== targetPathname && initialPayload.metadata?.pathname;
+
+    if (shouldAttemptPartial) {
+      fetchUrl.searchParams.set("_rsc_partial", "true");
+      fetchUrl.searchParams.set("_rsc_prev", currentPathname);
+      console.log(`[Browser] → Requesting PARTIAL render`);
+      console.log(`[Browser]   Previous: ${currentPathname}`);
+      console.log(`[Browser]   Target: ${targetPathname}`);
+    } else {
+      console.log(`[Browser] → Requesting FULL render`);
+      console.log(
+        `[Browser]   Reason: ${
+          currentPathname === targetPathname ? "Same path" : "No metadata"
+        }`
+      );
+    }
+
+    console.log(`[Browser] Fetching: ${fetchUrl.href}`);
+    const startTime = Date.now();
+
+    const payload = await createFromFetch<RscPayload>(fetch(fetchUrl.href));
+    console.log("payload", payload);
+
+    const fetchTime = Date.now() - startTime;
+    console.log(`[Browser] ✓ Response received in ${fetchTime}ms`);
+
+    // Log what we received
+    if (payload.metadata?.startIndex !== undefined) {
+      console.log(`[Browser] Received PARTIAL payload:`);
+      console.log(`[Browser]   Start index: ${payload.metadata.startIndex}`);
+      console.log(
+        `[Browser]   Preserved layouts:`,
+        payload.metadata.preservedLayouts
+      );
+      console.log(`[Browser] ⚠️ WARNING: Partial rendering merge not implemented!`);
+      console.log(`[Browser] ⚠️ This will cause layouts to be lost. Using full payload instead.`);
+      // TODO: Implement proper partial payload merging
+      // For now, we're replacing the entire tree which loses preserved layouts
+      // The correct implementation would:
+      // 1. Keep the existing layout wrappers from initialPayload or current state
+      // 2. Only replace the changed portion starting from startIndex
+      // 3. Reconstruct the component tree with preserved layouts wrapping new content
+    } else {
+      console.log(`[Browser] Received FULL payload`);
+    }
+
     setPayload(payload);
+    currentPathname = targetPathname;
+    console.log(`[Browser] ✓ UI updated`);
+    console.log(`[Browser] ============ END NAVIGATION ============\n`);
   }
 
   // register a handler which will be internally called by React
@@ -66,7 +133,7 @@ async function main() {
     );
     console.log("payload", payload);
     console.log("payload.returnValue", payload.returnValue);
-    setPayload(payload);
+    // setPayload(payload);
 
     return payload.returnValue;
   });

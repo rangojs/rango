@@ -7,8 +7,7 @@ import {
   decodeFormState,
 } from "@vitejs/plugin-rsc/rsc";
 import type { ReactFormState } from "react-dom/client";
-import { Root } from "../root.tsx";
-import { MyTestPage } from "../MyTestPage.tsx";
+import { router } from "../routes.tsx";
 import { Storage } from "./entry.storage.ts";
 // The schema of payload which is serialized into RSC stream on rsc environment
 // and deserialized on ssr/client environments.
@@ -21,6 +20,12 @@ export type RscPayload = {
   returnValue?: unknown;
   // server action form state (e.g. useActionState) of progressive enhancement case
   formState?: ReactFormState;
+  // Metadata for partial rendering
+  metadata?: {
+    pathname: string;
+    startIndex?: number;
+    preservedLayouts?: string[];
+  };
 };
 
 // the plugin by default assumes `rsc` entry having default export of request handler.
@@ -66,24 +71,72 @@ async function _handler(request: Request): Promise<Response> {
   // to achieve single round trip to mutate and fetch from server.
   const url = new URL(request.url);
 
-  // Route handling based on pathname
+  // Check if this is a partial render request
+  const isPartialRequest = url.searchParams.has("_rsc_partial");
+  const previousPathname = url.searchParams.get("_rsc_prev");
+
+  console.log(`\n[Entry.RSC] ==================== REQUEST ====================`);
+  console.log(`[Entry.RSC] URL: ${url.pathname}${url.search}`);
+  console.log(`[Entry.RSC] Method: ${request.method}`);
+  console.log(`[Entry.RSC] Is partial: ${isPartialRequest}`);
+  console.log(`[Entry.RSC] Previous path: ${previousPathname || 'N/A'}`);
+
   let component: React.ReactNode;
-  if (url.pathname === "/my-test") {
-    // Render the MyTestPage component for /my-test route
-    component = <MyTestPage />;
+  let metadata: RscPayload["metadata"];
+
+  if (isPartialRequest && previousPathname) {
+    console.log(`[Entry.RSC] >>> Attempting PARTIAL render`);
+    // Partial rendering - only render changed segments
+    const partialResult = await router.matchPartial(request, previousPathname);
+    if (partialResult) {
+      component = partialResult.component;
+      metadata = {
+        pathname: url.pathname,
+        startIndex: partialResult.startIndex,
+        preservedLayouts: partialResult.preservedLayouts,
+      };
+      console.log(`[Entry.RSC] ✓ Partial render successful`);
+      console.log(`[Entry.RSC]   Start index: ${partialResult.startIndex}`);
+      console.log(`[Entry.RSC]   Preserved layouts:`, partialResult.preservedLayouts);
+    } else {
+      // Fallback to full render if partial match fails
+      console.log(`[Entry.RSC] ⚠️ Partial render failed, falling back to full render`);
+      component = await router.match(request);
+      metadata = { pathname: url.pathname };
+    }
   } else {
-    // Default to Root component for all other routes
-    component = <Root url={url} />;
+    // Full page render using the router
+    console.log(`[Entry.RSC] >>> Performing FULL render`);
+    component = await router.match(request);
+    metadata = { pathname: url.pathname };
   }
-  // if (isAction) {
-  //   component = <>Nothing</>;
-  // }
+
+  // Handle 404
+  if (!component) {
+    console.log(`[Entry.RSC] ❌ No component returned - showing 404`);
+    component = (
+      <html>
+        <body>
+          <h1>404 - Not Found</h1>
+          <p>The page {url.pathname} was not found.</p>
+          <a href="/">Go home</a>
+        </body>
+      </html>
+    );
+  } else {
+    console.log(`[Entry.RSC] ✓ Component ready for rendering`);
+    console.log(`[Entry.RSC]   Component type:`, component?.type?.name || typeof component);
+  }
 
   const rscPayload: RscPayload = {
     root: component,
     formState,
     returnValue,
+    metadata,
   };
+
+  console.log(`[Entry.RSC] RSC Payload metadata:`, metadata);
+  console.log(`[Entry.RSC] ==================== END REQUEST ====================\n`);
   const rscOptions = { temporaryReferences };
   const rscStream = renderToReadableStream<RscPayload>(rscPayload, rscOptions);
 
