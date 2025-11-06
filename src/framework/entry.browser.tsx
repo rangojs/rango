@@ -22,7 +22,7 @@ async function main() {
   // stash `setPayload` function to trigger re-rendering
   // from outside of `BrowserRoot` component (e.g. server function call, navigation, hmr)
   let setPayload: (v: RscPayload) => void;
-
+  let aborter: AbortController | undefined = undefined;
   // Track current pathname for partial rendering
   let currentPathname = window.location.pathname;
 
@@ -123,9 +123,28 @@ async function main() {
 
     console.log(`[Browser] Fetching: ${fetchUrl.href}`);
     const startTime = Date.now();
-
-    const payload = await createFromFetch<RscPayload>(fetch(fetchUrl.href));
+    aborter?.abort?.("Cancelled due to new navigation");
+    aborter = new AbortController();
+    const payload = await createFromFetch<RscPayload>(
+      fetch(fetchUrl.href, {
+        // signal: aborter?.signal,
+      }).catch((err) => {
+        console.log(`[Browser] ✗ Fetch error:`, err);
+        return new Response(null, { status: 500 });
+      }),
+      { signal: aborter?.signal }
+    );
     console.log("payload", payload);
+
+    if (!payload || aborter?.signal.aborted === true) {
+      console.log(
+        `[Browser] ✗ Fetch aborted or failed`,
+        payload,
+        aborter?.signal
+      );
+      console.log(`[Browser] ============ END NAVIGATION ============\n`);
+      return;
+    }
 
     const fetchTime = Date.now() - startTime;
     console.log(`[Browser] ✓ Response received in ${fetchTime}ms`);
