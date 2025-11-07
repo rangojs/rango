@@ -12,7 +12,7 @@ import { startTransition, useActionState } from "react";
 import { ServerCounterClient } from "./components/server-counter.client.tsx";
 import { getServerCounter } from "./action.tsx";
 import { Storage } from "./framework/entry.storage.ts";
-
+import style from "./MyTestPage.module.css";
 // This is a dedicated RSC component for the /my-test route
 export async function MyTestPage() {
   // Increment visit counter on page load
@@ -50,7 +50,7 @@ export async function MyTestPage() {
   // console.log("state", { state, submitAction, isPending });
 
   return (
-    <div className="my-test-page">
+    <div className={`${style["my-test-page"]}`}>
       <h1>{testData.pageTitle}</h1>
       <TempAwaitText promise={_pending} />
       <ServerCounterClient>

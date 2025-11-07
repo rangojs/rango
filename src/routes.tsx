@@ -10,7 +10,6 @@ import HomePage from "./pages/HomePage";
 import DashboardPage from "./pages/DashboardPage";
 import DashboardAnalyticsPage from "./pages/DashboardAnalyticsPage";
 import ArticlesListPage from "./pages/ArticlesListPage";
-import { MyTestPage } from "./MyTestPage.tsx";
 
 // Create router instance
 export const router = new RscRouter();
@@ -77,6 +76,7 @@ router.get("/articles", async (ctx) => {
 
 router.get("/articles/:id", async (ctx) => {
   const { id } = ctx.params;
+  const MyTestPage = (await import("./MyTestPage")).MyTestPage;
   return (
     <article>
       <h2>Article {id}</h2>
