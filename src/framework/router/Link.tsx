@@ -1,48 +1,65 @@
-'use client';
+/**
+ * Global type-safe Link component using explicit route configuration
+ */
 
-import React from 'react';
+"use client";
 
-type LinkProps = React.AnchorHTMLAttributes<HTMLAnchorElement> & {
-  prefetch?: boolean;
-};
+import React from "react";
+import { buildPath } from "../rsc-router/route-paths";
+
+// Import the global routes configuration
+// This will be overridden by the user's routes.config.ts through path mapping
+import { type AppRoutePaths, type AppRoutes } from "../../routes.config";
 
 /**
- * RouterLink component for client-side navigation
- * Automatically intercepted by the browser entry navigation listener
+ * Check if a route has parameters
  */
-export function Link({ prefetch = false, ...props }: LinkProps) {
-  // The click handling is done by the global listener in entry.browser.tsx
-  // This component just ensures proper anchor rendering
+type HasRouteParams<T extends AppRoutePaths> = AppRoutes[T] extends null
+  ? false
+  : true;
+
+/**
+ * Get the parameter type for a route
+ */
+type RouteParamsFor<T extends AppRoutePaths> = AppRoutes[T] extends null
+  ? never
+  : AppRoutes[T];
+
+/**
+ * Props for the global type-safe Link component
+ */
+type GlobalTypedLinkProps<T extends AppRoutePaths = AppRoutePaths> = Omit<
+  React.AnchorHTMLAttributes<HTMLAnchorElement>,
+  "href"
+> & {
+  to: T;
+  prefetch?: boolean;
+} & (HasRouteParams<T> extends true
+    ? { params: RouteParamsFor<T> }
+    : { params?: never });
+
+/**
+ * Global type-safe Link component
+ *
+ * This component provides type-safe routing without requiring factory functions.
+ * Routes are defined in routes.config.ts and automatically provide type safety.
+ *
+ * @example
+ * import { GlobalTypedLink } from "rsc-router";
+ *
+ * <GlobalTypedLink to="/">Home</GlobalTypedLink>
+ * <GlobalTypedLink to="/user/:id" params={{ id: "123" }}>User</GlobalTypedLink>
+ */
+export function Link<T extends AppRoutePaths>(props: GlobalTypedLinkProps<T>) {
+  const { to, params, prefetch = false, ...restProps } = props;
+
+  const href = buildPath(to as string, params || undefined);
 
   React.useEffect(() => {
-    if (prefetch && props.href) {
-      // Prefetch the route on mount or when href changes
-      // This could trigger a background fetch to warm the cache
-      const url = new URL(props.href, window.location.origin);
-      if (url.origin === window.location.origin) {
-        // Add prefetch logic here if needed
-        console.log(`[Link] Prefetch enabled for ${props.href}`);
-      }
+    if (prefetch && href) {
+      console.log(`[GlobalTypedLink] Prefetch enabled for ${href}`);
     }
-  }, [prefetch, props.href]);
+  }, [prefetch, href]);
 
-  return <a {...props} />;
-}
-
-/**
- * NavLink component that adds active state
- */
-export function NavLink({
-  className,
-  activeClassName = 'active',
-  ...props
-}: LinkProps & { activeClassName?: string }) {
-  const isActive = props.href === window.location.pathname;
-
-  return (
-    <Link
-      {...props}
-      className={`${className || ''} ${isActive ? activeClassName : ''}`.trim()}
-    />
-  );
+  return <a {...restProps} href={href} />;
 }

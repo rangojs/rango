@@ -48,6 +48,33 @@ const routes = route({
 });
 
 // ==========================================
+// TYPE AUGMENTATION: Register routes globally
+// ==========================================
+
+/**
+ * Augment the global route registry to enable type-safe routing
+ * This allows the Link component to validate paths and parameters
+ *
+ * @example
+ * // ✅ Valid path with type-checked params
+ * <Link to="/items/:id" params={{ id: "123" }}>Item 123</Link>
+ *
+ * // ✅ Using route descriptors
+ * <Link to={routes.$descriptors.test.items.detail} params={{ id: "123" }}>Item 123</Link>
+ *
+ * // ❌ TypeScript error: invalid path
+ * <Link to="/invalid">Invalid</Link>
+ *
+ * // ❌ TypeScript error: missing required param 'id'
+ * <Link to="/items/:id">Item</Link>
+ */
+declare module "rsc-router" {
+  interface RouteRegistry {
+    routes: typeof routes;
+  }
+}
+
+// ==========================================
 // STEP 2: Create router with global config
 // ==========================================
 
@@ -77,7 +104,11 @@ router.map(routes, {
     [layout]: async () => {
       // The layout wraps all child routes
       // The <Outlet /> component will be injected automatically
-      return <TestLayout><Outlet /></TestLayout>;
+      return (
+        <TestLayout>
+          <Outlet />
+        </TestLayout>
+      );
     },
 
     // Test section middleware
@@ -89,20 +120,12 @@ router.map(routes, {
     ],
 
     // Revalidation configuration for test routes
-    [revalidate]: {
-      // Items list always revalidates
-      items: {
-        index: () => true,
-        // Detail page only revalidates when ID changes
-        detail: (ctx: any) => {
-          console.log('[REVALIDATION] Checking if item detail should revalidate');
-          console.log('  Current ID:', ctx.params.id);
-          console.log('  Next ID:', ctx.actionParams?.id);
-          return ctx.params.id !== ctx.actionParams?.id;
-        },
-      },
-      // Counter always revalidates to show new timestamp
-      counter: () => true,
+    [revalidate]: (ctx: any) => {
+      console.log("[REVALIDATION] Checking if should revalidate");
+      console.log("  Current path:", ctx.currentPath);
+      console.log("  Next path:", ctx.nextPath);
+      // Always revalidate for test routes
+      return true;
     },
 
     // Route handlers for test section
@@ -132,7 +155,7 @@ router.map(routes, {
 // EXPORTS
 // ==========================================
 
-export { router };
+export { router, routes };
 export default router;
 
 // ==========================================

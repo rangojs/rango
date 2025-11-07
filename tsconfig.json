@@ -17,7 +17,8 @@
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
-      "rsc-router": ["./src/framework/rsc-router"]
+      "rsc-router": ["./src/framework/rsc-router"],
+      "@/*": ["./src/*"]
     }
   }
 }

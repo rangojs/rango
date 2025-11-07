@@ -7,6 +7,7 @@ import type {
   LayoutHandler,
   MiddlewareHandler,
 } from "./types";
+import { createDescriptors, type RouteDescriptors } from "./route-descriptor";
 
 /**
  * Symbol exports for route metadata
@@ -18,16 +19,29 @@ export const loading = Symbol.for("route.loading");
 export const error = Symbol.for("route.error");
 
 /**
- * Create a route map with type inference
+ * Enhanced route map return type with descriptors
  */
-export function route<T extends RouteMap>(map: T): T;
+export type RouteMapWithDescriptors<T extends RouteMap> = T & {
+  $descriptors: RouteDescriptors<T>;
+};
+
+/**
+ * Create a route map with type inference and route descriptors
+ */
+export function route<T extends RouteMap>(map: T): RouteMapWithDescriptors<T>;
 export function route<T extends RouteMap, U extends RouteMap>(
   map1: T,
   map2: U
-): T & U;
-export function route(...maps: RouteMap[]): RouteMap {
+): RouteMapWithDescriptors<T & U>;
+export function route(...maps: RouteMap[]): any {
   if (maps.length === 1) {
-    return processRouteMap(maps[0]);
+    const processed = processRouteMap(maps[0]);
+    const descriptors = createDescriptors(processed);
+
+    // Create a combined object with both the route map and descriptors
+    return Object.assign(processed, {
+      $descriptors: descriptors,
+    });
   }
 
   // Merge multiple route maps
@@ -35,7 +49,11 @@ export function route(...maps: RouteMap[]): RouteMap {
   for (const map of maps) {
     Object.assign(merged, processRouteMap(map));
   }
-  return merged;
+
+  const descriptors = createDescriptors(merged);
+  return Object.assign(merged, {
+    $descriptors: descriptors,
+  });
 }
 
 /**

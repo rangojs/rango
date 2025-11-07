@@ -33,9 +33,7 @@ export function TestHomePage() {
         <a href="/test/items" style={{ marginRight: "10px" }}>
           Go to Item List →
         </a>
-        <a href="/test/counter">
-          Counter Example →
-        </a>
+        <a href="/test/counter">Counter Example →</a>
       </nav>
     </div>
   );
@@ -52,12 +50,10 @@ export function TestItemList() {
   return (
     <div style={{ padding: "20px" }}>
       <h2>📋 Item List</h2>
-      <p style={{ color: "green" }}>
-        Render count: {renderCount.list}
-      </p>
+      <p style={{ color: "green" }}>Render count: {renderCount.list}</p>
 
       <ul>
-        {items.map(item => (
+        {items.map((item) => (
           <li key={item.id} style={{ marginBottom: "10px" }}>
             <a href={`/test/items/${item.id}`}>
               {item.emoji} {item.name} →
@@ -74,33 +70,38 @@ export function TestItemList() {
 export function TestItemDetail({ id }: { id: string }) {
   renderCount.detail++;
 
-  const items: Record<string, { name: string; emoji: string; description: string }> = {
+  const items: Record<
+    string,
+    { name: string; emoji: string; description: string }
+  > = {
     "1": {
       name: "Apple",
       emoji: "🍎",
-      description: "A crisp and sweet fruit, perfect for snacking."
+      description: "A crisp and sweet fruit, perfect for snacking.",
     },
     "2": {
       name: "Banana",
       emoji: "🍌",
-      description: "Rich in potassium and great for energy."
+      description: "Rich in potassium and great for energy.",
     },
     "3": {
       name: "Cherry",
       emoji: "🍒",
-      description: "Small, sweet, and perfect for desserts."
+      description: "Small, sweet, and perfect for desserts.",
     },
   };
 
   const item = items[id] || {
     name: "Unknown",
     emoji: "❓",
-    description: "Item not found!"
+    description: "Item not found!",
   };
 
   return (
     <div style={{ padding: "20px" }}>
-      <h2>{item.emoji} {item.name}</h2>
+      <h2>
+        {item.emoji} {item.name}
+      </h2>
       <p style={{ color: "green" }}>
         Render count: {renderCount.detail} | Item ID: {id}
       </p>
@@ -138,15 +139,16 @@ export function TestCounter() {
   return (
     <div style={{ padding: "20px" }}>
       <h2>⏱️ Server Time Counter</h2>
-      <p>Current server time: <strong>{timestamp}</strong></p>
       <p>
-        This updates on each navigation to show when the server component re-renders.
+        Current server time: <strong>{timestamp}</strong>
+      </p>
+      <p>
+        This updates on each navigation to show when the server component
+        re-renders.
       </p>
 
       <div style={{ marginTop: "20px" }}>
-        <button onClick={() => window.location.reload()}>
-          Refresh Page
-        </button>
+        <button onClick={() => window.location.reload()}>Refresh Page</button>
         <a href="/test/counter" style={{ marginLeft: "10px" }}>
           Navigate to Same Page
         </a>
@@ -162,18 +164,22 @@ export function TestCounter() {
 // Test layout component
 export function TestLayout({ children }: { children?: React.ReactNode }) {
   return (
-    <div style={{
-      border: "3px solid #4CAF50",
-      borderRadius: "8px",
-      margin: "20px",
-      padding: "20px",
-      backgroundColor: "#f0f8f0"
-    }}>
-      <div style={{
-        borderBottom: "2px solid #4CAF50",
-        paddingBottom: "10px",
-        marginBottom: "20px"
-      }}>
+    <div
+      style={{
+        border: "3px solid #4CAF50",
+        borderRadius: "8px",
+        margin: "20px",
+        padding: "20px",
+        backgroundColor: "#f0f8f0",
+      }}
+    >
+      <div
+        style={{
+          borderBottom: "2px solid #4CAF50",
+          paddingBottom: "10px",
+          marginBottom: "20px",
+        }}
+      >
         <h1 style={{ color: "#2E7D32", margin: 0 }}>
           🧪 Test Layout Container
         </h1>
@@ -182,16 +188,16 @@ export function TestLayout({ children }: { children?: React.ReactNode }) {
         </p>
       </div>
 
-      <div>
-        {children}
-      </div>
+      <div>{children}</div>
 
-      <div style={{
-        borderTop: "2px solid #4CAF50",
-        paddingTop: "10px",
-        marginTop: "20px",
-        color: "#666"
-      }}>
+      <div
+        style={{
+          borderTop: "2px solid #4CAF50",
+          paddingTop: "10px",
+          marginTop: "20px",
+          color: "#666",
+        }}
+      >
         <small>Test Layout Footer - I stay here!</small>
       </div>
     </div>

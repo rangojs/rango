@@ -79,5 +79,25 @@ export type {
   HandlerMap,
 } from "./types";
 
+// Export type-safe routing utilities
+export type { RouteDescriptor, RouteDescriptors } from "./route-descriptor";
+
+export type { RouteMapWithDescriptors } from "./declarative";
+
+export type {
+  ValidRoutePaths,
+  RouteParams,
+  HasParams,
+  RouteRegistry,
+} from "./registry";
+
+export { buildPath, joinPaths } from "./route-paths";
+
+export { createLink, defineRoutes, TypedLink } from "./typed-link";
+export { Link, GlobalLink, type AppRoutes } from "./global-link";
+export { Link as GlobalTypedLink } from "../router/Link";
+
+export type { ExtractRoutePaths } from "./route-paths";
+
 // Export symbols as a namespace for convenience
 export { RouteSymbols } from "./types";

@@ -28,6 +28,7 @@
     "happy-dom": "^20.0.10",
     "jsdom": "^27.1.0",
     "rsc-html-stream": "^0.0.7",
+    "typescript": "^5.9.3",
     "vite": "^7.1.10",
     "vitest": "^4.0.8"
   }
