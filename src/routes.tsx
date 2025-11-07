@@ -1,4 +1,4 @@
-import { RscRouter } from "./framework/router/router.tsx";
+import { RscRouter } from "rsc-router";
 
 // Import layouts
 import RootLayout from "./layouts/RootLayout";

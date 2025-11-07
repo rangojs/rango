@@ -1,8 +1,14 @@
 import rsc from '@vitejs/plugin-rsc'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import path from 'path'
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      'rsc-router': path.resolve(__dirname, './src/framework/rsc-router')
+    }
+  },
   plugins: [
     rsc({
       // `entries` option is only a shorthand for specifying each `rollupOptions.input` below
