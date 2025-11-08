@@ -73,14 +73,14 @@ function isRouteDefinition(value: any): value is RouteDefinition {
  * Join path segments, handling leading/trailing slashes
  */
 function joinPaths(base: string, path: string): string {
-  const normalizedBase = base.replace(/\/+$/, '');
-  const normalizedPath = path.replace(/^\/+/, '');
+  const normalizedBase = base.replace(/\/+$/, "");
+  const normalizedPath = path.replace(/^\/+/, "");
 
-  if (!normalizedBase || normalizedBase === '/') {
-    return '/' + normalizedPath;
+  if (!normalizedBase || normalizedBase === "/") {
+    return "/" + normalizedPath;
   }
 
-  return normalizedBase + '/' + normalizedPath;
+  return normalizedBase + "/" + normalizedPath;
 }
 
 /**
@@ -95,23 +95,25 @@ export function createDescriptors<T extends RouteMap>(
   map: T,
   basePath = ""
 ): RouteDescriptors<T> {
-  const descriptors: any = {};
+  const descriptors: RouteDescriptors<any> = {} as any;
 
   for (const [key, value] of Object.entries(map)) {
     if (typeof value === "string") {
       // Simple string route: "/path"
-      const fullPath = value.startsWith('/') ? value : joinPaths(basePath, value);
-      descriptors[key] = {
+      const fullPath = value.startsWith("/")
+        ? value
+        : joinPaths(basePath, value);
+      descriptors[key as keyof RouteDescriptors<any>] = {
         pattern: fullPath,
         params: {} as ExtractRouteParams<typeof fullPath>,
         build: (params: any) => buildPath(fullPath, params),
-      };
+      } satisfies RouteDescriptor<typeof fullPath>;
     } else if (isRouteDefinition(value)) {
       // RouteDefinition: { pattern: "/path", method: "GET" }
-      const fullPath = value.pattern.startsWith('/')
+      const fullPath = value.pattern.startsWith("/")
         ? value.pattern
         : joinPaths(basePath, value.pattern);
-      descriptors[key] = {
+      descriptors[key as keyof RouteDescriptors<any>] = {
         pattern: fullPath,
         params: {} as ExtractRouteParams<typeof fullPath>,
         build: (params: any) => buildPath(fullPath, params),
@@ -120,7 +122,10 @@ export function createDescriptors<T extends RouteMap>(
       // Nested RouteMap: recurse with updated base path
       // For nested routes, we don't automatically add the key to the path
       // unless the nested routes are relative
-      descriptors[key] = createDescriptors(value, basePath);
+      descriptors[key as keyof RouteDescriptors<any>] = createDescriptors(
+        value,
+        basePath
+      );
     }
   }
 

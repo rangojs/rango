@@ -1,13 +1,14 @@
-import rsc from '@vitejs/plugin-rsc'
-import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
-import path from 'path'
-
+import rsc from "@vitejs/plugin-rsc";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+import path from "path";
+import { rscRouter } from "./src/framework/vite/plugin";
+import tsconfigPaths from "vite-tsconfig-paths";
 export default defineConfig({
   resolve: {
     alias: {
-      'rsc-router': path.resolve(__dirname, './src/framework/rsc-router')
-    }
+      "rsc-router": path.resolve(__dirname, "./src/framework/rsc-router"),
+    },
   },
   plugins: [
     rsc({
@@ -22,6 +23,8 @@ export default defineConfig({
     // use any of react plugins https://github.com/vitejs/vite-plugin-react
     // to enable client component HMR
     react(),
+    rscRouter({}),
+    tsconfigPaths(),
 
     // use https://github.com/antfu-collective/vite-plugin-inspect
     // to understand internal transforms required for RSC.
@@ -39,7 +42,7 @@ export default defineConfig({
       build: {
         rollupOptions: {
           input: {
-            index: './src/framework/entry.rsc.tsx',
+            index: "./src/framework/entry.rsc.tsx",
           },
         },
       },
@@ -53,7 +56,7 @@ export default defineConfig({
       build: {
         rollupOptions: {
           input: {
-            index: './src/framework/entry.ssr.tsx',
+            index: "./src/framework/entry.ssr.tsx",
           },
         },
       },
@@ -69,10 +72,10 @@ export default defineConfig({
       build: {
         rollupOptions: {
           input: {
-            index: './src/framework/entry.browser.tsx',
+            index: "./src/framework/entry.browser.tsx",
           },
         },
       },
     },
   },
-})
+});

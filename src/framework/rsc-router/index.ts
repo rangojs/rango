@@ -82,8 +82,6 @@ export type {
 // Export type-safe routing utilities
 export type { RouteDescriptor, RouteDescriptors } from "./route-descriptor";
 
-export type { RouteMapWithDescriptors } from "./declarative";
-
 export type {
   ValidRoutePaths,
   RouteParams,
@@ -93,9 +91,7 @@ export type {
 
 export { buildPath, joinPaths } from "./route-paths";
 
-export { createLink, defineRoutes, TypedLink } from "./typed-link";
 export { Link, GlobalLink, type AppRoutes } from "./global-link";
-export { Link as GlobalTypedLink } from "../router/Link";
 
 export type { ExtractRoutePaths } from "./route-paths";
 

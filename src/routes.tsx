@@ -10,6 +10,19 @@ import HomePage from "./pages/HomePage";
 import DashboardPage from "./pages/DashboardPage";
 import DashboardAnalyticsPage from "./pages/DashboardAnalyticsPage";
 import ArticlesListPage from "./pages/ArticlesListPage";
+const modules = await import("virtual:rsc-router");
+console.log(
+  `-----------------------------------------------------------------`
+);
+console.log("resolved", modules);
+console.log("resolved", modules.modules);
+console.log("resolved", await modules.modules.test());
+console.log("resolved", modules.structure);
+console.log("resolved", modules.default);
+console.log("resolved", console.dir(await import("virtual:rsc-router")));
+console.log(
+  `-----------------------------------------------------------------`
+);
 
 // Create router instance
 export const router = new RscRouter();

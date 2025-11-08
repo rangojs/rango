@@ -75,24 +75,35 @@ import { createRouter, route, middleware, layout } from "rsc-router";
 
 // `route()` creates a "route map" that organizes routes by name. The keys
 // of the map may be any name, and may be nested to group related routes.
-let routes = route({
-  home: "/",
-  about: "/about",
-  blog: {
-    index: "/",
-    show: "/:slug",
-  },
-});
+let routes = route([index("./home.tsx"),
+  route("about", "./about.tsx"),
+  layout("./auth/layout.tsx", [
+    route("login", "./auth/login.tsx"),
+    route("register", "./auth/register.tsx"),
+  ]),
+  prefix("concerts", [
+    index("./concerts/home.tsx"),
+    route(":city", "./concerts/city.tsx" ),
+    route("trending", "./concerts/trending.tsx"),
+  ]),]);
 
 type Routes = typeof routes;
-// {
-//   home: Route<ALL, '/'>
-//   about: Route<ALL, '/about'>
-//   blog: {
-//     index: Route<ALL, '/blog'>
-//     show: Route<ALL, '/blog/:slug'>
-//   },
-// }
+const routes3: Route<{
+    readonly home: "/";
+    readonly about: "/about";
+    readonly another1: Route<{
+        readonly home: "/";
+        readonly about: "/about";
+    }>;
+    readonly another2: Route<{
+        readonly home: "/";
+        readonly about: "/about";
+        readonly another: Route<{
+            readonly home: "/";
+            readonly about: "/about";
+        }>;
+    }>;
+}>
 
 let router = createRouter(routes, {
   // Middleware may be used to run code before and/or after route handlers run.
@@ -102,9 +113,10 @@ let router = createRouter(routes, {
 
 // Map the routes to "handlers" for each route. The structure of the route
 // handlers object mirrors the structure of the route map, with full type safety.
-router.map(routesBlog, () => import("route.blog.handlers"));
+router.map(another1, () => import("route.blog.handlers"));
+router.map(another2, () => import("route.blog.handlers"));
 
-map(routes, {
+router.map(routes, {
   [route.loading]: {
     show: () => import("blog/loading").then((m) => m.BlogLoading),
   },

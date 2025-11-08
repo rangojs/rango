@@ -5,6 +5,7 @@ import {
   middleware,
   layout,
   revalidate,
+  Route,
 } from "./declarative";
 import type { RouteContext, MiddlewareHandler } from "./types";
 
@@ -15,6 +16,31 @@ describe("Declarative Router API", () => {
         home: "/",
         about: "/about",
       });
+      const routes2 = route({
+        home: "/",
+        about: "/about",
+        another: routes,
+      });
+      type RouteKeys<T, Path extends string = ""> = T extends Route<any>
+        ? Path
+        : T extends object
+        ? {
+            [K in keyof T]: K extends string
+              ? T[K] extends Route<any>
+                ? `${Path}${Path extends "" ? "" : "."}${K}`
+                : RouteKeys<T[K], `${Path}${Path extends "" ? "" : "."}${K}`>
+              : never;
+          }[keyof T]
+        : never;
+
+      type NestedRoutes = RouteKeys<typeof routes2>;
+      const routes3 = route({
+        home: "/",
+        about: "/about",
+        another1: routes,
+        another2: routes2,
+      });
+      console.log("routes", routes);
 
       expect(routes).toEqual({
         home: "/",

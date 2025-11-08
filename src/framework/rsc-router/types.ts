@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { Route } from "./declarative";
 
 /**
  * Context object passed to route handlers
@@ -63,12 +64,23 @@ export type LoadingHandler = () => ReactNode | Promise<ReactNode>;
 /**
  * Error boundary handler
  */
-export type ErrorHandler = (error: Error, reset: () => void) => ReactNode | Promise<ReactNode>;
+export type ErrorHandler = (
+  error: Error,
+  reset: () => void
+) => ReactNode | Promise<ReactNode>;
 
 /**
  * HTTP methods supported by the router
  */
-export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS" | "ALL";
+export type HttpMethod =
+  | "GET"
+  | "POST"
+  | "PUT"
+  | "DELETE"
+  | "PATCH"
+  | "HEAD"
+  | "OPTIONS"
+  | "ALL";
 
 /**
  * Extract route parameters from a path pattern
@@ -84,7 +96,10 @@ export type ExtractRouteParams<T extends string> =
 /**
  * Route definition with type-safe params
  */
-export interface TypedRoute<TPattern extends string = string, TMethod extends HttpMethod = "ALL"> {
+export interface TypedRoute<
+  TPattern extends string = string,
+  TMethod extends HttpMethod = "ALL"
+> {
   pattern: TPattern;
   method: TMethod;
   params: ExtractRouteParams<TPattern>;
@@ -93,8 +108,8 @@ export interface TypedRoute<TPattern extends string = string, TMethod extends Ht
 /**
  * Route map structure for declarative API
  */
-export type RouteMap = {
-  [key: string]: string | RouteDefinition | RouteMap;
+export type RouteMap<T extends RouteMap = {}> = {
+  [key: string]: string | RouteDefinition | RouteMap | Route<T>;
 };
 
 /**
@@ -103,6 +118,7 @@ export type RouteMap = {
 export interface RouteDefinition {
   pattern: string;
   method?: HttpMethod;
+  id: string;
 }
 
 /**
@@ -129,8 +145,12 @@ export type HandlerMap<TRoutes extends RouteMap> = {
     : never;
 } & {
   [RouteSymbols.middleware]?: MiddlewareHandler[];
-  [RouteSymbols.layout]?: LayoutHandler | (() => Promise<{ default: LayoutHandler }>);
-  [RouteSymbols.revalidate]?: Record<string, RevalidationHandler> | RevalidationHandler;
+  [RouteSymbols.layout]?:
+    | LayoutHandler
+    | (() => Promise<{ default: LayoutHandler }>);
+  [RouteSymbols.revalidate]?:
+    | Record<string, RevalidationHandler>
+    | RevalidationHandler;
   [RouteSymbols.loading]?: Record<string, LoadingHandler> | LoadingHandler;
   [RouteSymbols.error]?: ErrorHandler;
 };

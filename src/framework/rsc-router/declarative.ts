@@ -1,11 +1,11 @@
 import { RscRouter } from "./imperative";
 import type {
-  RouteMap,
   RouteDefinition,
   HandlerMap,
   RouteHandler,
   LayoutHandler,
   MiddlewareHandler,
+  RouteMap,
 } from "./types";
 import { createDescriptors, type RouteDescriptors } from "./route-descriptor";
 
@@ -18,85 +18,15 @@ export const revalidate = Symbol.for("route.revalidate");
 export const loading = Symbol.for("route.loading");
 export const error = Symbol.for("route.error");
 
-/**
- * Enhanced route map return type with descriptors
- */
-export type RouteMapWithDescriptors<T extends RouteMap> = T & {
-  $descriptors: RouteDescriptors<T>;
-};
-
-/**
- * Create a route map with type inference and route descriptors
- */
-export function route<T extends RouteMap>(map: T): RouteMapWithDescriptors<T>;
-export function route<T extends RouteMap, U extends RouteMap>(
-  map1: T,
-  map2: U
-): RouteMapWithDescriptors<T & U>;
-export function route(...maps: RouteMap[]): any {
-  if (maps.length === 1) {
-    const processed = processRouteMap(maps[0]);
-    const descriptors = createDescriptors(processed);
-
-    // Create a combined object with both the route map and descriptors
-    return Object.assign(processed, {
-      $descriptors: descriptors,
-    });
-  }
-
-  // Merge multiple route maps
-  const merged: RouteMap = {};
-  for (const map of maps) {
-    Object.assign(merged, processRouteMap(map));
-  }
-
-  const descriptors = createDescriptors(merged);
-  return Object.assign(merged, {
-    $descriptors: descriptors,
-  });
+export function route<const T extends RouteMap>(map: T): Route<T> {
+  return new Route<T>(map) as Route<T>;
 }
 
-/**
- * Process and validate a route map
- */
-function processRouteMap(map: RouteMap, basePath: string = ""): RouteMap {
-  const processed: RouteMap = {};
-
-  for (const [key, value] of Object.entries(map)) {
-    if (typeof value === "string") {
-      // Simple string pattern
-      const fullPath = joinPaths(basePath, value);
-      processed[key] = fullPath;
-    } else if (isRouteDefinition(value)) {
-      // Route definition with method
-      const fullPath = joinPaths(basePath, value.pattern);
-      processed[key] = {
-        ...value,
-        pattern: fullPath,
-      };
-    } else if (isRouteMap(value)) {
-      // Nested route map
-      // For nested route maps, we just process them with the current base path
-      // The patterns inside should be relative to the parent
-      const nestedBasePath = key === "index" ? basePath : joinPaths(basePath, `/${key}`);
-
-      // But wait - check if this looks like it's meant to be a route group
-      // If all nested patterns start with the same segment that matches the key,
-      // then don't add the key to the base path
-      const nestedValues = Object.values(value);
-      const firstPattern = typeof nestedValues[0] === 'string' ? nestedValues[0] :
-        isRouteDefinition(nestedValues[0]) ? nestedValues[0].pattern : null;
-
-      // If the first pattern starts with /category and the key is category,
-      // then the patterns are absolute-ish and we shouldn't add the key
-      const shouldAddKey = !firstPattern || !firstPattern.startsWith(`/${key}`);
-
-      const actualBasePath = shouldAddKey ? nestedBasePath : basePath;
-      processed[key] = processRouteMap(value, actualBasePath);
-    }
+export class Route<T extends RouteMap> {
+  readonly route: RouteMap;
+  constructor(r: T) {
+    this.route = r;
   }
-
-  return processed;
 }
 
 /**
@@ -112,41 +42,24 @@ function isRouteDefinition(value: any): value is RouteDefinition {
 }
 
 /**
- * Type guard for RouteMap
- */
-function isRouteMap(value: any): value is RouteMap {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !isRouteDefinition(value) &&
-    !Array.isArray(value)
-  );
-}
-
-/**
- * Join path segments
- */
-function joinPaths(...paths: string[]): string {
-  return paths
-    .filter(Boolean)
-    .join("/")
-    .replace(/\/+/g, "/")
-    .replace(/\/$/, "") || "/";
-}
-
-/**
  * Router instance with declarative API
  */
 export class DeclarativeRouter {
   private imperativeRouter: RscRouter;
   private routeMap: RouteMap = {};
-  private handlers: Map<string, HandlerMap<any> | { __loader: () => Promise<{ default: HandlerMap<any> }> }> = new Map();
+  private handlers: Map<
+    string,
+    HandlerMap<any> | { __loader: () => Promise<{ default: HandlerMap<any> }> }
+  > = new Map();
   private globalMiddleware: MiddlewareHandler[] = [];
 
-  constructor(routes: RouteMap, options?: {
-    [middleware]?: MiddlewareHandler[];
-    [layout]?: LayoutHandler;
-  }) {
+  constructor(
+    routes: RouteMap,
+    options?: {
+      [middleware]?: MiddlewareHandler[];
+      [layout]?: LayoutHandler;
+    }
+  ) {
     this.imperativeRouter = new RscRouter();
     this.routeMap = routes;
 
@@ -174,8 +87,11 @@ export class DeclarativeRouter {
       this.handlers.set(JSON.stringify(routes), { __loader: handlers });
     } else {
       // Direct handlers
-      console.log('[DeclarativeRouter] Mapping routes:', JSON.stringify(routes, null, 2));
-      console.log('[DeclarativeRouter] Handlers keys:', Object.keys(handlers));
+      console.log(
+        "[DeclarativeRouter] Mapping routes:",
+        JSON.stringify(routes, null, 2)
+      );
+      console.log("[DeclarativeRouter] Handlers keys:", Object.keys(handlers));
       this.registerHandlers(routes, handlers);
     }
 
@@ -191,7 +107,9 @@ export class DeclarativeRouter {
     basePath: string = ""
   ) {
     // Extract metadata
-    const middlewareHandlers = handlers[middleware] as MiddlewareHandler[] | undefined;
+    const middlewareHandlers = handlers[middleware] as
+      | MiddlewareHandler[]
+      | undefined;
     const layoutHandler = handlers[layout] as LayoutHandler | undefined;
     // These will be implemented in future updates
     // const revalidateHandlers = handlers[revalidate] as any;
@@ -200,34 +118,46 @@ export class DeclarativeRouter {
 
     // Sort routes to ensure more specific routes are registered before dynamic ones
     // This prevents /blog/:slug from matching before /blog/category
-    const sortedEntries = Object.entries(routes).sort(([keyA, valueA], [keyB, valueB]) => {
-      // Skip metadata keys
-      if (keyA.startsWith("_") || typeof keyA === "symbol") return 1;
-      if (keyB.startsWith("_") || typeof keyB === "symbol") return -1;
+    const sortedEntries = Object.entries(routes).sort(
+      ([keyA, valueA], [keyB, valueB]) => {
+        // Skip metadata keys
+        if (keyA.startsWith("_") || typeof keyA === "symbol") return 1;
+        if (keyB.startsWith("_") || typeof keyB === "symbol") return -1;
 
-      // Get patterns to compare
-      const patternA = typeof valueA === "string" ? valueA :
-        isRouteDefinition(valueA) ? valueA.pattern :
-        isRouteMap(valueA) ? "nested" : "";
+        // Get patterns to compare
+        const patternA =
+          typeof valueA === "string"
+            ? valueA
+            : isRouteDefinition(valueA)
+            ? valueA.pattern
+            : isRouteMap(valueA)
+            ? "nested"
+            : "";
 
-      const patternB = typeof valueB === "string" ? valueB :
-        isRouteDefinition(valueB) ? valueB.pattern :
-        isRouteMap(valueB) ? "nested" : "";
+        const patternB =
+          typeof valueB === "string"
+            ? valueB
+            : isRouteDefinition(valueB)
+            ? valueB.pattern
+            : isRouteMap(valueB)
+            ? "nested"
+            : "";
 
-      // Nested routes (route maps) should be processed first
-      if (patternA === "nested" && patternB !== "nested") return -1;
-      if (patternB === "nested" && patternA !== "nested") return 1;
+        // Nested routes (route maps) should be processed first
+        if (patternA === "nested" && patternB !== "nested") return -1;
+        if (patternB === "nested" && patternA !== "nested") return 1;
 
-      // Static segments before dynamic segments
-      const isDynamicA = patternA.includes(":");
-      const isDynamicB = patternB.includes(":");
+        // Static segments before dynamic segments
+        const isDynamicA = patternA.includes(":");
+        const isDynamicB = patternB.includes(":");
 
-      if (!isDynamicA && isDynamicB) return -1;
-      if (!isDynamicB && isDynamicA) return 1;
+        if (!isDynamicA && isDynamicB) return -1;
+        if (!isDynamicB && isDynamicA) return 1;
 
-      // Otherwise maintain original order
-      return 0;
-    });
+        // Otherwise maintain original order
+        return 0;
+      }
+    );
 
     // Process each route
     for (const [key, routeValue] of sortedEntries) {
@@ -301,7 +231,8 @@ export class DeclarativeRouter {
           // Apply parent layout if exists
           if (layoutHandler) {
             // For layout, we need the base path of this route group
-            const layoutPath = key === "index" ? basePath : joinPaths(basePath, `/${key}`);
+            const layoutPath =
+              key === "index" ? basePath : joinPaths(basePath, `/${key}`);
             this.imperativeRouter.layout(layoutPath, layoutHandler);
           }
 
@@ -325,8 +256,10 @@ export class DeclarativeRouter {
   async match(request: Request) {
     // Load lazy handlers if needed
     for (const [key, value] of this.handlers.entries()) {
-      if (value && typeof value === 'object' && "__loader" in value) {
-        const loader = value as { __loader: () => Promise<{ default: HandlerMap<any> }> };
+      if (value && typeof value === "object" && "__loader" in value) {
+        const loader = value as {
+          __loader: () => Promise<{ default: HandlerMap<any> }>;
+        };
         const module = await loader.__loader();
         const routes = JSON.parse(key);
         this.registerHandlers(routes, module.default);
@@ -343,8 +276,10 @@ export class DeclarativeRouter {
   async matchPartial(request: Request, previousPathname?: string | null) {
     // Load lazy handlers if needed
     for (const [key, value] of this.handlers.entries()) {
-      if (value && typeof value === 'object' && "__loader" in value) {
-        const loader = value as { __loader: () => Promise<{ default: HandlerMap<any> }> };
+      if (value && typeof value === "object" && "__loader" in value) {
+        const loader = value as {
+          __loader: () => Promise<{ default: HandlerMap<any> }>;
+        };
         const module = await loader.__loader();
         const routes = JSON.parse(key);
         this.registerHandlers(routes, module.default);

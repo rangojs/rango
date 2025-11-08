@@ -14,6 +14,7 @@
     "test:run": "vitest run"
   },
   "dependencies": {
+    "@remix-run/route-pattern": "^0.15.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
@@ -25,11 +26,13 @@
     "@vitejs/plugin-react": "latest",
     "@vitejs/plugin-rsc": "latest",
     "@vitest/ui": "^4.0.8",
+    "glob": "^11.0.3",
     "happy-dom": "^20.0.10",
     "jsdom": "^27.1.0",
     "rsc-html-stream": "^0.0.7",
     "typescript": "^5.9.3",
     "vite": "^7.1.10",
+    "vite-tsconfig-paths": "^5.1.4",
     "vitest": "^4.0.8"
   }
 }
