@@ -3,7 +3,40 @@
  */
 
 import type { RouteDefinition, ResolvedRouteMap } from './route-definition';
+import { route } from './route-definition';
 import { LinearMatcher } from './linear-matcher';
+
+/**
+ * Route handler function type
+ */
+export type RouteHandler<TContext = MiddlewareContext> =
+  | ((ctx: TContext) => any)
+  | ((ctx?: TContext) => any)
+  | (() => any);
+
+/**
+ * Recursively build handler type from route map
+ * - String routes → RouteHandler
+ * - Nested routes → Nested handler object
+ */
+export type HandlersForRouteMap<T extends Record<string, RouteDefinition>> = {
+  [K in keyof T]?: T[K] extends string
+    ? RouteHandler
+    : T[K] extends Record<string, RouteDefinition>
+      ? HandlersForRouteMap<T[K]>
+      : never;
+} & {
+  // Allow special symbols
+  [route.layout]?:
+    | any // Single layout or array
+    | Record<keyof T, any>; // Per-route layouts
+  [route.parallel]?:
+    | Record<string, any> // Global parallel routes
+    | Record<keyof T, Record<string, any>>; // Per-route parallel routes
+  [route.loading]?: any | Record<keyof T, any>;
+  [route.error]?: any | Record<keyof T, any>;
+  [route.revalidate]?: any | Record<keyof T, any>;
+};
 
 /**
  * Router configuration options
@@ -72,8 +105,8 @@ export class RouteBuilder<T extends Record<string, RouteDefinition>> {
   }
 
   /**
-   * Map handlers to routes
-   * @param handlers - Object mapping route names to handler functions or lazy import
+   * Map handlers to routes (type-safe)
+   * @param handlers - Object mapping route names to handler functions
    * @returns The router instance for chaining
    *
    * @example
@@ -95,7 +128,7 @@ export class RouteBuilder<T extends Record<string, RouteDefinition>> {
    * });
    * ```
    */
-  map(handlers: any): RSCRouter {
+  map(handlers: HandlersForRouteMap<T>): RSCRouter {
     // Store handlers in the registered route
     this.router.addHandlersToRoute(this.registrationIndex, handlers);
     return this.router;
