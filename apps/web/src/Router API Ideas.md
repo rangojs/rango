@@ -741,6 +741,69 @@ app.route(routes.dashboard).map({
 // P-segments (parallel) render at the same level as R-segments
 ```
 
+### Per-Route Layouts and Parallel Routes
+
+Both layouts and parallel routes can be defined **per route** for maximum flexibility:
+
+```typescript
+let routes = route({
+  home: "/",
+  about: "/about",
+  dashboard: "/dashboard",
+});
+
+app.route(routes).map({
+  // Per-route layouts (type-safe route names)
+  [route.layout]: {
+    home: [RootLayout, HomeLayout],
+    about: [RootLayout, AboutLayout],
+    dashboard: [RootLayout, DashboardLayout],
+  },
+
+  // Per-route parallel routes (type-safe route names)
+  [route.parallel]: {
+    home: {
+      "@sidebar": () => <HomeSidebar />,
+    },
+    dashboard: {
+      "@sidebar": () => <DashboardSidebar />,
+      "@notifications": () => <NotificationPanel />,
+    },
+    // 'about' has no parallel routes
+  },
+
+  // Route handlers
+  home: () => <HomePage />,
+  about: () => <AboutPage />,
+  dashboard: () => <DashboardMain />,
+});
+```
+
+**Benefits**:
+- Each route can have different layouts
+- Each route can have different parallel routes
+- Type-safe: route names must match those in route map
+- Flexible: some routes can omit layouts or parallel routes
+- Clean: all configuration in one place
+
+**Alternative: Global + Per-Route Mixed**
+```typescript
+app.route(routes).map({
+  // Global layout for all routes
+  [route.layout]: RootLayout,
+
+  // Per-route additional layouts
+  [route.layout]: {
+    dashboard: [RootLayout, DashboardLayout],  // Overrides global
+    about: RootLayout,  // Uses global
+  },
+
+  home: () => <HomePage />,
+  about: () => <AboutPage />,
+  dashboard: () => <DashboardMain />,
+});
+```
+
 #### 4. Loading and Error Boundaries per Segment
 
 Each segment supports its own loading and error boundaries:
