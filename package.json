@@ -1,24 +1,23 @@
 {
-  "name": "@vitejs/plugin-rsc-examples-starter",
+  "name": "vite-rsc-monorepo",
   "version": "0.0.0",
   "private": true,
   "license": "MIT",
   "type": "module",
+  "packageManager": "pnpm@10.12.1",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "preview": "turbo run preview",
+    "lint": "turbo run lint",
+    "type-check": "turbo run type-check"
   },
   "devDependencies": {
-    "@types/react": "^19.2.2",
-    "@types/react-dom": "^19.2.2",
-    "@vitejs/plugin-react": "latest",
-    "@vitejs/plugin-rsc": "latest",
-    "rsc-html-stream": "^0.0.7",
-    "vite": "^7.1.10"
+    "turbo": "^2.6.0",
+    "typescript": "^5.7.3"
   }
 }

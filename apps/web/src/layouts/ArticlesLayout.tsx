@@ -1,5 +1,5 @@
 import React from "react";
-import { Outlet } from "../framework/router/Outlet";
+import { Outlet } from "rsc-router/client";
 const articles = [
   { id: 1, title: "Getting Started with RSC", date: "2024-01-15" },
   { id: 2, title: "Building Nested Layouts", date: "2024-01-14" },

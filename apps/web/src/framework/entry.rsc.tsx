@@ -138,8 +138,8 @@ async function _handler(request: Request): Promise<Response> {
   }
 
   // Handle 404
-  if (!component) {
-    console.log(`[Entry.RSC] ❌ No component returned - showing 404`);
+  if (!component && (!metadata?.segments || metadata.segments.length === 0)) {
+    console.log(`[Entry.RSC] ❌ No component or segments returned - showing 404`);
     component = (
       <html>
         <body>
@@ -149,6 +149,12 @@ async function _handler(request: Request): Promise<Response> {
         </body>
       </html>
     );
+  } else if (!component && metadata?.segments && metadata.segments.length > 0) {
+    // We have segments but no pre-built component - use a placeholder
+    // The client will reconstruct the full tree from segments
+    console.log(`[Entry.RSC] ✓ Segments ready for client-side reconstruction`);
+    console.log(`[Entry.RSC]   Segment count: ${metadata.segments.length}`);
+    component = <div data-rsc-segments="true" />;
   } else {
     console.log(`[Entry.RSC] ✓ Component ready for rendering`);
     console.log(

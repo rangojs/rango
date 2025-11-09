@@ -1,5 +1,5 @@
 import React from 'react';
-import { Outlet } from '../framework/router/Outlet';
+import { Outlet } from 'rsc-router/client';
 
 export default function RootLayout() {
   console.log('[RootLayout] Rendering');

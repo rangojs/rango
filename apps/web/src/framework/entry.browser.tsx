@@ -9,7 +9,7 @@ import React from "react";
 import { hydrateRoot } from "react-dom/client";
 import { rscStream } from "rsc-html-stream/client";
 import type { RscPayload } from "./entry.rsc";
-import { OutletProvider } from "./router/Outlet";
+import { OutletProvider } from "rsc-router/client";
 
 // ============================================================================
 // Types & Constants
@@ -62,7 +62,7 @@ const logger = {
 
 /**
  * Reconstructs a React component tree from an array of segments.
- * Builds the tree from innermost (last) to outermost (first) segment.
+ * Builds the tree from innermost (page) to outermost (root layout).
  */
 function reconstructTreeFromSegments(
   segments: Array<Segment>
@@ -71,17 +71,30 @@ function reconstructTreeFromSegments(
     return null;
   }
 
+  // Sort segments by index descending (innermost to outermost)
+  const sortedSegments = [...segments].sort((a, b) => b.index - a.index);
+
+  logger.info(`Reconstructing tree from ${sortedSegments.length} segments`);
+  sortedSegments.forEach(seg => {
+    logger.info(`  - index ${seg.index}: ${seg.pattern} (${seg.isLayout ? 'layout' : 'page'})`);
+  });
+
+  // Start with the innermost page component
   let tree: React.ReactNode = null;
 
-  // Build tree from first to last segment (outermost to innermost)
-  for (let i = 0; i < segments.length; i++) {
-    const segment = segments[i];
-
-    tree = React.createElement(OutletProvider, {
-      content: tree,
-      key: `outlet-${segment.index}`,
-      children: segment.component,
-    });
+  for (const segment of sortedSegments) {
+    if (segment.isLayout) {
+      // This is a layout - wrap the current tree
+      // The layout's <Outlet /> will render the content from OutletProvider
+      tree = React.createElement(OutletProvider, {
+        content: tree,
+        key: `outlet-${segment.index}`,
+        children: segment.component,
+      });
+    } else {
+      // This is a page component - it becomes the initial tree
+      tree = segment.component;
+    }
   }
 
   logger.info("Tree reconstruction complete");
@@ -314,8 +327,12 @@ function processPayload(manager: PayloadManager, payload: RscPayload): void {
     logger.success("Tree reconstructed and payload updated");
   } else if (payload.metadata?.segments) {
     // Full payload with segments
-    logger.info("Received FULL payload");
+    logger.info("Received FULL payload with segments");
     manager.currentSegments = payload.metadata.segments || [];
+
+    // Reconstruct tree from segments
+    payload.root = reconstructTreeFromSegments(manager.currentSegments);
+    logger.success("Tree reconstructed from segments");
   } else {
     logger.info("Received standard payload");
   }
@@ -415,6 +432,14 @@ async function initializeApp(): Promise<void> {
   };
 
   logger.info("Initial payload metadata:", initialPayload.metadata);
+
+  // Reconstruct tree from segments if we have them
+  if (initialPayload.metadata?.segments && initialPayload.metadata.segments.length > 0) {
+    logger.info("Reconstructing initial tree from segments...");
+    initialPayload.root = reconstructTreeFromSegments(manager.currentSegments);
+    logger.success("Initial tree reconstructed");
+  }
+
   logger.endSection();
 
   // Configure server callbacks

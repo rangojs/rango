@@ -1,4 +1,5 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "erasableSyntaxOnly": true,
     "allowImportingTsExtensions": true,
@@ -13,6 +14,12 @@
     "target": "ESNext",
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "types": ["vite/client", "@vitejs/plugin-rsc/types"],
-    "jsx": "react-jsx"
-  }
+    "jsx": "react-jsx",
+    "paths": {
+      "rsc-router": ["../../packages/rsc-router/src/index"],
+      "rsc-router/*": ["../../packages/rsc-router/src/*"]
+    }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
 }
