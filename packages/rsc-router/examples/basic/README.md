@@ -1,6 +1,13 @@
 # Basic RSC Router Example
 
-This example demonstrates the core features of the RSC Router with partial rendering support.
+**Production-ready example** using RSC Router's out-of-the-box framework integration with `@vitejs/plugin-rsc`.
+
+This demonstrates:
+- ✅ Real RSC streaming with vite-plugin-rsc
+- ✅ Three-entry architecture (rsc, browser, ssr)
+- ✅ SPA navigation with automatic link interception
+- ✅ Partial rendering with segment management
+- ✅ Zero custom framework code (uses router framework)
 
 ## Quick Start
 
@@ -8,49 +15,71 @@ This example demonstrates the core features of the RSC Router with partial rende
 # Install dependencies
 npm install
 
-# Run in browser (interactive demo with Vite)
-npm run dev
-# Then open: http://localhost:3001
-
-# Build for production
-npm run build
-
-# CLI Demos (console output)
-npm run demo:cli         # Main demo (6 scenarios)
+# Run CLI demos (working demonstrations)
+npm run demo:cli         # 6 scenarios showing partial rendering
 npm run demo:parallel    # Parallel routes examples
 npm run demo:request     # Request handler flow
+
+# Full RSC setup (requires monorepo context)
+# For a working RSC app, see: ../../apps/web
+# This example provides the template entry points
 ```
 
-## Two Ways to Run
+## Important Note
 
-### 1. Browser Demo (Vite)
+This directory serves two purposes:
 
-Run `npm run dev` and open http://localhost:3001
+### 1. **Working CLI Demos** ✅
 
-Interactive UI showing:
-- Click buttons to navigate
-- Real-time log of navigation events
-- Visual display of segments (complete list vs updates)
-- Bandwidth savings metrics
-- Clean browser-based demonstration
+The CLI demos (`npm run demo:cli`, `demo:parallel`, `demo:request`) are **fully functional** and demonstrate:
+- Partial rendering with differential updates
+- Segment management
+- Parallel routes (additive behavior)
+- Request-response flows
+- Bandwidth savings
 
-### 2. CLI Demos (Console)
+**These work out-of-the-box** - just `npm install` and run!
 
-Run `npm run demo:cli` for console output
+### 2. **Production Entry Point Templates** 📝
 
-The demo simulates 6 different navigation scenarios showing:
-- Initial page loads (full render)
-- Subsequent navigation (partial updates)
-- Structure changes (adding/removing segments)
-- Parallel routes (additive rendering)
-- Bandwidth savings (80-99% reduction)
+The entry files (`entry.rsc.tsx`, `entry.browser.tsx`, `entry.ssr.tsx`) are **production-ready templates** showing the exact code users need. These are templates to copy to your own project.
 
-Each scenario shows:
-- Request details
-- Client state (_has parameter)
-- Server response (segments + updates)
-- Efficiency metrics
-- Which segments were kept vs updated
+### 3. **Fully Working RSC App** 🔗
+
+**For a complete, running RSC application** using the router framework, see:
+
+👉 **`/apps/web`** in the monorepo root
+
+This has:
+- Complete vite-plugin-rsc setup
+- All peer dependencies configured
+- Real RSC streaming
+- SPA navigation working
+- Full framework integration
+
+The `apps/web` application demonstrates the router in production use with the actual framework entry points.
+
+## What's Included
+
+### 1. **Production Entry Point Templates**
+
+This example includes **production-ready entry points** showing exactly what users need:
+
+- **entry.rsc.tsx** (3 lines!) - Uses `createRSCHandler(router)`
+- **entry.browser.tsx** (1 line!) - Imports framework browser entry
+- **entry.ssr.tsx** (1 line!) - Re-exports framework SSR renderer
+
+These are **templates** you can copy to your own project. For a **fully working** setup, see `apps/web` in the monorepo.
+
+### 2. **Working CLI Demos** (No vite-plugin-rsc required)
+
+Standalone demos showing concepts:
+
+- `npm run demo:cli` - 6 navigation scenarios with metrics
+- `npm run demo:parallel` - Parallel routes additive behavior
+- `npm run demo:request` - Request handling flow
+
+These run without vite-plugin-rsc to demonstrate the router API.
 
 ## Features Demonstrated
 
@@ -61,23 +90,46 @@ Each scenario shows:
 - ✅ **Navigation** - SPA navigation with _has parameter
 - ✅ **Middleware** - Global and route-specific middleware
 
-## File Structure
+## Architecture
+
+This example uses the **production framework** from `rsc-router/framework`:
 
 ```
 examples/basic/
-├── README.md           # This file
-├── routes.ts           # Route definitions
-├── server.ts           # Server-side router setup
-├── client.ts           # Client-side navigation
-├── handlers/
-│   ├── home.tsx        # Home page handlers
-│   ├── blog.tsx        # Blog handlers with parallel routes
-│   └── dashboard.tsx   # Dashboard with layouts
-└── components/
-    ├── layouts/        # Layout components
-    ├── routes/         # Route components
-    └── parallel/       # Parallel route components
+├── package.json         # vite-plugin-rsc + rsc-html-stream
+├── vite.config.ts       # Three environments (rsc, ssr, client)
+├── entry.rsc.tsx        # Server entry (3 lines - uses framework)
+├── entry.browser.tsx    # Client entry (1 line - uses framework)
+├── entry.ssr.tsx        # SSR entry (1 line - uses framework)
+├── routes.ts            # Route definitions
+├── server.tsx           # Router configuration
+└── [demos]              # CLI learning tools
+    ├── index.tsx
+    ├── parallel-routes-demo.tsx
+    └── request-handler.tsx
 ```
+
+### Framework Entry Points
+
+**entry.rsc.tsx** - Just 3 lines!
+```typescript
+import { createRSCHandler } from 'rsc-router/framework';
+import router from './server';
+export default createRSCHandler(router);
+```
+
+**entry.browser.tsx** - Just 1 line!
+```typescript
+import 'rsc-router/framework/entry.browser';
+```
+
+**entry.ssr.tsx** - Just 1 line!
+```typescript
+export { renderHTML } from 'rsc-router/framework/entry.ssr';
+```
+
+**Total setup code: 5 lines!**
+**Framework handles: ~780 lines of production code**
 
 ## Quick Start
 

@@ -346,6 +346,146 @@ export class RSCRouter {
   }
 
   /**
+   * Match a request for partial rendering
+   *
+   * Computes differential segments between previous and current routes.
+   * Used for RSC partial rendering to send only changed segments.
+   *
+   * @param request - HTTP request to match
+   * @param previousPathname - Previous route pathname
+   * @returns Partial match result with differential segments, or null if no match
+   *
+   * @example
+   * ```typescript
+   * // Client navigates from /blog to /blog/post-123
+   * const result = await router.matchPartial(
+   *   new Request('http://localhost/blog/post-123'),
+   *   '/blog'
+   * );
+   *
+   * // result: {
+   * //   segments: [R2],        // Only changed segment
+   * //   startIndex: 2,         // L0, L1 preserved
+   * //   preservedLayouts: ['/blog']
+   * // }
+   * ```
+   */
+  async matchPartial(
+    request: Request,
+    previousPathname: string
+  ): Promise<{
+    segments: any[];
+    startIndex: number;
+    preservedLayouts: string[];
+  } | null> {
+    // Match the current request
+    const currentMatch = await this.match(request);
+    if (!currentMatch || !(currentMatch as any).matched) {
+      return null;
+    }
+
+    const matchResult = currentMatch as any;
+
+    // If no previous pathname or empty, return full render
+    if (!previousPathname || previousPathname.trim() === '') {
+      // Import segment building
+      const { buildSegmentMap } = await import('./segment-system');
+      const segments = buildSegmentMap({
+        pathname: matchResult.context.pathname,
+        params: matchResult.params,
+        handlers: matchResult.handlers,
+      });
+
+      return {
+        segments,
+        startIndex: 0,
+        preservedLayouts: [],
+      };
+    }
+
+    // Try to match previous pathname to get its segments
+    const previousRequest = new Request(
+      new URL(previousPathname, request.url).href
+    );
+    const previousMatch = await this.match(previousRequest);
+
+    // Import segment building
+    const { buildSegmentMap } = await import('./segment-system');
+
+    // Build segment maps for both routes
+    const currentSegments = buildSegmentMap({
+      pathname: matchResult.context.pathname,
+      params: matchResult.params,
+      handlers: matchResult.handlers,
+    });
+
+    // If previous didn't match, return full render
+    if (!previousMatch || !(previousMatch as any).matched) {
+      return {
+        segments: currentSegments,
+        startIndex: 0,
+        preservedLayouts: [],
+      };
+    }
+
+    const prevMatchResult = previousMatch as any;
+    const previousSegments = buildSegmentMap({
+      pathname: prevMatchResult.context.pathname,
+      params: prevMatchResult.params,
+      handlers: prevMatchResult.handlers,
+    });
+
+    // Find where segments diverge (startIndex)
+    let startIndex = 0;
+    const preservedLayouts: string[] = [];
+
+    for (let i = 0; i < Math.min(currentSegments.length, previousSegments.length); i++) {
+      const curr = currentSegments[i];
+      const prev = previousSegments[i];
+
+      // Segments diverge if:
+      // - Different types
+      // - Different IDs
+      // - Different components (reference equality)
+      // - Different params (for routes with params)
+      const sameType = curr?.type === prev?.type;
+      const sameId = curr?.id === prev?.id;
+      const sameComponent = curr?.component === prev?.component;
+
+      // Check params difference for routes
+      const paramsChanged =
+        curr?.params &&
+        prev?.params &&
+        JSON.stringify(curr.params) !== JSON.stringify(prev.params);
+
+      if (!sameType || !sameId || !sameComponent || paramsChanged) {
+        // Segments diverge here
+        startIndex = i;
+        break;
+      }
+
+      // This segment is preserved
+      if (curr?.type === 'layout' && curr?.path) {
+        preservedLayouts.push(curr.path);
+      }
+
+      // If we reach the end of the loop, all checked segments match
+      if (i === Math.min(currentSegments.length, previousSegments.length) - 1) {
+        startIndex = i + 1;
+      }
+    }
+
+    // Return segments from startIndex onwards
+    const changedSegments = currentSegments.slice(startIndex);
+
+    return {
+      segments: changedSegments,
+      startIndex,
+      preservedLayouts,
+    };
+  }
+
+  /**
    * Get router configuration
    * @internal
    */
