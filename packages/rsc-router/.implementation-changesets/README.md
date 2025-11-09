@@ -39,8 +39,8 @@ Each changeset file follows this format:
 - [Phase 7.3](./phase-7.3-differential-computation.md) - Differential Computation Algorithm ✅
 - [Phase 7.4](./phase-7.4-segment-map-building.md) - Segment Map Building ✅
 - [Phase 7.5](./phase-7.5-segment-rendering.md) - Server-Side Segment Rendering ✅
-- Phase 7.6 - RSC Payload Streaming 🔜 **← NEXT**
-- Phase 7.7 - Client Segment Store
+- [Phase 7.6](./phase-7.6-rsc-payload-streaming.md) - RSC Payload Streaming ✅
+- Phase 7.7 - Client Segment Store 🔜 **← NEXT**
 - Phase 7.8 - Client Navigation Protocol
 - Phase 7.9 - Client Segment Reconciliation
 - Phase 7.10 - Loading/Error Boundaries per Segment

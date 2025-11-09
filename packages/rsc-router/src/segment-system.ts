@@ -4,12 +4,21 @@
 
 import { createElement, Fragment } from 'react';
 import type { ReactNode } from 'react';
+import * as React from 'react';
 import { OutletProvider } from './Outlet';
 
 /**
  * Segment type identifiers
  */
 export type SegmentType = 'layout' | 'route' | 'parallel';
+
+/**
+ * Component type that can be either a ReactNode or a function component
+ */
+export type SegmentComponent =
+  | ReactNode
+  | ((props?: any) => ReactNode)
+  | React.ComponentType<any>;
 
 /**
  * Segment structure for partial rendering
@@ -32,8 +41,9 @@ export interface Segment {
 
   /**
    * React component for this segment
+   * Can be a ReactNode, function component, or class component
    */
-  component: ReactNode;
+  component: SegmentComponent;
 
   /**
    * Slot name for parallel segments (e.g., '@sidebar', '@modal')
@@ -136,7 +146,7 @@ export function isValidSegmentId(segmentId: string): boolean {
 export function createSegment(
   type: SegmentType,
   index: number,
-  component: ReactNode,
+  component: SegmentComponent,
   options?: {
     slot?: string;
     path?: string;
@@ -534,4 +544,124 @@ export function renderSegments(segments: Segment[]): ReactNode {
   }
 
   return content;
+}
+
+/**
+ * RSC Payload structure for client-server communication
+ *
+ * Format for streaming RSC updates to the client during navigation.
+ * The payload contains the complete segment list for reconciliation and
+ * the actual React components to render for segments that need updating.
+ */
+export interface RSCPayload {
+  /**
+   * Complete list of segment IDs for the target route
+   * Client uses this to reconcile (remove segments not in this list)
+   * @example ['L0', 'L1', 'R2', 'P3']
+   */
+  segments: string[];
+
+  /**
+   * Rendered React components for segments that need updating
+   * Only includes segments the client doesn't have or need revalidation
+   * @example { 'R2': <BlogPost />, 'P3': <Sidebar /> }
+   */
+  updates: Record<string, ReactNode>;
+}
+
+/**
+ * Create RSC payload for streaming to client
+ *
+ * Generates an RSC payload containing:
+ * 1. Complete segment list for client reconciliation
+ * 2. Rendered components for segments that need updating
+ *
+ * The function performs differential rendering by only including segments
+ * in the updates object that:
+ * - Don't exist on the client (!clientHas.has(id))
+ * - Have params that might have changed
+ *
+ * @param segments - Complete segment list for target route
+ * @param clientHas - Set of segment IDs the client currently has
+ * @returns RSC payload ready for streaming
+ *
+ * @example
+ * ```typescript
+ * // Initial navigation - client has nothing
+ * const segments = [
+ *   { id: 'L0', type: 'layout', component: RootLayout, ... },
+ *   { id: 'R1', type: 'route', component: BlogPost, ... }
+ * ];
+ * const clientHas = new Set();
+ * const payload = createRSCPayload(segments, clientHas);
+ * // {
+ * //   segments: ['L0', 'R1'],
+ * //   updates: {
+ * //     'L0': <RootLayout />,
+ * //     'R1': <BlogPost />
+ * //   }
+ * // }
+ *
+ * // Subsequent navigation - client has some segments
+ * const clientHas = new Set(['L0']);
+ * const payload = createRSCPayload(segments, clientHas);
+ * // {
+ * //   segments: ['L0', 'R1'],
+ * //   updates: {
+ * //     'R1': <BlogPost />  // Only R1, client already has L0
+ * //   }
+ * // }
+ * ```
+ */
+export function createRSCPayload(
+  segments: Segment[],
+  clientHas: Set<string>
+): RSCPayload {
+  // Extract all segment IDs for reconciliation
+  const segmentIds = segments.map((segment) => segment.id);
+
+  // Build updates object with only segments that need to be sent
+  const updates: Record<string, ReactNode> = {};
+
+  for (const segment of segments) {
+    // Determine if this segment should be sent
+    const shouldSend =
+      // Send if client doesn't have this segment
+      !clientHas.has(segment.id) ||
+      // Send if segment has params (conservative: assume params might have changed)
+      // This matches the logic in computeDifferential
+      (segment.params !== undefined && Object.keys(segment.params).length > 0);
+
+    if (shouldSend && segment.component) {
+      // Render the segment component
+      const Component = segment.component as any;
+
+      let rendered: ReactNode = null;
+
+      if (typeof Component === 'function') {
+        // Function component - invoke with params if present
+        const hasParams =
+          segment.params && Object.keys(segment.params).length > 0;
+
+        if (hasParams) {
+          rendered = createElement(Component, { params: segment.params });
+        } else {
+          rendered = createElement(Component);
+        }
+      } else {
+        // Already a ReactNode - use directly
+        rendered = Component;
+      }
+
+      // Add to updates object
+      if (rendered !== null) {
+        updates[segment.id] = rendered;
+      }
+    }
+  }
+
+  return {
+    segments: segmentIds,
+    updates,
+  };
 }
