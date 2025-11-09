@@ -195,3 +195,94 @@ export function parseClientSegments(hasParam: string | null): Set<string> {
   // Return as Set for efficient lookup and automatic deduplication
   return new Set(segments);
 }
+
+/**
+ * Result of differential computation
+ */
+export interface DifferentialResult {
+  /**
+   * Complete list of segment IDs for the target route
+   * Used by client for reconciliation (removing segments not in this list)
+   */
+  segmentIds: string[];
+
+  /**
+   * Segments that need to be sent to the client
+   * Only includes segments that the client doesn't have or need updating
+   */
+  updates: Segment[];
+}
+
+/**
+ * Compute differential segments for partial rendering
+ *
+ * Determines which segments need to be sent to the client by comparing
+ * the client's current segments with the target segments for the requested route.
+ *
+ * The algorithm sends only:
+ * - Segments that don't exist on the client
+ * - Segments that need revalidation (in future: params changed, etc.)
+ *
+ * @param clientHas - Set of segment IDs the client currently has
+ * @param targetSegments - Complete list of segments for target route
+ * @returns Object with complete segment IDs list and segments to update
+ *
+ * @example
+ * ```typescript
+ * // Initial navigation - client has nothing
+ * const clientHas = new Set();
+ * const targetSegments = [
+ *   { id: 'L0', type: 'layout', index: 0, component: <Layout /> },
+ *   { id: 'R1', type: 'route', index: 1, component: <Page /> }
+ * ];
+ * const result = computeDifferential(clientHas, targetSegments);
+ * // result.segmentIds => ['L0', 'R1']
+ * // result.updates => [L0, R1] (all segments)
+ *
+ * // Client has segments, navigates to same route
+ * const clientHas = new Set(['L0', 'R1']);
+ * const result = computeDifferential(clientHas, targetSegments);
+ * // result.segmentIds => ['L0', 'R1']
+ * // result.updates => [] (no changes)
+ *
+ * // Client navigates deeper (adding segments)
+ * const clientHas = new Set(['L0', 'R1']);
+ * const targetSegments = [
+ *   { id: 'L0', ... },
+ *   { id: 'R1', ... },
+ *   { id: 'L2', ... },  // New
+ *   { id: 'R3', ... }   // New
+ * ];
+ * const result = computeDifferential(clientHas, targetSegments);
+ * // result.segmentIds => ['L0', 'R1', 'L2', 'R3']
+ * // result.updates => [L2, R3] (only new segments)
+ * ```
+ */
+export function computeDifferential(
+  clientHas: Set<string>,
+  targetSegments: Segment[]
+): DifferentialResult {
+  // Extract target segment IDs for reconciliation
+  const segmentIds = targetSegments.map((segment) => segment.id);
+
+  // Compute which segments need to be sent
+  const updates: Segment[] = [];
+
+  for (const segment of targetSegments) {
+    const shouldSend =
+      // Send if client doesn't have this segment
+      !clientHas.has(segment.id) ||
+      // Send if segment has params (conservative: assume params might have changed)
+      // This is a simple heuristic until we have full revalidation logic
+      (segment.params !== undefined && Object.keys(segment.params).length > 0);
+
+    if (shouldSend) {
+      updates.push(segment);
+    }
+  }
+
+  return {
+    segmentIds,
+    updates,
+  };
+}
