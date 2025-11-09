@@ -355,7 +355,7 @@ export function buildSegmentMap(match: RouteMatch): Segment[] {
   }
 
   // 1. Process layouts
-  const layout = handlers.layout;
+  const layout = handlers[route.layout];
   if (layout !== undefined) {
     const layouts = Array.isArray(layout) ? layout : [layout];
 
@@ -391,7 +391,7 @@ export function buildSegmentMap(match: RouteMatch): Segment[] {
   }
 
   // 3. Process parallel routes (preserve insertion order)
-  const parallel = handlers.parallel;
+  const parallel = handlers[route.parallel];
   if (parallel && typeof parallel === 'object') {
     // Use Object.keys() to preserve insertion order (ES2015+)
     const slots = Object.keys(parallel);
@@ -796,4 +796,79 @@ export function wrapWithBoundaries(
   }
 
   return wrapped;
+}
+
+/**
+ * Parallel route slots
+ */
+export type ParallelSlots = Record<`@${string}`, ReactNode>;
+
+/**
+ * Extract parallel route slots from handlers
+ *
+ * Looks for [route.parallel] symbol in the handlers object.
+ * Supports both global parallel routes and per-route parallel routes.
+ *
+ * @param handlers - Route handlers object
+ * @param routeName - Optional route name for per-route parallel routes
+ * @returns Object with parallel slots (keys must have @ prefix)
+ *
+ * @example
+ * ```typescript
+ * // Global parallel routes
+ * const handlers = {
+ *   [route.parallel]: {
+ *     '@sidebar': SidebarComponent,
+ *     '@modal': ModalComponent
+ *   },
+ *   index: () => <div>Index</div>
+ * };
+ * const slots = extractParallelSlots(handlers);
+ * // { '@sidebar': SidebarComponent, '@modal': ModalComponent }
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Per-route parallel routes
+ * const handlers = {
+ *   [route.parallel]: {
+ *     '@sidebar': GlobalSidebar
+ *   },
+ *   dashboard: {
+ *     [route.parallel]: {
+ *       '@sidebar': DashboardSidebar,
+ *       '@notifications': Notifications
+ *     }
+ *   }
+ * };
+ * const slots = extractParallelSlots(handlers, 'dashboard');
+ * // { '@sidebar': DashboardSidebar, '@notifications': Notifications }
+ * // Per-route @sidebar overrides global
+ * ```
+ */
+export function extractParallelSlots(
+  handlers: any,
+  routeName?: string
+): ParallelSlots {
+  const slots: ParallelSlots = {};
+
+  // Extract global parallel routes
+  const globalParallel = handlers[route.parallel];
+  if (globalParallel && typeof globalParallel === 'object') {
+    Object.assign(slots, globalParallel);
+  }
+
+  // Extract per-route parallel routes (they override global)
+  if (routeName && handlers[routeName]) {
+    const routeHandlers = handlers[routeName];
+    if (typeof routeHandlers === 'object') {
+      const perRouteParallel = routeHandlers[route.parallel];
+      if (perRouteParallel && typeof perRouteParallel === 'object') {
+        // Merge, with per-route overriding global
+        Object.assign(slots, perRouteParallel);
+      }
+    }
+  }
+
+  return slots;
 }

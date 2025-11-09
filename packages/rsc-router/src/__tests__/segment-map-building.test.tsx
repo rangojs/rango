@@ -22,6 +22,7 @@
 import { describe, it, expect } from 'vitest';
 import type { Segment, RouteMatch } from '../segment-system';
 import { buildSegmentMap } from '../segment-system';
+import { route } from '../route-definition';
 
 describe('Phase 7.4: Segment Map Building', () => {
   describe('buildSegmentMap()', () => {
@@ -31,7 +32,7 @@ describe('Phase 7.4: Segment Map Building', () => {
           pathname: '/about',
           params: {},
           handlers: {
-            layout: <div>Layout</div>,
+            [route.layout]: <div>Layout</div>,
             index: <div>About Page</div>,
           },
         };
@@ -52,7 +53,7 @@ describe('Phase 7.4: Segment Map Building', () => {
           pathname: '/blog',
           params: {},
           handlers: {
-            layout: [
+            [route.layout]: [
               <div>Root Layout</div>,
               <div>App Layout</div>,
               <div>Blog Layout</div>,
@@ -94,9 +95,9 @@ describe('Phase 7.4: Segment Map Building', () => {
           pathname: '/dashboard',
           params: {},
           handlers: {
-            layout: <div>Dashboard Layout</div>,
+            [route.layout]: <div>Dashboard Layout</div>,
             index: <div>Dashboard Main</div>,
-            parallel: {
+            [route.parallel]: {
               '@sidebar': <div>Sidebar</div>,
               '@notifications': <div>Notifications</div>,
             },
@@ -129,7 +130,7 @@ describe('Phase 7.4: Segment Map Building', () => {
           params: {},
           handlers: {
             index: <div>Modal Page</div>,
-            parallel: {
+            [route.parallel]: {
               '@modal': <div>Modal Content</div>,
             },
           },
@@ -153,7 +154,7 @@ describe('Phase 7.4: Segment Map Building', () => {
           params: {},
           handlers: {
             index: <div>Dashboard</div>,
-            parallel: {
+            [route.parallel]: {
               '@sidebar': <div>Sidebar</div>,
               '@modal': <div>Modal</div>,
               '@notifications': <div>Notifications</div>,
@@ -180,7 +181,7 @@ describe('Phase 7.4: Segment Map Building', () => {
           pathname: '/blog/hello-world',
           params: { slug: 'hello-world' },
           handlers: {
-            layout: <div>Blog Layout</div>,
+            [route.layout]: <div>Blog Layout</div>,
             show: <div>Blog Post</div>,
           },
         };
@@ -198,7 +199,7 @@ describe('Phase 7.4: Segment Map Building', () => {
           params: { id: 'post-123' },
           handlers: {
             show: <div>Post</div>,
-            parallel: {
+            [route.parallel]: {
               '@comments': <div>Comments</div>,
             },
           },
@@ -218,7 +219,7 @@ describe('Phase 7.4: Segment Map Building', () => {
           pathname: '/blog/123/author/456',
           params: { slug: '123', authorId: '456' },
           handlers: {
-            layout: [<div>Blog Layout</div>, <div>Author Layout</div>],
+            [route.layout]: [<div>Blog Layout</div>, <div>Author Layout</div>],
             show: <div>Author Page</div>,
           },
         };
@@ -241,7 +242,7 @@ describe('Phase 7.4: Segment Map Building', () => {
           pathname: '/blog',
           params: {},
           handlers: {
-            layout: [RootLayout, BlogLayout],
+            [route.layout]: [RootLayout, BlogLayout],
             index: <div>Blog Index</div>,
           },
         };
@@ -277,7 +278,7 @@ describe('Phase 7.4: Segment Map Building', () => {
           params: {},
           handlers: {
             index: <div>Dashboard</div>,
-            parallel: {
+            [route.parallel]: {
               '@sidebar': Sidebar,
               '@modal': Modal,
             },
@@ -300,13 +301,13 @@ describe('Phase 7.4: Segment Map Building', () => {
           pathname: '/blog/123/author/456',
           params: { slug: '123', authorId: '456' },
           handlers: {
-            layout: [
+            [route.layout]: [
               <div>Root Layout</div>,
               <div>Blog Layout</div>,
               <div>Author Layout</div>,
             ],
             show: <div>Author Page</div>,
-            parallel: {
+            [route.parallel]: {
               '@sidebar': <div>Author Sidebar</div>,
               '@related': <div>Related Authors</div>,
             },
@@ -340,7 +341,7 @@ describe('Phase 7.4: Segment Map Building', () => {
           pathname: '/shop/electronics/123',
           params: { category: 'electronics', id: '123' },
           handlers: {
-            layout: <div>Shop Layout</div>,
+            [route.layout]: <div>Shop Layout</div>,
             show: <div>Product Page</div>,
           },
         };
@@ -389,7 +390,7 @@ describe('Phase 7.4: Segment Map Building', () => {
           pathname: '/empty-layout',
           params: {},
           handlers: {
-            layout: [],
+            [route.layout]: [],
             index: <div>Page</div>,
           },
         };
@@ -407,7 +408,7 @@ describe('Phase 7.4: Segment Map Building', () => {
           params: {},
           handlers: {
             index: <div>Page</div>,
-            parallel: {},
+            [route.parallel]: {},
           },
         };
 
@@ -459,9 +460,9 @@ describe('Phase 7.4: Segment Map Building', () => {
           pathname: '/test',
           params: {},
           handlers: {
-            layout: [<div>L1</div>, <div>L2</div>, <div>L3</div>],
+            [route.layout]: [<div>L1</div>, <div>L2</div>, <div>L3</div>],
             index: <div>Route</div>,
-            parallel: {
+            [route.parallel]: {
               '@sidebar': <div>Sidebar</div>,
             },
           },
