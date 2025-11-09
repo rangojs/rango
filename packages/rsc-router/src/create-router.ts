@@ -379,12 +379,15 @@ export class RSCRouter {
     preservedLayouts: string[];
   } | null> {
     // Match the current request
+    console.log('[matchPartial] Matching current request:', request.url);
     const currentMatch = await this.match(request);
     if (!currentMatch || !(currentMatch as any).matched) {
+      console.log('[matchPartial] Current request did not match');
       return null;
     }
 
     const matchResult = currentMatch as any;
+    console.log('[matchPartial] Current match found:', matchResult.context.pathname);
 
     // If no previous pathname or empty, return full render
     if (!previousPathname || previousPathname.trim() === '') {
@@ -426,12 +429,15 @@ export class RSCRouter {
 
     // If previous didn't match, return full render
     if (!previousMatch || !(previousMatch as any).matched) {
+      console.log('[matchPartial] Previous pathname did not match, returning full render');
       return {
         segments: currentSegments,
         startIndex: 0,
         preservedLayouts: [],
       };
     }
+
+    console.log('[matchPartial] Previous match found:', (previousMatch as any).context.pathname);
 
     const prevMatchResult = previousMatch as any;
     const previousSegments = buildSegmentMap({

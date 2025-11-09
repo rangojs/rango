@@ -116,6 +116,8 @@ async function _handler(request: Request, router: RSCRouter): Promise<Response> 
 
       const partialResult = await router.matchPartial(request, previousPathname);
 
+      console.log(`[RSC] matchPartial result:`, partialResult ? `${partialResult.segments.length} segments` : 'null');
+
       if (partialResult && partialResult.segments.length > 0) {
         // Partial rendering successful
         const { segments, startIndex, preservedLayouts } = partialResult;
