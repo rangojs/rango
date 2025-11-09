@@ -22,3 +22,4 @@ Each changeset file follows this format:
 - [Phase 3.4](./phase-3.4-route-builder-map.md) - RouteBuilder.map() Method - Handler Mapping ✅
 - [Phase 4.1](./phase-4.1-linear-matcher.md) - Linear Pattern Matcher - Static and Dynamic Routes ✅
 - [Phase 4.2](./phase-4.2-wildcard-support.md) - Linear Matcher - Wildcard and Optional Segments ✅
+- [Phase 5.1](./phase-5.1-middleware-execution.md) - Middleware Execution Pipeline ✅ **← ROUTER IS FUNCTIONAL!**

@@ -3,6 +3,7 @@
  */
 
 import type { RouteDefinition, ResolvedRouteMap } from './route-definition';
+import { LinearMatcher } from './linear-matcher';
 
 /**
  * Router configuration options
@@ -244,8 +245,81 @@ export class RSCRouter {
    * }
    * ```
    */
-  async match(_request: Request): Promise<unknown> {
-    // Implementation in later phases
+  async match(request: Request): Promise<unknown> {
+    const url = new URL(request.url);
+    const pathname = url.pathname;
+
+    // Linear scan through registered routes (Hono-style)
+    for (const registered of this.registeredRoutes) {
+      // Get all paths from this route registration
+      const paths = registered.routes.getAllPaths();
+
+      // Try to match each path
+      for (const routePath of paths) {
+        // Compose full path (prefix + route path)
+        const fullPath = registered.prefix
+          ? registered.prefix + routePath
+          : routePath;
+
+        // Create matcher (lazy compilation happens here if needed)
+        const matcher = new LinearMatcher(fullPath);
+        const matchResult = matcher.match(pathname);
+
+        if (matchResult.matched) {
+          // Found a match! Execute middleware pipeline
+
+          // Build context
+          const context: MiddlewareContext = {
+            request,
+            pathname,
+            url,
+            params: matchResult.params,
+            meta: {},
+          };
+
+          // Execute middleware chain
+          const middlewareChain = [
+            ...this.globalMiddleware,
+            ...registered.middleware,
+          ];
+
+          let index = 0;
+          let nextCalled = true;
+
+          const executeNext = async (): Promise<void> => {
+            if (index >= middlewareChain.length) {
+              return;
+            }
+
+            const middleware = middlewareChain[index++];
+            if (middleware) {
+              nextCalled = false;
+              await middleware(context, async () => {
+                nextCalled = true;
+                await executeNext();
+              });
+            }
+          };
+
+          await executeNext();
+
+          // If middleware didn't call next, stop here
+          if (!nextCalled && index < middlewareChain.length) {
+            return null;
+          }
+
+          // Return match result
+          return {
+            matched: true,
+            params: matchResult.params,
+            handlers: registered.handlers,
+            context,
+          };
+        }
+      }
+    }
+
+    // No match found
     return null;
   }
 
