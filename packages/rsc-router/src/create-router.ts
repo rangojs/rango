@@ -73,6 +73,16 @@ export class RouteBuilder<T extends Record<string, RouteDefinition>> {
 }
 
 /**
+ * Registered route entry
+ * Stores route map with optional prefix and middleware
+ */
+export interface RegisteredRoute {
+  routes: ResolvedRouteMap<any>;
+  prefix?: string;
+  middleware: Middleware[];
+}
+
+/**
  * RSC Router class
  * Main router instance that manages route registration and matching
  */
@@ -88,9 +98,9 @@ export class RSCRouter {
   private globalMiddleware: Middleware[] = [];
 
   /**
-   * Registered route builders (for tracking)
+   * Registered routes with their configurations
    */
-  private routeBuilders: RouteBuilder<any>[] = [];
+  private registeredRoutes: RegisteredRoute[] = [];
 
   /**
    * @internal - Use createRSCRouter() instead
@@ -153,7 +163,7 @@ export class RSCRouter {
 
     if (typeof prefixOrRoutes === 'string') {
       // Called with prefix: router.route('/blog', routes)
-      prefix = prefixOrRoutes;
+      prefix = this.normalizePrefix(prefixOrRoutes);
       routes = routeMap!;
     } else {
       // Called without prefix: router.route(routes)
@@ -161,10 +171,32 @@ export class RSCRouter {
       routes = prefixOrRoutes;
     }
 
+    // Store route registration (will be finalized in Phase 3.4 when .map() is called)
+    // For now, store immediately with empty middleware
+    this.registeredRoutes.push({
+      routes,
+      prefix,
+      middleware: [],
+    });
+
     const builder = new RouteBuilder(this, routes, prefix);
-    this.routeBuilders.push(builder);
 
     return builder;
+  }
+
+  /**
+   * Normalize path prefix
+   * - Remove trailing slash
+   * - Convert empty string and '/' to undefined (root)
+   * @internal
+   */
+  private normalizePrefix(prefix: string): string | undefined {
+    if (!prefix || prefix === '/') {
+      return undefined;
+    }
+
+    // Remove trailing slash
+    return prefix.endsWith('/') ? prefix.slice(0, -1) : prefix;
   }
 
   /**
@@ -200,6 +232,14 @@ export class RSCRouter {
    */
   getGlobalMiddleware(): Middleware[] {
     return [...this.globalMiddleware];
+  }
+
+  /**
+   * Get all registered routes
+   * @internal - Used for testing and debugging
+   */
+  getRegisteredRoutes(): RegisteredRoute[] {
+    return [...this.registeredRoutes];
   }
 }
 

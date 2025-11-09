@@ -17,3 +17,4 @@ Each changeset file follows this format:
 - [Phase 1.2](./phase-1.2-nested-routes.md) - Nested Route Support ✅
 - [Phase 2.1](./phase-2.1-route-symbols.md) - Route Symbols (layout, parallel, loading, error, revalidate) ✅
 - [Phase 3.1](./phase-3.1-create-router.md) - createRSCRouter() Factory and RSCRouter Class ✅
+- [Phase 3.2](./phase-3.2-route-mounting.md) - router.route() Method - Basic Mounting ✅
