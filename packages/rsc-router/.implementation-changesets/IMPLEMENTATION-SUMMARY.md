@@ -101,16 +101,16 @@ Successfully implemented **server-side RSC Router core** with partial rendering 
   - Segment-based tree reconstruction
   - This is REQUIRED infrastructure, not optional!
 
-### **Phase 9: Finalization (3 phases)**
-- 9.1: Update Router API Ideas.md ✅ (Already updated in Phase 6.3)
-- 9.2: E2E Integration Tests (full client-server flow)
-- 9.3: Performance Benchmarks ✅ (Verified in Phase 6.8)
+### **Phase 9: Testing & Finalization (3 phases)** ⚠️ CRITICAL
+- 9.1: E2E Test Infrastructure (Playwright + vite-plugin-rsc test app) 🔜 REQUIRED
+- 9.2: E2E Integration Tests (real browser, SPA nav, RSC streaming) 🔜 REQUIRED
+- 9.3: Performance Benchmarks ✅ (Already verified in Phase 6.8)
 
 ---
 
 ## 📝 CURRENT STATUS
 
-**Completion**: 34 out of 36 phases (94%)
+**Completion**: 34 out of 38 phases (89%)
 **Status**: Phase 8.2 (RSC Framework Integration) - **CRITICAL OUT-OF-THE-BOX FEATURE**
 **Next**: router.matchPartial() + entry points (rsc, browser, ssr) + vite-plugin-rsc setup
 
@@ -1062,3 +1062,182 @@ All implementation details are documented in:
 Generated: 2025-11-09
 Version: 1.0.0
 Status: **PRODUCTION READY** ✅
+
+---
+
+## 📋 CRITICAL REMAINING WORK
+
+### Phase 8.2: RSC Framework Integration (CRITICAL - OUT OF THE BOX)
+
+**Status**: 🔴 BLOCKING PRODUCTION
+
+From analyzing apps/web/src/framework/, these components are **MANDATORY** for production:
+
+#### 1. router.matchPartial() Method
+```typescript
+interface PartialMatchResult {
+  segments: Segment[];
+  startIndex: number;
+  preservedLayouts: string[];
+}
+
+class RSCRouter {
+  async matchPartial(
+    request: Request, 
+    previousPathname: string
+  ): Promise<PartialMatchResult | null>
+}
+```
+
+**Purpose**: Computes differential segments for partial rendering
+**Used by**: entry.rsc.tsx to generate partial payloads
+
+#### 2. Framework Entry Points (in src/framework/)
+
+**entry.rsc.tsx** - Server RSC stream generation
+- Uses router.match() for full renders
+- Uses router.matchPartial() for partial renders
+- Returns RscPayload with segments metadata
+- Integrates with vite-plugin-rsc renderToReadableStream
+
+**entry.browser.tsx** - Client hydration + SPA navigation
+- Link click interception (shouldInterceptLink)
+- createFromFetch for RSC deserialization
+- Segment-based tree reconstruction
+- Navigation state management
+- popstate/pushState handling
+- HMR integration
+
+**entry.ssr.tsx** - SSR HTML generation
+- RSC stream → HTML via renderToReadableStream
+- rsc-html-stream payload injection
+- Bootstrap script injection
+
+#### 3. Integration Requirements
+- vite-plugin-rsc peer dependency
+- rsc-html-stream for payload injection
+- Proper TypeScript types (RscPayload, Segment)
+- Export framework utilities
+
+**Tests**: ~20-25 tests
+- router.matchPartial() unit tests
+- Segment divergence computation
+- Preserved layout detection
+- Partial render scenarios
+
+---
+
+### Phase 9.1: E2E Test Infrastructure
+
+**Status**: 🔴 REQUIRED FOR VALIDATION
+
+Current testing:
+- ✅ 492 unit tests (vitest + happy-dom)
+- ❌ NO real browser tests
+- ❌ NO vite-plugin-rsc integration tests
+- ❌ NO RSC streaming validation
+
+**What's Needed**:
+
+1. **Playwright Setup**
+   - Browser automation (Chromium, Firefox, WebKit)
+   - Vite dev server integration
+   - Test fixtures with real apps
+
+2. **E2E Test App**
+   - Real vite-plugin-rsc setup
+   - Uses router framework entries
+   - Multiple routes for testing
+   - Parallel routes, layouts, middleware
+
+3. **Test Infrastructure**
+   - playwright.config.ts
+   - e2e/ test directory
+   - Helper utilities
+   - CI/CD integration
+
+**Files to Create**:
+- playwright.config.ts
+- e2e/helpers.ts
+- e2e/fixtures/test-app/ (real RSC app)
+- e2e/*.spec.ts (test files)
+
+**Tests**: Infrastructure setup (no test count yet)
+
+---
+
+### Phase 9.2: E2E Integration Tests
+
+**Status**: 🔴 REQUIRED FOR VALIDATION
+
+**Test Scenarios** (~40-50 E2E tests):
+
+#### Core Navigation (15-20 tests)
+- Initial page load with SSR
+- Link click SPA navigation
+- Browser back/forward
+- Partial render requests (_rsc_partial parameter)
+- Segment persistence validation
+- URL parameter handling
+
+#### Advanced Features (15-20 tests)
+- Nested layouts rendering
+- Layout persistence across routes
+- Parallel routes (additive rendering)
+- Multiple parallel slots
+- Error boundaries isolation
+- Loading states
+- Middleware execution order
+
+#### RSC Streaming (10-15 tests)
+- RSC payload structure validation
+- Metadata correctness
+- Segment metadata in responses
+- createFromFetch integration
+- rsc-html-stream payload injection
+- Browser hydration correctness
+
+**Tools**: Playwright, real Vite dev server, actual RSC streaming
+
+---
+
+## 📊 UPDATED PHASE BREAKDOWN
+
+| Phase | Type | Tests | Priority | Status |
+|-------|------|-------|----------|--------|
+| 8.2 | Framework Integration | 20-25 | 🔴 CRITICAL | Pending |
+| 9.1 | E2E Infrastructure | Setup | 🔴 CRITICAL | Pending |
+| 9.2 | E2E Tests | 40-50 | 🔴 CRITICAL | Pending |
+
+**Total Additional Work**:
+- Implementation: router.matchPartial() + 3 framework entries
+- Unit tests: ~20-25 tests
+- E2E tests: ~40-50 tests
+- Infrastructure: Playwright setup
+
+**Estimated Total Tests After Completion**: ~572-592 tests
+
+---
+
+## 🎯 REVISED COMPLETION STATUS
+
+**Phases Complete**: 34/38 (89%)
+
+**Remaining Work (4 phases)**:
+1. **Phase 8.2**: RSC Framework Integration (CRITICAL)
+2. **Phase 9.1**: E2E Test Infrastructure (CRITICAL)
+3. **Phase 9.2**: E2E Integration Tests (CRITICAL)  
+4. **Phase 9.3**: Performance Benchmarks (DONE ✅)
+
+**Current State**:
+- ✅ Core router API complete (routing, middleware, patterns)
+- ✅ Partial rendering foundation (segments, differential, payload)
+- ✅ Client-side utilities (store, navigation, reconciliation)
+- ❌ Framework integration (router.matchPartial, entry points)
+- ❌ E2E validation (real browser, RSC streaming)
+
+**What Makes it Production-Ready**:
+- Phase 8.2 provides out-of-the-box framework files
+- Phase 9.1-9.2 validates everything works in real environment
+- Users can import and use immediately, zero custom code
+
