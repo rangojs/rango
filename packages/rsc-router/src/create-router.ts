@@ -404,10 +404,15 @@ export class RSCRouter {
     }
 
     // Try to match previous pathname to get its segments
-    const previousRequest = new Request(
-      new URL(previousPathname, request.url).href
-    );
+    // Use the same origin as the current request
+    const url = new URL(request.url);
+    const previousUrl = new URL(previousPathname, url.origin);
+    const previousRequest = new Request(previousUrl.href);
     const previousMatch = await this.match(previousRequest);
+
+    console.log('[matchPartial] Previous pathname:', previousPathname);
+    console.log('[matchPartial] Previous URL:', previousUrl.href);
+    console.log('[matchPartial] Previous match:', previousMatch ? 'found' : 'null');
 
     // Import segment building
     const { buildSegmentMap } = await import('./segment-system');
