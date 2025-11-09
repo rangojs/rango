@@ -90,9 +90,16 @@ Successfully implemented **server-side RSC Router core** with partial rendering 
 - 7.9: Client Segment Reconciliation (OutletProvider composition)
 - 7.10: Loading/Error Boundaries per Segment
 
-### **Phase 8: Parallel Routes & Advanced Features (2 phases)**
-- 8.1: Parallel Route Slot Distribution (@sidebar, @modal patterns)
-- 8.2: Enhanced Revalidation Logic (layout persistence, path patterns)
+### **Phase 8: Parallel Routes & RSC Integration (3 phases)** ⚠️ CRITICAL
+- 8.1: Parallel Route Slot Distribution (@sidebar, @modal patterns) ✅
+- 8.1.1: Basic Example Application ✅
+- 8.2: RSC Framework Integration 🔜 **CRITICAL - OUT OF THE BOX**
+  - router.matchPartial() method (differential routing)
+  - Framework entry points (entry.rsc.tsx, entry.browser.tsx, entry.ssr.tsx)
+  - SPA navigation with link interception
+  - vite-plugin-rsc integration
+  - Segment-based tree reconstruction
+  - This is REQUIRED infrastructure, not optional!
 
 ### **Phase 9: Finalization (3 phases)**
 - 9.1: Update Router API Ideas.md ✅ (Already updated in Phase 6.3)
@@ -103,9 +110,13 @@ Successfully implemented **server-side RSC Router core** with partial rendering 
 
 ## 📝 CURRENT STATUS
 
-**Completion**: 28 out of 35 phases (80%)
-**Status**: Phase 7 (Partial Rendering) in progress - 7/12 complete
-**Next**: Phase 7.6 - RSC Payload Streaming
+**Completion**: 34 out of 36 phases (94%)
+**Status**: Phase 8.2 (RSC Framework Integration) - **CRITICAL OUT-OF-THE-BOX FEATURE**
+**Next**: router.matchPartial() + entry points (rsc, browser, ssr) + vite-plugin-rsc setup
+
+**IMPORTANT**: Phase 8.2 provides production-ready RSC framework integration out-of-the-box.
+This is NOT optional - it's the missing piece that makes the router production-ready with
+real RSC streaming, SPA navigation, and vite-plugin-rsc integration
 
 ---
 
@@ -897,31 +908,74 @@ app.route(routes.dashboard).map({
 
 ---
 
-### **Phase 8.2: Enhanced Revalidation Logic** (Server-Side)
+### **Phase 8.2: RSC Framework Integration** (Full Stack) ⚠️ CRITICAL OUT-OF-THE-BOX
 
-**Objective**: Layout persistence and smart revalidation
+**Objective**: Provide production-ready RSC framework integration with vite-plugin-rsc
 
-**Requirements from Design Doc** (lines 626-675):
-```typescript
-class LayoutRevalidation {
-  shouldRevalidateLayout(ctx: RevalidationContext, layoutIndex: number): boolean {
-    // Layout persists when path structure is same
-    // Only revalidate if layout-sensitive params changed
-  }
-}
-```
+**Requirements from apps/web/src/framework:**
+This is MANDATORY infrastructure that must be included in the router package.
+
+**Components to Implement**:
+
+1. **router.matchPartial()** method
+   ```typescript
+   interface PartialMatchResult {
+     segments: Segment[];
+     startIndex: number;
+     preservedLayouts: string[];
+   }
+   router.matchPartial(request, previousPathname): Promise<PartialMatchResult>
+   ```
+   - Computes differential segments between prev and current path
+   - Identifies startIndex where segments diverge
+   - Lists preserved layouts for client reuse
+   - Integrates with _rsc_partial parameter
+
+2. **Framework Entry Points** (in router package)
+   - `framework/entry.rsc.tsx` - RSC stream generation
+     * Uses router.match() and router.matchPartial()
+     * Returns RscPayload with segments metadata
+     * Handles full vs partial renders
+
+   - `framework/entry.browser.tsx` - Client hydration + SPA nav
+     * Link click interception for SPA
+     * createFromFetch for RSC deserialization
+     * Segment merging and tree reconstruction
+     * Navigation state management
+     * popstate/pushState handling
+
+   - `framework/entry.ssr.tsx` - SSR HTML generation
+     * RSC stream → HTML via renderToReadableStream
+     * rsc-html-stream payload injection
+     * Bootstrap script injection
+
+3. **Vite Plugin Integration**
+   - Example vite.config.ts showing three environments
+   - Documentation for setup
+   - Types for RscPayload
+
+4. **Out-of-the-Box Features**
+   - Pre-built framework files users can import
+   - SPA navigation works immediately
+   - Partial rendering automatic
+   - No custom setup required
 
 **Implementation**:
-1. Path pattern matching
-2. Layout-sensitive param detection
-3. Revalidation context building
-4. Smart differential computation enhancement
+1. Add router.matchPartial() to RSCRouter class
+2. Create framework/ directory in src/
+3. Implement three entry points
+4. Add vite-plugin-rsc peer dependency
+5. Export framework utilities
+6. Update example to use OOB framework
 
-**Tests**: 12-15 tests
-- Path pattern matching
-- Layout persistence
-- Param change detection
-- Revalidation scenarios
+**Tests**: 20-25 tests
+- router.matchPartial() unit tests
+- Segment divergence detection
+- Preserved layout computation
+- Partial vs full render logic
+- Navigation integration tests
+
+**Critical**: This makes the router production-ready with ZERO custom framework code needed!
 
 ---
 
