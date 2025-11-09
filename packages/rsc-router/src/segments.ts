@@ -17,7 +17,11 @@ export function findDivergenceIndex(
 
   let divergenceIndex = 0;
 
-  for (let i = 0; i < Math.min(currentSegments.length, nextSegments.length); i++) {
+  for (
+    let i = 0;
+    i < Math.min(currentSegments.length, nextSegments.length);
+    i++
+  ) {
     const current = currentSegments[i];
     const next = nextSegments[i];
 
@@ -25,7 +29,8 @@ export function findDivergenceIndex(
     const pathsMatch = current.path === next.path;
 
     // Check if params match (for dynamic segments)
-    const paramsMatch = JSON.stringify(current.params) === JSON.stringify(next.params);
+    const paramsMatch =
+      JSON.stringify(current.params) === JSON.stringify(next.params);
 
     // Check if the layout component is the same
     const layoutsMatch = current.layout === next.layout;
@@ -65,7 +70,7 @@ export function getChangedSegments(
     divergenceIndex,
     preservedSegments,
     newSegments,
-    removedSegments
+    removedSegments,
   };
 }
 
@@ -91,8 +96,8 @@ export function buildComponentTree(
  */
 export function getLayoutNames(segments: MatchedSegment[]): string[] {
   return segments
-    .filter(s => s.layout)
-    .map(s => s.layout?.name || 'UnnamedLayout');
+    .filter((s) => s.layout)
+    .map((s) => s.layout?.name || 'UnnamedLayout');
 }
 
 /**

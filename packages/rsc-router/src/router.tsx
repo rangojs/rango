@@ -1,5 +1,5 @@
-import type { ComponentType, ReactNode } from "react";
-import type { Segment } from "./types";
+import type { ComponentType, ReactNode } from 'react';
+import type { Segment } from './types';
 
 export type RouteContext = {
   params: Record<string, string>;
@@ -25,7 +25,7 @@ export type MiddlewareHandler = (
 
 export type Route = {
   pattern: string;
-  method: "GET" | "POST" | "ALL";
+  method: 'GET' | 'POST' | 'ALL';
   handlers: Array<MiddlewareHandler | RouteHandler | LayoutHandler>;
   isLayout: boolean;
   children: Route[];
@@ -50,7 +50,7 @@ export class RscRouter {
   ) {
     const route: Route = {
       pattern,
-      method: "ALL",
+      method: 'ALL',
       handlers,
       isLayout: true,
       children: [],
@@ -85,21 +85,21 @@ export class RscRouter {
    * Define a GET route
    */
   get(pattern: string, ...handlers: Array<MiddlewareHandler | RouteHandler>) {
-    return this.addRoute("GET", pattern, handlers);
+    return this.addRoute('GET', pattern, handlers);
   }
 
   /**
    * Define a POST route (for server actions)
    */
   post(pattern: string, ...handlers: Array<MiddlewareHandler | RouteHandler>) {
-    return this.addRoute("POST", pattern, handlers);
+    return this.addRoute('POST', pattern, handlers);
   }
 
   /**
    * Define a route for all methods
    */
   all(pattern: string, ...handlers: Array<MiddlewareHandler | RouteHandler>) {
-    return this.addRoute("ALL", pattern, handlers);
+    return this.addRoute('ALL', pattern, handlers);
   }
 
   /**
@@ -114,7 +114,7 @@ export class RscRouter {
   }
 
   private addRoute(
-    method: "GET" | "POST" | "ALL",
+    method: 'GET' | 'POST' | 'ALL',
     pattern: string,
     handlers: Array<MiddlewareHandler | RouteHandler>
   ) {
@@ -142,23 +142,23 @@ export class RscRouter {
 
     // Convert Express-style pattern to regex
     const regexPattern = route.pattern
-      .split("/")
+      .split('/')
       .map((segment) => {
-        if (segment.startsWith(":")) {
+        if (segment.startsWith(':')) {
           // Dynamic segment
           const paramName = segment.slice(1);
           paramNames.push(paramName);
-          return "([^/]+)";
+          return '([^/]+)';
         }
-        if (segment === "*") {
+        if (segment === '*') {
           // Catch-all
-          paramNames.push("*");
-          return "(.*)";
+          paramNames.push('*');
+          return '(.*)';
         }
         // Static segment
         return segment;
       })
-      .join("/");
+      .join('/');
 
     route.regex = new RegExp(`^${regexPattern}$`);
     route.paramNames = paramNames;
@@ -187,7 +187,7 @@ export class RscRouter {
     // Find matching routes (including parent layouts)
     const matchedRoutes = this.findMatchingRoutes(
       pathname,
-      method as "GET" | "POST",
+      method as 'GET' | 'POST',
       this.routes
     );
 
@@ -236,7 +236,7 @@ export class RscRouter {
 
       for (const handler of route.handlers) {
         console.log(
-          `[Router.match]   Handler: ${handler.name || "anonymous"}, length: ${
+          `[Router.match]   Handler: ${handler.name || 'anonymous'}, length: ${
             handler.length
           }`
         );
@@ -249,7 +249,9 @@ export class RscRouter {
           const layoutComponent = await layoutHandler(context);
           console.log(
             `[Router.match]     Layout returned:`,
-            typeof layoutComponent === 'object' && layoutComponent !== null && 'type' in layoutComponent
+            typeof layoutComponent === 'object' &&
+              layoutComponent !== null &&
+              'type' in layoutComponent
               ? (layoutComponent as any).type?.name || typeof layoutComponent
               : typeof layoutComponent
           );
@@ -289,7 +291,9 @@ export class RscRouter {
           });
           console.log(
             `[Router.match]     Route returned:`,
-            typeof componentTree === 'object' && componentTree !== null && 'type' in componentTree
+            typeof componentTree === 'object' &&
+              componentTree !== null &&
+              'type' in componentTree
               ? (componentTree as any).type?.name || typeof componentTree
               : typeof componentTree
           );
@@ -304,12 +308,12 @@ export class RscRouter {
 
   private findMatchingRoutes(
     pathname: string,
-    method: "GET" | "POST",
+    method: 'GET' | 'POST',
     routes: Route[],
     parentMatches: Array<{ route: Route; params: Record<string, string> }> = [],
     depth: number = 0
   ): Array<{ route: Route; params: Record<string, string> }> {
-    const indent = "  ".repeat(depth);
+    const indent = '  '.repeat(depth);
     console.log(
       `${indent}[findMatching] Searching at depth ${depth} for ${pathname}`
     );
@@ -319,13 +323,13 @@ export class RscRouter {
         `${indent}  Checking route: ${route.pattern} (${route.method}, isLayout: ${route.isLayout})`
       );
 
-      if (route.method !== "ALL" && route.method !== method) {
+      if (route.method !== 'ALL' && route.method !== method) {
         console.log(`${indent}    Skipped: method mismatch`);
         continue;
       }
 
       const match = route.regex?.exec(pathname);
-      console.log(`${indent}    Regex match: ${match ? "YES" : "NO"}`);
+      console.log(`${indent}    Regex match: ${match ? 'YES' : 'NO'}`);
 
       if (!match && !route.isLayout) {
         console.log(`${indent}    Skipped: no match and not a layout`);
@@ -387,7 +391,7 @@ export class RscRouter {
     const pathname = url.pathname;
 
     // Find matches for current route
-    const nextMatches = this.findMatchingRoutes(pathname, "GET", this.routes);
+    const nextMatches = this.findMatchingRoutes(pathname, 'GET', this.routes);
 
     // If no matches, return null
     if (nextMatches.length === 0) {
@@ -401,7 +405,7 @@ export class RscRouter {
     if (previousPathname) {
       const prevMatches = this.findMatchingRoutes(
         previousPathname,
-        "GET",
+        'GET',
         this.routes
       );
 

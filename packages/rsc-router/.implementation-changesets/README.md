@@ -10,4 +10,5 @@ Each changeset file follows this format:
 
 ## Index
 
-- [Phase 0.1](./phase-0.1-testing-infrastructure.md) - Testing Infrastructure Setup
+- [Phase 0.1](./phase-0.1-testing-infrastructure.md) - Testing Infrastructure Setup ✅
+- [Phase 0.2](./phase-0.2-quality-checks.md) - Quality Checks (ESLint, Prettier, Strict TypeScript) ✅

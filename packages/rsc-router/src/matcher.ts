@@ -4,10 +4,7 @@ import type { RouteSegment, MatchedRoute, MatchedSegment } from './types';
  * Parse URL pathname into segments
  */
 export function parsePathname(pathname: string): string[] {
-  return pathname
-    .split('/')
-    .filter(Boolean)
-    .map(decodeURIComponent);
+  return pathname.split('/').filter(Boolean).map(decodeURIComponent);
 }
 
 /**
@@ -27,7 +24,7 @@ function matchSegment(
     const paramName = routeSegment.slice(1);
     return {
       match: true,
-      params: { [paramName]: urlSegment }
+      params: { [paramName]: urlSegment },
     };
   }
 
@@ -35,7 +32,7 @@ function matchSegment(
   if (routeSegment === '*') {
     return {
       match: true,
-      params: { '*': urlSegment }
+      params: { '*': urlSegment },
     };
   }
 
@@ -65,7 +62,7 @@ export function matchRoute(
         path: '/',
         params: {},
         layout: route.layout,
-        meta: route.meta
+        meta: route.meta,
       });
     }
 
@@ -76,18 +73,20 @@ export function matchRoute(
           path: route.path,
           params: {},
           page: route.page,
-          meta: route.meta
+          meta: route.meta,
         });
         return true;
       }
       // Check if any child is an index route
-      const indexChild = route.children?.find(child => child.path === '' || child.path === 'index');
+      const indexChild = route.children?.find(
+        (child) => child.path === '' || child.path === 'index'
+      );
       if (indexChild?.page) {
         matchedSegments.push({
           path: '',
           params: {},
           page: indexChild.page,
-          meta: indexChild.meta
+          meta: indexChild.meta,
         });
         return true;
       }
@@ -115,7 +114,7 @@ export function matchRoute(
           const segment: MatchedSegment = {
             path: child.path,
             params: params || {},
-            meta: child.meta
+            meta: child.meta,
           };
 
           if (child.layout) {
@@ -146,7 +145,7 @@ export function matchRoute(
           // Backtrack if no match found
           matchedSegments.pop();
           if (params) {
-            Object.keys(params).forEach(key => delete allParams[key]);
+            Object.keys(params).forEach((key) => delete allParams[key]);
           }
         }
       }
@@ -159,7 +158,7 @@ export function matchRoute(
     return {
       pathname,
       segments: matchedSegments,
-      params: allParams
+      params: allParams,
     };
   }
 

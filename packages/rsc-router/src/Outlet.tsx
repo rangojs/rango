@@ -20,15 +20,13 @@ export function Outlet() {
  */
 export function OutletProvider({
   children,
-  content
+  content,
 }: {
   children: ReactNode;
   content: ReactNode;
 }) {
   return (
-    <OutletContext.Provider value={content}>
-      {children}
-    </OutletContext.Provider>
+    <OutletContext.Provider value={content}>{children}</OutletContext.Provider>
   );
 }
 
