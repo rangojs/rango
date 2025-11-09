@@ -211,11 +211,19 @@ async function fetchRscPayload(
 
     // Update state
     if (manager.setPayload) {
+      console.log(`${LOG_PREFIX} Calling setPayload with:`, {
+        hasRoot: !!payload.root,
+        rootType: typeof payload.root,
+        metadata: payload.metadata
+      });
       manager.setPayload(payload);
+      console.log(`${LOG_PREFIX} ✓ setPayload called`);
+    } else {
+      console.error(`${LOG_PREFIX} ✗ setPayload is null! Cannot update UI`);
     }
     manager.currentPathname = targetPathname;
 
-    console.log(`${LOG_PREFIX} ✓ UI updated`);
+    console.log(`${LOG_PREFIX} ✓ UI update complete`);
     console.log(`${LOG_PREFIX} ${'='.repeat(50)}\n`);
   } catch (error) {
     console.error(`${LOG_PREFIX} Navigation failed:`, error);
@@ -265,12 +273,20 @@ function BrowserRoot({
 }) {
   const [payload, setPayload] = React.useState(initialPayload);
 
+  console.log(`${LOG_PREFIX} BrowserRoot rendering, payload:`, {
+    hasRoot: !!payload.root,
+    pathname: payload.metadata?.pathname,
+    segments: payload.metadata?.segments?.map(s => s.id).join(', ')
+  });
+
   React.useEffect(() => {
+    console.log(`${LOG_PREFIX} Setting up setPayload callback`);
     manager.setPayload = setPayload;
   }, [manager]);
 
   // Set up client-side navigation
   React.useEffect(() => {
+    console.log(`${LOG_PREFIX} Setting up navigation interception`);
     return setupNavigationInterception(manager, () => fetchRscPayload(manager));
   }, [manager]);
 
