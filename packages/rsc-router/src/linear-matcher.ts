@@ -87,7 +87,8 @@ export class LinearMatcher {
     for (let i = 0; i < this.compiled.paramNames.length; i++) {
       const paramName = this.compiled.paramNames[i];
       const paramValue = match[i + 1]; // Regex groups start at index 1
-      if (paramName && paramValue) {
+      if (paramName && paramValue !== undefined) {
+        // Include empty strings for wildcards
         params[paramName] = paramValue;
       }
     }
@@ -114,6 +115,21 @@ export class LinearMatcher {
       if (!segment) {
         // Empty segment (from leading/trailing slash)
         return '';
+      }
+
+      // Check for wildcard
+      if (segment === '*') {
+        paramNames.push('*');
+        // Match everything (including slashes)
+        return '(.*)';
+      }
+
+      // Check for named wildcard (:path*)
+      if (segment.endsWith('*') && segment.includes(':')) {
+        const paramName = segment.slice(1, -1); // Remove : and *
+        paramNames.push(paramName);
+        // Match everything (including slashes)
+        return '(.*)';
       }
 
       if (segment.includes(':')) {
@@ -153,7 +169,13 @@ export class LinearMatcher {
 
             // Dynamic param matches anything except / and .
             // Use [^/.] to stop at dots (for extensions)
-            regexPart += isOptional ? '([^/.]+)?' : '([^/.]+)';
+            if (isOptional) {
+              // For optional segments, mark with special token
+              // Will be post-processed to make the preceding / optional too
+              regexPart += '§OPTIONAL§([^/.]+)';
+            } else {
+              regexPart += '([^/.]+)';
+            }
           }
         }
 
@@ -165,7 +187,15 @@ export class LinearMatcher {
     });
 
     // Join segments back with /
-    const regexPattern = regexParts.join('/');
+    let regexPattern = regexParts.join('/');
+
+    // Post-process optional segments
+    // Replace /§OPTIONAL§([^/.]+) with (?:/([^/.]+)|/)?
+    // This makes the slash optional and allows trailing slash without param
+    regexPattern = regexPattern.replace(
+      /\/§OPTIONAL§\(([^)]+)\)/g,
+      '(?:/($1)|/)?'
+    );
 
     // Create regex with anchors (^ and $) for exact matching
     const regex = new RegExp(`^${regexPattern}$`);
