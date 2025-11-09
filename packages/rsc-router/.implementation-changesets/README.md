@@ -24,3 +24,4 @@ Each changeset file follows this format:
 - [Phase 4.2](./phase-4.2-wildcard-support.md) - Linear Matcher - Wildcard and Optional Segments ✅
 - [Phase 5.1](./phase-5.1-middleware-execution.md) - Middleware Execution Pipeline ✅ **← ROUTER IS FUNCTIONAL!**
 - [Phase 5.2](./phase-5.2-middleware-security.md) - Middleware Security Verification ✅ **← SECURE BY DEFAULT! 🔒**
+- [Phase 6.1](./phase-6.1-layout-support.md) - Single Layout Support ✅ **← Already works!**
