@@ -286,3 +286,114 @@ export function computeDifferential(
     updates,
   };
 }
+
+/**
+ * Route match result from router
+ */
+export interface RouteMatch {
+  pathname: string;
+  params: Record<string, string>;
+  handlers: any; // The matched handlers object
+}
+
+/**
+ * Build segment map from route match
+ *
+ * Converts a route match result into a segment map for rendering.
+ * The segment map includes layouts, route content, and parallel routes,
+ * all with sequential indices for partial rendering.
+ *
+ * @param match - The route match result
+ * @returns Array of segments in rendering order
+ *
+ * @example
+ * ```typescript
+ * const match = {
+ *   pathname: '/blog/123',
+ *   params: { slug: '123' },
+ *   handlers: {
+ *     layout: [RootLayout, BlogLayout],
+ *     show: BlogPost,
+ *     parallel: {
+ *       '@sidebar': Sidebar,
+ *       '@modal': Modal
+ *     }
+ *   }
+ * };
+ *
+ * const segments = buildSegmentMap(match);
+ * // [
+ * //   { id: 'L0', type: 'layout', index: 0, component: RootLayout, ... },
+ * //   { id: 'L1', type: 'layout', index: 1, component: BlogLayout, ... },
+ * //   { id: 'R2', type: 'route', index: 2, component: BlogPost, ... },
+ * //   { id: 'P3', type: 'parallel', index: 3, component: Modal, slot: '@modal', ... },
+ * //   { id: 'P4', type: 'parallel', index: 4, component: Sidebar, slot: '@sidebar', ... }
+ * // ]
+ * ```
+ */
+export function buildSegmentMap(match: RouteMatch): Segment[] {
+  const segments: Segment[] = [];
+  let index = 0;
+
+  const { pathname, params, handlers } = match;
+
+  if (!handlers || Object.keys(handlers).length === 0) {
+    return segments;
+  }
+
+  // 1. Process layouts
+  const layout = handlers.layout;
+  if (layout !== undefined) {
+    const layouts = Array.isArray(layout) ? layout : [layout];
+
+    for (const layoutComponent of layouts) {
+      segments.push(
+        createSegment('layout', index++, layoutComponent, {
+          path: pathname,
+          // Layouts typically don't have params
+        })
+      );
+    }
+  }
+
+  // 2. Process route content (find non-special keys)
+  const specialKeys = ['layout', 'parallel', 'loading', 'error', 'revalidate'];
+  const routeKeys = Object.keys(handlers).filter(
+    (key) => !specialKeys.includes(key)
+  );
+
+  if (routeKeys.length > 0) {
+    // Use first route key (typically 'index', 'show', etc.)
+    const routeKey = routeKeys[0];
+    if (routeKey) {
+      const routeComponent = handlers[routeKey];
+
+      segments.push(
+        createSegment('route', index++, routeComponent, {
+          path: pathname,
+          params: Object.keys(params).length > 0 ? params : undefined,
+        })
+      );
+    }
+  }
+
+  // 3. Process parallel routes (preserve insertion order)
+  const parallel = handlers.parallel;
+  if (parallel && typeof parallel === 'object') {
+    // Use Object.keys() to preserve insertion order (ES2015+)
+    const slots = Object.keys(parallel);
+
+    for (const slot of slots) {
+      const component = parallel[slot];
+      segments.push(
+        createSegment('parallel', index++, component, {
+          slot,
+          path: pathname,
+          params: Object.keys(params).length > 0 ? params : undefined,
+        })
+      );
+    }
+  }
+
+  return segments;
+}
