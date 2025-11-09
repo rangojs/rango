@@ -2,41 +2,20 @@
  * RSC Router factory and core router class
  */
 
-import type { RouteDefinition, ResolvedRouteMap } from './route-definition';
-import { route } from './route-definition';
+import type {
+  RouteDefinition,
+  ResolvedRouteMap,
+  HandlersForRouteMap,
+} from './route-definition';
 import { LinearMatcher } from './linear-matcher';
 
 /**
- * Route handler function type
+ * Lazy handler import function type
+ * Supports dynamic imports: () => import('./handlers')
  */
-export type RouteHandler<TContext = MiddlewareContext> =
-  | ((ctx: TContext) => any)
-  | ((ctx?: TContext) => any)
-  | (() => any);
-
-/**
- * Recursively build handler type from route map
- * - String routes → RouteHandler
- * - Nested routes → Nested handler object
- */
-export type HandlersForRouteMap<T extends Record<string, RouteDefinition>> = {
-  [K in keyof T]?: T[K] extends string
-    ? RouteHandler
-    : T[K] extends Record<string, RouteDefinition>
-      ? HandlersForRouteMap<T[K]>
-      : never;
-} & {
-  // Allow special symbols
-  [route.layout]?:
-    | any // Single layout or array
-    | Record<keyof T, any>; // Per-route layouts
-  [route.parallel]?:
-    | Record<string, any> // Global parallel routes
-    | Record<keyof T, Record<string, any>>; // Per-route parallel routes
-  [route.loading]?: any | Record<keyof T, any>;
-  [route.error]?: any | Record<keyof T, any>;
-  [route.revalidate]?: any | Record<keyof T, any>;
-};
+export type LazyHandlers<T extends Record<string, RouteDefinition>> = () => Promise<
+  HandlersForRouteMap<T>
+>;
 
 /**
  * Router configuration options
@@ -106,7 +85,7 @@ export class RouteBuilder<T extends Record<string, RouteDefinition>> {
 
   /**
    * Map handlers to routes (type-safe)
-   * @param handlers - Object mapping route names to handler functions
+   * @param handlers - Object mapping route names to handler functions OR lazy import
    * @returns The router instance for chaining
    *
    * @example
@@ -127,8 +106,14 @@ export class RouteBuilder<T extends Record<string, RouteDefinition>> {
    *   home: () => <HomePage />
    * });
    * ```
+   *
+   * @example
+   * Lazy import:
+   * ```typescript
+   * router.route(routes).map(() => import('./handlers'));
+   * ```
    */
-  map(handlers: HandlersForRouteMap<T>): RSCRouter {
+  map(handlers: HandlersForRouteMap<T> | LazyHandlers<T>): RSCRouter {
     // Store handlers in the registered route
     this.router.addHandlersToRoute(this.registrationIndex, handlers);
     return this.router;

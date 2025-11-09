@@ -312,3 +312,77 @@ export {
   errorSymbol,
   revalidateSymbol,
 };
+
+/**
+ * Route handler function type
+ * Handlers can be sync, async, with or without context
+ */
+export type RouteHandler =
+  | ((ctx: any) => any)
+  | ((ctx?: any) => any)
+  | (() => any);
+
+/**
+ * Recursively build handler type from route map
+ * - String routes → RouteHandler
+ * - Nested routes → Nested handler object
+ */
+export type HandlersForRouteMap<T extends Record<string, RouteDefinition>> = {
+  [K in keyof T]?: T[K] extends string
+    ? RouteHandler
+    : T[K] extends Record<string, RouteDefinition>
+      ? HandlersForRouteMap<T[K]>
+      : never;
+} & {
+  // Allow special symbols
+  [K: symbol]: any; // Allow all symbols
+};
+
+/**
+ * Type-safe handler map helper
+ * Use this when defining handlers in a separate file for type safety
+ *
+ * @param routes - Route map (from route() function)
+ * @param handlers - Handler object matching route structure
+ * @returns The handlers object (type-safe)
+ *
+ * @example
+ * File: routes.ts
+ * ```typescript
+ * export const blogRoutes = route({
+ *   index: '/blog',
+ *   post: '/blog/:slug'
+ * });
+ * ```
+ *
+ * @example
+ * File: handlers.ts
+ * ```typescript
+ * import { map } from 'rsc-router';
+ * import { blogRoutes } from './routes';
+ *
+ * export default map(blogRoutes, {
+ *   [route.layout]: BlogLayout,
+ *   index: () => <BlogIndex />,
+ *   post: (ctx) => <BlogPost slug={ctx.params.slug} />
+ * });
+ * ```
+ *
+ * @example
+ * File: app.ts
+ * ```typescript
+ * import { blogRoutes } from './routes';
+ * import blogHandlers from './handlers';
+ *
+ * router.route('/blog', blogRoutes).map(blogHandlers);
+ * ```
+ */
+export function map<T extends Record<string, RouteDefinition>>(
+  _routes: ResolvedRouteMap<T>,
+  handlers: HandlersForRouteMap<T>
+): HandlersForRouteMap<T> {
+  // This is a pass-through function for type safety only
+  // The actual type checking happens at the parameter level
+  // TypeScript enforces that handler keys match route names
+  return handlers;
+}
