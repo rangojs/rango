@@ -19,3 +19,4 @@ Each changeset file follows this format:
 - [Phase 3.1](./phase-3.1-create-router.md) - createRSCRouter() Factory and RSCRouter Class ✅
 - [Phase 3.2](./phase-3.2-route-mounting.md) - router.route() Method - Basic Mounting ✅
 - [Phase 3.3](./phase-3.3-route-builder-middleware.md) - RouteBuilder.use() Method for Middleware ✅
+- [Phase 3.4](./phase-3.4-route-builder-map.md) - RouteBuilder.map() Method - Handler Mapping ✅

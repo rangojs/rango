@@ -72,23 +72,44 @@ export class RouteBuilder<T extends Record<string, RouteDefinition>> {
 
   /**
    * Map handlers to routes
-   * @param handlers - Object mapping route names to handler functions
-   * @returns The router instance
+   * @param handlers - Object mapping route names to handler functions or lazy import
+   * @returns The router instance for chaining
+   *
+   * @example
+   * Direct handlers:
+   * ```typescript
+   * router.route(routes).map({
+   *   home: () => <HomePage />,
+   *   about: () => <AboutPage />
+   * });
+   * ```
+   *
+   * @example
+   * With symbols:
+   * ```typescript
+   * router.route(routes).map({
+   *   [route.layout]: MyLayout,
+   *   [route.parallel]: { '@sidebar': Sidebar },
+   *   home: () => <HomePage />
+   * });
+   * ```
    */
-  map(_handlers: unknown): RSCRouter {
-    // Implementation in Phase 3.4
+  map(handlers: any): RSCRouter {
+    // Store handlers in the registered route
+    this.router.addHandlersToRoute(this.registrationIndex, handlers);
     return this.router;
   }
 }
 
 /**
  * Registered route entry
- * Stores route map with optional prefix and middleware
+ * Stores route map with optional prefix, middleware, and handlers
  */
 export interface RegisteredRoute {
   routes: ResolvedRouteMap<any>;
   prefix?: string;
   middleware: Middleware[];
+  handlers?: any;  // Handler object or lazy import function
 }
 
 /**
@@ -260,6 +281,17 @@ export class RSCRouter {
     const route = this.registeredRoutes[index];
     if (route) {
       route.middleware.push(...middleware);
+    }
+  }
+
+  /**
+   * Add handlers to a specific registered route
+   * @internal - Used by RouteBuilder
+   */
+  addHandlersToRoute(index: number, handlers: any): void {
+    const route = this.registeredRoutes[index];
+    if (route) {
+      route.handlers = handlers;
     }
   }
 }
