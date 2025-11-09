@@ -83,12 +83,48 @@ These run without vite-plugin-rsc to demonstrate the router API.
 
 ## Features Demonstrated
 
-- ✅ **Route Definitions** - Type-safe route maps with nested routes
-- ✅ **Layouts** - Single and array layouts with nesting
-- ✅ **Parallel Routes** - @sidebar and @modal slots rendering alongside main content
-- ✅ **Partial Rendering** - Client-server differential updates
-- ✅ **Navigation** - SPA navigation with _has parameter
-- ✅ **Middleware** - Global and route-specific middleware
+### Core Router Features
+- ✅ **Route Definitions** - Type-safe route maps with `route()`
+- ✅ **Static Routes** - `/`, `/about`, `/contact`, `/features`
+- ✅ **Dynamic Routes** - `/blog/:slug`, `/dashboard/users/:id`
+- ✅ **Nested Routes** - `users: { list, detail, edit }`
+- ✅ **Optional Params** - `/archive/:year?/:month?`
+- ✅ **Wildcard Routes** - `/files/*`
+
+### Layout System
+- ✅ **Single Layout** - `[route.layout]: RootLayout`
+- ✅ **Array Layouts** - `[route.layout]: [Root, Blog, Sidebar]`
+- ✅ **Layout Nesting** - Multiple levels with `<Outlet />`
+- ✅ **Layout Persistence** - Preserved across similar routes
+
+### Parallel Routes (ADDITIVE)
+- ✅ **Global Parallel** - `[route.parallel]: { '@sidebar': Sidebar }`
+- ✅ **Per-Route Parallel** - Different slots per route
+- ✅ **Multiple Slots** - @sidebar, @comments, @notifications
+- ✅ **Additive Rendering** - All render alongside main content
+
+### Middleware
+- ✅ **Global Middleware** - Runs on all requests
+- ✅ **Route-Specific** - Applies to route groups
+- ✅ **Multiple Middleware** - Chained execution
+- ✅ **Context Access** - Request, pathname, params
+
+### Boundaries
+- ✅ **Loading Boundaries** - `[route.loading]` per route
+- ✅ **Error Boundaries** - `[route.error]` per route
+- ✅ **Global Boundaries** - Fallback for all routes
+
+### Partial Rendering
+- ✅ **SPA Navigation** - No page reloads
+- ✅ **Differential Updates** - Only changed segments sent
+- ✅ **Segment Management** - Automatic client-side
+- ✅ **Bandwidth Savings** - 80-99% reduction
+
+### Framework Integration
+- ✅ **vite-plugin-rsc** - Three-entry architecture
+- ✅ **RSC Streaming** - Real React Server Components
+- ✅ **SSR + Hydration** - Server-side rendering
+- ✅ **Out-of-the-Box** - Framework provided (5 lines setup)
 
 ## Architecture
 

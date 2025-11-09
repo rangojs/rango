@@ -100,39 +100,81 @@ async function simulateRequest(
   // Example 1: Initial page load
   await simulateRequest('/', '', 'Example 1: Initial Page Load (Home)');
 
-  // Example 2: Navigate to blog (structure change)
+  // Example 2: Navigate to features page
   await simulateRequest(
-    '/blog',
+    '/features',
     'L0,R0',
-    'Example 2: Navigate to Blog (Structure Change)'
+    'Example 2: Navigate to Features (Same Layout)'
   );
 
-  // Example 3: Navigate to blog post (adding parallel routes)
+  // Example 3: Navigate to blog index (structure change - add BlogLayout)
+  await simulateRequest(
+    '/blog',
+    'L0,R1',
+    'Example 3: Navigate to Blog Index (Nested Layouts)'
+  );
+
+  // Example 4: Navigate to blog post (adding parallel routes)
   await simulateRequest(
     '/blog/hello-world',
     'L0,L1,R2',
-    'Example 3: Navigate to Blog Post (Has Parallel Routes)'
+    'Example 4: Blog Post (Adds Parallel Routes @sidebar + @comments)'
   );
 
-  // Example 4: Navigate to different post (partial update)
+  // Example 5: Navigate to different post (partial update)
   await simulateRequest(
     '/blog/another-post',
     'L0,L1,R2,P3,P4',
-    'Example 4: Navigate to Different Post (Only R2 Updates)'
+    'Example 5: Different Post (Only R2 Updates - Parallel Routes Preserved)'
   );
 
-  // Example 5: Navigate to dashboard (structure change with parallel)
+  // Example 6: Navigate to category post (different route handler)
+  await simulateRequest(
+    '/blog/tech/react-tips',
+    'L0,L1,R2,P3,P4',
+    'Example 6: Category Post (Multiple Params)'
+  );
+
+  // Example 7: Navigate to archive with optional params
+  await simulateRequest(
+    '/blog/archive/2024/11',
+    'L0,L1,R2,P3,P4',
+    'Example 7: Archive (Optional Params Demonstration)'
+  );
+
+  // Example 8: Navigate to dashboard (structure change with different parallel routes)
   await simulateRequest(
     '/dashboard',
     'L0,L1,R2,P3,P4',
-    'Example 5: Navigate to Dashboard (Different Parallel Routes)'
+    'Example 8: Dashboard (Different Parallel Routes @sidebar + @notifications)'
   );
 
-  // Example 6: Navigate within dashboard (no parallel on this route)
+  // Example 9: Navigate within dashboard (no parallel on this route)
   await simulateRequest(
     '/dashboard/analytics',
     'L0,L1,R2,P3,P4',
-    'Example 6: Dashboard Analytics (No Parallel Routes)'
+    'Example 9: Dashboard Analytics (No Parallel Routes on This Route)'
+  );
+
+  // Example 10: Navigate to nested user route
+  await simulateRequest(
+    '/dashboard/users/123',
+    'L0,L1,R2',
+    'Example 10: User Detail (Nested Routes + Dynamic Param)'
+  );
+
+  // Example 11: API route with JSON response
+  await simulateRequest(
+    '/api/health',
+    'L0,L1,R2',
+    'Example 11: API Health Check (JSON Response)'
+  );
+
+  // Example 12: Wildcard route
+  await simulateRequest(
+    '/api/files/documents/report.pdf',
+    'L0,R1',
+    'Example 12: Wildcard Route (File Path)'
   );
 
   console.log('\n' + '='.repeat(70));
