@@ -323,9 +323,52 @@ export type RouteHandler =
   | (() => any);
 
 /**
+ * Layout value type - can be single component, array, or per-route object
+ */
+export type LayoutValue<T extends Record<string, RouteDefinition>> =
+  | RouteHandler // Single layout
+  | RouteHandler[] // Layout array
+  | { [K in keyof T]?: RouteHandler | RouteHandler[] }; // Per-route layouts
+
+/**
+ * Parallel routes value type - global or per-route
+ */
+export type ParallelValue<T extends Record<string, RouteDefinition>> =
+  | Record<`@${string}`, RouteHandler> // Global parallel routes
+  | { [K in keyof T]?: Record<`@${string}`, RouteHandler> }; // Per-route parallel
+
+/**
+ * Loading value type - can be component or per-route
+ */
+export type LoadingValue<T extends Record<string, RouteDefinition>> =
+  | RouteHandler
+  | { [K in keyof T]?: RouteHandler };
+
+/**
+ * Error value type - can be component or per-route
+ */
+export type ErrorValue<T extends Record<string, RouteDefinition>> =
+  | RouteHandler
+  | { [K in keyof T]?: RouteHandler };
+
+/**
+ * Revalidate value type - can be function or per-route object
+ */
+export type RevalidateValue<T extends Record<string, RouteDefinition>> =
+  | ((ctx: any) => boolean)
+  | (
+      {
+        [K in keyof T]?: (ctx: any) => boolean;
+      } & {
+        [layoutSymbol]?: (ctx: any) => boolean;
+      }
+    );
+
+/**
  * Recursively build handler type from route map
  * - String routes → RouteHandler
  * - Nested routes → Nested handler object
+ * - Special symbols → Typed values
  */
 export type HandlersForRouteMap<T extends Record<string, RouteDefinition>> = {
   [K in keyof T]?: T[K] extends string
@@ -334,8 +377,12 @@ export type HandlersForRouteMap<T extends Record<string, RouteDefinition>> = {
       ? HandlersForRouteMap<T[K]>
       : never;
 } & {
-  // Allow special symbols
-  [K: symbol]: any; // Allow all symbols
+  // Type-safe symbols with specific value types
+  [layoutSymbol]?: LayoutValue<T>;
+  [parallelSymbol]?: ParallelValue<T>;
+  [loadingSymbol]?: LoadingValue<T>;
+  [errorSymbol]?: ErrorValue<T>;
+  [revalidateSymbol]?: RevalidateValue<T>;
 };
 
 /**

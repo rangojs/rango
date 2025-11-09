@@ -12,10 +12,14 @@ import { LinearMatcher } from './linear-matcher';
 /**
  * Lazy handler import function type
  * Supports dynamic imports: () => import('./handlers')
+ * The import can return either:
+ * - Module with default export: { default: HandlersForRouteMap<T> }
+ * - Direct handlers: HandlersForRouteMap<T>
  */
-export type LazyHandlers<T extends Record<string, RouteDefinition>> = () => Promise<
-  HandlersForRouteMap<T>
->;
+export type LazyHandlers<T extends Record<string, RouteDefinition>> =
+  | (() => Promise<HandlersForRouteMap<T>>)
+  | (() => Promise<{ default: HandlersForRouteMap<T> }>)
+  | (() => Promise<any>); // Fallback for flexibility
 
 /**
  * Router configuration options

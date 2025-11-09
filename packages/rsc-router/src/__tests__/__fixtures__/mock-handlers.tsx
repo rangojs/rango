@@ -12,8 +12,9 @@ export const mockRoutes = route({
 
 // Mock handlers using map() helper
 export default map(mockRoutes, {
-  [route.layout]: { asd: () => <div>MockLayout</div> },
+  [route.layout]: () => <div>MockLayout</div>,
   home: () => <div>MockHome</div>,
   about: () => <div>MockAbout</div>,
-  asd: () => <div>MockASD</div>,
+  // TypeScript now enforces: only 'home' and 'about' are valid keys!
+  // asd: () => <div>MockASD</div>,  // ❌ Would be TypeScript error now!
 });
