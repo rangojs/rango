@@ -18,3 +18,4 @@ Each changeset file follows this format:
 - [Phase 2.1](./phase-2.1-route-symbols.md) - Route Symbols (layout, parallel, loading, error, revalidate) ✅
 - [Phase 3.1](./phase-3.1-create-router.md) - createRSCRouter() Factory and RSCRouter Class ✅
 - [Phase 3.2](./phase-3.2-route-mounting.md) - router.route() Method - Basic Mounting ✅
+- [Phase 3.3](./phase-3.3-route-builder-middleware.md) - RouteBuilder.use() Method for Middleware ✅

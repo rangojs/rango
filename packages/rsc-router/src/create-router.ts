@@ -44,20 +44,29 @@ export interface MiddlewareContext {
  * Returned by router.route() to allow chaining .use() and .map()
  */
 export class RouteBuilder<T extends Record<string, RouteDefinition>> {
+  /**
+   * Index of this builder's route registration in the router
+   * Used to update middleware in the registered route
+   */
+  private registrationIndex: number;
+
   constructor(
     private router: RSCRouter,
     private _routeMap: ResolvedRouteMap<T>,
+    registrationIndex: number,
     private _prefix?: string
-  ) {}
+  ) {
+    this.registrationIndex = registrationIndex;
+  }
 
   /**
    * Add middleware to this route group
    * @param middleware - One or more middleware functions
    * @returns This RouteBuilder for chaining
    */
-  use(..._middleware: Middleware[]): this {
-    // Store middleware for this route group
-    // Implementation in Phase 3.3
+  use(...middleware: Middleware[]): this {
+    // Add middleware to the registered route
+    this.router.addMiddlewareToRoute(this.registrationIndex, ...middleware);
     return this;
   }
 
@@ -173,13 +182,14 @@ export class RSCRouter {
 
     // Store route registration (will be finalized in Phase 3.4 when .map() is called)
     // For now, store immediately with empty middleware
+    const registrationIndex = this.registeredRoutes.length;
     this.registeredRoutes.push({
       routes,
       prefix,
       middleware: [],
     });
 
-    const builder = new RouteBuilder(this, routes, prefix);
+    const builder = new RouteBuilder(this, routes, registrationIndex, prefix);
 
     return builder;
   }
@@ -240,6 +250,17 @@ export class RSCRouter {
    */
   getRegisteredRoutes(): RegisteredRoute[] {
     return [...this.registeredRoutes];
+  }
+
+  /**
+   * Add middleware to a specific registered route
+   * @internal - Used by RouteBuilder
+   */
+  addMiddlewareToRoute(index: number, ...middleware: Middleware[]): void {
+    const route = this.registeredRoutes[index];
+    if (route) {
+      route.middleware.push(...middleware);
+    }
   }
 }
 
