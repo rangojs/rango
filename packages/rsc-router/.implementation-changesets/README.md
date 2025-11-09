@@ -32,3 +32,6 @@ Each changeset file follows this format:
 - [Phase 6.6](./phase-6.6-lazy-loading.md) - Lazy Handler Imports ✅ **← Already works!**
 - [Phase 6.7](./phase-6.7-symbol-type-safety.md) - Symbol Type Safety ✅ **← COMPLETE TYPE SAFETY!**
 - [Phase 6.8](./phase-6.8-lazy-evaluation.md) - Lazy Evaluation Verification ✅ **← LAZY-EVERYTHING VERIFIED!**
+- [Phase 7.1.1](./phase-7.1.1-segment-id-tests.md) - Segment ID Tests ✅
+- [Phase 7.1.2](./phase-7.1.2-segment-id-implementation.md) - Segment ID Implementation ✅
+- [Phase 7.1.3](./phase-7.1.3-segment-consistency.md) - Segment Consistency Verification ✅
