@@ -159,6 +159,88 @@ export class RouteMap<T extends Record<string, RouteDefinition>> {
 }
 
 /**
+ * Special symbols for route metadata
+ * These are used as keys in route handler objects to define special properties
+ */
+
+/**
+ * Symbol for defining layouts
+ * @example
+ * ```typescript
+ * {
+ *   [route.layout]: MyLayout,
+ *   index: () => <Content />
+ * }
+ * ```
+ */
+const layoutSymbol = Symbol('route.layout');
+
+/**
+ * Symbol for defining parallel routes (named slots)
+ * @example
+ * ```typescript
+ * {
+ *   [route.parallel]: {
+ *     '@sidebar': SidebarComponent,
+ *     '@modal': ModalComponent
+ *   }
+ * }
+ * ```
+ */
+const parallelSymbol = Symbol('route.parallel');
+
+/**
+ * Symbol for defining loading boundaries
+ * @example
+ * ```typescript
+ * {
+ *   [route.loading]: LoadingComponent,
+ *   index: () => <Content />
+ * }
+ * ```
+ */
+const loadingSymbol = Symbol('route.loading');
+
+/**
+ * Symbol for defining error boundaries
+ * @example
+ * ```typescript
+ * {
+ *   [route.error]: ErrorComponent,
+ *   index: () => <Content />
+ * }
+ * ```
+ */
+const errorSymbol = Symbol('route.error');
+
+/**
+ * Symbol for defining revalidation logic
+ * @example
+ * ```typescript
+ * {
+ *   [route.revalidate]: (ctx) => ctx.currentRouteName !== 'home',
+ *   home: () => <HomePage />
+ * }
+ * ```
+ */
+const revalidateSymbol = Symbol('route.revalidate');
+
+/**
+ * Route function type with attached symbols
+ */
+export interface RouteFunction {
+  <const T extends Record<string, RouteDefinition>>(
+    definitions: T
+  ): ResolvedRouteMap<T>;
+
+  layout: typeof layoutSymbol;
+  parallel: typeof parallelSymbol;
+  loading: typeof loadingSymbol;
+  error: typeof errorSymbol;
+  revalidate: typeof revalidateSymbol;
+}
+
+/**
  * Creates a typed route map from route definitions
  *
  * @param definitions - Object mapping route names to path patterns or nested route definitions
@@ -200,8 +282,33 @@ export class RouteMap<T extends Record<string, RouteDefinition>> {
  * routes.getAllPaths() // ['/blog', '/blog/:slug', '/admin/users', '/admin/users/:id']
  * ```
  */
-export function route<const T extends Record<string, RouteDefinition>>(
-  definitions: T
-): ResolvedRouteMap<T> {
+const routeFunction = function route<
+  const T extends Record<string, RouteDefinition>,
+>(definitions: T): ResolvedRouteMap<T> {
   return new RouteMap(definitions) as ResolvedRouteMap<T>;
-}
+} as RouteFunction;
+
+/**
+ * Attach symbols to route function for use in route handlers
+ */
+routeFunction.layout = layoutSymbol;
+routeFunction.parallel = parallelSymbol;
+routeFunction.loading = loadingSymbol;
+routeFunction.error = errorSymbol;
+routeFunction.revalidate = revalidateSymbol;
+
+/**
+ * Export as route
+ */
+export { routeFunction as route };
+
+/**
+ * Export symbols individually for convenience
+ */
+export {
+  layoutSymbol,
+  parallelSymbol,
+  loadingSymbol,
+  errorSymbol,
+  revalidateSymbol,
+};

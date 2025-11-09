@@ -4,6 +4,7 @@ export * from './router';
 export * from './segments';
 export * from './matcher';
 export * from './route-definition';
+export * from './create-router';
 
 // Re-export commonly used components
 export { Link } from './Link';

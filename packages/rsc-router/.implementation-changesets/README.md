@@ -15,3 +15,4 @@ Each changeset file follows this format:
 - [Phase 1.1](./phase-1.1-route-function-basics.md) - Implement route() Function - Basic Types ✅
 - [Phase 1.1 Update](./phase-1.1-route-function-update.md) - RouteMap Class Implementation ✅
 - [Phase 1.2](./phase-1.2-nested-routes.md) - Nested Route Support ✅
+- [Phase 2.1](./phase-2.1-route-symbols.md) - Route Symbols (layout, parallel, loading, error, revalidate) ✅
