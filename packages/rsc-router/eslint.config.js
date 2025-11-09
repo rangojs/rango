@@ -80,6 +80,12 @@ export default [
   // Test files - more lenient rules
   {
     files: ['src/**/*.test.{ts,tsx}', 'src/**/*.spec.{ts,tsx}'],
+    languageOptions: {
+      globals: {
+        performance: 'readonly',
+        setTimeout: 'readonly',
+      },
+    },
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
       'no-console': 'off',
