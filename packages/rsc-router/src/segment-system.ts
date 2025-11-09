@@ -149,3 +149,49 @@ export function createSegment(
     ...options,
   };
 }
+
+/**
+ * Parse client segments from _has parameter
+ *
+ * During SPA navigation, the client reports which segments it currently has
+ * rendered using the _has query parameter (e.g., ?_has=L0,L1,R2).
+ *
+ * This function parses the _has parameter and returns a Set of segment IDs
+ * for efficient lookup during differential rendering.
+ *
+ * @param hasParam - The value of the _has query parameter (or null if not present)
+ * @returns Set of segment IDs (e.g., Set(['L0', 'L1', 'R2']))
+ *
+ * @example
+ * ```typescript
+ * // Typical usage with URL
+ * const url = new URL('http://localhost/blog/123?_has=L0,L1,R2');
+ * const hasParam = url.searchParams.get('_has');
+ * const clientSegments = parseClientSegments(hasParam);
+ * // clientSegments => Set(['L0', 'L1', 'R2'])
+ *
+ * // Initial navigation (no client state)
+ * parseClientSegments(null) // => Set([])
+ *
+ * // Handles whitespace
+ * parseClientSegments('L0, L1, R2') // => Set(['L0', 'L1', 'R2'])
+ *
+ * // Deduplicates automatically
+ * parseClientSegments('L0,L1,L0,R2') // => Set(['L0', 'L1', 'R2'])
+ * ```
+ */
+export function parseClientSegments(hasParam: string | null): Set<string> {
+  // Handle null or empty string (initial navigation)
+  if (!hasParam || hasParam.trim() === '') {
+    return new Set();
+  }
+
+  // Split by comma, trim whitespace, filter empty strings
+  const segments = hasParam
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  // Return as Set for efficient lookup and automatic deduplication
+  return new Set(segments);
+}
