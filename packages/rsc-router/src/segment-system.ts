@@ -2,7 +2,9 @@
  * Segment ID System - L0, R1, P2 identification for partial rendering
  */
 
+import { createElement, Fragment } from 'react';
 import type { ReactNode } from 'react';
+import { OutletProvider } from './Outlet';
 
 /**
  * Segment type identifiers
@@ -396,4 +398,140 @@ export function buildSegmentMap(match: RouteMatch): Segment[] {
   }
 
   return segments;
+}
+
+/**
+ * Render segments into a React tree with OutletProvider
+ *
+ * Takes a segment map and renders it into a nested React tree using OutletProvider
+ * to handle layout nesting. The function wraps each layout with OutletProvider,
+ * passing the child content through the Outlet component.
+ *
+ * @param segments - Array of segments to render
+ * @returns Rendered React tree, or null if segments is empty
+ *
+ * @example
+ * ```typescript
+ * const segments = [
+ *   { id: 'L0', type: 'layout', index: 0, component: RootLayout, path: '/blog' },
+ *   { id: 'L1', type: 'layout', index: 1, component: BlogLayout, path: '/blog' },
+ *   { id: 'R2', type: 'route', index: 2, component: BlogPost, path: '/blog/123', params: { slug: '123' } },
+ *   { id: 'P3', type: 'parallel', index: 3, component: Sidebar, slot: '@sidebar', path: '/blog/123' }
+ * ];
+ *
+ * const tree = renderSegments(segments);
+ * // Renders:
+ * // <RootLayout>
+ * //   <OutletProvider content={<BlogLayout><OutletProvider content={<BlogPost />}>}>
+ * //     <BlogLayout>
+ * //       <OutletProvider content={<BlogPost />}>
+ * //         <BlogPost />
+ * //       </OutletProvider>
+ * //     </BlogLayout>
+ * //   </OutletProvider>
+ * // </RootLayout>
+ * ```
+ */
+export function renderSegments(segments: Segment[]): ReactNode {
+  // Handle empty segments
+  if (!segments || segments.length === 0) {
+    return null;
+  }
+
+  // Separate segments by type
+  const layouts = segments.filter((s) => s.type === 'layout');
+  const routeSegment = segments.find((s) => s.type === 'route');
+  const parallelSegments = segments.filter((s) => s.type === 'parallel');
+
+  // Start with the innermost content (route + parallel routes)
+  let content: ReactNode = null;
+
+  // Render route content
+  if (routeSegment && routeSegment.component) {
+    const Component = routeSegment.component as any;
+
+    // If component is a function, invoke it with params
+    if (typeof Component === 'function') {
+      const hasParams =
+        routeSegment.params && Object.keys(routeSegment.params).length > 0;
+
+      if (hasParams) {
+        content = createElement(Component, { params: routeSegment.params });
+      } else {
+        content = createElement(Component);
+      }
+    } else {
+      // If it's already a ReactNode, use it directly
+      content = Component;
+    }
+  }
+
+  // Handle parallel routes (render alongside main content)
+  // For now, we'll render them after the main content
+  // In a real implementation, the layout would need to know about slots
+  if (parallelSegments.length > 0) {
+    const parallelNodes = parallelSegments.map((segment) => {
+      if (!segment.component) return null;
+
+      const Component = segment.component as any;
+
+      // If component is a function, invoke it with params
+      if (typeof Component === 'function') {
+        const hasParams =
+          segment.params && Object.keys(segment.params).length > 0;
+
+        if (hasParams) {
+          return createElement(Component, {
+            key: segment.id,
+            params: segment.params,
+          });
+        } else {
+          return createElement(Component, { key: segment.id });
+        }
+      } else {
+        // If it's already a ReactNode, use it directly
+        return createElement('div', { key: segment.id }, Component);
+      }
+    });
+
+    // Combine route content with parallel routes
+    if (content) {
+      content = createElement(Fragment, null, [content, ...parallelNodes]);
+    } else {
+      content = createElement(Fragment, null, parallelNodes);
+    }
+  }
+
+  // If no content at all, return null
+  if (!content) {
+    return null;
+  }
+
+  // Wrap with layouts from innermost to outermost (reverse order)
+  // Start from the last layout and work backwards
+  for (let i = layouts.length - 1; i >= 0; i--) {
+    const layoutSegment = layouts[i];
+    if (!layoutSegment || !layoutSegment.component) {
+      // Skip null/undefined layouts but continue wrapping
+      continue;
+    }
+
+    const LayoutComponent = layoutSegment.component as any;
+
+    // If it's a function, invoke it
+    if (typeof LayoutComponent === 'function') {
+      // Wrap current content with OutletProvider and pass to layout
+      const wrappedContent = content;
+      content = createElement(
+        OutletProvider,
+        { content: wrappedContent },
+        createElement(LayoutComponent)
+      );
+    } else {
+      // If it's already a ReactNode, just use it (rare case)
+      content = LayoutComponent;
+    }
+  }
+
+  return content;
 }
