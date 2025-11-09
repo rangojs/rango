@@ -41,8 +41,8 @@ Each changeset file follows this format:
 - [Phase 7.5](./phase-7.5-segment-rendering.md) - Server-Side Segment Rendering ✅
 - [Phase 7.6](./phase-7.6-rsc-payload-streaming.md) - RSC Payload Streaming ✅
 - [Phase 7.7](./phase-7.7-client-segment-store.md) - Client Segment Store ✅
-- Phase 7.8 - Client Navigation Protocol 🔜 **← NEXT**
-- Phase 7.9 - Client Segment Reconciliation
+- [Phase 7.8](./phase-7.8-client-navigation.md) - Client Navigation Protocol ✅
+- Phase 7.9 - Client Segment Reconciliation 🔜 **← NEXT**
 - Phase 7.10 - Loading/Error Boundaries per Segment
 - Phase 8.1 - Parallel Route Slot Distribution
 - Phase 8.2 - Enhanced Revalidation Logic

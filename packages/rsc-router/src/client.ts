@@ -6,6 +6,7 @@ export { Outlet, OutletProvider, useOutlet } from './Outlet';
 export type { LinkProps } from './Link';
 
 import type { Segment } from './segment-system';
+import type { RSCPayload } from './segment-system';
 
 /**
  * Client-side segment store for tracking rendered segments
@@ -183,4 +184,124 @@ export class SegmentStore {
       }
     }
   }
+}
+
+/**
+ * Navigation options for client-side navigation
+ */
+export interface NavigationOptions extends Omit<RequestInit, 'method' | 'body'> {
+  /**
+   * Segment store instance
+   * Used to send current segments via _has parameter
+   */
+  store: SegmentStore;
+
+  /**
+   * Base URL for the request
+   * Defaults to current origin
+   */
+  baseUrl?: string;
+
+  /**
+   * Additional headers to send with the request
+   * Merged with default headers (Accept: application/x-rsc)
+   */
+  headers?: HeadersInit;
+}
+
+/**
+ * Navigate to a route with partial rendering support
+ *
+ * Performs client-side navigation by:
+ * 1. Constructing URL with _has parameter (current segments)
+ * 2. Fetching from server with RSC headers
+ * 3. Parsing RSC payload response
+ *
+ * This function implements the client-side navigation protocol described
+ * in the design doc (lines 292-307). It sends the client's current segment
+ * state to the server via the _has parameter, allowing the server to compute
+ * a differential response containing only the segments that need updating.
+ *
+ * @param pathname - Target pathname to navigate to
+ * @param options - Navigation options including segment store
+ * @returns RSC payload containing segments and updates
+ *
+ * @throws Error if navigation fails (network error, non-ok response, etc.)
+ *
+ * @example
+ * ```typescript
+ * import { navigateToRoute, SegmentStore } from 'rsc-router/client';
+ *
+ * const store = new SegmentStore();
+ * // ... populate store with current segments
+ *
+ * // Navigate to new route
+ * const payload = await navigateToRoute('/blog/123', { store });
+ *
+ * // Process payload
+ * store.reconcile(payload.segments);
+ * // Update segments with payload.updates
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // With custom headers
+ * const payload = await navigateToRoute('/blog/123', {
+ *   store,
+ *   headers: {
+ *     'X-Custom-Header': 'value'
+ *   }
+ * });
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // With abort signal
+ * const controller = new AbortController();
+ * const payload = await navigateToRoute('/blog/123', {
+ *   store,
+ *   signal: controller.signal
+ * });
+ * // Later: controller.abort()
+ * ```
+ */
+export async function navigateToRoute(
+  pathname: string,
+  options: NavigationOptions
+): Promise<RSCPayload> {
+  const { store, baseUrl, headers: customHeaders, ...fetchOptions } = options;
+
+  // 1. Build URL with _has parameter
+  const url = new URL(pathname, baseUrl || window.location.origin);
+
+  // Add _has parameter if store has segments
+  const currentSegmentIds = store.getIds();
+  if (currentSegmentIds.length > 0) {
+    url.searchParams.set('_has', currentSegmentIds.join(','));
+  }
+
+  // 2. Prepare headers
+  const defaultHeaders: HeadersInit = {
+    Accept: 'application/x-rsc',
+  };
+
+  // Merge custom headers with defaults
+  const headers = { ...defaultHeaders, ...customHeaders };
+
+  // 3. Fetch from server
+  const response = await fetch(url.toString(), {
+    ...fetchOptions,
+    headers,
+    method: 'GET',
+  });
+
+  // 4. Check response status
+  if (!response.ok) {
+    throw new Error(`Navigation failed: ${response.status} ${response.statusText}`);
+  }
+
+  // 5. Parse RSC payload
+  const payload: RSCPayload = await response.json();
+
+  return payload;
 }
