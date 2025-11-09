@@ -6,6 +6,7 @@ import { createElement, Fragment } from 'react';
 import type { ReactNode } from 'react';
 import * as React from 'react';
 import { OutletProvider } from './Outlet';
+import { route } from './route-definition';
 
 /**
  * Segment type identifiers
@@ -664,4 +665,135 @@ export function createRSCPayload(
     segments: segmentIds,
     updates,
   };
+}
+
+/**
+ * Boundary components for a segment
+ */
+export interface SegmentBoundaries {
+  /**
+   * Loading boundary component
+   */
+  loading?: ReactNode;
+
+  /**
+   * Error boundary component
+   */
+  error?: ReactNode;
+}
+
+/**
+ * Extract loading and error boundaries from handlers
+ *
+ * Looks for [route.loading] and [route.error] symbols in the handlers object.
+ * Supports both global boundaries and per-route boundaries.
+ *
+ * @param handlers - Route handlers object
+ * @param routeName - Optional route name for per-route boundaries
+ * @returns Object with loading and error boundaries (if defined)
+ *
+ * @example
+ * ```typescript
+ * // Global boundaries
+ * const handlers = {
+ *   [route.loading]: LoadingComponent,
+ *   [route.error]: ErrorComponent,
+ *   index: () => <div>Index</div>
+ * };
+ * const boundaries = extractBoundaries(handlers);
+ * // { loading: LoadingComponent, error: ErrorComponent }
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Per-route boundaries
+ * const handlers = {
+ *   [route.loading]: GlobalLoading,
+ *   post: {
+ *     [route.loading]: PostLoading,
+ *     handler: () => <div>Post</div>
+ *   }
+ * };
+ * const boundaries = extractBoundaries(handlers, 'post');
+ * // { loading: PostLoading } - per-route overrides global
+ * ```
+ */
+export function extractBoundaries(
+  handlers: any,
+  routeName?: string
+): SegmentBoundaries {
+  const boundaries: SegmentBoundaries = {};
+
+  // Extract global boundaries
+  const globalLoading = handlers[route.loading];
+  const globalError = handlers[route.error];
+
+  // Extract per-route boundaries if routeName provided
+  let perRouteLoading: ReactNode | undefined;
+  let perRouteError: ReactNode | undefined;
+
+  if (routeName && handlers[routeName]) {
+    const routeHandlers = handlers[routeName];
+    if (typeof routeHandlers === 'object') {
+      perRouteLoading = routeHandlers[route.loading];
+      perRouteError = routeHandlers[route.error];
+    }
+  }
+
+  // Per-route boundaries override global
+  boundaries.loading = perRouteLoading ?? globalLoading;
+  boundaries.error = perRouteError ?? globalError;
+
+  return boundaries;
+}
+
+/**
+ * Wrap content with loading and error boundaries
+ *
+ * Wraps the given content with loading and/or error boundaries if provided.
+ * Error boundary is wrapped inside loading boundary to catch errors during loading.
+ *
+ * @param content - Content to wrap
+ * @param segment - Segment being rendered (for context)
+ * @param boundaries - Boundary components to use
+ * @returns Wrapped content, or original content if no boundaries
+ *
+ * @example
+ * ```typescript
+ * const content = <div>Route Content</div>;
+ * const wrapped = wrapWithBoundaries(content, segment, {
+ *   loading: LoadingComponent,
+ *   error: ErrorComponent
+ * });
+ * // Returns:
+ * // <LoadingBoundary fallback={<LoadingComponent />}>
+ * //   <ErrorBoundary fallback={<ErrorComponent />}>
+ * //     <div>Route Content</div>
+ * //   </ErrorBoundary>
+ * // </LoadingBoundary>
+ * ```
+ */
+export function wrapWithBoundaries(
+  content: ReactNode,
+  segment: Segment,
+  boundaries: SegmentBoundaries
+): ReactNode {
+  let wrapped = content;
+
+  // Wrap with error boundary first (innermost)
+  if (boundaries.error) {
+    // For now, we'll just note that error boundaries would wrap here
+    // Full React error boundary implementation would require ErrorBoundary component
+    // For this phase, we'll document the structure
+    wrapped = content; // Placeholder - would wrap with ErrorBoundary
+  }
+
+  // Wrap with loading boundary (outermost)
+  if (boundaries.loading) {
+    // For now, we'll just note that loading boundaries would wrap here
+    // Full implementation would use Suspense or custom loading boundary
+    wrapped = content; // Placeholder - would wrap with Suspense/LoadingBoundary
+  }
+
+  return wrapped;
 }

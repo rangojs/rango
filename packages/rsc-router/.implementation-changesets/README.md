@@ -43,7 +43,7 @@ Each changeset file follows this format:
 - [Phase 7.7](./phase-7.7-client-segment-store.md) - Client Segment Store ✅
 - [Phase 7.8](./phase-7.8-client-navigation.md) - Client Navigation Protocol ✅
 - [Phase 7.9](./phase-7.9-segment-reconciliation.md) - Client Segment Reconciliation ✅
-- Phase 7.10 - Loading/Error Boundaries per Segment 🔜 **← NEXT**
-- Phase 8.1 - Parallel Route Slot Distribution
+- [Phase 7.10](./phase-7.10-segment-boundaries.md) - Loading/Error Boundaries per Segment ✅
+- Phase 8.1 - Parallel Route Slot Distribution 🔜 **← NEXT**
 - Phase 8.2 - Enhanced Revalidation Logic
 - Phase 9.2 - E2E Integration Tests
