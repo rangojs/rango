@@ -5,8 +5,12 @@ export { Link } from './Link';
 export { Outlet, OutletProvider, useOutlet } from './Outlet';
 export type { LinkProps } from './Link';
 
-import type { Segment } from './segment-system';
+import type { Segment, SegmentType } from './segment-system';
 import type { RSCPayload } from './segment-system';
+import { parseSegmentId } from './segment-system';
+import { createElement, Fragment } from 'react';
+import type { ReactNode } from 'react';
+import { OutletProvider as OutletProviderComponent } from './Outlet';
 
 /**
  * Client-side segment store for tracking rendered segments
@@ -304,4 +308,191 @@ export async function navigateToRoute(
   const payload: RSCPayload = await response.json();
 
   return payload;
+}
+
+/**
+ * Process RSC payload and update segment store
+ *
+ * Implements the client-side reconciliation algorithm described in the design doc
+ * (lines 315-337). This function:
+ * 1. Reconciles store with server's segment list (removes segments not in list)
+ * 2. Updates existing segments with new components from updates
+ * 3. Adds new segments from updates
+ *
+ * @param payload - RSC payload from server response
+ * @param store - Segment store to update
+ *
+ * @example
+ * ```typescript
+ * // After navigation
+ * const payload = await navigateToRoute('/blog/123', { store });
+ *
+ * // Process the payload
+ * processPayload(payload, store);
+ *
+ * // Store is now reconciled with server state
+ * const tree = reconstructTreeFromSegments(store.getAll());
+ * ```
+ */
+export function processPayload(payload: RSCPayload, store: SegmentStore): void {
+  const { segments: serverSegmentIds, updates } = payload;
+
+  // 1. Reconcile - remove segments not in server's list
+  store.reconcile(serverSegmentIds);
+
+  // 2. Process updates - add or update segments
+  for (const segmentId of serverSegmentIds) {
+    // Only process if we have an update for this segment
+    if (segmentId in updates) {
+      const component = updates[segmentId];
+
+      // Parse segment ID to extract type and index
+      const parsed = parseSegmentId(segmentId);
+      if (!parsed) {
+        console.warn(`Invalid segment ID: ${segmentId}`);
+        continue;
+      }
+
+      const { type, index } = parsed;
+
+      // Create segment object
+      const segment: Segment = {
+        id: segmentId,
+        type,
+        index,
+        component,
+        path: '', // Path will be set by application context
+      };
+
+      // Add or update segment
+      if (store.has(segmentId)) {
+        store.updateSegment(segmentId, segment);
+      } else {
+        store.addSegment(segment);
+      }
+    }
+  }
+}
+
+/**
+ * Reconstruct React tree from segments using OutletProvider
+ *
+ * Implements the client-side tree reconstruction algorithm described in the
+ * design doc (lines 369-400). Builds a nested React tree where each layout
+ * wraps its children via OutletProvider.
+ *
+ * The tree is built from innermost to outermost:
+ * - Start with route content (innermost)
+ * - Add parallel routes alongside route content
+ * - Wrap with layouts from last to first (outermost)
+ *
+ * @param segments - Array of segments to render (will be sorted by index)
+ * @returns React tree ready for rendering, or null if no segments
+ *
+ * @example
+ * ```typescript
+ * const segments = store.getAll(); // Already sorted by index
+ * const tree = reconstructTreeFromSegments(segments);
+ *
+ * // Render the tree
+ * root.render(tree);
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // Given segments: [L0, L1, R2, P3]
+ * // Produces tree:
+ * // <OutletProvider content={<OutletProvider content={<Fragment><R2 /><P3 /></Fragment>}>}>
+ * //   <L0 />
+ * // </OutletProvider>
+ * //
+ * // L0's <Outlet /> renders L1
+ * // L1's <Outlet /> renders R2 + P3
+ * ```
+ */
+export function reconstructTreeFromSegments(segments: Segment[]): ReactNode {
+  // Handle empty segments
+  if (!segments || segments.length === 0) {
+    return null;
+  }
+
+  // Sort segments by index to ensure correct order
+  const sortedSegments = [...segments].sort((a, b) => a.index - b.index);
+
+  // Separate segments by type
+  const layouts = sortedSegments.filter((s) => s.type === 'layout');
+  const routeSegment = sortedSegments.find((s) => s.type === 'route');
+  const parallelSegments = sortedSegments.filter((s) => s.type === 'parallel');
+
+  // Start with the innermost content (route + parallel routes)
+  let content: ReactNode = null;
+
+  // Render route content
+  if (routeSegment && routeSegment.component) {
+    const Component = routeSegment.component as any;
+
+    // If component is a function, invoke it
+    if (typeof Component === 'function') {
+      content = createElement(Component);
+    } else {
+      // If it's already a ReactNode, use it directly
+      content = Component;
+    }
+  }
+
+  // Handle parallel routes (render alongside main content)
+  if (parallelSegments.length > 0) {
+    const parallelNodes = parallelSegments.map((segment) => {
+      if (!segment.component) return null;
+
+      const Component = segment.component as any;
+
+      // If component is a function, invoke it
+      if (typeof Component === 'function') {
+        return createElement(Component, { key: segment.id });
+      } else {
+        // If it's already a ReactNode, wrap it
+        return createElement('div', { key: segment.id }, Component);
+      }
+    });
+
+    // Combine route content with parallel routes
+    if (content) {
+      content = createElement(Fragment, null, [content, ...parallelNodes]);
+    } else {
+      content = createElement(Fragment, null, parallelNodes);
+    }
+  }
+
+  // If no content at all, return null
+  if (!content) {
+    return null;
+  }
+
+  // Wrap with layouts from innermost to outermost (reverse order)
+  // Start from the last layout and work backwards
+  for (let i = layouts.length - 1; i >= 0; i--) {
+    const layoutSegment = layouts[i];
+    if (!layoutSegment || !layoutSegment.component) {
+      // Skip null/undefined layouts but continue wrapping
+      continue;
+    }
+
+    const LayoutComponent = layoutSegment.component as any;
+
+    // If it's a function, invoke it
+    if (typeof LayoutComponent === 'function') {
+      // Wrap current content with OutletProvider and pass to layout
+      content = createElement(
+        OutletProviderComponent,
+        { content },
+        createElement(LayoutComponent)
+      );
+    } else {
+      // If it's already a ReactNode, just use it (rare case)
+      content = LayoutComponent;
+    }
+  }
+
+  return content;
 }
