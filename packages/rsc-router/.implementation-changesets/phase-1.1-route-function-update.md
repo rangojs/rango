@@ -148,3 +148,51 @@ The API remains compatible:
 ---
 
 This update addresses the design requirement that route() should return a class instance, not a plain object, to enable router identification and additional functionality.
+
+---
+
+## Additional Pattern Support
+
+Added comprehensive tests for:
+
+### Optional Path Segments
+```typescript
+const routes = route({
+  user: '/users/:id?',              // Optional single segment
+  userEdit: '/users/:id?/edit',     // Optional in middle
+  files: '/files/:year?/:month?/:day?'  // Multiple optional
+});
+```
+
+### File Extensions and Literals
+```typescript
+const routes = route({
+  // Static extensions
+  aboutHtml: '/about.html',
+  sitemap: '/sitemap.xml',
+  robotsTxt: '/robots.txt',
+
+  // Dynamic with extensions
+  userJson: '/users/:id.json',
+  postHtml: '/blog/:slug.html',
+
+  // Optional with extensions
+  userProfile: '/users/:id?/profile.html'
+});
+```
+
+**Test Count**: Increased from 11 to 18 tests (+7)
+**Total Tests**: 21/21 passing ✅
+
+---
+
+## Pattern Support Summary
+
+✅ Static paths
+✅ Dynamic segments (`:id`)
+✅ Optional segments (`:id?`)
+✅ File extensions (`.html`, `.json`, `.xml`)
+✅ Wildcards (`*`)
+✅ Special characters (dashes, underscores, numbers)
+❌ Query parameters (use searchParams instead)
+❌ Hash fragments (client-side only)

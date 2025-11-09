@@ -74,7 +74,7 @@ routes.user // Type: string, Value: '/users/:id'
 
 #### `packages/rsc-router/src/__tests__/route-definition.test.ts`
 **Purpose**: Comprehensive test suite for route() function
-**Tests**: 13 tests across 5 describe blocks
+**Tests**: 18 tests across 6 describe blocks
 
 **Test Coverage**:
 1. **Simple route definitions** (4 tests)
@@ -85,18 +85,31 @@ routes.user // Type: string, Value: '/users/:id'
 
 2. **Type safety** (2 tests)
    - Key preservation
-   - Structure integrity
+   - RouteMap instance verification
 
-3. **Empty and edge cases** (4 tests)
+3. **Empty and edge cases** (2 tests)
    - Empty route map
    - Single route
-   - Query parameters
-   - Hash fragments
 
 4. **Special characters** (3 tests)
    - Wildcard routes (`*`)
    - Dashes and underscores
    - Numbers in paths
+
+5. **Optional path segments** (3 tests)
+   - Optional dynamic segments (`:id?`)
+   - Optional segments in middle of path
+   - Multiple optional segments
+
+6. **File extensions and literals** (4 tests)
+   - Static file extensions (`.html`, `.json`, `.xml`)
+   - Dynamic segments with extensions (`:id.json`)
+   - Common file patterns (`robots.txt`, `favicon.ico`)
+   - Optional segments with extensions
+
+**Explicitly NOT Supported** (documented in tests):
+- ❌ Query parameters in patterns (`/search?q=:query`) - Use searchParams instead
+- ❌ Hash fragments in patterns (`/docs#section`) - Client-side only, never sent to server
 
 ---
 
@@ -123,14 +136,14 @@ pnpm test
 **Output**:
 ```
 ✓ src/__tests__/sanity.test.ts (3 tests) 2ms
-✓ src/__tests__/route-definition.test.ts (13 tests) 3ms
+✓ src/__tests__/route-definition.test.ts (18 tests) 4ms
 
 Test Files  2 passed (2)
-Tests  16 passed (16)
-Duration  329ms
+Tests  21 passed (21)
+Duration  380ms
 ```
 
-**Status**: ✅ 100% passing (16/16 tests)
+**Status**: ✅ 100% passing (21/21 tests)
 
 ### Code Coverage
 Not measured yet (will track in Phase 9.2)
@@ -177,10 +190,16 @@ function route<T extends Record<string, RouteDefinition>>(
 | Static | `'/'`, `'/about'` | Exact path match |
 | Dynamic | `'/users/:id'` | Named parameter |
 | Multi-param | `'/blog/:category/:slug'` | Multiple parameters |
+| Optional | `'/users/:id?'` | Optional segment |
+| Multi-optional | `'/files/:year?/:month?/:day?'` | Multiple optional segments |
 | Wildcard | `'/files/*'`, `'*'` | Catch-all routes |
-| Query string | `'/search?q=:query'` | With query params |
-| Hash | `'/docs#section'` | With hash fragments |
-| Special chars | `'/api-v1'`, `'/user_profile'` | Dashes, underscores |
+| File extensions | `'/about.html'`, `'/users/:id.json'` | Static or dynamic with extensions |
+| Common files | `'/robots.txt'`, `'/sitemap.xml'` | Standard file patterns |
+| Special chars | `'/api-v1'`, `'/user_profile'` | Dashes, underscores, numbers |
+
+**Not Supported** (by design):
+- Query parameters in route patterns - Use `ctx.searchParams` instead
+- Hash fragments - Client-side only, never reach server
 
 ### Type Safety Features
 
@@ -308,18 +327,40 @@ import { route } from 'rsc-router';
 
 // Define routes with type safety
 const routes = route({
+  // Static routes
   home: '/',
   about: '/about',
   contact: '/contact',
+
+  // Dynamic segments
   user: '/users/:id',
   post: '/blog/:category/:slug',
+
+  // Optional segments
+  userEdit: '/users/:id?/edit',
+  blogCategory: '/blog/:category?',
+
+  // File extensions
+  aboutHtml: '/about.html',
+  userJson: '/users/:id.json',
+  sitemap: '/sitemap.xml',
+  robotsTxt: '/robots.txt',
+
+  // Wildcards
   files: '/files/*',
+  notFound: '*',
 });
 
-// Type-safe access
-console.log(routes.home);    // '/'
-console.log(routes.user);    // '/users/:id'
-console.log(routes.post);    // '/blog/:category/:slug'
+// Property access (type-safe)
+console.log(routes.home);         // '/'
+console.log(routes.user);         // '/users/:id'
+console.log(routes.userEdit);     // '/users/:id?/edit'
+console.log(routes.userJson);     // '/users/:id.json'
+
+// Method access
+console.log(routes.get('home'));           // '/'
+console.log(routes.getRouteNames());       // ['home', 'about', ...]
+console.log(routes.has('user'));           // true
 
 // TypeScript ensures safety
 // routes.invalid // ❌ Compile error

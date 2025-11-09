@@ -102,21 +102,9 @@ describe('route() function - Basic types and simple routes', () => {
       expect(routes.getRouteNames()).toEqual(['home']);
     });
 
-    it('should handle route with query parameters in pattern', () => {
-      const routes = route({
-        search: '/search?q=:query',
-      });
-
-      expect(routes.search).toBe('/search?q=:query');
-    });
-
-    it('should handle route with hash in pattern', () => {
-      const routes = route({
-        docs: '/docs#section',
-      });
-
-      expect(routes.docs).toBe('/docs#section');
-    });
+    // Note: Query parameters and hash fragments are NOT supported in route patterns
+    // - Query params should be handled via searchParams, not route matching
+    // - Hash fragments are client-side only and never sent to server
   });
 
   describe('Special characters and patterns', () => {
@@ -148,6 +136,88 @@ describe('route() function - Basic types and simple routes', () => {
 
       expect(routes.api).toBe('/api/v1');
       expect(routes.legacy).toBe('/v2/users');
+    });
+  });
+
+  describe('Optional path segments', () => {
+    it('should handle optional dynamic segments', () => {
+      const routes = route({
+        user: '/users/:id?',
+        blogCategory: '/blog/:category?',
+      });
+
+      expect(routes.user).toBe('/users/:id?');
+      expect(routes.blogCategory).toBe('/blog/:category?');
+    });
+
+    it('should handle optional segments in middle of path', () => {
+      const routes = route({
+        userEdit: '/users/:id?/edit',
+        blogPost: '/blog/:category?/:slug',
+      });
+
+      expect(routes.userEdit).toBe('/users/:id?/edit');
+      expect(routes.blogPost).toBe('/blog/:category?/:slug');
+    });
+
+    it('should handle multiple optional segments', () => {
+      const routes = route({
+        complex: '/path/:optional1?/:optional2?/:required',
+        files: '/files/:year?/:month?/:day?',
+      });
+
+      expect(routes.complex).toBe('/path/:optional1?/:optional2?/:required');
+      expect(routes.files).toBe('/files/:year?/:month?/:day?');
+    });
+  });
+
+  describe('File extensions and literals', () => {
+    it('should handle routes with file extensions', () => {
+      const routes = route({
+        aboutHtml: '/about.html',
+        apiJson: '/api/users.json',
+        feedXml: '/feed.xml',
+      });
+
+      expect(routes.aboutHtml).toBe('/about.html');
+      expect(routes.apiJson).toBe('/api/users.json');
+      expect(routes.feedXml).toBe('/feed.xml');
+    });
+
+    it('should handle dynamic segments with file extensions', () => {
+      const routes = route({
+        userJson: '/users/:id.json',
+        postHtml: '/blog/:slug.html',
+        fileDownload: '/downloads/:filename.:ext',
+      });
+
+      expect(routes.userJson).toBe('/users/:id.json');
+      expect(routes.postHtml).toBe('/blog/:slug.html');
+      expect(routes.fileDownload).toBe('/downloads/:filename.:ext');
+    });
+
+    it('should handle mixed patterns with extensions', () => {
+      const routes = route({
+        sitemap: '/sitemap.xml',
+        robotsTxt: '/robots.txt',
+        manifest: '/manifest.json',
+        favicon: '/favicon.ico',
+      });
+
+      expect(routes.sitemap).toBe('/sitemap.xml');
+      expect(routes.robotsTxt).toBe('/robots.txt');
+      expect(routes.manifest).toBe('/manifest.json');
+      expect(routes.favicon).toBe('/favicon.ico');
+    });
+
+    it('should handle optional segments with extensions', () => {
+      const routes = route({
+        userProfile: '/users/:id?/profile.html',
+        apiResource: '/api/:version?/data.json',
+      });
+
+      expect(routes.userProfile).toBe('/users/:id?/profile.html');
+      expect(routes.apiResource).toBe('/api/:version?/data.json');
     });
   });
 });
