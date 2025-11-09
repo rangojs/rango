@@ -14,6 +14,13 @@
 - **Explicit ordering**: The order of `.use()` calls determines middleware execution order
 - **Scope control**: Middleware can be applied at router, route group, or individual route level
 
+### Layout Composition
+
+- **Single Layout**: `[route.layout]: BlogLayout` - Simple single layout wrapper
+- **Multiple Layouts**: `[route.layout]: [RootLayout, AppShell, BlogLayout]` - Nested layouts applied in order (outer to inner)
+- **Layout Nesting**: Each layout in the array wraps the next, with the last wrapping the content
+- **Outlet Usage**: Every layout uses `<Outlet />` to render its child content
+
 ### Route Mounting
 
 - **Path prefixes**: Routes can be mounted at specific path prefixes using `.route(path, routeMap)`
@@ -45,9 +52,9 @@ The router is designed for **extremely constrained environments** (Cloudflare Wo
 ```typescript
 // ❌ AVOID: Eager initialization
 const router = createRSCRouter({
-  routes: compileAllRoutes(),        // Pre-compiles everything
-  middleware: loadAllMiddleware(),   // Loads all middleware upfront
-  handlers: importAllHandlers(),     // Imports everything
+  routes: compileAllRoutes(), // Pre-compiles everything
+  middleware: loadAllMiddleware(), // Loads all middleware upfront
+  handlers: importAllHandlers(), // Imports everything
 });
 
 // ✅ PREFERRED: Lazy initialization
@@ -56,8 +63,8 @@ const router = createRSCRouter();
 // Routes are registered but NOT compiled until first match
 router
   .route("/blog", blogRoutes)
-  .use(() => import("./middleware"))  // Lazy middleware import
-  .map(() => import("./handlers"));   // Lazy handler import
+  .use(() => import("./middleware")) // Lazy middleware import
+  .map(() => import("./handlers")); // Lazy handler import
 ```
 
 #### Request-Time Optimization Strategies
@@ -72,7 +79,8 @@ router
 // Internal implementation approach (simplified)
 class RSCRouter {
   private routes: Map<string, LazyRouteConfig> = new Map();
-  private compiledMatchers: WeakMap<LazyRouteConfig, CompiledMatcher> = new WeakMap();
+  private compiledMatchers: WeakMap<LazyRouteConfig, CompiledMatcher> =
+    new WeakMap();
 
   async match(request: Request) {
     const path = new URL(request.url).pathname;
@@ -82,7 +90,7 @@ class RSCRouter {
       // Compile matcher on first use, cache result
       let matcher = this.compiledMatchers.get(config);
       if (!matcher) {
-        matcher = this.compilePattern(pattern);  // JIT compilation
+        matcher = this.compilePattern(pattern); // JIT compilation
         this.compiledMatchers.set(config, matcher);
       }
 
@@ -106,13 +114,13 @@ class RSCRouter {
 
 #### Performance Metrics to Optimize
 
-| Metric | Target | Rationale |
-|--------|--------|-----------|
-| Cold start | < 10ms | Critical for edge/serverless |
-| Route matching | < 1ms | Linear scan must be fast |
-| First byte time | < 50ms | Including handler import |
-| Memory baseline | < 1MB | Before any routes loaded |
-| Per-route overhead | < 10KB | Incremental cost per route |
+| Metric             | Target | Rationale                    |
+| ------------------ | ------ | ---------------------------- |
+| Cold start         | < 10ms | Critical for edge/serverless |
+| Route matching     | < 1ms  | Linear scan must be fast     |
+| First byte time    | < 50ms | Including handler import     |
+| Memory baseline    | < 1MB  | Before any routes loaded     |
+| Per-route overhead | < 10KB | Incremental cost per route   |
 
 #### Balanced Lazy Loading
 
@@ -122,7 +130,7 @@ While maximizing laziness, we maintain practical balance:
 // Reasonable eager loading for common cases
 app
   .route(mainRoutes)
-  .use(logger())  // Logger is lightweight, OK to load eagerly
+  .use(logger()) // Logger is lightweight, OK to load eagerly
   .map({
     // Home page handler can be eager - it's hit frequently
     home: HomepageHandler,
@@ -135,9 +143,9 @@ app
 // Heavy routes always lazy
 app
   .route("/admin", adminRoutes)
-  .use(() => import("./auth"))      // Auth middleware is heavy, keep lazy
-  .use(() => import("./rbac"))      // RBAC is complex, keep lazy
-  .map(() => import("./admin"));    // Admin handlers are large, keep lazy
+  .use(() => import("./auth")) // Auth middleware is heavy, keep lazy
+  .use(() => import("./rbac")) // RBAC is complex, keep lazy
+  .map(() => import("./admin")); // Admin handlers are large, keep lazy
 ```
 
 #### Trade-offs Acknowledged
@@ -148,6 +156,7 @@ app
 4. **Debugging**: Lazy loading can complicate stack traces - mitigated by source maps
 
 This architecture prioritizes **startup time** and **memory efficiency** over theoretical maximum throughput, which aligns with serverless/edge constraints where:
+
 - Workers have memory limits (128MB-1GB)
 - Cold starts directly impact user experience
 - CPU time is metered and costly
@@ -176,37 +185,371 @@ Every route is composed of indexed segments that can be individually rendered:
   L4: AuthorLayout,         // /blog/:id/author layout
   R5: AuthorProfile         // /blog/:id/author/:id content
 ]
+
+// When using layout arrays:
+// [route.layout]: [AppShell, BlogLayout, BlogSidebar]
+// Produces segments:
+[
+  L0: AppShell,            // Outermost layout
+  L1: BlogLayout,          // Middle layout
+  L2: BlogSidebar,         // Innermost layout
+  R3: BlogPost             // Content
+]
+// AppShell's <Outlet /> renders BlogLayout
+// BlogLayout's <Outlet /> renders BlogSidebar
+// BlogSidebar's <Outlet /> renders BlogPost
 ```
 
-### Partial Rendering Protocol
+### Server-Client Segment Rendering Architecture
 
-#### Query Parameter Syntax
+#### Core Principle: Client Reports, Server Computes
 
-Use the `_routes` query parameter with index-based notation:
+The client doesn't know routing logic or what segments it needs - it only knows what segments it currently has rendered. The server is responsible for computing what needs to be sent based on the navigation target and the client's current state.
 
-- **`L{n}`**: Layout at index n
-- **`R{n}`**: Route content at index n
-- **`:`**: Range operator (inclusive)
-- **`,`**: Multiple segments separator
-- **`@`**: Named slot prefix for parallel routes
+**Key Architecture Points:**
+
+- Server renders segments bottom-up using OutletContext
+- Client tracks rendered segment IDs (L0, R1, P2, etc.)
+- Segment types: L (layout), R (route content), P (parallel route with @name)
+- Layouts can be arrays: `[route.layout]: [Layout1, Layout2]` creates multiple L segments
+- Parallel routes use `[route.parallel]`: defines P segments like @sidebar, @modal
+- On navigation, client sends `_has` parameter with current segments
+- Server always responds with complete segment list for reconciliation
+- Server computes differential and returns only needed updates
+- Client reconciles by comparing its segments with server's list
+
+#### Server-Side Rendering with OutletContext
+
+On the server, segments are rendered hierarchically and passed through OutletContext. This bottom-up rendering approach allows parent layouts to receive pre-rendered children.
+
+**Note: Server and client handle segment composition differently:**
+
+- **Server**: Renders bottom-up, each segment has access to pre-rendered children via context
+- **Client**: Stores segments flat, `<Outlet />` component knows how to access the next segment
+
+```typescript
+// Server renders child segments and makes them available to parents
+class ServerRenderer {
+  async renderSegment(segment: RouteSegment, childContent?: ReactNode) {
+    // Set up context for this segment
+    // Outlet component will internally access this context
+    const context = {
+      children: childContent, // Pre-rendered child segments
+      params: segment.params,
+      pathname: segment.path,
+    };
+
+    // Render segment - Outlet inside will access context
+    const Component = await segment.component();
+    return (
+      <SegmentContext.Provider value={context}>
+        <Component />
+      </SegmentContext.Provider>
+    );
+  }
+
+  async renderFullRoute(pathname: string) {
+    const segments = this.buildSegmentMap(pathname);
+    let rendered = null;
+
+    // Render from deepest to root (bottom-up)
+    // This ensures children are rendered before parents
+    for (let i = segments.length - 1; i >= 0; i--) {
+      const segment = segments[i];
+      rendered = await this.renderSegment(segment, rendered);
+    }
+
+    return rendered;
+  }
+}
+
+// Example Layout Component
+function BlogLayout() {
+  return (
+    <div className="blog-layout">
+      <BlogHeader />
+      <main>
+        {/* Outlet automatically renders the next segment */}
+        <Outlet />
+      </main>
+      <BlogFooter />
+    </div>
+  );
+}
+```
+
+#### Client State Communication Protocol for SPA Navigation
+
+During SPA (Single Page Application) navigation, the client communicates its current rendered segments using the `_has` query parameter. This enables efficient updates without full page reloads:
+
+```typescript
+// Client tracks what segments are currently rendered
+interface ClientState {
+  renderedSegments: Set<string>; // e.g., Set(['L0', 'L1', 'R2', 'L3', 'R4'])
+}
+
+// During navigation, client sends what it has
+async function navigateToRoute(pathname: string) {
+  const currentSegments = Array.from(clientState.renderedSegments);
+  const url = `${pathname}?_has=${currentSegments.join(",")}`;
+
+  const responsePromise = fetch(url, {
+    headers: {
+      Accept: "application/x-rsc",
+    },
+  });
+
+  // Use RSC's createFromFetch to process the stream
+  const payload = await createFromFetch<RscPayload>(responsePromise);
+
+  // RscPayload contains segments and updates as RSC components
+  processPayload(payload);
+}
+
+// Process RSC payload
+interface RscPayload {
+  segments: string[]; // Complete list of segment IDs
+  updates: Record<string, ReactNode>; // RSC components for segments
+}
+
+function processPayload(payload: RscPayload) {
+  const { segments, updates } = payload;
+  const shouldExist = new Set(segments);
+
+  // 1. Remove segments not in server list
+  for (const id of clientState.renderedSegments) {
+    if (!shouldExist.has(id)) {
+      removeSegment(id);
+    }
+  }
+
+  // 2. Update/add segments from RSC payload
+  for (const [id, component] of Object.entries(updates)) {
+    if (clientState.renderedSegments.has(id)) {
+      updateSegment(id, component); // Replace with new RSC component
+    } else {
+      addSegment(id, component); // Add new RSC component
+    }
+  }
+
+  // 3. Update client state
+  clientState.renderedSegments = shouldExist;
+}
+```
+
+#### Client-Side Segment Composition with OutletProvider
+
+The client uses React Context to pass segments through the component tree:
+
+```typescript
+// Outlet component uses React Context to get its content
+const OutletContext = createContext<ReactNode | null>(null);
+
+export function Outlet() {
+  const content = useContext(OutletContext);
+  return <>{content}</>;
+}
+
+// OutletProvider wraps segments and provides content to Outlet
+export function OutletProvider({
+  children,
+  content,
+}: {
+  children: ReactNode; // The current segment component
+  content: ReactNode; // The next segment(s) to render in Outlet
+}) {
+  return (
+    <OutletContext.Provider value={content}>{children}</OutletContext.Provider>
+  );
+}
+
+// Client builds the segment chain using OutletProvider
+// NOTE: Implementation needs correction - should build so each segment's
+// Outlet shows the NEXT segment, not previous ones
+function reconstructTreeFromSegments(segments: Segment[]): ReactNode {
+  if (!segments || segments.length === 0) {
+    return null;
+  }
+
+  // Build from last to first (innermost to outermost)
+  // Each segment wraps the next one(s)
+  let tree: ReactNode = null;
+
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const segment = segments[i];
+
+    // Current segment's Outlet will show the accumulated tree (next segments)
+    tree = (
+      <OutletProvider content={tree} key={`outlet-${segment.index}`}>
+        {segment.component}
+      </OutletProvider>
+    );
+  }
+
+  return tree;
+}
+
+// Example: Given segments [L0: RootLayout, L1: BlogLayout, R2: BlogPost]
+//
+// Step 1 (i=2): tree = <OutletProvider content={null}><BlogPost /></OutletProvider>
+// Step 2 (i=1): tree = <OutletProvider content={[BlogPost wrapped]}><BlogLayout /></OutletProvider>
+// Step 3 (i=0): tree = <OutletProvider content={[BlogLayout+BlogPost wrapped]}><RootLayout /></OutletProvider>
+//
+// Result: RootLayout is outermost, its Outlet shows BlogLayout,
+//         BlogLayout's Outlet shows BlogPost
+
+// When BlogLayout renders <Outlet />, it gets BlogPost from context
+function BlogLayout() {
+  return (
+    <div className="blog-layout">
+      <BlogHeader />
+      <main>
+        <Outlet /> {/* Gets content from OutletContext */}
+      </main>
+      <BlogFooter />
+    </div>
+  );
+}
+```
+
+This approach:
+
+- Uses React Context for clean component composition
+- Layouts remain simple with just `<Outlet />`
+- OutletProvider handles passing segments through the tree
+- Works identically for all layouts regardless of nesting level
+
+#### Server Differential Computation
+
+The server computes what segments need to be sent:
+
+```typescript
+class DifferentialRenderer {
+  async handleRequest(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const pathname = url.pathname;
+    const clientHas = this.parseClientSegments(url.searchParams.get("_has"));
+
+    // Build target segment map for requested route
+    const targetSegments = this.buildSegmentMap(pathname);
+    const targetIds = new Set(targetSegments.map((s) => s.id));
+
+    // Compute what needs to be sent
+    const toSend = this.computeDifferential(
+      clientHas,
+      targetIds,
+      targetSegments
+    );
+
+    // Render only necessary segments
+    const rendered = await this.renderSegments(toSend);
+
+    // Create RSC payload with segment information
+    const rscPayload = {
+      segments: targetSegments.map((s) => s.id), // Complete list of segments
+      updates: rendered, // Only segments that need updating (as React components)
+    };
+
+    // Return as RSC stream, not JSON
+    return new Response(renderToRSCStream(rscPayload), {
+      headers: { "Content-Type": "application/x-rsc" },
+    });
+  }
+
+  private computeDifferential(
+    clientHas: Set<string>,
+    targetIds: Set<string>,
+    targetSegments: RouteSegment[]
+  ): RouteSegment[] {
+    const toRender: RouteSegment[] = [];
+
+    for (const segment of targetSegments) {
+      const shouldSend =
+        // Segment doesn't exist on client
+        !clientHas.has(segment.id) ||
+        // Segment needs revalidation (params changed, etc.)
+        this.needsRevalidation(segment, clientHas);
+
+      if (shouldSend) {
+        toRender.push(segment);
+      }
+    }
+
+    return toRender;
+  }
+}
+```
 
 #### Examples
 
+##### Initial Navigation (No Client State)
+
 ```typescript
-// Render only the author section (layout + content)
-GET /blog/123/author/456?_routes=L4:R5
+// Client navigates to /blog/123/author/456
+GET /blog/123/author/456
+// No _has parameter = full render
 
-// Render only the author content (layout unchanged)
-GET /blog/123/author/789?_routes=R5
+Server response (RSC Payload):
+{
+  segments: ['L0', 'L1', 'R2', 'L3', 'R4'],  // Complete segment list
+  updates: {  // All segments as RSC components
+    L0: <RootLayout />,
+    L1: <BlogLayout />,
+    R2: <BlogPost id="123" />,
+    L3: <AuthorLayout />,
+    R4: <AuthorProfile id="456" />
+  }
+}
+// Sent as RSC stream, not JSON
+```
 
-// Render multiple specific segments
-GET /blog/123/author/456?_routes=L2,R5
+##### Subsequent Navigation (With Client State)
 
-// Render a range
-GET /blog/123/author/456?_routes=L2:R5
+```typescript
+// Client has L0,L1,R2,L3,R4 rendered
+// Navigates to /blog/123/author/789
+GET /blog/123/author/789?_has=L0,L1,R2,L3,R4
 
-// Render named slots
-GET /blog/123?_routes=R3,@sidebar,@modal
+Server computes:
+- L0: No change needed (same root)
+- L1: No change needed (same blog layout)
+- R2: No change needed (same blog post)
+- L3: No change needed (same author layout structure)
+- R4: NEEDS UPDATE (different author ID)
+
+Server response (RSC Payload):
+{
+  segments: ['L0', 'L1', 'R2', 'L3', 'R4'],  // Same structure
+  updates: {
+    R4: <AuthorProfile id="789" />  // Only R4 as RSC component
+  }
+}
+// Streamed as RSC, client reconciles: keeps L0-L3, updates R4
+```
+
+##### Navigation with Structure Change
+
+```typescript
+// Client has L0,L1,R2 rendered (on /blog/123)
+// Navigates to /blog/123/author/456 (deeper nesting)
+GET /blog/123/author/456?_has=L0,L1,R2
+
+Server computes:
+- L0: Already has
+- L1: Already has
+- R2: Already has
+- L3: NEW - needs to send
+- R4: NEW - needs to send
+
+Server response (RSC Payload):
+{
+  segments: ['L0', 'L1', 'R2', 'L3', 'R4'],  // Extended structure
+  updates: {
+    L3: <AuthorLayout />,      // New segment as RSC
+    R4: <AuthorProfile id="456" />  // New segment as RSC
+  }
+}
+// Streamed as RSC, client reconciles: keeps L0-L2, adds L3-R4
 ```
 
 ### Implementation Requirements
@@ -218,7 +561,7 @@ Routes must maintain a consistent index mapping:
 ```typescript
 interface RouteSegment {
   index: number;
-  type: 'layout' | 'content' | 'error' | 'loading';
+  type: "layout" | "content" | "error" | "loading";
   path: string;
   component: () => Promise<JSX.Element>;
   params: Record<string, string>;
@@ -236,16 +579,16 @@ class RSCRouter {
     for (const layout of this.rootLayouts) {
       segments.push({
         index: index++,
-        type: 'layout',
-        path: '/',
+        type: "layout",
+        path: "/",
         component: layout,
-        params: {}
+        params: {},
       });
     }
 
     // Build segments for each path part
-    const parts = pathname.split('/').filter(Boolean);
-    let currentPath = '';
+    const parts = pathname.split("/").filter(Boolean);
+    let currentPath = "";
 
     for (const part of parts) {
       currentPath += `/${part}`;
@@ -255,10 +598,10 @@ class RSCRouter {
       for (const layout of layouts) {
         segments.push({
           index: index++,
-          type: 'layout',
+          type: "layout",
           path: currentPath,
           component: layout,
-          params: this.extractParams(currentPath)
+          params: this.extractParams(currentPath),
         });
       }
 
@@ -267,10 +610,10 @@ class RSCRouter {
       if (content) {
         segments.push({
           index: index++,
-          type: 'content',
+          type: "content",
           path: currentPath,
           component: content,
-          params: this.extractParams(currentPath)
+          params: this.extractParams(currentPath),
         });
       }
     }
@@ -293,7 +636,10 @@ interface RevalidationContext {
 }
 
 class LayoutRevalidation {
-  shouldRevalidateLayout(ctx: RevalidationContext, layoutIndex: number): boolean {
+  shouldRevalidateLayout(
+    ctx: RevalidationContext,
+    layoutIndex: number
+  ): boolean {
     const currentLayout = ctx.currentSegments[layoutIndex];
     const nextLayout = ctx.nextSegments[layoutIndex];
 
@@ -311,9 +657,11 @@ class LayoutRevalidation {
     // Same structure but different params (e.g., /blog/1 to /blog/2)
     // Layout persists, only content revalidates
     const paramKeys = Object.keys(currentLayout.params);
-    const significantParamChanged = paramKeys.some(key => {
-      return currentLayout.params[key] !== nextLayout.params[key] &&
-             this.isLayoutSensitiveParam(key);
+    const significantParamChanged = paramKeys.some((key) => {
+      return (
+        currentLayout.params[key] !== nextLayout.params[key] &&
+        this.isLayoutSensitiveParam(key)
+      );
     });
 
     return significantParamChanged;
@@ -321,46 +669,76 @@ class LayoutRevalidation {
 
   private getPathPattern(path: string): string {
     // Convert /blog/123 to /blog/:id pattern
-    return path.replace(/\/\d+/g, '/:id')
-               .replace(/\/[a-f0-9-]{36}/g, '/:uuid'); // UUIDs
+    return path.replace(/\/\d+/g, "/:id").replace(/\/[a-f0-9-]{36}/g, "/:uuid"); // UUIDs
   }
 }
 ```
 
-#### 3. Named Slots for Parallel Routes
+#### 3. Parallel Routes (Named Slots)
 
-Support rendering multiple components at the same route level:
+Support rendering multiple components at the same route level using `[route.parallel]`:
 
 ```typescript
-// Route definition with parallel routes
+// Route definition
 let routes = route({
-  dashboard: {
-    path: "/dashboard",
-    slots: {
-      "@main": "/dashboard",
-      "@sidebar": "/dashboard",
-      "@modal": "/dashboard"
-    }
-  }
+  dashboard: "/dashboard",
 });
 
-// Route handlers
+// Route handlers with parallel routes
 app.route(routes.dashboard).map({
   // Main content
   index: () => <DashboardContent />,
 
-  // Named slots
-  "@sidebar": () => <DashboardSidebar />,
-  "@modal": () => <DashboardModal />,
+  // Parallel routes using [route.parallel]
+  [route.parallel]: {
+    "@sidebar": () => <DashboardSidebar />,
+    "@modal": () => <DashboardModal />,
+    "@header": () => <DashboardHeader />,
+  },
 });
 
-// Partial rendering of slots
+// Partial rendering of parallel routes
 // GET /dashboard?_routes=@sidebar
 // Only re-renders the sidebar component
 
-// Multiple slots
+// Multiple parallel routes
 // GET /dashboard?_routes=@sidebar,@modal
 // Re-renders both sidebar and modal
+
+// All parallel routes render together with main content
+// GET /dashboard
+// Renders: index + @sidebar + @modal + @header
+```
+
+### Complete Example with Layouts and Parallel Routes
+
+```typescript
+let routes = route({
+  dashboard: "/dashboard",
+  settings: "/dashboard/settings",
+});
+
+app.route(routes.dashboard).map({
+  // Can combine array layouts with parallel routes
+  [route.layout]: [AppShell, DashboardLayout],
+
+  // Main content
+  index: () => <DashboardMain />,
+
+  // Parallel routes render alongside main content
+  [route.parallel]: {
+    "@sidebar": () => <DashboardSidebar />,
+    "@notifications": () => <NotificationPanel />,
+  },
+});
+
+// Segment structure for /dashboard:
+// L0: AppShell
+// L1: DashboardLayout
+// R2: DashboardMain
+// P3: @sidebar (DashboardSidebar)
+// P4: @notifications (NotificationPanel)
+// P-segments (parallel) render at the same level as R-segments
 ```
 
 #### 4. Loading and Error Boundaries per Segment
@@ -376,17 +754,17 @@ interface SegmentBoundaries {
 // Route configuration with boundaries
 app.route("/blog", blogRoutes).map({
   [route.layout]: BlogLayout,
-  [route.loading]: BlogLoading,    // L2.loading
-  [route.error]: BlogError,        // L2.error
+  [route.loading]: BlogLoading, // L2.loading
+  [route.error]: BlogError, // L2.error
 
-  index: () => <BlogList />,       // R3
+  index: () => <BlogList />, // R3
 
   // Nested route with its own boundaries
   post: {
-    [route.loading]: PostLoading,  // R4.loading
-    [route.error]: PostError,      // R4.error
-    handler: (ctx) => <BlogPost id={ctx.params.id} />
-  }
+    [route.loading]: PostLoading, // R4.loading
+    [route.error]: PostError, // R4.error
+    handler: (ctx) => <BlogPost id={ctx.params.id} />,
+  },
 });
 
 // During partial render with error
@@ -414,11 +792,11 @@ class PartialRenderer {
     }
 
     if (middlewareResult.blocked) {
-      return new Response('Forbidden', { status: 403 });
+      return new Response("Forbidden", { status: 403 });
     }
 
     // Only AFTER middleware passes do we check partial rendering
-    const routes = url.searchParams.get('_routes');
+    const routes = url.searchParams.get("_routes");
 
     if (!routes) {
       return this.fullRender(request, middlewareResult.context);
@@ -458,12 +836,12 @@ class PartialRenderer {
 // Example: Admin route with authentication
 app
   .route("/admin", adminRoutes)
-  .use(authenticate())     // Runs on EVERY request to /admin/*
-  .use(requireRole('admin')) // Even for ?_routes=R5
-  .use(auditLog())         // Logs all access attempts
+  .use(authenticate()) // Runs on EVERY request to /admin/*
+  .use(requireRole("admin")) // Even for ?_routes=R5
+  .use(auditLog()) // Logs all access attempts
   .map({
     users: () => <UserList />,
-    settings: () => <Settings />
+    settings: () => <Settings />,
   });
 
 // Request: GET /admin/users?_routes=R3
@@ -480,7 +858,7 @@ app
 class PartialRenderer {
   async render(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    const routes = url.searchParams.get('_routes');
+    const routes = url.searchParams.get("_routes");
 
     // Middleware has already run before this point
     if (!routes) {
@@ -499,34 +877,34 @@ class PartialRenderer {
     // Render with boundaries
     const rendered = await this.renderSegments(segmentsToRender, {
       wrapInBoundaries: true,
-      streaming: true
+      streaming: true,
     });
 
     // Return RSC payload (not full HTML document)
     return new Response(rendered, {
       headers: {
-        'Content-Type': 'application/x-rsc',
-        'X-Rendered-Segments': segments
-      }
+        "Content-Type": "application/x-rsc",
+        "X-Rendered-Segments": segments,
+      },
     });
   }
 
   private parseRouteSegments(routes: string): SegmentSelector[] {
     // Parse "L2:R5" or "L2,R5" or "@sidebar"
     const selectors: SegmentSelector[] = [];
-    const parts = routes.split(',');
+    const parts = routes.split(",");
 
     for (const part of parts) {
-      if (part.includes(':')) {
+      if (part.includes(":")) {
         // Range selector
-        const [start, end] = part.split(':');
-        selectors.push({ type: 'range', start, end });
-      } else if (part.startsWith('@')) {
+        const [start, end] = part.split(":");
+        selectors.push({ type: "range", start, end });
+      } else if (part.startsWith("@")) {
         // Named slot
-        selectors.push({ type: 'slot', name: part });
+        selectors.push({ type: "slot", name: part });
       } else {
         // Single segment
-        selectors.push({ type: 'single', id: part });
+        selectors.push({ type: "single", id: part });
       }
     }
 
@@ -535,51 +913,92 @@ class PartialRenderer {
 }
 ```
 
-### Navigation Examples
+### Client-Server Navigation Flow
 
-#### Initial Navigation
+#### Why Client Reports Instead of Requesting
+
+The client doesn't know the routing structure or what it needs next - it only knows what's currently rendered. This "dumb client, smart server" approach ensures:
+
+- Routing logic stays server-side
+- Client code remains minimal
+- Server can optimize based on full route knowledge
+- Structure changes are handled gracefully
+
+#### Navigation Flow Examples
+
+##### Initial Page Load
+
 ```typescript
-// User navigates to /blog/123/author/456
-// Full render (no _routes param)
+// First visit - no client state
 GET /blog/123/author/456
 
-Response segments:
-L0: RootLayout
-L1: BlogLayout
-R2: BlogPost(id=123)
-L3: AuthorLayout
-R4: AuthorProfile(id=456)
+Server: Full render all segments
+Response: L0, L1, R2, L3, R4
+Client: Stores segment IDs for future navigation
 ```
 
-#### Navigate to Different Author
-```typescript
-// User clicks to view different author
-// Only author content changes, layout persists
-GET /blog/123/author/789?_routes=R4
+##### Navigate to Different Author
 
-Response segments:
-R4: AuthorProfile(id=789)  // Only this renders
+```typescript
+// Client currently has: L0,L1,R2,L3,R4
+// User clicks to /blog/123/author/789
+
+GET /blog/123/author/789?_has=L0,L1,R2,L3,R4
+
+Server computation:
+- Target route needs: L0,L1,R2,L3,R4
+- Client has: L0,L1,R2,L3,R4
+- Only R4 has different params (789 vs 456)
+
+Response (RSC Payload):
+{
+  segments: ['L0', 'L1', 'R2', 'L3', 'R4'],
+  updates: { R4: <AuthorProfile id="789" /> }
+}
+// Streamed as RSC via createFromFetch
+Client: Reconciles - keeps all segments, updates only R4
 ```
 
-#### Navigate to Different Blog Post
-```typescript
-// User navigates to different blog post
-// Blog layout persists, content and nested routes change
-GET /blog/456/author/789?_routes=R2:R4
+##### Navigate to Different Blog Post
 
-Response segments:
-R2: BlogPost(id=456)
-L3: AuthorLayout         // Re-render due to parent change
-R4: AuthorProfile(id=789)
+```typescript
+// Client currently has: L0,L1,R2,L3,R4
+// User navigates to /blog/456
+
+GET /blog/456?_has=L0,L1,R2,L3,R4
+
+Server computation:
+- Target route needs: L0,L1,R2 only
+- Client has extra segments: L3,R4
+- R2 needs update (different blog ID)
+
+Response: {
+  segments: ['L0', 'L1', 'R2'],  // Shorter list - no L3,R4
+  updates: { R2: <BlogPost id="456" /> }
+}
+Client: Reconciles - sees L3,R4 not in list, removes them, updates R2
 ```
 
-#### Revalidate Specific Layout
-```typescript
-// Force revalidation of blog layout only
-GET /blog/123/author/456?_routes=L1
+##### Structure Addition
 
-Response segments:
-L1: BlogLayout  // Only layout re-renders
+```typescript
+// Client on /blog/123 has: L0,L1,R2
+// Navigates to /blog/123/author/456 (deeper)
+
+GET /blog/123/author/456?_has=L0,L1,R2
+
+Server computation:
+- Target needs: L0,L1,R2,L3,R4
+- Client missing: L3,R4
+
+Response: {
+  segments: ['L0', 'L1', 'R2', 'L3', 'R4'],  // Extended list
+  updates: {
+    L3: <AuthorLayout />,
+    R4: <AuthorProfile id="456" />
+  }
+}
+Client: Reconciles - sees L3,R4 in list but not rendered, adds them
 ```
 
 ### Performance Optimizations
@@ -598,25 +1017,32 @@ const stream = new ReadableStream({
       controller.enqueue(encodeRSCChunk(segment.index, rendered));
     }
     controller.close();
-  }
+  },
 });
 
 return new Response(stream, {
-  headers: { 'Content-Type': 'application/x-rsc-stream' }
+  headers: { "Content-Type": "application/x-rsc-stream" },
 });
 ```
 
 ### Critical Implementation Notes
 
 1. **Middleware Execution**: Middleware MUST run on EVERY request, regardless of partial/full render - this is critical for security
-2. **Consistency**: Segment indices MUST remain consistent across renders
-3. **State Preservation**: Persisted layouts must maintain their state
-4. **Error Isolation**: Errors in one segment must not affect others
-5. **Progressive Enhancement**: Full render fallback if partial rendering fails
-6. **Type Safety**: TypeScript must enforce valid segment references
-7. **Security First**: Never bypass middleware for performance - security checks are non-negotiable
+2. **Client-Server Protocol**: Client uses `_has` parameter to report current segments, server computes what to send - client never knows routing logic
+3. **Outlet Component**: All layouts use simple `<Outlet />` syntax - implementation handles segment access internally (context on server, store lookup on client)
+4. **Consistency**: Segment IDs (L0, R1, etc.) MUST remain consistent across renders for the same route structure
+5. **State Preservation**: Persisted layouts must maintain their state when not re-rendered
+6. **Error Isolation**: Errors in one segment must not affect others - use boundaries per segment
+7. **Progressive Enhancement**: Full render fallback if client state is missing or corrupted
+8. **Type Safety**: TypeScript must enforce valid segment references and context types
+9. **Security First**: Never bypass middleware for performance - security checks are non-negotiable
 
-This partial rendering system is **MANDATORY** for the router implementation and must be considered in all architectural decisions. The combination of always-running middleware with partial rendering ensures both security and performance.
+This partial rendering system with client state reporting is **MANDATORY** for the router implementation. The architecture ensures:
+
+- Minimal client complexity (client just reports what it has)
+- Server controls all routing decisions
+- Optimal performance through differential updates
+- Security through mandatory middleware execution
 
 ---
 
@@ -637,8 +1063,8 @@ let routesMain = route({
 
 // Define blog routes relative to their mount point
 let routesBlog = route({
-  index: "/",        // Will become /blog when mounted at /blog
-  show: "/:slug",    // Will become /blog/:slug when mounted at /blog
+  index: "/", // Will become /blog when mounted at /blog
+  show: "/:slug", // Will become /blog/:slug when mounted at /blog
 });
 
 let app = createRSCRouter({
@@ -666,9 +1092,10 @@ app
   .route(routesMain)
   .use(logger()) // Apply logging to main routes
   .map({
-    [route.layout]: (ctx) => <MainLayout />, // layout for all routes in this map and must use <Outlet/>
-    // or
-    [route.layout]: [moreLayout1, moreLayout2],
+    // Layouts can be a single component or array of nested layouts
+    [route.layout]: <MainLayout />, // Single layout
+    // OR array for multiple nested layouts (applied in order)
+    // [route.layout]: [<BaseLayout />, <MainLayout />],
 
     // GET request handler (automatic)
     home() {
@@ -699,9 +1126,10 @@ app
 ```typescript
 // route.blog.handlers.ts
 export default map(routesBlog, {
+  // Layout can be single component or array for nested layouts
   [route.layout]: BlogLayout,
-  // or
-  [route.layout]: [BlogLayout, BlogSidebar],
+  // OR multiple layouts that nest (outer to inner order)
+  // [route.layout]: [AppShell, BlogLayout, BlogSidebar],
 
   // GET /blog - automatically handles GET requests (mounted at /blog)
   index() {
@@ -823,20 +1251,20 @@ let authRoutes = route({
 });
 
 let adminRoutes = route({
-  index: "/",           // Will become /admin
-  users: "/users",      // Will become /admin/users
-  posts: "/posts",      // Will become /admin/posts
+  index: "/", // Will become /admin
+  users: "/users", // Will become /admin/users
+  posts: "/posts", // Will become /admin/posts
   settings: "/settings", // Will become /admin/settings
 });
 
 let apiV1Routes = route({
-  users: "/users",      // Will become /api/v1/users
-  posts: "/posts",      // Will become /api/v1/posts
+  users: "/users", // Will become /api/v1/users
+  posts: "/posts", // Will become /api/v1/posts
 });
 
 let apiV2Routes = route({
-  users: "/users",      // Will become /api/v2/users
-  posts: "/posts",      // Will become /api/v2/posts
+  users: "/users", // Will become /api/v2/users
+  posts: "/posts", // Will become /api/v2/posts
   comments: "/comments", // Will become /api/v2/comments
 });
 
@@ -1045,8 +1473,10 @@ async function updateProduct(formData: FormData) {
   }
 
   await db.products.update(productId, validation.data);
-  revalidatePath(`/products/${productId}`);
-  redirect(`/products/${productId}`);
+  getRouter().current.revalidate();
+  throw redirect(`/products/${productId}`);
+  // or
+  return redirect(`/products/${productId}`);
 }
 
 export function ProductEditForm({ product }) {
@@ -1110,4 +1540,36 @@ app
       },
     },
   });
+```
+
+### Domain Router
+
+```typescript
+const domainRouter = createHostRouter({});
+const websiteDomainRoute = hostRoute(["*"]);
+const storeDomainRoute = hostRoute("*/store/*");
+const docsDomainRoute = hostRoute("*/docs/*");
+const authDomainRoute = hostRoute("*/auth/*");
+const adminDomainRoute = hostRoute("admin.*");
+const apiDomainRoute = hostRoute("api.*");
+
+/* website */
+domainRouter.host(websiteDomainRoute).map(() => import("app.server"));
+/* store */
+domainRouter.host(storeDomainRoute).map(() => import("store.server"));
+/* docs */
+domainRouter.host(docsDomainRoute).map(() => import("docs.server"));
+/* auth */
+domainRouter.host(authDomainRoute).map(() => import("auth.server"));
+/* admin */
+domainRouter.host(adminDomainRoute).map(() => import("admin.server"));
+/* api */
+domainRouter.host(apiDomainRoute).map(() => import("api.server"));
+/* saas */
+domainRouter
+  .host(["*.*"])
+  .use(saasMiddleware())
+  .map(() => import("saas.server"));
+
+export default domainRouter;
 ```
