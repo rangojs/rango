@@ -5,12 +5,32 @@
 
 /**
  * A route definition can be either:
- * - A string path (e.g., '/', '/about', '/users/:id') - Phase 1.1
- * - A nested object of route definitions - Phase 1.2 (not yet implemented)
- *
- * For now (Phase 1.1), only string paths are supported
+ * - A string path (e.g., '/', '/about', '/users/:id')
+ * - A nested object of route definitions (for grouped routes)
  */
-export type RouteDefinition = string;
+export type RouteDefinition =
+  | string
+  | { [key: string]: RouteDefinition };
+
+/**
+ * Recursively maps route definitions to their resolved types
+ * - String → string
+ * - Nested object → ResolvedRouteMap<T>
+ */
+export type RouteMapType<T> = T extends string
+  ? string
+  : T extends Record<string, RouteDefinition>
+    ? ResolvedRouteMap<T>
+    : never;
+
+/**
+ * Resolved route map type that includes both class methods and properties
+ * This type tells TypeScript that RouteMap<T> has all properties from T
+ */
+export type ResolvedRouteMap<T extends Record<string, RouteDefinition>> =
+  RouteMap<T> & {
+    [K in keyof T]: RouteMapType<T[K]>;
+  };
 
 /**
  * Route class that wraps route definitions
@@ -31,26 +51,47 @@ export class RouteMap<T extends Record<string, RouteDefinition>> {
   constructor(definitions: T) {
     this._routes = definitions;
 
-    // Make route definitions accessible as properties
-    // This allows: routeMap.home instead of routeMap.get('home')
+    // Process each definition - could be string or nested object
     Object.keys(definitions).forEach((key) => {
-      Object.defineProperty(this, key, {
-        get() {
-          return definitions[key];
-        },
-        enumerable: true,
-        configurable: false,
-      });
+      const value = definitions[key];
+
+      if (typeof value === 'string') {
+        // Simple string path - create getter
+        Object.defineProperty(this, key, {
+          get() {
+            return value;
+          },
+          enumerable: true,
+          configurable: false,
+        });
+      } else {
+        // Nested object - recursively create RouteMap
+        Object.defineProperty(this, key, {
+          get() {
+            return new RouteMap(value as Record<string, RouteDefinition>);
+          },
+          enumerable: true,
+          configurable: false,
+        });
+      }
     });
   }
 
   /**
-   * Get a route path by name
+   * Get a route path by name (or nested RouteMap)
    * @param name - Route name
-   * @returns Route path pattern
+   * @returns Route path pattern or nested RouteMap
    */
-  get<K extends keyof T>(name: K): T[K] {
-    return this._routes[name];
+  get<K extends keyof T>(name: K): RouteMapType<T[K]> {
+    const value = this._routes[name];
+
+    if (typeof value === 'string') {
+      return value as unknown as RouteMapType<T[K]>;
+    } else {
+      return new RouteMap(
+        value as Record<string, RouteDefinition>
+      ) as unknown as RouteMapType<T[K]>;
+    }
   }
 
   /**
@@ -74,7 +115,7 @@ export class RouteMap<T extends Record<string, RouteDefinition>> {
    * @param name - Route name to check
    * @returns True if route exists
    */
-  has(name: keyof T): boolean {
+  has(name: string): boolean {
     return name in this._routes;
   }
 
@@ -84,15 +125,47 @@ export class RouteMap<T extends Record<string, RouteDefinition>> {
   entries(): Array<[keyof T, T[keyof T]]> {
     return Object.entries(this._routes) as Array<[keyof T, T[keyof T]]>;
   }
+
+  /**
+   * Check if this RouteMap represents nested routes
+   * @returns True if any definition is an object (nested)
+   */
+  isNested(): boolean {
+    return Object.values(this._routes).some(
+      (value) => typeof value === 'object'
+    );
+  }
+
+  /**
+   * Get all leaf paths (flattened)
+   * Useful for getting all actual route paths from nested structure
+   * @returns Array of all path strings
+   */
+  getAllPaths(): string[] {
+    const paths: string[] = [];
+
+    for (const value of Object.values(this._routes)) {
+      if (typeof value === 'string') {
+        paths.push(value);
+      } else {
+        // Recursively get paths from nested RouteMap
+        const nestedMap = new RouteMap(value as Record<string, RouteDefinition>);
+        paths.push(...nestedMap.getAllPaths());
+      }
+    }
+
+    return paths;
+  }
 }
 
 /**
  * Creates a typed route map from route definitions
  *
- * @param definitions - Object mapping route names to path patterns
+ * @param definitions - Object mapping route names to path patterns or nested route definitions
  * @returns RouteMap instance with full type safety and property access
  *
  * @example
+ * Simple routes:
  * ```typescript
  * const routes = route({
  *   home: '/',
@@ -100,13 +173,35 @@ export class RouteMap<T extends Record<string, RouteDefinition>> {
  *   user: '/users/:id'
  * });
  *
- * routes.home // '/' - property access
- * routes.get('home') // '/' - method access
+ * routes.home // '/'
+ * routes.get('user') // '/users/:id'
  * routes.getRouteNames() // ['home', 'about', 'user']
+ * ```
+ *
+ * @example
+ * Nested routes:
+ * ```typescript
+ * const routes = route({
+ *   blog: {
+ *     index: '/blog',
+ *     post: '/blog/:slug'
+ *   },
+ *   admin: {
+ *     users: {
+ *       list: '/admin/users',
+ *       detail: '/admin/users/:id'
+ *     }
+ *   }
+ * });
+ *
+ * routes.blog.index // '/blog'
+ * routes.admin.users.list // '/admin/users'
+ * routes.blog.getRouteNames() // ['index', 'post']
+ * routes.getAllPaths() // ['/blog', '/blog/:slug', '/admin/users', '/admin/users/:id']
  * ```
  */
 export function route<const T extends Record<string, RouteDefinition>>(
   definitions: T
-): InstanceType<typeof RouteMap<T>> & T {
-  return new RouteMap(definitions) as InstanceType<typeof RouteMap<T>> & T;
+): ResolvedRouteMap<T> {
+  return new RouteMap(definitions) as ResolvedRouteMap<T>;
 }

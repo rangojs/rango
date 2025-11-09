@@ -13,3 +13,5 @@ Each changeset file follows this format:
 - [Phase 0.1](./phase-0.1-testing-infrastructure.md) - Testing Infrastructure Setup ✅
 - [Phase 0.2](./phase-0.2-quality-checks.md) - Quality Checks (ESLint, Prettier, Strict TypeScript) ✅
 - [Phase 1.1](./phase-1.1-route-function-basics.md) - Implement route() Function - Basic Types ✅
+- [Phase 1.1 Update](./phase-1.1-route-function-update.md) - RouteMap Class Implementation ✅
+- [Phase 1.2](./phase-1.2-nested-routes.md) - Nested Route Support ✅
