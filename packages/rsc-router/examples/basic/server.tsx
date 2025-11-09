@@ -11,13 +11,33 @@
  */
 
 import { createRSCRouter } from '../../src/create-router';
+import { Outlet } from '../../src/Outlet';
 import { route } from '../../src/route-definition';
 import { mainRoutes, blogRoutes, dashboardRoutes } from './routes';
 
 // Example components
-const RootLayout = () => <html><body><div>Root</div></body></html>;
-const BlogLayout = () => <div className="blog-layout"><div>Blog Layout</div></div>;
-const DashboardLayout = () => <div className="dashboard-layout"><div>Dashboard</div></div>;
+const RootLayout = () => (
+  <html>
+    <body>
+      Root
+      <div>
+        <Outlet />
+      </div>
+    </body>
+  </html>
+);
+const BlogLayout = () => (
+  <div className="blog-layout">
+    <div>Blog Layout</div>
+    <Outlet />
+  </div>
+);
+const DashboardLayout = () => (
+  <div className="dashboard-layout">
+    <div>Dashboard</div>
+    <Outlet />
+  </div>
+);
 
 const HomePage = () => <div>Home Page</div>;
 const AboutPage = () => <div>About Page</div>;
@@ -27,7 +47,11 @@ const BlogIndex = () => <div>Blog Index</div>;
 const BlogPost = ({ params }: { params: { slug: string } }) => (
   <div>Blog Post: {params.slug}</div>
 );
-const BlogCategory = ({ params }: { params: { category: string; slug: string } }) => (
+const BlogCategory = ({
+  params,
+}: {
+  params: { category: string; slug: string };
+}) => (
   <div>
     Category: {params.category}, Post: {params.slug}
   </div>
