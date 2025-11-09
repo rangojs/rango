@@ -6,6 +6,7 @@ export * from './matcher';
 export * from './route-definition';
 export * from './create-router';
 export * from './linear-matcher';
+export * from './segment-system';
 
 // Re-export commonly used components
 export { Link } from './Link';
