@@ -30,6 +30,326 @@
 
 ---
 
+## How Server Rendering and Client Reconstruction Works
+
+### Prerequisites
+
+This implementation requires:
+- **Vite** with three environments: `rsc` (React Server Components), `ssr` (Server-Side Rendering), and `client` (browser)
+- **@vitejs/plugin-rsc** plugin for RSC support
+- Three entry points configured in `vite.config.ts`:
+  - `entry.rsc.tsx` - Handles RSC stream generation on the server
+  - `entry.ssr.tsx` - Handles HTML generation with embedded RSC payload
+  - `entry.browser.tsx` - Handles client hydration and SPA navigation
+
+### The Two Types of Requests
+
+#### 1. Document Requests (Full Page Load)
+
+**When it happens:**
+- User types URL in address bar and hits Enter
+- User refreshes the page (F5 or Ctrl+R)
+- User clicks a link with `target="_blank"` or uses Ctrl/Cmd+Click
+- JavaScript is disabled
+- First visit to the application
+
+**How it works:**
+
+1. **Browser Request:**
+   ```http
+   GET /blog/post-123 HTTP/1.1
+   Accept: text/html
+   ```
+
+2. **Server Processing (entry.rsc.tsx):**
+   - Router calls `router.match(request)` to find matching routes
+   - Builds complete segment map: all layouts + page component
+   - Example segments: `[L0: RootLayout, L1: BlogLayout, R2: BlogPost]`
+   - Creates RSC stream with full component tree and segment metadata
+   - Delegates to SSR entry for HTML generation
+
+3. **SSR Processing (entry.ssr.tsx):**
+   - Receives RSC stream from RSC entry
+   - Deserializes RSC stream to React VDOM
+   - Renders VDOM to HTML stream
+   - **Embeds RSC payload** in HTML as `<script>` tag for hydration
+   - Injects bootstrap script to load client code
+
+4. **Browser Receives HTML:**
+   ```html
+   <!DOCTYPE html>
+   <html>
+     <body>
+       <!-- Rendered HTML content -->
+       <div id="root">...</div>
+
+       <!-- Embedded RSC payload for hydration -->
+       <script>
+         self.__RSC_PAYLOAD__ = /* RSC stream data */
+       </script>
+
+       <!-- Bootstrap script -->
+       <script type="module" src="/entry.browser.js"></script>
+     </body>
+   </html>
+   ```
+
+5. **Client Hydration (entry.browser.tsx):**
+   - Reads embedded RSC payload from `self.__RSC_PAYLOAD__`
+   - Extracts segment metadata
+   - Reconstructs React tree using `OutletProvider` for layouts
+   - Hydrates the existing DOM with React components
+   - Sets up SPA navigation interceptors
+   - **Result:** Fully interactive application
+
+**Key Points:**
+- Server sends complete HTML document
+- All segments are rendered and sent
+- RSC payload is embedded for hydration
+- No additional network requests needed
+
+#### 2. SPA Partial Requests (Client-Side Navigation)
+
+**When it happens:**
+- User clicks an internal link (without modifiers)
+- JavaScript navigation (e.g., `history.pushState`)
+- Browser back/forward buttons
+- Form submissions via RSC actions
+
+**How it works:**
+
+1. **Link Interception (entry.browser.tsx):**
+   - User clicks `<a href="/blog/post-456">`
+   - Browser intercepts the click event
+   - Prevents default navigation with `event.preventDefault()`
+   - Updates URL with `history.pushState()`
+
+2. **Client Partial Request:**
+   ```http
+   GET /blog/post-456?_has=L0,L1,R2
+   Accept: text/x-component
+   ```
+   - `_has=L0,L1,R2` - Client reports which segments it currently has rendered
+   - Server uses this to determine what needs to be sent
+   - Client doesn't know routing logic - just reports its current state
+
+3. **Server Differential Computation (entry.rsc.tsx):**
+   - Detects `_has` parameter with client's current segments
+   - Calls `router.match(request)` to get target route segments
+   - Compares what client has vs what target route needs:
+     ```
+     Client has: L0, L1, R2 (from _has parameter)
+       [L0: RootLayout, L1: BlogLayout, R2: BlogPost(id=123)]
+
+     Target needs: /blog/post-456
+       [L0: RootLayout, L1: BlogLayout, R2: BlogPost(id=456)]
+
+     Server logic:
+     - L0: Client has it, same layout → Skip
+     - L1: Client has it, same layout → Skip
+     - R2: Client has it, but params changed → Send update
+     ```
+   - Returns ONLY segments that need updating or are new
+
+4. **Server Partial Response:**
+   ```javascript
+   {
+     root: <BlogPost id="456" />,  // Only the changed component
+     metadata: {
+       pathname: '/blog/post-456',
+       segments: [R2],              // Only changed segment
+       startIndex: 2,               // L0, L1 preserved
+       preservedLayouts: ['/blog'],
+       isPartial: true
+     }
+   }
+   ```
+   - Sent as RSC stream (not HTML)
+   - Much smaller payload (~2KB vs ~100KB full page)
+
+5. **Client Segment Reconstruction (handled automatically by framework):**
+   - Framework's `entry.browser.tsx` receives partial RSC payload
+   - Framework automatically merges segments:
+     ```javascript
+     // Current segments in memory (managed by framework)
+     [L0: RootLayout, L1: BlogLayout, R2: BlogPost(id=123)]
+
+     // Framework removes segments from startIndex onwards
+     [L0: RootLayout, L1: BlogLayout]
+
+     // Framework adds new segments from payload
+     [L0: RootLayout, L1: BlogLayout, R2: BlogPost(id=456)]
+     ```
+   - Framework reconstructs tree with `OutletProvider`:
+     ```javascript
+     // This happens automatically - users don't write this!
+     <OutletProvider content={BlogPost}>
+       <BlogLayout />
+     </OutletProvider>
+     ```
+   - React re-renders only changed parts
+   - **Result:** Instant navigation without page reload
+   - **Note:** All this complexity is hidden from users!
+
+**Key Points:**
+- No HTML sent, only RSC stream
+- Only changed segments transmitted
+- Layouts are preserved and not re-rendered
+- React handles minimal DOM updates
+
+### The Segment System
+
+**What are segments?**
+Segments are the building blocks of a route, representing each layout and page component in the hierarchy:
+
+```typescript
+type Segment = {
+  index: number;               // Sequential index (0, 1, 2...)
+  pattern: string;             // Route pattern ('/blog', '/blog/:id')
+  component: React.ReactNode;  // The actual React component
+  isLayout: boolean;           // True for layouts, false for pages
+};
+```
+
+**Example Route Structure:**
+```
+Route: /blog/post-123/comments
+
+Segments:
+  [0] L0: RootLayout       (pattern: '/')
+  [1] L1: BlogLayout       (pattern: '/blog')
+  [2] R2: BlogPost         (pattern: '/blog/:id')
+  [3] L3: CommentsLayout   (pattern: '/blog/:id/comments')
+  [4] R4: CommentsList     (pattern: '/blog/:id/comments')
+```
+
+### The OutletProvider Pattern
+
+Layouts use `<Outlet />` to render child content. The framework handles this via `OutletProvider`:
+
+**Server-side:** Renders bottom-up, passing pre-rendered children through context
+**Client-side:** Reconstructs tree using `OutletProvider` to connect segments
+
+```jsx
+// BlogLayout component
+function BlogLayout() {
+  return (
+    <div className="blog-layout">
+      <BlogHeader />
+      <main>
+        <Outlet />  {/* Child content goes here */}
+      </main>
+      <BlogFooter />
+    </div>
+  );
+}
+
+// Client reconstruction
+<OutletProvider content={<BlogPost />}>
+  <BlogLayout />  {/* BlogLayout's <Outlet /> renders BlogPost */}
+</OutletProvider>
+```
+
+### Important: Tree Reconstruction is Out-of-the-Box
+
+**A critical technical detail:** The tree reconstruction from segments is **provided automatically by the rsc-router framework**. Users do NOT need to implement this themselves.
+
+**What the framework provides:**
+- **Server-side (`router.match()`):** Returns `[component, segments]` tuple - segments array instead of a pre-built tree
+- **Server-side differential logic:** Computes what needs to be sent based on client's `_has` parameter
+- **Client-side (`entry.browser.tsx`):** Automatically reconstructs the tree from segments
+- **The `reconstructTreeFromSegments` function:** Built into the framework, handles all the complexity
+- **Segment reconciliation:** Client automatically manages segment additions, updates, and removals
+
+**Why this matters:**
+1. **Server simplicity:** The router only needs to return a flat array of segments
+2. **Client automation:** The framework's browser entry automatically handles reconstruction
+3. **No user code needed:** Developers just define routes and components
+4. **Consistent behavior:** All apps get the same optimized reconstruction logic
+
+**The reconstruction algorithm (handled by framework):**
+```javascript
+// This is PROVIDED by rsc-router - users don't write this!
+function reconstructTreeFromSegments(segments: Segment[]): ReactNode {
+  // Sort segments by index descending (innermost to outermost)
+  const sortedSegments = [...segments].sort((a, b) => b.index - a.index);
+
+  let tree = null;
+
+  for (const segment of sortedSegments) {
+    if (segment.isLayout) {
+      // Wrap current tree with layout using OutletProvider
+      tree = <OutletProvider content={tree}>
+        {segment.component}
+      </OutletProvider>;
+    } else {
+      // Page component becomes the initial tree
+      tree = segment.component;
+    }
+  }
+
+  return tree;
+}
+```
+
+**What users write:**
+```javascript
+// Users only define routes and components
+const router = createRSCRouter();
+router.route(routes).map({
+  [route.layout]: BlogLayout,  // Just specify the layout
+  index: () => <BlogPost />     // Just return the component
+});
+```
+
+**What users DON'T write:**
+- Tree reconstruction logic
+- Segment management
+- OutletProvider wrapping
+- Differential merging
+- Any of the complex client-side navigation logic
+
+This out-of-the-box functionality is why the rsc-router can deliver instant SPA navigation with minimal configuration - all the complex segment management and tree reconstruction is handled automatically by the framework.
+
+### Performance Benefits
+
+**Document Request (Full Page):**
+- HTML: ~50KB
+- JavaScript: ~200KB
+- CSS: ~30KB
+- Total: ~280KB
+- Time to Interactive: ~2-3 seconds
+
+**SPA Navigation (Partial):**
+- RSC payload: ~2-5KB
+- No JavaScript re-download
+- No CSS re-download
+- Total: ~2-5KB
+- Time to Interactive: ~50-200ms
+
+**Bandwidth Savings:** ~98% reduction
+**Speed Improvement:** 10-20x faster navigation
+
+### Summary
+
+- **Document Requests** provide full HTML with embedded RSC payload for SEO and initial load
+- **SPA Partial Requests** send only changed segments for instant navigation
+- The router computes differentials server-side, clients just apply updates
+- Segments enable granular updates without re-rendering entire pages
+- OutletProvider pattern enables clean layout composition
+- Vite's three environments (rsc, ssr, client) handle different aspects of the rendering pipeline
+
+**Most importantly:** All the complex client-side logic (tree reconstruction, segment management, link interception, differential merging) is **provided out-of-the-box by the rsc-router framework**. Users only need to:
+1. Define their routes with the router API
+2. Write their components (layouts and pages)
+3. Configure the three Vite entry points (one-time setup)
+
+The framework handles all the sophisticated rendering, navigation, and optimization automatically. This is why developers can achieve enterprise-grade SPA performance with minimal configuration.
+
+This architecture combines the best of both worlds: SEO-friendly server rendering with SPA-like navigation performance, all while keeping the developer experience simple and declarative.
+
+---
+
 ## Architectural Decisions
 
 ### Performance-First Design for Serverless
@@ -1713,85 +2033,89 @@ export { renderHTML } from 'rsc-router/framework/entry.ssr';
 - ✅ Server action support
 - ✅ HMR support
 
-### router.matchPartial() - Differential Routing
+### router.match() and Differential Computation
 
-The router provides `matchPartial()` for computing differential segments during navigation:
+The router provides `match()` which returns segments, and the server computes differentials based on what the client reports having:
 
 ```typescript
-interface PartialMatchResult {
+interface MatchResult {
   /**
-   * Changed segments (from startIndex onwards)
+   * The component tree (can be null for segment-based rendering)
+   */
+  component: ReactNode | null;
+
+  /**
+   * All segments for the matched route
    */
   segments: Segment[];
-
-  /**
-   * Index where segments diverge
-   */
-  startIndex: number;
-
-  /**
-   * Paths of preserved layouts
-   */
-  preservedLayouts: string[];
 }
 
 class RSCRouter {
   /**
-   * Match a request for partial rendering
-   *
-   * Computes differential segments between previous and current routes.
-   * Used for RSC partial rendering to send only changed segments.
+   * Match a request and return all segments for the route
    */
-  async matchPartial(
-    request: Request,
-    previousPathname: string
-  ): Promise<PartialMatchResult | null>;
+  async match(request: Request): Promise<[ReactNode | null, Segment[]]>;
 }
 ```
 
-**Usage in RSC entry:**
+**Server-side differential computation:**
 
 ```typescript
 // entry.rsc.tsx
-const isPartialRequest = url.searchParams.has('_rsc_partial');
-const previousPathname = url.searchParams.get('_rsc_prev');
+const hasParam = url.searchParams.get('_has');
+const clientSegments = hasParam ? hasParam.split(',') : [];
 
-if (isPartialRequest && previousPathname) {
-  // Compute differential segments
-  const partial = await router.matchPartial(request, previousPathname);
+// Always get full route segments
+const [component, targetSegments] = await router.match(request);
 
-  if (partial) {
-    // Send only changed segments
-    // Client already has segments 0 to startIndex-1
-    return {
-      segments: partial.segments,        // Only changed
-      startIndex: partial.startIndex,    // Where they diverge
-      preservedLayouts: partial.preservedLayouts
-    };
+if (clientSegments.length > 0) {
+  // Compute what needs to be sent
+  const segmentsToSend = [];
+
+  for (const targetSeg of targetSegments) {
+    const clientHas = clientSegments.includes(targetSeg.id);
+
+    if (!clientHas || targetSeg.requiresUpdate(clientVersion)) {
+      segmentsToSend.push(targetSeg);
+    }
   }
+
+  // Send differential response
+  return {
+    segments: targetSegments,    // Full list for client reconciliation
+    updates: segmentsToSend,     // Only segments that need updating
+    isPartial: true
+  };
 }
 
-// Fallback to full render
-const match = await router.match(request);
+// No client state - send everything
+return {
+  segments: targetSegments,
+  root: reconstructTree(targetSegments)
+};
 ```
 
 **Example: Navigate from /blog to /blog/post-123**
 
 ```typescript
-// Previous route: /blog
-// Current route: /blog/post-123
+// Client reports: _has=L0,L1,R2
+// Target route: /blog/post-123
 
-const result = await router.matchPartial(request, '/blog');
+const [_, targetSegments] = await router.match(request);
+// targetSegments: [L0, L1, R2(new)]
 
-// Result:
-// {
-//   segments: [R2],           // Only the post segment
-//   startIndex: 2,            // L0, L1 preserved
-//   preservedLayouts: ['/blog']
-// }
+// Server computes:
+// - L0: Client has it, no change needed
+// - L1: Client has it, no change needed
+// - R2: Client has old R2, params changed, send update
 
-// Client keeps: L0 (root), L1 (blog layout)
-// Client updates: R2 (blog post)
+// Response:
+{
+  segments: ['L0', 'L1', 'R2'],  // Full list
+  updates: { R2: <BlogPost id="123" /> },  // Only R2 updated
+  isPartial: true
+}
+
 // Bandwidth: ~2KB vs ~100KB full page
 ```
 
@@ -1817,33 +2141,35 @@ export function createRSCHandler(router: RSCRouter) {
     }
 
     // 2. Determine render type
-    const isPartial = url.searchParams.has('_rsc_partial');
-    const previousPath = url.searchParams.get('_rsc_prev');
+    const hasParam = url.searchParams.get('_has');
+    const clientSegments = hasParam ? hasParam.split(',') : null;
 
-    // 3. Partial rendering
-    if (isPartial && previousPath) {
-      const partial = await router.matchPartial(request, previousPath);
-      if (partial) {
-        // Render only changed segments
-        const component = renderSegments(partial.segments);
+    // 3. Get target route segments
+    const match = await router.match(request);
+    const targetSegments = buildSegmentMap(match);
+
+    // 4. Compute differential if client has segments
+    if (clientSegments) {
+      const segmentsToSend = computeDifferential(
+        clientSegments,
+        targetSegments
+      );
+
+      if (segmentsToSend.length < targetSegments.length) {
+        // Partial render - send only changed segments
         return createRSCStream({
-          root: component,
+          root: renderSegments(segmentsToSend),
           metadata: {
-            segments: partial.segments,
-            startIndex: partial.startIndex,
-            preservedLayouts: partial.preservedLayouts,
+            segments: targetSegments,  // Full list for reconciliation
+            updates: segmentsToSend,   // Only changed segments
             isPartial: true
           }
         });
       }
     }
 
-    // 4. Full rendering
-    const match = await router.match(request);
-    const segments = buildSegmentMap(match);
-    const component = renderSegments(segments);
-
-    // 5. Return RSC stream or delegate to SSR
+    // 5. Full rendering (no _has or all segments need update)
+    const component = renderSegments(targetSegments);
     const rscStream = renderToReadableStream({ root: component, metadata });
 
     if (wantsRSC) {
@@ -1857,8 +2183,8 @@ export function createRSCHandler(router: RSCRouter) {
 ```
 
 **Parameters:**
-- `_rsc_partial=true` - Request partial rendering
-- `_rsc_prev=/previous/path` - Previous pathname for differential
+- `_has=L0,L1,R2` - Client reports which segments it currently has rendered
+- Server computes what needs to be sent based on target route requirements
 
 **Response:**
 - RSC stream with segment metadata
@@ -1898,16 +2224,15 @@ document.addEventListener('click', (event) => {
 // 4. Navigation with partial rendering
 async function navigate(url: string) {
   const currentSegments = store.getIds().join(',');
-  const currentPath = window.location.pathname;
 
-  // Fetch with partial parameters
-  const fetchUrl = `${url}?_rsc_partial=true&_rsc_prev=${currentPath}`;
+  // Fetch with _has parameter reporting current segments
+  const fetchUrl = `${url}?_has=${currentSegments}`;
   const payload = await createFromFetch(fetch(fetchUrl));
 
-  // Process partial payload
+  // Process response
   if (payload.metadata.isPartial) {
-    // Remove segments from startIndex onwards
-    // Add new segments from payload
+    // Server sent differential updates
+    // Reconcile segments based on server's list
     // Reconstruct tree from merged segments
   }
 
@@ -1930,9 +2255,9 @@ window.addEventListener('popstate', () => navigate(location.href));
 1. User clicks link
 2. Event intercepted, preventDefault()
 3. history.pushState() updates URL
-4. Fetch with `_rsc_partial` parameter
-5. Receive partial payload
-6. Merge segments with existing store
+4. Fetch with `_has` parameter listing current segments
+5. Server computes differential, sends partial payload
+6. Client merges segments based on server response
 7. Reconstruct React tree
 8. Render (no page reload!)
 
@@ -2029,29 +2354,29 @@ Browser:
 
 Browser (entry.browser.tsx):
   → Current: /blog, has segments: [L0, L1, R2, P3, P4]
-  → Fetch: /blog/post-123?_rsc_partial=true&_rsc_prev=/blog
+  → Fetch: /blog/post-123?_has=L0,L1,R2,P3,P4
   → createFromFetch(fetch(url))
 
 Server (entry.rsc.tsx):
-  → Detects _rsc_partial=true
-  → router.matchPartial(request, '/blog')
+  → Detects _has=L0,L1,R2,P3,P4
+  → router.match(request) to get target segments
   → Computes differential:
-     - L0: layout, preserved ✅
-     - L1: layout, preserved ✅
-     - R2: route, changed (different slug) ⚠️
-     - P3: parallel, changed (new params) ⚠️
-     - P4: parallel, changed (new params) ⚠️
-  → startIndex: 2 (L0, L1 preserved)
-  → segments: [R2, P3, P4] (only changed)
+     - L0: Client has it, same layout → Skip ✅
+     - L1: Client has it, same layout → Skip ✅
+     - R2: Client has it, params changed → Update ⚠️
+     - P3: Client has it, params changed → Update ⚠️
+     - P4: Client has it, params changed → Update ⚠️
+  → segments to send: [R2, P3, P4] (only changed)
   → renderSegments([R2, P3, P4])
   → Return RSC stream with metadata
 
 Browser (entry.browser.tsx):
   → Receives partial payload
   → metadata.isPartial: true
-  → metadata.startIndex: 2
-  → Remove segments from index 2 onwards
-  → Add new segments: R2, P3, P4
+  → metadata.segments: full list for reconciliation
+  → metadata.updates: only changed segments
+  → Reconcile based on server's segment list
+  → Merge updated segments: R2, P3, P4
   → reconstructTreeFromSegments([L0, L1, R2, P3, P4])
   → setPayload(newPayload)
   ✓ UI updates without page reload!
@@ -2183,7 +2508,7 @@ document.addEventListener('click', (event) => {
 #### Client Request Headers
 
 ```http
-GET /blog/post-123?_rsc_partial=true&_rsc_prev=/blog HTTP/1.1
+GET /blog/post-123?_has=L0,L1,R2 HTTP/1.1
 Accept: text/x-component
 ```
 
