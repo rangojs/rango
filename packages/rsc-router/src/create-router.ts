@@ -69,11 +69,12 @@ export class RouteBuilder<T extends Record<string, RouteDefinition>> {
 
   constructor(
     private router: RSCRouter,
-    private _routeMap: ResolvedRouteMap<T>,
+    _routeMap: ResolvedRouteMap<T>,  // Removed private to fix unused warning
     registrationIndex: number,
-    private _prefix?: string
+    _prefix?: string  // Removed private to fix unused warning
   ) {
     this.registrationIndex = registrationIndex;
+    // _routeMap and _prefix are kept for future use but not currently accessed
   }
 
   /**

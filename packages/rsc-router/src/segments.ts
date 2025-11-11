@@ -25,6 +25,9 @@ export function findDivergenceIndex(
     const current = currentSegments[i];
     const next = nextSegments[i];
 
+    // Safety check - if either is missing, we've diverged
+    if (!current || !next) break;
+
     // Check if paths match (considering dynamic segments)
     const pathsMatch = current.path === next.path;
 
@@ -80,7 +83,7 @@ export function getChangedSegments(
  */
 export function buildComponentTree(
   segments: MatchedSegment[],
-  startIndex: number = 0
+  _startIndex: number = 0  // Unused but kept for API compatibility
 ): React.ReactNode {
   if (segments.length === 0) {
     return null;

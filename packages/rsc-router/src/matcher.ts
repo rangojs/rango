@@ -108,7 +108,9 @@ export function matchRoute(
       });
 
       for (const child of sortedChildren) {
-        const { match, params } = matchSegment(currentSegment, child.path);
+        const childPath = child.path;
+        if (!childPath) continue; // Skip if path is undefined
+        const { match, params } = matchSegment(currentSegment, childPath as string);
 
         if (match) {
           const segment: MatchedSegment = {

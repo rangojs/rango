@@ -1,5 +1,5 @@
 import React from "react";
-import { Outlet } from "rsc-router/client";
+import { Outlet } from "rsc-router";
 const articles = [
   { id: 1, title: "Getting Started with RSC", date: "2024-01-15" },
   { id: 2, title: "Building Nested Layouts", date: "2024-01-14" },
@@ -9,7 +9,7 @@ export default function ArticlesLayout() {
   console.log("[ArticlesLayout] Rendering");
 
   return (
-    <div>
+    <div data-layout="articles">
       <div
         style={{
           background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",

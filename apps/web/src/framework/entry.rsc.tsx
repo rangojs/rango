@@ -10,182 +10,267 @@ import type { ReactFormState } from "react-dom/client";
 import { router } from "../routes.tsx";
 import { Storage } from "./entry.storage.ts";
 import type { Segment } from "./entry.browser.tsx";
-// The schema of payload which is serialized into RSC stream on rsc environment
-// and deserialized on ssr/client environments.
+import type { ResolvedSegment } from "rsc-router";
+import { renderSegments } from "rsc-router";
+
+// ============================================================================
+// Type Definitions
+// ============================================================================
+
+/**
+ * RSC Payload Schema
+ *
+ * This is the data structure that gets serialized into RSC stream
+ * on the server and deserialized on SSR/client environments.
+ */
 export type RscPayload = {
-  // this demo renders/serializes/deserizlies entire root html element
-  // but this mechanism can be changed to render/fetch different parts of components
-  // based on your own route conventions.
+  // Root component to render
   root: React.ReactNode;
-  // server action return value of non-progressive enhancement case
+
+  // Server action results (for non-progressive enhancement)
   returnValue?: unknown;
-  // server action form state (e.g. useActionState) of progressive enhancement case
+
+  // Server action form state (for progressive enhancement)
   formState?: ReactFormState;
-  // Metadata for partial rendering
+
+  // Metadata for partial/differential rendering
   metadata?: {
     pathname: string;
-    segments: Segment[];
-    startIndex?: number;
-    preservedLayouts?: string[];
-    isPartial?: boolean; // Flag to indicate partial response with segments in root
+    segments: Segment[]; // Complete segment list for this route
+    isPartial?: boolean; // Indicates partial vs full response
+    matched?: string[]; // Matched segments for this route
+    diff?: string[]; // Differential segments for partial updates
   };
 };
 
-// the plugin by default assumes `rsc` entry having default export of request handler.
-// however, how server entries are executed can be customized by registering
-// own server handler e.g. `@cloudflare/vite-plugin`.
-export default async function handler(request: Request): Promise<Response> {
-  const streams = [];
+// ============================================================================
+// Differential Rendering Logic
+// ============================================================================
 
-  return await Storage.run(streams, () => _handler(request));
-}
-async function _handler(request: Request): Promise<Response> {
-  // handle server function request
-  const isAction = request.method === "POST";
-  let returnValue: unknown | undefined;
-  let formState: ReactFormState | undefined;
-  let temporaryReferences: unknown | undefined;
-  if (isAction) {
-    // x-rsc-action header exists when action is called via `ReactClient.setServerCallback`.
-    const actionId = request.headers.get("x-rsc-action");
-    if (actionId) {
-      const contentType = request.headers.get("content-type");
-      const body = contentType?.startsWith("multipart/form-data")
-        ? await request.formData()
-        : await request.text();
-      temporaryReferences = createTemporaryReferenceSet();
-      const args = await decodeReply(body, { temporaryReferences });
-      const action = await loadServerAction(actionId);
-      returnValue = await action.apply(null, args);
+/**
+ * Determines which segments need to be sent to the client based on what they already have.
+ * Layouts are skipped if unchanged, routes are always sent (they represent different pages).
+ */
+function computeDifferentialUpdate(
+  targetSegments: Segment[],
+  clientSegmentIds: string[]
+): Segment[] {
+  console.log(`[Entry.RSC] >>> Computing DIFFERENTIAL`);
+
+  const clientHas = new Set(clientSegmentIds);
+  const segmentsToSend: Segment[] = [];
+
+  for (const segment of targetSegments) {
+    const clientHasSegment = clientHas.has(segment.id);
+
+    if (!clientHasSegment) {
+      // Client doesn't have this segment - must send it
+      segmentsToSend.push(segment);
+      console.log(`[Entry.RSC]   ${segment.id}: NEW - sending`);
+    } else if (segment.id.startsWith("R")) {
+      // Route segments always update (different page/params)
+      segmentsToSend.push(segment);
+      console.log(`[Entry.RSC]   ${segment.id}: UPDATE - sending`);
     } else {
-      // otherwise server function is called via `<form action={...}>`
-      // before hydration (e.g. when javascript is disabled).
-      // aka progressive enhancement.
-      const formData = await request.formData();
-      const decodedAction = await decodeAction(formData);
-      const result = await decodedAction();
-      formState = await decodeFormState(result, formData);
+      // Layout unchanged - skip sending
+      console.log(`[Entry.RSC]   ${segment.id}: UNCHANGED - skipping`);
     }
   }
 
-  // serialization from React VDOM tree to RSC stream.
-  // we render RSC stream after handling server function request
-  // so that new render reflects updated state from server function call
-  // to achieve single round trip to mutate and fetch from server.
+  console.log(
+    `[Entry.RSC] ✓ Sending ${segmentsToSend.length}/${targetSegments.length} segments`
+  );
+
+  return segmentsToSend;
+}
+
+// ============================================================================
+// Server Action Handling
+// ============================================================================
+
+/**
+ * Handles POST requests for server actions (form submissions and RPC calls).
+ */
+async function handleServerAction(request: Request): Promise<{
+  returnValue?: unknown;
+  formState?: ReactFormState;
+  temporaryReferences?: unknown;
+}> {
+  const actionId = request.headers.get("x-rsc-action");
+
+  if (actionId) {
+    // RPC-style action call (e.g., onClick handler)
+    const contentType = request.headers.get("content-type");
+    const body = contentType?.startsWith("multipart/form-data")
+      ? await request.formData()
+      : await request.text();
+
+    const temporaryReferences = createTemporaryReferenceSet();
+    const args = await decodeReply(body, { temporaryReferences });
+    const action = await loadServerAction(actionId);
+    const returnValue = await action.apply(null, args);
+
+    return { returnValue, temporaryReferences };
+  } else {
+    // Form action (progressive enhancement)
+    const formData = await request.formData();
+    const decodedAction = await decodeAction(formData);
+    const result = await decodedAction();
+    const formState = await decodeFormState(result, formData);
+
+    return { formState };
+  }
+}
+
+// ============================================================================
+// Document Request Handler
+// ============================================================================
+
+/**
+ * Handles full document requests (initial page loads, full refreshes)
+ * These requests have no client state and need complete rendering.
+ */
+async function handleDocumentRequest(
+  request: Request,
+  url: URL,
+  serverActionResult?: {
+    returnValue?: unknown;
+    formState?: ReactFormState;
+    temporaryReferences?: unknown;
+  }
+): Promise<RscPayload> {
+  console.log(`[Entry.RSC] >>> DOCUMENT REQUEST: Full render`);
+  // Match the route and get all segments
+  const match = await router.match(request, {});
+  console.log("segments", match);
+
+  // Handle 404s and prepare component
+  const finalComponent = renderSegments(match.segments);
+  console.log("finalComponent", finalComponent);
+
+  // Build complete RSC payload
+  return {
+    root: finalComponent,
+    returnValue: serverActionResult?.returnValue,
+    formState: serverActionResult?.formState,
+    metadata: {
+      pathname: url.pathname,
+      segments: match.segments,
+      isPartial: false,
+      matched: match.matched,
+      diff: match.diff,
+    },
+  };
+}
+
+// ============================================================================
+// Partial Request Handler
+// ============================================================================
+
+/**
+ * Handles partial requests (client-side navigation)
+ * These requests have existing client state and need differential updates.
+ */
+async function handlePartialRequest(
+  request: Request,
+  url: URL,
+  clientSegmentIds: string[],
+  serverActionResult?: {
+    returnValue?: unknown;
+    formState?: ReactFormState;
+    temporaryReferences?: unknown;
+  }
+): Promise<RscPayload> {
+  console.log(`[Entry.RSC] >>> PARTIAL REQUEST: Differential render`);
+  console.log(`[Entry.RSC] >>> URL: ${url.href}`);
+  console.log(`[Entry.RSC] Client segments: ${clientSegmentIds.join(", ")}`);
+
+  // Match the route and get target segments
+  const match = await router.matchPartial(request, clientSegmentIds, {});
+  console.log("partial segments", match);
+  // Build partial RSC payload
+  return {
+    root: null,
+    returnValue: serverActionResult?.returnValue,
+    formState: serverActionResult?.formState,
+    metadata: {
+      pathname: url.pathname,
+      segments: match.segments,
+      isPartial: true,
+      matched: match.matched,
+      diff: match.diff,
+    },
+  };
+}
+
+// ============================================================================
+// Main Entry Point
+// ============================================================================
+
+/**
+ * Main request handler with Storage context
+ */
+export default async function handler(request: Request): Promise<Response> {
+  const streams = [];
+  return await Storage.run(streams, () => processRequest(request));
+}
+
+/**
+ * Core request processing logic
+ */
+async function processRequest(request: Request): Promise<Response> {
   const url = new URL(request.url);
 
-  // Check if this is a partial render request
-  const isPartialRequest = url.searchParams.has("_rsc_partial");
-  const previousPathname = url.searchParams.get("_rsc_prev");
-
+  // ==================== Request Logging ====================
   console.log(
     `\n[Entry.RSC] ==================== REQUEST ====================`
   );
   console.log(`[Entry.RSC] URL: ${url.pathname}${url.search}`);
   console.log(`[Entry.RSC] Method: ${request.method}`);
-  console.log(`[Entry.RSC] Is partial: ${isPartialRequest}`);
-  console.log(`[Entry.RSC] Previous path: ${previousPathname || "N/A"}`);
 
-  let component: React.ReactNode;
-  let metadata: RscPayload["metadata"];
-
-  if (isPartialRequest) {
-    console.log(`[Entry.RSC] >>> Attempting PARTIAL render`);
-    // Partial rendering - send only changed segments
-    const partialResult = await router.matchPartial(request, previousPathname);
-    if (partialResult) {
-      // For partial rendering, send segments as the root
-      component = partialResult.segments.at(0)?.component || null;
-      metadata = {
-        pathname: url.pathname,
-        startIndex: partialResult.startIndex,
-        preservedLayouts: partialResult.preservedLayouts,
-        isPartial: true, // Flag to indicate this is a partial response
-        segments: partialResult.segments,
-      };
-      console.log(`[Entry.RSC] ✓ Partial render successful`);
-      console.log(`[Entry.RSC]   Start index: ${partialResult.startIndex}`);
-      console.log(
-        `[Entry.RSC]   Preserved layouts:`,
-        partialResult.preservedLayouts
-      );
-      console.log(
-        `[Entry.RSC]   Segments sent:`,
-        partialResult.segments.length
-      );
-      partialResult.segments.forEach((seg) => {
-        console.log(
-          `[Entry.RSC]     - Index ${seg.index}: ${seg.pattern} (${
-            seg.isLayout ? "layout" : "page"
-          })`
-        );
-      });
-    } else {
-      // Fallback to full render if partial match fails
-      console.log(
-        `[Entry.RSC] ⚠️ Partial render failed, falling back to full render`
-      );
-      let [_component, segments] = await router.match(request);
-      component = _component;
-      metadata = { pathname: url.pathname, segments };
-    }
-  } else {
-    // Full page render using the router
-    console.log(`[Entry.RSC] >>> Performing FULL render`);
-    const [_component, segments] = await router.match(request);
-    component = _component;
-    metadata = { pathname: url.pathname, segments };
+  // ==================== Server Actions ====================
+  let serverActionResult;
+  if (request.method === "POST") {
+    serverActionResult = await handleServerAction(request);
   }
 
-  // Handle 404
-  if (!component && (!metadata?.segments || metadata.segments.length === 0)) {
-    console.log(`[Entry.RSC] ❌ No component or segments returned - showing 404`);
-    component = (
-      <html>
-        <body>
-          <h1>404 - Not Found</h1>
-          <p>The page {url.pathname} was not found.</p>
-          <a href="/">Go home</a>
-        </body>
-      </html>
-    );
-  } else if (!component && metadata?.segments && metadata.segments.length > 0) {
-    // We have segments but no pre-built component - use a placeholder
-    // The client will reconstruct the full tree from segments
-    console.log(`[Entry.RSC] ✓ Segments ready for client-side reconstruction`);
-    console.log(`[Entry.RSC]   Segment count: ${metadata.segments.length}`);
-    component = <div data-rsc-segments="true" />;
-  } else {
-    console.log(`[Entry.RSC] ✓ Component ready for rendering`);
-    console.log(
-      `[Entry.RSC]   Component type:`,
-      component?.type?.name || typeof component
-    );
-  }
+  // ==================== Client State Detection ====================
+  const hasParam = url.searchParams.get("_has");
+  const clientSegmentIds = hasParam ? hasParam.split(",") : [];
+  console.log(
+    `[Entry.RSC] Client has: ${clientSegmentIds.join(", ") || "none"}`
+  );
 
-  const rscPayload: RscPayload = {
-    root: component,
-    formState,
-    returnValue,
-    metadata,
-  };
+  // ==================== Route to Appropriate Handler ====================
+  const rscPayload =
+    clientSegmentIds.length > 0
+      ? await handlePartialRequest(
+          request,
+          url,
+          clientSegmentIds,
+          serverActionResult
+        )
+      : await handleDocumentRequest(request, url, serverActionResult);
 
-  console.log(`[Entry.RSC] RSC Payload metadata:`, metadata);
+  console.log(`[Entry.RSC] RSC Payload metadata:`, rscPayload.metadata);
   console.log(
     `[Entry.RSC] ==================== END REQUEST ====================\n`
   );
-  const rscOptions = { temporaryReferences };
+
+  // ==================== Serialize to RSC Stream ====================
+  const rscOptions = {
+    temporaryReferences: serverActionResult?.temporaryReferences,
+  };
   const rscStream = renderToReadableStream<RscPayload>(rscPayload, rscOptions);
 
-  // respond RSC stream without HTML rendering based on framework's convention.
-  // here we use request header `content-type`.
-  // additionally we allow `?__rsc` and `?__html` to easily view payload directly.
+  // ==================== Determine Response Type ====================
   const isRscRequest =
     (!request.headers.get("accept")?.includes("text/html") &&
       !url.searchParams.has("__html")) ||
     url.searchParams.has("__rsc");
 
   if (isRscRequest) {
+    // Return RSC stream directly for React consumption
     return new Response(rscStream, {
       headers: {
         "content-type": "text/x-component;charset=utf-8",
@@ -194,24 +279,20 @@ async function _handler(request: Request): Promise<Response> {
     });
   }
 
-  // Delegate to SSR environment for html rendering.
-  // The plugin provides `loadModule` helper to allow loading SSR environment entry module
-  // in RSC environment. however this can be customized by implementing own runtime communication
-  // e.g. `@cloudflare/vite-plugin`'s service binding.
+  // ==================== SSR for HTML Responses ====================
   const ssrEntryModule = await import.meta.viteRsc.loadModule<
     typeof import("./entry.ssr.tsx")
   >("ssr", "index");
+
   const htmlStream = await ssrEntryModule.renderHTML(
     rscStream,
     {
-      formState,
-      // allow quick simulation of javscript disabled browser
+      formState: rscPayload.formState,
       debugNojs: url.searchParams.has("__nojs"),
     },
     Storage.getStore()
   );
 
-  // respond html
   return new Response(htmlStream, {
     headers: {
       "Content-type": "text/html",

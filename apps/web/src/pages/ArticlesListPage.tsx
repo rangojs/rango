@@ -7,6 +7,11 @@ export default function ArticlesListPage() {
     { id: 1, title: 'Getting Started with RSC', date: '2024-01-15' },
     { id: 2, title: 'Building Nested Layouts', date: '2024-01-14' },
     { id: 3, title: 'Partial Rendering Explained', date: '2024-01-13' },
+    { id: 100, title: 'Advanced RSC Patterns', date: '2024-01-12' },
+    { id: 123, title: 'Deep Dive into Segments', date: '2024-01-11' },
+    { id: 200, title: 'Testing RSC Apps', date: '2024-01-10' },
+    { id: 456, title: 'Layout Optimization', date: '2024-01-09' },
+    { id: 789, title: 'Differential Rendering', date: '2024-01-08' },
   ];
 
   return (

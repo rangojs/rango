@@ -1,11 +1,22 @@
 import type { ComponentType, ReactNode } from 'react';
 
+// Segment type definition - matches segment-system
+export type SegmentType = 'layout' | 'route' | 'parallel';
+
 export type Segment = {
-  index: number;
-  pattern: string;
-  component: ReactNode;
-  isLayout: boolean;
+  id: string; // Unique segment ID (e.g., 'L0', 'R2', 'P3')
+  type: SegmentType; // Segment type
+  index: number; // Sequential index
+  pattern?: string; // Route pattern (e.g., '/blog/:id')
+  component: ReactNode; // React component
+  isLayout?: boolean; // Backward compatibility: true for layouts
+  slot?: string; // For parallel routes (e.g., '@sidebar')
+  path?: string; // Path for this segment
+  params?: Record<string, string>; // Route params
 };
+
+// ResolvedSegment is a Segment with the handler already executed to ReactNode
+export type ResolvedSegment = Segment;
 
 export type RouteSegment = {
   /** The path segment (e.g., 'dashboard', ':id', '*') */

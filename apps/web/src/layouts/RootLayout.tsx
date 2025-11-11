@@ -1,5 +1,5 @@
 import React from 'react';
-import { Outlet } from 'rsc-router/client';
+import { Outlet } from "rsc-router";
 
 export default function RootLayout() {
   console.log('[RootLayout] Rendering');
@@ -11,7 +11,7 @@ export default function RootLayout() {
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Vite + RSC Router</title>
       </head>
-      <body>
+      <body data-layout="root">
         <header style={{ background: '#333', color: 'white', padding: '1rem' }}>
           <nav style={{ display: 'flex', gap: '1rem' }}>
             <a href="/" style={{ color: 'white' }}>Home</a>

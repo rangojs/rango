@@ -2754,3 +2754,1060 @@ The RSC Router framework provides:
 **Features**: Full RSC + SPA + Partial Rendering
 
 This makes RSC Router a **complete, production-ready solution** for React Server Components with Vite.
+
+---
+
+## Caching and Prefetching Strategy
+
+### Design Philosophy: Serverless-First, React Cache-Driven
+
+The rsc-router is designed for **serverless and edge environments** where the server efficiently handles each request. Rather than complex HTTP caching layers, the router relies on React's `use cache` primitive for component-level optimization.
+
+**Core Principles:**
+1. **Serverless-first**: Optimized for edge functions and serverless deployments
+2. **React cache**: Segment-level caching via React's `use cache` (donut pattern)
+3. **Optional HTTP caching**: Add Cache-Control only when explicitly needed
+4. **Simple client**: Browser fetches from server on navigation, no complex state tracking
+
+### The Approach
+
+Rather than complex caching strategies with multiple layers, this router focuses on:
+
+**Server-side:**
+- React `use cache` for component-level optimization
+- Layouts cached, pages re-render (donut pattern)
+- Tag-based invalidation for fine-grained control
+
+**Client-side:**
+- Simple navigation: fetch on every route change
+- Optional prefetching with HTTP caching when configured
+
+**HTTP caching:**
+- Disabled by default (serverless-friendly)
+- Enabled explicitly via `[route.cache]` config
+- Used primarily for prefetching scenarios
+
+### Why Vary Headers Are Problematic
+
+If you were to use request headers to determine differential rendering:
+
+```http
+Request:
+GET /blog/456
+RSC-Router-From-Path: /blog/123
+
+Response:
+HTTP/1.1 200 OK
+Vary: RSC-Router-From-Path
+Content-Type: text/x-component
+```
+
+This creates **cache fragmentation**:
+
+```
+CDN Cache for /blog/456:
+
+Entry 1: /blog/456 + From:/blog/123     → [Response A]
+Entry 2: /blog/456 + From:/             → [Response B]
+Entry 3: /blog/456 + From:/articles/99  → [Response C]
+Entry 4: /blog/456 + From:/blog/999     → [Response D]
+...
+```
+
+**Impact:**
+- Cache hit rate drops from ~95% to ~5%
+- Every unique navigation path creates a new cache entry
+- CDN storage costs increase dramatically
+- Origin server hit rate increases 20×
+
+**Cost comparison:**
+```
+AWS Lambda costs:
+- CPU per request: $0.00001
+- CDN origin fetch: $0.01 per request
+
+Hitting origin due to cache miss is 1000× more expensive!
+```
+
+### Route-Level Cache Configuration
+
+Configure caching behavior declaratively in your route definitions:
+
+```typescript
+import { createRSCRouter, route } from "rsc-router";
+
+let routes = route({
+  blog: {
+    list: '/blog',
+    post: '/blog/:slug',
+  },
+  dashboard: {
+    index: '/dashboard',
+    settings: '/dashboard/settings',
+  }
+});
+
+let app = createRSCRouter();
+
+// Public blog routes - optimize for cache hits
+app.route(routes.blog).map({
+  [route.layout]: BlogLayout,
+
+  // Route-level cache configuration
+  [route.cache]: {
+    control: 'public, max-age=3600, s-maxage=86400',
+    prefetch: 'full',              // Prefetch strategy
+    staleWhileRevalidate: 60,
+    revalidate: 300,
+  },
+
+  list: () => <BlogList />,
+  post: (ctx) => <BlogPost slug={ctx.params.slug} />
+});
+
+// Private dashboard routes - optimize for freshness
+app.route(routes.dashboard).map({
+  [route.layout]: DashboardLayout,
+
+  [route.cache]: {
+    control: 'private, no-cache',
+    prefetch: 'partial',           // Optimize for personalized content
+    revalidate: false,             // Always fresh
+  },
+
+  index: () => <Dashboard />,
+  settings: () => <Settings />
+});
+```
+
+### Per-Route Granular Control
+
+Different routes can have different caching strategies:
+
+```typescript
+app.route(routes.blog).map({
+  [route.cache]: {
+    // Default for all blog routes
+    default: {
+      control: 'public, max-age=3600',
+      prefetch: 'full',
+    },
+
+    // Override for specific routes
+    post: {
+      control: 'public, max-age=7200',    // Cache posts longer
+      prefetch: 'full',
+      revalidate: 300,
+    },
+    list: {
+      control: 'public, max-age=60',      // List changes often
+      prefetch: 'partial',                // Optimize list navigation
+    }
+  },
+
+  list: () => <BlogList />,
+  post: (ctx) => <BlogPost slug={ctx.params.slug} />
+});
+```
+
+### Cache Configuration Options
+
+#### `[route.cache]` Symbol
+
+Configure caching behavior for routes:
+
+```typescript
+interface CacheConfig {
+  // HTTP Cache-Control header
+  control?: string;
+
+  // Prefetch strategy: 'full' | 'partial' | false
+  prefetch?: 'full' | 'partial' | false;
+
+  // Revalidation time in seconds
+  revalidate?: number | false;
+
+  // Stale-while-revalidate time
+  staleWhileRevalidate?: number;
+
+  // Custom cache key function
+  cacheKey?: (ctx: RequestContext) => string;
+
+  // Per-route overrides
+  [routeName: string]: CacheConfig;
+}
+```
+
+**Prefetch Strategies:**
+
+1. **`'full'`** (default for public routes):
+   - Prefetches complete route including all layouts
+   - Best for: Blog posts, product pages, marketing pages
+   - Uses browser HTTP cache effectively
+   - Higher bandwidth but better cache hits
+
+2. **`'partial'`**:
+   - Prefetches only changed segments
+   - Best for: Dashboards, personalized content
+   - Lower bandwidth but requires edge caching
+   - Useful when content is always personalized
+
+3. **`false`**:
+   - Disables prefetching entirely
+   - Best for: Forms, checkout flows, mutations
+   - Ensures always-fresh data on navigation
+
+### Client-Side Integration
+
+The framework's `<Link>` component automatically respects server cache configuration:
+
+```typescript
+import { Link } from "rsc-router";
+
+// Uses server-configured cache strategy
+<Link href="/blog/my-post">
+  Read Article
+</Link>
+
+// Override server config if needed
+<Link
+  href="/blog/my-post"
+  prefetch={false}              // User override: don't prefetch
+>
+  Read Article
+</Link>
+
+// Explicit cache hint
+<Link
+  href="/dashboard"
+  prefetch="partial"            // Override for this link
+  cache="private"
+>
+  Dashboard
+</Link>
+```
+
+### Server-Side Implementation
+
+The server handles cache configuration automatically:
+
+```typescript
+// entry.rsc.tsx
+export async function handleRSC(request: Request) {
+  const url = new URL(request.url);
+  const match = await router.match(request);
+  const cacheConfig = match.route.config.cache || {};
+
+  // Determine render strategy
+  const isPrefetch = request.headers.get('Purpose') === 'prefetch';
+  const prefetchType = request.headers.get('X-Prefetch-Type') || cacheConfig.prefetch;
+
+  // Build cache headers from route config
+  const headers = new Headers({
+    'Cache-Control': cacheConfig.control || 'public, max-age=60',
+    'X-Prefetch-Strategy': cacheConfig.prefetch || 'full',
+  });
+
+  // If stale-while-revalidate configured
+  if (cacheConfig.staleWhileRevalidate) {
+    headers.set(
+      'Cache-Control',
+      `${cacheConfig.control}, stale-while-revalidate=${cacheConfig.staleWhileRevalidate}`
+    );
+  }
+
+  // Render based on strategy
+  let segments;
+
+  if (isPrefetch && prefetchType === 'full') {
+    // Full prefetch: render everything for browser cache
+    segments = await renderAllSegments(match);
+  } else if (prefetchType === 'partial') {
+    // Partial: optimize based on edge cache
+    segments = await renderOptimizedSegments(match, request);
+  } else {
+    // Regular navigation: intelligent rendering
+    segments = await renderRoute(match);
+  }
+
+  return new Response(renderToRSCStream(segments), { headers });
+}
+```
+
+### Edge Runtime Caching
+
+Leverage edge runtime caching for application-aware optimization:
+
+```typescript
+// Middleware for edge caching
+app.use(async (ctx, next) => {
+  const cacheKey = `rsc:${ctx.url.pathname}`;
+  const cacheConfig = ctx.route?.config.cache;
+
+  // Skip cache for private routes
+  if (cacheConfig?.control?.includes('private')) {
+    return next();
+  }
+
+  // Check edge cache (Cloudflare KV, Vercel Edge Config, etc.)
+  const cached = await ctx.env.CACHE?.get(cacheKey);
+  if (cached) {
+    return new Response(cached, {
+      headers: {
+        'X-Cache': 'HIT',
+        'Cache-Control': cacheConfig.control
+      }
+    });
+  }
+
+  // Render and cache
+  const response = await next();
+  const ttl = cacheConfig?.revalidate || 60;
+
+  if (response.ok && ttl > 0) {
+    await ctx.env.CACHE?.put(
+      cacheKey,
+      await response.clone().text(),
+      { expirationTtl: ttl }
+    );
+  }
+
+  return response;
+});
+```
+
+### Integration with React's `use cache`
+
+Combine route-level caching with component-level caching:
+
+```typescript
+// Layout with cache directive
+async function BlogLayout() {
+  'use cache';
+  cacheLife('hours');
+
+  const categories = await db.categories.findAll();
+
+  return (
+    <div className="blog-layout">
+      <BlogHeader categories={categories} />
+      <main>
+        <Outlet />
+      </main>
+      <BlogFooter />
+    </div>
+  );
+}
+
+// Page with different cache policy
+async function BlogPost({ slug }: { slug: string }) {
+  'use cache';
+  cacheLife('minutes');
+  cacheTag(`post-${slug}`);
+
+  const post = await db.posts.findBySlug(slug);
+
+  return <article>{post.content}</article>;
+}
+
+// Route configuration
+app.route('/blog/:slug').map({
+  [route.layout]: BlogLayout,
+
+  [route.cache]: {
+    control: 'public, max-age=3600',
+    prefetch: 'full',
+  },
+
+  post: (ctx) => <BlogPost slug={ctx.params.slug} />
+});
+```
+
+**Layered Caching Strategy:**
+1. **HTTP Cache** (Browser/CDN): Controls response caching
+2. **Edge Cache** (Runtime): Application-aware caching
+3. **React Cache** (Component): Fine-grained component caching
+
+### Two-Level Prefetch Caching
+
+The framework uses a two-level caching approach for prefetching:
+
+**Level 1: Browser HTTP Cache**
+- Stores full renders keyed by URL
+- Works with standard browser caching
+- High hit rate for common navigations
+
+**Level 2: Client Memory Cache**
+- Stores individual segments in memory
+- Enables intelligent reuse during navigation
+- Merges with prefetched data on navigation
+
+```typescript
+// Prefetch flow
+onMouseEnter={() => {
+  // 1. Prefetch full render (browser cacheable)
+  fetch('/blog/456', {
+    headers: { 'Purpose': 'prefetch' }
+  });
+  // Browser caches full render at: /blog/456
+}}
+
+onClick={() => {
+  // 2. Navigate
+  navigate('/blog/456');
+
+  // 3. Browser cache HIT! (full render)
+  const response = await fetch('/blog/456');
+
+  // 4. Client intelligently merges with current segments
+  //    Reuses L0, L1 from memory, uses R2 from fetch
+}}
+```
+
+### User Decision Matrix
+
+Choose the right strategy for different route types:
+
+| Route Type | Cache Control | Prefetch | Best For |
+|------------|---------------|----------|----------|
+| **Public Blog** | `public, max-age=3600` | `full` | SEO content, marketing |
+| **Product Pages** | `public, max-age=7200` | `full` | E-commerce catalogs |
+| **User Dashboard** | `private, no-cache` | `partial` | Personalized content |
+| **Real-time Data** | `private, no-store` | `false` | Live feeds, dashboards |
+| **Forms/Checkout** | `no-cache` | `false` | Mutations, sensitive data |
+
+### Performance Comparison
+
+#### Scenario: Navigation from `/blog/123` to `/blog/456`
+
+**Full Render (with caching):**
+```
+Server: 10ms (full render)
+Network: 50KB
+Cache hit rate: 95%
+Average cost per user: 0.5ms + 2.5KB
+```
+
+**Differential Render (with Vary):**
+```
+Server: 2ms (partial render)
+Network: 5KB
+Cache hit rate: 5%
+Average cost per user: 1.9ms + 4.75KB
+```
+
+**Result:** Full render with caching is faster due to higher cache hit rate!
+
+### Best Practices
+
+1. **Start with full prefetch and public caching** for most routes
+2. **Use partial prefetch** only for personalized/private content
+3. **Disable prefetch** for forms, mutations, and checkout flows
+4. **Combine with React's `use cache`** for component-level optimization
+5. **Use edge caching middleware** to avoid Vary header fragmentation
+6. **Monitor cache hit rates** and adjust strategies accordingly
+
+### Example: Complete Application
+
+```typescript
+import { createRSCRouter, route } from "rsc-router";
+
+let routes = route({
+  // Marketing pages
+  home: '/',
+  about: '/about',
+
+  // Blog
+  blog: {
+    list: '/blog',
+    post: '/blog/:slug',
+  },
+
+  // E-commerce
+  products: {
+    list: '/products',
+    detail: '/products/:id',
+  },
+
+  // User area
+  dashboard: '/dashboard',
+  profile: '/profile',
+
+  // Actions
+  checkout: '/checkout',
+  login: '/login',
+});
+
+let app = createRSCRouter();
+
+// Marketing - high cache, full prefetch
+app.route([routes.home, routes.about]).map({
+  [route.cache]: {
+    control: 'public, max-age=7200',
+    prefetch: 'full',
+  },
+  home: () => <HomePage />,
+  about: () => <AboutPage />,
+});
+
+// Blog - medium cache, full prefetch
+app.route(routes.blog).map({
+  [route.cache]: {
+    default: { control: 'public, max-age=3600', prefetch: 'full' },
+    list: { control: 'public, max-age=300', prefetch: 'full' },
+    post: { control: 'public, max-age=7200', prefetch: 'full' },
+  },
+  list: () => <BlogList />,
+  post: (ctx) => <BlogPost slug={ctx.params.slug} />,
+});
+
+// Products - medium cache, full prefetch
+app.route(routes.products).map({
+  [route.cache]: {
+    control: 'public, max-age=1800',
+    prefetch: 'full',
+    staleWhileRevalidate: 300,
+  },
+  list: () => <ProductList />,
+  detail: (ctx) => <ProductDetail id={ctx.params.id} />,
+});
+
+// User dashboard - no cache, partial prefetch
+app.route([routes.dashboard, routes.profile]).map({
+  [route.cache]: {
+    control: 'private, no-cache',
+    prefetch: 'partial',
+  },
+  dashboard: () => <Dashboard />,
+  profile: () => <Profile />,
+});
+
+// Actions - no cache, no prefetch
+app.route([routes.checkout, routes.login]).map({
+  [route.cache]: {
+    control: 'no-cache, no-store',
+    prefetch: false,
+  },
+  checkout: () => <Checkout />,
+  login: () => <Login />,
+});
+```
+
+### Future Enhancements
+
+Potential future additions to the caching system:
+
+1. **Smart prefetch prediction**: ML-based prediction of likely navigation paths
+2. **Adaptive strategies**: Automatically adjust based on network conditions
+3. **Segment-level cache tags**: Fine-grained invalidation with `cacheTag`
+4. **Distributed edge cache**: Coordination across edge locations
+5. **Cache warming**: Pre-populate edge cache for popular routes
+
+---
+
+## Segment State Tracking and Differential Rendering
+
+### Design Philosophy: Serverless-First, React Cache-Driven
+
+This router is designed for **serverless and edge environments** where the server can efficiently handle requests without complex HTTP caching layers. The architecture prioritizes:
+
+1. **Simple navigation**: Browser fetches from server on every navigation
+2. **Server-side optimization**: React's `use cache` handles segment-level caching
+3. **Optional HTTP caching**: Cache-Control headers only when explicitly needed (prefetching, static assets)
+4. **Edge runtime efficiency**: Leverage edge compute for fast responses
+
+### The Navigation Problem
+
+When navigating between routes (e.g., `/blog/123` → `/blog/456`), the server can optimize rendering if it knows where the user is coming from. However, we want to keep this simple.
+
+### Solution: Previous Path Header
+
+The client sends the previous full path (pathname + query) as a simple header:
+
+```http
+GET /blog/456
+RSC-Router-Prev: /blog/123?sort=date
+```
+
+**Why this approach:**
+- Simple: Just a string, no JSON parsing
+- Server decides: Server has full routing knowledge to optimize
+- No cache fragmentation: Not used for response variation
+- Edge-friendly: Minimal overhead in serverless functions
+
+### Server-Side: Optimization Hint
+
+```typescript
+// entry.rsc.tsx
+export async function handleRSC(request: Request) {
+  const url = new URL(request.url);
+
+  // Get previous path (optional hint)
+  const prevPath = request.headers.get('RSC-Router-Prev');
+
+  // Match both paths if available
+  const targetMatch = await router.match(url.pathname);
+  const prevMatch = prevPath ? await router.match(new URL(prevPath, url.origin).pathname) : null;
+
+  // Server can use this to optimize React cache keys
+  // Example: same route pattern = layouts can be cached
+  const hint = prevMatch ? {
+    samePattern: prevMatch.pattern === targetMatch.pattern,
+    prevPath,
+  } : null;
+
+  // Render segments (React cache handles optimization)
+  const rendered = await renderAllSegments(targetMatch, { hint });
+
+  // Default: no HTTP caching (serverless-first)
+  return new Response(rendered, {
+    headers: {
+      'Content-Type': 'text/x-component',
+      // No Cache-Control by default
+      // Add explicitly if needed for prefetching
+    }
+  });
+}
+```
+
+**Key points:**
+- Server uses hint to optimize React cache lookups
+- Response doesn't vary based on hint
+- No Cache-Control by default (browser always fetches fresh)
+- HTTP caching added only when explicitly configured
+
+### The Donut Pattern: Segment-Level Caching
+
+The "donut pattern" enables caching outer layers (layouts) while rendering fresh inner content (pages). This is achieved through React's `use cache` primitive combined with segment-based rendering.
+
+```
+┌─────────────────────────────────┐
+│  RootLayout (CACHED)            │
+│  ┌───────────────────────────┐  │
+│  │ BlogLayout (CACHED)       │  │
+│  │  ┌─────────────────────┐  │  │
+│  │  │ BlogPost            │  │  │  ← Only this renders fresh
+│  │  │ (DYNAMIC)           │  │  │
+│  │  └─────────────────────┘  │  │
+│  └───────────────────────────┘  │
+└─────────────────────────────────┘
+```
+
+#### Implementation with `use cache`
+
+Based on [vite-plugin-react-use-cache](https://github.com/jacob-ebey/vite-plugin-react-use-cache) implementation:
+
+```typescript
+// Layout with caching
+async function BlogLayout() {
+  'use cache';
+  cacheLife('hours');
+  cacheTag('blog-layout');
+
+  // This data fetch is cached
+  const categories = await db.categories.findAll();
+
+  return (
+    <div className="blog-layout">
+      <BlogHeader categories={categories} />
+      <main>
+        <Outlet /> {/* Fresh content rendered here */}
+      </main>
+      <BlogFooter />
+    </div>
+  );
+}
+
+// Page with different cache lifetime
+async function BlogPost({ slug }: { slug: string }) {
+  'use cache';
+  cacheLife('minutes');
+  cacheTag(`post-${slug}`);
+
+  const post = await db.posts.findBySlug(slug);
+
+  return (
+    <article>
+      <h1>{post.title}</h1>
+      <div>{post.content}</div>
+    </article>
+  );
+}
+```
+
+#### How Segment Caching Works
+
+```typescript
+// Server rendering with segment-level caching
+async function renderSegment(
+  pattern: string,
+  params: Record<string, string>,
+  component: Component,
+  comparison?: SegmentStatus
+) {
+  'use cache';
+
+  // Cache key combines pattern + params
+  const cacheKey = `${pattern}::${JSON.stringify(params)}`;
+  cacheKey(cacheKey);
+
+  // Set appropriate cache lifetime based on segment type
+  if (pattern.includes(':')) {
+    cacheLife('minutes'); // Dynamic segments cache shorter
+  } else {
+    cacheLife('hours');   // Static layouts cache longer
+  }
+
+  // Tag for invalidation
+  cacheTag(`segment:${pattern}`);
+
+  // Render the component
+  return await renderComponent(component, params);
+}
+```
+
+#### Navigation Example with Caching
+
+**Initial state:** `/blog/123`
+
+**Navigate to:** `/blog/456`
+
+```http
+GET /blog/456
+RSC-Router-Prev: /blog/123
+Accept: text/x-component
+```
+
+**Server processing:**
+
+```typescript
+// Server matches both paths
+prevMatch: { pattern: '/blog/:post', params: { post: '123' } }
+targetMatch: { pattern: '/blog/:post', params: { post: '456' } }
+
+// Same pattern detected → layouts can be reused
+
+Segment: '/' (RootLayout)
+  React cache key: '/'
+  Cache: HIT (0.1ms)
+
+Segment: '/blog' (BlogLayout)
+  React cache key: '/blog'
+  Cache: HIT (0.1ms)
+
+Segment: '/blog/:post' (BlogPost)
+  React cache key: '/blog/:post::456'
+  Cache: MISS (10ms - new post ID)
+
+Total: 10.2ms (vs 15ms without React cache)
+```
+
+### Cache Invalidation with Tags
+
+```typescript
+// Invalidate blog layout when categories change
+revalidateTag('blog-layout');
+
+// Invalidate specific post
+revalidateTag('post-456');
+
+// Invalidate all posts
+revalidateTag('segment:/blog/:post');
+```
+
+#### Server Action Integration
+
+```typescript
+async function updateBlogPost(formData: FormData) {
+  'use server';
+
+  const slug = formData.get('slug') as string;
+  await db.posts.update(slug, { ... });
+
+  // Invalidate only this post's cache
+  revalidateTag(`post-${slug}`);
+
+  // If categories changed, invalidate layout too
+  if (categoriesChanged) {
+    revalidateTag('blog-layout');
+  }
+
+  redirect(`/blog/${slug}`);
+}
+```
+
+### Router Integration: Automatic Segment Caching
+
+The router can automatically wrap segments with caching based on route configuration:
+
+```typescript
+app.route('/blog/:slug').map({
+  [route.layout]: BlogLayout,
+
+  [route.cache]: {
+    // Layout cache configuration
+    layout: {
+      lifetime: 'hours',
+      tags: ['blog-layout'],
+      key: (params) => '/blog',  // Static key for layout
+    },
+
+    // Page cache configuration
+    page: {
+      lifetime: 'minutes',
+      tags: (params) => [`post-${params.slug}`],
+      key: (params) => `/blog/:post::${params.slug}`,
+    }
+  },
+
+  post: (ctx) => <BlogPost slug={ctx.params.slug} />
+});
+```
+
+#### Automatic Cache Wrapper
+
+```typescript
+// Framework automatically wraps segments
+async function renderSegmentWithCache(
+  segment: Segment,
+  config: CacheConfig
+) {
+  const cacheKey = config.key
+    ? config.key(segment.params)
+    : `${segment.pattern}::${JSON.stringify(segment.params)}`;
+
+  return cache(
+    async () => {
+      'use cache';
+      cacheLife(config.lifetime || 'default');
+
+      // Add tags
+      if (typeof config.tags === 'function') {
+        config.tags(segment.params).forEach(tag => cacheTag(tag));
+      } else {
+        config.tags?.forEach(tag => cacheTag(tag));
+      }
+
+      // Render segment
+      return await renderComponent(segment.component, segment.params);
+    },
+    [cacheKey]
+  );
+}
+```
+
+### Client-Side Implementation
+
+```typescript
+// Track current path
+let currentPath = window.location.pathname + window.location.search;
+
+// Navigation with previous path hint
+async function navigate(path: string) {
+  const response = await fetch(path, {
+    headers: {
+      'Accept': 'text/x-component',
+      'RSC-Router-Prev': currentPath,  // Simple string
+    }
+  });
+
+  const payload = await createFromFetch(response);
+
+  // Update current path
+  currentPath = path;
+
+  // Render
+  renderPayload(payload);
+}
+```
+
+**Simplicity wins:**
+- No complex state tracking
+- Just send previous pathname+query as string
+- Server has full routing knowledge to optimize
+- Client stays lightweight
+
+### Performance with React Cache
+
+#### Without React Cache
+
+```
+Navigation: /blog/123 → /blog/456
+
+Server rendering:
+- RootLayout: 2ms (render + data fetch)
+- BlogLayout: 5ms (render + fetch categories)
+- BlogPost: 10ms (render + fetch post)
+Total: 17ms
+
+Response: ~50KB
+```
+
+#### With React Cache (Donut Pattern)
+
+```
+Navigation: /blog/123 → /blog/456
+
+Server rendering:
+- RootLayout: <1ms (React cache hit)
+- BlogLayout: <1ms (React cache hit)
+- BlogPost: 10ms (new post, cache miss)
+Total: ~10ms
+
+Response: ~50KB (same size)
+
+Improvement: ~40% faster server rendering
+```
+
+**Note:** Numbers are illustrative. Actual performance depends on:
+- Component complexity
+- Data fetching latency
+- Edge runtime performance
+- Network conditions
+
+### Best Practices
+
+1. **React cache for segments**: Use `use cache` in layouts and pages
+2. **Shorter lifetimes for dynamic content**: Pages cache for minutes, layouts for hours
+3. **Tag for invalidation**: Use `cacheTag` for fine-grained cache busting
+4. **Keep layouts simple**: Simpler layouts = better cache reuse
+5. **Monitor in development**: Log cache hits/misses during dev
+6. **Add HTTP caching selectively**: Use Cache-Control only for prefetching or static content
+
+### Optional: HTTP Caching for Prefetching
+
+By default, the router doesn't set Cache-Control (serverless-first). Add it explicitly when needed:
+
+```typescript
+app.route('/blog/:slug').map({
+  [route.cache]: {
+    // HTTP caching for prefetch responses
+    control: 'public, max-age=60',  // Cache for 1 minute
+    prefetch: 'full',
+  },
+
+  post: (ctx) => <BlogPost slug={ctx.params.slug} />
+});
+```
+
+**When to use HTTP caching:**
+- Prefetching: Allow browser to cache prefetched responses
+- Static assets: Marketing pages, about pages
+- Public content: Blog posts that change infrequently
+
+**When NOT to use:**
+- User-specific data (dashboards, profiles)
+- Real-time content (live feeds, notifications)
+- Forms and mutations (always fresh)
+
+### Two-Layer Caching (Serverless-First)
+
+1. **React cache** (server-side): Individual segments, managed by React
+2. **Browser cache** (optional): Full responses, only when HTTP caching configured
+
+**Note:** No edge KV/cache layer required by default. React cache handles optimization at the function level.
+
+### Example: Complete Route with Segment Caching
+
+```typescript
+import { createRSCRouter, route } from "rsc-router";
+
+let routes = route({
+  blog: {
+    list: '/blog',
+    post: '/blog/:slug',
+    author: '/blog/:slug/author',
+  }
+});
+
+let app = createRSCRouter();
+
+app.route(routes.blog).map({
+  // Layouts cached aggressively
+  [route.layout]: [RootLayout, BlogLayout],
+
+  [route.cache]: {
+    // Root layout cache (shared across all routes)
+    '/': {
+      lifetime: 'days',
+      tags: ['root-layout'],
+    },
+
+    // Blog layout cache (shared across blog routes)
+    '/blog': {
+      lifetime: 'hours',
+      tags: ['blog-layout'],
+    },
+
+    // Per-route page caching
+    list: {
+      lifetime: 'minutes',
+      tags: ['blog-list'],
+    },
+    post: {
+      lifetime: 'minutes',
+      tags: (params) => [`post-${params.slug}`],
+    },
+    author: {
+      lifetime: 'minutes',
+      tags: (params) => [`author-${params.slug}`],
+    }
+  },
+
+  list: async () => {
+    const posts = await db.posts.findAll();
+    return <BlogList posts={posts} />;
+  },
+
+  post: async (ctx) => {
+    const post = await db.posts.findBySlug(ctx.params.slug);
+    return <BlogPost post={post} />;
+  },
+
+  author: async (ctx) => {
+    const post = await db.posts.findBySlug(ctx.params.slug);
+    const author = await db.authors.findById(post.authorId);
+    return <AuthorPage author={author} />;
+  }
+});
+```
+
+### Monitoring and Debugging
+
+```typescript
+// Development mode: log cache performance
+if (import.meta.env.DEV) {
+  app.use(async (ctx, next) => {
+    const start = performance.now();
+    const comparison = ctx.segmentComparison;
+
+    const response = await next();
+    const duration = performance.now() - start;
+
+    console.log('Segment Rendering:', {
+      url: ctx.url.pathname,
+      duration: `${duration.toFixed(2)}ms`,
+      segments: Object.entries(comparison).map(([pattern, status]) => ({
+        pattern,
+        status: status.status,
+        cached: status.status === 'unchanged'
+      }))
+    });
+
+    return response;
+  });
+}
+```
+
+### Summary
+
+This serverless-first approach with donut pattern caching provides:
+
+- **Simple navigation hint**: Just send previous path as header
+- **React cache optimization**: Layouts cached automatically via `use cache`
+- **No complex HTTP caching**: Cache-Control optional, add only when needed
+- **Edge-friendly**: Minimal overhead, works well in serverless functions
+- **Tag-based invalidation**: Granular cache control with `cacheTag`
+- **Straightforward DX**: Write components with `use cache`, router handles the rest
+
+The design prioritizes simplicity and serverless performance over complex caching strategies.

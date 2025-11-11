@@ -1,4 +1,4 @@
-import { RscRouter } from "rsc-router/server";
+import { RscRouter, route } from "rsc-router";
 
 // Import layouts
 import RootLayout from "./layouts/RootLayout";
@@ -14,6 +14,19 @@ import ArticlesListPage from "./pages/ArticlesListPage";
 // Create router instance
 export const router = new RscRouter();
 
+const appRoute = route({
+  index: "/",
+  about: "/about",
+});
+const dashboardRoute = route({
+  index: "/",
+  analytics: "/analytics",
+});
+const articlesRoute = route({
+  index: "/",
+  details: "/:id",
+});
+
 // Global middleware example
 router.use(async (ctx, next) => {
   console.log(`[Middleware] Request to: ${ctx.pathname}`);
@@ -25,6 +38,8 @@ router.use(async (ctx, next) => {
 router.layout("/", async (ctx, children) => {
   return <RootLayout />;
 });
+
+router.route(appRoute);
 
 // Home page
 router.get("/", async (ctx) => {
@@ -108,15 +123,13 @@ router.get("/about", async (ctx) => {
 
 router.endLayout(); // End root layout
 
-// 404 handler (no layout)
+// 404 handler (uses root layout)
 router.all("*", async (ctx) => {
   return (
-    <html>
-      <body>
-        <h1>404 - Not Found</h1>
-        <p>The page {ctx.pathname} was not found.</p>
-        <a href="/">Go home</a>
-      </body>
-    </html>
+    <div>
+      <h1>404 - Not Found</h1>
+      <p>The page {ctx.pathname} was not found.</p>
+      <a href="/">Go home</a>
+    </div>
   );
 });

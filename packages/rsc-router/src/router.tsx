@@ -1,5 +1,5 @@
-import type { ComponentType, ReactNode } from 'react';
-import type { Segment } from './types';
+import type { ReactNode } from 'react';
+import type { Segment, ResolvedSegment } from './types';
 
 export type RouteContext = {
   params: Record<string, string>;
@@ -10,9 +10,8 @@ export type RouteContext = {
   meta: Record<string, any>;
 };
 
-export type RouteHandler = (
-  context: RouteContext
-) => ReactNode | Promise<ReactNode>;
+// Internal type - not exported to avoid conflict with route-definition.ts
+type RouteHandler = (context: RouteContext) => ReactNode | Promise<ReactNode>;
 
 export type LayoutHandler = (
   context: RouteContext
@@ -39,47 +38,6 @@ export type Route = {
 export class RscRouter {
   private routes: Route[] = [];
   private currentRoute: Route | null = null;
-  private layoutStack: Route[] = [];
-
-  /**
-   * Define a layout route that wraps child routes
-   */
-  layout(
-    pattern: string,
-    ...handlers: Array<MiddlewareHandler | LayoutHandler>
-  ) {
-    const route: Route = {
-      pattern,
-      method: 'ALL',
-      handlers,
-      isLayout: true,
-      children: [],
-    };
-
-    // Parse pattern to create regex and extract param names
-    this.compileRoute(route);
-
-    // If we're inside another layout, add as child
-    if (this.currentRoute) {
-      this.currentRoute.children.push(route);
-    } else {
-      this.routes.push(route);
-    }
-
-    // Push to layout stack for nesting
-    this.layoutStack.push(this.currentRoute || route);
-    this.currentRoute = route;
-
-    return this;
-  }
-
-  /**
-   * End current layout group
-   */
-  endLayout() {
-    this.currentRoute = this.layoutStack.pop() || null;
-    return this;
-  }
 
   /**
    * Define a GET route
@@ -167,22 +125,13 @@ export class RscRouter {
   /**
    * Match a request against routes and execute handlers
    */
-  async match(request: Request): Promise<[ReactNode | null, Segment[]]> {
+  async match(request: Request, context: RouteContext) {
     const url = new URL(request.url);
     const pathname = url.pathname;
     const method = request.method;
-    let currentSegments: Array<{
-      index: number;
-      pattern: string;
-      component: React.ReactNode;
-      isLayout: boolean;
-    }> = [];
+
     console.log(`\n[Router.match] ========== START MATCHING ==========`);
     console.log(`[Router.match] Method: ${method}, Path: ${pathname}`);
-    console.log(
-      `[Router.match] Available routes:`,
-      this.routes.map((r) => r.pattern)
-    );
 
     // Find matching routes (including parent layouts)
     const matchedRoutes = this.findMatchingRoutes(
@@ -191,134 +140,48 @@ export class RscRouter {
       this.routes
     );
 
+    const matchedSegmentIds = matchedRoutes.map((m) => m.id);
     console.log(
-      `[Router.match] Matched routes:`,
-      matchedRoutes.map((m) => ({
-        pattern: m.route.pattern,
-        isLayout: m.route.isLayout,
-        params: m.params,
-      }))
+      `[Router.match] Matched segments: ${matchedSegmentIds.join(', ')}`
     );
 
-    if (matchedRoutes.length === 0) {
-      console.log(`[Router.match] ❌ No matching routes found`);
-      return [null, []];
-    }
-
-    // Build context
-    const context: RouteContext = {
-      params: {},
-      searchParams: url.searchParams,
-      pathname,
-      url,
-      request,
-      meta: {},
-    };
-
-    // Extract params from the matched routes
-    for (const matched of matchedRoutes) {
-      Object.assign(context.params, matched.params);
-    }
-
-    // Execute middleware and handlers in order
-    let componentTree: ReactNode = null;
-
-    console.log(
-      `[Router.match] Processing ${matchedRoutes.length} matched routes...`
+    // Render all segments (no filtering needed for full match)
+    const segments: Array<ResolvedSegment> = await this.renderSegments(
+      matchedRoutes,
+      context
     );
 
-    // Process from outermost to innermost
-    for (let i = matchedRoutes.length - 1; i >= 0; i--) {
-      const { route } = matchedRoutes[i];
-      console.log(
-        `\n[Router.match] Processing route ${i}: ${route.pattern} (isLayout: ${route.isLayout})`
-      );
-
-      for (const handler of route.handlers) {
-        console.log(
-          `[Router.match]   Handler: ${handler.name || 'anonymous'}, length: ${
-            handler.length
-          }`
-        );
-
-        // Check route type first
-        if (route.isLayout) {
-          // It's a layout handler - just store the segment
-          console.log(`[Router.match]   → Executing layout handler`);
-          const layoutHandler = handler as LayoutHandler;
-          const layoutComponent = await layoutHandler(context);
-          console.log(
-            `[Router.match]     Layout returned:`,
-            typeof layoutComponent === 'object' &&
-              layoutComponent !== null &&
-              'type' in layoutComponent
-              ? (layoutComponent as any).type?.name || typeof layoutComponent
-              : typeof layoutComponent
-          );
-          currentSegments.push({
-            index: i,
-            pattern: route.pattern,
-            component: layoutComponent,
-            isLayout: true,
-          });
-
-          console.log(`[Router.match]     Stored layout segment`);
-        } else if (handler.length === 2) {
-          // It's middleware (has 'next' parameter)
-          console.log(`[Router.match]   → Executing middleware`);
-          const middleware = handler as MiddlewareHandler;
-          let nextCalled = false;
-          await middleware(context, async () => {
-            nextCalled = true;
-            console.log(`[Router.match]     Middleware called next()`);
-          });
-          if (!nextCalled) {
-            console.log(
-              `[Router.match]   ⚠️ Middleware didn't call next, stopping`
-            );
-            break;
-          }
-        } else {
-          // It's a route handler
-          console.log(`[Router.match]   → Executing route handler`);
-          const routeHandler = handler as RouteHandler;
-          componentTree = await routeHandler(context);
-          currentSegments.push({
-            index: i,
-            pattern: route.pattern,
-            component: componentTree,
-            isLayout: false,
-          });
-          console.log(
-            `[Router.match]     Route returned:`,
-            typeof componentTree === 'object' &&
-              componentTree !== null &&
-              'type' in componentTree
-              ? (componentTree as any).type?.name || typeof componentTree
-              : typeof componentTree
-          );
-        }
-      }
-    }
-
+    console.log(`[Router.match] Rendered ${segments.length} segments`);
+    console.log('[Router.match] Segments:', segments);
     console.log(`[Router.match] ========== END MATCHING ==========\n`);
-    // Server sends segments - client will reconstruct tree using OutletProvider
-    return [null, currentSegments] as const;
+
+    return {
+      segments,
+      matched: matchedSegmentIds,
+      diff: matchedSegmentIds,
+    };
   }
 
   private findMatchingRoutes(
     pathname: string,
     method: 'GET' | 'POST',
     routes: Route[],
-    parentMatches: Array<{ route: Route; params: Record<string, string> }> = [],
+    parentMatches: Array<{
+      route: Route;
+      params: Record<string, string>;
+      id: string;
+    }> = [],
     depth: number = 0
-  ): Array<{ route: Route; params: Record<string, string> }> {
+  ): Array<{ route: Route; params: Record<string, string>; id: string }> {
     const indent = '  '.repeat(depth);
     console.log(
       `${indent}[findMatching] Searching at depth ${depth} for ${pathname}`
     );
+    console.log('[findMatching] routes', routes);
 
     for (const route of routes) {
+      console.log('[findMatching] route', route);
+
       console.log(
         `${indent}  Checking route: ${route.pattern} (${route.method}, isLayout: ${route.isLayout})`
       );
@@ -344,8 +207,14 @@ export class RscRouter {
         });
       }
 
-      const currentMatch = { route, params };
-      console.log(`${indent}    Created match with params:`, params);
+      // Generate ID based on position and type
+      // TODO: Handle parallel routes - they should use 'P' prefix (e.g., 'P0', 'P1')
+      // Currently Route type doesn't have a field to identify parallel routes
+      const id = route.isLayout
+        ? `L${parentMatches.length}`
+        : `R${parentMatches.length}`;
+      const currentMatch = { route, params, id };
+      console.log(`${indent}    Created match with ID: ${id}, params:`, params);
 
       // If this is a layout, check its children
       if (route.isLayout) {
@@ -376,115 +245,126 @@ export class RscRouter {
   }
 
   /**
+   * Render segments by calling their handlers and resolving components
+   */
+  private async renderSegments(
+    matches: Array<{
+      route: Route;
+      params: Record<string, string>;
+      id: string;
+    }>,
+    context: RouteContext
+  ): Promise<Array<ResolvedSegment>> {
+    const segments: Array<ResolvedSegment> = [];
+
+    // Process each match and render the component
+    for (let i = 0; i < matches.length; i++) {
+      const { route, params, id } = matches[i];
+
+      // Update context with params from this match
+      const segmentContext = {
+        ...context,
+        params: { ...context.params, ...params },
+      };
+
+      let component: ReactNode = null;
+
+      try {
+        // Execute all handlers for this route
+        for (const handler of route.handlers) {
+          // Check if it's a regular handler or middleware
+          if (handler.length === 1 || route.isLayout) {
+            // Regular handler or layout handler
+            const result = await handler(segmentContext);
+
+            // Handle dynamic imports (e.g., () => import('./Component'))
+            if (typeof result === 'function') {
+              const importResult = await result();
+              // Handle ES module default exports
+              component = importResult.default || importResult;
+            } else {
+              component = result;
+            }
+          }
+          // Skip middleware handlers (they have 2 params: context and next)
+        }
+      } catch (error) {
+        console.error(
+          `[Router.renderSegments] Error rendering segment ${id}:`,
+          error
+        );
+        // Return error component
+        component = <div>Error loading segment {id}</div>;
+      }
+
+      // Create resolved segment
+      const segment: ResolvedSegment = {
+        id,
+        type: route.isLayout ? 'layout' : 'route',
+        index: i,
+        pattern: route.pattern,
+        component,
+        isLayout: route.isLayout,
+        params,
+      };
+
+      segments.push(segment);
+    }
+
+    return segments;
+  }
+
+  /**
    * Get partial route match for client-side navigation
    * Returns only changed segments for true partial rendering
+   *
    */
   async matchPartial(
     request: Request,
-    previousPathname?: string | null
-  ): Promise<{
-    segments: Array<Segment>;
-    startIndex: number;
-    preservedLayouts: string[];
-  } | null> {
+    clientSegmentIds: string[],
+    context: RouteContext
+  ) {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
     // Find matches for current route
     const nextMatches = this.findMatchingRoutes(pathname, 'GET', this.routes);
-
-    // If no matches, return null
-    if (nextMatches.length === 0) {
-      return null;
-    }
-
-    // Determine divergence point if previous pathname provided
-    let divergenceIndex = 0;
-    let preservedLayouts: string[] = [];
-
-    if (previousPathname) {
-      const prevMatches = this.findMatchingRoutes(
-        previousPathname,
-        'GET',
-        this.routes
-      );
-
-      // Find where routes diverge
-      for (
-        let i = 0;
-        i < Math.min(prevMatches.length, nextMatches.length);
-        i++
-      ) {
-        if (prevMatches[i].route !== nextMatches[i].route) {
-          break;
+    const matchedSegmentIds = nextMatches.map((m) => m.id);
+    const clientSegmentIdsSet = new Set(clientSegmentIds);
+    const toRenderSegments = nextMatches.filter((s) => {
+      if (clientSegmentIdsSet.has(s.id)) {
+        // here we need to call segmets.revalidate(ctx) which is by default false and if true we should render it again
+        // await match.route.revalidate(context, other props as needed)
+        // revalidate must not be async func
+        const revalidate = false;
+        if (revalidate) {
+          return true;
         }
-        divergenceIndex++;
+        return false;
       }
-
-      preservedLayouts = prevMatches
-        .slice(0, divergenceIndex)
-        .filter((m) => m.route.isLayout)
-        .map((m) => m.route.pattern);
-    }
-
-    // Build context
-    const context: RouteContext = {
-      params: {},
-      searchParams: url.searchParams,
-      pathname,
-      url,
-      request,
-      meta: {},
-    };
-
-    // Extract all params
-    for (const matched of nextMatches) {
-      Object.assign(context.params, matched.params);
-    }
-
-    // Build segments array - ONLY the changed segments
-    const segments: Array<Segment> = [];
-
-    // Process ONLY from divergence point to end
-    // This gives us minimal segments needed
-    for (let i = divergenceIndex; i < nextMatches.length; i++) {
-      const { route } = nextMatches[i];
-
-      for (const handler of route.handlers) {
-        // Skip middleware
-        if (route.isLayout) {
-          const layoutHandler = handler as LayoutHandler;
-          // Pass null as children - client will reconstruct
-          const layoutComponent = await layoutHandler(context);
-
-          segments.push({
-            index: i,
-            pattern: route.pattern,
-            component: layoutComponent,
-            isLayout: true,
-          });
-        } else if (handler.length === 1) {
-          const routeHandler = handler as RouteHandler;
-          const pageComponent = await routeHandler(context);
-
-          segments.push({
-            index: i,
-            pattern: route.pattern,
-            component: pageComponent,
-            isLayout: false,
-          });
-        }
-      }
-    }
+      return true;
+    });
+    const renderedSegmentIds = toRenderSegments.map((s) => s.id);
 
     console.log(
-      `[Router.matchPartial] Returning ${segments.length} segments starting from index ${divergenceIndex}`
+      `[Router.matchPartial] Next segments: ${matchedSegmentIds.join(', ')}`
+    );
+    console.log(
+      `[Router.matchPartial] Client segments: ${clientSegmentIds.join(', ')}`
+    );
+    console.log(
+      `[Router.matchPartial] Rendered segments: ${renderedSegmentIds.join(', ')}`
+    );
+    // Render segments - call handlers to get components
+    const segments: Array<ResolvedSegment> = await this.renderSegments(
+      toRenderSegments,
+      context
     );
 
     return {
       segments,
-      startIndex: divergenceIndex,
-      preservedLayouts,
+      matched: matchedSegmentIds,
+      diff: renderedSegmentIds,
     };
   }
 }

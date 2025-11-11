@@ -1,26 +1,35 @@
 /**
  * Playwright E2E Test Configuration
  *
- * Runs E2E tests against the example app to validate:
+ * Runs E2E tests against the web app to validate:
  * - Real browser RSC streaming
- * - SPA navigation
- * - Partial rendering
- * - Segment management
+ * - SPA navigation with _has parameter
+ * - Partial rendering and differential updates
+ * - Segment-based reconciliation
+ * - Layout preservation
  */
 
 import { defineConfig, devices } from '@playwright/test';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
-  testDir: './e2e',
-  fullyParallel: true,
+  testDir: './tests/e2e',
+  fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
-  reporter: 'html',
+  retries: 0, // Never retry - fail fast
+  workers: 1, // Use single worker to avoid race conditions
+  reporter: 'list', // Simple list output, no HTML reports
+  timeout: 30000, // 30 second timeout per test
+  globalTimeout: 60000, // 60 second total timeout
 
   use: {
-    baseURL: 'http://localhost:3002',
-    trace: 'on-first-retry',
+    baseURL: 'http://localhost:5173',
+    trace: 'off', // Don't generate traces
+    screenshot: 'off', // Don't take screenshots
+    actionTimeout: 10000, // 10 second timeout for actions
   },
 
   projects: [
@@ -28,24 +37,16 @@ export default defineConfig({
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
     },
-
-    {
-      name: 'firefox',
-      use: { ...devices['Desktop Firefox'] },
-    },
-
-    {
-      name: 'webkit',
-      use: { ...devices['Desktop Safari'] },
-    },
   ],
 
-  // Run dev server before E2E tests
+  // Auto-start dev server and show logs
   webServer: {
-    command: 'cd e2e/fixtures/test-app && npm run dev',
-    url: 'http://localhost:3002',
+    command: 'pnpm dev',
+    cwd: path.resolve(__dirname, '../../apps/web'),
+    url: 'http://localhost:5173',
     reuseExistingServer: !process.env.CI,
-    stdout: 'pipe',
+    timeout: 30 * 1000,
+    stdout: 'pipe', // Show server logs in test output
     stderr: 'pipe',
   },
 });

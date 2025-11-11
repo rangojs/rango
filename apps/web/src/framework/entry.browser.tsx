@@ -9,25 +9,17 @@ import React from "react";
 import { hydrateRoot } from "react-dom/client";
 import { rscStream } from "rsc-html-stream/client";
 import type { RscPayload } from "./entry.rsc";
-import { OutletProvider } from "rsc-router/client";
+import { OutletProvider, type Segment } from "rsc-router";
 
 // ============================================================================
 // Types & Constants
 // ============================================================================
 
-export type Segment = {
-  index: number;
-  pattern: string;
-  component: React.ReactNode;
-  isLayout: boolean;
-};
-
 const LOG_PREFIX = "[Browser]";
 const LOG_SEPARATOR = "============";
 
 // Navigation constants
-const PARTIAL_PARAM = "_rsc_partial";
-const PREV_PATH_PARAM = "_rsc_prev";
+const HAS_PARAM = "_has"; // Client reports which segments it has
 const RSC_ACTION_HEADER = "x-rsc-action";
 
 // ============================================================================
@@ -63,9 +55,11 @@ const logger = {
 /**
  * Reconstructs a React component tree from an array of segments.
  * Builds the tree from innermost (page) to outermost (root layout).
+ * Uses component cache to preserve React instances for unchanged segments.
  */
 function reconstructTreeFromSegments(
-  segments: Array<Segment>
+  segments: Array<Segment>,
+  componentCache: Map<string, React.ReactNode>
 ): React.ReactNode {
   if (!segments || segments.length === 0) {
     return null;
@@ -75,52 +69,56 @@ function reconstructTreeFromSegments(
   const sortedSegments = [...segments].sort((a, b) => b.index - a.index);
 
   logger.info(`Reconstructing tree from ${sortedSegments.length} segments`);
-  sortedSegments.forEach(seg => {
-    logger.info(`  - index ${seg.index}: ${seg.pattern} (${seg.isLayout ? 'layout' : 'page'})`);
+  sortedSegments.forEach((seg) => {
+    logger.info(
+      `  - index ${seg.index}: ${seg.pattern} (${seg.isLayout ? "layout" : "page"})`
+    );
   });
 
   // Start with the innermost page component
   let tree: React.ReactNode = null;
 
   for (const segment of sortedSegments) {
+    const cacheKey = segment.id;
+
     if (segment.isLayout) {
-      // This is a layout - wrap the current tree
-      // The layout's <Outlet /> will render the content from OutletProvider
-      tree = React.createElement(OutletProvider, {
-        content: tree,
-        key: `outlet-${segment.index}`,
+      // Check if we have a cached version of this layout
+      const cachedComponent = componentCache.get(cacheKey);
+
+      if (cachedComponent && segment.id.startsWith("L")) {
+        // Reuse cached layout component for unchanged layouts
+        logger.info(`  Reusing cached layout: ${segment.id}`);
+        tree = React.createElement(OutletProvider, {
+          content: tree,
+          key: segment.id,
+          children: cachedComponent,
+        });
+      } else {
+        // Create new component and cache it
+        logger.info(`  Creating new component: ${segment.id}`);
+        const newComponent = segment.component;
+        componentCache.set(cacheKey, newComponent);
+
+        tree = React.createElement(OutletProvider, {
+          content: tree,
+          key: segment.id,
+          children: newComponent,
+        });
+      }
+    } else {
+      // Page component - always create new (pages change on navigation)
+      logger.info(`  Creating new page component: ${segment.id}`);
+      componentCache.set(cacheKey, segment.component);
+
+      tree = React.createElement("div", {
+        key: segment.id,
         children: segment.component,
       });
-    } else {
-      // This is a page component - it becomes the initial tree
-      tree = segment.component;
     }
   }
 
   logger.info("Tree reconstruction complete");
   return tree;
-}
-
-/**
- * Merges new segments with existing ones for partial updates
- */
-function mergeSegments(
-  currentSegments: Segment[],
-  newSegments: Segment[],
-  startIndex: number
-): Segment[] {
-  // Preserve existing segments up to the start index
-  const preservedSegments = currentSegments.filter((s) => s.index < startIndex);
-
-  logger.info(
-    `Preserving ${preservedSegments.length} segments before index ${startIndex}`
-  );
-
-  // Combine with new segments and sort by index
-  const mergedSegments = [...preservedSegments, ...newSegments];
-  mergedSegments.sort((a, b) => b.index - a.index);
-
-  return mergedSegments;
 }
 
 // ============================================================================
@@ -204,6 +202,7 @@ interface PayloadManager {
   abortController?: AbortController;
   setPayload: ((payload: RscPayload) => void) | null;
   initialMetadata?: RscPayload["metadata"];
+  componentCache: Map<string, React.ReactNode>; // Cache components by segment ID
 }
 
 /**
@@ -211,29 +210,25 @@ interface PayloadManager {
  */
 function createFetchUrl(
   targetUrl: string,
-  currentPathname: string,
-  hasMetadata: boolean
-): URL {
+  currentSegments: Segment[]
+): { url: URL; isPartialRequest: boolean } {
   const url = new URL(targetUrl, window.location.origin);
-  const targetPathname = url.pathname;
+  let isPartialRequest = false;
 
-  const shouldAttemptPartial =
-    currentPathname !== targetPathname && hasMetadata;
-
-  if (shouldAttemptPartial) {
-    url.searchParams.set(PARTIAL_PARAM, "true");
-    url.searchParams.set(PREV_PATH_PARAM, currentPathname);
+  // If we have segments from a previous render, send them for differential rendering
+  if (currentSegments.length > 0) {
+    // Report which segments we currently have
+    const segmentIds = currentSegments.map((s) => s.id).join(",");
+    url.searchParams.set(HAS_PARAM, segmentIds);
+    isPartialRequest = true;
     logger.info("→ Requesting PARTIAL render");
-    logger.info(`  Previous: ${currentPathname}`);
-    logger.info(`  Target: ${targetPathname}`);
+    logger.info(`  Has segments: ${segmentIds}`);
   } else {
     logger.info("→ Requesting FULL render");
-    const reason =
-      currentPathname === targetPathname ? "Same path" : "No metadata";
-    logger.info(`  Reason: ${reason}`);
+    logger.info(`  Reason: No current segments`);
   }
 
-  return url;
+  return { url, isPartialRequest };
 }
 
 /**
@@ -250,11 +245,10 @@ async function fetchRscPayload(
   logger.info(`From: ${manager.currentPathname}`);
   logger.info(`To: ${targetPathname}`);
 
-  // Build fetch URL with partial rendering params
-  const fetchUrl = createFetchUrl(
+  // Build fetch URL with _has parameter
+  const { url: fetchUrl, isPartialRequest } = createFetchUrl(
     url,
-    manager.currentPathname,
-    Boolean(manager.initialMetadata?.pathname)
+    manager.currentSegments
   );
 
   logger.info(`Fetching: ${fetchUrl.href}`);
@@ -265,7 +259,14 @@ async function fetchRscPayload(
   manager.abortController = new AbortController();
 
   try {
-    const responsePromise = fetch(fetchUrl.href).catch((err) => {
+    // Set appropriate Accept header
+    const headers: Record<string, string> = {
+      Accept: isPartialRequest ? "text/x-component" : "text/html",
+    };
+
+    logger.info(`Accept header: ${headers.Accept}`);
+
+    const responsePromise = fetch(fetchUrl.href, { headers }).catch((err) => {
       logger.error("Fetch error:", err);
       return new Response(null, { status: 500 });
     });
@@ -304,34 +305,86 @@ async function fetchRscPayload(
  * Processes received payload and handles partial updates
  */
 function processPayload(manager: PayloadManager, payload: RscPayload): void {
-  if (payload.metadata?.isPartial && payload.metadata?.segments) {
-    logger.info("Received PARTIAL payload with segments:");
-    logger.info(`  Start index: ${payload.metadata.startIndex}`);
-    logger.info(`  Preserved layouts: ${payload.metadata.preservedLayouts}`);
+  if (payload.metadata?.isPartial && payload.metadata?.updates) {
+    logger.info("Received PARTIAL payload with updates:");
 
-    // Log segment details
-    payload.metadata.segments.forEach((seg: Segment) => {
-      const type = seg.isLayout ? "layout" : "page";
-      logger.info(`    - Index ${seg.index}: ${seg.pattern} (${type})`);
+    // Server sent us a list of segment IDs that should exist,
+    // and the actual updated segments
+    const serverSegments = payload.metadata.segments || [];
+    const updates = payload.metadata.updates || [];
+
+    logger.info(
+      `  Server segment IDs: ${serverSegments.map((s) => s.id).join(", ")}`
+    );
+    logger.info(`  Updated segments: ${updates.map((s) => s.id).join(", ")}`);
+
+    // Create a map of segment IDs that should exist
+    const shouldExist = new Set(serverSegments.map((s) => s.id));
+
+    // Remove segments that shouldn't exist anymore
+    manager.currentSegments = manager.currentSegments.filter((s) => {
+      if (shouldExist.has(s.id)) {
+        logger.info(`  ${s.id}: KEEP - still needed`);
+        return true;
+      } else {
+        logger.info(`  ${s.id}: REMOVE - no longer needed`);
+        return false;
+      }
     });
 
-    // Merge and reconstruct segments
-    manager.currentSegments = mergeSegments(
-      manager.currentSegments,
-      payload.metadata.segments,
-      payload.metadata.startIndex ?? 0
-    );
+    // Add or update segments from the updates array
+    // IMPORTANT: Only replace segments that are in the updates array
+    // This preserves React component instances for unchanged segments
+    for (const updateSeg of updates) {
+      const existingIndex = manager.currentSegments.findIndex(
+        (s) => s.id === updateSeg.id
+      );
 
-    // Reconstruct tree from merged segments
-    payload.root = reconstructTreeFromSegments(manager.currentSegments);
-    logger.success("Tree reconstructed and payload updated");
+      if (existingIndex >= 0) {
+        // Replace existing segment with new version
+        logger.info(`  ${updateSeg.id}: REPLACE - updating with new version`);
+        manager.currentSegments[existingIndex] = updateSeg;
+      } else {
+        // Add new segment (didn't exist before)
+        logger.info(`  ${updateSeg.id}: ADD - new segment`);
+        manager.currentSegments.push(updateSeg);
+      }
+    }
+
+    // Sort by index to maintain proper order
+    manager.currentSegments.sort((a, b) => a.index - b.index);
+
+    // For partial updates, only reconstruct if we have actual changes
+    // This preserves React component instances for unchanged layouts
+    if (updates.length > 0) {
+      // Clear cache entries for updated segments only
+      updates.forEach((seg) => {
+        manager.componentCache.delete(seg.id);
+        logger.info(`  Cleared cache for updated segment: ${seg.id}`);
+      });
+
+      // Reconstruct the tree with cache
+      payload.root = reconstructTreeFromSegments(
+        manager.currentSegments,
+        manager.componentCache
+      );
+      logger.success("Tree reconstructed with partial updates");
+    } else {
+      // No updates - keep existing tree
+      logger.info("No segment updates - preserving existing tree");
+    }
   } else if (payload.metadata?.segments) {
     // Full payload with segments
     logger.info("Received FULL payload with segments");
     manager.currentSegments = payload.metadata.segments || [];
 
+    // Clear cache for full payload (all new components)
+    manager.componentCache.clear();
     // Reconstruct tree from segments
-    payload.root = reconstructTreeFromSegments(manager.currentSegments);
+    payload.root = reconstructTreeFromSegments(
+      manager.currentSegments,
+      manager.componentCache
+    );
     logger.success("Tree reconstructed from segments");
   } else {
     logger.info("Received standard payload");
@@ -429,14 +482,21 @@ async function initializeApp(): Promise<void> {
     abortController: undefined,
     setPayload: null,
     initialMetadata: initialPayload.metadata,
+    componentCache: new Map(), // Initialize component cache
   };
 
   logger.info("Initial payload metadata:", initialPayload.metadata);
 
   // Reconstruct tree from segments if we have them
-  if (initialPayload.metadata?.segments && initialPayload.metadata.segments.length > 0) {
+  if (
+    initialPayload.metadata?.segments &&
+    initialPayload.metadata.segments.length > 0
+  ) {
     logger.info("Reconstructing initial tree from segments...");
-    initialPayload.root = reconstructTreeFromSegments(manager.currentSegments);
+    initialPayload.root = reconstructTreeFromSegments(
+      manager.currentSegments,
+      manager.componentCache
+    );
     logger.success("Initial tree reconstructed");
   }
 

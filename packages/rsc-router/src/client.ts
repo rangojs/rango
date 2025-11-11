@@ -1,17 +1,17 @@
-// Client-side exports for rsc-router
-'use client';
+// Client-side utilities for rsc-router
+// Note: No 'use client' here - only React components need that directive
+// Link and Outlet have 'use client' in their own files
 
 export { Link } from './Link';
 export { Outlet, OutletProvider, useOutlet } from './Outlet';
 export type { LinkProps } from './Link';
 
-import type { Segment, SegmentType } from './segment-system';
-import type { RSCPayload } from './segment-system';
+import type { Segment } from './segment-system';
 import { parseSegmentId } from './segment-system';
 import { createElement, Fragment } from 'react';
 import type { ReactNode } from 'react';
 import { OutletProvider as OutletProviderComponent } from './Outlet';
-
+export { renderSegments } from './segment-system';
 /**
  * Client-side segment store for tracking rendered segments
  *
@@ -193,7 +193,8 @@ export class SegmentStore {
 /**
  * Navigation options for client-side navigation
  */
-export interface NavigationOptions extends Omit<RequestInit, 'method' | 'body'> {
+export interface NavigationOptions
+  extends Omit<RequestInit, 'method' | 'body'> {
   /**
    * Segment store instance
    * Used to send current segments via _has parameter
@@ -301,7 +302,9 @@ export async function navigateToRoute(
 
   // 4. Check response status
   if (!response.ok) {
-    throw new Error(`Navigation failed: ${response.status} ${response.statusText}`);
+    throw new Error(
+      `Navigation failed: ${response.status} ${response.statusText}`
+    );
   }
 
   // 5. Parse RSC payload
@@ -483,11 +486,10 @@ export function reconstructTreeFromSegments(segments: Segment[]): ReactNode {
     // If it's a function, invoke it
     if (typeof LayoutComponent === 'function') {
       // Wrap current content with OutletProvider and pass to layout
-      content = createElement(
-        OutletProviderComponent,
-        { content },
-        createElement(LayoutComponent)
-      );
+      content = createElement(OutletProviderComponent, {
+        content,
+        children: createElement(LayoutComponent),
+      });
     } else {
       // If it's already a ReactNode, just use it (rare case)
       content = LayoutComponent;

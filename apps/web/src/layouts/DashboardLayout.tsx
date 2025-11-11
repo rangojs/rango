@@ -1,11 +1,11 @@
 import React from 'react';
-import { Outlet } from 'rsc-router/client';
+import { Outlet } from "rsc-router";
 
 export default function DashboardLayout() {
   console.log('[DashboardLayout] Rendering');
 
   return (
-    <div style={{ display: 'flex', gap: '2rem' }}>
+    <div data-layout="dashboard" style={{ display: 'flex', gap: '2rem' }}>
       <aside style={{
         width: '200px',
         background: '#f5f5f5',
