@@ -255,6 +255,25 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
     const prevUrl = new URL(previousUrl);
     const prevMatch = findMatch(prevUrl.pathname);
 
+    // Build previous segments for comparison
+    let prevSegments: ResolvedSegment[] = [];
+    if (prevMatch) {
+      const prevContext: HandlerContext<any, TContext> = {
+        params: prevMatch.params,
+        request,
+        searchParams: prevUrl.searchParams,
+        pathname: prevUrl.pathname,
+        url: prevUrl,
+        ...(context as any),
+      };
+      prevSegments = await buildSegments(
+        prevMatch.entry,
+        prevMatch.routeKey,
+        prevMatch.params,
+        prevContext
+      );
+    }
+
     const handlerContext: HandlerContext<any, TContext> = {
       params: nextMatch.params,
       request,
@@ -279,20 +298,39 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
     for (const segment of allSegments) {
       if (!clientSegmentSet.has(segment.id)) {
         // Client doesn't have this segment
+        console.log(`[Router.matchPartial] ${segment.id}: NEW - including`);
         segmentsToRender.push(segment);
         continue;
       }
 
       // Client has this segment - check if params changed (default revalidation)
-      if (segment.params && prevMatch) {
-        const prevParams = prevMatch.params;
-        const paramsChanged = Object.keys(segment.params).some(
-          (key) => segment.params![key] !== prevParams[key]
-        );
+      const prevSegment = prevSegments.find((s) => s.id === segment.id);
+
+      if (prevSegment && segment.params) {
+        const prevParams = prevSegment.params || {};
+        const nextParams = segment.params;
+
+        // Check if any param changed
+        const paramsChanged =
+          Object.keys(nextParams).length !== Object.keys(prevParams).length ||
+          Object.keys(nextParams).some((key) => nextParams[key] !== prevParams[key]);
 
         if (paramsChanged) {
+          console.log(
+            `[Router.matchPartial] ${segment.id}: PARAMS CHANGED - revalidating`,
+            { prev: prevParams, next: nextParams }
+          );
           segmentsToRender.push(segment);
+        } else {
+          console.log(`[Router.matchPartial] ${segment.id}: UNCHANGED - skipping`);
         }
+      } else if (!prevSegment) {
+        // Previous route didn't have this segment (shouldn't happen if IDs match)
+        console.log(`[Router.matchPartial] ${segment.id}: NO PREV - including`);
+        segmentsToRender.push(segment);
+      } else {
+        // No params on this segment, and client has it - skip
+        console.log(`[Router.matchPartial] ${segment.id}: NO PARAMS - skipping`);
       }
 
       // TODO: Support custom revalidation functions from route.revalidate symbol
