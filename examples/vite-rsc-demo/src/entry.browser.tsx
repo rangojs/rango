@@ -31,7 +31,6 @@ const navigationManager: NavigationManager = {
 
 async function fetchPartialUpdate(targetUrl?: string) {
   const url = targetUrl || window.location.href;
-  const targetPathname = new URL(url).pathname;
 
   console.log(`\n[Browser] >>> NAVIGATION`);
   console.log(`[Browser] From: ${navigationManager.currentUrl}`);
@@ -63,12 +62,13 @@ async function fetchPartialUpdate(targetUrl?: string) {
     console.log(`[Browser] Diff: ${diff?.join(', ')}`);
 
     // Update stored segments with new ones
-    segments.forEach((segment: ResolvedSegment) => {
+    segments?.forEach((segment: ResolvedSegment) => {
       navigationManager.storedSegments.set(segment.id, segment);
     });
 
     // Build full segment list by merging
-    const fullSegments = matched.map((id: string) => {
+    const matchedIds = matched || [];
+    const fullSegments = matchedIds.map((id: string) => {
       const segment = navigationManager.storedSegments.get(id);
       if (!segment) {
         console.warn(`[Browser] Missing segment: ${id}`);
@@ -82,7 +82,7 @@ async function fetchPartialUpdate(targetUrl?: string) {
     const newTree = renderSegments(fullSegments);
 
     // Update segment IDs
-    navigationManager.currentSegmentIds = matched;
+    navigationManager.currentSegmentIds = matchedIds;
     navigationManager.currentUrl = url;
 
     // Update UI
@@ -98,12 +98,13 @@ async function fetchPartialUpdate(targetUrl?: string) {
     navigationManager.currentSegmentIds = payload.metadata?.segments?.map((s: any) => s.id) || [];
     navigationManager.currentUrl = url;
 
-    // Store all segments
-    payload.metadata?.segments?.forEach((segment: ResolvedSegment) => {
-      navigationManager.storedSegments.set(segment.id, segment);
-    });
+    // Store all segments (metadata segments don't have components on initial load)
+    // Just track IDs for now
 
-    navigationManager.setPayload?.(payload);
+    navigationManager.setPayload?.({
+      root: payload.root,
+      metadata: payload.metadata,
+    });
   }
 }
 

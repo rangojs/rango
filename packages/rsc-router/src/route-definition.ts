@@ -2,7 +2,7 @@ import type {
   RouteDefinition,
   ResolvedRouteMap,
   HandlersForRouteMap,
-} from './types.js';
+} from "./types.js";
 
 /**
  * Define a route map with patterns
@@ -16,10 +16,10 @@ import type {
  * });
  * ```
  */
-export function route<T extends RouteDefinition>(
+export function route<const T extends RouteDefinition>(
   routes: T
 ): ResolvedRouteMap<T> {
-  return flattenRoutes(routes, '') as ResolvedRouteMap<T>;
+  return flattenRoutes(routes, "") as ResolvedRouteMap<T>;
 }
 
 /**
@@ -32,7 +32,7 @@ function flattenRoutes(
   const flattened: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(routes)) {
-    if (typeof value === 'string') {
+    if (typeof value === "string") {
       // Direct route pattern
       flattened[key] = value;
     } else {
