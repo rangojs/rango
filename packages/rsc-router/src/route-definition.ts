@@ -70,51 +70,55 @@ export const route = function <const T extends RouteDefinition>(
 } as RouteFn;
 
 // Implement symbol getters (return new symbol each time)
-Object.defineProperty(route, 'layout', {
+Object.defineProperty(route, "layout", {
   get() {
     return Symbol(`route.layout.${symbolCounter++}`) as LayoutSymbol;
-  }
+  },
 });
 
-Object.defineProperty(route, 'parallel', {
+Object.defineProperty(route, "parallel", {
   get() {
     return Symbol(`route.parallel.${symbolCounter++}`) as ParallelSymbol;
-  }
+  },
 });
 
-Object.defineProperty(route, 'middleware', {
+Object.defineProperty(route, "middleware", {
   get() {
     return Symbol(`route.middleware.${symbolCounter++}`) as MiddlewareSymbol;
-  }
+  },
 });
 
-(route as any).revalidate = Symbol('route.revalidate') as RevalidateSymbol;
+(route as any).revalidate = Symbol("route.revalidate") as RevalidateSymbol;
 
 // Attach route.all namespace with getters
 (route as any).all = {};
 
-Object.defineProperty((route as any).all, 'layout', {
+Object.defineProperty((route as any).all, "layout", {
   get() {
     return Symbol(`route.all.layout.${symbolCounter++}`) as AllLayoutSymbol;
-  }
+  },
 });
 
-Object.defineProperty((route as any).all, 'parallel', {
+Object.defineProperty((route as any).all, "parallel", {
   get() {
     return Symbol(`route.all.parallel.${symbolCounter++}`) as AllParallelSymbol;
-  }
+  },
 });
 
-Object.defineProperty((route as any).all, 'middleware', {
+Object.defineProperty((route as any).all, "middleware", {
   get() {
-    return Symbol(`route.all.middleware.${symbolCounter++}`) as AllMiddlewareSymbol;
-  }
+    return Symbol(
+      `route.all.middleware.${symbolCounter++}`
+    ) as AllMiddlewareSymbol;
+  },
 });
 
-Object.defineProperty((route as any).all, 'revalidate', {
+Object.defineProperty((route as any).all, "revalidate", {
   get() {
-    return Symbol(`route.all.revalidate.${symbolCounter++}`) as AllRevalidateSymbol;
-  }
+    return Symbol(
+      `route.all.revalidate.${symbolCounter++}`
+    ) as AllRevalidateSymbol;
+  },
 });
 
 /**

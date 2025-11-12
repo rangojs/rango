@@ -67,11 +67,15 @@ import type {
 } from "./route-definition.js";
 
 /**
- * Valid layout value - excludes primitives
+ * Valid layout value - component or handler function
  */
-type LayoutValue =
-  | Exclude<ReactNode, string | number | boolean | null | undefined>
-  | Array<Exclude<ReactNode, string | number | boolean | null | undefined>>;
+type LayoutValue<TContext = any> =
+  | ReactNode
+  | Handler<any, TContext>
+  | Array<
+      | Exclude<ReactNode, string | number | boolean | null | undefined>
+      | Handler<any, TContext>
+    >;
 
 /**
  * Handlers object that maps route names to handler functions with type-safe symbol properties
@@ -82,7 +86,7 @@ export type HandlersForRouteMap<T extends RouteDefinition, TContext = any> = {
     : never;
 } & Partial<{
   // Per-route symbols with type constraints
-  [K in LayoutSymbol]: LayoutValue;
+  [K in LayoutSymbol]: LayoutValue<TContext>;
   [K in ParallelSymbol]: Record<`@${string}`, Handler<any, TContext>>;
   [K in MiddlewareSymbol]: Array<
     (ctx: HandlerContext<any, TContext>, next: () => Promise<void>) => void | Promise<void>
@@ -90,7 +94,7 @@ export type HandlersForRouteMap<T extends RouteDefinition, TContext = any> = {
   [K in RevalidateSymbol]: RevalidateFn<any, TContext>;
 
   // Global symbols with type constraints
-  [K in AllLayoutSymbol]: LayoutValue;
+  [K in AllLayoutSymbol]: LayoutValue<TContext>;
   [K in AllParallelSymbol]: Record<`@${string}`, Handler<any, TContext>>;
   [K in AllMiddlewareSymbol]: Array<
     (ctx: HandlerContext<any, TContext>, next: () => Promise<void>) => void | Promise<void>

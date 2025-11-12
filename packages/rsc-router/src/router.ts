@@ -194,20 +194,22 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
         if (symbolInfo.type === 'layout') {
           const layouts = Array.isArray(value) ? value : [value];
           if (symbolInfo.global) {
-            // Cumulative: Add to global layouts
+            // Global: Add to global layouts
             globalLayouts.push(...layouts);
           } else {
-            // Per-route: Replace current
-            currentLayouts = layouts;
+            // Per-route: Accumulate for current route
+            if (!currentLayouts) currentLayouts = [];
+            currentLayouts.push(...layouts);
           }
         } else if (symbolInfo.type === 'parallel') {
           const slots = value as Record<string, Handler>;
           if (symbolInfo.global) {
-            // Cumulative: Merge into global parallel
+            // Global: Merge into global parallel
             Object.assign(globalParallel, slots);
           } else {
-            // Per-route: Replace current (will merge with global later)
-            currentParallel = slots;
+            // Per-route: Accumulate for current route
+            if (!currentParallel) currentParallel = {};
+            Object.assign(currentParallel, slots);
           }
         }
         // Skip middleware and revalidate for now
@@ -222,11 +224,16 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
           // Use current or global layouts
           const layoutsToUse = currentLayouts || globalLayouts;
           for (const layout of layoutsToUse) {
+            // Check if layout is a handler function
+            const component = typeof layout === 'function'
+              ? await layout(context)
+              : layout;
+
             segments.push({
               id: `L${index}.${entry.registrationId}`,
               type: 'layout',
               index,
-              component: layout,
+              component,
             });
             index++;
           }
@@ -264,8 +271,11 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
 
           break;  // Found our route, stop processing
         }
-        // Note: Don't reset currentLayouts/currentParallel here
-        // They should persist for all routes that don't have their own metadata
+
+        // Reset accumulated per-route metadata after processing each route
+        // This ensures next route starts fresh
+        currentLayouts = null;
+        currentParallel = null;
       }
     }
 
