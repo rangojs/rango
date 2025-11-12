@@ -13,6 +13,7 @@
 - **Fluent API**: Middleware is applied using chainable `.use()` methods for better composability
 - **Explicit ordering**: The order of `.use()` calls determines middleware execution order
 - **Scope control**: Middleware can be applied at router, route group, or individual route level
+- **Colocation support**: Use `route.middleware` symbol to colocate middleware with handlers in the same file (see [Colocating Middleware with Handlers](#colocating-middleware-with-handlers))
 
 ### Layout Composition
 
@@ -386,6 +387,103 @@ router
   .use(() => import("./middleware")) // Lazy middleware import
   .map(() => import("./handlers")); // Lazy handler import
 ```
+
+#### Colocating Middleware with Handlers
+
+**Problem**: When handlers are in separate files, you need two imports to set up a route:
+
+```typescript
+// router.ts
+import blogHandlers, { blogMiddleware } from './handlers/blog.handlers';
+
+router
+  .route('/blog', blogRoutes)
+  .use(...blogMiddleware)      // Import middleware separately
+  .map(blogHandlers);           // Import handlers separately
+```
+
+**Solution**: Use the `route.middleware` symbol to colocate middleware with handlers:
+
+```typescript
+// handlers/blog.handlers.ts
+import { route, map } from 'rsc-router';
+import { blogRoutes } from './blog.routes';
+
+export default map(blogRoutes, {
+  [route.middleware]: [blogAuth(), blogRateLimit()],  // Middleware colocated
+  [route.layout]: BlogLayout,
+  index: () => <BlogIndex />,
+  post: (ctx) => <BlogPost slug={ctx.params.slug} />
+});
+
+// router.ts - Single import!
+router.route('/blog', blogRoutes).map(() => import('./handlers/blog.handlers'));
+```
+
+**Key Benefits**:
+
+1. **Single Import**: Handlers and their middleware come from one file
+2. **Colocation**: Middleware lives next to the handlers it protects
+3. **Works with Lazy Loading**: Compatible with `() => import()` pattern
+4. **Type-Safe**: TypeScript ensures middleware array is properly typed
+5. **Composable**: Combines with router-level `.use()` middleware
+
+**How It Works**:
+
+The router extracts `route.middleware` from the handler object during the `.map()` call:
+
+```typescript
+class RouteBuilder {
+  map(handlers: HandlersOrImport) {
+    // If handlers contain route.middleware symbol, extract and register it
+    if (handlers[route.middleware]) {
+      this.registered.middleware.push(...handlers[route.middleware]);
+    }
+
+    // Store handlers (without the middleware key)
+    this.registered.handlers = handlers;
+    return this.router;
+  }
+}
+```
+
+**Middleware Execution Order**:
+
+Middleware from all sources is combined in order:
+
+```typescript
+const middlewareChain = [
+  ...router.globalMiddleware,        // 1. Global via router.use()
+  ...route.middleware,               // 2. Route-level via .use()
+  ...handlers[route.middleware],     // 3. Handler-colocated via symbol
+];
+
+// Example:
+router
+  .use(logger())                     // Runs first (global)
+  .route('/blog', blogRoutes)
+  .use(blogTracking())               // Runs second (route-level)
+  .map(() => import('./blog'));      // blogAuth() runs third (handler file)
+```
+
+**When to Use Each Approach**:
+
+- **`route.middleware` symbol**: When middleware is specific to a handler file and you want colocation
+- **`.use()` on route**: When middleware applies to multiple handler files under same route
+- **`.use()` on router**: When middleware applies globally to all routes
+
+**Comparison**:
+
+```typescript
+// ❌ Before: Two imports required
+import blogHandlers, { blogMiddleware } from './blog.handlers';
+router.route('/blog', blogRoutes).use(...blogMiddleware).map(blogHandlers);
+
+// ✅ After: Single import with colocation
+router.route('/blog', blogRoutes).map(() => import('./blog.handlers'));
+```
+
+**Security Note**: Regardless of how middleware is registered (via `.use()` or `route.middleware`), it ALWAYS executes on every request, including partial renders. This ensures auth/authorization cannot be bypassed.
 
 #### Request-Time Optimization Strategies
 
