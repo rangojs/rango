@@ -1,4 +1,4 @@
-import { RscRouter, route } from "rsc-router";
+import { RscRouter } from "rsc-router";
 
 // Import layouts
 import RootLayout from "./layouts/RootLayout";
@@ -34,21 +34,9 @@ router.use(async (ctx, next) => {
   await next();
 });
 
-// Root layout - wraps everything
-router.layout("/", async (ctx, children) => {
-  return <RootLayout />;
-});
-
-router.route(appRoute);
-
 // Home page
 router.get("/", async (ctx) => {
   return <HomePage />;
-});
-
-// Dashboard layout group
-router.layout("/dashboard", async (ctx, children) => {
-  return <DashboardLayout />;
 });
 
 // Dashboard pages
@@ -78,13 +66,7 @@ router.get("/dashboard/settings", async (ctx) => {
   );
 });
 
-router.endLayout(); // End dashboard layout group
-
-// Articles layout group
-router.layout("/articles", async (ctx, children) => {
-  return <ArticlesLayout />;
-});
-
+// Articles pages
 router.get("/articles", async (ctx) => {
   return <ArticlesListPage />;
 });
@@ -106,9 +88,7 @@ router.get("/articles/:id", async (ctx) => {
   );
 });
 
-router.endLayout(); // End articles layout group
-
-// Simple about page (uses root layout only)
+// Simple about page
 router.get("/about", async (ctx) => {
   return (
     <div>
@@ -121,9 +101,7 @@ router.get("/about", async (ctx) => {
   );
 });
 
-router.endLayout(); // End root layout
-
-// 404 handler (uses root layout)
+// 404 handler
 router.all("*", async (ctx) => {
   return (
     <div>
