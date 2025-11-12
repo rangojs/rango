@@ -1,4 +1,4 @@
-import { map, routeSymbols } from 'rsc-router';
+import { map, route } from 'rsc-router';
 import type { homeRoutes } from '../routes.js';
 import { RootLayout } from '../layouts/RootLayout.js';
 
@@ -6,7 +6,7 @@ import { RootLayout } from '../layouts/RootLayout.js';
  * Home handlers
  */
 export default map<typeof homeRoutes>({
-  [routeSymbols.layout]: <RootLayout />,
+  [route.layout]: <RootLayout />,
   index: () => (
     <div>
       <h1>🏠 Home</h1>

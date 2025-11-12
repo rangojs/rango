@@ -1,4 +1,4 @@
-import { map, routeSymbols } from 'rsc-router';
+import { map, route } from 'rsc-router';
 import type { blogRoutes } from '../routes.js';
 import { RootLayout } from '../layouts/RootLayout.js';
 import { BlogLayout } from '../layouts/BlogLayout.js';
@@ -7,7 +7,7 @@ import { BlogLayout } from '../layouts/BlogLayout.js';
  * Blog handlers with nested layouts
  */
 export default map<typeof blogRoutes>({
-  [routeSymbols.layout]: [<RootLayout />, <BlogLayout />],
+  [route.layout]: [<RootLayout />, <BlogLayout />],
 
   index: () => (
     <div>

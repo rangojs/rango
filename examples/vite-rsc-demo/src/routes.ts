@@ -21,3 +21,11 @@ export const blogRoutes = route({
 export const aboutRoutes = route({
   index: '/about',
 });
+
+/**
+ * Dashboard routes (for testing parallel routes)
+ */
+export const dashboardRoutes = route({
+  index: '/',
+  settings: '/settings',
+});

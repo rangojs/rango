@@ -1,5 +1,5 @@
 import { createRSCRouter } from 'rsc-router';
-import { homeRoutes, blogRoutes, aboutRoutes } from './routes.js';
+import { homeRoutes, blogRoutes, aboutRoutes, dashboardRoutes } from './routes.js';
 
 /**
  * App context (empty for now, but typed for future use)
@@ -22,6 +22,9 @@ router
   .map(() => import('./handlers/blog.js'))
 
   .route('', aboutRoutes)
-  .map(() => import('./handlers/about.js'));
+  .map(() => import('./handlers/about.js'))
 
-console.log('[Router] Configured with 3 route groups (lazy-loaded handlers)');
+  .route('/dashboard', dashboardRoutes)  // Dashboard with parallel routes
+  .map(() => import('./handlers/dashboard.js'));
+
+console.log('[Router] Configured with 4 route groups (lazy-loaded handlers)');

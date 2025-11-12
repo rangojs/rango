@@ -7,7 +7,7 @@
 // Core router
 export { createRSCRouter, type RSCRouter } from './router.js';
 
-// Route definitions
+// Route definitions and symbols (route is a function with symbol properties)
 export { route, map } from './route-definition.js';
 
 // Segment system
@@ -26,6 +26,3 @@ export type {
   ExtractParams,
   RevalidateFn,
 } from './types.js';
-
-// Route symbols
-export { route as routeSymbols } from './types.js';

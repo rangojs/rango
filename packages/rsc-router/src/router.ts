@@ -8,7 +8,7 @@ import type {
   MatchResult,
   RouteEntry,
 } from './types.js';
-import { route as routeSymbols } from './types.js';
+import { route } from './route-definition.js';
 
 /**
  * Router builder for chaining .use() and .map()
@@ -141,7 +141,26 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
   }
 
   /**
-   * Build segments from matched route
+   * Helper to detect if a symbol is a route symbol
+   */
+  function getSymbolType(sym: symbol):
+    | { type: 'layout' | 'parallel' | 'middleware' | 'revalidate'; global: boolean }
+    | null {
+    const str = sym.toString();
+
+    if (str.includes('route.all.layout')) return { type: 'layout', global: true };
+    if (str.includes('route.all.parallel')) return { type: 'parallel', global: true };
+    if (str.includes('route.all.middleware')) return { type: 'middleware', global: true };
+    if (str.includes('route.layout')) return { type: 'layout', global: false };
+    if (str.includes('route.parallel')) return { type: 'parallel', global: false };
+    if (str.includes('route.middleware')) return { type: 'middleware', global: false };
+    if (str.includes('route.revalidate')) return { type: 'revalidate', global: false };
+
+    return null;
+  }
+
+  /**
+   * Build segments from matched route using positional extraction
    */
   async function buildSegments(
     entry: RouteEntry<TContext>,
@@ -153,33 +172,101 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
     const segments: ResolvedSegment[] = [];
     let index = 0;
 
-    // Process layouts
-    const layouts = handlers[routeSymbols.layout];
-    if (layouts) {
-      const layoutArray = Array.isArray(layouts) ? layouts : [layouts];
+    // Track global metadata (cumulative from all route.all.* symbols)
+    const globalLayouts: ReactNode[] = [];
+    const globalParallel: Record<string, Handler> = {};
 
-      for (const layout of layoutArray) {
-        segments.push({
-          id: `L${index}.${entry.registrationId}`,
-          type: 'layout',
-          index,
-          component: layout,
-        });
-        index++;
+    // Track per-route metadata (from symbols before current route)
+    let currentLayouts: ReactNode[] | null = null;
+    let currentParallel: Record<string, Handler> | null = null;
+
+    // Use Reflect.ownKeys to preserve insertion order (symbols + strings)
+    const keys = Reflect.ownKeys(handlers);
+
+    // PASS 1: Process all symbols to accumulate metadata
+    for (const key of keys) {
+      if (typeof key === 'symbol') {
+        const symbolInfo = getSymbolType(key);
+        if (!symbolInfo) continue;
+
+        const value = handlers[key as any];
+
+        if (symbolInfo.type === 'layout') {
+          const layouts = Array.isArray(value) ? value : [value];
+          if (symbolInfo.global) {
+            // Cumulative: Add to global layouts
+            globalLayouts.push(...layouts);
+          } else {
+            // Per-route: Replace current
+            currentLayouts = layouts;
+          }
+        } else if (symbolInfo.type === 'parallel') {
+          const slots = value as Record<string, Handler>;
+          if (symbolInfo.global) {
+            // Cumulative: Merge into global parallel
+            Object.assign(globalParallel, slots);
+          } else {
+            // Per-route: Replace current (will merge with global later)
+            currentParallel = slots;
+          }
+        }
+        // Skip middleware and revalidate for now
       }
     }
 
-    // Process route handler
-    const handler = handlers[routeKey];
-    if (handler) {
-      const component = await handler(context);
-      segments.push({
-        id: `R${index}.${entry.registrationId}`,
-        type: 'route',
-        index,
-        component,
-        params,
-      });
+    // PASS 2: Process route handlers
+    for (const key of keys) {
+      if (typeof key === 'string') {
+        // It's a route handler
+        if (key === routeKey) {
+          // Use current or global layouts
+          const layoutsToUse = currentLayouts || globalLayouts;
+          for (const layout of layoutsToUse) {
+            segments.push({
+              id: `L${index}.${entry.registrationId}`,
+              type: 'layout',
+              index,
+              component: layout,
+            });
+            index++;
+          }
+
+          // Process route handler
+          const handler = handlers[key];
+          if (handler) {
+            const component = await handler(context);
+            segments.push({
+              id: `R${index}.${entry.registrationId}`,
+              type: 'route',
+              index,
+              component,
+              params,
+            });
+            index++;
+          }
+
+          // Process parallel routes (merge global + per-route)
+          const mergedParallel = { ...globalParallel, ...currentParallel };
+          if (Object.keys(mergedParallel).length > 0) {
+            for (const [slot, parallelHandler] of Object.entries(mergedParallel)) {
+              const component = await parallelHandler(context);
+              segments.push({
+                id: `P${index}.${entry.registrationId}`,
+                type: 'parallel',
+                index,
+                component,
+                params,
+                slot,
+              });
+              index++;
+            }
+          }
+
+          break;  // Found our route, stop processing
+        }
+        // Note: Don't reset currentLayouts/currentParallel here
+        // They should persist for all routes that don't have their own metadata
+      }
     }
 
     return segments;
@@ -254,6 +341,13 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
     // Match previous route
     const prevUrl = new URL(previousUrl);
     const prevMatch = findMatch(prevUrl.pathname);
+
+    // If navigating to a different route handler, force full re-render
+    if (prevMatch && prevMatch.routeKey !== nextMatch.routeKey) {
+      console.log(`[Router.matchPartial] Different route handler: ${prevMatch.routeKey} → ${nextMatch.routeKey}`);
+      // Return null to trigger full render
+      return null;
+    }
 
     // Build previous segments for comparison
     let prevSegments: ResolvedSegment[] = [];

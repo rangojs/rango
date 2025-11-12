@@ -38,62 +38,109 @@ router.route("/dashboard", adminRoutes); // /dashboard/users, /dashboard/setting
 
 ## Handler Definition API
 
-### Type-Safe Handlers (Separate File)
+### Positional Symbol Pattern
+
+Route symbols (`route.layout`, `route.parallel`, `route.middleware`) use **getter functions** that return unique symbols on each access. This enables **positional association** - metadata defined immediately before a route handler applies to that route.
 
 ```typescript
 // handlers/blog.handlers.tsx
-import { map } from 'rsc-router';
+import { map, route } from 'rsc-router';
 import type { blogRoutes } from '../routes/blog.routes';
 
 export default map<typeof blogRoutes>({
-  // Single layout
-  [route.layout]: BlogLayout,
+  // Global layout (applies to all routes unless overridden)
+  [route.all.layout]: RootLayout,
 
-  // Route handlers with typed params
-  index: (ctx) => <BlogIndex />,
-
-  post: (ctx) => {
-    // ctx.params.slug is typed as string
-    // ctx.params.foo would be TypeScript error
-    return <BlogPost slug={ctx.params.slug} />;
+  // Global parallel route (renders on all routes)
+  [route.parallel]: {
+    '@footer': (ctx) => <Footer />
   },
 
-  category: (ctx) => {
-    // ctx.params = { category: string, id: string }
-    return <Category category={ctx.params.category} id={ctx.params.id} />;
+  // Route: index
+  [route.layout]: BlogLayout,  // Override: Use BlogLayout for index
+  index: (ctx) => <BlogIndex />,
+
+  // Route: post
+  [route.layout]: [BlogLayout, PostLayout],  // Nested layouts for post
+  [route.parallel]: {
+    '@sidebar': (ctx) => <PostSidebar slug={ctx.params.slug} />,
+    '@comments': (ctx) => <Comments postId={ctx.params.slug} />
+  },
+  post: (ctx) => <BlogPost slug={ctx.params.slug} />,
+
+  // Route: category (uses global layout, no per-route parallel)
+  category: (ctx) => <Category category={ctx.params.category} id={ctx.params.id} />,
+
+  // Revalidation (per-route)
+  [route.revalidate]: {
+    post: ({ prevParams, nextParams }) => prevParams.slug !== nextParams.slug
   }
 });
 ```
 
-### Nested Layouts
+### How Getter Symbols Work
+
+All route symbols are **getter functions** that return unique symbols on each access:
+
+```typescript
+const sym1 = route.layout; // Symbol('route.layout')#1
+const sym2 = route.layout; // Symbol('route.layout')#2
+sym1 !== sym2; // true - different symbols!
+
+const sym3 = route.all.layout; // Symbol('route.all.layout')#1
+const sym4 = route.all.layout; // Symbol('route.all.layout')#2
+sym3 !== sym4; // true - different symbols!
+```
+
+This enables:
+
+1. **Multiple per-route symbols** - each applies to the next route only
+2. **Multiple global symbols** - each applies to ALL routes (cumulative)
+
+### Flexible Definition Styles
+
+#### Style 1: Arrays (Concise)
 
 ```typescript
 export default map<typeof routes>({
-  // Multiple layouts (outer to inner)
-  [route.layout]: [RootLayout, AppShell, BlogLayout],
+  [route.all.layout]: [<PublicLayout />, <SectionLayout />],
+  [route.all.parallel]: {
+    '@footer': Footer,
+    '@nav': Nav
+  },
 
-  index: (ctx) => <Home />,
-  post: (ctx) => <Post slug={ctx.params.slug} />
+  home: (ctx) => <Home />,
+  about: (ctx) => <About />
 });
 ```
 
-### Revalidation (Future)
+#### Style 2: Multiple Symbols (Explicit)
 
 ```typescript
-export default map<typeof blogRoutes>({
-  [route.layout]: BlogLayout,
+export default map<typeof routes>({
+  [route.all.layout]: <PublicLayout />,
+  [route.all.layout]: <SectionLayout />,
+  [route.all.parallel]: { '@footer': Footer },
+  [route.all.parallel]: { '@nav': Nav },
 
-  post: (ctx) => <BlogPost slug={ctx.params.slug} />,
-
-  // Revalidation function for params changes
-  [route.revalidate]: {
-    post: ({ prevParams, nextParams, prevUrl, nextUrl, context }) => {
-      // Force re-render if slug changed
-      return prevParams.slug !== nextParams.slug;
-    }
-  }
+  home: (ctx) => <Home />,
+  about: (ctx) => <About />
 });
 ```
+
+#### Style 3: Mixed (Flexible)
+
+```typescript
+export default map<typeof routes>({
+  [route.all.layout]: [<PublicLayout />, <SectionLayout />],
+  [route.all.parallel]: { '@footer': Footer },
+  [route.all.parallel]: { '@nav': Nav },  // Additional
+
+  home: (ctx) => <Home />
+});
+```
+
+**All three styles produce identical results!** Choose based on preference and readability.
 
 ## Router Creation API
 
@@ -574,41 +621,108 @@ export function createRSCHandler(router: RSCRouter) {
 1. **Generic Context Type**: `createRSCRouter<TAppContext>()` for type-safe context flow
 2. **Separate Routes from Handlers**: Type-only imports, lazy handler execution
 3. **Globally Unique Segment IDs**: `{Type}{Position}.{RegistrationId}` format
-4. **Previous URL in Header**: `X-RSC-Router-Client-Path` header (not query param) to avoid URL length limits
-5. **Segments in Query Param**: `_rsc_segments` query param for CDN caching and prefetching
-6. **Client Tracks Segment IDs**: Explicit state vs pathname diffing
-7. **Server Builds Full Tree**: Client builds partial tree from merged segments
-8. **Universal OutletProvider Wrapping**: All segments wrapped regardless of type
-9. **Prefetch Graceful Degradation**: Prefetch works without header, server skips revalidation checks
-10. **Payload Duplication in Full Render**: root + segments metadata (optimize post-MVP)
-11. **Params-Based Revalidation**: Default re-render when params change
+4. **Positional Symbol Getters**: `route.layout`, `route.parallel`, `route.middleware` return new symbols on each access for positional association
+5. **Global vs Per-Route via @ Prefix**: Keys starting with `@` are global, route names are per-route
+6. **Previous URL in Header**: `X-RSC-Router-Client-Path` header (not query param) to avoid URL length limits
+7. **Segments in Query Param**: `_rsc_segments` query param for CDN caching and prefetching
+8. **Client Tracks Segment IDs**: Explicit state vs pathname diffing
+9. **Server Builds Full Tree**: Client builds partial tree from merged segments
+10. **Universal OutletProvider Wrapping**: All segments wrapped regardless of type
+11. **Parallel Routes as Siblings**: Route + parallel segments rendered as siblings (Fragment), not nested
+12. **Prefetch Graceful Degradation**: Prefetch works without header, server skips revalidation checks
+13. **Payload Duplication in Full Render**: root + segments metadata (optimize post-MVP)
+14. **Params-Based Revalidation**: Default re-render when params change
 
-## Future APIs (Post-MVP)
+## Parallel Routes
 
-### Middleware
-
-```typescript
-export default map<typeof blogRoutes>({
-  [route.middleware]: [blogAuth(), blogRateLimit()],
-  [route.layout]: BlogLayout,
-  post: (ctx) => <BlogPost />
-});
-```
-
-### Parallel Routes
+### Basic Usage
 
 ```typescript
 export default map<typeof routes>({
   [route.layout]: DashboardLayout,
+
+  // Parallel routes render as siblings to main route
   [route.parallel]: {
-    '@sidebar': Sidebar,
-    '@modal': Modal
+    '@sidebar': (ctx) => <Sidebar />,
+    '@analytics': (ctx) => <Analytics />
   },
-  dashboard: (ctx) => <Dashboard />
+
+  dashboard: (ctx) => <DashboardMain />
 });
 ```
 
-### Loading & Error Boundaries
+**Rendered structure:**
+
+```tsx
+<DashboardLayout>
+  <Outlet /> {/* Renders: */}
+  {/* <><DashboardMain /><Sidebar /><Analytics /></> */}
+</DashboardLayout>
+```
+
+### Per-Route Parallel Slots
+
+```typescript
+export default map<typeof routes>({
+  // Global parallel (all routes)
+  [route.parallel]: {
+    '@footer': (ctx) => <Footer />
+  },
+
+  // Route: index
+  [route.parallel]: {
+    '@sidebar': (ctx) => <IndexSidebar />
+  },
+  index: (ctx) => <Index />,
+
+  // Route: post (global @footer + per-route @comments)
+  [route.parallel]: {
+    '@sidebar': (ctx) => <PostSidebar slug={ctx.params.slug} />,
+    '@comments': (ctx) => <Comments postId={ctx.params.slug} />
+  },
+  post: (ctx) => <Post slug={ctx.params.slug} />
+});
+```
+
+**Result for post route:**
+
+- Global: `@footer` (from first parallel symbol)
+- Per-route: `@sidebar`, `@comments` (from second parallel symbol)
+- All render as siblings: `<><Post /><Footer /><PostSidebar /><Comments /></>`
+
+### Segment IDs for Parallel Routes
+
+```
+L0.0 - Layout
+R1.0 - Main route
+P2.0 - @footer (global parallel)
+P3.0 - @sidebar (per-route parallel)
+P4.0 - @comments (per-route parallel)
+```
+
+Parallel segments participate fully in partial rendering and revalidation.
+
+## Middleware (Future)
+
+### Positional Middleware
+
+```typescript
+export default map<typeof routes>({
+  // Global middleware
+  [route.middleware]: [logger(), tracker()],
+
+  // Route: index (global middleware only)
+  index: (ctx) => <Index />,
+
+  // Route: post (global + per-route middleware)
+  [route.middleware]: [auth(), rateLimit()],
+  post: (ctx) => <Post />
+});
+```
+
+Middleware executes: `[logger, tracker, auth, rateLimit]` for post route.
+
+## Loading & Error Boundaries (Future)
 
 ```typescript
 export default map<typeof routes>({

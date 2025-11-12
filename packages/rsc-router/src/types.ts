@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ReactNode } from "react";
 
 /**
  * Extract param names from a route pattern
@@ -8,8 +8,8 @@ export type ExtractParams<T extends string> =
   T extends `${infer _Start}:${infer Param}/${infer Rest}`
     ? { [K in Param | keyof ExtractParams<`/${Rest}`>]: string }
     : T extends `${infer _Start}:${infer Param}`
-    ? { [K in Param]: string }
-    : {};
+      ? { [K in Param]: string }
+      : {};
 
 /**
  * Route definition - maps route names to patterns
@@ -54,34 +54,60 @@ export type RevalidateFn<TParams = {}, TContext = any> = (ctx: {
   context: TContext;
 }) => boolean;
 
+// Import static symbols for type constraints
+import type {
+  LayoutSymbol,
+  ParallelSymbol,
+  MiddlewareSymbol,
+  RevalidateSymbol,
+  AllLayoutSymbol,
+  AllParallelSymbol,
+  AllMiddlewareSymbol,
+  AllRevalidateSymbol,
+} from "./route-definition.js";
+
 /**
- * Handlers object that maps route names to handler functions
+ * Valid layout value - excludes primitives
  */
-export type HandlersForRouteMap<
-  T extends RouteDefinition,
-  TContext = any
-> = {
+type LayoutValue =
+  | Exclude<ReactNode, string | number | boolean | null | undefined>
+  | Array<Exclude<ReactNode, string | number | boolean | null | undefined>>;
+
+/**
+ * Handlers object that maps route names to handler functions with type-safe symbol properties
+ */
+export type HandlersForRouteMap<T extends RouteDefinition, TContext = any> = {
   [K in keyof T]?: T[K] extends string
     ? Handler<ExtractParams<T[K]>, TContext>
     : never;
-} & {
-  [route.layout]?: ReactNode | ReactNode[];
-  [route.revalidate]?: {
-    [K in keyof T]?: T[K] extends string
-      ? RevalidateFn<ExtractParams<T[K]>, TContext>
-      : never;
-  };
-};
+} & Partial<{
+  // Per-route symbols with type constraints
+  [K in LayoutSymbol]: LayoutValue;
+  [K in ParallelSymbol]: Record<`@${string}`, Handler<any, TContext>>;
+  [K in MiddlewareSymbol]: Array<
+    (ctx: HandlerContext<any, TContext>, next: () => Promise<void>) => void | Promise<void>
+  >;
+  [K in RevalidateSymbol]: RevalidateFn<any, TContext>;
+
+  // Global symbols with type constraints
+  [K in AllLayoutSymbol]: LayoutValue;
+  [K in AllParallelSymbol]: Record<`@${string}`, Handler<any, TContext>>;
+  [K in AllMiddlewareSymbol]: Array<
+    (ctx: HandlerContext<any, TContext>, next: () => Promise<void>) => void | Promise<void>
+  >;
+  [K in AllRevalidateSymbol]: RevalidateFn<any, TContext>;
+}>;
 
 /**
  * Resolved segment with component
  */
 export interface ResolvedSegment {
   id: string;
-  type: 'layout' | 'route';
+  type: "layout" | "route" | "parallel";
   index: number;
   component: ReactNode;
   params?: Record<string, string>;
+  slot?: string; // For parallel routes: '@sidebar', '@modal', etc.
 }
 
 /**
@@ -89,18 +115,14 @@ export interface ResolvedSegment {
  */
 export interface SegmentMetadata {
   id: string;
-  type: 'layout' | 'route';
+  type: "layout" | "route" | "parallel";
   index: number;
   params?: Record<string, string>;
+  slot?: string;
 }
 
-/**
- * Route symbols for special properties
- */
-export const route = {
-  layout: Symbol('route.layout') as symbol,
-  revalidate: Symbol('route.revalidate') as symbol,
-} as const;
+// Note: route symbols are now defined in route-definition.ts
+// as properties on the route() function
 
 /**
  * Router match result
