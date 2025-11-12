@@ -1,65 +1,122 @@
-import type { ComponentType, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
-// Segment type definition - matches segment-system
-export type SegmentType = 'layout' | 'route' | 'parallel';
+/**
+ * Extract param names from a route pattern
+ * Example: "/blog/:slug/:id" => { slug: string, id: string }
+ */
+export type ExtractParams<T extends string> =
+  T extends `${infer _Start}:${infer Param}/${infer Rest}`
+    ? { [K in Param | keyof ExtractParams<`/${Rest}`>]: string }
+    : T extends `${infer _Start}:${infer Param}`
+    ? { [K in Param]: string }
+    : {};
 
-export type Segment = {
-  id: string; // Unique segment ID (e.g., 'L0', 'R2', 'P3')
-  type: SegmentType; // Segment type
-  index: number; // Sequential index
-  pattern?: string; // Route pattern (e.g., '/blog/:id')
-  component: ReactNode; // React component
-  isLayout?: boolean; // Backward compatibility: true for layouts
-  slot?: string; // For parallel routes (e.g., '@sidebar')
-  path?: string; // Path for this segment
-  params?: Record<string, string>; // Route params
+/**
+ * Route definition - maps route names to patterns
+ */
+export type RouteDefinition = {
+  [key: string]: string | RouteDefinition;
 };
 
-// ResolvedSegment is a Segment with the handler already executed to ReactNode
-export type ResolvedSegment = Segment;
-
-export type RouteSegment = {
-  /** The path segment (e.g., 'dashboard', ':id', '*') */
-  path: string;
-  /** Whether this is a dynamic segment (starts with ':') */
-  isDynamic?: boolean;
-  /** Whether this is a catch-all segment (is '*') */
-  isCatchAll?: boolean;
-  /** Layout component for this segment */
-  layout?: ComponentType<{ children?: ReactNode }>;
-  /** Page component for this segment (leaf nodes) */
-  page?: ComponentType<any>;
-  /** Child routes */
-  children?: RouteSegment[];
-  /** Optional metadata */
-  meta?: {
-    title?: string;
-    description?: string;
-  };
+/**
+ * Resolved route map - flattened route definitions with full paths
+ */
+export type ResolvedRouteMap<T extends RouteDefinition> = {
+  [K in keyof T]: T[K] extends string ? T[K] : never;
 };
 
-export type MatchedSegment = {
-  path: string;
-  params: Record<string, string>;
-  layout?: ComponentType<{ children?: ReactNode }>;
-  page?: ComponentType<any>;
-  meta?: RouteSegment['meta'];
-};
+/**
+ * Handler function that receives context and returns React content
+ */
+export type Handler<TParams = {}, TContext = any> = (
+  ctx: HandlerContext<TParams, TContext>
+) => ReactNode | Promise<ReactNode>;
 
-export type MatchedRoute = {
+/**
+ * Context passed to handlers
+ */
+export type HandlerContext<TParams = {}, TContext = any> = {
+  params: TParams;
+  request: Request;
+  searchParams: URLSearchParams;
   pathname: string;
-  segments: MatchedSegment[];
-  params: Record<string, string>;
+  url: URL;
+} & TContext;
+
+/**
+ * Revalidation function signature
+ */
+export type RevalidateFn<TParams = {}, TContext = any> = (ctx: {
+  prevParams: TParams;
+  nextParams: TParams;
+  prevUrl: string;
+  nextUrl: string;
+  context: TContext;
+}) => boolean;
+
+/**
+ * Handlers object that maps route names to handler functions
+ */
+export type HandlersForRouteMap<
+  T extends RouteDefinition,
+  TContext = any
+> = {
+  [K in keyof T]?: T[K] extends string
+    ? Handler<ExtractParams<T[K]>, TContext>
+    : never;
+} & {
+  [route.layout]?: ReactNode | ReactNode[];
+  [route.revalidate]?: {
+    [K in keyof T]?: T[K] extends string
+      ? RevalidateFn<ExtractParams<T[K]>, TContext>
+      : never;
+  };
 };
 
-export type PartialRscPayload = {
-  segments: {
-    startIndex: number;
-    components: ReactNode[];
-  };
-  metadata: {
-    pathname: string;
-    preservedLayouts: string[];
-    params: Record<string, string>;
-  };
-};
+/**
+ * Resolved segment with component
+ */
+export interface ResolvedSegment {
+  id: string;
+  type: 'layout' | 'route';
+  index: number;
+  component: ReactNode;
+  params?: Record<string, string>;
+}
+
+/**
+ * Segment metadata (without component)
+ */
+export interface SegmentMetadata {
+  id: string;
+  type: 'layout' | 'route';
+  index: number;
+  params?: Record<string, string>;
+}
+
+/**
+ * Route symbols for special properties
+ */
+export const route = {
+  layout: Symbol('route.layout') as symbol,
+  revalidate: Symbol('route.revalidate') as symbol,
+} as const;
+
+/**
+ * Router match result
+ */
+export interface MatchResult {
+  segments: ResolvedSegment[];
+  matched: string[];
+  diff: string[];
+}
+
+/**
+ * Internal route entry stored in router
+ */
+export interface RouteEntry<TContext = any> {
+  prefix: string;
+  routes: ResolvedRouteMap<any>;
+  handlers: any;
+  registrationId: number;
+}

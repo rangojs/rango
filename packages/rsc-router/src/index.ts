@@ -1,34 +1,31 @@
-// Main entry point for rsc-router
-export * from './types';
-export * from './router';
-export * from './segments';
-export * from './matcher';
-export * from './route-definition';
-export * from './create-router';
-export * from './linear-matcher';
+/**
+ * rsc-router
+ *
+ * Type-safe RSC router with partial rendering support
+ */
 
-// Export segment-system utilities but not Segment/SegmentType (already exported from types.ts)
-export {
-  generateSegmentId,
-  parseSegmentId,
-  isValidSegmentId,
-  createSegment,
-  parseClientSegments,
-  computeDifferential,
-  buildSegmentMap,
-  renderSegments,
-} from './segment-system';
+// Core router
+export { createRSCRouter, type RSCRouter } from './router.js';
 
-// Re-export client components (Vite traces "use client" back to source files)
-export { Link } from './Link';
-export type { LinkProps } from './Link';
-export { Outlet, OutletProvider, useOutlet } from './Outlet';
+// Route definitions
+export { route, map } from './route-definition.js';
 
-// Re-export client-side utilities
-export {
-  SegmentStore,
-  navigateToRoute,
-  processPayload,
-  reconstructTreeFromSegments,
-} from './client';
-export type { NavigationOptions } from './client';
+// Segment system
+export { renderSegments } from './segment-system.js';
+
+// Types
+export type {
+  RouteDefinition,
+  ResolvedRouteMap,
+  Handler,
+  HandlerContext,
+  HandlersForRouteMap,
+  ResolvedSegment,
+  SegmentMetadata,
+  MatchResult,
+  ExtractParams,
+  RevalidateFn,
+} from './types.js';
+
+// Route symbols
+export { route as routeSymbols } from './types.js';
