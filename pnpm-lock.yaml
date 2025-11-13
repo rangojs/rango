@@ -15,50 +15,6 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
-  apps/web:
-    dependencies:
-      react:
-        specifier: ^19.2.0
-        version: 19.2.0
-      react-dom:
-        specifier: ^19.2.0
-        version: 19.2.0(react@19.2.0)
-      rsc-router:
-        specifier: workspace:*
-        version: link:../../packages/rsc-router
-    devDependencies:
-      '@types/react':
-        specifier: ^19.2.2
-        version: 19.2.2
-      '@types/react-dom':
-        specifier: ^19.2.2
-        version: 19.2.2(@types/react@19.2.2)
-      '@vitejs/plugin-react':
-        specifier: latest
-        version: 5.1.0(vite@7.2.2(tsx@4.20.6))
-      '@vitejs/plugin-rsc':
-        specifier: latest
-        version: 0.5.1(react-dom@19.2.0(react@19.2.0))(react@19.2.0)(vite@7.2.2(tsx@4.20.6))
-      rsc-html-stream:
-        specifier: ^0.0.7
-        version: 0.0.7
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
-      vite:
-        specifier: ^7.1.10
-        version: 7.2.2(tsx@4.20.6)
-
-  examples/basic-demo:
-    dependencies:
-      host-router:
-        specifier: workspace:*
-        version: link:../../packages/host-router
-    devDependencies:
-      tsx:
-        specifier: ^4.19.2
-        version: 4.20.6
-
   examples/vite-rsc-demo:
     dependencies:
       react:
@@ -644,9 +600,6 @@ packages:
   '@remix-run/node-fetch-server@0.10.0':
     resolution: {integrity: sha512-FmYaJHQKEPrT0UFo5KaLTmrm4F6dz5DJBzRY42H93w8FpVg5zKifNWGbH+wYsyExyWVgVrOsifS7IGFtz7HkSA==}
 
-  '@rolldown/pluginutils@1.0.0-beta.43':
-    resolution: {integrity: sha512-5Uxg7fQUCmfhax7FJke2+8B6cqgeUJUD9o2uXIKXhD+mG0mL6NObmVoi9wXEU1tY89mZKgAYA6fTbftx3q2ZPQ==}
-
   '@rolldown/pluginutils@1.0.0-beta.47':
     resolution: {integrity: sha512-8QagwMH3kNCuzD8EWL8R2YPW5e4OrHNSAHRFDdmFqEwEaD/KcNKjVoumo+gP2vW5eKB2UPbM6vTYiGZX0ixLnw==}
 
@@ -850,12 +803,6 @@ packages:
   '@typescript-eslint/visitor-keys@8.46.3':
     resolution: {integrity: sha512-uk574k8IU0rOF/AjniX8qbLSGURJVUCeM5e4MIMKBFFi8weeiLrG1fyQejyLXQpRZbU/1BuQasleV/RfHC3hHg==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
-
-  '@vitejs/plugin-react@5.1.0':
-    resolution: {integrity: sha512-4LuWrg7EKWgQaMJfnN+wcmbAW+VSsCmqGohftWjuct47bv8uE4n/nPpq4XjJPsxgq00GGG5J8dvBczp8uxScew==}
-    engines: {node: ^20.19.0 || >=22.12.0}
-    peerDependencies:
-      vite: ^4.2.0 || ^5.0.0 || ^6.0.0 || ^7.0.0
 
   '@vitejs/plugin-react@5.1.1':
     resolution: {integrity: sha512-WQfkSw0QbQ5aJ2CHYw23ZGkqnRwqKHD/KYsMeTkZzPT4Jcf0DcBxBtwMJxnu6E7oxw5+JC6ZAiePgh28uJ1HBA==}
@@ -2192,8 +2139,6 @@ snapshots:
 
   '@remix-run/node-fetch-server@0.10.0': {}
 
-  '@rolldown/pluginutils@1.0.0-beta.43': {}
-
   '@rolldown/pluginutils@1.0.0-beta.47': {}
 
   '@rollup/rollup-android-arm-eabi@4.53.1':
@@ -2394,18 +2339,6 @@ snapshots:
     dependencies:
       '@typescript-eslint/types': 8.46.3
       eslint-visitor-keys: 4.2.1
-
-  '@vitejs/plugin-react@5.1.0(vite@7.2.2(tsx@4.20.6))':
-    dependencies:
-      '@babel/core': 7.28.5
-      '@babel/plugin-transform-react-jsx-self': 7.27.1(@babel/core@7.28.5)
-      '@babel/plugin-transform-react-jsx-source': 7.27.1(@babel/core@7.28.5)
-      '@rolldown/pluginutils': 1.0.0-beta.43
-      '@types/babel__core': 7.20.5
-      react-refresh: 0.18.0
-      vite: 7.2.2(tsx@4.20.6)
-    transitivePeerDependencies:
-      - supports-color
 
   '@vitejs/plugin-react@5.1.1(vite@7.2.2(tsx@4.20.6))':
     dependencies:

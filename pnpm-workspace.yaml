@@ -1,5 +1,3 @@
 packages:
-  - 'apps/*'
   - 'packages/*'
-  - '!packages/rsc-router-old'
   - 'examples/*'
