@@ -49,7 +49,10 @@ export function OutletProvider({
 }
 
 /**
- * Hook to access outlet content (future API)
+ * Hook to access outlet content programmatically
+ *
+ * Alternative to using <Outlet /> component. Useful when you need
+ * direct access to the outlet content in your logic.
  *
  * @example
  * ```tsx

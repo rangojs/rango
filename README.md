@@ -1,16 +1,17 @@
-# Vite RSC Monorepo
+# RSC Router
 
-A Turbo-powered monorepo for React Server Components with Vite and a custom RSC router.
+A code-first, type-safe React Server Components router for serverless deployments.
 
 ## Structure
 
 ```
 .
-├── apps/
-│   └── web/              # Main web application
 ├── packages/
-│   └── rsc-router/       # RSC Router package
-└── package.json          # Root workspace configuration
+│   ├── rsc-router/       # Main RSC router package
+│   └── host-router/      # Host router utilities
+├── examples/
+│   └── vite-rsc-demo/    # Demo app with shop example
+└── NEXT.md               # Development roadmap
 ```
 
 ## Getting Started
@@ -33,22 +34,26 @@ pnpm build
 pnpm dev
 ```
 
-## Workspaces
+## Packages
 
-### Apps
+### `packages/rsc-router`
+React Server Components router with:
+- **Code-first routing** - No file-based conventions
+- **Type-safe params** - Automatic inference from route patterns
+- **Partial rendering** - Optimal performance with RSC
+- **Parallel routes** - First-class support for complex layouts
+- **Nested routes** - Clean API for route hierarchies
+- **Serverless-optimized** - Lazy loading and efficient bundling
 
-- **`apps/web`**: Main web application using Vite + RSC + rsc-router
-  - React Server Components with [`@vitejs/plugin-rsc`](https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-rsc)
-  - Custom RSC router with partial rendering support
-  - Serverless-optimized architecture
+### `packages/host-router`
+Host router utilities for multi-environment deployment
 
-### Packages
-
-- **`packages/rsc-router`**: React Server Components router
-  - Partial rendering support for optimal performance
-  - Lazy loading optimized for serverless environments
-  - Type-safe routing with TypeScript
-  - Parallel routes and nested layouts
+### `examples/vite-rsc-demo`
+Comprehensive demo application featuring:
+- Ecommerce shop with nested routes
+- Dynamic segments and layout composition
+- Parallel routes for sidebars and widgets
+- Multi-step checkout flow
 
 ## Scripts
 
@@ -67,32 +72,57 @@ This monorepo uses:
 
 ### Working with the Router
 
-The `rsc-router` package is developed in `packages/rsc-router`. Changes will be automatically reflected in the web app during development thanks to Turbo's watch mode.
+The `rsc-router` package is in `packages/rsc-router`. Changes are automatically reflected in the demo app thanks to Turbo's watch mode.
 
-See [Router API Ideas](./src/Router%20API%20Ideas.md) for detailed documentation on the router architecture and API design.
+See [RSC_ROUTER_API_DESIGN.md](./RSC_ROUTER_API_DESIGN.md) for detailed API documentation and [NEXT.md](./NEXT.md) for the development roadmap.
 
-### API Usage
+### Quick Example
 
-The example app demonstrates RSC patterns:
+```typescript
+// Define routes
+export const shopRoutes = route({
+  index: '/',
+  products: {
+    category: '/products/:category',
+    detail: '/product/:slug',
+  },
+});
 
-- [`apps/web/vite.config.ts`](./apps/web/vite.config.ts) - Vite RSC plugin configuration
-- [`apps/web/src/framework/entry.rsc.tsx`](./apps/web/src/framework/entry.rsc.tsx) - RSC entry point
-- [`apps/web/src/framework/entry.ssr.tsx`](./apps/web/src/framework/entry.ssr.tsx) - SSR entry point
-- [`apps/web/src/framework/entry.browser.tsx`](./apps/web/src/framework/entry.browser.tsx) - Client entry point
-- [`apps/web/src/routes.tsx`](./apps/web/src/routes.tsx) - Route definitions
+// Mount and define handlers
+router
+  .route('/shop', shopRoutes)
+  .map(() => import('./handlers/shop.js'));
 
-### Adding a New Package
+// Handler with layouts and parallel routes
+export default map<typeof shopRoutes>({
+  [layout("*", "shop")]: <ShopLayout />,
+  [parallel("index", "sidebar")]: {
+    '@sidebar': () => <CategoryFilter />
+  },
+  index: () => <ProductList />,
+  'products.detail': (ctx) => <ProductPage slug={ctx.params.slug} />
+});
+```
 
-1. Create a new directory under `packages/` or `apps/`
-2. Add a `package.json` with appropriate scripts
-3. Update dependencies as needed
-4. Run `pnpm install` from the root
+## Status
 
-## Original Example
+🚧 **Active Development** - See [NEXT.md](./NEXT.md) for the current roadmap.
 
-This monorepo is based on the Vite + RSC example. See the original documentation:
-- [`@vitejs/plugin-rsc`](https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-rsc) for plugin documentation
-- [vite-plugin-rsc-deploy-example](https://github.com/hi-ogawa/vite-plugin-rsc-deploy-example) for deployment examples
+**Current Focus:** Phase 1 - Foundation
+- ✅ Core routing with nested routes and dynamic segments
+- ✅ Layout composition and parallel routes
+- ✅ Partial rendering optimization
+- 🚧 Revalidation logic (in progress)
+- 📋 Middleware implementation (planned)
+- 📋 RSC Actions/Server Actions (planned)
+
+## Built With
+
+- [React 19](https://react.dev/) - React Server Components
+- [Vite](https://vitejs.dev/) + [@vitejs/plugin-rsc](https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-rsc)
+- [TypeScript](https://www.typescriptlang.org/)
+- [Turbo](https://turbo.build/) - Monorepo orchestration
+- [pnpm](https://pnpm.io/) - Package management
 
 ## License
 

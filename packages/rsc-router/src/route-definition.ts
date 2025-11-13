@@ -11,11 +11,14 @@ import type {
  *
  * @example
  * ```typescript
- * // Define routes
+ * // Define routes (use relative paths when mounting at a prefix)
  * const blogRoutes = route({
- *   index: '/blog',
- *   post: '/blog/:slug'
+ *   index: '/',
+ *   post: '/:slug'
  * });
+ *
+ * // Mount at /blog prefix in router:
+ * router.route('/blog', blogRoutes).map(() => import('./blog.js'));
  *
  * // Use in handlers (optional, for consistency)
  * export default map<typeof blogRoutes>({

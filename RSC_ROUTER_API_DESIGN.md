@@ -7,12 +7,15 @@
 ```typescript
 import { route } from "rsc-router";
 
-// Define route map with patterns
+// Define route map with patterns (relative paths for mounting)
 export const blogRoutes = route({
-  index: "/blog",
-  post: "/blog/:slug",
-  category: "/blog/:category/:id",
+  index: "/",           // Will be /blog when mounted at /blog
+  post: "/:slug",       // Will be /blog/:slug
+  category: "/:category/:id",  // Will be /blog/:category/:id
 });
+
+// Mount at /blog prefix in router
+router.route('/blog', blogRoutes).map(() => import('./blog.js'));
 ```
 
 ### Nested Routes (Relative Paths)
@@ -883,9 +886,12 @@ setPayload({ root, metadata: payload.metadata });
 ```typescript
 // routes/blog.routes.ts
 export const blogRoutes = route({
-  index: "/blog",
-  post: "/blog/:slug",
+  index: "/",
+  post: "/:slug",
 });
+
+// Mount at /blog in router
+router.route('/blog', blogRoutes).map(() => import('./blog.handlers.js'));
 ```
 
 ### 2. Define Handlers
