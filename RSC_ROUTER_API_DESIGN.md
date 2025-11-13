@@ -1246,31 +1246,244 @@ Parallel segments participate fully in partial rendering and revalidation.
 
 ## Middleware
 
-### Per-Route Middleware
+Middleware functions execute **before route handlers and layouts**, allowing you to:
+- Authenticate/authorize requests
+- Modify context (add user, permissions, etc.)
+- Log requests and track analytics
+- Rate limit or throttle requests
+- Short-circuit execution (throw errors, redirect)
+
+### Execution Flow
+
+```
+Request → Middleware Chain → Handlers (layouts + route + parallel)
+         ↓ (can modify ctx)
+         ↓ (can throw/stop)
+```
+
+Middleware executes:
+- ✅ Before any handlers (layouts, routes, parallel)
+- ✅ On both full and partial renders
+- ✅ Once per request (not per segment)
+- ✅ Can modify context passed to all handlers
+
+###Execution Order
+
+**Chaining with Global + Per-Route:**
 
 ```typescript
-import { map, middleware } from 'rsc-router';
+export default map<typeof shopRoutes>({
+  // 1. Global middleware (runs for ALL routes)
+  [middleware('*', 'logger')]: [
+    (ctx, next) => {
+      console.log(`Request: ${ctx.pathname}`);
+      next(); // Call next to continue chain
+    }
+  ],
 
-export default map<typeof routes>({
-  // Middleware for index route
-  [middleware('index', 'tracking')]: [logger(), tracker()],
-  index: (ctx) => <Index />,
+  [middleware('*', 'auth')]: [
+    (ctx, next) => {
+      ctx.user = await authenticate(ctx.request);
+      next();
+    }
+  ],
 
-  // Middleware for post route
-  [middleware('post', 'auth')]: [auth(), rateLimit()],
-  post: (ctx) => <Post />
+  // 2. Per-route middleware (runs only for specific route)
+  [middleware('checkout', 'validate')]: [
+    (ctx, next) => {
+      if (!ctx.user) throw new Error('Unauthorized');
+      next();
+    }
+  ],
+
+  // Handlers execute AFTER all middleware
+  checkout: (ctx) => <Checkout user={ctx.user} />
 });
 ```
 
-Middleware functions receive context and a `next()` callback:
+**Order**: Global middleware (in definition order) → Per-route middleware (in definition order) → Handlers
+
+### Context Modification
+
+Middleware can modify the context object, and changes flow to all handlers:
 
 ```typescript
-[middleware('admin', 'auth')]: [
-  (ctx, next) => {
-    if (!ctx.user?.isAdmin) {
+[middleware('*', 'auth')]: [
+  async (ctx: any, next) => {
+    // Add user to context
+    const token = ctx.request.headers.get('Authorization');
+    ctx.user = await validateToken(token);
+    ctx.permissions = await getPermissions(ctx.user.id);
+
+    console.log(`Authenticated: ${ctx.user.name}`);
+    next();
+  }
+],
+
+// Handler receives modified context
+"account": (ctx: any) => {
+  // ctx.user is available!
+  return <div>Welcome, {ctx.user.name}!</div>;
+}
+```
+
+### Multiple Middleware (Chaining)
+
+```typescript
+[middleware('api', 'security')]: [
+  // 1. Rate limiting (runs first)
+  async (ctx: any, next) => {
+    const remaining = await checkRateLimit(ctx.request);
+    if (remaining === 0) {
+      throw new Error('Rate limit exceeded');
+    }
+    ctx.rateLimitRemaining = remaining;
+    next();
+  },
+
+  // 2. Authentication (runs second)
+  async (ctx: any, next) => {
+    ctx.user = await authenticate(ctx.request);
+    if (!ctx.user) {
       throw new Error('Unauthorized');
     }
     next();
+  },
+
+  // 3. Authorization (runs third)
+  async (ctx: any, next) => {
+    const canAccess = await checkPermissions(ctx.user, 'api');
+    if (!canAccess) {
+      throw new Error('Forbidden');
+    }
+    next();
+  }
+]
+```
+
+**All middleware must call `next()` for the chain to continue.**
+
+### Short-Circuit (Stop Execution)
+
+**Option 1: Throw Error**
+```typescript
+[middleware('admin', 'auth')]: [
+  (ctx: any, next) => {
+    if (!ctx.user?.isAdmin) {
+      throw new Error('Unauthorized'); // Stops execution
+    }
+    next();
+  }
+]
+```
+
+**Option 2: Don't Call next()**
+```typescript
+[middleware('maintenance', 'check')]: [
+  (ctx: any, next) => {
+    if (isMaintenanceMode()) {
+      // Don't call next() - stops chain
+      return;
+    }
+    next();
+  }
+]
+```
+
+### Global Middleware
+
+Use `'*'` to apply middleware to all routes:
+
+```typescript
+export default map<typeof shopRoutes>({
+  // Runs for every shop route
+  [middleware('*', 'logger')]: [
+    (ctx, next) => {
+      console.log(`Shop route accessed: ${ctx.pathname}`);
+      next();
+    }
+  ],
+
+  // Runs for every shop route
+  [middleware('*', 'auth')]: [
+    async (ctx: any, next) => {
+      ctx.user = await getCurrentUser(ctx.request);
+      next();
+    }
+  ],
+
+  // All routes get logger → auth → handler
+  index: (ctx: any) => <ProductList user={ctx.user} />,
+  cart: (ctx: any) => <Cart user={ctx.user} />
+});
+```
+
+### Real-World Examples
+
+#### Authentication with Context Modification
+
+```typescript
+[middleware('*', 'auth')]: [
+  async (ctx: any, next) => {
+    const sessionId = ctx.request.headers.get('Cookie')
+      ?.match(/session=([^;]+)/)?.[1];
+
+    if (sessionId) {
+      ctx.user = await db.getUserBySession(sessionId);
+      ctx.permissions = await db.getPermissions(ctx.user.id);
+    }
+
+    next();
+  }
+],
+
+// Protected routes
+[middleware('account', 'requireAuth')]: [
+  (ctx: any, next) => {
+    if (!ctx.user) {
+      throw new Error('Please login');
+    }
+    next();
+  }
+]
+```
+
+#### Rate Limiting
+
+```typescript
+const requestCounts = new Map();
+
+[middleware('*', 'rateLimit')]: [
+  (ctx: any, next) => {
+    const ip = ctx.request.headers.get('CF-Connecting-IP') || 'unknown';
+    const count = requestCounts.get(ip) || 0;
+
+    if (count > 100) {
+      throw new Error('Rate limit exceeded');
+    }
+
+    requestCounts.set(ip, count + 1);
+    ctx.rateLimitRemaining = 100 - count;
+
+    next();
+  }
+]
+```
+
+#### Logging & Analytics
+
+```typescript
+[middleware('*', 'analytics')]: [
+  async (ctx, next) => {
+    const startTime = Date.now();
+
+    await next(); // Execute rest of chain
+
+    const duration = Date.now() - startTime;
+    console.log(`${ctx.pathname} - ${duration}ms`);
+
+    // Send to analytics service
+    await trackPageView(ctx.pathname, duration);
   }
 ]
 ```

@@ -194,13 +194,41 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
   }
 
   /**
+   * Execute middleware chain with recursive chaining
+   */
+  async function executeMiddleware(
+    middleware: any[],
+    ctx: HandlerContext<any, TContext>
+  ): Promise<void> {
+    if (middleware.length === 0) {
+      return;
+    }
+
+    let index = 0;
+
+    const next = async (): Promise<void> => {
+      if (index >= middleware.length) {
+        return;
+      }
+
+      const currentMiddleware = middleware[index++];
+      await currentMiddleware(ctx, next);
+    };
+
+    await next();
+  }
+
+  /**
    * Build segments from matched route using positional extraction
+   *
+   * @param skipMiddleware - If true, skip middleware execution (for building prev segments in comparison)
    */
   async function buildSegments(
     entry: RouteEntry<TContext>,
     routeKey: string,
     params: Record<string, string>,
-    context: HandlerContext<any, TContext>
+    context: HandlerContext<any, TContext>,
+    skipMiddleware = false
   ): Promise<ResolvedSegment[]> {
     const handlers = await loadHandlers(entry.handlers);
     const segments: ResolvedSegment[] = [];
@@ -209,10 +237,12 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
     // Track global metadata (wildcard '*' routes)
     const globalLayouts: (ReactNode | Handler)[] = [];
     const globalParallel: Record<string, Handler> = {};
+    const globalMiddleware: any[] = [];
 
     // Track per-route metadata (specific to routeKey)
     const perRouteLayouts: (ReactNode | Handler)[] = [];
     const perRouteParallel: Record<string, Handler> = {};
+    const perRouteMiddleware: any[] = [];
 
     // Use Reflect.ownKeys to preserve insertion order (symbols + strings)
     const keys = Reflect.ownKeys(handlers);
@@ -242,8 +272,28 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
           // Per-route: Only add if routeName matches current routeKey
           Object.assign(perRouteParallel, slots);
         }
+      } else if (keyInfo.type === 'middleware') {
+        const middlewareFns = value as any[];
+        if (keyInfo.global) {
+          // Global middleware: Apply to all routes
+          globalMiddleware.push(...middlewareFns);
+        } else if (keyInfo.routeName === routeKey) {
+          // Per-route middleware: Only add if routeName matches current routeKey
+          perRouteMiddleware.push(...middlewareFns);
+        }
       }
-      // Skip middleware and revalidate for now
+      // Skip revalidate (handled separately in matchPartial)
+    }
+
+    // Execute middleware before processing handlers
+    // Global middleware runs first, then route-specific middleware
+    if (!skipMiddleware) {
+      const allMiddleware = [...globalMiddleware, ...perRouteMiddleware];
+      if (allMiddleware.length > 0) {
+        console.log(`[Router.buildSegments] Executing ${allMiddleware.length} middleware for route: ${routeKey}`);
+        await executeMiddleware(allMiddleware, context);
+        console.log(`[Router.buildSegments] Middleware execution complete`);
+      }
     }
 
     // PASS 2: Process route handlers
@@ -426,7 +476,8 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
         prevMatch.entry,
         prevMatch.routeKey,
         prevMatch.params,
-        prevContext
+        prevContext,
+        true  // Skip middleware for prev segments (comparison only)
       );
     }
 

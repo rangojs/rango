@@ -1,4 +1,4 @@
-import { map, route, layout, parallel, revalidate } from "rsc-router";
+import { map, route, layout, parallel, revalidate, middleware } from "rsc-router";
 import type { dashboardRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { DashboardLayout } from "../layouts/DashboardLayout.js";
@@ -12,6 +12,41 @@ export default map<typeof dashboardRoutes>({
   // Global layouts - apply to all dashboard routes
   [layout("*", "root")]: <RootLayout />,
   [layout("*", "dashboard")]: <DashboardLayout />,
+
+  // Middleware - demonstrates rate limiting and request tracking
+  [middleware("*", "rateLimit")]: [
+    (ctx: any, next) => {
+      console.log("[Dashboard Middleware] Rate limit check");
+      // Simulate rate limiting - in real app, check request count
+      const requestCount = (ctx as any).requestCount || 0;
+      (ctx as any).requestCount = requestCount + 1;
+
+      if (requestCount > 100) {
+        console.warn("[Dashboard Middleware] Rate limit exceeded - would return 429");
+        // In real app: throw new Error('Rate limit exceeded')
+      } else {
+        console.log(`[Dashboard Middleware] Request ${requestCount + 1}/100`);
+      }
+      next();
+    },
+  ],
+
+  [middleware("*", "analytics")]: [
+    (ctx: any, next) => {
+      console.log(`[Dashboard Middleware] Analytics: ${ctx.pathname} at ${new Date().toISOString()}`);
+      // In real app: send to analytics service
+      next();
+    },
+  ],
+
+  // Settings route - additional validation middleware
+  [middleware("settings", "validate")]: [
+    (ctx: any, next) => {
+      console.log("[Dashboard Middleware] Settings validation");
+      // Could validate permissions, check feature flags, etc.
+      next();
+    },
+  ],
 
   // Revalidation - demonstrates context usage
   // In real app, could check if user permissions changed, data expired, etc.

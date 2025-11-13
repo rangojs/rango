@@ -1,4 +1,4 @@
-import { map, layout, parallel, revalidate } from "rsc-router";
+import { map, layout, parallel, revalidate, middleware } from "rsc-router";
 import type { shopRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { ShopLayout } from "../layouts/ShopLayout.js";
@@ -53,6 +53,66 @@ export default map<typeof shopRoutes>({
   [layout("account.index", "account")]: <AccountLayout />,
   [layout("account.orders", "account")]: <AccountLayout />,
   [layout("account.orderDetail", "account")]: <AccountLayout />,
+
+  // ===================
+  // MIDDLEWARE
+  // ===================
+
+  // Global middleware - runs for ALL shop routes
+  // Demonstrates logging and context modification
+  [middleware("*", "logger")]: [
+    (ctx: any, next) => {
+      console.log(`[Shop Middleware] Logger: ${ctx.pathname}`);
+      next();
+    },
+  ],
+
+  [middleware("*", "mockAuth")]: [
+    (ctx: any, next) => {
+      // Simulate authentication - add mock user to context
+      console.log("[Shop Middleware] Auth: Adding mock user to context");
+      (ctx as any).user = {
+        id: "user-123",
+        name: "John Doe",
+        email: "john@example.com",
+      };
+      next();
+    },
+  ],
+
+  // Checkout routes - require auth check
+  [middleware("checkout.index", "requireAuth")]: [
+    (ctx: any, next) => {
+      console.log("[Shop Middleware] Checkout auth check");
+      if (!(ctx as any).user) {
+        console.error("[Shop Middleware] No user - would redirect to login");
+        // In real app: throw new Error('Unauthorized') or redirect
+      }
+      next();
+    },
+  ],
+
+  [middleware("checkout.payment", "requireAuth")]: [
+    (ctx: any, next) => {
+      console.log("[Shop Middleware] Payment auth check");
+      if (!(ctx as any).user) {
+        console.error("[Shop Middleware] No user - would redirect to login");
+      }
+      next();
+    },
+  ],
+
+  // Account routes - check permissions
+  [middleware("account.orders", "permissions")]: [
+    (ctx: any, next) => {
+      console.log("[Shop Middleware] Checking order view permissions");
+      const user = (ctx as any).user;
+      if (user) {
+        console.log(`[Shop Middleware] User ${user.name} can view orders`);
+      }
+      next();
+    },
+  ],
 
   // ===================
   // REVALIDATION
@@ -632,34 +692,61 @@ export default map<typeof shopRoutes>({
   ),
 
   // Account dashboard (nested route group)
-  "account.index": () => (
-    <div>
-      <h2>Account Dashboard</h2>
-      <p className="segment-id">Segment: Account Index</p>
-      <div style={{
-        background: "#fff",
-        border: "1px solid #e9ecef",
-        borderRadius: "8px",
-        padding: "1.5rem",
-        marginTop: "1rem",
-      }}>
-        <h3>Welcome back, John!</h3>
-        <p>Manage your account and view your order history.</p>
-        <div style={{ marginTop: "1rem" }}>
-          <a href="/shop/account/orders" style={{
-            background: "#667eea",
-            color: "white",
-            padding: "0.75rem 1.5rem",
-            borderRadius: "4px",
-            textDecoration: "none",
-            display: "inline-block",
-          }}>
-            View All Orders
-          </a>
+  "account.index": (ctx: any) => {
+    const user = ctx.user || { name: "Guest", email: "No user in context" };
+
+    return (
+      <div>
+        <h2>Account Dashboard</h2>
+        <p className="segment-id">Segment: Account Index</p>
+
+        <div style={{
+          background: "#d1f2eb",
+          border: "2px solid #0f5132",
+          padding: "1rem",
+          borderRadius: "8px",
+          marginTop: "1rem",
+        }}>
+          <h4 style={{ marginTop: 0 }}>🔐 User from Middleware Context</h4>
+          <p style={{ fontSize: "0.9rem", margin: "0.5rem 0" }}>
+            <strong>Name:</strong> {user.name}
+          </p>
+          <p style={{ fontSize: "0.9rem", margin: "0.5rem 0" }}>
+            <strong>Email:</strong> {user.email}
+          </p>
+          <p style={{ fontSize: "0.9rem", margin: "0.5rem 0" }}>
+            <strong>ID:</strong> <code>{user.id || 'N/A'}</code>
+          </p>
+          <p style={{ fontSize: "0.75rem", color: "#0f5132", marginTop: "0.75rem", marginBottom: 0, fontStyle: "italic" }}>
+            ↑ This user object was added to <code>ctx.user</code> by the "mockAuth" middleware
+          </p>
+        </div>
+
+        <div style={{
+          background: "#fff",
+          border: "1px solid #e9ecef",
+          borderRadius: "8px",
+          padding: "1.5rem",
+          marginTop: "1rem",
+        }}>
+          <h3>Welcome back, {user.name}!</h3>
+          <p>Manage your account and view your order history.</p>
+          <div style={{ marginTop: "1rem" }}>
+            <a href="/shop/account/orders" style={{
+              background: "#667eea",
+              color: "white",
+              padding: "0.75rem 1.5rem",
+              borderRadius: "4px",
+              textDecoration: "none",
+              display: "inline-block",
+            }}>
+              View All Orders
+            </a>
+          </div>
         </div>
       </div>
-    </div>
-  ),
+    );
+  },
 
   // Order history (nested route)
   "account.orders": () => (
