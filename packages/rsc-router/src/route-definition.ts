@@ -46,8 +46,8 @@ function flattenRoutes(
 
   for (const [key, value] of Object.entries(routes)) {
     if (typeof value === "string") {
-      // Direct route pattern
-      flattened[key] = value;
+      // Direct route pattern - include prefix
+      flattened[prefix + key] = value;
     } else {
       // Nested routes - flatten recursively
       const nested = flattenRoutes(value, `${prefix}${key}.`);

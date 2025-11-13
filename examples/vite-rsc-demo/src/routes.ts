@@ -29,3 +29,26 @@ export const dashboardRoutes = route({
   index: '/',
   settings: '/settings',
 });
+
+/**
+ * Shop routes - comprehensive ecommerce example
+ * Tests nested routes, dynamic segments, layout composition, and parallel routes
+ */
+export const shopRoutes = route({
+  index: '/',
+  products: {
+    category: '/products/:category',
+    detail: '/product/:slug',
+  },
+  cart: '/cart',
+  checkout: {
+    index: '/checkout',
+    payment: '/checkout/payment',
+    confirm: '/checkout/confirm',
+  },
+  account: {
+    index: '/account',
+    orders: '/account/orders',
+    orderDetail: '/account/orders/:id',
+  },
+});

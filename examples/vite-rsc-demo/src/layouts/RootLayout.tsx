@@ -46,6 +46,7 @@ export function RootLayout() {
           <a href="/about">About</a>
           <a href="/blog">Blog</a>
           <a href="/dashboard">Dashboard</a>
+          <a href="/shop">Shop</a>
         </nav>
         <Outlet />
       </body>

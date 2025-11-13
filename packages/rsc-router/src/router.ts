@@ -94,8 +94,10 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
     routeKey: string;
     params: Record<string, string>;
   } | null {
+    console.log(`[Router.findMatch] Trying to match pathname: ${pathname}`);
     for (const entry of routes) {
       const routeEntries = Object.entries(entry.routes);
+      console.log(`[Router.findMatch] Entry prefix: ${entry.prefix}, routes:`, Object.keys(entry.routes));
 
       for (const [routeKey, pattern] of routeEntries) {
         // Join prefix and pattern, handling edge cases
