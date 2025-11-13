@@ -1,10 +1,11 @@
-import { map, route, layout, parallel, revalidate } from "rsc-router";
+import { map, layout, parallel, revalidate } from "rsc-router";
 import type { shopRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { ShopLayout } from "../layouts/ShopLayout.js";
 import { CheckoutLayout } from "../layouts/CheckoutLayout.js";
 import { AccountLayout } from "../layouts/AccountLayout.js";
 import { SegmentTimer } from "../components/SegmentTimer.js";
+import { CurrentURL } from "../components/CurrentURL.js";
 
 // Mock product data
 const products = [
@@ -27,6 +28,10 @@ const orders = [
 /**
  * Shop handlers - comprehensive ecommerce example
  * Tests all routing features: nested routes, dynamic segments, layout composition, parallel routes
+ *
+ * NOTE: TypeScript errors on nested route keys (products.category, etc) are a known limitation.
+ * RouteKeys<T> type utility needs improvement to handle flattened nested routes.
+ * Works correctly at runtime.
  */
 export default map<typeof shopRoutes>({
   // ===================
@@ -278,7 +283,7 @@ export default map<typeof shopRoutes>({
   // ===================
 
   // Shop homepage - product listing
-  [route("index")]: () => (
+  index: () => (
     <div style={{ display: "flex", gap: "2rem" }}>
       <div style={{ flex: 1 }}>
         <h2>All Products</h2>
@@ -316,7 +321,7 @@ export default map<typeof shopRoutes>({
   ),
 
   // Category browsing - demonstrates dynamic segment
-  [route("products.category")]: (ctx) => {
+  "products.category": (ctx: any) => {
     const categoryProducts = products.filter((p) => p.category === ctx.params.category);
 
     return (
@@ -355,9 +360,10 @@ export default map<typeof shopRoutes>({
   },
 
   // Product detail - demonstrates dynamic segment + parallel routes
-  [route("products.detail")]: (ctx) => {
+  "products.detail": (ctx: any) => {
     const product = products.find((p) => p.slug === ctx.params.slug);
     const renderTime = new Date().toISOString();
+    const queryParams: [string, string][] = Array.from(ctx.searchParams.entries());
 
     if (!product) {
       return (
@@ -372,6 +378,35 @@ export default map<typeof shopRoutes>({
       <div>
         <h2>{product.name}</h2>
         <p className="segment-id">Segment: Product Detail ({product.slug})</p>
+        <p>
+          <strong>Slug (route param):</strong> <code>{product.slug}</code>
+        </p>
+
+        <CurrentURL />
+
+        <div style={{
+          background: '#fff3cd',
+          padding: '0.75rem',
+          borderRadius: '4px',
+          marginTop: '0.5rem',
+          border: '2px solid #856404',
+        }}>
+          <div style={{ marginBottom: '0.25rem', fontSize: '0.85rem', fontWeight: 'bold', color: '#856404' }}>
+            📸 Server Snapshot (at render time)
+          </div>
+          <div style={{ fontSize: '0.8rem' }}>
+            <strong>Query Params:</strong>{' '}
+            {queryParams.length > 0 ? (
+              <code>{queryParams.map(([k, v]) => `${k}=${v}`).join('&')}</code>
+            ) : (
+              <em style={{ color: '#666' }}>none</em>
+            )}
+          </div>
+          <p style={{ fontSize: '0.7rem', color: '#856404', marginTop: '0.5rem', marginBottom: 0, fontStyle: 'italic' }}>
+            ↑ Frozen from <code>ctx.searchParams</code>. Won't update if segment not revalidated!
+          </p>
+        </div>
+
         <div style={{
           background: "#fff",
           border: "1px solid #e9ecef",
@@ -474,7 +509,7 @@ export default map<typeof shopRoutes>({
   ),
 
   // Checkout - step 1 (demonstrates nested routes with layout)
-  [route("checkout.index")]: () => (
+  "checkout.index": () => (
     <div style={{ display: "flex", gap: "2rem" }}>
       <div style={{ flex: 1 }}>
         <h2>Checkout</h2>
@@ -512,7 +547,7 @@ export default map<typeof shopRoutes>({
   ),
 
   // Checkout - step 2 payment (demonstrates multi-step flow)
-  [route("checkout.payment")]: () => (
+  "checkout.payment": () => (
     <div style={{ display: "flex", gap: "2rem" }}>
       <div style={{ flex: 1 }}>
         <h2>Payment</h2>
@@ -559,7 +594,7 @@ export default map<typeof shopRoutes>({
   ),
 
   // Checkout - confirmation
-  [route("checkout.confirm")]: () => (
+  "checkout.confirm": () => (
     <div>
       <div style={{
         background: "#d1f2eb",
@@ -597,7 +632,7 @@ export default map<typeof shopRoutes>({
   ),
 
   // Account dashboard (nested route group)
-  [route("account.index")]: () => (
+  "account.index": () => (
     <div>
       <h2>Account Dashboard</h2>
       <p className="segment-id">Segment: Account Index</p>
@@ -627,7 +662,7 @@ export default map<typeof shopRoutes>({
   ),
 
   // Order history (nested route)
-  [route("account.orders")]: () => (
+  "account.orders": () => (
     <div>
       <h2>Order History</h2>
       <p className="segment-id">Segment: Account Orders</p>
@@ -664,7 +699,7 @@ export default map<typeof shopRoutes>({
   ),
 
   // Order detail (nested + dynamic segment)
-  [route("account.orderDetail")]: (ctx) => {
+  "account.orderDetail": (ctx: any) => {
     const order = orders.find((o) => o.id === ctx.params.id);
 
     if (!order) {

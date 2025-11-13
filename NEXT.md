@@ -19,8 +19,8 @@ Build a **code-first, type-safe RSC router** for serverless deployments (Cloudfl
 
 ## Phase 1: Core Mutations (THIS WEEK) 🔥
 
-### 1. Revalidation Logic (START HERE)
-**Status:** Type defined, partially implemented
+### 1. Revalidation Logic ✅ COMPLETE
+**Status:** ✅ Fully implemented and tested
 **Priority:** CRITICAL - Foundation for actions and caching
 
 **Current State:**
@@ -218,6 +218,7 @@ For platform-agnostic deployment.
 ## Backlog / Future Considerations
 
 ### Not Prioritized Yet:
+- ❓ **RouteKeys type utility improvement** - Currently doesn't handle flattened nested routes (products.category, checkout.payment). Works at runtime, TypeScript error only.
 - ❓ Router-level layouts (`.layouts()` method) - DEFERRED (handlers work fine)
 - ❓ Lazy route flattening - DEFERRED (no performance issue yet)
 - ❓ Error boundaries
@@ -248,7 +249,7 @@ For platform-agnostic deployment.
 ## Success Metrics
 
 ### Week 1 (Current):
-- [ ] Revalidation logic complete
+- [x] Revalidation logic complete
 - [ ] Middleware fully working
 - [ ] RSC Actions working end-to-end
 - [ ] Build a working "add to cart" flow

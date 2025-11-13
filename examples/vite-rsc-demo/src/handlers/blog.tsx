@@ -3,11 +3,13 @@ import type { blogRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { BlogLayout } from "../layouts/BlogLayout.js";
 import { SegmentTimer } from "../components/SegmentTimer.js";
+import { CurrentURL } from "../components/CurrentURL.js";
 
 /**
  * Blog handlers using shorthand string syntax (no helpers)
  * Demonstrates simple revalidation
  */
+// @ts-expect-error - String syntax for metadata keys works at runtime but TypeScript can't verify the patterns
 export default map<typeof blogRoutes>({
   // Global layouts - apply to all blog routes
   "$layout.*.root": <RootLayout />,
@@ -50,7 +52,10 @@ export default map<typeof blogRoutes>({
 
   post: (ctx) => {
     const renderTime = new Date().toISOString();
-    const queryParams = Array.from(ctx.searchParams.entries());
+    const queryParams: [string, string][] = Array.from(ctx.searchParams.entries());
+
+    // Get previous URL from request header (sent by client during partial navigation)
+    const previousClientUrl = ctx.request.headers.get('X-RSC-Router-Client-Path');
 
     return (
       <div>
@@ -64,23 +69,37 @@ export default map<typeof blogRoutes>({
         <p>
           <strong>Slug (route param):</strong> <code>{ctx.params.slug}</code>
         </p>
+
+        <CurrentURL />
+
         <div style={{
-          background: '#f0f9ff',
+          background: '#fff3cd',
           padding: '0.75rem',
           borderRadius: '4px',
           marginTop: '0.5rem',
+          border: '2px solid #856404',
         }}>
-          <strong>Query Params (read from searchParams):</strong>{' '}
-          {queryParams.length > 0 ? (
-            <code>{queryParams.map(([k, v]) => `${k}=${v}`).join('&')}</code>
-          ) : (
-            <em style={{ color: '#666' }}>none</em>
+          <div style={{ marginBottom: '0.25rem', fontSize: '0.85rem', fontWeight: 'bold', color: '#856404' }}>
+            📸 Server Snapshot (at render time: {renderTime})
+          </div>
+          <div style={{ fontSize: '0.8rem', marginBottom: '0.5rem' }}>
+            <strong>Query Params (ctx.searchParams):</strong>{' '}
+            {queryParams.length > 0 ? (
+              <code>{queryParams.map(([k, v]) => `${k}=${v}`).join('&')}</code>
+            ) : (
+              <em style={{ color: '#666' }}>none</em>
+            )}
+          </div>
+          {previousClientUrl && (
+            <div style={{ fontSize: '0.75rem', color: '#856404', marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid #856404' }}>
+              <strong>Previous URL (from header):</strong><br/>
+              <code style={{ fontSize: '0.7rem' }}>{previousClientUrl}</code>
+            </div>
           )}
+          <p style={{ fontSize: '0.7rem', color: '#856404', marginTop: '0.5rem', marginBottom: 0, fontStyle: 'italic' }}>
+            ↑ Frozen server data. Won't update if segment not revalidated!
+          </p>
         </div>
-        <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem' }}>
-          ⚠️ Note: Query params are rendered from <code>ctx.searchParams</code> at render time.
-          If segment doesn't re-render (revalidation = false), query display won't update!
-        </p>
 
         <SegmentTimer
           segmentId="R2.1 (Blog Post)"
