@@ -61,6 +61,15 @@ async function fetchPartialUpdate(targetUrl?: string) {
     console.log(`[Browser] Partial update - matched: ${matched?.join(', ')}`);
     console.log(`[Browser] Diff: ${diff?.join(', ')}`);
 
+    // If diff is empty, nothing changed - skip update!
+    if (!diff || diff.length === 0) {
+      console.log(`[Browser] No changes - all revalidations returned false, keeping existing UI`);
+      // Still update URL state
+      navigationManager.currentUrl = url;
+      console.log(`[Browser] ✓ Navigation complete (no re-render)\n`);
+      return;
+    }
+
     // Update stored segments with new ones
     segments?.forEach((segment: ResolvedSegment) => {
       navigationManager.storedSegments.set(segment.id, segment);

@@ -1,9 +1,10 @@
-import { map, route, layout, parallel } from "rsc-router";
+import { map, route, layout, parallel, revalidate } from "rsc-router";
 import type { shopRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { ShopLayout } from "../layouts/ShopLayout.js";
 import { CheckoutLayout } from "../layouts/CheckoutLayout.js";
 import { AccountLayout } from "../layouts/AccountLayout.js";
+import { SegmentTimer } from "../components/SegmentTimer.js";
 
 // Mock product data
 const products = [
@@ -47,6 +48,53 @@ export default map<typeof shopRoutes>({
   [layout("account.index", "account")]: <AccountLayout />,
   [layout("account.orders", "account")]: <AccountLayout />,
   [layout("account.orderDetail", "account")]: <AccountLayout />,
+
+  // ===================
+  // REVALIDATION
+  // ===================
+
+  // Global revalidation - applies to ALL shop routes
+  // Demonstrates how to add custom logic that affects every route
+  [revalidate("*", "global")]: ({ defaultShouldRevalidate }) => {
+    console.log("[Shop] Global revalidation check - defaultShouldRevalidate:", defaultShouldRevalidate);
+    // Defer to default behavior (params changed)
+    return defaultShouldRevalidate;
+  },
+
+  // Product detail - multiple named revalidations with short-circuit
+  // First one that returns true wins
+  // IMPORTANT: Demonstrates route params vs query string difference
+  [revalidate("products.detail", "demo")]: ({ currentParams, nextParams, currentUrl, nextUrl, defaultShouldRevalidate }) => {
+    console.log("[Shop] Product detail revalidation demo:");
+    console.log("  - Current slug:", currentParams.slug);
+    console.log("  - Next slug:", nextParams.slug);
+    console.log("  - Current query:", currentUrl.search);
+    console.log("  - Next query:", nextUrl.search);
+    console.log("  - defaultShouldRevalidate:", defaultShouldRevalidate);
+    console.log("  ⮑ defaultShouldRevalidate is TRUE only when ROUTE PARAMS change (slug)");
+    console.log("  ⮑ Query string changes (?tab=1) do NOT affect defaultShouldRevalidate");
+
+    // Defer to default: true if slug changed, false if only query changed
+    return defaultShouldRevalidate;
+  },
+
+  // Cart - always revalidate (fresh data)
+  [revalidate("cart")]: () => {
+    console.log("[Shop] Cart always revalidates (fresh data)");
+    return true; // Always refresh cart
+  },
+
+  // Checkout confirmation - never revalidate (static once rendered)
+  [revalidate("checkout.confirm")]: () => {
+    console.log("[Shop] Checkout confirmation never revalidates");
+    return false; // Static confirmation page
+  },
+
+  // Account order detail - only revalidate if order ID changed
+  [revalidate("account.orderDetail")]: ({ currentParams, nextParams, defaultShouldRevalidate }) => {
+    console.log(`[Shop] Order detail: ${currentParams.id} → ${nextParams.id}`);
+    return defaultShouldRevalidate; // Revalidate when ID changes
+  },
 
   // ===================
   // PARALLEL ROUTES
@@ -309,6 +357,7 @@ export default map<typeof shopRoutes>({
   // Product detail - demonstrates dynamic segment + parallel routes
   [route("products.detail")]: (ctx) => {
     const product = products.find((p) => p.slug === ctx.params.slug);
+    const renderTime = new Date().toISOString();
 
     if (!product) {
       return (
@@ -351,6 +400,33 @@ export default map<typeof shopRoutes>({
             Add to Cart
           </button>
         </div>
+
+        <SegmentTimer
+          segmentId={`Product Detail (${product.slug})`}
+          serverRenderTime={renderTime}
+        />
+
+        <div style={{ marginTop: '1rem', padding: '1rem', background: '#fff3cd', borderRadius: '4px' }}>
+          <h4 style={{ marginTop: 0 }}>🧪 Test Revalidation Behavior:</h4>
+          <ul style={{ margin: 0, paddingLeft: '1.5rem', fontSize: '0.9rem' }}>
+            <li style={{ marginBottom: '0.5rem' }}>
+              <a href="/shop/product/wireless-headphones">Wireless Headphones</a> → <strong>Slug changes = Timer resets</strong>
+            </li>
+            <li style={{ marginBottom: '0.5rem' }}>
+              <a href="/shop/product/running-shoes">Running Shoes</a> → <strong>Slug changes = Timer resets</strong>
+            </li>
+            <li style={{ marginBottom: '0.5rem' }}>
+              <a href={`/shop/product/${product.slug}?tab=details`}>Add ?tab=details</a> → <strong>Query only = Timer keeps running</strong>
+            </li>
+            <li style={{ marginBottom: '0.5rem' }}>
+              <a href={`/shop/product/${product.slug}?tab=reviews`}>Change to ?tab=reviews</a> → <strong>Query change = Timer keeps running</strong>
+            </li>
+          </ul>
+          <p style={{ fontSize: '0.8rem', color: '#856404', marginTop: '0.75rem', marginBottom: 0 }}>
+            <strong>Watch the timer and console logs!</strong> defaultShouldRevalidate is TRUE only when <code>:slug</code> changes.
+          </p>
+        </div>
+
         <p style={{ marginTop: "1rem", color: "#666" }}>
           <a href="/shop">← Back to shop</a>
         </p>

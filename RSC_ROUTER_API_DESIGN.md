@@ -798,45 +798,235 @@ const payload = await fetch(fetchUrl, {
 
 ## Revalidation Logic
 
-### Default Behavior
+Revalidation controls when route segments re-render during client-side navigation (partial rendering). Inspired by [React Router's shouldRevalidate](https://reactrouter.com/start/data/route-object#shouldrevalidate).
+
+### When Revalidation Runs
+
+Revalidation **only applies during partial rendering** (SPA navigation):
+- ✅ Client has the segment already
+- ✅ Same route handler (not navigating to different route)
+- ❌ NOT on initial page load (full render always happens)
+- ❌ NOT when navigating to different route (full render)
+- ❌ NOT for NEW segments (always render regardless of revalidation functions)
+
+### Critical: What Triggers defaultShouldRevalidate?
+
+**`defaultShouldRevalidate = true` when:**
+- Route params (:slug, :id, etc.) change
+- Example: `/product/shoe-1` → `/product/shoe-2` (id changed)
+
+**`defaultShouldRevalidate = false` when:**
+- Only query string changes
+- Example: `/product/shoe-1?tab=1` → `/product/shoe-1?tab=2` (id unchanged)
+- Only hash changes
+- Example: `/product/shoe-1#reviews` → `/product/shoe-1#specs`
+
+**NEW segments ALWAYS render:**
+- Bypass revalidation functions entirely
+- Revalidation only checks segments client already has
+
+### Default Behavior Examples
+
+#### Route Param Change → defaultShouldRevalidate = TRUE
 
 ```typescript
 // Navigate /blog/hello → /blog/world
-// Both match same route registration, same segment IDs
-
-// Client has: ['L0.0', 'L1.0', 'R2.0']
-// Server matches: ['L0.0', 'L1.0', 'R2.0']
+// Route param changes: { slug: 'hello' } → { slug: 'world' }
 
 // For each segment:
-// L0.0: Client has it, params unchanged → Skip
-// L1.0: Client has it, params unchanged → Skip
-// R2.0: Client has it, BUT params changed (hello→world) → Re-render
+// L0.0 (RootLayout): No params → defaultShouldRevalidate = false → Skip
+// L1.0 (BlogLayout): No params → defaultShouldRevalidate = false → Skip
+// R2.0 (BlogPost): params.slug changed → defaultShouldRevalidate = TRUE → Re-render
 
-// Default: Re-render if params changed
+// Result: Only R2.0 re-renders
 ```
 
-### Custom Revalidation
+#### Query String Change → defaultShouldRevalidate = FALSE
 
 ```typescript
+// Navigate /blog/hello?tab=1 → /blog/hello?tab=2
+// Route params unchanged: { slug: 'hello' } → { slug: 'hello' }
+// Only query string changed
+
+// For each segment:
+// L0.0 (RootLayout): No params → defaultShouldRevalidate = false → Skip
+// L1.0 (BlogLayout): No params → defaultShouldRevalidate = false → Skip
+// R2.0 (BlogPost): params.slug UNCHANGED → defaultShouldRevalidate = FALSE → Skip
+
+// Result: Nothing re-renders (optimized!)
+
+// To revalidate on query changes, use custom revalidation:
+[revalidate('post')]: ({ currentUrl, nextUrl }) => {
+  return currentUrl.search !== nextUrl.search; // Revalidate if query changed
+}
+```
+
+#### NEW Segment → ALWAYS Renders (No Revalidation Check)
+
+```typescript
+// Navigate /dashboard → /dashboard/settings
+// Different route within same handler, new segments
+
+// Client has: ['L0.0', 'L1.0', 'R2.0']
+// Server returns: ['L0.0', 'L1.0', 'R3.0'] (R3.0 is NEW)
+
+// For each segment:
+// L0.0: Client has, no params → Skip
+// L1.0: Client has, no params → Skip
+// R3.0: Client DOESN'T have → Re-render (bypass revalidation functions)
+
+// NEW segments always render regardless of revalidation functions
+```
+
+### Custom Revalidation API
+
+#### Basic Example - Defer to Default
+
+```typescript
+import { map, revalidate } from 'rsc-router';
+
 export default map<typeof blogRoutes>({
-  post: (ctx) => <BlogPost slug={ctx.params.slug} />,
+  // Simple revalidation - defer to default param checking
+  [revalidate('post')]: ({ defaultShouldRevalidate }) => {
+    console.log('[Blog] Checking if post should revalidate');
+    return defaultShouldRevalidate; // true if slug changed
+  },
 
-  [route.revalidate]: {
-    post: ({ prevParams, nextParams, prevUrl, nextUrl, context }) => {
-      // Custom logic - only revalidate if slug changed
-      if (prevParams.slug !== nextParams.slug) {
-        return true;
-      }
+  post: (ctx) => <BlogPost slug={ctx.params.slug} />
+});
+```
 
-      // Check other conditions
-      if (context.user?.id !== prevContext.user?.id) {
-        return true;
-      }
+#### Multiple Named Revalidations - Short-Circuit OR
 
-      return false;
+```typescript
+export default map<typeof shopRoutes>({
+  // Multiple revalidations execute in order, short-circuit on first true
+  [revalidate('products.detail', 'auth')]: ({ context }) => {
+    // Check 1: Did user login/logout?
+    if (context.user?.id !== context.prevUser?.id) {
+      console.log('[Shop] User changed - force refresh');
+      return true; // Stop here, re-render
     }
+    return false; // Continue to next check
+  },
+
+  [revalidate('products.detail', 'cache')]: ({ currentUrl, nextUrl }) => {
+    // Check 2: Did cache-busting param change?
+    if (currentUrl.searchParams.get('v') !== nextUrl.searchParams.get('v')) {
+      console.log('[Shop] Version changed - refresh');
+      return true; // Stop here, re-render
+    }
+    return false; // Continue to next check
+  },
+
+  [revalidate('products.detail', 'slug')]: ({ currentParams, nextParams }) => {
+    // Check 3: Did slug change?
+    const changed = currentParams.slug !== nextParams.slug;
+    console.log(`[Shop] Slug changed: ${changed}`);
+    return changed; // Final check
+  },
+
+  'products.detail': (ctx) => <ProductDetail slug={ctx.params.slug} />
+});
+```
+
+#### Global Revalidation - Applies to All Routes
+
+```typescript
+export default map<typeof shopRoutes>({
+  // Global revalidation runs for EVERY route in this handler
+  [revalidate('*', 'tracking')]: ({ currentUrl, nextUrl }) => {
+    console.log('[Shop] Global revalidation hook');
+    // Could track analytics, check session, etc.
+    return false; // Don't force revalidation
+  },
+
+  // Still runs after global for specific routes
+  [revalidate('cart')]: () => {
+    console.log('[Shop] Cart always refreshes');
+    return true; // Always get fresh cart data
   }
 });
+```
+
+#### Always/Never Revalidate
+
+```typescript
+// Always revalidate (ignore params, always fresh)
+[revalidate('dashboard')]: () => true;
+
+// Never revalidate (static content, optimize)
+[revalidate('about')]: () => false;
+
+// Custom condition (ignore param changes)
+[revalidate('post')]: ({ currentUrl, nextUrl }) => {
+  // Only revalidate if ?refresh=true query param present
+  return nextUrl.searchParams.has('refresh');
+};
+```
+
+### Execution Order
+
+Revalidations execute with **short-circuit OR logic**:
+
+```typescript
+1. revalidate('*', 'name1')     → if true, STOP and re-render
+2. revalidate('*', 'name2')     → if true, STOP and re-render
+3. revalidate('routeName', 'a') → if true, STOP and re-render
+4. revalidate('routeName', 'b') → if true, STOP and re-render
+5. All false? → Skip segment (client keeps existing)
+```
+
+**Optimization:** First `true` short-circuits - remaining functions don't execute.
+
+### Function Signature
+
+```typescript
+type ShouldRevalidateFn = (args: {
+  currentParams: TParams;           // Previous route params
+  currentUrl: URL;                  // Previous URL object
+  nextParams: TParams;              // Next route params
+  nextUrl: URL;                     // Next URL object
+  defaultShouldRevalidate: boolean; // true if params changed
+  context: TContext;                // App context (db, user, etc.)
+  // Future action support:
+  actionResult?: any;               // Result from server action
+  formData?: FormData;              // Form data submitted
+  formMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+}) => boolean;
+```
+
+### Real-World Examples
+
+#### Ecommerce Product Page
+
+```typescript
+[revalidate('product', 'inventory')]: ({ currentParams, nextParams, context }) => {
+  // Same product? Check if inventory changed in context
+  if (currentParams.id === nextParams.id) {
+    return context.inventoryVersion !== context.prevInventoryVersion;
+  }
+  // Different product - always revalidate
+  return true;
+},
+```
+
+#### User Dashboard with Auth
+
+```typescript
+[revalidate('*', 'auth')]: ({ context }) => {
+  // Force revalidation if user session changed
+  return context.user?.sessionId !== context.prevUser?.sessionId;
+},
+```
+
+#### Static Marketing Pages
+
+```typescript
+// Never revalidate (content doesn't change)
+[revalidate('about')]: () => false,
+[revalidate('pricing')]: () => false,
+[revalidate('features')]: () => false,
 ```
 
 ## Client-Side Reconstruction

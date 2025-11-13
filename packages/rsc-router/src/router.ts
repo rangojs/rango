@@ -179,12 +179,14 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
       }
     }
 
-    // Check for revalidate: $revalidate.routeName
+    // Check for revalidate: $revalidate.routeName.name
     if (key.startsWith('$revalidate.')) {
       const parts = key.split('.');
-      if (parts.length >= 2) {
+      if (parts.length >= 3) {
         const routeName = parts[1];
-        return { type: 'revalidate', global: false, routeName };
+        const isGlobal = routeName === '*';
+        const name = parts[2];
+        return { type: 'revalidate', global: isGlobal, routeName: isGlobal ? undefined : routeName, name };
       }
     }
 
@@ -346,6 +348,33 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
   }
 
   /**
+   * Extract revalidation functions from handlers
+   */
+  async function extractRevalidations(
+    handlers: any,
+    routeKey: string
+  ): Promise<{ global: any[]; perRoute: any[] }> {
+    const loadedHandlers = await loadHandlers(handlers);
+    const global: any[] = [];
+    const perRoute: any[] = [];
+
+    const keys = Reflect.ownKeys(loadedHandlers);
+    for (const key of keys) {
+      const keyInfo = getKeyType(key);
+      if (keyInfo?.type === 'revalidate') {
+        const fn = loadedHandlers[key as any];
+        if (keyInfo.global) {
+          global.push({ name: keyInfo.name, fn });
+        } else if (keyInfo.routeName === routeKey) {
+          perRoute.push({ name: keyInfo.name, fn });
+        }
+      }
+    }
+
+    return { global, perRoute };
+  }
+
+  /**
    * Match partial request with revalidation
    */
   async function matchPartial(
@@ -418,6 +447,12 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
       handlerContext
     );
 
+    // Extract revalidation functions for this route
+    const revalidations = await extractRevalidations(
+      nextMatch.entry.handlers,
+      nextMatch.routeKey
+    );
+
     // Filter: only render segments client doesn't have or need revalidation
     const clientSegmentSet = new Set(clientSegmentIds);
     const segmentsToRender: ResolvedSegment[] = [];
@@ -430,37 +465,61 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
         continue;
       }
 
-      // Client has this segment - check if params changed (default revalidation)
+      // Client has this segment - determine if it needs revalidation
       const prevSegment = prevSegments.find((s) => s.id === segment.id);
 
-      if (prevSegment && segment.params) {
-        const prevParams = prevSegment.params || {};
-        const nextParams = segment.params;
+      // Calculate default revalidation (true if params changed)
+      const prevParams = prevSegment?.params || {};
+      const nextParams = segment.params || {};
+      const defaultShouldRevalidate =
+        Object.keys(nextParams).length !== Object.keys(prevParams).length ||
+        Object.keys(nextParams).some((key) => nextParams[key] !== prevParams[key]);
 
-        // Check if any param changed
-        const paramsChanged =
-          Object.keys(nextParams).length !== Object.keys(prevParams).length ||
-          Object.keys(nextParams).some((key) => nextParams[key] !== prevParams[key]);
+      // Execute revalidation functions with short-circuit OR logic
+      // Order: global functions first, then route-specific functions
+      const allRevalidations = [...revalidations.global, ...revalidations.perRoute];
+      let shouldRevalidate = false;
 
-        if (paramsChanged) {
+      if (allRevalidations.length > 0) {
+        // Custom revalidation functions exist - execute with short-circuit
+        for (const { name, fn } of allRevalidations) {
+          const result = fn({
+            currentParams: prevParams,
+            currentUrl: prevUrl,
+            nextParams,
+            nextUrl: url,
+            defaultShouldRevalidate,
+            context,
+          });
+
+          if (result === true) {
+            console.log(
+              `[Router.matchPartial] ${segment.id}: REVALIDATE (${name}) returned TRUE - revalidating`
+            );
+            shouldRevalidate = true;
+            break; // Short-circuit on first true
+          }
+        }
+
+        if (!shouldRevalidate) {
+          console.log(`[Router.matchPartial] ${segment.id}: All revalidations FALSE - skipping`);
+        }
+      } else {
+        // No custom revalidations - use default behavior
+        shouldRevalidate = defaultShouldRevalidate;
+        if (shouldRevalidate) {
           console.log(
-            `[Router.matchPartial] ${segment.id}: PARAMS CHANGED - revalidating`,
+            `[Router.matchPartial] ${segment.id}: PARAMS CHANGED (default) - revalidating`,
             { prev: prevParams, next: nextParams }
           );
-          segmentsToRender.push(segment);
         } else {
-          console.log(`[Router.matchPartial] ${segment.id}: UNCHANGED - skipping`);
+          console.log(`[Router.matchPartial] ${segment.id}: UNCHANGED (default) - skipping`);
         }
-      } else if (!prevSegment) {
-        // Previous route didn't have this segment (shouldn't happen if IDs match)
-        console.log(`[Router.matchPartial] ${segment.id}: NO PREV - including`);
-        segmentsToRender.push(segment);
-      } else {
-        // No params on this segment, and client has it - skip
-        console.log(`[Router.matchPartial] ${segment.id}: NO PARAMS - skipping`);
       }
 
-      // TODO: Support custom revalidation functions from route.revalidate symbol
+      if (shouldRevalidate) {
+        segmentsToRender.push(segment);
+      }
     }
 
     return {

@@ -114,16 +114,33 @@ export const middleware = <const T extends string, const Name extends string>(
 /**
  * Define revalidation function for a specific route
  *
+ * Supports multiple named revalidations per route. They execute in order
+ * and short-circuit on first `true` (OR logic).
+ *
  * @example
  * ```typescript
  * {
- *   [revalidate('post')]: (ctx) => ctx.prevParams.slug !== ctx.nextParams.slug
+ *   // Global revalidation - applies to all routes
+ *   [revalidate('*', 'default')]: ({ defaultShouldRevalidate }) => defaultShouldRevalidate,
+ *
+ *   // Route-specific revalidations (multiple)
+ *   [revalidate('post', 'auth')]: ({ context }) => context.user?.id !== context.prevUser?.id,
+ *   [revalidate('post', 'cache')]: ({ currentParams, nextParams }) => {
+ *     return currentParams.slug !== nextParams.slug;
+ *   },
+ *
+ *   // Single name can be omitted for simple case
+ *   [revalidate('about')]: () => false  // Never revalidate
  * }
  * ```
  */
-export const revalidate = <const T extends string>(
-  routeName: T
-): `$revalidate.${T}` => `$revalidate.${routeName}` as const;
+export const revalidate = <const T extends string, const Name extends string = string>(
+  routeName: T,
+  name?: Name
+): `$revalidate.${T}.${string}` => {
+  const revalidateName = name || 'default';
+  return `$revalidate.${routeName}.${revalidateName}` as const;
+};
 
 /**
  * Type-safe handler definition helper

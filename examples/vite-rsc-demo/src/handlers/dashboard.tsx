@@ -1,4 +1,4 @@
-import { map, route, layout, parallel } from "rsc-router";
+import { map, route, layout, parallel, revalidate } from "rsc-router";
 import type { dashboardRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { DashboardLayout } from "../layouts/DashboardLayout.js";
@@ -6,11 +6,21 @@ import { DashboardLayout } from "../layouts/DashboardLayout.js";
 /**
  * Dashboard handlers with parallel routes
  * Demonstrates both shorthand and explicit route() syntax
+ * Shows context-based revalidation
  */
 export default map<typeof dashboardRoutes>({
   // Global layouts - apply to all dashboard routes
   [layout("*", "root")]: <RootLayout />,
   [layout("*", "dashboard")]: <DashboardLayout />,
+
+  // Revalidation - demonstrates context usage
+  // In real app, could check if user permissions changed, data expired, etc.
+  [revalidate("*", "context")]: ({ context, currentUrl, nextUrl }) => {
+    console.log("[Dashboard] Context-based revalidation check");
+    // Example: Could check context.user?.updatedAt or other app state
+    // For demo, just use URL change as proxy for "context changed"
+    return currentUrl.search !== nextUrl.search; // Revalidate if query params changed
+  },
 
   // Parallel routes for index
   [parallel("index", "slots")]: {
