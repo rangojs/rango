@@ -1,19 +1,25 @@
-import { map, route } from "rsc-router";
+import { map } from "rsc-router";
 import type { blogRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { BlogLayout } from "../layouts/BlogLayout.js";
 
 /**
- * Blog handlers with nested layouts
+ * Blog handlers using shorthand string syntax (no helpers)
  */
 export default map<typeof blogRoutes>({
-  [route.all.layout]: [<RootLayout />, <BlogLayout />],
-  // [route.all.middleware]: [
-  //   (ctx, next) => {
-  //     console.log("Blog route middleware");
-  //     next();
-  //   },
-  // ],
+  // Global layouts - apply to all blog routes
+  "$layout.*.root": <RootLayout />,
+  "$layout.*.blog": <BlogLayout />,
+
+  // Global middleware - apply to all blog routes
+  "$middleware.*.logger": [
+    (_ctx, next) => {
+      console.log("Blog route accessed");
+      next();
+    },
+  ],
+
+  // Route handlers - using shorthand string syntax
   index: () => (
     <div>
       <h2>Blog Posts</h2>
@@ -37,7 +43,7 @@ export default map<typeof blogRoutes>({
       <h2>
         {ctx.params.slug
           .split("-")
-          .map((w) => w[0].toUpperCase() + w.slice(1))
+          .map((w: string) => w[0].toUpperCase() + w.slice(1))
           .join(" ")}
       </h2>
       <p className="segment-id">Segment: Blog Post Route</p>

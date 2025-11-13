@@ -1,125 +1,39 @@
 import type {
   RouteDefinition,
   ResolvedRouteMap,
-  HandlersForRouteMap,
 } from "./types.js";
 
 /**
- * Branded symbol types for type-safe constraints
- */
-export type LayoutSymbol = symbol & { readonly __brand: "layout" };
-export type ParallelSymbol = symbol & { readonly __brand: "parallel" };
-export type MiddlewareSymbol = symbol & { readonly __brand: "middleware" };
-export type RevalidateSymbol = symbol & { readonly __brand: "revalidate" };
-export type AllLayoutSymbol = symbol & { readonly __brand: "all.layout" };
-export type AllParallelSymbol = symbol & { readonly __brand: "all.parallel" };
-export type AllMiddlewareSymbol = symbol & {
-  readonly __brand: "all.middleware";
-};
-export type AllRevalidateSymbol = symbol & {
-  readonly __brand: "all.revalidate";
-};
-
-/**
- * Symbol caches for each type (enables multiple unique symbols)
- */
-const layoutSymbols = new Map<string, symbol>();
-const parallelSymbols = new Map<string, symbol>();
-const middlewareSymbols = new Map<string, symbol>();
-const allLayoutSymbols = new Map<string, symbol>();
-const allParallelSymbols = new Map<string, symbol>();
-const allMiddlewareSymbols = new Map<string, symbol>();
-const allRevalidateSymbols = new Map<string, symbol>();
-
-// Counter for auto-generating unique names
-let symbolCounter = 0;
-
-/**
- * Route function with symbol getters
- */
-interface RouteFn {
-  <const T extends RouteDefinition>(routes: T): ResolvedRouteMap<T>;
-  get layout(): LayoutSymbol;
-  get parallel(): ParallelSymbol;
-  get middleware(): MiddlewareSymbol;
-  readonly revalidate: RevalidateSymbol;
-  readonly all: {
-    get layout(): AllLayoutSymbol;
-    get parallel(): AllParallelSymbol;
-    get middleware(): AllMiddlewareSymbol;
-    get revalidate(): AllRevalidateSymbol;
-  };
-}
-
-/**
- * Define a route map with patterns
+ * Define routes or get a route key
+ *
+ * @overload Define a route map with patterns
+ * @overload Get a route handler key (for consistency with other helpers)
  *
  * @example
  * ```typescript
+ * // Define routes
  * const blogRoutes = route({
  *   index: '/blog',
- *   post: '/blog/:slug',
- *   category: '/blog/:category/:id'
+ *   post: '/blog/:slug'
+ * });
+ *
+ * // Use in handlers (optional, for consistency)
+ * export default map<typeof blogRoutes>({
+ *   index: () => <Component />,           // Shorthand
+ *   [route('post')]: (ctx) => <Post />    // Explicit
  * });
  * ```
  */
-export const route = function <const T extends RouteDefinition>(
-  routes: T
-): ResolvedRouteMap<T> {
-  return flattenRoutes(routes, "") as ResolvedRouteMap<T>;
-} as RouteFn;
-
-// Implement symbol getters (return new symbol each time)
-Object.defineProperty(route, "layout", {
-  get() {
-    return Symbol(`route.layout.${symbolCounter++}`) as LayoutSymbol;
-  },
-});
-
-Object.defineProperty(route, "parallel", {
-  get() {
-    return Symbol(`route.parallel.${symbolCounter++}`) as ParallelSymbol;
-  },
-});
-
-Object.defineProperty(route, "middleware", {
-  get() {
-    return Symbol(`route.middleware.${symbolCounter++}`) as MiddlewareSymbol;
-  },
-});
-
-(route as any).revalidate = Symbol("route.revalidate") as RevalidateSymbol;
-
-// Attach route.all namespace with getters
-(route as any).all = {};
-
-Object.defineProperty((route as any).all, "layout", {
-  get() {
-    return Symbol(`route.all.layout.${symbolCounter++}`) as AllLayoutSymbol;
-  },
-});
-
-Object.defineProperty((route as any).all, "parallel", {
-  get() {
-    return Symbol(`route.all.parallel.${symbolCounter++}`) as AllParallelSymbol;
-  },
-});
-
-Object.defineProperty((route as any).all, "middleware", {
-  get() {
-    return Symbol(
-      `route.all.middleware.${symbolCounter++}`
-    ) as AllMiddlewareSymbol;
-  },
-});
-
-Object.defineProperty((route as any).all, "revalidate", {
-  get() {
-    return Symbol(
-      `route.all.revalidate.${symbolCounter++}`
-    ) as AllRevalidateSymbol;
-  },
-});
+export function route<const T extends RouteDefinition>(routes: T): ResolvedRouteMap<T>;
+export function route<const T extends string>(routeName: T): T;
+export function route<const T extends RouteDefinition | string>(
+  input: T
+): T extends string ? T : ResolvedRouteMap<T & RouteDefinition> {
+  if (typeof input === 'string') {
+    return input as any;
+  }
+  return flattenRoutes(input as RouteDefinition, "") as any;
+}
 
 /**
  * Flatten nested route definitions
@@ -145,20 +59,84 @@ function flattenRoutes(
 }
 
 /**
+ * Define a layout for a specific route
+ *
+ * @example
+ * ```typescript
+ * {
+ *   [layout('index', 'root')]: <RootLayout />,
+ *   [layout('post', 'blog')]: <BlogLayout />
+ * }
+ * ```
+ */
+export const layout = <const T extends string, const Name extends string>(
+  routeName: T,
+  name: Name
+): `$layout.${T}.${Name}` => `$layout.${routeName}.${name}` as const;
+
+/**
+ * Define parallel routes for a specific route
+ *
+ * @example
+ * ```typescript
+ * {
+ *   [parallel('index', 'sidebar')]: {
+ *     '@sidebar': (ctx) => <Sidebar />
+ *   }
+ * }
+ * ```
+ */
+export const parallel = <const T extends string, const Name extends string>(
+  routeName: T,
+  name: Name
+): `$parallel.${T}.${Name}` => `$parallel.${routeName}.${name}` as const;
+
+/**
+ * Define middleware for a specific route
+ *
+ * @example
+ * ```typescript
+ * {
+ *   [middleware('index', 'auth')]: [
+ *     (ctx, next) => { console.log('auth'); next(); }
+ *   ]
+ * }
+ * ```
+ */
+export const middleware = <const T extends string, const Name extends string>(
+  routeName: T,
+  name: Name
+): `$middleware.${T}.${Name}` => `$middleware.${routeName}.${name}` as const;
+
+/**
+ * Define revalidation function for a specific route
+ *
+ * @example
+ * ```typescript
+ * {
+ *   [revalidate('post')]: (ctx) => ctx.prevParams.slug !== ctx.nextParams.slug
+ * }
+ * ```
+ */
+export const revalidate = <const T extends string>(
+  routeName: T
+): `$revalidate.${T}` => `$revalidate.${routeName}` as const;
+
+/**
  * Type-safe handler definition helper
  *
  * @example
  * ```typescript
  * export default map<typeof blogRoutes>({
- *   [route.layout]: BlogLayout,
+ *   [layout('index', 'root')]: <RootLayout />,
  *   index: (ctx) => <BlogIndex />,
  *   post: (ctx) => <BlogPost slug={ctx.params.slug} />
  * });
  * ```
  */
-export function map<T extends RouteDefinition, TContext = any>(
-  handlers: HandlersForRouteMap<T, TContext>
-): HandlersForRouteMap<T, TContext> {
+export function map<const T extends RouteDefinition, TContext = any>(
+  handlers: import("./types.js").HandlersForRouteMap<T, TContext>
+): import("./types.js").HandlersForRouteMap<T, TContext> {
   // Pass-through for type safety
   return handlers;
 }

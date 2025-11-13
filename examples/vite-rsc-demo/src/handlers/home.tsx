@@ -1,4 +1,4 @@
-import { map, route } from 'rsc-router';
+import { map, route, layout } from 'rsc-router';
 import type { homeRoutes } from '../routes.js';
 import { RootLayout } from '../layouts/RootLayout.js';
 
@@ -6,8 +6,10 @@ import { RootLayout } from '../layouts/RootLayout.js';
  * Home handlers
  */
 export default map<typeof homeRoutes>({
-  [route.layout]: <RootLayout />,
-  index: () => (
+  // Global layout
+  [layout('*', 'root')]: <RootLayout />,
+
+  [route('index')]: () => (
     <div>
       <h1>🏠 Home</h1>
       <p className="segment-id">Segment: Home Route</p>

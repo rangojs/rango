@@ -7,17 +7,17 @@ import type {
   ResolvedSegment,
   MatchResult,
   RouteEntry,
+  Handler,
 } from './types.js';
-import { route } from './route-definition.js';
 
 /**
  * Router builder for chaining .use() and .map()
  */
-interface RouteBuilder<TContext> {
+interface RouteBuilder<T extends RouteDefinition, TContext> {
   map(
     handlers:
-      | HandlersForRouteMap<any, TContext>
-      | (() => Promise<{ default: HandlersForRouteMap<any, TContext> }>)
+      | HandlersForRouteMap<T, TContext>
+      | (() => Promise<{ default: HandlersForRouteMap<T, TContext> }>)
   ): RSCRouter<TContext>;
 }
 
@@ -28,7 +28,7 @@ export interface RSCRouter<TContext = any> {
   route<T extends RouteDefinition>(
     prefix: string,
     routes: ResolvedRouteMap<T>
-  ): RouteBuilder<TContext>;
+  ): RouteBuilder<T, TContext>;
 
   match(request: Request, context: TContext): Promise<MatchResult>;
 
@@ -141,20 +141,52 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
   }
 
   /**
-   * Helper to detect if a symbol is a route symbol
+   * Helper to detect if a key is a route metadata key
    */
-  function getSymbolType(sym: symbol):
-    | { type: 'layout' | 'parallel' | 'middleware' | 'revalidate'; global: boolean }
+  function getKeyType(key: string | symbol):
+    | { type: 'layout' | 'parallel' | 'middleware' | 'revalidate'; global: boolean; routeName?: string }
     | null {
-    const str = sym.toString();
+    if (typeof key !== 'string') return null;
 
-    if (str.includes('route.all.layout')) return { type: 'layout', global: true };
-    if (str.includes('route.all.parallel')) return { type: 'parallel', global: true };
-    if (str.includes('route.all.middleware')) return { type: 'middleware', global: true };
-    if (str.includes('route.layout')) return { type: 'layout', global: false };
-    if (str.includes('route.parallel')) return { type: 'parallel', global: false };
-    if (str.includes('route.middleware')) return { type: 'middleware', global: false };
-    if (str.includes('route.revalidate')) return { type: 'revalidate', global: false };
+    // New pattern-based format: $layout.{routeName}.{layoutName}
+    // Check for layout keys: $layout.*.layoutName or $layout.routeName.layoutName
+    if (key.startsWith('$layout.')) {
+      const parts = key.split('.');
+      if (parts.length >= 3) {
+        const routeName = parts[1]; // '*' for global, or route name
+        const isGlobal = routeName === '*';
+        return { type: 'layout', global: isGlobal, routeName: isGlobal ? undefined : routeName };
+      }
+    }
+
+    // Check for parallel keys: $parallel.*.name or $parallel.routeName.name
+    if (key.startsWith('$parallel.')) {
+      const parts = key.split('.');
+      if (parts.length >= 3) {
+        const routeName = parts[1];
+        const isGlobal = routeName === '*';
+        return { type: 'parallel', global: isGlobal, routeName: isGlobal ? undefined : routeName };
+      }
+    }
+
+    // Check for middleware keys: $middleware.*.name or $middleware.routeName.name
+    if (key.startsWith('$middleware.')) {
+      const parts = key.split('.');
+      if (parts.length >= 3) {
+        const routeName = parts[1];
+        const isGlobal = routeName === '*';
+        return { type: 'middleware', global: isGlobal, routeName: isGlobal ? undefined : routeName };
+      }
+    }
+
+    // Check for revalidate: $revalidate.routeName
+    if (key.startsWith('$revalidate.')) {
+      const parts = key.split('.');
+      if (parts.length >= 2) {
+        const routeName = parts[1];
+        return { type: 'revalidate', global: false, routeName };
+      }
+    }
 
     return null;
   }
@@ -172,58 +204,54 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
     const segments: ResolvedSegment[] = [];
     let index = 0;
 
-    // Track global metadata (cumulative from all route.all.* symbols)
-    const globalLayouts: ReactNode[] = [];
+    // Track global metadata (wildcard '*' routes)
+    const globalLayouts: (ReactNode | Handler)[] = [];
     const globalParallel: Record<string, Handler> = {};
 
-    // Track per-route metadata (from symbols before current route)
-    let currentLayouts: ReactNode[] | null = null;
-    let currentParallel: Record<string, Handler> | null = null;
+    // Track per-route metadata (specific to routeKey)
+    const perRouteLayouts: (ReactNode | Handler)[] = [];
+    const perRouteParallel: Record<string, Handler> = {};
 
     // Use Reflect.ownKeys to preserve insertion order (symbols + strings)
     const keys = Reflect.ownKeys(handlers);
 
-    // PASS 1: Process all symbols to accumulate metadata
+    // PASS 1: Process all metadata keys to accumulate
     for (const key of keys) {
-      if (typeof key === 'symbol') {
-        const symbolInfo = getSymbolType(key);
-        if (!symbolInfo) continue;
+      const keyInfo = getKeyType(key);
+      if (!keyInfo) continue;
 
-        const value = handlers[key as any];
+      const value = handlers[key as any];
 
-        if (symbolInfo.type === 'layout') {
-          const layouts = Array.isArray(value) ? value : [value];
-          if (symbolInfo.global) {
-            // Global: Add to global layouts
-            globalLayouts.push(...layouts);
-          } else {
-            // Per-route: Accumulate for current route
-            if (!currentLayouts) currentLayouts = [];
-            currentLayouts.push(...layouts);
-          }
-        } else if (symbolInfo.type === 'parallel') {
-          const slots = value as Record<string, Handler>;
-          if (symbolInfo.global) {
-            // Global: Merge into global parallel
-            Object.assign(globalParallel, slots);
-          } else {
-            // Per-route: Accumulate for current route
-            if (!currentParallel) currentParallel = {};
-            Object.assign(currentParallel, slots);
-          }
+      if (keyInfo.type === 'layout') {
+        const layouts = Array.isArray(value) ? (value as unknown as (ReactNode | Handler)[]) : [value as unknown as (ReactNode | Handler)];
+        if (keyInfo.global) {
+          // Global: Add to global layouts
+          globalLayouts.push(...layouts);
+        } else if (keyInfo.routeName === routeKey) {
+          // Per-route: Only add if routeName matches current routeKey
+          perRouteLayouts.push(...layouts);
         }
-        // Skip middleware and revalidate for now
+      } else if (keyInfo.type === 'parallel') {
+        const slots = value as unknown as Record<string, Handler>;
+        if (keyInfo.global) {
+          // Global: Merge into global parallel
+          Object.assign(globalParallel, slots);
+        } else if (keyInfo.routeName === routeKey) {
+          // Per-route: Only add if routeName matches current routeKey
+          Object.assign(perRouteParallel, slots);
+        }
       }
+      // Skip middleware and revalidate for now
     }
 
     // PASS 2: Process route handlers
     for (const key of keys) {
-      if (typeof key === 'string') {
-        // It's a route handler
+      if (typeof key === 'string' && !key.startsWith('$')) {
+        // It's a route handler (not a metadata key)
         if (key === routeKey) {
-          // Use current or global layouts
-          const layoutsToUse = currentLayouts || globalLayouts;
-          for (const layout of layoutsToUse) {
+          // Combine global layouts + per-route layouts
+          const allLayouts = [...globalLayouts, ...perRouteLayouts];
+          for (const layout of allLayouts) {
             // Check if layout is a handler function
             const component = typeof layout === 'function'
               ? await layout(context)
@@ -253,7 +281,7 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
           }
 
           // Process parallel routes (merge global + per-route)
-          const mergedParallel = { ...globalParallel, ...currentParallel };
+          const mergedParallel = { ...globalParallel, ...perRouteParallel };
           if (Object.keys(mergedParallel).length > 0) {
             for (const [slot, parallelHandler] of Object.entries(mergedParallel)) {
               const component = await parallelHandler(context);
@@ -271,11 +299,6 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
 
           break;  // Found our route, stop processing
         }
-
-        // Reset accumulated per-route metadata after processing each route
-        // This ensures next route starts fresh
-        currentLayouts = null;
-        currentParallel = null;
       }
     }
 
@@ -454,9 +477,13 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
     prefix: string,
     routeMap: ResolvedRouteMap<T>,
     registrationId: number
-  ): RouteBuilder<TContext> {
+  ): RouteBuilder<T, TContext> {
     return {
-      map(handlers) {
+      map(
+        handlers:
+          | HandlersForRouteMap<T, TContext>
+          | (() => Promise<{ default: HandlersForRouteMap<T, TContext> }>)
+      ) {
         routes.push({
           prefix,
           routes: routeMap,
@@ -475,7 +502,7 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
     route<T extends RouteDefinition>(
       prefix: string,
       routes: ResolvedRouteMap<T>
-    ): RouteBuilder<TContext> {
+    ): RouteBuilder<T, TContext> {
       const registrationId = nextRegistrationId++;
       return createRouteBuilder(prefix, routes, registrationId);
     },

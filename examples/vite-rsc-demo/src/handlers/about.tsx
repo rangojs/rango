@@ -1,4 +1,4 @@
-import { map, route } from "rsc-router";
+import { map, route, layout } from "rsc-router";
 import type { aboutRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { Outlet } from "rsc-router/client";
@@ -6,16 +6,17 @@ import { Outlet } from "rsc-router/client";
 /**
  * About handlers
  */
-export default map<typeof aboutRoutes, { test: true }>({
-  [route.layout]: <RootLayout />,
-  [route.layout]: (
+export default map<typeof aboutRoutes>({
+  // Global layouts
+  [layout("*", "root")]: () => <RootLayout />,
+  [layout("*", "test")]: (
     <>
       test
-      <Outlet />{" "}
+      <Outlet />
     </>
   ),
-  // [route.layout]:false,
-  index: () => (
+
+  [route("index")]: () => (
     <div>
       <h1>ℹ️ About</h1>
       <p className="segment-id">Segment: About Route</p>

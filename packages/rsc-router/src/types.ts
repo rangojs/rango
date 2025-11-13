@@ -54,53 +54,56 @@ export type RevalidateFn<TParams = {}, TContext = any> = (ctx: {
   context: TContext;
 }) => boolean;
 
-// Import static symbols for type constraints
-import type {
-  LayoutSymbol,
-  ParallelSymbol,
-  MiddlewareSymbol,
-  RevalidateSymbol,
-  AllLayoutSymbol,
-  AllParallelSymbol,
-  AllMiddlewareSymbol,
-  AllRevalidateSymbol,
-} from "./route-definition.js";
+/**
+ * Middleware function signature
+ */
+export type MiddlewareFn<TParams = any, TContext = any> = (
+  ctx: HandlerContext<TParams, TContext>,
+  next: () => void | Promise<void>
+) => void | Promise<void>;
+
+/**
+ * Extract all route keys from a route definition (flattened)
+ */
+export type RouteKeys<T extends RouteDefinition> = {
+  [K in keyof T]: T[K] extends string ? K : never;
+}[keyof T] & string;
 
 /**
  * Valid layout value - component or handler function
+ * Note: Arrays are not supported. Use separate layout() declarations with unique names instead.
  */
 type LayoutValue<TContext = any> =
   | ReactNode
-  | Handler<any, TContext>
-  | Array<
-      | Exclude<ReactNode, string | number | boolean | null | undefined>
-      | Handler<any, TContext>
-    >;
+  | Handler<any, TContext>;
 
 /**
- * Handlers object that maps route names to handler functions with type-safe symbol properties
+ * Handlers object that maps route names to handler functions with type-safe string patterns
  */
 export type HandlersForRouteMap<T extends RouteDefinition, TContext = any> = {
-  [K in keyof T]?: T[K] extends string
+  // Route handlers
+  [K in RouteKeys<T>]?: T[K] extends string
     ? Handler<ExtractParams<T[K]>, TContext>
     : never;
-} & Partial<{
-  // Per-route symbols with type constraints
-  [K in LayoutSymbol]: LayoutValue<TContext>;
-  [K in ParallelSymbol]: Record<`@${string}`, Handler<any, TContext>>;
-  [K in MiddlewareSymbol]: Array<
-    (ctx: HandlerContext<any, TContext>, next: () => Promise<void>) => void | Promise<void>
+} & {
+  // Layout patterns: $layout.{routeName}.{layoutName}
+  // Supports '*' wildcard for global layouts that apply to all routes
+  [K in `$layout.${RouteKeys<T> | '*'}.${string}`]?: LayoutValue<TContext>;
+} & {
+  // Parallel route patterns: $parallel.{routeName}.{parallelName}
+  // Supports '*' wildcard for global parallel routes that apply to all routes
+  [K in `$parallel.${RouteKeys<T> | '*'}.${string}`]?: Record<
+    `@${string}`,
+    Handler<any, TContext>
   >;
-  [K in RevalidateSymbol]: RevalidateFn<any, TContext>;
-
-  // Global symbols with type constraints
-  [K in AllLayoutSymbol]: LayoutValue<TContext>;
-  [K in AllParallelSymbol]: Record<`@${string}`, Handler<any, TContext>>;
-  [K in AllMiddlewareSymbol]: Array<
-    (ctx: HandlerContext<any, TContext>, next: () => Promise<void>) => void | Promise<void>
-  >;
-  [K in AllRevalidateSymbol]: RevalidateFn<any, TContext>;
-}>;
+} & {
+  // Middleware patterns: $middleware.{routeName}.{middlewareName}
+  // Supports '*' wildcard for global middleware that applies to all routes
+  [K in `$middleware.${RouteKeys<T> | '*'}.${string}`]?: MiddlewareFn<any, TContext>[];
+} & {
+  // Revalidate patterns: $revalidate.{routeName}
+  [K in `$revalidate.${RouteKeys<T>}`]?: RevalidateFn<any, TContext>;
+};
 
 /**
  * Resolved segment with component
