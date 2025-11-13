@@ -144,7 +144,7 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
    * Helper to detect if a key is a route metadata key
    */
   function getKeyType(key: string | symbol):
-    | { type: 'layout' | 'parallel' | 'middleware' | 'revalidate'; global: boolean; routeName?: string }
+    | { type: 'layout' | 'parallel' | 'middleware' | 'revalidate'; global: boolean; routeName?: string; name?: string }
     | null {
     if (typeof key !== 'string') return null;
 
