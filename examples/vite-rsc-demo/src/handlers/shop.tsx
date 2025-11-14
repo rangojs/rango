@@ -8,7 +8,11 @@ import { SegmentTimer } from "../components/SegmentTimer.js";
 import { CurrentURL } from "../components/CurrentURL.js";
 import { AddToCartForm } from "../components/AddToCartForm.js";
 import { StreamingActionForm } from "../components/StreamingActionForm.js";
-import { addToCart, addToCartWithResult, getCartCount } from "../actions/shop.actions.js";
+import {
+  addToCart,
+  addToCartWithResult,
+  getCartCount,
+} from "../actions/shop.actions.js";
 import { addToCartSlowly } from "../actions/streaming.actions.js";
 
 // Mock product data
@@ -191,23 +195,31 @@ export default map<typeof shopRoutes>({
   }) => {
     console.log("[Shop] Product detail revalidation:");
     console.log("  - Segment type:", segmentType);
-    console.log("  - Layout name:", layoutName || 'n/a');
-    console.log("  - Slot name:", slotName || 'n/a');
+    console.log("  - Layout name:", layoutName || "n/a");
+    console.log("  - Slot name:", slotName || "n/a");
     console.log("  - Method:", method);
     console.log("  - defaultShouldRevalidate:", defaultShouldRevalidate);
-    console.log("  - Action ID:", actionId || 'none');
+    console.log("  - Action ID:", actionId || "none");
     console.log("  - Route name:", routeName);
 
-    if (method === 'POST') {
-      if (segmentType === 'layout') {
-        console.log(`  ⮑ Layout "${layoutName}" - default=${defaultShouldRevalidate} (route-specific only)`);
-      } else if (segmentType === 'parallel') {
-        console.log(`  ⮑ Parallel slot "${slotName}" - default=${defaultShouldRevalidate} (route-specific only)`);
+    if (method === "POST") {
+      if (segmentType === "layout") {
+        console.log(
+          `  ⮑ Layout "${layoutName}" - default=${defaultShouldRevalidate} (route-specific only)`
+        );
+      } else if (segmentType === "parallel") {
+        console.log(
+          `  ⮑ Parallel slot "${slotName}" - default=${defaultShouldRevalidate} (route-specific only)`
+        );
       } else {
-        console.log(`  ⮑ Route segment - default=${defaultShouldRevalidate} (always TRUE for actions)`);
+        console.log(
+          `  ⮑ Route segment - default=${defaultShouldRevalidate} (always TRUE for actions)`
+        );
       }
     } else {
-      console.log(`  ⮑ Navigation - default=${defaultShouldRevalidate} (params changed: ${defaultShouldRevalidate})`);
+      console.log(
+        `  ⮑ Navigation - default=${defaultShouldRevalidate} (params changed: ${defaultShouldRevalidate})`
+      );
     }
 
     // Defer to smart defaults
@@ -641,7 +653,7 @@ export default map<typeof shopRoutes>({
               color: "#0066cc",
             }}
           >
-            🛒 Cart: {cartCount} {cartCount === 1 ? 'item' : 'items'}
+            🛒 Cart: {cartCount} {cartCount === 1 ? "item" : "items"}
           </div>
           <p
             style={{
@@ -652,7 +664,8 @@ export default map<typeof shopRoutes>({
               fontStyle: "italic",
             }}
           >
-            ↑ This count updates automatically when you add items via Server Actions!
+            ↑ This count updates automatically when you add items via Server
+            Actions!
           </p>
         </div>
 
@@ -788,7 +801,9 @@ export default map<typeof shopRoutes>({
           >
             <strong>📦 useActionState Demo:</strong>
             <ul style={{ margin: "0.5rem 0 0 0", paddingLeft: "1.5rem" }}>
-              <li>Green button uses <code>useActionState</code> hook</li>
+              <li>
+                Green button uses <code>useActionState</code> hook
+              </li>
               <li>Action returns validation results and cart summary</li>
               <li>State persists across renders</li>
               <li>Try clicking multiple times to see quantity increase!</li>
