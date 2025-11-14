@@ -1,0 +1,32 @@
+{
+  "name": "rsc-router",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Type-safe RSC router with partial rendering support",
+  "author": "Ivo Todorov",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./client": {
+      "types": "./src/client.tsx",
+      "import": "./src/client.tsx"
+    }
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "react": "^19.0.0",
+    "typescript": "^5.3.0"
+  }
+}
