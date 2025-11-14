@@ -1674,22 +1674,71 @@ export default map<typeof shopRoutes>({
 ```
 
 **Revalidation Context Fields:**
+
+All revalidations receive:
+- `currentParams`, `nextParams`: Route parameters
+- `currentUrl`, `nextUrl`: Full URL objects
+- `defaultShouldRevalidate`: Smart default (see below)
+- `context`: Handler context (env, user, etc.)
+
+**Segment Metadata** (identifies which segment is being evaluated):
+- `segmentType`: `'layout' | 'route' | 'parallel'`
+- `layoutName`: Layout name (e.g., `'root'`, `'shop'`, `'auth'`) - only for layouts
+- `slotName`: Slot name (e.g., `'@sidebar'`, `'@modal'`) - only for parallels
+
+**Action Context** (only when triggered by server action):
 - `method`: `'GET'` for navigation, `'POST'` for actions
 - `actionId`: Action identifier (e.g., `"actions/shop.actions!addToCart"`)
 - `actionUrl`: URL where action was executed
-- `actionResult`: Return value from action
+- `actionResult`: Return value from action execution
 - `formData`: FormData from action request
-- `routeName`: Route name where action was executed (e.g., `"products.detail"`, `"cart"`)
+- `routeName`: Route name where action executed (e.g., `"products.detail"`)
 
-**Example - Conditional revalidation based on route:**
+**Smart Defaults (defaultShouldRevalidate):**
+- **Navigation (GET):** TRUE if route params changed, FALSE if only query changed
+- **Actions (POST):**
+  - Global layouts (`layout('*', ...)`) → FALSE (optimization)
+  - Route-specific segments → TRUE (likely need fresh data)
+
+**Example - Granular control per segment:**
 ```typescript
-[revalidate('cart')]: ({ routeName, actionId, method }) => {
-  // Only revalidate cart if action came from product detail page
-  if (method === 'POST' && routeName === 'products.detail') {
-    console.log(`Cart action from ${routeName} - revalidating`);
+[revalidate('products.detail')]: ({
+  segmentType,
+  layoutName,
+  slotName,
+  method,
+  actionId,
+  defaultShouldRevalidate
+}) => {
+  // Skip global layouts (already optimized by default)
+  if (segmentType === 'layout' && layoutName === 'root') {
+    return false;
+  }
+
+  // Always refresh auth layout on actions (user might have changed)
+  if (segmentType === 'layout' && layoutName === 'auth' && method === 'POST') {
     return true;
   }
-  return false; // Actions from other routes don't affect cart display
+
+  // Refresh sidebar only for cart actions
+  if (segmentType === 'parallel' && slotName === '@sidebar' && actionId?.includes('Cart')) {
+    return true;
+  }
+
+  // Use smart defaults for everything else
+  return defaultShouldRevalidate;
+}
+```
+
+**Example - Route-based action handling:**
+```typescript
+[revalidate('cart')]: ({ routeName, actionId, method }) => {
+  // Only revalidate cart if action came from product page
+  if (method === 'POST' && routeName === 'products.detail') {
+    console.log(`Product added to cart - revalidating`);
+    return true;
+  }
+  return false;
 }
 ```
 
