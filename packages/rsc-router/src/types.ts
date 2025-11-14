@@ -253,10 +253,12 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
   nextUrl: URL;
   defaultShouldRevalidate: boolean;
   context: HandlerContext<TParams, TEnv>;
-  // Future action support:
-  actionResult?: any;
-  formData?: FormData;
-  formMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  // Action context (populated when revalidation triggered by server action):
+  actionId?: string;        // Action identifier (e.g., "actions/shop.actions!addToCart")
+  actionUrl?: URL;          // URL where action was executed
+  actionResult?: any;       // Return value from action execution
+  formData?: FormData;      // FormData from action request
+  method?: string;          // Request method: 'GET' for navigation, 'POST' for actions
 }) => boolean | { defaultShouldRevalidate: boolean };
 
 /**

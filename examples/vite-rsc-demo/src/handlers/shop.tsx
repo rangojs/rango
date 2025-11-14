@@ -6,6 +6,7 @@ import { CheckoutLayout } from "../layouts/CheckoutLayout.js";
 import { AccountLayout } from "../layouts/AccountLayout.js";
 import { SegmentTimer } from "../components/SegmentTimer.js";
 import { CurrentURL } from "../components/CurrentURL.js";
+import { addToCart, getCartCount } from "../actions/shop.actions.js";
 
 // Mock product data
 const products = [
@@ -72,6 +73,9 @@ const orders = [
  * - Alternative: Explicit import (see blog.tsx)
  * - Revalidation handlers are now type-safe for nested routes!
  */
+
+console.log('[Shop Handler] Module loaded - revalidations should be registered!');
+
 export default map<typeof shopRoutes>({
   // ← TEnv defaults to RSCRouter.Env (global)
   // ===================
@@ -162,40 +166,45 @@ export default map<typeof shopRoutes>({
 
   // Global revalidation - applies to ALL shop routes
   // Demonstrates how to add custom logic that affects every route
+  // IMPORTANT: Return object (soft decision) to allow route-specific revalidations to override
   [revalidate("*", "global")]: ({ defaultShouldRevalidate }) => {
     console.log(
       "[Shop] Global revalidation check - defaultShouldRevalidate:",
       defaultShouldRevalidate
     );
-    // Defer to default behavior (params changed)
-    return defaultShouldRevalidate;
+    // Soft decision - pass suggestion to next revalidation
+    return { defaultShouldRevalidate };
   },
 
-  // Product detail - multiple named revalidations with short-circuit
-  // First one that returns true wins
-  // IMPORTANT: Demonstrates route params vs query string difference
+  // Product detail - action-aware revalidation
+  // Demonstrates smart revalidation based on action context
   [revalidate("products.detail", "demo")]: ({
     currentParams,
     nextParams,
     currentUrl,
     nextUrl,
     defaultShouldRevalidate,
+    method,
+    actionId,
+    actionUrl,
   }) => {
     console.log("[Shop] Product detail revalidation demo:");
     console.log("  - Current slug:", currentParams.slug);
     console.log("  - Next slug:", nextParams.slug);
-    console.log("  - Current query:", currentUrl.search);
-    console.log("  - Next query:", nextUrl.search);
     console.log("  - defaultShouldRevalidate:", defaultShouldRevalidate);
-    console.log(
-      "  ⮑ defaultShouldRevalidate is TRUE only when ROUTE PARAMS change (slug)"
-    );
-    console.log(
-      "  ⮑ Query string changes (?tab=1) do NOT affect defaultShouldRevalidate"
-    );
+    console.log("  - Request method:", method);
+    console.log("  - Action ID:", actionId || 'none (navigation)');
 
-    // Defer to default: true if slug changed, false if only query changed
-    return defaultShouldRevalidate;
+    // Action-aware revalidation:
+    // If triggered by addToCart action → always revalidate (cart count changed)
+    // If regular navigation → defer to default (revalidate only if slug changed)
+    if (method === 'POST' && actionId?.includes('addToCart')) {
+      console.log("  ⮑ Action triggered (addToCart) - forcing revalidation");
+      return true; // Cart count changed, must refresh
+    }
+
+    console.log("  ⮑ Navigation - using default behavior");
+    return defaultShouldRevalidate; // true if slug changed, false if only query changed
   },
 
   // Cart - always revalidate (fresh data)
@@ -578,13 +587,16 @@ export default map<typeof shopRoutes>({
     );
   },
 
-  // Product detail - demonstrates dynamic segment + parallel routes
-  "products.detail": (ctx) => {
+  // Product detail - demonstrates dynamic segment + parallel routes + server actions
+  "products.detail": async (ctx) => {
     const product = products.find((p) => p.slug === ctx.params.slug);
     const renderTime = new Date().toISOString();
     const queryParams: [string, string][] = Array.from(
       ctx.searchParams.entries()
     );
+
+    // Get current cart count (server-side data fetch)
+    const cartCount = await getCartCount();
 
     if (!product) {
       return (
@@ -604,6 +616,38 @@ export default map<typeof shopRoutes>({
         <p>
           <strong>Slug (route param):</strong> <code>{product.slug}</code>
         </p>
+
+        {/* Cart count badge */}
+        <div
+          style={{
+            background: "#e8f4f8",
+            padding: "0.75rem",
+            borderRadius: "4px",
+            marginTop: "0.5rem",
+            border: "2px solid #0066cc",
+          }}
+        >
+          <div
+            style={{
+              fontSize: "0.9rem",
+              fontWeight: "bold",
+              color: "#0066cc",
+            }}
+          >
+            🛒 Cart: {cartCount} {cartCount === 1 ? 'item' : 'items'}
+          </div>
+          <p
+            style={{
+              fontSize: "0.7rem",
+              color: "#0066cc",
+              marginTop: "0.25rem",
+              marginBottom: 0,
+              fontStyle: "italic",
+            }}
+          >
+            ↑ This count updates automatically when you add items via Server Actions!
+          </p>
+        </div>
 
         <CurrentURL />
 
@@ -683,19 +727,42 @@ export default map<typeof shopRoutes>({
           <p style={{ marginBottom: "1rem" }}>
             This is a great {product.name.toLowerCase()} perfect for your needs.
           </p>
-          <button
+
+          {/* Server Action Form */}
+          <form>
+            <button
+              formAction={addToCart.bind(null, product.slug, 1)}
+              style={{
+                background: "#667eea",
+                color: "white",
+                border: "none",
+                padding: "0.75rem 1.5rem",
+                borderRadius: "4px",
+                fontSize: "1rem",
+                cursor: "pointer",
+              }}
+            >
+              Add to Cart
+            </button>
+          </form>
+
+          <div
             style={{
-              background: "#667eea",
-              color: "white",
-              border: "none",
-              padding: "0.75rem 1.5rem",
+              marginTop: "1rem",
+              padding: "0.75rem",
+              background: "#d1f2eb",
               borderRadius: "4px",
-              fontSize: "1rem",
-              cursor: "pointer",
+              fontSize: "0.85rem",
             }}
           >
-            Add to Cart
-          </button>
+            <strong>✨ Server Actions Demo:</strong>
+            <ul style={{ margin: "0.5rem 0 0 0", paddingLeft: "1.5rem" }}>
+              <li>Click "Add to Cart" to trigger a server action</li>
+              <li>Cart count updates automatically via revalidation</li>
+              <li>No page reload - seamless SPA experience</li>
+              <li>Watch browser console for action flow!</li>
+            </ul>
+          </div>
         </div>
 
         <SegmentTimer

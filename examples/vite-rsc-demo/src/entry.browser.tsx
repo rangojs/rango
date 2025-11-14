@@ -1,4 +1,4 @@
-import { createFromReadableStream, createFromFetch } from '@vitejs/plugin-rsc/browser';
+import { createFromReadableStream, createFromFetch, setServerCallback, encodeReply, createTemporaryReferenceSet } from '@vitejs/plugin-rsc/browser';
 import React from 'react';
 import { hydrateRoot } from 'react-dom/client';
 import { rscStream } from 'rsc-html-stream/client';
@@ -24,6 +24,87 @@ const navigationManager: NavigationManager = {
   storedSegments: new Map(),
   setPayload: null,
 };
+
+// ============================================================================
+// Server Action Callback
+// ============================================================================
+
+// Setup server action callback - React calls this when server actions are invoked
+setServerCallback(async (id: string, args: any[]) => {
+  console.log(`\n[Browser] >>> SERVER ACTION: ${id}`);
+  console.log(`[Browser] Args:`, args);
+
+  // 1. Create temporary references for serialization
+  const temporaryReferences = createTemporaryReferenceSet();
+
+  // 2. Build action request URL with current segments
+  const url = new URL(window.location.href);
+  url.searchParams.set('_rsc_action', id);
+  url.searchParams.set('_rsc_segments', navigationManager.currentSegmentIds.join(','));
+
+  // 3. Encode arguments
+  const encodedBody = await encodeReply(args, { temporaryReferences });
+
+  console.log(`[Browser] Encoded body type:`, typeof encodedBody, encodedBody instanceof FormData);
+  console.log(`[Browser] Sending action request to: ${url.href}`);
+  console.log(`[Browser] Current segments: ${navigationManager.currentSegmentIds.join(', ')}`);
+
+  // 4. Send action request (don't await - pass promise to createFromFetch)
+  const responsePromise = fetch(url, {
+    method: 'POST',
+    headers: {
+      'rsc-action': id,
+      'X-RSC-Router-Client-Path': navigationManager.currentUrl,
+      // Note: Don't set Content-Type if using FormData - browser will set it with boundary
+    },
+    body: encodedBody,
+  });
+
+  // 5. Deserialize response (MUST use same temporaryReferences)
+  const payload = await createFromFetch<RscPayload>(responsePromise, { temporaryReferences });
+
+  console.log(`[Browser] Action response received:`, payload.metadata);
+
+  // 6. Process same as partial navigation
+  const { metadata } = payload;
+  const { matched, diff, segments, isPartial } = metadata || {};
+
+  if (isPartial) {
+    // Store new segments
+    segments?.forEach((segment: ResolvedSegment) => {
+      navigationManager.storedSegments.set(segment.id, segment);
+    });
+
+    // Rebuild from matched (source of truth)
+    const fullSegments = matched.map((id: string) =>
+      navigationManager.storedSegments.get(id)
+    ).filter(Boolean) as ResolvedSegment[];
+
+    // HMR resilience check
+    if (fullSegments.length < matched.length) {
+      console.warn(`[Browser] Missing segments after action, refetching...`);
+      return fetchPartialUpdate(window.location.href, []);
+    }
+
+    // Update state
+    navigationManager.currentSegmentIds = matched;
+
+    // Render
+    const newTree = renderSegments(fullSegments);
+    navigationManager.setPayload?.({ root: newTree, metadata });
+
+    console.log(`[Browser] ✓ Action complete - UI updated`);
+  } else {
+    // Full update
+    navigationManager.currentSegmentIds = matched || [];
+    navigationManager.setPayload?.(payload);
+  }
+
+  // Actions don't return values (updates happen via RSC)
+  return undefined;
+});
+
+console.log('[Browser] ✓ Server action callback registered');
 
 // ============================================================================
 // Fetch Partial Update
