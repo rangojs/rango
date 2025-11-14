@@ -20,6 +20,7 @@ export default map<typeof homeRoutes>({
         <li>✅ Layouts (RootLayout)</li>
         <li>Navigate to <a href="/blog">Blog</a> to test params</li>
         <li>Navigate to <a href="/about">About</a></li>
+        <li>Navigate to <a href="/admin">Admin</a> to test soft/hard revalidation</li>
       </ul>
     </div>
   ),

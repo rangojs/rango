@@ -561,34 +561,50 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         Object.keys(nextParams).length !== Object.keys(prevParams).length ||
         Object.keys(nextParams).some((key) => nextParams[key] !== prevParams[key]);
 
-      // Execute revalidation functions with short-circuit OR logic
+      // Execute revalidation functions with soft/hard decision pattern
       // Order: global functions first, then route-specific functions
       const allRevalidations = [...revalidations.global, ...revalidations.perRoute];
       let shouldRevalidate = false;
+      let currentSuggestion = defaultShouldRevalidate;
 
       if (allRevalidations.length > 0) {
-        // Custom revalidation functions exist - execute with short-circuit
+        // Custom revalidation functions exist - execute with soft/hard decision pattern
+        let hardDecisionMade = false;
+
         for (const { name, fn } of allRevalidations) {
           const result = fn({
             currentParams: prevParams,
             currentUrl: prevUrl,
             nextParams,
             nextUrl: url,
-            defaultShouldRevalidate,
+            defaultShouldRevalidate: currentSuggestion,
             context,
           });
 
-          if (result === true) {
+          // Check if hard decision (boolean) or soft decision (object)
+          if (typeof result === 'boolean') {
+            // Hard decision - short-circuit
             console.log(
-              `[Router.matchPartial] ${segment.id}: REVALIDATE (${name}) returned TRUE - revalidating`
+              `[Router.matchPartial] ${segment.id}: REVALIDATE (${name}) HARD decision: ${result} - short-circuit`
             );
-            shouldRevalidate = true;
-            break; // Short-circuit on first true
+            shouldRevalidate = result;
+            hardDecisionMade = true;
+            break;
+          } else {
+            // Soft decision - update suggestion and continue
+            currentSuggestion = result.defaultShouldRevalidate;
+            console.log(
+              `[Router.matchPartial] ${segment.id}: REVALIDATE (${name}) SOFT decision: ${currentSuggestion} - continuing`
+            );
           }
         }
 
-        if (!shouldRevalidate) {
-          console.log(`[Router.matchPartial] ${segment.id}: All revalidations FALSE - skipping`);
+        if (!hardDecisionMade) {
+          // All revalidators returned soft decisions - use final suggestion
+          shouldRevalidate = currentSuggestion;
+          console.log(
+            `[Router.matchPartial] ${segment.id}: All SOFT decisions - final suggestion: ${shouldRevalidate}`
+          );
         }
       } else {
         // No custom revalidations - use default behavior
@@ -631,7 +647,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       ) {
         routes.push({
           prefix,
-          routes: routeMap,
+          routes: routeMap as ResolvedRouteMap<any>,
           handlers,
           registrationId,
         });

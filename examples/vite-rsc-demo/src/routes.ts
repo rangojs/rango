@@ -52,3 +52,14 @@ export const shopRoutes = route({
     orderDetail: '/account/orders/:id',
   },
 });
+
+/**
+ * Admin routes - demonstrates soft/hard revalidation pattern
+ * Tests global soft decisions with route-specific overrides
+ */
+export const adminRoutes = route({
+  index: '/',
+  users: '/users',
+  user: '/users/:id',
+  settings: '/settings',
+});

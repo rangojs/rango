@@ -965,35 +965,67 @@ export default map<typeof shopRoutes>({
 };
 ```
 
-### Execution Order
+### Execution Order - Soft/Hard Decision Pattern
 
-Revalidations execute with **short-circuit OR logic**:
+Revalidations execute with **soft/hard decision pattern**:
 
+**Hard Decision (boolean):**
+- Returns `true` or `false`
+- **Short-circuits** immediately - stops execution
+- Definitive answer - no other revalidators run
+
+**Soft Decision (object):**
+- Returns `{ defaultShouldRevalidate: boolean }`
+- **Continues** to next revalidator with updated suggestion
+- Allows downstream revalidators to override
+
+**Execution Flow:**
 ```typescript
-1. revalidate('*', 'name1')     → if true, STOP and re-render
-2. revalidate('*', 'name2')     → if true, STOP and re-render
-3. revalidate('routeName', 'a') → if true, STOP and re-render
-4. revalidate('routeName', 'b') → if true, STOP and re-render
-5. All false? → Skip segment (client keeps existing)
+1. Start with built-in defaultShouldRevalidate (true if params changed)
+2. Execute global revalidators ('*') first
+3. Then route-specific revalidators
+4. Each can make:
+   - Hard decision → STOP immediately, use that value
+   - Soft decision → UPDATE suggestion, continue
+5. If all soft decisions → use final suggestion
 ```
 
-**Optimization:** First `true` short-circuits - remaining functions don't execute.
+**Example:**
+```typescript
+// Global provides default, allows override
+[revalidate('*', 'global')]: () => {
+  return { defaultShouldRevalidate: true }; // SOFT: suggest yes, but keep checking
+}
+
+// Route-specific can override
+[revalidate('post')]: ({ currentParams, nextParams }) => {
+  return currentParams.slug !== nextParams.slug; // HARD: definitive answer, stop
+}
+```
 
 ### Function Signature
 
 ```typescript
 type ShouldRevalidateFn = (args: {
-  currentParams: TParams;           // Previous route params
+  currentParams: GenericParams;     // Previous route params ({ [key: string]: string | undefined })
   currentUrl: URL;                  // Previous URL object
-  nextParams: TParams;              // Next route params
+  nextParams: GenericParams;        // Next route params
   nextUrl: URL;                     // Next URL object
-  defaultShouldRevalidate: boolean; // true if params changed
+  defaultShouldRevalidate: boolean; // Current suggestion (updated by soft decisions)
   context: TContext;                // App context (db, user, etc.)
   // Future action support:
   actionResult?: any;               // Result from server action
   formData?: FormData;              // Form data submitted
   formMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-}) => boolean;
+}) => boolean | { defaultShouldRevalidate: boolean }; // Hard or soft decision
+
+// Helper type for stricter params
+type RevalidateParams<TParams = GenericParams> = Parameters<ShouldRevalidateFn<TParams>>[0];
+
+// Usage with inline typing:
+[revalidate('post')]: ((params: RevalidateParams<{ slug: string }>) => {
+  return params.currentParams.slug !== params.nextParams.slug;
+})
 ```
 
 ### Real-World Examples

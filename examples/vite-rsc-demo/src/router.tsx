@@ -1,5 +1,5 @@
 import { createRSCRouter, type RouterEnv } from 'rsc-router';
-import { homeRoutes, blogRoutes, aboutRoutes, dashboardRoutes, shopRoutes } from './routes.js';
+import { homeRoutes, blogRoutes, aboutRoutes, dashboardRoutes, shopRoutes, adminRoutes } from './routes.js';
 
 /**
  * Platform bindings (Cloudflare Workers, environment variables, etc.)
@@ -63,6 +63,9 @@ router
   .map(() => import('./handlers/dashboard.js'))
 
   .route('/shop', shopRoutes)  // Shop - comprehensive ecommerce example
-  .map(() => import('./handlers/shop.js'));
+  .map(() => import('./handlers/shop.js'))
 
-console.log('[Router] Configured with 5 route groups (lazy-loaded handlers)');
+  .route('/admin', adminRoutes)  // Admin - demonstrates soft/hard revalidation
+  .map(() => import('./handlers/admin.js'));
+
+console.log('[Router] Configured with 6 route groups (lazy-loaded handlers)');

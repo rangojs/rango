@@ -192,32 +192,47 @@ export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<S
  * Should revalidate function signature (inspired by React Router)
  *
  * Determines whether a route segment should re-render during partial navigation.
- * Multiple revalidation functions can be defined per route - they execute in order
- * and short-circuit on first `true` (OR logic).
+ * Multiple revalidation functions can be defined per route - they execute in order.
+ *
+ * **Return Types:**
+ * - `boolean` - Hard decision: immediately returns this value (short-circuits)
+ * - `{ defaultShouldRevalidate: boolean }` - Soft decision: updates suggestion for next revalidator
+ *
+ * **Execution Flow:**
+ * 1. Start with built-in `defaultShouldRevalidate` (true if params changed)
+ * 2. Execute global revalidators first, then route-specific
+ * 3. Hard decision (boolean): stop immediately and use that value
+ * 4. Soft decision (object): update suggestion and continue to next revalidator
+ * 5. If all return soft decisions: use the final suggestion
  *
  * @param args.currentParams - Previous route params (generic by default, can be narrowed)
  * @param args.currentUrl - Previous URL
  * @param args.nextParams - Next route params (generic by default, can be narrowed)
  * @param args.nextUrl - Next URL
- * @param args.defaultShouldRevalidate - True if params changed (built-in behavior)
+ * @param args.defaultShouldRevalidate - Current suggestion (updated by soft decisions)
  * @param args.context - App context (db, user, etc.)
  * @param args.actionResult - Result from action (future support)
  * @param args.formData - Form data from action (future support)
  * @param args.formMethod - HTTP method from action (future support)
  *
- * @returns true to re-render segment, false to skip
+ * @returns Hard decision (boolean) or soft suggestion (object)
  *
  * @example
  * ```typescript
- * // Generic params (default)
- * [revalidate('post')]: ({ currentParams, nextParams, defaultShouldRevalidate }) => {
- *   return defaultShouldRevalidate; // currentParams is GenericParams
+ * // Hard decision - definitive answer
+ * [revalidate('post')]: ({ currentParams, nextParams }) => {
+ *   return currentParams.slug !== nextParams.slug; // boolean - short-circuits
+ * }
+ *
+ * // Soft decision - allows downstream revalidators to override
+ * [revalidate('*', 'global')]: ({ defaultShouldRevalidate }) => {
+ *   return { defaultShouldRevalidate: true }; // object - continues to next
  * }
  *
  * // Explicit typing for stricter params
- * [revalidate('post')]: (({ currentParams, nextParams }) => {
- *   return currentParams.slug !== nextParams.slug; // slug is string | undefined
- * }) satisfies ShouldRevalidateFn<{ slug: string }>
+ * [revalidate('post')]: ((params: RevalidateParams<{ slug: string }>) => {
+ *   return params.currentParams.slug !== params.nextParams.slug;
+ * })
  * ```
  */
 export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
@@ -231,7 +246,7 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
   actionResult?: any;
   formData?: FormData;
   formMethod?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-}) => boolean;
+}) => boolean | { defaultShouldRevalidate: boolean };
 
 /**
  * Middleware function signature
