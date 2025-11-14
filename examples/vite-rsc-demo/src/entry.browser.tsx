@@ -29,18 +29,19 @@ const navigationManager: NavigationManager = {
 // Fetch Partial Update
 // ============================================================================
 
-async function fetchPartialUpdate(targetUrl?: string) {
+async function fetchPartialUpdate(targetUrl?: string, segmentIds?: string[]) {
   const url = targetUrl || window.location.href;
+  const segments = segmentIds ?? navigationManager.currentSegmentIds;
 
   console.log(`\n[Browser] >>> NAVIGATION`);
   console.log(`[Browser] From: ${navigationManager.currentUrl}`);
   console.log(`[Browser] To: ${url}`);
-  console.log(`[Browser] Current segments: ${navigationManager.currentSegmentIds.join(', ')}`);
+  console.log(`[Browser] Segments to send: ${segments.join(', ')}`);
 
   // Build fetch URL with partial rendering params
   const fetchUrl = new URL(url);
   fetchUrl.searchParams.set('_rsc_partial', 'true');
-  fetchUrl.searchParams.set('_rsc_segments', navigationManager.currentSegmentIds.join(','));
+  fetchUrl.searchParams.set('_rsc_segments', segments.join(','));
 
   console.log(`[Browser] Fetching: ${fetchUrl.pathname}${fetchUrl.search}`);
 
@@ -86,17 +87,13 @@ async function fetchPartialUpdate(targetUrl?: string) {
     }).filter(Boolean) as ResolvedSegment[];
 
     // HMR RESILIENCE: Check if we're missing segments (React Refresh cleared state)
-    // If any segments are missing, do a full fetch instead of partial merge
+    // If any segments are missing, refetch with empty segment list (server sends all)
     if (fullSegments.length < matchedIds.length) {
       const missingCount = matchedIds.length - fullSegments.length;
-      console.warn(`[Browser] HMR detected: Missing ${missingCount} segments in storage. Doing full fetch...`);
+      console.warn(`[Browser] HMR detected: Missing ${missingCount} segments in storage. Refetching all segments...`);
 
-      // Fall back to full render - remove _rsc_partial to force full render
-      const fullUrl = new URL(url);
-      fullUrl.searchParams.delete('_rsc_partial');
-      fullUrl.searchParams.delete('_rsc_segments');
-      window.location.href = fullUrl.href; // Full page reload
-      return;
+      // Refetch with empty segments = tell server "I have nothing, send everything"
+      return fetchPartialUpdate(url, []); // Recursive call with empty segments
     }
 
     console.log(`[Browser] Merged segments: ${fullSegments.map(s => s.id).join(', ')}`);
