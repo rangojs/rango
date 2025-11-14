@@ -15,6 +15,8 @@ export { renderSegments } from './segment-system.js';
 
 // Types
 export type {
+  RouterEnv,
+  DefaultEnv,
   RouteDefinition,
   ResolvedRouteMap,
   Handler,
@@ -24,7 +26,9 @@ export type {
   SegmentMetadata,
   MatchResult,
   ExtractParams,
-  RevalidateFn,
+  GenericParams,
+  RevalidateParams,
+  ShouldRevalidateFn,
   MiddlewareFn,
   RouteKeys,
 } from './types.js';

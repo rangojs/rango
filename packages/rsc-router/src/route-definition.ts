@@ -145,18 +145,44 @@ export const revalidate = <const T extends string, const Name extends string = s
 /**
  * Type-safe handler definition helper
  *
- * @example
+ * Supports two patterns for type-safe context:
+ *
+ * **Pattern 1: Module Augmentation (Recommended - No imports needed)**
  * ```typescript
- * export default map<typeof blogRoutes>({
- *   [layout('index', 'root')]: <RootLayout />,
- *   index: (ctx) => <BlogIndex />,
- *   post: (ctx) => <BlogPost slug={ctx.params.slug} />
- * });
+ * // In router.tsx:
+ * declare global {
+ *   namespace RSCRouter {
+ *     interface Env extends RouterEnv<AppBindings, AppVariables> {}
+ *   }
+ * }
+ *
+ * // In handler file - context is automatically typed!
+ * export default map<typeof shopRoutes>({
+ *   [middleware('*', 'auth')]: [
+ *     (ctx, next) => {
+ *       ctx.set('user', ...) // Type-safe via global augmentation!
+ *     }
+ *   ]
+ * })
+ * ```
+ *
+ * **Pattern 2: Explicit Generic (Alternative - Explicit imports)**
+ * ```typescript
+ * import type { AppEnv } from '../router.js';
+ *
+ * export default map<typeof blogRoutes, AppEnv>({
+ *   [middleware('*', 'auth')]: [
+ *     (ctx, next) => {
+ *       ctx.set('user', ...) // Type-safe via explicit generic!
+ *     }
+ *   ]
+ * })
  * ```
  */
-export function map<const T extends RouteDefinition, TContext = any>(
-  handlers: import("./types.js").HandlersForRouteMap<T, TContext>
-): import("./types.js").HandlersForRouteMap<T, TContext> {
+export function map<const T extends RouteDefinition, TEnv = import("./types.js").DefaultEnv>(
+  handlers: import("./types.js").HandlersForRouteMap<T, TEnv> | Record<string, any>
+): import("./types.js").HandlersForRouteMap<T, TEnv> {
   // Pass-through for type safety
-  return handlers;
+  // Union with Record<string, any> allows object literals with inferred string index signatures
+  return handlers as import("./types.js").HandlersForRouteMap<T, TEnv>;
 }

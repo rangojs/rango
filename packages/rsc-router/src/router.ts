@@ -13,26 +13,26 @@ import type {
 /**
  * Router builder for chaining .use() and .map()
  */
-interface RouteBuilder<T extends RouteDefinition, TContext> {
+interface RouteBuilder<T extends RouteDefinition, TEnv> {
   map(
     handlers:
-      | HandlersForRouteMap<T, TContext>
-      | (() => Promise<{ default: HandlersForRouteMap<T, TContext> }>)
-  ): RSCRouter<TContext>;
+      | HandlersForRouteMap<T, TEnv>
+      | (() => Promise<{ default: HandlersForRouteMap<T, TEnv> }>)
+  ): RSCRouter<TEnv>;
 }
 
 /**
  * RSC Router interface
  */
-export interface RSCRouter<TContext = any> {
+export interface RSCRouter<TEnv = any> {
   route<T extends RouteDefinition>(
     prefix: string,
     routes: ResolvedRouteMap<T>
-  ): RouteBuilder<T, TContext>;
+  ): RouteBuilder<T, TEnv>;
 
-  match(request: Request, context: TContext): Promise<MatchResult>;
+  match(request: Request, context: TEnv): Promise<MatchResult>;
 
-  matchPartial(request: Request, context: TContext): Promise<MatchResult | null>;
+  matchPartial(request: Request, context: TEnv): Promise<MatchResult | null>;
 }
 
 /**
@@ -52,9 +52,38 @@ export interface RSCRouter<TContext = any> {
  *   .map(() => import('./blog.handlers'));
  * ```
  */
-export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
-  const routes: RouteEntry<TContext>[] = [];
+export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
+  const routes: RouteEntry<TEnv>[] = [];
   let nextRegistrationId = 0;
+
+  /**
+   * Create HandlerContext with typed env/var/get/set
+   */
+  function createHandlerContext(
+    params: Record<string, string>,
+    request: Request,
+    searchParams: URLSearchParams,
+    pathname: string,
+    url: URL,
+    bindings: any = {}
+  ): HandlerContext<any, TEnv> {
+    // Variables object (mutable by middleware)
+    const variables: any = {};
+
+    return {
+      params,
+      request,
+      searchParams,
+      pathname,
+      url,
+      env: bindings,
+      var: variables,
+      get: (key: string) => variables[key],
+      set: (key: string, value: any) => {
+        variables[key] = value;
+      },
+    };
+  }
 
   /**
    * Compile a route pattern to regex
@@ -90,7 +119,7 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
    * Match a pathname against registered routes
    */
   function findMatch(pathname: string): {
-    entry: RouteEntry<TContext>;
+    entry: RouteEntry<TEnv>;
     routeKey: string;
     params: Record<string, string>;
   } | null {
@@ -130,9 +159,9 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
    */
   async function loadHandlers(
     handlers:
-      | HandlersForRouteMap<any, TContext>
-      | (() => Promise<{ default: HandlersForRouteMap<any, TContext> }>)
-  ): Promise<HandlersForRouteMap<any, TContext>> {
+      | HandlersForRouteMap<any, TEnv>
+      | (() => Promise<{ default: HandlersForRouteMap<any, TEnv> }>)
+  ): Promise<HandlersForRouteMap<any, TEnv>> {
     if (typeof handlers === 'function') {
       const module = await handlers();
       return module.default;
@@ -198,7 +227,7 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
    */
   async function executeMiddleware(
     middleware: any[],
-    ctx: HandlerContext<any, TContext>
+    ctx: HandlerContext<any, TEnv>
   ): Promise<void> {
     if (middleware.length === 0) {
       return;
@@ -224,10 +253,10 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
    * @param skipMiddleware - If true, skip middleware execution (for building prev segments in comparison)
    */
   async function buildSegments(
-    entry: RouteEntry<TContext>,
+    entry: RouteEntry<TEnv>,
     routeKey: string,
     params: Record<string, string>,
-    context: HandlerContext<any, TContext>,
+    context: HandlerContext<any, TEnv>,
     skipMiddleware = false
   ): Promise<ResolvedSegment[]> {
     const handlers = await loadHandlers(entry.handlers);
@@ -362,7 +391,7 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
    */
   async function match(
     request: Request,
-    context: TContext
+    context: TEnv
   ): Promise<MatchResult> {
     const url = new URL(request.url);
     const pathname = url.pathname;
@@ -372,14 +401,17 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
       throw new Error(`No route matched for ${pathname}`);
     }
 
-    const handlerContext: HandlerContext<any, TContext> = {
-      params: matched.params,
+    // Extract bindings from context (if using RouterEnv pattern)
+    const bindings = (context as any)?.Bindings || {};
+
+    const handlerContext = createHandlerContext(
+      matched.params,
       request,
-      searchParams: url.searchParams,
+      url.searchParams,
       pathname,
       url,
-      ...(context as any),
-    };
+      bindings
+    );
 
     const segments = await buildSegments(
       matched.entry,
@@ -429,7 +461,7 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
    */
   async function matchPartial(
     request: Request,
-    context: TContext
+    context: TEnv
   ): Promise<MatchResult | null> {
     const url = new URL(request.url);
     const pathname = url.pathname;
@@ -461,17 +493,20 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
       return null;
     }
 
+    // Extract bindings from context
+    const bindings = (context as any)?.Bindings || {};
+
     // Build previous segments for comparison
     let prevSegments: ResolvedSegment[] = [];
     if (prevMatch) {
-      const prevContext: HandlerContext<any, TContext> = {
-        params: prevMatch.params,
+      const prevContext = createHandlerContext(
+        prevMatch.params,
         request,
-        searchParams: prevUrl.searchParams,
-        pathname: prevUrl.pathname,
-        url: prevUrl,
-        ...(context as any),
-      };
+        prevUrl.searchParams,
+        prevUrl.pathname,
+        prevUrl,
+        bindings
+      );
       prevSegments = await buildSegments(
         prevMatch.entry,
         prevMatch.routeKey,
@@ -481,14 +516,14 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
       );
     }
 
-    const handlerContext: HandlerContext<any, TContext> = {
-      params: nextMatch.params,
+    const handlerContext = createHandlerContext(
+      nextMatch.params,
       request,
-      searchParams: url.searchParams,
+      url.searchParams,
       pathname,
       url,
-      ...(context as any),
-    };
+      bindings
+    );
 
     // Build all segments for current route
     const allSegments = await buildSegments(
@@ -587,12 +622,12 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
     prefix: string,
     routeMap: ResolvedRouteMap<T>,
     registrationId: number
-  ): RouteBuilder<T, TContext> {
+  ): RouteBuilder<T, TEnv> {
     return {
       map(
         handlers:
-          | HandlersForRouteMap<T, TContext>
-          | (() => Promise<{ default: HandlersForRouteMap<T, TContext> }>)
+          | HandlersForRouteMap<T, TEnv>
+          | (() => Promise<{ default: HandlersForRouteMap<T, TEnv> }>)
       ) {
         routes.push({
           prefix,
@@ -608,11 +643,11 @@ export function createRSCRouter<TContext = any>(): RSCRouter<TContext> {
   /**
    * Router instance
    */
-  const router: RSCRouter<TContext> = {
+  const router: RSCRouter<TEnv> = {
     route<T extends RouteDefinition>(
       prefix: string,
       routes: ResolvedRouteMap<T>
-    ): RouteBuilder<T, TContext> {
+    ): RouteBuilder<T, TEnv> {
       const registrationId = nextRegistrationId++;
       return createRouteBuilder(prefix, routes, registrationId);
     },

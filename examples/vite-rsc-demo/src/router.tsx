@@ -1,17 +1,52 @@
-import { createRSCRouter } from 'rsc-router';
+import { createRSCRouter, type RouterEnv } from 'rsc-router';
 import { homeRoutes, blogRoutes, aboutRoutes, dashboardRoutes, shopRoutes } from './routes.js';
 
 /**
- * App context (empty for now, but typed for future use)
+ * Platform bindings (Cloudflare Workers, environment variables, etc.)
+ * Accessed via ctx.env
  */
-export interface AppContext {
-  // Add app-specific context here (db, user, etc.)
+export interface AppBindings {
+  // Example for Cloudflare Workers:
+  // DB?: D1Database;
+  // KV?: KVNamespace;
+  // STRIPE_KEY?: string;
 }
 
 /**
- * Create and configure the router
+ * Middleware-injected variables (user, permissions, etc.)
+ * Accessed via ctx.var or ctx.get('key')
  */
-export const router = createRSCRouter<AppContext>();
+export interface AppVariables {
+  user?: {
+    id: string;
+    name: string;
+    email: string;
+  };
+  permissions?: string[];
+  requestId?: string;
+  requestCount?: number;
+  rateLimitRemaining?: number;
+}
+
+/**
+ * Combined app environment (Hono-inspired type-safe context)
+ */
+export type AppEnv = RouterEnv<AppBindings, AppVariables>;
+
+/**
+ * Module augmentation - makes AppEnv available globally in all handlers
+ * This allows handlers to have type-safe context without importing AppEnv
+ */
+declare global {
+  namespace RSCRouter {
+    interface Env extends AppEnv {}
+  }
+}
+
+/**
+ * Create and configure the router with type-safe context
+ */
+export const router = createRSCRouter<AppEnv>();
 
 // Register routes with lazy-loaded handlers
 router

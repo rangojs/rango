@@ -1,5 +1,6 @@
 import { map, revalidate } from "rsc-router";
 import type { blogRoutes } from "../routes.js";
+import type { AppEnv } from "../router.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { BlogLayout } from "../layouts/BlogLayout.js";
 import { SegmentTimer } from "../components/SegmentTimer.js";
@@ -8,9 +9,11 @@ import { CurrentURL } from "../components/CurrentURL.js";
 /**
  * Blog handlers using shorthand string syntax (no helpers)
  * Demonstrates simple revalidation
+ *
+ * NOTE: Uses EXPLICIT import of AppEnv as second generic to show alternative pattern.
+ * Could also rely on global module augmentation (see shop.tsx).
  */
-// @ts-expect-error - String syntax for metadata keys works at runtime but TypeScript can't verify the patterns
-export default map<typeof blogRoutes>({
+export default map<typeof blogRoutes, AppEnv>({
   // Global layouts - apply to all blog routes
   "$layout.*.root": <RootLayout />,
   "$layout.*.blog": <BlogLayout />,
@@ -25,8 +28,14 @@ export default map<typeof blogRoutes>({
 
   // Revalidation - demonstrates default behavior
   // Only revalidate blog post if slug actually changes
-  [revalidate("post")]: ({ currentParams, nextParams, defaultShouldRevalidate }) => {
-    console.log(`[Blog] Checking revalidation: ${currentParams.slug} → ${nextParams.slug}`);
+  [revalidate("post")]: ({
+    currentParams,
+    nextParams,
+    defaultShouldRevalidate,
+  }) => {
+    console.log(
+      `[Blog] Checking revalidation: ${currentParams.slug} → ${nextParams.slug}`
+    );
     // Defer to default: true if slug changed, false otherwise
     return defaultShouldRevalidate;
   },
@@ -52,10 +61,14 @@ export default map<typeof blogRoutes>({
 
   post: (ctx) => {
     const renderTime = new Date().toISOString();
-    const queryParams: [string, string][] = Array.from(ctx.searchParams.entries());
+    const queryParams: [string, string][] = Array.from(
+      ctx.searchParams.entries()
+    );
 
     // Get previous URL from request header (sent by client during partial navigation)
-    const previousClientUrl = ctx.request.headers.get('X-RSC-Router-Client-Path');
+    const previousClientUrl = ctx.request.headers.get(
+      "X-RSC-Router-Client-Path"
+    );
 
     return (
       <div>
@@ -72,31 +85,57 @@ export default map<typeof blogRoutes>({
 
         <CurrentURL />
 
-        <div style={{
-          background: '#fff3cd',
-          padding: '0.75rem',
-          borderRadius: '4px',
-          marginTop: '0.5rem',
-          border: '2px solid #856404',
-        }}>
-          <div style={{ marginBottom: '0.25rem', fontSize: '0.85rem', fontWeight: 'bold', color: '#856404' }}>
+        <div
+          style={{
+            background: "#fff3cd",
+            padding: "0.75rem",
+            borderRadius: "4px",
+            marginTop: "0.5rem",
+            border: "2px solid #856404",
+          }}
+        >
+          <div
+            style={{
+              marginBottom: "0.25rem",
+              fontSize: "0.85rem",
+              fontWeight: "bold",
+              color: "#856404",
+            }}
+          >
             📸 Server Snapshot (at render time: {renderTime})
           </div>
-          <div style={{ fontSize: '0.8rem', marginBottom: '0.5rem' }}>
-            <strong>Query Params (ctx.searchParams):</strong>{' '}
+          <div style={{ fontSize: "0.8rem", marginBottom: "0.5rem" }}>
+            <strong>Query Params (ctx.searchParams):</strong>{" "}
             {queryParams.length > 0 ? (
-              <code>{queryParams.map(([k, v]) => `${k}=${v}`).join('&')}</code>
+              <code>{queryParams.map(([k, v]) => `${k}=${v}`).join("&")}</code>
             ) : (
-              <em style={{ color: '#666' }}>none</em>
+              <em style={{ color: "#666" }}>none</em>
             )}
           </div>
           {previousClientUrl && (
-            <div style={{ fontSize: '0.75rem', color: '#856404', marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid #856404' }}>
-              <strong>Previous URL (from header):</strong><br/>
-              <code style={{ fontSize: '0.7rem' }}>{previousClientUrl}</code>
+            <div
+              style={{
+                fontSize: "0.75rem",
+                color: "#856404",
+                marginTop: "0.5rem",
+                paddingTop: "0.5rem",
+                borderTop: "1px solid #856404",
+              }}
+            >
+              <strong>Previous URL (from header):</strong>
+              <br />
+              <code style={{ fontSize: "0.7rem" }}>{previousClientUrl}</code>
             </div>
           )}
-          <p style={{ fontSize: '0.7rem', color: '#856404', marginTop: '0.5rem', marginBottom: 0, fontStyle: 'italic' }}>
+          <p
+            style={{
+              fontSize: "0.7rem",
+              color: "#856404",
+              marginTop: "0.5rem",
+              marginBottom: 0,
+              fontStyle: "italic",
+            }}
+          >
             ↑ Frozen server data. Won't update if segment not revalidated!
           </p>
         </div>
@@ -106,25 +145,43 @@ export default map<typeof blogRoutes>({
           serverRenderTime={renderTime}
         />
 
-        <div style={{ marginTop: '1rem', padding: '1rem', background: '#f8f9fa', borderRadius: '4px' }}>
+        <div
+          style={{
+            marginTop: "1rem",
+            padding: "1rem",
+            background: "#f8f9fa",
+            borderRadius: "4px",
+          }}
+        >
           <h4 style={{ marginTop: 0 }}>Test Revalidation:</h4>
-          <ul style={{ margin: 0, paddingLeft: '1.5rem' }}>
+          <ul style={{ margin: 0, paddingLeft: "1.5rem" }}>
             <li>
-              <a href="/blog/hello-world">Navigate to hello-world</a> (slug changes → timer resets)
+              <a href="/blog/hello-world">Navigate to hello-world</a> (slug
+              changes → timer resets)
             </li>
             <li>
-              <a href={`/blog/${ctx.params.slug}?tab=1`}>Add ?tab=1</a> (query only → timer keeps running)
+              <a href={`/blog/${ctx.params.slug}?tab=1`}>Add ?tab=1</a> (query
+              only → timer keeps running)
             </li>
             <li>
-              <a href={`/blog/${ctx.params.slug}?tab=2`}>Change to ?tab=2</a> (query change → timer keeps running)
+              <a href={`/blog/${ctx.params.slug}?tab=2`}>Change to ?tab=2</a>{" "}
+              (query change → timer keeps running)
             </li>
           </ul>
-          <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.5rem', marginBottom: 0 }}>
-            <strong>Expected:</strong> Timer resets only when slug changes, not when query params change.
+          <p
+            style={{
+              fontSize: "0.85rem",
+              color: "#666",
+              marginTop: "0.5rem",
+              marginBottom: 0,
+            }}
+          >
+            <strong>Expected:</strong> Timer resets only when slug changes, not
+            when query params change.
           </p>
         </div>
 
-        <p style={{ marginTop: '1rem' }}>
+        <p style={{ marginTop: "1rem" }}>
           <a href="/blog">← Back to blog</a>
         </p>
       </div>

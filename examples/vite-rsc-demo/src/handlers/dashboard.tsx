@@ -15,11 +15,11 @@ export default map<typeof dashboardRoutes>({
 
   // Middleware - demonstrates rate limiting and request tracking
   [middleware("*", "rateLimit")]: [
-    (ctx: any, next) => {
+    (ctx, next) => {
       console.log("[Dashboard Middleware] Rate limit check");
-      // Simulate rate limiting - in real app, check request count
-      const requestCount = (ctx as any).requestCount || 0;
-      (ctx as any).requestCount = requestCount + 1;
+      // Simulate rate limiting - in real app, check request count (type-safe!)
+      const requestCount = ctx.get('requestCount') || 0;
+      ctx.set('requestCount', requestCount + 1);
 
       if (requestCount > 100) {
         console.warn("[Dashboard Middleware] Rate limit exceeded - would return 429");
@@ -32,7 +32,7 @@ export default map<typeof dashboardRoutes>({
   ],
 
   [middleware("*", "analytics")]: [
-    (ctx: any, next) => {
+    (ctx, next) => {
       console.log(`[Dashboard Middleware] Analytics: ${ctx.pathname} at ${new Date().toISOString()}`);
       // In real app: send to analytics service
       next();
@@ -41,7 +41,7 @@ export default map<typeof dashboardRoutes>({
 
   // Settings route - additional validation middleware
   [middleware("settings", "validate")]: [
-    (ctx: any, next) => {
+    (ctx, next) => {
       console.log("[Dashboard Middleware] Settings validation");
       // Could validate permissions, check feature flags, etc.
       next();
