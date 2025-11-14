@@ -21,6 +21,7 @@ export default map<typeof homeRoutes>({
         <li>Navigate to <a href="/blog">Blog</a> to test params</li>
         <li>Navigate to <a href="/about">About</a></li>
         <li>Navigate to <a href="/admin">Admin</a> to test soft/hard revalidation</li>
+        <li>Navigate to <a href="/protected?logged_in=true">Protected</a> to test middleware short-circuit & URL filtering</li>
       </ul>
     </div>
   ),

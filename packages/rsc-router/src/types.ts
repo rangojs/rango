@@ -133,6 +133,9 @@ export type Handler<TParams = {}, TEnv = any> = (
  * - Middleware variables (var.user, var.permissions)
  * - Getter/setter for variables (get('user'), set('user', ...))
  *
+ * **Important:** System parameters (query params starting with `_rsc`) are filtered out.
+ * Handlers see only user-facing query params. Access raw request via `_originalRequest`.
+ *
  * @example
  * ```typescript
  * const handler = (ctx: HandlerContext<{ slug: string }, AppEnv>) => {
@@ -141,15 +144,22 @@ export type Handler<TParams = {}, TEnv = any> = (
  *   ctx.var.user           // Variable (User | undefined)
  *   ctx.get('user')        // Alternative getter
  *   ctx.set('user', {...}) // Setter
+ *
+ *   // Clean URLs (system params filtered):
+ *   ctx.url                // No _rsc* params
+ *   ctx.searchParams       // No _rsc* params
+ *
+ *   // Advanced: access raw request
+ *   ctx._originalRequest   // Full request with all params
  * }
  * ```
  */
 export type HandlerContext<TParams = {}, TEnv = any> = {
   params: TParams;
   request: Request;
-  searchParams: URLSearchParams;
+  searchParams: URLSearchParams;  // Filtered (no _rsc* params)
   pathname: string;
-  url: URL;
+  url: URL;                       // Filtered (no _rsc* params)
   env: TEnv extends RouterEnv<infer B, any> ? B : {};
   var: TEnv extends RouterEnv<any, infer V> ? V : {};
   get: TEnv extends RouterEnv<any, infer V>
@@ -158,6 +168,7 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
   set: TEnv extends RouterEnv<any, infer V>
     ? <K extends keyof V>(key: K, value: V[K]) => void
     : (key: string, value: any) => void;
+  _originalRequest: Request;      // Raw request (includes all system params)
 };
 
 /**
@@ -250,13 +261,34 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
 
 /**
  * Middleware function signature
+ *
+ * Middleware can either call `next()` to continue the pipeline,
+ * or return a Response to short-circuit and skip remaining middleware + handler.
+ *
+ * **Short-Circuit Patterns:**
+ * - `return redirect('/login')` - Soft redirect (SPA navigation)
+ * - `return Response.redirect('/login', 302)` - Hard redirect (full page reload)
+ * - `return new Response('Unauthorized', { status: 401 })` - Error response
+ *
  * @param TParams - Route params (defaults to GenericParams, can be narrowed with satisfies)
  * @param TEnv - Environment type
+ *
+ * @example
+ * ```typescript
+ * [middleware('checkout.*', 'auth')]: [
+ *   (ctx, next) => {
+ *     if (!ctx.get('user')) {
+ *       return redirect('/login'); // Soft redirect - short-circuit
+ *     }
+ *     next(); // Continue pipeline
+ *   }
+ * ]
+ * ```
  */
 export type MiddlewareFn<TParams = GenericParams, TEnv = any> = (
   ctx: HandlerContext<TParams, TEnv>,
   next: () => void | Promise<void>
-) => void | Promise<void>;
+) => void | Promise<void> | Response | Promise<Response>;
 
 /**
  * Extract all route keys from a route definition (includes flattened nested routes)

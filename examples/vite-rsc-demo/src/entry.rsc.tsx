@@ -115,6 +115,13 @@ export default async function handler(request: Request): Promise<Response> {
       },
     });
   } catch (error) {
+    // Check if middleware/handler returned Response (redirect, auth, etc.)
+    if (error instanceof Response) {
+      console.log(`[RSC] Middleware/handler returned Response - returning directly`);
+      return error;
+    }
+
+    // Actual error - log and re-throw
     console.error(`[RSC] Error:`, error);
     throw error;
   }

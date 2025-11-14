@@ -143,6 +143,42 @@ export const revalidate = <const T extends string, const Name extends string = s
 };
 
 /**
+ * Create a soft redirect response for SPA navigation
+ *
+ * Soft redirects stay within the SPA and do a partial RSC fetch to the target URL.
+ * Use this for auth redirects or navigation that should feel seamless.
+ *
+ * For hard redirects (full page reload), use `Response.redirect()` directly.
+ *
+ * @param url - Destination URL
+ * @param status - HTTP status code (default: 302)
+ *
+ * @example
+ * ```typescript
+ * [middleware('checkout.*', 'auth')]: [
+ *   (ctx, next) => {
+ *     if (!ctx.get('user')) {
+ *       return redirect('/login'); // Soft redirect - SPA navigation
+ *     }
+ *     next();
+ *   }
+ * ]
+ *
+ * // Hard redirect (full page reload):
+ * return Response.redirect('/login', 302);
+ * ```
+ */
+export function redirect(url: string, status: number = 302): Response {
+  return new Response(null, {
+    status,
+    headers: {
+      'Location': url,
+      'X-RSC-Redirect': url,  // Marker for soft redirect
+    },
+  });
+}
+
+/**
  * Type-safe handler definition helper
  *
  * Supports two patterns for type-safe context:

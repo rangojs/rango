@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { RouteNotFoundError, sanitizeError } from './errors.js';
 import type {
   RouteDefinition,
   ResolvedRouteMap,
@@ -70,18 +71,32 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     // Variables object (mutable by middleware)
     const variables: any = {};
 
+    // Filter system parameters (starting with _rsc) from searchParams
+    // This ensures handlers only see user-facing query params
+    const cleanSearchParams = new URLSearchParams();
+    searchParams.forEach((value, key) => {
+      if (!key.startsWith('_rsc')) {
+        cleanSearchParams.set(key, value);
+      }
+    });
+
+    // Create clean URL without system params
+    const cleanUrl = new URL(url);
+    cleanUrl.search = cleanSearchParams.toString();
+
     return {
       params,
       request,
-      searchParams,
+      searchParams: cleanSearchParams,  // Filtered params
       pathname,
-      url,
+      url: cleanUrl,                    // Clean URL
       env: bindings,
       var: variables,
       get: (key: string) => variables[key],
       set: (key: string, value: any) => {
         variables[key] = value;
       },
+      _originalRequest: request,        // Raw request for advanced use
     };
   }
 
@@ -224,27 +239,43 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
   /**
    * Execute middleware chain with recursive chaining
+   * Returns Response if middleware short-circuits, null otherwise
    */
   async function executeMiddleware(
     middleware: any[],
     ctx: HandlerContext<any, TEnv>
-  ): Promise<void> {
+  ): Promise<Response | null> {
     if (middleware.length === 0) {
-      return;
+      return null;
     }
 
     let index = 0;
+    let earlyResponse: Response | null = null;
 
     const next = async (): Promise<void> => {
-      if (index >= middleware.length) {
-        return;
+      if (index >= middleware.length || earlyResponse) {
+        return; // Stop if reached end or middleware returned Response
       }
 
       const currentMiddleware = middleware[index++];
-      await currentMiddleware(ctx, next);
+
+      try {
+        const result = await currentMiddleware(ctx, next);
+
+        // Check if middleware short-circuited with Response
+        if (result instanceof Response) {
+          earlyResponse = result;
+          console.log(`[Router.executeMiddleware] Middleware returned Response - short-circuit`);
+        }
+      } catch (error) {
+        // Middleware threw error - propagate it
+        console.error(`[Router.executeMiddleware] Middleware threw error:`, error);
+        throw error;
+      }
     };
 
     await next();
+    return earlyResponse; // null if all middleware called next()
   }
 
   /**
@@ -320,7 +351,14 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       const allMiddleware = [...globalMiddleware, ...perRouteMiddleware];
       if (allMiddleware.length > 0) {
         console.log(`[Router.buildSegments] Executing ${allMiddleware.length} middleware for route: ${routeKey}`);
-        await executeMiddleware(allMiddleware, context);
+        const middlewareResponse = await executeMiddleware(allMiddleware, context);
+
+        // If middleware returned Response, short-circuit the pipeline
+        if (middlewareResponse) {
+          console.log(`[Router.buildSegments] Middleware short-circuited with Response`);
+          throw middlewareResponse; // Propagate Response to be caught by caller
+        }
+
         console.log(`[Router.buildSegments] Middleware execution complete`);
       }
     }
@@ -350,15 +388,25 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           // Process route handler
           const handler = handlers[key];
           if (handler) {
-            const component = await handler(context);
-            segments.push({
-              id: `R${index}.${entry.registrationId}`,
-              type: 'route',
+            try {
+              const component = await handler(context);
+              segments.push({
+                id: `R${index}.${entry.registrationId}`,
+                type: 'route',
               index,
               component,
               params,
             });
-            index++;
+              index++;
+            } catch (error) {
+              // Handler can throw Response as escape hatch (e.g., throw redirect('/login'))
+              if (error instanceof Response) {
+                console.log(`[Router.buildSegments] Handler threw Response - propagating`);
+                throw error;
+              }
+              // Re-throw actual errors
+              throw error;
+            }
           }
 
           // Process parallel routes (merge global + per-route)
@@ -398,7 +446,16 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
     const matched = findMatch(pathname);
     if (!matched) {
-      throw new Error(`No route matched for ${pathname}`);
+      throw new RouteNotFoundError(`No route matched for ${pathname}`, {
+        cause: {
+          pathname,
+          method: request.method,
+          registeredRoutes: routes.map(r => ({
+            prefix: r.prefix,
+            routes: Object.keys(r.routes),
+          })),
+        },
+      });
     }
 
     // Extract bindings from context (if using RouterEnv pattern)
@@ -413,20 +470,32 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       bindings
     );
 
-    const segments = await buildSegments(
-      matched.entry,
-      matched.routeKey,
-      matched.params,
-      handlerContext
-    );
+    try {
+      const segments = await buildSegments(
+        matched.entry,
+        matched.routeKey,
+        matched.params,
+        handlerContext
+      );
 
-    const segmentIds = segments.map((s) => s.id);
+      const segmentIds = segments.map((s) => s.id);
 
-    return {
-      segments,
-      matched: segmentIds,
-      diff: segmentIds,
-    };
+      return {
+        segments,
+        matched: segmentIds,
+        diff: segmentIds,
+      };
+    } catch (error) {
+      // Check if middleware/handler short-circuited with Response
+      if (error instanceof Response) {
+        console.log(`[Router.match] Response short-circuit - returning directly`);
+        throw error; // Propagate to top-level handler (entry.rsc.tsx)
+      }
+
+      // Sanitize error for production security
+      console.error(`[Router.match] Error during match:`, error);
+      throw sanitizeError(error);
+    }
   }
 
   /**
@@ -479,7 +548,17 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     // Match current route
     const nextMatch = findMatch(pathname);
     if (!nextMatch) {
-      throw new Error(`No route matched for ${pathname}`);
+      throw new RouteNotFoundError(`No route matched for ${pathname}`, {
+        cause: {
+          pathname,
+          method: request.method,
+          previousUrl,
+          registeredRoutes: routes.map(r => ({
+            prefix: r.prefix,
+            routes: Object.keys(r.routes),
+          })),
+        },
+      });
     }
 
     // Match previous route
@@ -526,12 +605,25 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     );
 
     // Build all segments for current route
-    const allSegments = await buildSegments(
-      nextMatch.entry,
-      nextMatch.routeKey,
-      nextMatch.params,
-      handlerContext
-    );
+    let allSegments;
+    try {
+      allSegments = await buildSegments(
+        nextMatch.entry,
+        nextMatch.routeKey,
+        nextMatch.params,
+        handlerContext
+      );
+    } catch (error) {
+      // Check if middleware/handler short-circuited with Response
+      if (error instanceof Response) {
+        console.log(`[Router.matchPartial] Response short-circuit - returning directly`);
+        throw error; // Propagate to top-level handler
+      }
+
+      // Sanitize error for production security
+      console.error(`[Router.matchPartial] Error during matchPartial:`, error);
+      throw sanitizeError(error);
+    }
 
     // Extract revalidation functions for this route
     const revalidations = await extractRevalidations(
@@ -547,6 +639,14 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       if (!clientSegmentSet.has(segment.id)) {
         // Client doesn't have this segment
         console.log(`[Router.matchPartial] ${segment.id}: NEW - including`);
+        segmentsToRender.push(segment);
+        continue;
+      }
+
+      // Layouts are essential UI structure - always include them
+      // They don't have params so param-based revalidation doesn't work
+      if (segment.type === 'layout') {
+        console.log(`[Router.matchPartial] ${segment.id}: LAYOUT - always including`);
         segmentsToRender.push(segment);
         continue;
       }

@@ -63,3 +63,13 @@ export const adminRoutes = route({
   user: '/users/:id',
   settings: '/settings',
 });
+
+/**
+ * Protected routes - demonstrates middleware short-circuit & system param filtering
+ * Tests soft/hard redirects, error handling, transparent URLs
+ */
+export const protectedRoutes = route({
+  index: '/',
+  dashboard: '/dashboard',
+  profile: '/profile/:username',
+});
