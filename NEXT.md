@@ -3,6 +3,38 @@
 ## Vision
 Build a **code-first, type-safe RSC router** for serverless deployments (Cloudflare Workers, edge functions) that simplifies ecommerce development without file-based conventions.
 
+---
+
+## 🎯 NEXT PRIORITIES (Phase 2)
+
+**Phase 1 is COMPLETE!** All core mutation features are implemented and working:
+- ✅ Revalidation (soft/hard decision pattern)
+- ✅ Middleware (chaining, context, error handling)
+- ✅ Server Actions (with returnValue, streaming, useActionState)
+
+**Up Next - Phase 2: Caching & Performance**
+
+### Immediate Next Steps:
+
+1. **Caching Strategy** (NEXT - High Priority)
+   - Route response caching for GET requests
+   - Cache headers (stale-while-revalidate, max-age)
+   - Cache invalidation after mutations
+   - Per-route cache configuration
+   - Integration with edge/CDN caching
+
+2. **Root Document API** (DX Improvement)
+   - Remove boilerplate `[layout("*", "root")]` from every handler
+   - Single document definition at router level
+   - Cleaner handler code
+
+3. **Cloudflare Workers Adapter** (Deployment)
+   - Platform-specific adapter for CF Workers
+   - D1/KV/Durable Objects integration
+   - Edge-optimized bundling
+
+See detailed roadmap below ↓
+
 ## Current State ✅
 - ✅ Core routing with nested routes
 - ✅ Dynamic segments with type inference
@@ -17,7 +49,7 @@ Build a **code-first, type-safe RSC router** for serverless deployments (Cloudfl
 
 ---
 
-## Phase 1: Core Mutations (IN PROGRESS) 🔥
+## Phase 1: Core Mutations ✅ COMPLETE 🎉
 
 ### 1.1 Revalidation Logic ✅ COMPLETE
 **Status:** ✅ Fully implemented, tested, and enhanced
@@ -95,32 +127,53 @@ Build a **code-first, type-safe RSC router** for serverless deployments (Cloudfl
 
 ---
 
-### 1.3 RSC Actions (Server Actions) ⬅️ NEXT PRIORITY
-**Status:** Not implemented
+### 1.3 RSC Actions (Server Actions) ✅ COMPLETE
+**Status:** ✅ Fully implemented with action-aware revalidation
 **Priority:** CRITICAL - Can't build real apps without mutations
+**Completed:** 2025-11-14
 
-**Design Questions:**
-- How to define actions in handlers?
-  ```typescript
-  [$action('addToCart')]: async (ctx, formData) => { ... }
-  ```
-- How to route action requests (POST to special endpoint?)
-- How to invoke from client components
-- Return values vs redirects vs revalidation
-- Access to route params and context
-- Error handling
-- **Trigger revalidation after action completes**
-- **Run middleware before actions** (auth checks)
+**What Was Implemented:**
+- ✅ React Server Actions with 'use server' directive
+- ✅ Action detection via `rsc-action` header
+- ✅ Action loading via `import.meta.viteRsc.loadServerAction()`
+- ✅ Argument encoding/decoding with temporaryReferences
+- ✅ Automatic revalidation after action execution
+- ✅ Integration with partial rendering
+- ✅ Action-aware revalidation context (method, actionId, actionUrl, actionResult, formData, routeName)
+- ✅ Smart defaults for action revalidation (route-specific = TRUE, global layouts = FALSE)
+- ✅ Segment-aware revalidation (segmentType, layoutName, slotName)
+- ✅ Progressive enhancement (works without JS)
+- ✅ Action return values (returnValue support)
+- ✅ Client-side hydration architecture
+- ✅ useActionState integration
+- ✅ Promise streaming with Suspense boundaries
+- ✅ Error handling with sanitization in production
+- ✅ HMR resilience (automatic refetch on missing segments)
 
-**Files to Modify:**
-- `packages/rsc-router/src/types.ts` - Add action types
-- `packages/rsc-router/src/router.ts` - Action routing/execution
-- `packages/rsc-router/src/route-definition.ts` - action() helper
-- Create client-side action invoker
+**Files Modified:**
+- `entry.rsc.tsx` - Action detection, loading, execution, revalidation
+- `entry.browser.tsx` - setServerCallback registration, argument encoding, POST requests
+- `packages/rsc-router/src/router.ts` - matchPartial with action context
+- `packages/rsc-router/src/types.ts` - RevalidateParams with action fields
+- `examples/vite-rsc-demo/src/actions/shop.actions.ts` - Demo actions (addToCart, etc.)
+- `examples/vite-rsc-demo/src/actions/streaming.actions.ts` - Promise streaming demo
+- `examples/vite-rsc-demo/src/handlers/shop.tsx` - Full action integration demo
+- `examples/vite-rsc-demo/src/components/AddToCartForm.tsx` - useActionState demo
+- `examples/vite-rsc-demo/src/components/StreamingActionForm.tsx` - Suspense demo
+- `RSC_ROUTER_API_DESIGN.md` - Complete Server Actions documentation
 
-**Dependencies:**
-- ⚠️ Requires revalidation logic (trigger re-renders after mutations)
-- ⚠️ Requires middleware (auth checks before actions)
+**Success Criteria:**
+- ✅ Actions execute server-side with 'use server'
+- ✅ Automatic revalidation after actions
+- ✅ Action-aware revalidation with full context
+- ✅ Segment-aware control (layout vs route vs parallel)
+- ✅ Action return values work (useActionState)
+- ✅ Promise streaming works (Suspense)
+- ✅ Progressive enhancement (no-JS fallback)
+- ✅ Error handling with production sanitization
+- ✅ Cart count updates automatically after addToCart
+- ✅ HMR doesn't break actions
+- ✅ Comprehensive demo in shop.tsx
 
 ---
 
@@ -255,11 +308,11 @@ For platform-agnostic deployment.
 
 ## Success Metrics
 
-### Week 1 (Current):
+### Week 1 (Current): ✅ COMPLETE
 - [x] Revalidation logic complete (with soft/hard pattern)
 - [x] Middleware 100% complete (error handling, short-circuit, URL filtering)
-- [ ] RSC Actions working end-to-end
-- [ ] Build a working "add to cart" flow
+- [x] RSC Actions working end-to-end
+- [x] Build a working "add to cart" flow
 
 ### Month 1:
 - [ ] Caching strategy implemented
@@ -306,4 +359,4 @@ For platform-agnostic deployment.
 
 ---
 
-Last Updated: 2025-11-14
+Last Updated: 2025-11-14 (Phase 1 Complete! 🎉)
