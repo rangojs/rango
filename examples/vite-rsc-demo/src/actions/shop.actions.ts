@@ -101,3 +101,62 @@ export async function getCartItems(): Promise<Array<{ productId: string; quantit
   const cart = carts.get('demo-cart');
   return cart?.items || [];
 }
+
+/**
+ * Add to cart with validation and return value
+ * Demonstrates action that returns data to the client
+ *
+ * @param productId - Product identifier
+ * @param quantity - Number to add
+ * @returns Success status and cart summary
+ */
+export async function addToCartWithResult(productId: string, quantity: number = 1) {
+  console.log(`[Action] addToCartWithResult: ${productId} x${quantity}`);
+
+  // Validate quantity
+  if (quantity < 1) {
+    console.log(`[Action] Validation failed: quantity must be positive`);
+    throw new Error('Quantity must be at least 1');
+  }
+
+  if (quantity > 10) {
+    console.log(`[Action] Validation failed: quantity too large`);
+    throw new Error('Cannot add more than 10 items at once');
+  }
+
+  // Get or create cart
+  const cartId = 'demo-cart';
+  let cart = carts.get(cartId);
+
+  if (!cart) {
+    cart = { items: [] };
+    carts.set(cartId, cart);
+  }
+
+  // Add or update item
+  const existing = cart.items.find(item => item.productId === productId);
+  const previousQuantity = existing?.quantity || 0;
+
+  if (existing) {
+    existing.quantity += quantity;
+  } else {
+    cart.items.push({ productId, quantity });
+  }
+
+  const newQuantity = existing?.quantity || quantity;
+  const totalItems = cart.items.reduce((sum, item) => sum + item.quantity, 0);
+
+  console.log(`[Action] Cart updated. Total items: ${totalItems}`);
+
+  // Return success with cart summary
+  return {
+    success: true,
+    message: `Added ${quantity} item(s) to cart`,
+    cart: {
+      productId,
+      previousQuantity,
+      newQuantity,
+      totalItems,
+    },
+  };
+}

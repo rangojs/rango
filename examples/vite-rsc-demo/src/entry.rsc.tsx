@@ -1,4 +1,4 @@
-import { renderToReadableStream, decodeReply, createTemporaryReferenceSet, decodeAction } from '@vitejs/plugin-rsc/rsc';
+import { renderToReadableStream, decodeReply, createTemporaryReferenceSet, decodeAction, loadServerAction } from '@vitejs/plugin-rsc/rsc';
 import { router } from './router.js';
 import { renderSegments } from 'rsc-router';
 
@@ -14,6 +14,8 @@ export type RscPayload = {
     matched?: string[];
     diff?: string[];
   };
+  returnValue?: { ok: boolean; data: any }; // Action return value
+  formState?: any; // Form state (future)
 };
 
 /**
@@ -74,30 +76,27 @@ export default async function handler(request: Request): Promise<Response> {
         throw new Error(`Failed to decode action arguments: ${error}`);
       }
 
-      // 3. Load and execute the server action
-      // Parse action ID: "/src/actions/shop.actions.ts#addToCart"
-      const [filePath, exportName] = actionId.split('#');
-      console.log(`[RSC] Loading action from: ${filePath}, export: ${exportName}`);
+      // 3. Load and execute the server action using official Vite RSC API
+      console.log(`[RSC] Loading action: ${actionId}`);
 
-      let actionResult: any;
+      let returnValue: { ok: boolean; data: any };
+      let actionStatus = 200;
+
       try {
-        // Dynamically import the action module
-        const actionModule = await import(/* @vite-ignore */ filePath);
-        const action = actionModule[exportName];
+        // Use official loadServerAction API (handles Vite's module loading)
+        const action = await loadServerAction(actionId);
 
-        if (!action || typeof action !== 'function') {
-          throw new Error(`Action ${exportName} not found in ${filePath}`);
-        }
+        console.log(`[RSC] Executing action with args:`, args);
 
-        console.log(`[RSC] Executing action with args:`, args.slice(0, 2)); // Only use first 2 args
+        // Execute the action with decoded arguments
+        const data = await action.apply(null, args);
 
-        // Execute the action (ignore the FormData at index 2)
-        actionResult = await action(...args.slice(0, 2));
-
-        console.log(`[RSC] Action executed successfully, result:`, actionResult);
+        returnValue = { ok: true, data };
+        console.log(`[RSC] Action executed successfully, result:`, data);
       } catch (error) {
         console.error(`[RSC] Action execution error:`, error);
-        throw error;
+        returnValue = { ok: false, data: error };
+        actionStatus = 500;
       }
 
       // 5. Revalidate to determine which segments need updating
@@ -107,7 +106,7 @@ export default async function handler(request: Request): Promise<Response> {
       const actionContext = {
         actionId,
         actionUrl: new URL(request.url),
-        actionResult,
+        actionResult: returnValue.data, // Pass the unwrapped result
         formData: actionFormData,
       };
 
@@ -134,12 +133,14 @@ export default async function handler(request: Request): Promise<Response> {
             matched: fullMatch.matched,
             diff: fullMatch.diff,
           },
+          returnValue, // Include action result
         };
 
         const rscStream = renderToReadableStream<RscPayload>(payload, { temporaryReferences });
 
-        console.log(`[RSC] Action complete - returning full render`);
+        console.log(`[RSC] Action complete - returning full render with returnValue`);
         return new Response(rscStream, {
+          status: actionStatus,
           headers: {
             'content-type': 'text/x-component;charset=utf-8',
           },
@@ -158,15 +159,18 @@ export default async function handler(request: Request): Promise<Response> {
           matched: matchResult.matched,
           diff: matchResult.diff,
         },
+        returnValue, // Include action result
       };
 
       const rscStream = renderToReadableStream<RscPayload>(payload, { temporaryReferences });
 
-      console.log(`[RSC] Action complete - returning updated segments`);
+      console.log(`[RSC] Action complete - returning updated segments with returnValue`);
       console.log(`[RSC] Matched: ${matchResult.matched.join(', ')}`);
       console.log(`[RSC] Diff: ${matchResult.diff.join(', ')}`);
+      console.log(`[RSC] Return value:`, returnValue);
 
       return new Response(rscStream, {
+        status: actionStatus,
         headers: {
           'content-type': 'text/x-component;charset=utf-8',
         },
@@ -218,7 +222,7 @@ export default async function handler(request: Request): Promise<Response> {
         root,
         metadata: {
           pathname: url.pathname,
-          segments: match.segments.map(s => ({ id: s.id, type: s.type, index: s.index, params: s.params })),
+          segments: match.segments, // Send full segments WITH components for initial hydration
           matched: match.matched,
           diff: match.diff,
         },

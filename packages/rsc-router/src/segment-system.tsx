@@ -1,6 +1,6 @@
-import { createElement, Fragment, type ReactNode } from 'react';
-import { OutletProvider } from './client.js';
-import type { ResolvedSegment } from './types.js';
+import { createElement, Fragment, type ReactNode } from "react";
+import { OutletProvider } from "./client.js";
+import type { ResolvedSegment } from "./types.js";
 
 /**
  * Render segments into a React tree with proper layout nesting
@@ -32,10 +32,10 @@ import type { ResolvedSegment } from './types.js';
 export function renderSegments(segments: ResolvedSegment[]): ReactNode {
   // Separate segments by type
   const layouts: ResolvedSegment[] = [];
-  const contentSegments: ResolvedSegment[] = [];  // route + parallel
+  const contentSegments: ResolvedSegment[] = []; // route + parallel
 
   for (const segment of segments) {
-    if (segment.type === 'layout') {
+    if (segment.type === "layout") {
       layouts.push(segment);
     } else {
       // Both 'route' and 'parallel' are content
@@ -58,11 +58,12 @@ export function renderSegments(segments: ResolvedSegment[]): ReactNode {
 
   // Wrap with layouts (reverse order - innermost to outermost)
   for (let i = layouts.length - 1; i >= 0; i--) {
-    const { component } = layouts[i]!;
-    content = createElement(
-      OutletProvider,
-      { content, children: component }
-    );
+    const { component, id } = layouts[i]!;
+    content = createElement(OutletProvider, {
+      key: id,
+      content,
+      children: component,
+    });
   }
 
   return content;

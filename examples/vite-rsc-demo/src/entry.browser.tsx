@@ -1,11 +1,17 @@
-import { createFromReadableStream, createFromFetch, setServerCallback, encodeReply, createTemporaryReferenceSet } from '@vitejs/plugin-rsc/browser';
-import React from 'react';
-import { hydrateRoot } from 'react-dom/client';
-import { rscStream } from 'rsc-html-stream/client';
-import type { RscPayload } from './entry.rsc.js';
-import { renderSegments, type ResolvedSegment } from 'rsc-router';
+import {
+  createFromReadableStream,
+  createFromFetch,
+  setServerCallback,
+  encodeReply,
+  createTemporaryReferenceSet,
+} from "@vitejs/plugin-rsc/browser";
+import React, { startTransition } from "react";
+import { hydrateRoot } from "react-dom/client";
+import { rscStream } from "rsc-html-stream/client";
+import type { RscPayload } from "./entry.rsc.js";
+import { renderSegments, type ResolvedSegment } from "rsc-router";
 
-console.log('[Browser] Initializing...');
+console.log("[Browser] Initializing...");
 
 // ============================================================================
 // Navigation Manager
@@ -15,7 +21,9 @@ interface NavigationManager {
   currentUrl: string;
   currentSegmentIds: string[];
   storedSegments: Map<string, ResolvedSegment>;
-  setPayload: ((payload: { root: React.ReactNode; metadata: any }) => void) | null;
+  setPayload:
+    | ((payload: { root: React.ReactNode; metadata: any }) => void)
+    | null;
 }
 
 const navigationManager: NavigationManager = {
@@ -39,72 +47,155 @@ setServerCallback(async (id: string, args: any[]) => {
 
   // 2. Build action request URL with current segments
   const url = new URL(window.location.href);
-  url.searchParams.set('_rsc_action', id);
-  url.searchParams.set('_rsc_segments', navigationManager.currentSegmentIds.join(','));
+  url.searchParams.set("_rsc_action", id);
+  url.searchParams.set(
+    "_rsc_segments",
+    navigationManager.currentSegmentIds.join(",")
+  );
 
   // 3. Encode arguments
   const encodedBody = await encodeReply(args, { temporaryReferences });
 
-  console.log(`[Browser] Encoded body type:`, typeof encodedBody, encodedBody instanceof FormData);
+  console.log(
+    `[Browser] Encoded body type:`,
+    typeof encodedBody,
+    encodedBody instanceof FormData
+  );
   console.log(`[Browser] Sending action request to: ${url.href}`);
-  console.log(`[Browser] Current segments: ${navigationManager.currentSegmentIds.join(', ')}`);
+  console.log(
+    `[Browser] Current segments: ${navigationManager.currentSegmentIds.join(", ")}`
+  );
 
   // 4. Send action request (don't await - pass promise to createFromFetch)
   const responsePromise = fetch(url, {
-    method: 'POST',
+    method: "POST",
     headers: {
-      'rsc-action': id,
-      'X-RSC-Router-Client-Path': navigationManager.currentUrl,
+      "rsc-action": id,
+      "X-RSC-Router-Client-Path": navigationManager.currentUrl,
       // Note: Don't set Content-Type if using FormData - browser will set it with boundary
     },
     body: encodedBody,
   });
 
   // 5. Deserialize response (MUST use same temporaryReferences)
-  const payload = await createFromFetch<RscPayload>(responsePromise, { temporaryReferences });
+  const payload = await createFromFetch<RscPayload>(responsePromise, {
+    temporaryReferences,
+  });
 
   console.log(`[Browser] Action response received:`, payload.metadata);
 
   // 6. Process same as partial navigation
-  const { metadata } = payload;
+  const { metadata, returnValue } = payload;
   const { matched, diff, segments, isPartial } = metadata || {};
 
+  // Log action result
+  if (returnValue) {
+    console.log(`[Browser] Action result:`, returnValue);
+    if (!returnValue.ok) {
+      console.error(`[Browser] Action failed:`, returnValue.data);
+    }
+  }
+
   if (isPartial) {
+    console.log(`[Browser] Processing partial update`);
+    console.log(
+      `[Browser] Server sent ${segments?.length || 0} segments in diff:`,
+      diff
+    );
+    console.log(`[Browser] Server expects client to have:`, matched);
+    console.log(
+      `[Browser] Client storedSegments has ${navigationManager.storedSegments.size} entries:`,
+      Array.from(navigationManager.storedSegments.keys())
+    );
+
     // Store new segments
     segments?.forEach((segment: ResolvedSegment) => {
+      console.log(`[Browser] Storing segment ${segment.id}`);
       navigationManager.storedSegments.set(segment.id, segment);
     });
 
+    console.log(
+      `[Browser] After storing, storedSegments has ${navigationManager.storedSegments.size} entries`
+    );
+
     // Rebuild from matched (source of truth)
-    const fullSegments = matched.map((id: string) =>
-      navigationManager.storedSegments.get(id)
-    ).filter(Boolean) as ResolvedSegment[];
+    const fullSegments = matched
+      .map((id: string) => {
+        const segment = navigationManager.storedSegments.get(id);
+        if (!segment) {
+          console.error(
+            `[Browser] MISSING SEGMENT: ${id} not in storedSegments!`
+          );
+        }
+        return segment;
+      })
+      .filter(Boolean) as ResolvedSegment[];
+
+    console.log(
+      `[Browser] Rebuilt ${fullSegments.length} segments from matched array`
+    );
 
     // HMR resilience check
     if (fullSegments.length < matched.length) {
       console.warn(`[Browser] Missing segments after action, refetching...`);
-      return fetchPartialUpdate(window.location.href, []);
+      console.log(`[Browser] returnValue before refetch:`, returnValue);
+
+      // Save return value before refetch
+      const savedReturnValue = returnValue;
+
+      // Refetch and update UI FIRST
+      await fetchPartialUpdate(window.location.href, []);
+      console.log(`[Browser] Refetch complete, now returning action result`);
+
+      // Return action result AFTER UI is refreshed
+      if (savedReturnValue && !savedReturnValue.ok) {
+        throw savedReturnValue.data;
+      }
+
+      const dataToReturn = savedReturnValue?.data;
+      console.log(`[Browser] Returning to React (HMR case):`, dataToReturn);
+      return dataToReturn;
     }
 
     // Update state
     navigationManager.currentSegmentIds = matched;
 
-    // Render
+    // Prepare new tree
     const newTree = renderSegments(fullSegments);
-    navigationManager.setPayload?.({ root: newTree, metadata });
 
-    console.log(`[Browser] ✓ Action complete - UI updated`);
+    // For actions: delay segment update to let React commit action state first
+    // Use queueMicrotask to schedule after current render cycle
+    const returnData = returnValue?.data;
+
+    navigationManager.setPayload?.({ root: newTree, metadata });
+    console.log(
+      `[Browser] ✓ Action complete - UI updated (after action state committed)`
+    );
+
+    // Return immediately so useActionState can process
+    console.log(
+      `[Browser] ✓ Returning action result, segments will update on next tick`
+    );
+
+    if (returnValue && !returnValue.ok) {
+      throw returnValue.data;
+    }
+
+    return returnData;
   } else {
     // Full update
     navigationManager.currentSegmentIds = matched || [];
-    navigationManager.setPayload?.(payload);
-  }
+    // navigationManager.setPayload?.(payload);
 
-  // Actions don't return values (updates happen via RSC)
-  return undefined;
+    // Return action result
+    if (returnValue && !returnValue.ok) {
+      throw returnValue.data;
+    }
+    return returnValue?.data;
+  }
 });
 
-console.log('[Browser] ✓ Server action callback registered');
+console.log("[Browser] ✓ Server action callback registered");
 
 // ============================================================================
 // Fetch Partial Update
@@ -117,19 +208,19 @@ async function fetchPartialUpdate(targetUrl?: string, segmentIds?: string[]) {
   console.log(`\n[Browser] >>> NAVIGATION`);
   console.log(`[Browser] From: ${navigationManager.currentUrl}`);
   console.log(`[Browser] To: ${url}`);
-  console.log(`[Browser] Segments to send: ${segments.join(', ')}`);
+  console.log(`[Browser] Segments to send: ${segments.join(", ")}`);
 
   // Build fetch URL with partial rendering params
   const fetchUrl = new URL(url);
-  fetchUrl.searchParams.set('_rsc_partial', 'true');
-  fetchUrl.searchParams.set('_rsc_segments', segments.join(','));
+  fetchUrl.searchParams.set("_rsc_partial", "true");
+  fetchUrl.searchParams.set("_rsc_segments", segments.join(","));
 
   console.log(`[Browser] Fetching: ${fetchUrl.pathname}${fetchUrl.search}`);
 
   // Fetch with previous URL header (don't await - pass promise to createFromFetch)
   const responsePromise = fetch(fetchUrl, {
     headers: {
-      'X-RSC-Router-Client-Path': navigationManager.currentUrl,
+      "X-RSC-Router-Client-Path": navigationManager.currentUrl,
     },
   });
 
@@ -140,12 +231,14 @@ async function fetchPartialUpdate(targetUrl?: string, segmentIds?: string[]) {
   if (payload.metadata?.isPartial) {
     // Partial update - merge segments
     const { segments, matched, diff } = payload.metadata;
-    console.log(`[Browser] Partial update - matched: ${matched?.join(', ')}`);
-    console.log(`[Browser] Diff: ${diff?.join(', ')}`);
+    console.log(`[Browser] Partial update - matched: ${matched?.join(", ")}`);
+    console.log(`[Browser] Diff: ${diff?.join(", ")}`);
 
     // If diff is empty, nothing changed - skip update!
     if (!diff || diff.length === 0) {
-      console.log(`[Browser] No changes - all revalidations returned false, keeping existing UI`);
+      console.log(
+        `[Browser] No changes - all revalidations returned false, keeping existing UI`
+      );
       // Still update URL state
       navigationManager.currentUrl = url;
       console.log(`[Browser] ✓ Navigation complete (no re-render)\n`);
@@ -159,25 +252,31 @@ async function fetchPartialUpdate(targetUrl?: string, segmentIds?: string[]) {
 
     // Build full segment list by merging
     const matchedIds = matched || [];
-    const fullSegments = matchedIds.map((id: string) => {
-      const segment = navigationManager.storedSegments.get(id);
-      if (!segment) {
-        console.warn(`[Browser] Missing segment: ${id}`);
-      }
-      return segment;
-    }).filter(Boolean) as ResolvedSegment[];
+    const fullSegments = matchedIds
+      .map((id: string) => {
+        const segment = navigationManager.storedSegments.get(id);
+        if (!segment) {
+          console.warn(`[Browser] Missing segment: ${id}`);
+        }
+        return segment;
+      })
+      .filter(Boolean) as ResolvedSegment[];
 
     // HMR RESILIENCE: Check if we're missing segments (React Refresh cleared state)
     // If any segments are missing, refetch with empty segment list (server sends all)
     if (fullSegments.length < matchedIds.length) {
       const missingCount = matchedIds.length - fullSegments.length;
-      console.warn(`[Browser] HMR detected: Missing ${missingCount} segments in storage. Refetching all segments...`);
+      console.warn(
+        `[Browser] HMR detected: Missing ${missingCount} segments in storage. Refetching all segments...`
+      );
 
       // Refetch with empty segments = tell server "I have nothing, send everything"
       return fetchPartialUpdate(url, []); // Recursive call with empty segments
     }
 
-    console.log(`[Browser] Merged segments: ${fullSegments.map(s => s.id).join(', ')}`);
+    console.log(
+      `[Browser] Merged segments: ${fullSegments.map((s) => s.id).join(", ")}`
+    );
 
     // Rebuild tree on client
     const newTree = renderSegments(fullSegments);
@@ -196,7 +295,8 @@ async function fetchPartialUpdate(targetUrl?: string, segmentIds?: string[]) {
   } else {
     // Full update (fallback)
     console.log(`[Browser] Full update (fallback)`);
-    navigationManager.currentSegmentIds = payload.metadata?.segments?.map((s: any) => s.id) || [];
+    navigationManager.currentSegmentIds =
+      payload.metadata?.segments?.map((s: any) => s.id) || [];
     navigationManager.currentUrl = url;
 
     // Store all segments (metadata segments don't have components on initial load)
@@ -220,17 +320,17 @@ function shouldInterceptLink(link: HTMLAnchorElement): boolean {
   }
 
   // Don't intercept if it has download attribute
-  if (link.hasAttribute('download')) {
+  if (link.hasAttribute("download")) {
     return false;
   }
 
   // Don't intercept if target is set
-  if (link.target && link.target !== '_self') {
+  if (link.target && link.target !== "_self") {
     return false;
   }
 
   // Don't intercept if modifier keys are pressed
-  if (link.getAttribute('data-no-intercept') === 'true') {
+  if (link.getAttribute("data-no-intercept") === "true") {
     return false;
   }
 
@@ -238,9 +338,9 @@ function shouldInterceptLink(link: HTMLAnchorElement): boolean {
 }
 
 function setupLinkInterception() {
-  document.addEventListener('click', (e) => {
+  document.addEventListener("click", (e) => {
     const target = e.target as HTMLElement;
-    const link = target.closest('a');
+    const link = target.closest("a");
 
     if (!link || !shouldInterceptLink(link)) {
       return;
@@ -250,13 +350,13 @@ function setupLinkInterception() {
     const href = link.href;
 
     // Update URL
-    window.history.pushState({}, '', href);
+    window.history.pushState({}, "", href);
 
     // Fetch partial update
     fetchPartialUpdate(href);
   });
 
-  console.log('[Browser] ✓ Link interception enabled');
+  console.log("[Browser] ✓ Link interception enabled");
 }
 
 // ============================================================================
@@ -274,11 +374,11 @@ function BrowserRoot({ initialPayload }: { initialPayload: RscPayload }) {
     setupLinkInterception();
 
     // Setup popstate listener
-    window.addEventListener('popstate', () => {
+    window.addEventListener("popstate", () => {
       fetchPartialUpdate();
     });
 
-    console.log('[Browser] ✓ Ready for navigation');
+    console.log("[Browser] ✓ Ready for navigation");
 
     return () => {
       navigationManager.setPayload = null;
@@ -293,28 +393,39 @@ function BrowserRoot({ initialPayload }: { initialPayload: RscPayload }) {
 // ============================================================================
 
 async function initializeApp() {
-  console.log('[Browser] Loading initial payload...');
+  console.log("[Browser] Loading initial payload...");
 
   // Get RSC stream from SSR-injected __FLIGHT_DATA__
   const initialPayload = await createFromReadableStream<RscPayload>(rscStream);
 
-  console.log('[Browser] Initial payload:', initialPayload.metadata);
+  console.log("[Browser] Initial payload:", initialPayload.metadata);
 
   // Initialize navigation manager
   navigationManager.currentUrl = window.location.href;
-  navigationManager.currentSegmentIds = initialPayload.metadata?.segments?.map((s: any) => s.id) || [];
+  navigationManager.currentSegmentIds =
+    initialPayload.metadata?.segments?.map((s: any) => s.id) || [];
 
-  // Store initial segments
-  initialPayload.metadata?.segments?.forEach((segment: any) => {
-    // For initial load, segments in metadata don't have components
-    // We'll need to track the actual rendered segments differently
-    // For now, just store the IDs
+  // Store initial segments WITH components in storedSegments
+  // This is critical for partial rendering to work on first navigation/action
+  initialPayload.metadata?.segments?.forEach((segment: ResolvedSegment) => {
+    console.log(`[Browser] Storing initial segment: ${segment.id}`);
+    navigationManager.storedSegments.set(segment.id, segment);
   });
 
-  console.log('[Browser] Initial segments:', navigationManager.currentSegmentIds.join(', '));
+  console.log(
+    "[Browser] Initial segments:",
+    navigationManager.currentSegmentIds.join(", ")
+  );
+  console.log(
+    `[Browser] Stored ${navigationManager.storedSegments.size} segments for partial rendering`
+  );
 
   // Hydrate
-  const root = document.getElementById('root') || document;
+  const root = document.getElementById("root") || document;
+  // Rebuild tree on client
+  const newTree = (initialPayload.root = renderSegments(
+    initialPayload.metadata!.segments
+  ));
   hydrateRoot(
     root,
     <React.StrictMode>
@@ -322,10 +433,10 @@ async function initializeApp() {
     </React.StrictMode>
   );
 
-  console.log('[Browser] ✓ Hydrated\n');
+  console.log("[Browser] ✓ Hydrated\n");
 }
 
 // Start the app
 initializeApp().catch((error) => {
-  console.error('[Browser] Initialization error:', error);
+  console.error("[Browser] Initialization error:", error);
 });
