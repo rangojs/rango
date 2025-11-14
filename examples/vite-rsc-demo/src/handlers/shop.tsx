@@ -73,9 +73,6 @@ const orders = [
  * - Alternative: Explicit import (see blog.tsx)
  * - Revalidation handlers are now type-safe for nested routes!
  */
-
-console.log('[Shop Handler] Module loaded - revalidations should be registered!');
-
 export default map<typeof shopRoutes>({
   // ← TEnv defaults to RSCRouter.Env (global)
   // ===================
