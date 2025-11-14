@@ -6,7 +6,10 @@ import { CheckoutLayout } from "../layouts/CheckoutLayout.js";
 import { AccountLayout } from "../layouts/AccountLayout.js";
 import { SegmentTimer } from "../components/SegmentTimer.js";
 import { CurrentURL } from "../components/CurrentURL.js";
-import { addToCart, getCartCount } from "../actions/shop.actions.js";
+import { AddToCartForm } from "../components/AddToCartForm.js";
+import { StreamingActionForm } from "../components/StreamingActionForm.js";
+import { addToCart, addToCartWithResult, getCartCount } from "../actions/shop.actions.js";
+import { addToCartSlowly } from "../actions/streaming.actions.js";
 
 // Mock product data
 const products = [
@@ -765,6 +768,56 @@ export default map<typeof shopRoutes>({
               <li>Cart count updates automatically via revalidation</li>
               <li>No page reload - seamless SPA experience</li>
               <li>Watch browser console for action flow!</li>
+            </ul>
+          </div>
+
+          {/* useActionState demo - official React pattern */}
+          <AddToCartForm
+            productId={product.slug}
+            action={addToCartWithResult}
+          />
+
+          <div
+            style={{
+              marginTop: "1rem",
+              padding: "0.75rem",
+              background: "#fff3cd",
+              borderRadius: "4px",
+              fontSize: "0.85rem",
+            }}
+          >
+            <strong>📦 useActionState Demo:</strong>
+            <ul style={{ margin: "0.5rem 0 0 0", paddingLeft: "1.5rem" }}>
+              <li>Green button uses <code>useActionState</code> hook</li>
+              <li>Action returns validation results and cart summary</li>
+              <li>State persists across renders</li>
+              <li>Try clicking multiple times to see quantity increase!</li>
+              <li>Progressive enhancement ready (works without JS)</li>
+            </ul>
+          </div>
+
+          {/* Streaming Promise demo with Suspense */}
+          <StreamingActionForm
+            productId={product.slug}
+            action={addToCartSlowly}
+          />
+
+          <div
+            style={{
+              marginTop: "1rem",
+              padding: "0.75rem",
+              background: "#e8f4f8",
+              borderRadius: "4px",
+              fontSize: "0.85rem",
+            }}
+          >
+            <strong>🌊 Promise Streaming Demo:</strong>
+            <ul style={{ margin: "0.5rem 0 0 0", paddingLeft: "1.5rem" }}>
+              <li>Red button returns a Promise (not awaited on server)</li>
+              <li>Promise streams to client via RSC</li>
+              <li>Suspense boundary shows loading state</li>
+              <li>Resolves after 3 seconds on the client!</li>
+              <li>Tests advanced RSC streaming capabilities</li>
             </ul>
           </div>
         </div>
