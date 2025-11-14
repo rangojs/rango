@@ -224,12 +224,15 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     }
 
     // Check for revalidate: $revalidate.routeName.name
+    // Format: $revalidate.products.detail.demo → routeName: "products.detail", name: "demo"
     if (key.startsWith('$revalidate.')) {
       const parts = key.split('.');
       if (parts.length >= 3) {
-        const routeName = parts[1];
+        // Extract: everything between '$revalidate.' and the last part (which is the name)
+        const name = parts[parts.length - 1]; // Last part is always the name
+        const routeNameParts = parts.slice(1, -1); // Everything between $revalidate. and .name
+        const routeName = routeNameParts.join('.'); // Rejoin for nested routes
         const isGlobal = routeName === '*';
-        const name = parts[2];
         return { type: 'revalidate', global: isGlobal, routeName: isGlobal ? undefined : routeName, name };
       }
     }
@@ -509,19 +512,26 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     const global: any[] = [];
     const perRoute: any[] = [];
 
+    console.log(`[Router.extractRevalidations] Looking for route key: "${routeKey}"`);
+
     const keys = Reflect.ownKeys(loadedHandlers);
     for (const key of keys) {
       const keyInfo = getKeyType(key);
       if (keyInfo?.type === 'revalidate') {
         const fn = loadedHandlers[key as any];
+        console.log(`[Router.extractRevalidations] Found revalidation: "${keyInfo.routeName}" (global: ${keyInfo.global})`);
         if (keyInfo.global) {
           global.push({ name: keyInfo.name, fn });
         } else if (keyInfo.routeName === routeKey) {
+          console.log(`[Router.extractRevalidations] ✓ MATCHED route-specific revalidation for "${routeKey}"`);
           perRoute.push({ name: keyInfo.name, fn });
+        } else {
+          console.log(`[Router.extractRevalidations] ✗ Skipped - "${keyInfo.routeName}" !== "${routeKey}"`);
         }
       }
     }
 
+    console.log(`[Router.extractRevalidations] Result: ${global.length} global, ${perRoute.length} per-route`);
     return { global, perRoute };
   }
 
@@ -530,7 +540,13 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
    */
   async function matchPartial(
     request: Request,
-    context: TEnv
+    context: TEnv,
+    actionContext?: {
+      actionId?: string;
+      actionUrl?: URL;
+      actionResult?: any;
+      formData?: FormData;
+    }
   ): Promise<MatchResult | null> {
     const url = new URL(request.url);
     const pathname = url.pathname;
@@ -679,6 +695,12 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             nextUrl: url,
             defaultShouldRevalidate: currentSuggestion,
             context,
+            // Action context (only populated when triggered by server action)
+            actionId: actionContext?.actionId,
+            actionUrl: actionContext?.actionUrl,
+            actionResult: actionContext?.actionResult,
+            formData: actionContext?.formData,
+            method: request.method, // GET for navigation, POST for actions
           });
 
           // Check if hard decision (boolean) or soft decision (object)

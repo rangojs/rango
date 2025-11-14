@@ -1520,6 +1520,233 @@ const requestCounts = new Map();
 ]
 ```
 
+## Server Actions
+
+Server Actions enable server-side mutations with automatic revalidation and seamless client updates.
+
+### Basic Usage
+
+```typescript
+// actions/shop.actions.ts
+'use server'
+
+export async function addToCart(productId: string, quantity: number = 1) {
+  // Perform server-side mutation (database, cache, etc.)
+  await db.cart.add({ productId, quantity });
+
+  // No return value needed - revalidation handles UI updates
+}
+
+export async function removeFromCart(productId: string) {
+  await db.cart.remove(productId);
+}
+```
+
+### Using Actions in Components
+
+```typescript
+// handlers/shop.tsx
+import { addToCart } from '../actions/shop.actions.js';
+
+export default map<typeof shopRoutes>({
+  'products.detail': async (ctx) => {
+    const product = await getProduct(ctx.params.slug);
+    const cartCount = await getCartCount(); // Server-side data fetch
+
+    return (
+      <div>
+        <h2>{product.name}</h2>
+        <p>Cart: {cartCount} items</p>
+
+        {/* Server Action Form */}
+        <form>
+          <button formAction={addToCart.bind(null, product.id, 1)}>
+            Add to Cart
+          </button>
+        </form>
+      </div>
+    );
+  }
+});
+```
+
+### How Server Actions Work
+
+**Flow:**
+1. User clicks button/submits form
+2. React calls `setServerCallback(actionId, args)`
+3. Client serializes args with `encodeReply(args, { temporaryReferences })`
+4. POST request sent with:
+   - `rsc-action` header: action ID
+   - `_rsc_segments`: current segment IDs
+   - `X-RSC-Router-Client-Path`: current URL
+   - Body: encoded arguments
+5. Server:
+   - Decodes args with `decodeReply(body, { temporaryReferences })`
+   - Loads and executes action via `import.meta.viteRsc.loadServerAction(actionId)`
+   - Runs revalidation via `router.matchPartial()`
+   - Returns RSC payload with updated segments
+6. Client:
+   - Deserializes response with `createFromFetch(response, { temporaryReferences })`
+   - Merges new segments with stored segments
+   - Updates UI automatically
+
+**Key Points:**
+- Actions return `undefined` - UI updates via revalidation
+- Use same `temporaryReferences` for encode/decode pairs
+- Actions trigger partial revalidation (only changed segments re-render)
+- Reuses existing partial navigation infrastructure
+- HMR resilient (automatic refetch on missing segments)
+
+### Action Request Protocol
+
+**Client Request:**
+```typescript
+POST /shop/product/shoe-1?_rsc_action=actions/shop.actions!addToCart&_rsc_segments=L0.4,R1.4
+Headers:
+  rsc-action: actions/shop.actions!addToCart
+  X-RSC-Router-Client-Path: /shop/product/shoe-1
+Body: <encoded arguments>
+```
+
+**Server Response:**
+```typescript
+{
+  root: null,  // Client rebuilds tree
+  metadata: {
+    pathname: "/shop/product/shoe-1",
+    segments: [ResolvedSegment<R1.4>],  // Only changed segments
+    isPartial: true,
+    matched: ['L0.4', 'R1.4'],  // All segment IDs
+    diff: ['R1.4']  // Only revalidated segment IDs
+  }
+}
+```
+
+### Progressive Enhancement
+
+Server Actions work with standard HTML forms:
+
+```typescript
+// Without JavaScript - full page reload
+<form action={addToCart.bind(null, productId, 1)}>
+  <button type="submit">Add to Cart</button>
+</form>
+
+// With JavaScript - SPA navigation
+<form>
+  <button formAction={addToCart.bind(null, productId, 1)}>
+    Add to Cart
+  </button>
+</form>
+```
+
+### Integration with Revalidation
+
+Actions trigger the same revalidation logic as navigation, with additional action context:
+
+```typescript
+export default map<typeof shopRoutes>({
+  // Action-aware revalidation - smart decisions based on what triggered it
+  [revalidate('products.detail')]: ({
+    currentParams,
+    nextParams,
+    method,
+    actionId
+  }) => {
+    // If triggered by addToCart action → always revalidate (cart count changed)
+    if (method === 'POST' && actionId?.includes('addToCart')) {
+      console.log('Action triggered - revalidating for fresh cart count');
+      return true;
+    }
+
+    // Regular navigation → only revalidate if slug changed
+    return currentParams.slug !== nextParams.slug;
+  },
+
+  'products.detail': async (ctx) => {
+    const product = await getProduct(ctx.params.slug);
+    const cartCount = await getCartCount(); // ← Updates after addToCart action
+
+    return <ProductDetail product={product} cartCount={cartCount} />;
+  }
+});
+```
+
+**Revalidation Context Fields:**
+- `method`: `'GET'` for navigation, `'POST'` for actions
+- `actionId`: Action identifier (e.g., `"actions/shop.actions!addToCart"`)
+- `actionUrl`: URL where action was executed
+- `actionResult`: Return value from action
+- `formData`: FormData from action request
+
+### Data Fetching Helpers
+
+Non-action functions can be exported for server-side data fetching:
+
+```typescript
+'use server'
+
+// Action - triggers revalidation
+export async function addToCart(productId: string, quantity: number) {
+  await db.cart.add({ productId, quantity });
+}
+
+// Helper - just fetches data (no revalidation)
+export async function getCartCount(): Promise<number> {
+  const cart = await db.cart.get();
+  return cart.items.length;
+}
+
+export async function getCartItems() {
+  return await db.cart.getItems();
+}
+```
+
+### Error Handling
+
+```typescript
+'use server'
+
+export async function addToCart(productId: string, quantity: number) {
+  // Errors are caught by the router and sanitized in production
+  if (quantity < 1) {
+    throw new Error('Quantity must be at least 1');
+  }
+
+  const product = await db.products.get(productId);
+  if (!product) {
+    throw new Error('Product not found');
+  }
+
+  if (product.stock < quantity) {
+    throw new Error('Insufficient stock');
+  }
+
+  await db.cart.add({ productId, quantity });
+}
+```
+
+### Implementation Files
+
+**Server:** `entry.rsc.tsx`
+- Action detection via `rsc-action` header
+- Action loading via `import.meta.viteRsc.loadServerAction()`
+- Argument decoding with temporaryReferences
+- Revalidation after action execution
+
+**Client:** `entry.browser.tsx`
+- `setServerCallback()` registration
+- Argument encoding with temporaryReferences
+- POST request with action ID and current segments
+- Response deserialization and UI update
+
+**Actions:** `actions/*.actions.ts`
+- `'use server'` directive
+- Export action functions
+- Perform mutations
+- No return values needed
+
 ## Loading & Error Boundaries (Future)
 
 ```typescript
