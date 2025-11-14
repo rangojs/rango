@@ -85,6 +85,20 @@ async function fetchPartialUpdate(targetUrl?: string) {
       return segment;
     }).filter(Boolean) as ResolvedSegment[];
 
+    // HMR RESILIENCE: Check if we're missing segments (React Refresh cleared state)
+    // If any segments are missing, do a full fetch instead of partial merge
+    if (fullSegments.length < matchedIds.length) {
+      const missingCount = matchedIds.length - fullSegments.length;
+      console.warn(`[Browser] HMR detected: Missing ${missingCount} segments in storage. Doing full fetch...`);
+
+      // Fall back to full render - remove _rsc_partial to force full render
+      const fullUrl = new URL(url);
+      fullUrl.searchParams.delete('_rsc_partial');
+      fullUrl.searchParams.delete('_rsc_segments');
+      window.location.href = fullUrl.href; // Full page reload
+      return;
+    }
+
     console.log(`[Browser] Merged segments: ${fullSegments.map(s => s.id).join(', ')}`);
 
     // Rebuild tree on client

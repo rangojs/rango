@@ -8,10 +8,20 @@
 export { createRSCRouter, type RSCRouter } from './router.js';
 
 // Route definitions and helper functions
-export { route, map, layout, parallel, middleware, revalidate } from './route-definition.js';
+export { route, map, layout, parallel, middleware, revalidate, redirect } from './route-definition.js';
 
 // Segment system
 export { renderSegments } from './segment-system.js';
+
+// Error classes and utilities
+export {
+  RouteNotFoundError,
+  MiddlewareError,
+  HandlerError,
+  BuildError,
+  InvalidHandlerError,
+  sanitizeError,
+} from './errors.js';
 
 // Types
 export type {

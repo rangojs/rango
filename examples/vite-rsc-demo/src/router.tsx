@@ -1,5 +1,5 @@
 import { createRSCRouter, type RouterEnv } from 'rsc-router';
-import { homeRoutes, blogRoutes, aboutRoutes, dashboardRoutes, shopRoutes, adminRoutes } from './routes.js';
+import { homeRoutes, blogRoutes, aboutRoutes, dashboardRoutes, shopRoutes, adminRoutes, protectedRoutes } from './routes.js';
 
 /**
  * Platform bindings (Cloudflare Workers, environment variables, etc.)
@@ -66,6 +66,9 @@ router
   .map(() => import('./handlers/shop.js'))
 
   .route('/admin', adminRoutes)  // Admin - demonstrates soft/hard revalidation
-  .map(() => import('./handlers/admin.js'));
+  .map(() => import('./handlers/admin.js'))
 
-console.log('[Router] Configured with 6 route groups (lazy-loaded handlers)');
+  .route('/protected', protectedRoutes)  // Protected - demonstrates middleware short-circuit
+  .map(() => import('./handlers/protected.js'));
+
+console.log('[Router] Configured with 7 route groups (lazy-loaded handlers)');
