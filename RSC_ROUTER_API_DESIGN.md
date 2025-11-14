@@ -1679,6 +1679,19 @@ export default map<typeof shopRoutes>({
 - `actionUrl`: URL where action was executed
 - `actionResult`: Return value from action
 - `formData`: FormData from action request
+- `routeName`: Route name where action was executed (e.g., `"products.detail"`, `"cart"`)
+
+**Example - Conditional revalidation based on route:**
+```typescript
+[revalidate('cart')]: ({ routeName, actionId, method }) => {
+  // Only revalidate cart if action came from product detail page
+  if (method === 'POST' && routeName === 'products.detail') {
+    console.log(`Cart action from ${routeName} - revalidating`);
+    return true;
+  }
+  return false; // Actions from other routes don't affect cart display
+}
+```
 
 ### Data Fetching Helpers
 

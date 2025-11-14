@@ -253,12 +253,17 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
   nextUrl: URL;
   defaultShouldRevalidate: boolean;
   context: HandlerContext<TParams, TEnv>;
+  // Segment metadata (which segment is being evaluated):
+  segmentType: 'layout' | 'route' | 'parallel';
+  layoutName?: string;      // Layout name (e.g., "root", "shop", "auth") - only for layouts
+  slotName?: string;        // Slot name (e.g., "@sidebar", "@modal") - only for parallels
   // Action context (populated when revalidation triggered by server action):
   actionId?: string;        // Action identifier (e.g., "actions/shop.actions!addToCart")
   actionUrl?: URL;          // URL where action was executed
   actionResult?: any;       // Return value from action execution
   formData?: FormData;      // FormData from action request
   method?: string;          // Request method: 'GET' for navigation, 'POST' for actions
+  routeName?: string;       // Route name where action was executed (e.g., "products.detail")
 }) => boolean | { defaultShouldRevalidate: boolean };
 
 /**
@@ -356,6 +361,8 @@ export interface ResolvedSegment {
   component: ReactNode;
   params?: Record<string, string>;
   slot?: string; // For parallel routes: '@sidebar', '@modal', etc.
+  isGlobal?: boolean; // For layouts/parallels: true if defined with '*', false if route-specific
+  layoutName?: string; // For layouts: the layout name identifier
 }
 
 /**

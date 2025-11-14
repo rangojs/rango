@@ -176,35 +176,42 @@ export default map<typeof shopRoutes>({
     return { defaultShouldRevalidate };
   },
 
-  // Product detail - action-aware revalidation
-  // Demonstrates smart revalidation based on action context
+  // Product detail - segment-aware revalidation demo
+  // Demonstrates per-segment revalidation with full context
   [revalidate("products.detail", "demo")]: ({
     currentParams,
     nextParams,
-    currentUrl,
-    nextUrl,
     defaultShouldRevalidate,
     method,
     actionId,
-    actionUrl,
+    routeName,
+    segmentType,
+    layoutName,
+    slotName,
   }) => {
-    console.log("[Shop] Product detail revalidation demo:");
-    console.log("  - Current slug:", currentParams.slug);
-    console.log("  - Next slug:", nextParams.slug);
+    console.log("[Shop] Product detail revalidation:");
+    console.log("  - Segment type:", segmentType);
+    console.log("  - Layout name:", layoutName || 'n/a');
+    console.log("  - Slot name:", slotName || 'n/a');
+    console.log("  - Method:", method);
     console.log("  - defaultShouldRevalidate:", defaultShouldRevalidate);
-    console.log("  - Request method:", method);
-    console.log("  - Action ID:", actionId || 'none (navigation)');
+    console.log("  - Action ID:", actionId || 'none');
+    console.log("  - Route name:", routeName);
 
-    // Action-aware revalidation:
-    // If triggered by addToCart action → always revalidate (cart count changed)
-    // If regular navigation → defer to default (revalidate only if slug changed)
-    if (method === 'POST' && actionId?.includes('addToCart')) {
-      console.log("  ⮑ Action triggered (addToCart) - forcing revalidation");
-      return true; // Cart count changed, must refresh
+    if (method === 'POST') {
+      if (segmentType === 'layout') {
+        console.log(`  ⮑ Layout "${layoutName}" - default=${defaultShouldRevalidate} (route-specific only)`);
+      } else if (segmentType === 'parallel') {
+        console.log(`  ⮑ Parallel slot "${slotName}" - default=${defaultShouldRevalidate} (route-specific only)`);
+      } else {
+        console.log(`  ⮑ Route segment - default=${defaultShouldRevalidate} (always TRUE for actions)`);
+      }
+    } else {
+      console.log(`  ⮑ Navigation - default=${defaultShouldRevalidate} (params changed: ${defaultShouldRevalidate})`);
     }
 
-    console.log("  ⮑ Navigation - using default behavior");
-    return defaultShouldRevalidate; // true if slug changed, false if only query changed
+    // Defer to smart defaults
+    return defaultShouldRevalidate;
   },
 
   // Cart - always revalidate (fresh data)
