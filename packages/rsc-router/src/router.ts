@@ -371,9 +371,13 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       if (typeof key === 'string' && !key.startsWith('$')) {
         // It's a route handler (not a metadata key)
         if (key === routeKey) {
-          // Combine global layouts + per-route layouts
-          const allLayouts = [...globalLayouts, ...perRouteLayouts];
-          for (const layout of allLayouts) {
+          // Combine global layouts + per-route layouts (track which are global)
+          const allLayouts: Array<{ component: ReactNode | Handler; isGlobal: boolean; name?: string }> = [
+            ...globalLayouts.map((c, i) => ({ component: c, isGlobal: true, name: `global-${i}` })),
+            ...perRouteLayouts.map((c, i) => ({ component: c, isGlobal: false, name: `route-${i}` }))
+          ];
+
+          for (const { component: layout, isGlobal, name } of allLayouts) {
             // Check if layout is a handler function
             const component = typeof layout === 'function'
               ? await layout(context)
@@ -384,6 +388,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
               type: 'layout',
               index,
               component,
+              isGlobal, // Track if global or route-specific
+              layoutName: name, // Layout identifier
             });
             index++;
           }
@@ -412,10 +418,14 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             }
           }
 
-          // Process parallel routes (merge global + per-route)
-          const mergedParallel = { ...globalParallel, ...perRouteParallel };
-          if (Object.keys(mergedParallel).length > 0) {
-            for (const [slot, parallelHandler] of Object.entries(mergedParallel)) {
+          // Process parallel routes (track global vs route-specific)
+          const allParallels: Array<{ slot: string; handler: Handler; isGlobal: boolean }> = [
+            ...Object.entries(globalParallel).map(([slot, handler]) => ({ slot, handler, isGlobal: true })),
+            ...Object.entries(perRouteParallel).map(([slot, handler]) => ({ slot, handler, isGlobal: false }))
+          ];
+
+          if (allParallels.length > 0) {
+            for (const { slot, handler: parallelHandler, isGlobal } of allParallels) {
               const component = await parallelHandler(context);
               segments.push({
                 id: `P${index}.${entry.registrationId}`,
@@ -424,6 +434,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
                 component,
                 params,
                 slot,
+                isGlobal, // Track if global or route-specific
               });
               index++;
             }
@@ -659,23 +670,31 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         continue;
       }
 
-      // Layouts are essential UI structure - always include them
-      // They don't have params so param-based revalidation doesn't work
-      if (segment.type === 'layout') {
-        console.log(`[Router.matchPartial] ${segment.id}: LAYOUT - always including`);
-        segmentsToRender.push(segment);
-        continue;
-      }
-
       // Client has this segment - determine if it needs revalidation
       const prevSegment = prevSegments.find((s) => s.id === segment.id);
 
-      // Calculate default revalidation (true if params changed)
+      // Calculate default revalidation based on segment type and request method
       const prevParams = prevSegment?.params || {};
       const nextParams = segment.params || {};
-      const defaultShouldRevalidate =
+      const paramsChanged =
         Object.keys(nextParams).length !== Object.keys(prevParams).length ||
         Object.keys(nextParams).some((key) => nextParams[key] !== prevParams[key]);
+
+      let defaultShouldRevalidate: boolean;
+
+      if (request.method === 'POST') {
+        // Actions: revalidate route-specific segments, skip global ones
+        if (segment.type === 'layout' || segment.type === 'parallel') {
+          // For layouts/parallels: only revalidate if route-specific (not global)
+          defaultShouldRevalidate = segment.isGlobal === false;
+        } else {
+          // Routes always revalidate on actions
+          defaultShouldRevalidate = true;
+        }
+      } else {
+        // Navigation: revalidate if params changed
+        defaultShouldRevalidate = paramsChanged;
+      }
 
       // Execute revalidation functions with soft/hard decision pattern
       // Order: global functions first, then route-specific functions
@@ -695,12 +714,17 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             nextUrl: url,
             defaultShouldRevalidate: currentSuggestion,
             context,
+            // Segment metadata (which segment is being evaluated)
+            segmentType: segment.type,
+            layoutName: segment.layoutName,
+            slotName: segment.slot,
             // Action context (only populated when triggered by server action)
             actionId: actionContext?.actionId,
             actionUrl: actionContext?.actionUrl,
             actionResult: actionContext?.actionResult,
             formData: actionContext?.formData,
             method: request.method, // GET for navigation, POST for actions
+            routeName: nextMatch.routeKey, // User-friendly route name (e.g., "products.detail")
           });
 
           // Check if hard decision (boolean) or soft decision (object)
