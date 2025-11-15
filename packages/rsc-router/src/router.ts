@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import { RouteNotFoundError, sanitizeError } from './errors.js';
+import type { ReactNode } from "react";
+import { RouteNotFoundError, sanitizeError } from "./errors.js";
 import type {
   RouteDefinition,
   ResolvedRouteMap,
@@ -9,7 +9,7 @@ import type {
   MatchResult,
   RouteEntry,
   Handler,
-} from './types.js';
+} from "./types.js";
 
 /**
  * Router builder for chaining .use() and .map()
@@ -75,7 +75,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     // This ensures handlers only see user-facing query params
     const cleanSearchParams = new URLSearchParams();
     searchParams.forEach((value, key) => {
-      if (!key.startsWith('_rsc')) {
+      if (!key.startsWith("_rsc")) {
         cleanSearchParams.set(key, value);
       }
     });
@@ -87,16 +87,16 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     return {
       params,
       request,
-      searchParams: cleanSearchParams,  // Filtered params
+      searchParams: cleanSearchParams, // Filtered params
       pathname,
-      url: cleanUrl,                    // Clean URL
+      url: cleanUrl, // Clean URL
       env: bindings,
       var: variables,
       get: (key: string) => variables[key],
       set: (key: string, value: any) => {
         variables[key] = value;
       },
-      _originalRequest: request,        // Raw request for advanced use
+      _originalRequest: request, // Raw request for advanced use
     };
   }
 
@@ -109,20 +109,20 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
   } {
     const paramNames: string[] = [];
     const regexPattern = pattern
-      .split('/')
+      .split("/")
       .map((segment) => {
-        if (segment.startsWith(':')) {
+        if (segment.startsWith(":")) {
           const paramName = segment.slice(1);
           paramNames.push(paramName);
-          return '([^/]+)';
+          return "([^/]+)";
         }
-        if (segment === '*') {
-          paramNames.push('*');
-          return '(.*)';
+        if (segment === "*") {
+          paramNames.push("*");
+          return "(.*)";
         }
         return segment;
       })
-      .join('/');
+      .join("/");
 
     return {
       regex: new RegExp(`^${regexPattern}$`),
@@ -144,9 +144,9 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       for (const [routeKey, pattern] of routeEntries) {
         // Join prefix and pattern, handling edge cases
         let fullPattern: string;
-        if (entry.prefix === '' || entry.prefix === '/') {
+        if (entry.prefix === "" || entry.prefix === "/") {
           fullPattern = pattern;
-        } else if (pattern === '/' || pattern === '') {
+        } else if (pattern === "/" || pattern === "") {
           fullPattern = entry.prefix;
         } else {
           fullPattern = entry.prefix + pattern;
@@ -158,7 +158,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         if (match) {
           const params: Record<string, string> = {};
           paramNames.forEach((name, index) => {
-            params[name] = match[index + 1] || '';
+            params[name] = match[index + 1] || "";
           });
 
           return { entry, routeKey, params };
@@ -177,7 +177,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       | HandlersForRouteMap<any, TEnv>
       | (() => Promise<{ default: HandlersForRouteMap<any, TEnv> }>)
   ): Promise<HandlersForRouteMap<any, TEnv>> {
-    if (typeof handlers === 'function') {
+    if (typeof handlers === "function") {
       const module = await handlers();
       return module.default;
     }
@@ -187,63 +187,85 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
   /**
    * Helper to detect if a key is a route metadata key
    */
-  function getKeyType(key: string | symbol):
-    | { type: 'layout' | 'parallel' | 'middleware' | 'revalidate'; global: boolean; routeName?: string; name?: string }
-    | null {
-    if (typeof key !== 'string') return null;
+  function getKeyType(key: string | symbol): {
+    type: "layout" | "parallel" | "middleware" | "revalidate";
+    global: boolean;
+    routeName?: string;
+    name?: string;
+  } | null {
+    if (typeof key !== "string") return null;
 
     // New pattern-based format: $layout.{routeName}.{layoutName}
     // Check for layout keys: $layout.*.layoutName or $layout.routeName.layoutName
     // For nested routes: $layout.products.detail.breadcrumbs → routeName: "products.detail", name: "breadcrumbs"
-    if (key.startsWith('$layout.')) {
-      const parts = key.split('.');
+    if (key.startsWith("$layout.")) {
+      const parts = key.split(".");
       if (parts.length >= 3) {
         // Last part is always the layout name
         const layoutName = parts[parts.length - 1];
         // Everything between $layout. and .layoutName is the routeName
         const routeNameParts = parts.slice(1, -1);
-        const routeName = routeNameParts.join('.');
-        const isGlobal = routeName === '*';
-        return { type: 'layout', global: isGlobal, routeName: isGlobal ? undefined : routeName, name: layoutName };
+        const routeName = routeNameParts.join(".");
+        const isGlobal = routeName === "*";
+        return {
+          type: "layout",
+          global: isGlobal,
+          routeName: isGlobal ? undefined : routeName,
+          name: layoutName,
+        };
       }
     }
 
     // Check for parallel keys: $parallel.*.name or $parallel.routeName.name
     // For nested routes: $parallel.products.detail.slots → routeName: "products.detail", name: "slots"
-    if (key.startsWith('$parallel.')) {
-      const parts = key.split('.');
+    if (key.startsWith("$parallel.")) {
+      const parts = key.split(".");
       if (parts.length >= 3) {
         // Last part is the parallel group name
         const parallelName = parts[parts.length - 1];
         // Everything between $parallel. and .name is the routeName
         const routeNameParts = parts.slice(1, -1);
-        const routeName = routeNameParts.join('.');
-        const isGlobal = routeName === '*';
-        return { type: 'parallel', global: isGlobal, routeName: isGlobal ? undefined : routeName, name: parallelName };
+        const routeName = routeNameParts.join(".");
+        const isGlobal = routeName === "*";
+        return {
+          type: "parallel",
+          global: isGlobal,
+          routeName: isGlobal ? undefined : routeName,
+          name: parallelName,
+        };
       }
     }
 
     // Check for middleware keys: $middleware.*.name or $middleware.routeName.name
-    if (key.startsWith('$middleware.')) {
-      const parts = key.split('.');
+    if (key.startsWith("$middleware.")) {
+      const parts = key.split(".");
       if (parts.length >= 3) {
         const routeName = parts[1];
-        const isGlobal = routeName === '*';
-        return { type: 'middleware', global: isGlobal, routeName: isGlobal ? undefined : routeName };
+        const isGlobal = routeName === "*";
+        return {
+          type: "middleware",
+          global: isGlobal,
+          routeName: isGlobal ? undefined : routeName,
+        };
       }
     }
 
     // Check for revalidate: $revalidate.routeName.name
     // Format: $revalidate.products.detail.demo → routeName: "products.detail", name: "demo"
-    if (key.startsWith('$revalidate.')) {
-      const parts = key.split('.');
+    if (key.startsWith("$revalidate.")) {
+      const parts = key.split(".");
       if (parts.length >= 3) {
         // Extract: everything between '$revalidate.' and the last part (which is the name)
         const name = parts[parts.length - 1]; // Last part is always the name
         const routeNameParts = parts.slice(1, -1); // Everything between $revalidate. and .name
-        const routeName = routeNameParts.join('.'); // Rejoin for nested routes
-        const isGlobal = routeName === '*';
-        return { type: 'revalidate', global: isGlobal, routeName: isGlobal ? undefined : routeName, name };
+        const routeName = routeNameParts.join("."); // Rejoin for nested routes
+        const isGlobal = routeName === "*";
+        return {
+          type: "revalidate",
+          global: isGlobal,
+          routeName: isGlobal ? undefined : routeName,
+          name,
+        };
       }
     }
 
@@ -278,11 +300,16 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         // Check if middleware short-circuited with Response
         if (result instanceof Response) {
           earlyResponse = result;
-          console.log(`[Router.executeMiddleware] Middleware returned Response - short-circuit`);
+          console.log(
+            `[Router.executeMiddleware] Middleware returned Response - short-circuit`
+          );
         }
       } catch (error) {
         // Middleware threw error - propagate it
-        console.error(`[Router.executeMiddleware] Middleware threw error:`, error);
+        console.error(
+          `[Router.executeMiddleware] Middleware threw error:`,
+          error
+        );
         throw error;
       }
     };
@@ -308,12 +335,18 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     let index = 0;
 
     // Track global metadata (wildcard '*' routes)
-    const globalLayouts: Array<{ component: ReactNode | Handler; name: string }> = [];
+    const globalLayouts: Array<{
+      component: ReactNode | Handler;
+      name: string;
+    }> = [];
     const globalParallel: Record<string, Handler> = {};
     const globalMiddleware: any[] = [];
 
     // Track per-route metadata (specific to routeKey)
-    const perRouteLayouts: Array<{ component: ReactNode | Handler; name: string }> = [];
+    const perRouteLayouts: Array<{
+      component: ReactNode | Handler;
+      name: string;
+    }> = [];
     const perRouteParallel: Record<string, Handler> = {};
     const perRouteMiddleware: any[] = [];
 
@@ -327,17 +360,23 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
       const value = handlers[key as any];
 
-      if (keyInfo.type === 'layout') {
-        const layouts = Array.isArray(value) ? (value as unknown as (ReactNode | Handler)[]) : [value as unknown as (ReactNode | Handler)];
-        const layoutName = keyInfo.name || 'unnamed';
+      if (keyInfo.type === "layout") {
+        const layouts = Array.isArray(value)
+          ? (value as unknown as (ReactNode | Handler)[])
+          : [value as unknown as ReactNode | Handler];
+        const layoutName = keyInfo.name || "unnamed";
         if (keyInfo.global) {
           // Global: Add to global layouts with name
-          globalLayouts.push(...layouts.map(component => ({ component, name: layoutName })));
+          globalLayouts.push(
+            ...layouts.map((component) => ({ component, name: layoutName }))
+          );
         } else if (keyInfo.routeName === routeKey) {
           // Per-route: Only add if routeName matches current routeKey
-          perRouteLayouts.push(...layouts.map(component => ({ component, name: layoutName })));
+          perRouteLayouts.push(
+            ...layouts.map((component) => ({ component, name: layoutName }))
+          );
         }
-      } else if (keyInfo.type === 'parallel') {
+      } else if (keyInfo.type === "parallel") {
         const slots = value as unknown as Record<string, Handler>;
         if (keyInfo.global) {
           // Global: Merge into global parallel
@@ -346,7 +385,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           // Per-route: Only add if routeName matches current routeKey
           Object.assign(perRouteParallel, slots);
         }
-      } else if (keyInfo.type === 'middleware') {
+      } else if (keyInfo.type === "middleware") {
         const middlewareFns = value as any[];
         if (keyInfo.global) {
           // Global middleware: Apply to all routes
@@ -364,12 +403,19 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     if (!skipMiddleware) {
       const allMiddleware = [...globalMiddleware, ...perRouteMiddleware];
       if (allMiddleware.length > 0) {
-        console.log(`[Router.buildSegments] Executing ${allMiddleware.length} middleware for route: ${routeKey}`);
-        const middlewareResponse = await executeMiddleware(allMiddleware, context);
+        console.log(
+          `[Router.buildSegments] Executing ${allMiddleware.length} middleware for route: ${routeKey}`
+        );
+        const middlewareResponse = await executeMiddleware(
+          allMiddleware,
+          context
+        );
 
         // If middleware returned Response, short-circuit the pipeline
         if (middlewareResponse) {
-          console.log(`[Router.buildSegments] Middleware short-circuited with Response`);
+          console.log(
+            `[Router.buildSegments] Middleware short-circuited with Response`
+          );
           throw middlewareResponse; // Propagate Response to be caught by caller
         }
 
@@ -379,24 +425,35 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
     // PASS 2: Process route handlers
     for (const key of keys) {
-      if (typeof key === 'string' && !key.startsWith('$')) {
+      if (typeof key === "string" && !key.startsWith("$")) {
         // It's a route handler (not a metadata key)
         if (key === routeKey) {
           // Combine global layouts + per-route layouts
-          const allLayouts: Array<{ component: ReactNode | Handler; isGlobal: boolean; name: string }> = [
-            ...globalLayouts.map(({ component, name }) => ({ component, isGlobal: true, name })),
-            ...perRouteLayouts.map(({ component, name }) => ({ component, isGlobal: false, name }))
+          const allLayouts: Array<{
+            component: ReactNode | Handler;
+            isGlobal: boolean;
+            name: string;
+          }> = [
+            ...globalLayouts.map(({ component, name }) => ({
+              component,
+              isGlobal: true,
+              name,
+            })),
+            ...perRouteLayouts.map(({ component, name }) => ({
+              component,
+              isGlobal: false,
+              name,
+            })),
           ];
 
           for (const { component: layout, isGlobal, name } of allLayouts) {
             // Check if layout is a handler function
-            const component = typeof layout === 'function'
-              ? await layout(context)
-              : layout;
+            const component =
+              typeof layout === "function" ? await layout(context) : layout;
 
             segments.push({
               id: `L${index}.${entry.registrationId}`,
-              type: 'layout',
+              type: "layout",
               index,
               component,
               isGlobal, // Track if global or route-specific
@@ -412,16 +469,18 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
               const component = await handler(context);
               segments.push({
                 id: `R${index}.${entry.registrationId}`,
-                type: 'route',
-              index,
-              component,
-              params,
-            });
+                type: "route",
+                index,
+                component,
+                params,
+              });
               index++;
             } catch (error) {
               // Handler can throw Response as escape hatch (e.g., throw redirect('/login'))
               if (error instanceof Response) {
-                console.log(`[Router.buildSegments] Handler threw Response - propagating`);
+                console.log(
+                  `[Router.buildSegments] Handler threw Response - propagating`
+                );
                 throw error;
               }
               // Re-throw actual errors
@@ -430,17 +489,33 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           }
 
           // Process parallel routes (track global vs route-specific)
-          const allParallels: Array<{ slot: string; handler: Handler; isGlobal: boolean }> = [
-            ...Object.entries(globalParallel).map(([slot, handler]) => ({ slot, handler, isGlobal: true })),
-            ...Object.entries(perRouteParallel).map(([slot, handler]) => ({ slot, handler, isGlobal: false }))
+          const allParallels: Array<{
+            slot: string;
+            handler: Handler;
+            isGlobal: boolean;
+          }> = [
+            ...Object.entries(globalParallel).map(([slot, handler]) => ({
+              slot,
+              handler,
+              isGlobal: true,
+            })),
+            ...Object.entries(perRouteParallel).map(([slot, handler]) => ({
+              slot,
+              handler,
+              isGlobal: false,
+            })),
           ];
 
           if (allParallels.length > 0) {
-            for (const { slot, handler: parallelHandler, isGlobal } of allParallels) {
+            for (const {
+              slot,
+              handler: parallelHandler,
+              isGlobal,
+            } of allParallels) {
               const component = await parallelHandler(context);
               segments.push({
                 id: `P${index}.${entry.registrationId}`,
-                type: 'parallel',
+                type: "parallel",
                 index,
                 component,
                 params,
@@ -451,7 +526,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             }
           }
 
-          break;  // Found our route, stop processing
+          break; // Found our route, stop processing
         }
       }
     }
@@ -462,10 +537,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
   /**
    * Match request and return segments
    */
-  async function match(
-    request: Request,
-    context: TEnv
-  ): Promise<MatchResult> {
+  async function match(request: Request, context: TEnv): Promise<MatchResult> {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
@@ -475,10 +547,6 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         cause: {
           pathname,
           method: request.method,
-          registeredRoutes: routes.map(r => ({
-            prefix: r.prefix,
-            routes: Object.keys(r.routes),
-          })),
         },
       });
     }
@@ -513,7 +581,9 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     } catch (error) {
       // Check if middleware/handler short-circuited with Response
       if (error instanceof Response) {
-        console.log(`[Router.match] Response short-circuit - returning directly`);
+        console.log(
+          `[Router.match] Response short-circuit - returning directly`
+        );
         throw error; // Propagate to top-level handler (entry.rsc.tsx)
       }
 
@@ -537,7 +607,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     const keys = Reflect.ownKeys(loadedHandlers);
     for (const key of keys) {
       const keyInfo = getKeyType(key);
-      if (keyInfo?.type === 'revalidate') {
+      if (keyInfo?.type === "revalidate") {
         const fn = loadedHandlers[key as any];
         if (keyInfo.global) {
           global.push({ name: keyInfo.name, fn });
@@ -568,8 +638,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
     // Extract client state from query params and header
     const clientSegmentIds =
-      url.searchParams.get('_rsc_segments')?.split(',') || [];
-    const previousUrl = request.headers.get('X-RSC-Router-Client-Path');
+      url.searchParams.get("_rsc_segments")?.split(",") || [];
+    const previousUrl = request.headers.get("X-RSC-Router-Client-Path");
 
     if (!previousUrl) {
       // No previous URL - fall back to full render
@@ -584,10 +654,6 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           pathname,
           method: request.method,
           previousUrl,
-          registeredRoutes: routes.map(r => ({
-            prefix: r.prefix,
-            routes: Object.keys(r.routes),
-          })),
         },
       });
     }
@@ -598,7 +664,9 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
     // If navigating to a different route handler, force full re-render
     if (prevMatch && prevMatch.routeKey !== nextMatch.routeKey) {
-      console.log(`[Router.matchPartial] Different route handler: ${prevMatch.routeKey} → ${nextMatch.routeKey}`);
+      console.log(
+        `[Router.matchPartial] Different route handler: ${prevMatch.routeKey} → ${nextMatch.routeKey}`
+      );
       // Return null to trigger full render
       return null;
     }
@@ -622,7 +690,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         prevMatch.routeKey,
         prevMatch.params,
         prevContext,
-        true  // Skip middleware for prev segments (comparison only)
+        true // Skip middleware for prev segments (comparison only)
       );
     }
 
@@ -647,7 +715,9 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     } catch (error) {
       // Check if middleware/handler short-circuited with Response
       if (error instanceof Response) {
-        console.log(`[Router.matchPartial] Response short-circuit - returning directly`);
+        console.log(
+          `[Router.matchPartial] Response short-circuit - returning directly`
+        );
         throw error; // Propagate to top-level handler
       }
 
@@ -682,13 +752,15 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       const nextParams = segment.params || {};
       const paramsChanged =
         Object.keys(nextParams).length !== Object.keys(prevParams).length ||
-        Object.keys(nextParams).some((key) => nextParams[key] !== prevParams[key]);
+        Object.keys(nextParams).some(
+          (key) => nextParams[key] !== prevParams[key]
+        );
 
       let defaultShouldRevalidate: boolean;
 
-      if (request.method === 'POST') {
+      if (request.method === "POST") {
         // Actions: revalidate route-specific segments, skip global ones
-        if (segment.type === 'layout' || segment.type === 'parallel') {
+        if (segment.type === "layout" || segment.type === "parallel") {
           // For layouts/parallels: only revalidate if route-specific (not global)
           defaultShouldRevalidate = segment.isGlobal === false;
         } else {
@@ -702,7 +774,10 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
       // Execute revalidation functions with soft/hard decision pattern
       // Order: global functions first, then route-specific functions
-      const allRevalidations = [...revalidations.global, ...revalidations.perRoute];
+      const allRevalidations = [
+        ...revalidations.global,
+        ...revalidations.perRoute,
+      ];
       let shouldRevalidate = false;
       let currentSuggestion = defaultShouldRevalidate;
 
@@ -732,7 +807,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           });
 
           // Check if hard decision (boolean) or soft decision (object)
-          if (typeof result === 'boolean') {
+          if (typeof result === "boolean") {
             // Hard decision - short-circuit
             console.log(
               `[Router.matchPartial] ${segment.id}: REVALIDATE (${name}) HARD decision: ${result} - short-circuit`
@@ -765,7 +840,9 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             { prev: prevParams, next: nextParams }
           );
         } else {
-          console.log(`[Router.matchPartial] ${segment.id}: UNCHANGED (default) - skipping`);
+          console.log(
+            `[Router.matchPartial] ${segment.id}: UNCHANGED (default) - skipping`
+          );
         }
       }
 
