@@ -206,7 +206,7 @@ export function validatePattern(pattern: string): void {
   // Check for invalid characters (spaces, etc.)
   if (/\s/.test(pattern)) {
     throw new InvalidPatternError(pattern, 'contains whitespace', {
-      cause: { pattern, whitespaceMatch: pattern.match(/\s/g) },
+      cause: { pattern },
     });
   }
 

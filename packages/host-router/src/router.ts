@@ -178,7 +178,7 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
     }
 
     throw new InvalidHandlerError(handler, {
-      cause: { handlerType: typeof handler, handler },
+      cause: { handlerType: typeof handler },
     });
   }
 
@@ -284,7 +284,6 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
           cause: {
             hostname: effectiveHostname,
             pathname,
-            registeredPatterns: routes.map((r) => r.patterns),
           },
         });
       }
