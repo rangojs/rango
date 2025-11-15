@@ -1,0 +1,10 @@
+import type { RouteRevalidateFn } from "rsc-router";
+import type { shopRoutes } from "@/routes.js";
+
+export const checkoutConfirmRevalidation: RouteRevalidateFn<
+  typeof shopRoutes,
+  "checkout.confirm"
+> = () => {
+    console.log("[Shop] Checkout confirmation never revalidates");
+    return false; // Static confirmation page
+  };

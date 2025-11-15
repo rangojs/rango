@@ -1,12 +1,19 @@
 import rsc from '@vitejs/plugin-rsc';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
+import path from 'path';
 
 export default defineConfig({
   plugins: [
     rsc(),
     react(),
   ],
+
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
 
   environments: {
     // RSC environment - server-side React rendering

@@ -1,0 +1,213 @@
+import type { RouteHandler } from "rsc-router";
+import type { shopRoutes } from "@/routes.js";
+import { products } from "@/handlers/shop/data.js";
+import { SegmentTimer } from "@/components/SegmentTimer.js";
+import { CurrentURL } from "@/components/CurrentURL.js";
+import { AddToCartForm } from "@/components/AddToCartForm.js";
+import { StreamingActionForm } from "@/components/StreamingActionForm.js";
+import {
+  addToCart,
+  addToCartWithResult,
+  getCartCount,
+} from "@/actions/shop.actions.js";
+import { addToCartSlowly } from "@/actions/streaming.actions.js";
+import { PDPNavbar, ProductCard, ProductCardSimple } from "@/handlers/shop/components.js";
+
+// ==================== PRODUCT ROUTES ====================
+
+export const indexRoute: RouteHandler<typeof shopRoutes, "index"> = () => (
+  <div style={{ display: "flex", gap: "2rem" }}>
+    <div style={{ flex: 1 }}>
+      <h2>All Products</h2>
+      <p className="segment-id">Segment: Shop Index</p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "1rem" }}>
+        {products.map((product) => (
+          <ProductCard key={product.id} product={product} />
+        ))}
+      </div>
+    </div>
+  </div>
+);
+
+export const productsCategoryRoute: RouteHandler<
+  typeof shopRoutes,
+  "products.category"
+> = (ctx) => {
+  const categoryProducts = products.filter(
+    (p) => p.category === ctx.params.category
+  );
+
+  return (
+    <div style={{ display: "flex", gap: "2rem" }}>
+      <div style={{ flex: 1 }}>
+        <h2>Category: {ctx.params.category}</h2>
+        <p className="segment-id">Segment: Products Category</p>
+        <p>
+          Showing {categoryProducts.length} products in {ctx.params.category}
+        </p>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(2, 1fr)",
+            gap: "1rem",
+          }}
+        >
+          {categoryProducts.map((product) => (
+            <ProductCard key={product.id} product={product} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export const productsDetailRoute: RouteHandler<
+  typeof shopRoutes,
+  "products.detail"
+> = async (ctx) => {
+  const product = products.find((p) => p.slug === ctx.params.slug);
+  const renderTime = new Date().toISOString();
+  const queryParams: [string, string][] = Array.from(
+    ctx.searchParams.entries()
+  );
+
+  if (!product) {
+    return (
+      <div>
+        <h2>Product Not Found</h2>
+        <p className="segment-id">Segment: Products Detail</p>
+        <p>Sorry, we couldn't find the product you're looking for.</p>
+      </div>
+    );
+  }
+
+  // Fetch cart count
+  const cartCount = await getCartCount();
+
+  return (
+    <div style={{ display: "flex", gap: "2rem" }}>
+      <div style={{ flex: 1 }}>
+        <PDPNavbar cartCount={cartCount} />
+
+        <div style={{ marginTop: "1rem" }}>
+          <div
+            style={{
+              width: "100%",
+              height: "300px",
+              background: "#eee",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              marginBottom: "1rem",
+            }}
+          >
+            {product.name} Image
+          </div>
+
+          <h2>{product.name}</h2>
+          <p className="segment-id">Segment: Products Detail</p>
+
+          <p>${product.price}</p>
+          <p>{product.description}</p>
+
+          <div style={{ marginTop: "1rem" }}>
+            <h3>Add to Cart - Tests multiple server action patterns</h3>
+
+            <div
+              style={{
+                display: "grid",
+                gap: "1rem",
+                gridTemplateColumns: "repeat(2, 1fr)",
+                marginTop: "1rem",
+              }}
+            >
+              {/* Basic Action - Fire and forget */}
+              <div style={{ padding: "1rem", border: "1px solid #ddd" }}>
+                <h4>1. Fire & Forget</h4>
+                <p style={{ fontSize: "0.9rem", color: "#666" }}>
+                  No return value tracking
+                </p>
+                <AddToCartForm
+                  productId={product.id}
+                  action={addToCart}
+                  buttonText="Add to Cart (Fire & Forget)"
+                />
+              </div>
+
+              {/* Action with Return Value */}
+              <div style={{ padding: "1rem", border: "1px solid #ddd" }}>
+                <h4>2. With Return Value</h4>
+                <p style={{ fontSize: "0.9rem", color: "#666" }}>
+                  Shows action result
+                </p>
+                <AddToCartForm
+                  productId={product.id}
+                  action={addToCartWithResult}
+                  buttonText="Add to Cart (With Result)"
+                  showResult
+                />
+              </div>
+
+              {/* Progressive Enhancement */}
+              <div style={{ padding: "1rem", border: "1px solid #ddd" }}>
+                <h4>3. Progressive Enhancement</h4>
+                <p style={{ fontSize: "0.9rem", color: "#666" }}>
+                  Works without JS (POST form)
+                </p>
+                <AddToCartForm
+                  productId={product.id}
+                  action={addToCart}
+                  buttonText="Add to Cart (No JS)"
+                  progressive
+                />
+              </div>
+
+              {/* Streaming Action */}
+              <div style={{ padding: "1rem", border: "1px solid #ddd" }}>
+                <h4>4. Streaming Updates</h4>
+                <p style={{ fontSize: "0.9rem", color: "#666" }}>
+                  Real-time progress (3s delay)
+                </p>
+                <StreamingActionForm
+                  productId={product.id}
+                  action={addToCartSlowly}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div
+            style={{
+              marginTop: "2rem",
+              padding: "1rem",
+              background: "#f5f5f5",
+              borderRadius: "4px",
+            }}
+          >
+            <h4>Segment Metadata</h4>
+            <ul>
+              <li>
+                <strong>Route:</strong> /shop/product/{ctx.params.slug}
+              </li>
+              <li>
+                <strong>Product ID:</strong> {product.id}
+              </li>
+              <li>
+                <strong>Rendered:</strong> {renderTime}
+              </li>
+              {queryParams.length > 0 && (
+                <li>
+                  <strong>Query Params:</strong>{" "}
+                  {queryParams.map(([key, value]) => `${key}=${value}`).join(", ")}
+                </li>
+              )}
+            </ul>
+            <SegmentTimer />
+          </div>
+
+          <CurrentURL />
+        </div>
+      </div>
+    </div>
+  );
+};

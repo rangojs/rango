@@ -41,4 +41,8 @@ export type {
   ShouldRevalidateFn,
   MiddlewareFn,
   RouteKeys,
+  // Type-safe helper types for route-specific handlers
+  RouteHandler,
+  RouteRevalidateFn,
+  RouteMiddlewareFn,
 } from './types.js';
