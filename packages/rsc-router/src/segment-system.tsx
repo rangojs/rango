@@ -1,6 +1,7 @@
 import { createElement, Fragment, type ReactNode } from "react";
 import { OutletProvider } from "./client.js";
 import type { ResolvedSegment } from "./types.js";
+import { invariant } from "./errors.js";
 
 /**
  * Render segments into a React tree with proper layout nesting
@@ -31,60 +32,37 @@ import type { ResolvedSegment } from "./types.js";
  */
 export function renderSegments(segments: ResolvedSegment[]): ReactNode {
   // Separate segments by type
-  const layouts: ResolvedSegment[] = [];
-  const contentSegments: ResolvedSegment[] = []; // route + parallel
   const tree = segmentTreeWalk(segments);
   // Render content segments as siblings
   let content: ReactNode = null;
 
   for (const node of tree) {
-    console.log("node", node);
+    invariant(
+      node.segment.type === "layout" || node.segment.type === "route",
+      `Expected layout or route segment, got ${node.segment.type}`
+    );
     const { component, id, params } = node.segment;
     let nodeContent: ReactNode = component;
-    if (node.children.length > 0) {
-      nodeContent = createElement(
-        Fragment,
-        null,
-        component,
-        ...node.children.map((seg) => seg.component)
-      );
-    }
+    console.log("node", node);
+
     content = createElement(OutletProvider, {
       key: `${id}-${Object.entries(params ?? {})
         .map(([k, v]) => `${k}=${v}`)
         .join(",")}`,
-      content: content, // Outlet content
+      content: node.segment.type === "layout" ? content : null,
+      segment: node.segment,
+      parallel: node.parallel,
       children: nodeContent,
-    });
-  }
-
-  return content;
-
-  if (contentSegments.length > 0) {
-    if (contentSegments.length === 1) {
-      // Single content segment - no need for Fragment
-      content = contentSegments[0]!.component;
-    } else {
-      // Multiple content segments - wrap in Fragment
-      const children = contentSegments.map((seg) => seg.component);
-      content = createElement(Fragment, null, ...children);
-    }
-  }
-
-  // Wrap with layouts (reverse order - innermost to outermost)
-  for (let i = layouts.length - 1; i >= 0; i--) {
-    const { component, id } = layouts[i]!;
-    content = createElement(OutletProvider, {
-      key: id,
-      content,
-      children: component,
     });
   }
 
   return content;
 }
 
-function* segmentTreeWalk(segments: ResolvedSegment[]) {
+function* segmentTreeWalk(segments: ResolvedSegment[]): Generator<{
+  segment: ResolvedSegment;
+  parallel: ResolvedSegment[];
+}> {
   const _segments = [...segments];
   let parallelSegments: ResolvedSegment[] = [];
   do {
@@ -101,10 +79,9 @@ function* segmentTreeWalk(segments: ResolvedSegment[]) {
     // type is layout or route
     yield {
       segment,
-      children: parallelSegments,
+      parallel: parallelSegments,
     };
-
-    // clear collected parallel segments
-    parallelSegments = [];
+    yield* segmentTreeWalk(_segments);
+    break;
   } while (_segments.length > 0);
 }

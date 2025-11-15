@@ -1264,6 +1264,124 @@ export default map<typeof routes>({
 - Parallel slots: `@footer`, `@sidebar`, `@comments`
 - All render as siblings: `<><Post /><Footer /><PostSidebar /><Comments /></>`
 
+### Controlling Parallel Route Placement with `<ParallelOutlet>`
+
+By default, parallel routes render as siblings to the main route content. However, you can use `<ParallelOutlet name="@slotName" />` in your layouts or route components to control exactly where each parallel route renders.
+
+**Benefits:**
+- ✅ Render parallel content **before** or **after** the main `<Outlet />`
+- ✅ Position parallel routes in specific areas of your layout (sidebars, headers, footers)
+- ✅ Create flexible layouts with precise control over content placement
+- ✅ Can be used in **both layouts and route components**
+
+**Example: Layout with ParallelOutlet**
+
+```tsx
+// layouts/ShopLayout.tsx
+import { Outlet, ParallelOutlet } from 'rsc-router/client';
+
+export function ShopLayout() {
+  return (
+    <div className="shop-layout">
+      <header>Shop Header</header>
+      <div className="content">
+        {/* Sidebar renders BEFORE main content */}
+        <aside>
+          <ParallelOutlet name="@sidebar" />
+        </aside>
+
+        <main>
+          {/* Main route content */}
+          <Outlet />
+
+          {/* Related products render AFTER main content */}
+          <ParallelOutlet name="@related" />
+        </main>
+
+        <aside>
+          {/* Order summary in right sidebar */}
+          <ParallelOutlet name="@summary" />
+        </aside>
+      </div>
+    </div>
+  );
+}
+```
+
+**Example: Route Component with ParallelOutlet**
+
+```tsx
+// Product detail route handler
+export const ProductDetailRoute = (ctx) => (
+  <div className="product-detail">
+    <h1>{ctx.params.productName}</h1>
+    <p>Product details here...</p>
+
+    {/* Reviews render within the route component */}
+    <section className="reviews">
+      <ParallelOutlet name="@reviews" />
+    </section>
+
+    {/* Related products render below */}
+    <ParallelOutlet name="@related" />
+  </div>
+);
+```
+
+**Handler Definition:**
+
+```typescript
+import { map, parallel } from 'rsc-router';
+
+export default map<typeof shopRoutes>({
+  [layout('products.detail', 'shop')]: <ShopLayout />,
+
+  // Define parallel slots
+  [parallel('products.detail', 'slots')]: {
+    '@sidebar': () => <CategorySidebar />,
+    '@related': async (ctx) => {
+      const related = await getRelatedProducts(ctx.params.slug);
+      return <RelatedProducts products={related} />;
+    },
+    '@reviews': async (ctx) => {
+      const reviews = await getReviews(ctx.params.slug);
+      return <ProductReviews reviews={reviews} />;
+    },
+    '@summary': () => <OrderSummary />
+  },
+
+  'products.detail': ProductDetailRoute
+});
+```
+
+**Rendered Structure:**
+
+```tsx
+<ShopLayout>
+  <aside>
+    <CategorySidebar /> {/* @sidebar via ParallelOutlet */}
+  </aside>
+  <main>
+    <div className="product-detail">
+      <h1>Product Name</h1>
+      <section className="reviews">
+        <ProductReviews /> {/* @reviews via ParallelOutlet */}
+      </section>
+      <RelatedProducts /> {/* @related via ParallelOutlet */}
+    </div>
+  </main>
+  <aside>
+    <OrderSummary /> {/* @summary via ParallelOutlet */}
+  </aside>
+</ShopLayout>
+```
+
+**Key Points:**
+- If a parallel slot is **not** rendered via `<ParallelOutlet>`, it won't appear in the output
+- You can call `<ParallelOutlet>` multiple times for the same slot (though only the first will render)
+- Parallel slots that aren't referenced via `<ParallelOutlet>` are ignored
+- This gives you complete control over layout composition
+
 ### Segment IDs for Parallel Routes
 
 ```
