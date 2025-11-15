@@ -120,7 +120,7 @@ export function handleCookieOverride(
   // If not allowed, throw error
   if (!allowed) {
     throw new HostOverrideNotAllowedError(originalHostname, cookieName, {
-      cause: { allowedHosts, cookieValue, currentHost: originalHostname },
+      cause: { cookieValue, currentHost: originalHostname },
     });
   }
 
