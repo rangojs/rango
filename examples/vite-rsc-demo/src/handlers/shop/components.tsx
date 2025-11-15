@@ -1,33 +1,36 @@
 import { categories, products, orders } from "./data.js";
+import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 
 // ==================== PARALLEL ROUTE COMPONENTS ====================
 
 export function CategorySidebar() {
   return (
-    <div
-      style={{
-        background: "#f8f9fa",
-        padding: "1.5rem",
-        borderRadius: "8px",
-        marginLeft: "2rem",
-        width: "200px",
-      }}
-    >
-      <p className="segment-id">Segment: @sidebar</p>
-      <h3 style={{ marginTop: 0 }}>Categories</h3>
-      <ul style={{ listStyle: "none", padding: 0 }}>
-        {categories.map((cat) => (
-          <li key={cat} style={{ marginBottom: "0.5rem" }}>
-            <a
-              href={`/shop/products/${cat}`}
-              style={{ textTransform: "capitalize" }}
-            >
-              {cat}
-            </a>
-          </li>
-        ))}
-      </ul>
-    </div>
+    <DebugSegmentWrapper type="parallel" name="@sidebar">
+      <div
+        style={{
+          background: "#f8f9fa",
+          padding: "1.5rem",
+          borderRadius: "8px",
+          marginLeft: "2rem",
+          width: "200px",
+        }}
+      >
+        <p className="segment-id">Segment: @sidebar</p>
+        <h3 style={{ marginTop: 0 }}>Categories</h3>
+        <ul style={{ listStyle: "none", padding: 0 }}>
+          {categories.map((cat) => (
+            <li key={cat} style={{ marginBottom: "0.5rem" }}>
+              <a
+                href={`/shop/products/${cat}`}
+                style={{ textTransform: "capitalize" }}
+              >
+                {cat}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </DebugSegmentWrapper>
   );
 }
 
@@ -43,31 +46,33 @@ export function RelatedProducts({ slug }: { slug?: string }) {
     : [];
 
   return (
-    <div
-      style={{
-        background: "#fff3cd",
-        padding: "1.5rem",
-        borderRadius: "8px",
-        marginTop: "2rem",
-      }}
-    >
-      <p className="segment-id">Segment: @related</p>
-      <h3 style={{ marginTop: 0 }}>Related Products</h3>
-      {relatedProducts.length > 0 ? (
-        <ul style={{ listStyle: "none", padding: 0 }}>
-          {relatedProducts.map((p) => (
-            <li key={p.id} style={{ marginBottom: "0.5rem" }}>
-              <a href={`/shop/product/${p.slug}`}>{p.name}</a>
-              <span style={{ color: "#666", marginLeft: "0.5rem" }}>
-                ${p.price}
-              </span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p>No related products found.</p>
-      )}
-    </div>
+    <DebugSegmentWrapper type="parallel" name="@related">
+      <div
+        style={{
+          background: "#fff3cd",
+          padding: "1.5rem",
+          borderRadius: "8px",
+          marginTop: "2rem",
+        }}
+      >
+        <p className="segment-id">Segment: @related</p>
+        <h3 style={{ marginTop: 0 }}>Related Products</h3>
+        {relatedProducts.length > 0 ? (
+          <ul style={{ listStyle: "none", padding: 0 }}>
+            {relatedProducts.map((p) => (
+              <li key={p.id} style={{ marginBottom: "0.5rem" }}>
+                <a href={`/shop/product/${p.slug}`}>{p.name}</a>
+                <span style={{ color: "#666", marginLeft: "0.5rem" }}>
+                  ${p.price}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p>No related products found.</p>
+        )}
+      </div>
+    </DebugSegmentWrapper>
   );
 }
 
@@ -78,77 +83,81 @@ export function OrderSummary({ variant = "cart" }: { variant?: "cart" | "checkou
     "@summary (payment)";
 
   return (
-    <div
-      style={{
-        background: "#e8f4f8",
-        padding: "1.5rem",
-        borderRadius: "8px",
-        marginLeft: "2rem",
-        width: "250px",
-      }}
-    >
-      <p className="segment-id">Segment: {segmentLabel}</p>
-      <h3 style={{ marginTop: 0 }}>Order Summary</h3>
-      <div style={{ marginBottom: "1rem" }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            marginBottom: "0.5rem",
-          }}
-        >
-          <span>Subtotal:</span>
-          <span>$149.99</span>
-        </div>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            marginBottom: "0.5rem",
-          }}
-        >
-          <span>Shipping:</span>
-          <span>$10.00</span>
-        </div>
-        <hr style={{ margin: "0.5rem 0" }} />
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            fontWeight: "bold",
-          }}
-        >
-          <span>Total:</span>
-          <span>$159.99</span>
+    <DebugSegmentWrapper type="parallel" name={segmentLabel}>
+      <div
+        style={{
+          background: "#e8f4f8",
+          padding: "1.5rem",
+          borderRadius: "8px",
+          marginLeft: "2rem",
+          width: "250px",
+        }}
+      >
+        <p className="segment-id">Segment: {segmentLabel}</p>
+        <h3 style={{ marginTop: 0 }}>Order Summary</h3>
+        <div style={{ marginBottom: "1rem" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginBottom: "0.5rem",
+            }}
+          >
+            <span>Subtotal:</span>
+            <span>$149.99</span>
+          </div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginBottom: "0.5rem",
+            }}
+          >
+            <span>Shipping:</span>
+            <span>$10.00</span>
+          </div>
+          <hr style={{ margin: "0.5rem 0" }} />
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              fontWeight: "bold",
+            }}
+          >
+            <span>Total:</span>
+            <span>$159.99</span>
+          </div>
         </div>
       </div>
-    </div>
+    </DebugSegmentWrapper>
   );
 }
 
 export function RecentOrders() {
   return (
-    <div
-      style={{
-        background: "#d1f2eb",
-        padding: "1.5rem",
-        borderRadius: "8px",
-        marginTop: "2rem",
-      }}
-    >
-      <p className="segment-id">Segment: @orders</p>
-      <h3 style={{ marginTop: 0 }}>Recent Orders</h3>
-      <ul style={{ listStyle: "none", padding: 0 }}>
-        {orders.slice(0, 2).map((order) => (
-          <li key={order.id} style={{ marginBottom: "0.5rem" }}>
-            <a href={`/shop/account/orders/${order.id}`}>{order.id}</a>
-            <span style={{ color: "#666", marginLeft: "0.5rem" }}>
-              ${order.total}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </div>
+    <DebugSegmentWrapper type="parallel" name="@orders">
+      <div
+        style={{
+          background: "#d1f2eb",
+          padding: "1.5rem",
+          borderRadius: "8px",
+          marginTop: "2rem",
+        }}
+      >
+        <p className="segment-id">Segment: @orders</p>
+        <h3 style={{ marginTop: 0 }}>Recent Orders</h3>
+        <ul style={{ listStyle: "none", padding: 0 }}>
+          {orders.slice(0, 2).map((order) => (
+            <li key={order.id} style={{ marginBottom: "0.5rem" }}>
+              <a href={`/shop/account/orders/${order.id}`}>{order.id}</a>
+              <span style={{ color: "#666", marginLeft: "0.5rem" }}>
+                ${order.total}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </DebugSegmentWrapper>
   );
 }
 
