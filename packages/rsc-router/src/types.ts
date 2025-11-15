@@ -397,3 +397,108 @@ export interface RouteEntry<TEnv = any> {
   handlers: any;
   registrationId: number;
 }
+
+/**
+ * Type-safe route handler helper for specific routes
+ *
+ * Automatically extracts the correct param types from your route definition.
+ *
+ * @template TRoutes - Your route definition object (e.g., typeof shopRoutes)
+ * @template K - The route key (e.g., "cart", "products.detail")
+ * @template TEnv - Environment type (defaults to global RSCRouter.Env)
+ *
+ * @example
+ * ```typescript
+ * import { RouteHandler } from "rsc-router";
+ * import { shopRoutes } from "./routes.js";
+ *
+ * export const cartRoute: RouteHandler<typeof shopRoutes, "cart"> = (ctx) => {
+ *   // ctx.params is typed correctly for the cart route
+ *   // ctx.get('user') is type-safe via global augmentation
+ *   return <CartPage />;
+ * }
+ *
+ * export const productRoute: RouteHandler<typeof shopRoutes, "products.detail"> = (ctx) => {
+ *   // ctx.params.slug is automatically typed as string
+ *   return <ProductDetail slug={ctx.params.slug} />;
+ * }
+ * ```
+ */
+export type RouteHandler<
+  TRoutes extends RouteDefinition,
+  K extends keyof TRoutes,
+  TEnv = DefaultEnv
+> = Handler<ExtractRouteParams<TRoutes, K & string>, TEnv>;
+
+/**
+ * Type-safe revalidation function helper for specific routes
+ *
+ * Automatically extracts the correct param types from your route definition.
+ *
+ * @template TRoutes - Your route definition object (e.g., typeof shopRoutes)
+ * @template K - The route key (e.g., "cart", "products.detail")
+ * @template TEnv - Environment type (defaults to global RSCRouter.Env)
+ *
+ * @example
+ * ```typescript
+ * import { RouteRevalidateFn } from "rsc-router";
+ * import { shopRoutes } from "./routes.js";
+ *
+ * export const cartRevalidation: RouteRevalidateFn<typeof shopRoutes, "cart"> = ({
+ *   currentParams,
+ *   nextParams
+ * }) => {
+ *   // params are typed correctly for the cart route
+ *   return true; // Always revalidate cart
+ * }
+ *
+ * export const productRevalidation: RouteRevalidateFn<typeof shopRoutes, "products.detail"> = ({
+ *   currentParams,
+ *   nextParams
+ * }) => {
+ *   // currentParams.slug and nextParams.slug are automatically typed
+ *   return currentParams.slug !== nextParams.slug;
+ * }
+ * ```
+ */
+export type RouteRevalidateFn<
+  TRoutes extends RouteDefinition,
+  K extends keyof TRoutes,
+  TEnv = DefaultEnv
+> = ShouldRevalidateFn<ExtractRouteParams<TRoutes, K & string>, TEnv>;
+
+/**
+ * Type-safe middleware function helper for specific routes
+ *
+ * Automatically extracts the correct param types from your route definition.
+ *
+ * @template TRoutes - Your route definition object (e.g., typeof shopRoutes)
+ * @template K - The route key (e.g., "checkout.index", "account.orders")
+ * @template TEnv - Environment type (defaults to global RSCRouter.Env)
+ *
+ * @example
+ * ```typescript
+ * import { RouteMiddlewareFn } from "rsc-router";
+ * import { shopRoutes } from "./routes.js";
+ *
+ * export const checkoutMiddleware: RouteMiddlewareFn<typeof shopRoutes, "checkout.index"> = (ctx, next) => {
+ *   // ctx.params is typed correctly for checkout.index route
+ *   // ctx.get('user') is type-safe via global augmentation
+ *   if (!ctx.get('user')) {
+ *     return redirect('/login');
+ *   }
+ *   next();
+ * }
+ *
+ * export const productMiddleware: RouteMiddlewareFn<typeof shopRoutes, "products.detail"> = (ctx, next) => {
+ *   // ctx.params.slug is automatically typed as string
+ *   console.log('Viewing product:', ctx.params.slug);
+ *   next();
+ * }
+ * ```
+ */
+export type RouteMiddlewareFn<
+  TRoutes extends RouteDefinition,
+  K extends keyof TRoutes,
+  TEnv = DefaultEnv
+> = MiddlewareFn<ExtractRouteParams<TRoutes, K & string>, TEnv>;
