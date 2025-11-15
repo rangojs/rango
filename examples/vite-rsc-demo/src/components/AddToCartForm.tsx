@@ -18,8 +18,8 @@ export function AddToCartForm({
   productId,
   action,
 }: {
-  productId: string;
-  action: (productId: string, quantity: number) => Promise<any>;
+  productId: string | number;
+  action: (productId: string | number, quantity: number) => Promise<any>;
 }) {
   const [state, formAction, isPending] = useActionState<ActionState, FormData>(
     async (_prevState, formData) => {
@@ -34,6 +34,7 @@ export function AddToCartForm({
     },
     null // initial state
   );
+  console.log("state", state);
 
   return (
     <div>

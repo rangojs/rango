@@ -2,7 +2,7 @@ import type { RouteHandler } from "rsc-router";
 import type { shopRoutes } from "@/routes.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 
-export const checkoutIndexRoute: RouteHandler<
+export const CheckoutIndexRoute: RouteHandler<
   typeof shopRoutes,
   "checkout.index"
 > = (ctx) => (
@@ -111,7 +111,7 @@ export const checkoutIndexRoute: RouteHandler<
   </div>
 );
 
-export const checkoutPaymentRoute: RouteHandler<
+export const CheckoutPaymentRoute: RouteHandler<
   typeof shopRoutes,
   "checkout.payment"
 > = () => (
@@ -207,7 +207,7 @@ export const checkoutPaymentRoute: RouteHandler<
   </div>
 );
 
-export const checkoutConfirmRoute: RouteHandler<
+export const CheckoutConfirmRoute: RouteHandler<
   typeof shopRoutes,
   "checkout.confirm"
 > = () => (

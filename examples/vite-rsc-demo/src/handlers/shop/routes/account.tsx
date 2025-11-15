@@ -3,7 +3,7 @@ import type { shopRoutes } from "@/routes.js";
 import { orders } from "@/handlers/shop/data.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 
-export const accountIndexRoute: RouteHandler<
+export const AccountIndexRoute: RouteHandler<
   typeof shopRoutes,
   "account.index"
 > = (ctx) => {
@@ -88,7 +88,7 @@ export const accountIndexRoute: RouteHandler<
   );
 };
 
-export const accountOrdersRoute: RouteHandler<
+export const AccountOrdersRoute: RouteHandler<
   typeof shopRoutes,
   "account.orders"
 > = () => (
@@ -151,7 +151,7 @@ export const accountOrdersRoute: RouteHandler<
   </div>
 );
 
-export const accountOrderDetailRoute: RouteHandler<
+export const AccountOrderDetailRoute: RouteHandler<
   typeof shopRoutes,
   "account.orderDetail"
 > = (ctx) => {

@@ -2,7 +2,7 @@ import { map, layout, middleware, revalidate } from "rsc-router";
 import type { blogRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { BlogLayout } from "../layouts/BlogLayout.js";
-import { indexRoute, postRoute } from "./blog/routes.js";
+import { IndexRoute, PostRoute } from "./blog/routes.js";
 import { postRevalidation } from "./blog/revalidation.js";
 import { loggerMiddleware } from "./blog/middleware.js";
 
@@ -23,6 +23,6 @@ export default map<typeof blogRoutes>({
   [revalidate("post")]: postRevalidation,
 
   // Route handlers
-  index: indexRoute,
-  post: postRoute,
+  index: IndexRoute,
+  post: PostRoute,
 });

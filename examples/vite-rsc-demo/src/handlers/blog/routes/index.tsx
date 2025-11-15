@@ -2,7 +2,7 @@ import type { RouteHandler } from "rsc-router";
 import type { blogRoutes } from "@/routes.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 
-export const indexRoute: RouteHandler<typeof blogRoutes, "index"> = () => (
+export const IndexRoute: RouteHandler<typeof blogRoutes, "index"> = () => (
   <DebugSegmentWrapper type="route" name="Blog Index">
     <div>
       <h2>Blog Posts</h2>

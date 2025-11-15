@@ -2,7 +2,7 @@ import type { RouteHandler } from "rsc-router";
 import type { adminRoutes } from "@/routes.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 
-export const indexRoute: RouteHandler<typeof adminRoutes, "index"> = () => (
+export const IndexRoute: RouteHandler<typeof adminRoutes, "index"> = () => (
   <DebugSegmentWrapper type="route" name="Admin Index">
     <div>
       <h2>Admin Dashboard</h2>
@@ -47,7 +47,7 @@ export const indexRoute: RouteHandler<typeof adminRoutes, "index"> = () => (
   </DebugSegmentWrapper>
 );
 
-export const usersRoute: RouteHandler<typeof adminRoutes, "users"> = () => (
+export const UsersRoute: RouteHandler<typeof adminRoutes, "users"> = () => (
   <DebugSegmentWrapper type="route" name="Users List">
     <div>
       <h2>Users List</h2>
@@ -76,7 +76,7 @@ export const usersRoute: RouteHandler<typeof adminRoutes, "users"> = () => (
   </DebugSegmentWrapper>
 );
 
-export const userRoute: RouteHandler<typeof adminRoutes, "user"> = (ctx) => (
+export const UserRoute: RouteHandler<typeof adminRoutes, "user"> = (ctx) => (
   <DebugSegmentWrapper type="route" name="User Detail">
     <div>
       <h2>User {ctx.params.id}</h2>
@@ -121,7 +121,7 @@ export const userRoute: RouteHandler<typeof adminRoutes, "user"> = (ctx) => (
   </DebugSegmentWrapper>
 );
 
-export const settingsRoute: RouteHandler<typeof adminRoutes, "settings"> = () => (
+export const SettingsRoute: RouteHandler<typeof adminRoutes, "settings"> = () => (
   <DebugSegmentWrapper type="route" name="Admin Settings">
     <div>
       <h2>Admin Settings</h2>

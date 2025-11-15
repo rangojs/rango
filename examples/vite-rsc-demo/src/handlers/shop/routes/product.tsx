@@ -20,7 +20,7 @@ import {
 
 // ==================== PRODUCT ROUTES ====================
 
-export const indexRoute: RouteHandler<typeof shopRoutes, "index"> = () => (
+export const IndexRoute: RouteHandler<typeof shopRoutes, "index"> = () => (
   <DebugSegmentWrapper type="route" name="Shop Index">
     <div style={{ display: "flex", gap: "2rem" }}>
       <div style={{ flex: 1 }}>
@@ -42,7 +42,7 @@ export const indexRoute: RouteHandler<typeof shopRoutes, "index"> = () => (
   </DebugSegmentWrapper>
 );
 
-export const productsCategoryRoute: RouteHandler<
+export const ProductsCategoryRoute: RouteHandler<
   typeof shopRoutes,
   "products.category"
 > = (ctx) => {
@@ -76,7 +76,7 @@ export const productsCategoryRoute: RouteHandler<
   );
 };
 
-export const productsDetailRoute: RouteHandler<
+export const ProductsDetailRoute: RouteHandler<
   typeof shopRoutes,
   "products.detail"
 > = async (ctx) => {
@@ -103,130 +103,116 @@ export const productsDetailRoute: RouteHandler<
     <DebugSegmentWrapper type="route" name="Product Detail">
       <div style={{ display: "flex", gap: "2rem" }}>
         <div style={{ flex: 1 }}>
-          <PDPNavbar cartCount={cartCount} />
+          <PDPNavbar cartCount={cartCount} {...product} />
 
           <div style={{ marginTop: "1rem" }}>
-            <div
-              style={{
-                width: "100%",
-                height: "300px",
-                background: "#eee",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                marginBottom: "1rem",
-              }}
-            >
-              {product.name} Image
-            </div>
-
             <h2>{product.name}</h2>
-            <p className="segment-id">Segment: Products Detail</p>
-
             <p>${product.price}</p>
             <p>{product.description}</p>
 
-          <div style={{ marginTop: "1rem" }}>
-            <h3>Add to Cart - Tests multiple server action patterns</h3>
+            <div style={{ marginTop: "1rem" }}>
+              <h3>Add to Cart - Tests multiple server action patterns</h3>
+
+              <div
+                style={{
+                  display: "grid",
+                  gap: "1rem",
+                  gridTemplateColumns: "repeat(2, 1fr)",
+                  marginTop: "1rem",
+                }}
+              >
+                {/* Basic Action - Fire and forget */}
+                <div style={{ padding: "1rem", border: "1px solid #ddd" }}>
+                  <h4>1. Fire & Forget</h4>
+                  <p style={{ fontSize: "0.9rem", color: "#666" }}>
+                    No return value tracking
+                  </p>
+                  <AddToCartForm
+                    productId={product.id}
+                    action={addToCart}
+                    buttonText="Add to Cart (Fire & Forget)"
+                  />
+                </div>
+
+                {/* Action with Return Value */}
+                <div style={{ padding: "1rem", border: "1px solid #ddd" }}>
+                  <h4>2. With Return Value</h4>
+                  <p style={{ fontSize: "0.9rem", color: "#666" }}>
+                    Shows action result
+                  </p>
+                  <AddToCartForm
+                    productId={product.id}
+                    action={addToCartWithResult}
+                    buttonText="Add to Cart (With Result)"
+                    showResult
+                  />
+                </div>
+
+                {/* Progressive Enhancement */}
+                <div style={{ padding: "1rem", border: "1px solid #ddd" }}>
+                  <h4>3. Progressive Enhancement</h4>
+                  <p style={{ fontSize: "0.9rem", color: "#666" }}>
+                    Works without JS (POST form)
+                  </p>
+                  <AddToCartForm
+                    productId={product.id}
+                    action={addToCart}
+                    buttonText="Add to Cart (No JS)"
+                    progressive
+                  />
+                </div>
+
+                {/* Streaming Action */}
+                <div style={{ padding: "1rem", border: "1px solid #ddd" }}>
+                  <h4>4. Streaming Updates</h4>
+                  <p style={{ fontSize: "0.9rem", color: "#666" }}>
+                    Real-time progress (3s delay)
+                  </p>
+                  <StreamingActionForm
+                    productId={product.id}
+                    action={addToCartSlowly}
+                  >
+                    Add product (Streaming)
+                  </StreamingActionForm>
+                </div>
+              </div>
+            </div>
 
             <div
               style={{
-                display: "grid",
-                gap: "1rem",
-                gridTemplateColumns: "repeat(2, 1fr)",
-                marginTop: "1rem",
+                marginTop: "2rem",
+                padding: "1rem",
+                background: "#f5f5f5",
+                borderRadius: "4px",
               }}
             >
-              {/* Basic Action - Fire and forget */}
-              <div style={{ padding: "1rem", border: "1px solid #ddd" }}>
-                <h4>1. Fire & Forget</h4>
-                <p style={{ fontSize: "0.9rem", color: "#666" }}>
-                  No return value tracking
-                </p>
-                <AddToCartForm
-                  productId={product.id}
-                  action={addToCart}
-                  buttonText="Add to Cart (Fire & Forget)"
-                />
-              </div>
-
-              {/* Action with Return Value */}
-              <div style={{ padding: "1rem", border: "1px solid #ddd" }}>
-                <h4>2. With Return Value</h4>
-                <p style={{ fontSize: "0.9rem", color: "#666" }}>
-                  Shows action result
-                </p>
-                <AddToCartForm
-                  productId={product.id}
-                  action={addToCartWithResult}
-                  buttonText="Add to Cart (With Result)"
-                  showResult
-                />
-              </div>
-
-              {/* Progressive Enhancement */}
-              <div style={{ padding: "1rem", border: "1px solid #ddd" }}>
-                <h4>3. Progressive Enhancement</h4>
-                <p style={{ fontSize: "0.9rem", color: "#666" }}>
-                  Works without JS (POST form)
-                </p>
-                <AddToCartForm
-                  productId={product.id}
-                  action={addToCart}
-                  buttonText="Add to Cart (No JS)"
-                  progressive
-                />
-              </div>
-
-              {/* Streaming Action */}
-              <div style={{ padding: "1rem", border: "1px solid #ddd" }}>
-                <h4>4. Streaming Updates</h4>
-                <p style={{ fontSize: "0.9rem", color: "#666" }}>
-                  Real-time progress (3s delay)
-                </p>
-                <StreamingActionForm
-                  productId={product.id}
-                  action={addToCartSlowly}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div
-            style={{
-              marginTop: "2rem",
-              padding: "1rem",
-              background: "#f5f5f5",
-              borderRadius: "4px",
-            }}
-          >
-            <h4>Segment Metadata</h4>
-            <ul>
-              <li>
-                <strong>Route:</strong> /shop/product/{ctx.params.slug}
-              </li>
-              <li>
-                <strong>Product ID:</strong> {product.id}
-              </li>
-              <li>
-                <strong>Rendered:</strong> {renderTime}
-              </li>
-              {queryParams.length > 0 && (
+              <h4>Segment Metadata</h4>
+              <ul>
                 <li>
-                  <strong>Query Params:</strong>{" "}
-                  {queryParams
-                    .map(([key, value]) => `${key}=${value}`)
-                    .join(", ")}
+                  <strong>Route:</strong> /shop/product/{ctx.params.slug}
                 </li>
-              )}
-            </ul>
-            <SegmentTimer />
-          </div>
+                <li>
+                  <strong>Product ID:</strong> {product.id}
+                </li>
+                <li>
+                  <strong>Rendered:</strong> {renderTime}
+                </li>
+                {queryParams.length > 0 && (
+                  <li>
+                    <strong>Query Params:</strong>{" "}
+                    {queryParams
+                      .map(([key, value]) => `${key}=${value}`)
+                      .join(", ")}
+                  </li>
+                )}
+              </ul>
+              <SegmentTimer />
+            </div>
 
-          <CurrentURL />
+            <CurrentURL />
+          </div>
         </div>
       </div>
-    </div>
-  </DebugSegmentWrapper>
+    </DebugSegmentWrapper>
   );
 };
