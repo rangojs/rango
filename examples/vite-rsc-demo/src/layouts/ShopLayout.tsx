@@ -22,6 +22,7 @@ export function ShopLayout() {
           </div>
         </header>
         <DebugSegmentWrapper type="outlet" name="Shop Outlet">
+          {/* Route components handle their own parallel outlets */}
           <Outlet />
         </DebugSegmentWrapper>
       </div>

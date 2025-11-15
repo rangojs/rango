@@ -3,6 +3,7 @@ import type { shopRoutes } from "@/routes.js";
 import { products } from "@/handlers/shop/data.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
+import { ParallelOutlet } from "rsc-router/client";
 
 export const CartRoute: RouteHandler<typeof shopRoutes, "cart"> = () => (
   <DebugSegmentWrapper type="route" name="Cart">
@@ -98,6 +99,10 @@ export const CartRoute: RouteHandler<typeof shopRoutes, "cart"> = () => (
         <SegmentTimer />
       </div>
     </div>
+      {/* Order summary - parallel route */}
+      <aside style={{ width: "300px" }}>
+        <ParallelOutlet name="@summary" />
+      </aside>
     </div>
   </DebugSegmentWrapper>
 );

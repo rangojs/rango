@@ -17,7 +17,7 @@ interface ErrorOptions {
  * Thrown when no route matches the requested pathname
  */
 export class RouteNotFoundError extends Error {
-  name = 'RouteNotFoundError' as const;
+  name = "RouteNotFoundError" as const;
   cause?: unknown;
 
   constructor(message: string, options?: ErrorOptions) {
@@ -30,7 +30,7 @@ export class RouteNotFoundError extends Error {
  * Thrown when middleware execution fails
  */
 export class MiddlewareError extends Error {
-  name = 'MiddlewareError' as const;
+  name = "MiddlewareError" as const;
   cause?: unknown;
 
   constructor(message: string, options?: ErrorOptions) {
@@ -43,7 +43,7 @@ export class MiddlewareError extends Error {
  * Thrown when a route handler fails
  */
 export class HandlerError extends Error {
-  name = 'HandlerError' as const;
+  name = "HandlerError" as const;
   cause?: unknown;
 
   constructor(message: string, options?: ErrorOptions) {
@@ -56,7 +56,7 @@ export class HandlerError extends Error {
  * Thrown when segment building fails
  */
 export class BuildError extends Error {
-  name = 'BuildError' as const;
+  name = "BuildError" as const;
   cause?: unknown;
 
   constructor(message: string, options?: ErrorOptions) {
@@ -69,12 +69,32 @@ export class BuildError extends Error {
  * Thrown when route handler returns invalid type
  */
 export class InvalidHandlerError extends Error {
-  name = 'InvalidHandlerError' as const;
+  name = "InvalidHandlerError" as const;
   cause?: unknown;
 
   constructor(message: string, options?: ErrorOptions) {
     super(message);
     this.cause = options?.cause;
+  }
+}
+
+/**
+ * Internal invariant assertion for development-time checks
+ *
+ * @internal
+ * @param condition - Condition that must be true
+ * @param message - Error message to throw if condition is false
+ * @throws {Error} If condition is false
+ *
+ * @example
+ * ```typescript
+ * invariant(user !== null, 'User must be defined');
+ * invariant(node.type === 'layout', `Expected layout, got ${node.type}`);
+ * ```
+ */
+export function invariant(condition: any, message: string): asserts condition {
+  if (!condition) {
+    throw new Error(`Invariant: ${message}`);
   }
 }
 
@@ -91,7 +111,7 @@ export class InvalidHandlerError extends Error {
  */
 export function sanitizeError(error: unknown): Response {
   // CRITICAL: Consume stack trace to prevent memory leaks
-  if (error && typeof error === 'object' && 'stack' in error) {
+  if (error && typeof error === "object" && "stack" in error) {
     const _ = error.stack; // Force V8 to generate/consume stack trace
   }
 
@@ -105,27 +125,29 @@ export function sanitizeError(error: unknown): Response {
   if (isDev) {
     // Development: Send full error details for debugging
     const errorDetails = {
-      name: error instanceof Error ? error.name : 'Error',
+      name: error instanceof Error ? error.name : "Error",
       message: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
-      cause: error && typeof error === 'object' && 'cause' in error ? (error as any).cause : undefined,
+      cause:
+        error && typeof error === "object" && "cause" in error
+          ? (error as any).cause
+          : undefined,
     };
 
     return new Response(JSON.stringify(errorDetails, null, 2), {
       status: 500,
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
     });
   }
 
   // Production: Generic error only - NO internal details
   // SECURITY: Never leak stack traces, file paths, or application state
-  return new Response('Internal Server Error', {
+  return new Response("Internal Server Error", {
     status: 500,
     headers: {
-      'Content-Type': 'text/plain',
+      "Content-Type": "text/plain",
     },
   });
 }
-

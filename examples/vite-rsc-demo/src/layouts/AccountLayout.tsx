@@ -1,4 +1,4 @@
-import { Outlet } from 'rsc-router/client';
+import { Outlet, ParallelOutlet } from 'rsc-router/client';
 import { DebugSegmentWrapper } from '../components/DebugSegmentWrapper.js';
 
 export function AccountLayout() {
@@ -41,6 +41,8 @@ export function AccountLayout() {
           <DebugSegmentWrapper type="outlet" name="Account Outlet">
             <Outlet />
           </DebugSegmentWrapper>
+          {/* Recent orders parallel slot - renders after main content */}
+          <ParallelOutlet name="@orders" />
         </main>
       </div>
     </DebugSegmentWrapper>

@@ -6,6 +6,7 @@ import { CurrentURL } from "@/components/CurrentURL.js";
 import { AddToCartForm } from "@/components/AddToCartForm.js";
 import { StreamingActionForm } from "@/components/StreamingActionForm.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
+import { OutletProvider, ParallelOutlet } from "rsc-router/client";
 import {
   addToCart,
   addToCartWithResult,
@@ -17,12 +18,15 @@ import {
   ProductCard,
   ProductCardSimple,
 } from "@/handlers/shop/components.js";
+import { use } from "react";
 
 // ==================== PRODUCT ROUTES ====================
 
 export const IndexRoute: RouteHandler<typeof shopRoutes, "index"> = () => (
   <DebugSegmentWrapper type="route" name="Shop Index">
     <div style={{ display: "flex", gap: "2rem" }}>
+      {/* Category sidebar - parallel route */}
+      <ParallelOutlet name="@sidebar" />
       <div style={{ flex: 1 }}>
         <h2>All Products</h2>
         <p className="segment-id">Segment: Shop Index</p>
@@ -210,6 +214,11 @@ export const ProductsDetailRoute: RouteHandler<
             </div>
 
             <CurrentURL />
+          </div>
+
+          {/* Related products - parallel route */}
+          <div style={{ marginTop: "2rem" }}>
+            <ParallelOutlet name="@related" />
           </div>
         </div>
       </div>
