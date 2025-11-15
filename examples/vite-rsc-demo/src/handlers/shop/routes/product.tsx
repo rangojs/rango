@@ -5,28 +5,41 @@ import { SegmentTimer } from "@/components/SegmentTimer.js";
 import { CurrentURL } from "@/components/CurrentURL.js";
 import { AddToCartForm } from "@/components/AddToCartForm.js";
 import { StreamingActionForm } from "@/components/StreamingActionForm.js";
+import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 import {
   addToCart,
   addToCartWithResult,
   getCartCount,
-} from "@/actions/shop.actions.js";
+} from "@/handlers/shop/actions/shop.actions.js";
 import { addToCartSlowly } from "@/actions/streaming.actions.js";
-import { PDPNavbar, ProductCard, ProductCardSimple } from "@/handlers/shop/components.js";
+import {
+  PDPNavbar,
+  ProductCard,
+  ProductCardSimple,
+} from "@/handlers/shop/components.js";
 
 // ==================== PRODUCT ROUTES ====================
 
 export const indexRoute: RouteHandler<typeof shopRoutes, "index"> = () => (
-  <div style={{ display: "flex", gap: "2rem" }}>
-    <div style={{ flex: 1 }}>
-      <h2>All Products</h2>
-      <p className="segment-id">Segment: Shop Index</p>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "1rem" }}>
-        {products.map((product) => (
-          <ProductCard key={product.id} product={product} />
-        ))}
+  <DebugSegmentWrapper type="route" name="Shop Index">
+    <div style={{ display: "flex", gap: "2rem" }}>
+      <div style={{ flex: 1 }}>
+        <h2>All Products</h2>
+        <p className="segment-id">Segment: Shop Index</p>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(2, 1fr)",
+            gap: "1rem",
+          }}
+        >
+          {products.map((product) => (
+            <ProductCard key={product.id} product={product} />
+          ))}
+        </div>
       </div>
     </div>
-  </div>
+  </DebugSegmentWrapper>
 );
 
 export const productsCategoryRoute: RouteHandler<
@@ -38,26 +51,28 @@ export const productsCategoryRoute: RouteHandler<
   );
 
   return (
-    <div style={{ display: "flex", gap: "2rem" }}>
-      <div style={{ flex: 1 }}>
-        <h2>Category: {ctx.params.category}</h2>
-        <p className="segment-id">Segment: Products Category</p>
-        <p>
-          Showing {categoryProducts.length} products in {ctx.params.category}
-        </p>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(2, 1fr)",
-            gap: "1rem",
-          }}
-        >
-          {categoryProducts.map((product) => (
-            <ProductCard key={product.id} product={product} />
-          ))}
+    <DebugSegmentWrapper type="route" name="Products Category">
+      <div style={{ display: "flex", gap: "2rem" }}>
+        <div style={{ flex: 1 }}>
+          <h2>Category: {ctx.params.category}</h2>
+          <p className="segment-id">Segment: Products Category</p>
+          <p>
+            Showing {categoryProducts.length} products in {ctx.params.category}
+          </p>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(2, 1fr)",
+              gap: "1rem",
+            }}
+          >
+            {categoryProducts.map((product) => (
+              <ProductCard key={product.id} product={product} />
+            ))}
+          </div>
         </div>
       </div>
-    </div>
+    </DebugSegmentWrapper>
   );
 };
 
@@ -85,30 +100,31 @@ export const productsDetailRoute: RouteHandler<
   const cartCount = await getCartCount();
 
   return (
-    <div style={{ display: "flex", gap: "2rem" }}>
-      <div style={{ flex: 1 }}>
-        <PDPNavbar cartCount={cartCount} />
+    <DebugSegmentWrapper type="route" name="Product Detail">
+      <div style={{ display: "flex", gap: "2rem" }}>
+        <div style={{ flex: 1 }}>
+          <PDPNavbar cartCount={cartCount} />
 
-        <div style={{ marginTop: "1rem" }}>
-          <div
-            style={{
-              width: "100%",
-              height: "300px",
-              background: "#eee",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              marginBottom: "1rem",
-            }}
-          >
-            {product.name} Image
-          </div>
+          <div style={{ marginTop: "1rem" }}>
+            <div
+              style={{
+                width: "100%",
+                height: "300px",
+                background: "#eee",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                marginBottom: "1rem",
+              }}
+            >
+              {product.name} Image
+            </div>
 
-          <h2>{product.name}</h2>
-          <p className="segment-id">Segment: Products Detail</p>
+            <h2>{product.name}</h2>
+            <p className="segment-id">Segment: Products Detail</p>
 
-          <p>${product.price}</p>
-          <p>{product.description}</p>
+            <p>${product.price}</p>
+            <p>{product.description}</p>
 
           <div style={{ marginTop: "1rem" }}>
             <h3>Add to Cart - Tests multiple server action patterns</h3>
@@ -198,7 +214,9 @@ export const productsDetailRoute: RouteHandler<
               {queryParams.length > 0 && (
                 <li>
                   <strong>Query Params:</strong>{" "}
-                  {queryParams.map(([key, value]) => `${key}=${value}`).join(", ")}
+                  {queryParams
+                    .map(([key, value]) => `${key}=${value}`)
+                    .join(", ")}
                 </li>
               )}
             </ul>
@@ -209,5 +227,6 @@ export const productsDetailRoute: RouteHandler<
         </div>
       </div>
     </div>
+  </DebugSegmentWrapper>
   );
 };

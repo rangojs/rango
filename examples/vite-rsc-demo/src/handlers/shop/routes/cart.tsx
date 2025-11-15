@@ -2,12 +2,14 @@ import type { RouteHandler } from "rsc-router";
 import type { shopRoutes } from "@/routes.js";
 import { products } from "@/handlers/shop/data.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
+import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 
 export const cartRoute: RouteHandler<typeof shopRoutes, "cart"> = () => (
-  <div style={{ display: "flex", gap: "2rem" }}>
-    <div style={{ flex: 1 }}>
-      <h2>Shopping Cart</h2>
-      <p className="segment-id">Segment: Cart</p>
+  <DebugSegmentWrapper type="route" name="Cart">
+    <div style={{ display: "flex", gap: "2rem" }}>
+      <div style={{ flex: 1 }}>
+        <h2>Shopping Cart</h2>
+        <p className="segment-id">Segment: Cart</p>
       <p style={{ color: "#666", marginBottom: "1rem" }}>
         This route ALWAYS revalidates (fresh cart data)
       </p>
@@ -96,5 +98,6 @@ export const cartRoute: RouteHandler<typeof shopRoutes, "cart"> = () => (
         <SegmentTimer />
       </div>
     </div>
-  </div>
+    </div>
+  </DebugSegmentWrapper>
 );
