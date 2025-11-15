@@ -43,12 +43,13 @@ export function renderSegments(segments: ResolvedSegment[]): ReactNode {
     );
     const { component, id, params } = node.segment;
     let nodeContent: ReactNode = component;
-    console.log("node", node);
+    const key = `${id}-${Object.entries(params ?? {})
+      .map(([k, v]) => `${k}=${v}`)
+      .join(",")}`;
+    console.log("node", { key, node });
 
     content = createElement(OutletProvider, {
-      key: `${id}-${Object.entries(params ?? {})
-        .map(([k, v]) => `${k}=${v}`)
-        .join(",")}`,
+      key: key,
       content: node.segment.type === "layout" ? content : null,
       segment: node.segment,
       parallel: node.parallel,

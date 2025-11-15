@@ -18,6 +18,7 @@ console.log("[Browser] Initializing...");
 // ============================================================================
 
 interface NavigationManager {
+  path: string;
   currentUrl: string;
   currentSegmentIds: string[];
   storedSegments: Map<string, ResolvedSegment>;
@@ -27,20 +28,35 @@ interface NavigationManager {
 }
 
 const navigationManager: NavigationManager = {
+  path: window.location.pathname,
   currentUrl: window.location.href,
   currentSegmentIds: [],
   storedSegments: new Map(),
   setPayload: null,
 };
-
+let abortControllers: AbortController[] = [];
+function cleanUpForController(abortController: AbortController) {
+  abortControllers = abortControllers.filter((ac) => ac !== abortController);
+  abortController.abort();
+  console.log(`[Browser] Clean up abort controller:`, abortControllers);
+}
+function abortAllControllersAndAdd(abortController: AbortController) {
+  abortControllers.forEach((ac) => ac.abort());
+  abortControllers = [];
+  abortControllers.push(abortController);
+  console.log(`[Browser] Aborted all controllers`);
+}
 // ============================================================================
 // Server Action Callback
 // ============================================================================
 
 // Setup server action callback - React calls this when server actions are invoked
 setServerCallback(async (id: string, args: any[]) => {
-  console.log(`\n[Browser] >>> SERVER ACTION: ${id}`);
-  console.log(`[Browser] Args:`, args);
+  const abortController = new AbortController();
+
+  abortAllControllersAndAdd(abortController);
+
+  console.log(`[Browser] Args:`, args, { abortControllers });
 
   // 1. Create temporary references for serialization
   const temporaryReferences = createTemporaryReferenceSet();
@@ -156,42 +172,44 @@ setServerCallback(async (id: string, args: any[]) => {
       console.log(`[Browser] Returning to React (HMR case):`, dataToReturn);
       return dataToReturn;
     }
-
+    if (navigationManager.path !== metadata?.pathname) {
+      console.warn(`[Browser] Path changed during action, skipping UI update`);
+      cleanUpForController(abortController);
+    }
     // Update state
-    navigationManager.currentSegmentIds = matched;
+    navigationManager.currentSegmentIds = matched!;
 
-    // Prepare new tree
-    const newTree = renderSegments(fullSegments);
-
-    // For actions: delay segment update to let React commit action state first
-    // Use queueMicrotask to schedule after current render cycle
     const returnData = returnValue?.data;
-
-    navigationManager.setPayload?.({ root: newTree, metadata });
-    console.log(
-      `[Browser] ✓ Action complete - UI updated (after action state committed)`
-    );
-
-    // Return immediately so useActionState can process
-    console.log(
-      `[Browser] ✓ Returning action result, segments will update on next tick`
-    );
 
     if (returnValue && !returnValue.ok) {
       throw returnValue.data;
     }
+
+    if (abortController.signal.aborted) {
+      cleanUpForController(abortController);
+      console.log(`[Browser] ✓ Action aborted - skipping UI update`);
+      return returnData;
+    }
+    // Prepare new tree
+    const newTree = renderSegments(fullSegments);
+
+    if (abortController.signal.aborted === false) {
+      navigationManager.setPayload?.({ root: newTree, metadata });
+      console.log(
+        `[Browser] ✓ Action complete - UI updated (after action state committed)`
+      );
+    } else {
+      console.log(`[Browser] ✓ Action aborted - skipping UI update`);
+    }
+    abortControllers = abortControllers.filter((ac) => ac !== abortController);
+    console.log(`[Browser] Clean up abort controller:`, abortControllers);
+    console.log(`[Browser] Returning to React:`, returnData);
 
     return returnData;
   } else {
     // Full update
     navigationManager.currentSegmentIds = matched || [];
-    // navigationManager.setPayload?.(payload);
-
-    // Return action result
-    if (returnValue && !returnValue.ok) {
-      throw returnValue.data;
-    }
-    return returnValue?.data;
+    throw new Error(`[Browser] Full update after action is not supported yet`);
   }
 });
 
@@ -217,6 +235,8 @@ async function fetchPartialUpdate(targetUrl?: string, segmentIds?: string[]) {
 
   console.log(`[Browser] Fetching: ${fetchUrl.pathname}${fetchUrl.search}`);
 
+  /* Optimistically set the new path */
+  navigationManager.path = window.location.pathname;
   // Fetch with previous URL header (don't await - pass promise to createFromFetch)
   const responsePromise = fetch(fetchUrl, {
     headers: {
@@ -226,7 +246,6 @@ async function fetchPartialUpdate(targetUrl?: string, segmentIds?: string[]) {
 
   // Deserialize RSC payload
   const payload = await createFromFetch<RscPayload>(responsePromise);
-  console.log(`[Browser] Received payload:`, payload.metadata);
 
   if (payload.metadata?.isPartial) {
     // Partial update - merge segments
@@ -241,6 +260,7 @@ async function fetchPartialUpdate(targetUrl?: string, segmentIds?: string[]) {
       );
       // Still update URL state
       navigationManager.currentUrl = url;
+      navigationManager.path = window.location.pathname;
       console.log(`[Browser] ✓ Navigation complete (no re-render)\n`);
       return;
     }
@@ -294,10 +314,11 @@ async function fetchPartialUpdate(targetUrl?: string, segmentIds?: string[]) {
     console.log(`[Browser] ✓ Navigation complete\n`);
   } else {
     // Full update (fallback)
-    console.log(`[Browser] Full update (fallback)`);
+    console.warn(`[Browser] Full update (fallback)`);
     navigationManager.currentSegmentIds =
       payload.metadata?.segments?.map((s: any) => s.id) || [];
     navigationManager.currentUrl = url;
+    navigationManager.path = window.location.pathname;
 
     // Store all segments (metadata segments don't have components on initial load)
     // Just track IDs for now
@@ -402,6 +423,7 @@ async function initializeApp() {
 
   // Initialize navigation manager
   navigationManager.currentUrl = window.location.href;
+  navigationManager.path = window.location.pathname;
   navigationManager.currentSegmentIds =
     initialPayload.metadata?.segments?.map((s: any) => s.id) || [];
 

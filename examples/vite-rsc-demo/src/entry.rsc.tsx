@@ -6,7 +6,7 @@ import {
   loadServerAction,
 } from "@vitejs/plugin-rsc/rsc";
 import { router } from "./router.js";
-import { renderSegments } from "rsc-router";
+import { renderSegments, ResolvedSegment } from "rsc-router";
 
 /**
  * RSC Payload Schema
@@ -15,7 +15,7 @@ export type RscPayload = {
   root: React.ReactNode;
   metadata?: {
     pathname: string;
-    segments: any[];
+    segments: ResolvedSegment[];
     isPartial?: boolean;
     matched?: string[];
     diff?: string[];
@@ -144,12 +144,7 @@ export default async function handler(request: Request): Promise<Response> {
           root,
           metadata: {
             pathname: url.pathname,
-            segments: fullMatch.segments.map((s) => ({
-              id: s.id,
-              type: s.type,
-              index: s.index,
-              params: s.params,
-            })),
+            segments: fullMatch.segments,
             matched: fullMatch.matched,
             diff: fullMatch.diff,
           },
@@ -215,7 +210,7 @@ export default async function handler(request: Request): Promise<Response> {
 
       if (!result) {
         // Fall back to full render
-        console.log(`[RSC] Partial match failed, falling back to full`);
+        console.warn(`[RSC] Partial match failed, falling back to full`);
         const match = await router.match(request, {});
         const root = renderSegments(match.segments);
 
@@ -223,14 +218,10 @@ export default async function handler(request: Request): Promise<Response> {
           root,
           metadata: {
             pathname: url.pathname,
-            segments: match.segments.map((s) => ({
-              id: s.id,
-              type: s.type,
-              index: s.index,
-              params: s.params,
-            })),
+            segments: match.segments,
             matched: match.matched,
             diff: match.diff,
+            isPartial: false,
           },
         };
       } else {
@@ -239,15 +230,15 @@ export default async function handler(request: Request): Promise<Response> {
           metadata: {
             pathname: url.pathname,
             segments: result.segments,
-            isPartial: true,
             matched: result.matched,
             diff: result.diff,
+            isPartial: true,
           },
         };
       }
     } else {
       // Full render (initial page load)
-      console.log(`[RSC] >>> FULL RENDER`);
+      console.warn(`[RSC] >>> FULL RENDER`);
       const match = await router.match(request, {});
       const root = renderSegments(match.segments);
 
@@ -258,6 +249,7 @@ export default async function handler(request: Request): Promise<Response> {
           segments: match.segments, // Send full segments WITH components for initial hydration
           matched: match.matched,
           diff: match.diff,
+          isPartial: false,
         },
       };
     }

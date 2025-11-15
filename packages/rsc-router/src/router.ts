@@ -662,15 +662,6 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     const prevUrl = new URL(previousUrl);
     const prevMatch = findMatch(prevUrl.pathname);
 
-    // If navigating to a different route handler, force full re-render
-    if (prevMatch && prevMatch.routeKey !== nextMatch.routeKey) {
-      console.log(
-        `[Router.matchPartial] Different route handler: ${prevMatch.routeKey} → ${nextMatch.routeKey}`
-      );
-      // Return null to trigger full render
-      return null;
-    }
-
     // Extract bindings from context
     const bindings = (context as any)?.Bindings || {};
 
