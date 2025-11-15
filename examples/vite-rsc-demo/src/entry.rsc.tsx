@@ -1,6 +1,12 @@
-import { renderToReadableStream, decodeReply, createTemporaryReferenceSet, decodeAction, loadServerAction } from '@vitejs/plugin-rsc/rsc';
-import { router } from './router.js';
-import { renderSegments } from 'rsc-router';
+import {
+  renderToReadableStream,
+  decodeReply,
+  createTemporaryReferenceSet,
+  decodeAction,
+  loadServerAction,
+} from "@vitejs/plugin-rsc/rsc";
+import { router } from "./router.js";
+import { renderSegments } from "rsc-router";
 
 /**
  * RSC Payload Schema
@@ -23,13 +29,15 @@ export type RscPayload = {
  */
 export default async function handler(request: Request): Promise<Response> {
   const url = new URL(request.url);
-  const isPartial = url.searchParams.has('_rsc_partial');
-  const isAction = request.headers.has('rsc-action') || url.searchParams.has('_rsc_action');
-  const actionId = request.headers.get('rsc-action') || url.searchParams.get('_rsc_action');
+  const isPartial = url.searchParams.has("_rsc_partial");
+  const isAction =
+    request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
+  const actionId =
+    request.headers.get("rsc-action") || url.searchParams.get("_rsc_action");
 
   console.log(`\n[RSC] ${request.method} ${url.pathname}${url.search}`);
   console.log(`[RSC] Partial: ${isPartial}`);
-  console.log(`[RSC] Action: ${isAction ? actionId : 'none'}`);
+  console.log(`[RSC] Action: ${isAction ? actionId : "none"}`);
 
   let payload: RscPayload;
 
@@ -45,7 +53,7 @@ export default async function handler(request: Request): Promise<Response> {
 
       // 2. Decode action arguments from request body
       // decodeReply can handle FormData or text body automatically
-      const contentType = request.headers.get('content-type') || '';
+      const contentType = request.headers.get("content-type") || "";
       console.log(`[RSC] Content-Type: ${contentType}`);
 
       let args: any[] = [];
@@ -53,19 +61,24 @@ export default async function handler(request: Request): Promise<Response> {
 
       try {
         // decodeReply accepts FormData or text - get the appropriate body
-        const body = contentType.includes('multipart/form-data')
+        const body = contentType.includes("multipart/form-data")
           ? await request.formData()
           : await request.text();
 
-        console.log(`[RSC] Body type:`, body instanceof FormData ? 'FormData' : 'text');
+        console.log(
+          `[RSC] Body type:`,
+          body instanceof FormData ? "FormData" : "text"
+        );
 
         // Store FormData for revalidation context
         if (body instanceof FormData) {
           actionFormData = body;
         }
 
-        if ((body instanceof FormData && body.entries().next().done === false) ||
-            (typeof body === 'string' && body.length > 0)) {
+        if (
+          (body instanceof FormData && body.entries().next().done === false) ||
+          (typeof body === "string" && body.length > 0)
+        ) {
           args = await decodeReply(body, { temporaryReferences });
           console.log(`[RSC] Action args decoded:`, args);
         } else {
@@ -121,7 +134,9 @@ export default async function handler(request: Request): Promise<Response> {
 
       if (!matchResult) {
         // Fall back to full render if partial match fails
-        console.log(`[RSC] Partial match failed after action, falling back to full render`);
+        console.log(
+          `[RSC] Partial match failed after action, falling back to full render`
+        );
         const fullMatch = await router.match(request, {});
         const root = renderSegments(fullMatch.segments);
 
@@ -129,20 +144,29 @@ export default async function handler(request: Request): Promise<Response> {
           root,
           metadata: {
             pathname: url.pathname,
-            segments: fullMatch.segments.map(s => ({ id: s.id, type: s.type, index: s.index, params: s.params })),
+            segments: fullMatch.segments.map((s) => ({
+              id: s.id,
+              type: s.type,
+              index: s.index,
+              params: s.params,
+            })),
             matched: fullMatch.matched,
             diff: fullMatch.diff,
           },
           returnValue, // Include action result
         };
 
-        const rscStream = renderToReadableStream<RscPayload>(payload, { temporaryReferences });
+        const rscStream = renderToReadableStream<RscPayload>(payload, {
+          temporaryReferences,
+        });
 
-        console.log(`[RSC] Action complete - returning full render with returnValue`);
+        console.log(
+          `[RSC] Action complete - returning full render with returnValue`
+        );
         return new Response(rscStream, {
           status: actionStatus,
           headers: {
-            'content-type': 'text/x-component;charset=utf-8',
+            "content-type": "text/x-component;charset=utf-8",
           },
         });
       }
@@ -162,17 +186,21 @@ export default async function handler(request: Request): Promise<Response> {
         returnValue, // Include action result
       };
 
-      const rscStream = renderToReadableStream<RscPayload>(payload, { temporaryReferences });
+      const rscStream = renderToReadableStream<RscPayload>(payload, {
+        temporaryReferences,
+      });
 
-      console.log(`[RSC] Action complete - returning updated segments with returnValue`);
-      console.log(`[RSC] Matched: ${matchResult.matched.join(', ')}`);
-      console.log(`[RSC] Diff: ${matchResult.diff.join(', ')}`);
+      console.log(
+        `[RSC] Action complete - returning updated segments with returnValue`
+      );
+      console.log(`[RSC] Matched: ${matchResult.matched.join(", ")}`);
+      console.log(`[RSC] Diff: ${matchResult.diff.join(", ")}`);
       console.log(`[RSC] Return value:`, returnValue);
 
       return new Response(rscStream, {
         status: actionStatus,
         headers: {
-          'content-type': 'text/x-component;charset=utf-8',
+          "content-type": "text/x-component;charset=utf-8",
         },
       });
     }
@@ -195,7 +223,12 @@ export default async function handler(request: Request): Promise<Response> {
           root,
           metadata: {
             pathname: url.pathname,
-            segments: match.segments.map(s => ({ id: s.id, type: s.type, index: s.index, params: s.params })),
+            segments: match.segments.map((s) => ({
+              id: s.id,
+              type: s.type,
+              index: s.index,
+              params: s.params,
+            })),
             matched: match.matched,
             diff: match.diff,
           },
@@ -230,24 +263,27 @@ export default async function handler(request: Request): Promise<Response> {
     }
 
     console.log(`[RSC] ✓ Payload ready`);
-    console.log(`[RSC] Segments:`, payload.metadata?.segments?.map(s => s.id).join(', '));
+    console.log(
+      `[RSC] Segments:`,
+      payload.metadata?.segments?.map((s) => s.id).join(", ")
+    );
 
     // Serialize to RSC stream
     const rscStream = renderToReadableStream<RscPayload>(payload);
 
     // Determine if this is an RSC request or HTML request
     const isRscRequest =
-      (!request.headers.get('accept')?.includes('text/html') &&
-        !url.searchParams.has('__html')) ||
-      url.searchParams.has('__rsc');
+      (!request.headers.get("accept")?.includes("text/html") &&
+        !url.searchParams.has("__html")) ||
+      url.searchParams.has("__rsc");
 
     if (isRscRequest) {
       // Return RSC stream for client navigation
       console.log(`[RSC] → Returning RSC stream`);
       return new Response(rscStream, {
         headers: {
-          'content-type': 'text/x-component;charset=utf-8',
-          vary: 'accept',
+          "content-type": "text/x-component;charset=utf-8",
+          vary: "accept",
         },
       });
     }
@@ -255,20 +291,22 @@ export default async function handler(request: Request): Promise<Response> {
     // Delegate to SSR for HTML response (document requests)
     console.log(`[RSC] → Delegating to SSR for HTML`);
     const ssrEntryModule = await import.meta.viteRsc.loadModule<
-      typeof import('./entry.ssr.js')
-    >('ssr', 'index');
+      typeof import("./entry.ssr.js")
+    >("ssr", "index");
 
     const htmlStream = await ssrEntryModule.renderHTML(rscStream);
 
     return new Response(htmlStream, {
       headers: {
-        'content-type': 'text/html;charset=utf-8',
+        "content-type": "text/html;charset=utf-8",
       },
     });
   } catch (error) {
     // Check if middleware/handler returned Response (redirect, auth, etc.)
     if (error instanceof Response) {
-      console.log(`[RSC] Middleware/handler returned Response - returning directly`);
+      console.log(
+        `[RSC] Middleware/handler returned Response - returning directly`
+      );
       return error;
     }
 

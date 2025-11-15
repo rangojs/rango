@@ -1,12 +1,7 @@
 "use client";
 
-import { use, useActionState, Suspense } from "react";
-
-type ActionState = {
-  promise?: Promise<any>;
-  result?: any;
-  error?: string;
-} | null;
+import { use, useActionState, Suspense, startTransition } from "react";
+import { StreamingAction } from "../actions/test.actions";
 
 /**
  * Streaming Action Form - demonstrates Promise streaming with Suspense
@@ -17,26 +12,29 @@ type ActionState = {
 export function StreamingActionForm({
   productId,
   action,
+  children,
 }: {
   productId: string;
   action: (productId: string, quantity: number) => Promise<any>;
+  children?: React.ReactNode;
 }) {
-  const [state, formAction, isPending] = useActionState<ActionState, FormData>(
-    async (_prevState, _formData) => {
-      console.log("[StreamingActionForm] Starting action...");
-
-      // Call the action - it returns a Promise
-      const promise = action(productId, 1);
-
-      console.log(
-        "[StreamingActionForm] Action returned Promise, storing for Suspense"
-      );
-
-      // Return the Promise - Suspense will wait for it
-      return { promise };
+  const [state, formAction, isPending] = useActionState(
+    async (_prevState, formData) => {
+      try {
+        console.log("StreamingActionForm data set", { isPending, state });
+        const result = await StreamingAction({ teststestse: true });
+        console.log("[StreamingAction] Action result:", result);
+        return result;
+      } catch (error) {
+        console.error("[StreamingAction] Action error:", error);
+        return { success: false, error: String(error) };
+      }
     },
-    null
+    {
+      promise: null,
+    }
   );
+  console.log("StreamingActionForm isPending", { isPending, state });
 
   return (
     <div>
@@ -55,11 +53,11 @@ export function StreamingActionForm({
             marginTop: "1rem",
           }}
         >
-          {isPending ? "Processing..." : "Add to Cart (Streaming)"}
+          {isPending ? "Processing..." : <>{children}</>}
         </button>
       </form>
 
-      {state?.promise && (
+      {state.promise && (
         <div
           style={{
             marginTop: "1rem",
@@ -115,20 +113,5 @@ function PromiseResolver({ promise }: { promise: Promise<any> }) {
 
   console.log("[PromiseResolver] Promise resolved:", result);
 
-  return (
-    <div
-      style={{ background: "#d4edda", padding: "1rem", borderRadius: "4px" }}
-    >
-      <h4 style={{ margin: "0 0 0.5rem 0" }}>✅ Completed!</h4>
-      <p style={{ margin: "0 0 0.5rem 0" }}>
-        <strong>{result.message}</strong>
-      </p>
-      <ul style={{ margin: 0, paddingLeft: "1.5rem", fontSize: "0.9rem" }}>
-        <li>Completed at: {new Date(result.timestamp).toLocaleTimeString()}</li>
-        <li>Product: {result.cart.productId}</li>
-        <li>Quantity: {result.cart.quantity}</li>
-        <li>Total items: {result.cart.totalItems}</li>
-      </ul>
-    </div>
-  );
+  return promise;
 }

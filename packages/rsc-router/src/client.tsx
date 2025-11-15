@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, type ReactNode } from "react";
 
 /**
  * Context for outlet content

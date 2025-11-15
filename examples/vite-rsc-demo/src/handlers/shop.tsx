@@ -180,52 +180,6 @@ export default map<typeof shopRoutes>({
     return { defaultShouldRevalidate };
   },
 
-  // Product detail - segment-aware revalidation demo
-  // Demonstrates per-segment revalidation with full context
-  [revalidate("products.detail", "demo")]: ({
-    currentParams,
-    nextParams,
-    defaultShouldRevalidate,
-    method,
-    actionId,
-    routeName,
-    segmentType,
-    layoutName,
-    slotName,
-  }) => {
-    console.log("[Shop] Product detail revalidation:");
-    console.log("  - Segment type:", segmentType);
-    console.log("  - Layout name:", layoutName || "n/a");
-    console.log("  - Slot name:", slotName || "n/a");
-    console.log("  - Method:", method);
-    console.log("  - defaultShouldRevalidate:", defaultShouldRevalidate);
-    console.log("  - Action ID:", actionId || "none");
-    console.log("  - Route name:", routeName);
-
-    if (method === "POST") {
-      if (segmentType === "layout") {
-        console.log(
-          `  ⮑ Layout "${layoutName}" - default=${defaultShouldRevalidate} (route-specific only)`
-        );
-      } else if (segmentType === "parallel") {
-        console.log(
-          `  ⮑ Parallel slot "${slotName}" - default=${defaultShouldRevalidate} (route-specific only)`
-        );
-      } else {
-        console.log(
-          `  ⮑ Route segment - default=${defaultShouldRevalidate} (always TRUE for actions)`
-        );
-      }
-    } else {
-      console.log(
-        `  ⮑ Navigation - default=${defaultShouldRevalidate} (params changed: ${defaultShouldRevalidate})`
-      );
-    }
-
-    // Defer to smart defaults
-    return defaultShouldRevalidate;
-  },
-
   // Cart - always revalidate (fresh data)
   [revalidate("cart")]: () => {
     console.log("[Shop] Cart always revalidates (fresh data)");
@@ -281,7 +235,60 @@ export default map<typeof shopRoutes>({
       </div>
     ),
   },
+  // Product detail - segment-aware revalidation demo
+  // Demonstrates per-segment revalidation with full context
+  [revalidate("products.detail", "demo")]: ({
+    currentParams,
+    nextParams,
+    defaultShouldRevalidate,
+    method,
+    actionId,
+    routeName,
+    segmentType,
+    layoutName,
+    slotName,
+  }) => {
+    console.log("nextParams", {
+      currentParams,
+      nextParams,
+      defaultShouldRevalidate,
+    });
+    if (method == "POST") {
+      return true;
+    }
+    return currentParams.slug !== nextParams.slug;
+    console.log("[Shop] Product detail revalidation:");
+    console.log("  - Segment type:", segmentType);
+    console.log("  - Layout name:", layoutName || "n/a");
+    console.log("  - Slot name:", slotName || "n/a");
+    console.log("  - Method:", method);
+    console.log("  - defaultShouldRevalidate:", defaultShouldRevalidate);
+    console.log("  - Action ID:", actionId || "none");
+    console.log("  - Route name:", routeName);
 
+    if (method === "POST") {
+      if (segmentType === "layout") {
+        console.log(
+          `  ⮑ Layout "${layoutName}" - default=${defaultShouldRevalidate} (route-specific only)`
+        );
+      } else if (segmentType === "parallel") {
+        console.log(
+          `  ⮑ Parallel slot "${slotName}" - default=${defaultShouldRevalidate} (route-specific only)`
+        );
+      } else {
+        console.log(
+          `  ⮑ Route segment - default=${defaultShouldRevalidate} (always TRUE for actions)`
+        );
+      }
+    } else {
+      console.log(
+        `  ⮑ Navigation - default=${defaultShouldRevalidate} (params changed: ${defaultShouldRevalidate})`
+      );
+    }
+
+    // Defer to smart defaults
+    return defaultShouldRevalidate;
+  },
   // Related products on product detail page
   [parallel("products.detail", "related")]: {
     "@related": (ctx) => {
@@ -744,9 +751,11 @@ export default map<typeof shopRoutes>({
           >
             ${product.price}
           </p>
+          <h1>{product.name}</h1>
           <p style={{ marginBottom: "1rem" }}>
             This is a great {product.name.toLowerCase()} perfect for your needs.
           </p>
+          <PDPNavbar {...product} />
 
           {/* Server Action Form */}
           <form>
@@ -815,7 +824,9 @@ export default map<typeof shopRoutes>({
           <StreamingActionForm
             productId={product.slug}
             action={addToCartSlowly}
-          />
+          >
+            {product.name}
+          </StreamingActionForm>
 
           <div
             style={{
@@ -841,53 +852,6 @@ export default map<typeof shopRoutes>({
           segmentId={`Product Detail (${product.slug})`}
           serverRenderTime={renderTime}
         />
-
-        <div
-          style={{
-            marginTop: "1rem",
-            padding: "1rem",
-            background: "#fff3cd",
-            borderRadius: "4px",
-          }}
-        >
-          <h4 style={{ marginTop: 0 }}>🧪 Test Revalidation Behavior:</h4>
-          <ul style={{ margin: 0, paddingLeft: "1.5rem", fontSize: "0.9rem" }}>
-            <li style={{ marginBottom: "0.5rem" }}>
-              <a href="/shop/product/wireless-headphones">
-                Wireless Headphones
-              </a>{" "}
-              → <strong>Slug changes = Timer resets</strong>
-            </li>
-            <li style={{ marginBottom: "0.5rem" }}>
-              <a href="/shop/product/running-shoes">Running Shoes</a> →{" "}
-              <strong>Slug changes = Timer resets</strong>
-            </li>
-            <li style={{ marginBottom: "0.5rem" }}>
-              <a href={`/shop/product/${product.slug}?tab=details`}>
-                Add ?tab=details
-              </a>{" "}
-              → <strong>Query only = Timer keeps running</strong>
-            </li>
-            <li style={{ marginBottom: "0.5rem" }}>
-              <a href={`/shop/product/${product.slug}?tab=reviews`}>
-                Change to ?tab=reviews
-              </a>{" "}
-              → <strong>Query change = Timer keeps running</strong>
-            </li>
-          </ul>
-          <p
-            style={{
-              fontSize: "0.8rem",
-              color: "#856404",
-              marginTop: "0.75rem",
-              marginBottom: 0,
-            }}
-          >
-            <strong>Watch the timer and console logs!</strong>{" "}
-            defaultShouldRevalidate is TRUE only when <code>:slug</code>{" "}
-            changes.
-          </p>
-        </div>
 
         <p style={{ marginTop: "1rem", color: "#666" }}>
           <a href="/shop">← Back to shop</a>
@@ -1368,3 +1332,56 @@ export default map<typeof shopRoutes>({
     );
   },
 });
+function PDPNavbar(product: {
+  id: number;
+  slug: string;
+  name: string;
+  category: string;
+  price: number;
+}) {
+  return (
+    <div
+      style={{
+        marginTop: "1rem",
+        padding: "1rem",
+        background: "#fff3cd",
+        borderRadius: "4px",
+      }}
+    >
+      <h4 style={{ marginTop: 0 }}>🧪 Test Revalidation Behavior:</h4>
+      <ul style={{ margin: 0, paddingLeft: "1.5rem", fontSize: "0.9rem" }}>
+        <li style={{ marginBottom: "0.5rem" }}>
+          <a href="/shop/product/wireless-headphones">Wireless Headphones</a> →{" "}
+          <strong>Slug changes = Timer resets</strong>
+        </li>
+        <li style={{ marginBottom: "0.5rem" }}>
+          <a href="/shop/product/running-shoes">Running Shoes</a> →{" "}
+          <strong>Slug changes = Timer resets</strong>
+        </li>
+        <li style={{ marginBottom: "0.5rem" }}>
+          <a href={`/shop/product/${product.slug}?tab=details`}>
+            Add ?tab=details
+          </a>{" "}
+          → <strong>Query only = Timer keeps running</strong>
+        </li>
+        <li style={{ marginBottom: "0.5rem" }}>
+          <a href={`/shop/product/${product.slug}?tab=reviews`}>
+            Change to ?tab=reviews
+          </a>{" "}
+          → <strong>Query change = Timer keeps running</strong>
+        </li>
+      </ul>
+      <p
+        style={{
+          fontSize: "0.8rem",
+          color: "#856404",
+          marginTop: "0.75rem",
+          marginBottom: 0,
+        }}
+      >
+        <strong>Watch the timer and console logs!</strong>{" "}
+        defaultShouldRevalidate is TRUE only when <code>:slug</code> changes.
+      </p>
+    </div>
+  );
+}

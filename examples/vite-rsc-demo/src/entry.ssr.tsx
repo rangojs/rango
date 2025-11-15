@@ -22,12 +22,7 @@ export async function renderHTML(
   function SsrRoot() {
     // Kick off deserialization inside ReactDOMServer context
     payload ??= createFromReadableStream<RscPayload>(rscStream1);
-    return <FixSsrThenable>{React.use(payload).root}</FixSsrThenable>;
-  }
-
-  // Wrapper component to avoid React SSR bugs with lazy + use
-  function FixSsrThenable(props: React.PropsWithChildren) {
-    return props.children;
+    return React.use(payload).root;
   }
 
   // Get bootstrap script content (loads entry.browser.tsx)

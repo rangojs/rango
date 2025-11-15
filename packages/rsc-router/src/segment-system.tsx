@@ -33,18 +33,33 @@ export function renderSegments(segments: ResolvedSegment[]): ReactNode {
   // Separate segments by type
   const layouts: ResolvedSegment[] = [];
   const contentSegments: ResolvedSegment[] = []; // route + parallel
-
-  for (const segment of segments) {
-    if (segment.type === "layout") {
-      layouts.push(segment);
-    } else {
-      // Both 'route' and 'parallel' are content
-      contentSegments.push(segment);
-    }
-  }
-
+  const tree = segmentTreeWalk(segments);
   // Render content segments as siblings
   let content: ReactNode = null;
+
+  for (const node of tree) {
+    console.log("node", node);
+    const { component, id, params } = node.segment;
+    let nodeContent: ReactNode = component;
+    if (node.children.length > 0) {
+      nodeContent = createElement(
+        Fragment,
+        null,
+        component,
+        ...node.children.map((seg) => seg.component)
+      );
+    }
+    content = createElement(OutletProvider, {
+      key: `${id}-${Object.entries(params ?? {})
+        .map(([k, v]) => `${k}=${v}`)
+        .join(",")}`,
+      content: content, // Outlet content
+      children: nodeContent,
+    });
+  }
+
+  return content;
+
   if (contentSegments.length > 0) {
     if (contentSegments.length === 1) {
       // Single content segment - no need for Fragment
@@ -67,4 +82,29 @@ export function renderSegments(segments: ResolvedSegment[]): ReactNode {
   }
 
   return content;
+}
+
+function* segmentTreeWalk(segments: ResolvedSegment[]) {
+  const _segments = [...segments];
+  let parallelSegments: ResolvedSegment[] = [];
+  do {
+    const segment = _segments.pop();
+    if (!segment) {
+      return null;
+    }
+
+    if (segment.type === "parallel") {
+      parallelSegments.push(segment);
+      continue;
+    }
+
+    // type is layout or route
+    yield {
+      segment,
+      children: parallelSegments,
+    };
+
+    // clear collected parallel segments
+    parallelSegments = [];
+  } while (_segments.length > 0);
 }

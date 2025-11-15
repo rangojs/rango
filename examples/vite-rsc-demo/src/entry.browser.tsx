@@ -433,6 +433,13 @@ async function initializeApp() {
     </React.StrictMode>
   );
 
+  // implement server HMR by triggering re-fetch/render of RSC upon server code change
+  if (import.meta.hot) {
+    import.meta.hot.on("rsc:update", () => {
+      fetchPartialUpdate(location.href, []);
+    });
+  }
+
   console.log("[Browser] ✓ Hydrated\n");
 }
 
