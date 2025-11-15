@@ -7,16 +7,16 @@ import { AccountLayout } from "../layouts/AccountLayout.js";
 
 // Import handlers and configuration from modular folders
 import {
-  indexRoute,
-  productsCategoryRoute,
-  productsDetailRoute,
-  cartRoute,
-  checkoutIndexRoute,
-  checkoutPaymentRoute,
-  checkoutConfirmRoute,
-  accountIndexRoute,
-  accountOrdersRoute,
-  accountOrderDetailRoute,
+  IndexRoute,
+  ProductsCategoryRoute,
+  ProductsDetailRoute,
+  CartRoute,
+  CheckoutIndexRoute,
+  CheckoutPaymentRoute,
+  CheckoutConfirmRoute,
+  AccountIndexRoute,
+  AccountOrdersRoute,
+  AccountOrderDetailRoute,
 } from "./shop/routes/index.js";
 import {
   CategorySidebar,
@@ -63,7 +63,7 @@ export default map<typeof shopRoutes>({
   // ===================
   // SHOP HOMEPAGE
   // ===================
-  index: indexRoute,
+  index: IndexRoute,
   [parallel("index", "sidebar")]: {
     "@sidebar": () => <CategorySidebar />,
   },
@@ -71,12 +71,12 @@ export default map<typeof shopRoutes>({
   // ===================
   // PRODUCTS - CATEGORY
   // ===================
-  "products.category": productsCategoryRoute,
+  "products.category": ProductsCategoryRoute,
 
   // ===================
   // PRODUCTS - DETAIL
   // ===================
-  "products.detail": productsDetailRoute,
+  "products.detail": ProductsDetailRoute,
   [revalidate("products.detail", "demo")]: productDetailRevalidation,
   [parallel("products.detail", "related")]: {
     "@related": (ctx) => <RelatedProducts slug={ctx.params.slug} />,
@@ -85,7 +85,7 @@ export default map<typeof shopRoutes>({
   // ===================
   // CART
   // ===================
-  cart: cartRoute,
+  cart: CartRoute,
   [revalidate("cart")]: cartRevalidation,
   [parallel("cart", "summary")]: {
     "@summary": () => <OrderSummary variant="cart" />,
@@ -94,7 +94,7 @@ export default map<typeof shopRoutes>({
   // ===================
   // CHECKOUT - INDEX
   // ===================
-  "checkout.index": checkoutIndexRoute,
+  "checkout.index": CheckoutIndexRoute,
   [layout("checkout.index", "checkout")]: <CheckoutLayout />,
   [middleware("checkout.index", "requireAuth")]: requireAuthMiddleware,
   [parallel("checkout.index", "summary")]: {
@@ -104,7 +104,7 @@ export default map<typeof shopRoutes>({
   // ===================
   // CHECKOUT - PAYMENT
   // ===================
-  "checkout.payment": checkoutPaymentRoute,
+  "checkout.payment": CheckoutPaymentRoute,
   [layout("checkout.payment", "checkout")]: <CheckoutLayout />,
   [middleware("checkout.payment", "requireAuth")]: requireAuthMiddleware,
   [parallel("checkout.payment", "summary")]: {
@@ -114,14 +114,14 @@ export default map<typeof shopRoutes>({
   // ===================
   // CHECKOUT - CONFIRM
   // ===================
-  "checkout.confirm": checkoutConfirmRoute,
+  "checkout.confirm": CheckoutConfirmRoute,
   [layout("checkout.confirm", "checkout")]: <CheckoutLayout />,
   [revalidate("checkout.confirm")]: checkoutConfirmRevalidation,
 
   // ===================
   // ACCOUNT - INDEX
   // ===================
-  "account.index": accountIndexRoute,
+  "account.index": AccountIndexRoute,
   [layout("account.index", "account")]: <AccountLayout />,
   [parallel("account.index", "orders")]: {
     "@orders": () => <RecentOrders />,
@@ -130,14 +130,14 @@ export default map<typeof shopRoutes>({
   // ===================
   // ACCOUNT - ORDERS
   // ===================
-  "account.orders": accountOrdersRoute,
+  "account.orders": AccountOrdersRoute,
   [layout("account.orders", "account")]: <AccountLayout />,
   [middleware("account.orders", "permissions")]: permissionsMiddleware,
 
   // ===================
   // ACCOUNT - ORDER DETAIL
   // ===================
-  "account.orderDetail": accountOrderDetailRoute,
+  "account.orderDetail": AccountOrderDetailRoute,
   [layout("account.orderDetail", "account")]: <AccountLayout />,
   [revalidate("account.orderDetail")]: orderDetailRevalidation,
 });

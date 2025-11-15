@@ -1,16 +1,16 @@
 export {
-  indexRoute,
-  productsCategoryRoute,
-  productsDetailRoute,
+  IndexRoute,
+  ProductsCategoryRoute,
+  ProductsDetailRoute,
 } from "./product.js";
-export { cartRoute } from "./cart.js";
+export { CartRoute } from "./cart.js";
 export {
-  checkoutIndexRoute,
-  checkoutPaymentRoute,
-  checkoutConfirmRoute,
+  CheckoutIndexRoute,
+  CheckoutPaymentRoute,
+  CheckoutConfirmRoute,
 } from "./checkout.js";
 export {
-  accountIndexRoute,
-  accountOrdersRoute,
-  accountOrderDetailRoute,
+  AccountIndexRoute,
+  AccountOrdersRoute,
+  AccountOrderDetailRoute,
 } from "./account.js";

@@ -1,7 +1,7 @@
 import { map, layout, revalidate } from "rsc-router";
 import type { adminRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
-import { indexRoute, usersRoute, userRoute, settingsRoute } from "./admin/routes.js";
+import { IndexRoute, UsersRoute, UserRoute, SettingsRoute } from "./admin/routes.js";
 import { globalRevalidation, settingsRevalidation, userRevalidation } from "./admin/revalidation.js";
 
 /**
@@ -30,8 +30,8 @@ export default map<typeof adminRoutes>({
   [revalidate("user")]: userRevalidation,
 
   // ROUTE HANDLERS
-  index: indexRoute,
-  users: usersRoute,
-  user: userRoute,
-  settings: settingsRoute,
+  index: IndexRoute,
+  users: UsersRoute,
+  user: UserRoute,
+  settings: SettingsRoute,
 });

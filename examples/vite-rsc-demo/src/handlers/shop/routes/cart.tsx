@@ -4,7 +4,7 @@ import { products } from "@/handlers/shop/data.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 
-export const cartRoute: RouteHandler<typeof shopRoutes, "cart"> = () => (
+export const CartRoute: RouteHandler<typeof shopRoutes, "cart"> = () => (
   <DebugSegmentWrapper type="route" name="Cart">
     <div style={{ display: "flex", gap: "2rem" }}>
       <div style={{ flex: 1 }}>

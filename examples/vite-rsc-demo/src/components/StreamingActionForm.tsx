@@ -14,7 +14,7 @@ export function StreamingActionForm({
   action,
   children,
 }: {
-  productId: string;
+  productId: string | number;
   action: (productId: string, quantity: number) => Promise<any>;
   children?: React.ReactNode;
 }) {
@@ -22,7 +22,7 @@ export function StreamingActionForm({
     async (_prevState, formData) => {
       try {
         console.log("StreamingActionForm data set", { isPending, state });
-        const result = await StreamingAction({ teststestse: true });
+        const result = await StreamingAction(formData);
         console.log("[StreamingAction] Action result:", result);
         return result;
       } catch (error) {

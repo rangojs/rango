@@ -35,12 +35,13 @@ export function CategorySidebar() {
 }
 
 export function RelatedProducts({ slug }: { slug?: string }) {
-  const currentProduct = slug ? products.find((p) => p.slug === slug) : undefined;
+  const currentProduct = slug
+    ? products.find((p) => p.slug === slug)
+    : undefined;
   const relatedProducts = currentProduct
     ? products
         .filter(
-          (p) =>
-            p.category === currentProduct.category && p.slug !== slug
+          (p) => p.category === currentProduct.category && p.slug !== slug
         )
         .slice(0, 2)
     : [];
@@ -76,11 +77,17 @@ export function RelatedProducts({ slug }: { slug?: string }) {
   );
 }
 
-export function OrderSummary({ variant = "cart" }: { variant?: "cart" | "checkout" | "payment" }) {
+export function OrderSummary({
+  variant = "cart",
+}: {
+  variant?: "cart" | "checkout" | "payment";
+}) {
   const segmentLabel =
-    variant === "cart" ? "@summary" :
-    variant === "checkout" ? "@summary (checkout)" :
-    "@summary (payment)";
+    variant === "cart"
+      ? "@summary"
+      : variant === "checkout"
+        ? "@summary (checkout)"
+        : "@summary (payment)";
 
   return (
     <DebugSegmentWrapper type="parallel" name={segmentLabel}>
@@ -163,13 +170,15 @@ export function RecentOrders() {
 
 // ==================== PRODUCT PAGE COMPONENTS ====================
 
-export function PDPNavbar(product: {
-  id: number;
-  slug: string;
-  name: string;
-  category: string;
-  price: number;
-}) {
+export function PDPNavbar(
+  product: {
+    id: number;
+    slug: string;
+    name: string;
+    category: string;
+    price: number;
+  } & { cartCount?: number }
+) {
   return (
     <div
       style={{
@@ -179,7 +188,10 @@ export function PDPNavbar(product: {
         borderRadius: "4px",
       }}
     >
-      <h4 style={{ marginTop: 0 }}>🧪 Test Revalidation Behavior:</h4>
+      <h4 style={{ marginTop: 0 }}>🧪 Test Revalidation Behavior:</h4>{" "}
+      <h4 style={{ marginTop: 0 }}>
+        <strong>In cart: {product.cartCount ?? 0}</strong>
+      </h4>
       <ul style={{ margin: 0, paddingLeft: "1.5rem", fontSize: "0.9rem" }}>
         <li style={{ marginBottom: "0.5rem" }}>
           <a href="/shop/product/wireless-headphones">Wireless Headphones</a> →{" "}
@@ -217,7 +229,17 @@ export function PDPNavbar(product: {
   );
 }
 
-export function ProductCard({ product }: { product: { id: number; slug: string; name: string; category: string; price: number } }) {
+export function ProductCard({
+  product,
+}: {
+  product: {
+    id: number;
+    slug: string;
+    name: string;
+    category: string;
+    price: number;
+  };
+}) {
   return (
     <a
       key={product.id}
@@ -252,7 +274,11 @@ export function ProductCard({ product }: { product: { id: number; slug: string; 
   );
 }
 
-export function ProductCardSimple({ product }: { product: { id: number; slug: string; name: string; price: number } }) {
+export function ProductCardSimple({
+  product,
+}: {
+  product: { id: number; slug: string; name: string; price: number };
+}) {
   return (
     <a
       key={product.id}

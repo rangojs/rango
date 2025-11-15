@@ -4,7 +4,7 @@ import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 import { CurrentURL } from "@/components/CurrentURL.js";
 
-export const postRoute: RouteHandler<typeof blogRoutes, "post"> = (ctx) => {
+export const PostRoute: RouteHandler<typeof blogRoutes, "post"> = (ctx) => {
   const renderTime = new Date().toISOString();
   const queryParams: [string, string][] = Array.from(
     ctx.searchParams.entries()
