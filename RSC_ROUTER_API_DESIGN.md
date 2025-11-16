@@ -39,31 +39,40 @@ router.route("/admin", adminRoutes);
 router.route("/dashboard", adminRoutes); // /dashboard/users, /dashboard/settings, etc.
 ```
 
-### Nested Routes - Handler Example
+### Array-Based Handler Definition
+
+**Clean, nested structure with full type inference:**
 
 ```typescript
-import { map, layout, middleware } from 'rsc-router';
+import { map } from 'rsc-router';
 
-export default map<typeof adminRoutes>({
-  // Global layouts - apply to ALL admin routes
-  [layout('*', 'root')]: <RootLayout />,
-  [layout('*', 'admin')]: <AdminLayout />,
+export default map<typeof adminRoutes>(({ route, layout, middleware }) => [
+  // Global layouts - wrap all routes
+  layout(<RootLayout />),
+  layout(<AdminLayout />, [
+    // Middleware applies to all routes in this layout
+    middleware(requireAuth()),
 
-  // Global middleware - apply to ALL admin routes
-  [middleware('*', 'auth')]: [requireAuth()],
+    route("dashboard", AdminDashboard),
+    route("users.list", UsersList),
+    route("users.detail", (ctx) => <UserDetail id={ctx.params.id} />),
 
-  // Additional middleware only for edit route
-  [middleware('users.edit', 'adminCheck')]: [requireAdmin()],
+    // Additional middleware for specific route
+    route("users.edit", (ctx) => <UserEdit id={ctx.params.id} />, ({ middleware }) => [
+      middleware(requireAdmin()),
+    ]),
 
-  // Route handlers - use dot notation for nested routes
-  dashboard: () => <AdminDashboard />,
-  'users.list': () => <UsersList />,
-  'users.detail': (ctx) => <UserDetail id={ctx.params.id} />,
-  'users.edit': (ctx) => <UserEdit id={ctx.params.id} />,
-  settings: () => <AdminSettings />
-});
-// All routes get: RootLayout → AdminLayout → requireAuth()
-// users.edit additionally gets: requireAdmin()
+    route("settings", AdminSettings),
+  ]),
+]);
+```
+
+**Benefits:**
+- ✅ Visual hierarchy matches logical structure
+- ✅ Route-scoped helpers (`parallel`, `middleware`, `revalidate`) get typed params
+- ✅ No computed property names `[layout(...)]:`
+- ✅ Clean imports - only `import { map }`
+- ✅ Autocomplete for valid route names
 ```
 
 ### Complex Example: E-commerce Site
@@ -73,29 +82,22 @@ export default map<typeof adminRoutes>({
 export const shopRoutes = route({
   index: '/',
   products: {
-    list: '/products',
-    category: '/products/category/:category',
-    detail: '/products/:slug',
+    category: '/products/:category',
+    detail: '/product/:slug',
   },
   cart: '/cart',
   checkout: {
     index: '/checkout',
-    shipping: '/checkout/shipping',
     payment: '/checkout/payment',
-    confirmation: '/checkout/confirmation/:orderId',
+    confirm: '/checkout/confirm',
   },
-  account: {
-    index: '/account',
-    orders: '/account/orders',
-    orderDetail: '/account/orders/:orderId',
-  }
 });
 
-// handlers/shop.handlers.tsx
-import { map, layout, parallel, middleware, revalidate } from 'rsc-router';
+// handlers/shop.tsx
+import { map } from 'rsc-router';
 
-export default map<typeof shopRoutes>({
-  // ===== LAYOUTS =====
+export default map<typeof shopRoutes>(({ route, layout, middleware, revalidate }) => [
+  // Global root
 
   // Global layout - applies to ALL routes
   [layout('*', 'root')]: <RootLayout />,
@@ -182,75 +184,76 @@ export default map<typeof shopRoutes>({
   // Cart tracking
   [middleware('cart', 'analytics')]: [trackCartView()],
 
-  // ===== REVALIDATION =====
+  layout(<ShopLayout />, [
+    middleware(trackingMiddleware()),
 
-  // Revalidate product detail when slug changes
-  [revalidate('products.detail')]: ({ prevParams, nextParams }) =>
-    prevParams.slug !== nextParams.slug,
+    route("index", ShopIndex),
+    route("products.category", (ctx) => <ProductCategory category={ctx.params.category} />),
 
-  // Revalidate order detail when orderId changes
-  [revalidate('account.orderDetail')]: ({ prevParams, nextParams }) =>
-    prevParams.orderId !== nextParams.orderId,
+    route("products.detail", ProductDetail, ({ parallel, revalidate }) => [
+      revalidate(({ currentParams, nextParams }) => currentParams.slug !== nextParams.slug),
 
-  [revalidate('checkout.confirmation')]: ({ prevParams, nextParams }) =>
-    prevParams.orderId !== nextParams.orderId,
+      parallel({
+        "@related": (ctx) => <RelatedProducts slug={ctx.params.slug} />,
+        "@reviews": (ctx) => <ProductReviews slug={ctx.params.slug} />,
+      }),
+    ]),
 
-  // ===== ROUTE HANDLERS =====
+    route("cart", Cart, ({ parallel }) => [
+      parallel({
+        "@recommendations": () => <Recommendations />,
+      }),
+    ]),
+  ]),
 
-  index: () => <ShopHome />,
+  layout(<CheckoutLayout />, [
+    middleware(requireAuth()),
 
-  'products.list': async (ctx) => {
-    const products = await getProducts();
-    return <ProductsList products={products} />;
-  },
+    route("checkout.index", CheckoutIndex, ({ parallel }) => [
+      parallel({
+        "@summary": () => <OrderSummary />,
+      }),
+    ]),
 
-  'products.category': async (ctx) => {
-    const products = await getProductsByCategory(ctx.params.category);
-    return <ProductsCategory category={ctx.params.category} products={products} />;
-  },
+    route("checkout.payment", CheckoutPayment),
+    route("checkout.confirm", CheckoutConfirm),
+  ]),
+```
 
-  'products.detail': async (ctx) => {
-    const product = await getProduct(ctx.params.slug);
-    return <ProductDetail product={product} />;
-  },
+**Key Features Shown:**
+- Nested layouts create visual hierarchy
+- Route-scoped helpers (`parallel`, `revalidate`) get typed params
+- Middleware scoped to layout applies to all child routes
+- Clean, readable structure
 
-  cart: async (ctx) => {
-    const cart = await getCart(ctx.session.cartId);
-    return <Cart cart={cart} />;
-  },
+### Revalidation API
 
-  'checkout.index': () => <CheckoutStart />,
+Revalidation is **segment-specific** - use route-scoped helpers:
 
-  'checkout.shipping': async (ctx) => {
-    const cart = await getCart(ctx.session.cartId);
-    return <CheckoutShipping cart={cart} />;
-  },
+```typescript
+export default map<typeof shopRoutes>(({ route, layout, revalidate }) => [
+  layout(<ShopLayout />, [
+    // Layout revalidation
+    revalidate((args) => {
+      return args.context.get('theme') !== args.context.get('prevTheme');
+    }),
 
-  'checkout.payment': async (ctx) => {
-    const order = await getOrder(ctx.session.orderId);
-    return <CheckoutPayment order={order} />;
-  },
+    route("products.detail", ProductDetail, ({ parallel, revalidate }) => [
+      // Route revalidation
+      revalidate(({ currentParams, nextParams }) => {
+        return currentParams.slug !== nextParams.slug;
+      }),
 
-  'checkout.confirmation': async (ctx) => {
-    const order = await getOrder(ctx.params.orderId);
-    return <CheckoutConfirmation order={order} />;
-  },
-
-  'account.index': async (ctx) => {
-    const user = await getUser(ctx.user.id);
-    return <AccountDashboard user={user} />;
-  },
-
-  'account.orders': async (ctx) => {
-    const orders = await getUserOrders(ctx.user.id);
-    return <OrdersList orders={orders} />;
-  },
-
-  'account.orderDetail': async (ctx) => {
-    const order = await getOrder(ctx.params.orderId);
-    return <OrderDetail order={order} />;
-  }
-});
+      parallel({
+        "@related": (ctx) => <RelatedProducts slug={ctx.params.slug} />
+      }, [
+        // Parallel revalidation
+        revalidate(({ currentParams, nextParams }) => {
+          return currentParams.slug !== nextParams.slug;
+        }),
+      ]),
+    ]),
+  ]),
 ```
 
 ## Handler Definition API
@@ -885,9 +888,9 @@ Revalidation functions are **segment-specific** - you define them separately for
 #### Segment-Specific Helpers
 
 ```typescript
-import { map, revalidateRoute, revalidateLayout, revalidateParallel } from 'rsc-router';
+import { map } from 'rsc-router';
 
-export default map<typeof shopRoutes>({
+export default map<typeof shopRoutes>(({ layout, parallel, revalidateRoute }) => ({
   // Route handler revalidation - only called for the route itself
   "products.detail": ProductsDetailRoute,
   [revalidateRoute("products.detail")]: ({ defaultShouldRevalidate }) => {
@@ -946,7 +949,14 @@ export default map<typeof shopRoutes>({
   },
 
   'products.detail': (ctx) => <ProductDetail slug={ctx.params.slug} />
-});
+}));
+```
+
+**Benefits of Builder Pattern:**
+- ✅ **Route-aware autocomplete** - helpers know valid route names
+- ✅ **Catch typos at authoring time** - `layout("invalid.route", ...)` errors immediately
+- ✅ **Clean imports** - only import `map`
+- ✅ **Scoped helpers** - can't accidentally use helpers from wrong route definition
 ```
 
 #### Global Revalidation - Applies to All Routes/Layouts/Parallels

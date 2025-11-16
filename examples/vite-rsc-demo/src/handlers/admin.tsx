@@ -11,21 +11,21 @@ import { globalRevalidation, settingsRevalidation, userRevalidation } from "./ad
  * - Soft decision: { defaultShouldRevalidate: boolean } - continues to next revalidator
  * - Hard decision: boolean - short-circuits immediately
  *
- * Array-based API with nested structure
+ * Array-based API with use() pattern
  */
 export default map<typeof adminRoutes>(({ route, layout, revalidate }) => [
-  layout(<RootLayout />, [
+  layout(<RootLayout />, () => [
     // Global soft revalidation
     revalidate(globalRevalidation),
 
     route("index", IndexRoute),
     route("users", UsersRoute),
 
-    route("user", UserRoute, ({ revalidate }) => [
+    route("user", UserRoute, () => [
       revalidate(userRevalidation),
     ]),
 
-    route("settings", SettingsRoute, ({ revalidate }) => [
+    route("settings", SettingsRoute, () => [
       revalidate(settingsRevalidation),
     ]),
   ]),

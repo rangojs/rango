@@ -36,16 +36,18 @@ Build a **code-first, type-safe RSC router** for serverless deployments (Cloudfl
 See detailed roadmap below ↓
 
 ## Current State ✅
-- ✅ Core routing with nested routes
-- ✅ Dynamic segments with type inference
+- ✅ Core routing with nested routes (up to 5 levels deep)
+- ✅ Dynamic segments with type inference (up to 10 param levels)
 - ✅ Layout composition (multiple layouts per route)
-- ✅ Parallel routes (first-class support)
+- ✅ Parallel routes (first-class support with typed params)
 - ✅ Partial rendering optimization
 - ✅ Lazy-loaded handlers
 - ✅ Type-safe params extraction
+- ✅ **Array-based handler API** - clean nesting, route-scoped helpers, full type inference
+- ✅ **Segment-specific revalidation** - revalidateRoute, revalidateLayout, revalidateParallel
 - ✅ Demo shop example (comprehensive test case)
 
-**Bug Fixed:** Nested route flattening now works correctly (products.detail stays prefixed)
+**Latest:** Array-based API with route-scoped helpers provides full type inference for inline handlers!
 
 ---
 

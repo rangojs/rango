@@ -5,10 +5,11 @@ import { Outlet } from "rsc-router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 
 /**
- * About handlers - array-based API
+ * About handlers - array-based API with use() pattern
  */
 export default map<typeof aboutRoutes>(({ route, layout }) => [
   layout(<RootLayout />),
+
   layout(
     <DebugSegmentWrapper type="layout" name="Test">
       <div>

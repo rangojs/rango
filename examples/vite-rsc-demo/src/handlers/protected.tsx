@@ -4,46 +4,46 @@ import { RootLayout } from "../layouts/RootLayout.js";
 
 /**
  * Protected handlers - demonstrates middleware short-circuit
- * Array-based API
+ * Array-based API with use() pattern
  */
 export default map<typeof protectedRoutes>(({ route, layout, middleware }) => [
-  layout(<RootLayout />),
+  layout(<RootLayout />, () => [
+    // Global auth middleware
+    middleware(
+      (ctx, next) => {
+        const isLoggedIn = ctx.searchParams.get("logged_in") === "true";
 
-  // Global auth middleware
-  middleware(
-    (ctx, next) => {
-      const isLoggedIn = ctx.searchParams.get("logged_in") === "true";
+        if (!isLoggedIn) {
+          console.log("[Protected] Not logged in - soft redirect");
+          return redirect("/");
+        }
 
-      if (!isLoggedIn) {
-        console.log("[Protected] Not logged in - soft redirect");
-        return redirect("/");
+        console.log("[Protected] Authenticated");
+        next();
       }
+    ),
 
-      console.log("[Protected] Authenticated");
-      next();
-    }
-  ),
+    route("index", (ctx) => (
+      <div>
+        <h2>Protected Area</h2>
+        <p>You are authenticated!</p>
+        <p>URL: {ctx.pathname}</p>
+        <p><a href="/">← Back to home</a></p>
+      </div>
+    )),
 
-  route("index", (ctx) => (
-    <div>
-      <h2>Protected Area</h2>
-      <p>You are authenticated!</p>
-      <p>URL: {ctx.pathname}</p>
-      <p><a href="/">← Back to home</a></p>
-    </div>
-  )),
+    route("dashboard", () => (
+      <div>
+        <h2>Dashboard</h2>
+        <p>Protected dashboard content</p>
+      </div>
+    )),
 
-  route("dashboard", () => (
-    <div>
-      <h2>Dashboard</h2>
-      <p>Protected dashboard content</p>
-    </div>
-  )),
-
-  route("profile", (ctx) => (
-    <div>
-      <h2>Profile: {ctx.params.username}</h2>
-      <p>Protected profile page</p>
-    </div>
-  )),
+    route("profile", (ctx) => (
+      <div>
+        <h2>Profile: {ctx.params.username}</h2>
+        <p>Protected profile page</p>
+      </div>
+    )),
+  ]),
 ]);

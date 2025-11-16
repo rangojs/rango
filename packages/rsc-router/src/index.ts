@@ -8,7 +8,7 @@
 export { createRSCRouter, type RSCRouter } from './router.js';
 
 // Route definitions and helper functions
-export { route, map, layout, parallel, middleware, revalidateRoute, revalidateLayout, revalidateParallel, redirect } from './route-definition.js';
+export { route, map, layout, parallel, middleware, revalidateRoute, revalidateLayout, revalidateParallel, redirect, type RouteHelpers } from './route-definition.js';
 
 // Segment system
 export { renderSegments } from './segment-system.js';

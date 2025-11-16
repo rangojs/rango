@@ -4,7 +4,7 @@ import { RootLayout } from '../layouts/RootLayout.js';
 import { DebugSegmentWrapper } from '../components/DebugSegmentWrapper.js';
 
 /**
- * Home handlers - array-based API
+ * Home handlers - array-based API with use() pattern
  */
 export default map<typeof homeRoutes>(({ route, layout }) => [
   layout(<RootLayout />),

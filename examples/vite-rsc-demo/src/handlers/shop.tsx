@@ -46,14 +46,16 @@ import { ParallelOutlet } from "rsc-router/client";
  * Shop handlers - comprehensive ecommerce example
  * Tests all routing features: nested routes, dynamic segments, layout composition, parallel routes
  *
- * TYPE SAFETY NOTE:
- * - Array-based API with route-scoped helpers
- * - Full type inference for inline handlers - no explicit types needed!
- * - ctx.params automatically typed based on route pattern
- * - parallel() handlers get params from parent route
+ * **NEW API with use() pattern:**
+ * - use() callbacks for configuration
+ * - Orphan layouts (no child routes = extend parent)
+ * - Multiple middleware/revalidate calls
+ * - Parallel slots share config
+ * - AsyncLocalStorage for implicit context
+ * - Full type inference for inline handlers
  */
 export default map<typeof shopRoutes>(
-  ({ route, layout, middleware, revalidate }) => [
+  ({ route, layout, middleware, parallel, revalidate }) => [
     //#region Global Layout & Middleware
     // Global root layout wraps everything
     layout(
@@ -61,8 +63,9 @@ export default map<typeof shopRoutes>(
         <ParallelOutlet name="@promoBanner" />
         <RootLayout />
       </>,
-      ({ parallel }) => [
+      () => [
         revalidate(globalRevalidation),
+
         parallel({
           "@promoBanner": () => (
             <div
@@ -78,14 +81,15 @@ export default map<typeof shopRoutes>(
         }),
 
         // Global middleware
-        middleware(...loggerMiddleware, ...mockAuthMiddleware),
+        middleware(...loggerMiddleware),
+        middleware(...mockAuthMiddleware),
         //#endregion
 
         //#region Shop Routes
         // Shop layout wraps shop routes
-        layout(<ShopLayout />, [
+        layout(<ShopLayout />, () => [
           // Homepage
-          route("index", IndexRoute, ({ parallel }) => [
+          route("index", IndexRoute, () => [
             parallel({
               "@sidebar": () => <CategorySidebar />,
             }),
@@ -95,17 +99,13 @@ export default map<typeof shopRoutes>(
           route("products.category", ProductsCategoryRoute),
 
           // Product detail
-          route(
-            "products.detail.view",
-            ProductsDetailRoute,
-            ({ parallel, revalidate }) => [
-              revalidate(productDetailRevalidation),
+          route("products.detail.view", ProductsDetailRoute, () => [
+            revalidate(productDetailRevalidation),
 
-              parallel({
-                "@related": (ctx) => <RelatedProducts slug={ctx.params.slug} />,
-              }),
-            ]
-          ),
+            parallel({
+              "@related": (ctx) => <RelatedProducts slug={ctx.params.slug} />,
+            }),
+          ]),
 
           // Deeply nested reviews
           route("products.detail.reviews.index", (ctx) => (
@@ -131,7 +131,7 @@ export default map<typeof shopRoutes>(
           )),
 
           // Cart
-          route("cart", CartRoute, ({ parallel, revalidate }) => [
+          route("cart", CartRoute, () => [
             revalidate(cartRevalidation),
             parallel({
               "@summary": () => <OrderSummary variant="cart" />,
@@ -142,22 +142,22 @@ export default map<typeof shopRoutes>(
 
         //#region Checkout Routes
         // Checkout layout
-        layout(<CheckoutLayout />, [
+        layout(<CheckoutLayout />, () => [
           middleware(...requireAuthMiddleware),
 
-          route("checkout.index", CheckoutIndexRoute, ({ parallel }) => [
+          route("checkout.index", CheckoutIndexRoute, () => [
             parallel({
               "@summary": () => <OrderSummary variant="checkout" />,
             }),
           ]),
 
-          route("checkout.payment", CheckoutPaymentRoute, ({ parallel }) => [
+          route("checkout.payment", CheckoutPaymentRoute, () => [
             parallel({
               "@summary": () => <OrderSummary variant="payment" />,
             }),
           ]),
 
-          route("checkout.confirm", CheckoutConfirmRoute, ({ revalidate }) => [
+          route("checkout.confirm", CheckoutConfirmRoute, () => [
             revalidate(checkoutConfirmRevalidation),
           ]),
         ]),
@@ -165,22 +165,20 @@ export default map<typeof shopRoutes>(
 
         //#region Account Routes
         // Account layout
-        layout(<AccountLayout />, [
-          route("account.index", AccountIndexRoute, ({ parallel }) => [
+        layout(<AccountLayout />, () => [
+          route("account.index", AccountIndexRoute, () => [
             parallel({
               "@orders": () => <RecentOrders />,
             }),
           ]),
 
-          route("account.orders", AccountOrdersRoute, ({ middleware }) => [
+          route("account.orders", AccountOrdersRoute, () => [
             middleware(...permissionsMiddleware),
           ]),
 
-          route(
-            "account.orderDetail",
-            AccountOrderDetailRoute,
-            ({ revalidate }) => [revalidate(orderDetailRevalidation)]
-          ),
+          route("account.orderDetail", AccountOrderDetailRoute, () => [
+            revalidate(orderDetailRevalidation),
+          ]),
         ]),
         //#endregion
       ]

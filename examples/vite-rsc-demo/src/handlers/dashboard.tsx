@@ -5,12 +5,12 @@ import { DashboardLayout } from "../layouts/DashboardLayout.js";
 
 /**
  * Dashboard handlers with parallel routes
- * Array-based API with clean nesting
+ * Array-based API with use() pattern
  */
-export default map<typeof dashboardRoutes>(({ route, layout, middleware, revalidate }) => [
+export default map<typeof dashboardRoutes>(({ route, layout, middleware, parallel, revalidate }) => [
   layout(<RootLayout />),
 
-  layout(<DashboardLayout />, [
+  layout(<DashboardLayout />, () => [
     // Global middleware
     middleware(
       (ctx, next) => {
@@ -44,7 +44,7 @@ export default map<typeof dashboardRoutes>(({ route, layout, middleware, revalid
         <h1>Dashboard Home</h1>
         <p>Welcome to your dashboard</p>
       </div>
-    ), ({ parallel }) => [
+    ), () => [
       parallel({
         "@sidebar": () => (
           <div style={{ background: "#fff3cd", padding: "1rem", borderRadius: "8px" }}>
@@ -76,7 +76,7 @@ export default map<typeof dashboardRoutes>(({ route, layout, middleware, revalid
           <a href="/dashboard">← Back to Dashboard</a>
         </p>
       </div>
-    ), ({ middleware }) => [
+    ), () => [
       middleware((ctx, next) => {
         console.log("[Dashboard Middleware] Settings validation");
         next();
