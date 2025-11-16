@@ -1,1 +1,2 @@
 - When you start a session always read the docs and what is next for work
+- When writing code comments, never use icons and emojis. Keep comments technical and focused on implementation details. Comments must explain what the code does, not session-related context.
