@@ -332,7 +332,20 @@ type ExtractRouteParams<T extends RouteDefinition, K extends string> =
     : GenericParams;
 
 /**
+ * Valid handler keys - all allowed patterns
+ */
+type ValidHandlerKeys<T extends RouteDefinition> =
+  | RouteKeys<T>
+  | `$layout.${RouteKeys<T> | '*'}.${string}`
+  | `$parallel.${RouteKeys<T> | '*'}.${string}`
+  | `$middleware.${RouteKeys<T> | '*'}.${string}`
+  | `$revalidate.route.${RouteKeys<T> | '*'}.${string}`
+  | `$revalidate.layout.${RouteKeys<T> | '*'}.${string}.${string}`
+  | `$revalidate.parallel.${RouteKeys<T> | '*'}.${string}.${string}.${string}`;
+
+/**
  * Handlers object that maps route names to handler functions with type-safe string patterns
+ * Prevents invalid route keys - TypeScript will error if you use a key that doesn't exist
  */
 export type HandlersForRouteMap<T extends RouteDefinition, TEnv = any> = {
   // Route handlers - type-safe params extracted from route patterns
@@ -372,6 +385,10 @@ export type HandlersForRouteMap<T extends RouteDefinition, TEnv = any> = {
   // Supports '*' wildcard for global parallel revalidations
   // Multiple revalidations execute in order with short-circuit on first `true` (OR logic)
   [K in `$revalidate.parallel.${RouteKeys<T> | '*'}.${string}.${string}.${string}`]?: ShouldRevalidateFn<GenericParams, TEnv>;
+} & {
+  // Catch-all: prevent invalid keys from being used
+  // This makes TypeScript error if you use a route key that doesn't exist
+  [K in string]: K extends ValidHandlerKeys<T> ? unknown : never;
 };
 
 /**
