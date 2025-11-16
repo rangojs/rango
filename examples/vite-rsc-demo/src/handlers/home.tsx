@@ -1,16 +1,15 @@
-import { map, route, layout } from 'rsc-router';
+import { map } from 'rsc-router';
 import type { homeRoutes } from '../routes.js';
 import { RootLayout } from '../layouts/RootLayout.js';
 import { DebugSegmentWrapper } from '../components/DebugSegmentWrapper.js';
 
 /**
- * Home handlers
+ * Home handlers - array-based API
  */
-export default map<typeof homeRoutes>({
-  // Global layout
-  [layout('*', 'root')]: <RootLayout />,
+export default map<typeof homeRoutes>(({ route, layout }) => [
+  layout(<RootLayout />),
 
-  [route('index')]: () => (
+  route('index', () => (
     <DebugSegmentWrapper type="route" name="Home">
       <div>
         <h1>🏠 Home</h1>
@@ -27,5 +26,5 @@ export default map<typeof homeRoutes>({
         </ul>
       </div>
     </DebugSegmentWrapper>
-  ),
-});
+  )),
+]);

@@ -1,33 +1,33 @@
-import { route } from 'rsc-router';
+import { route } from "rsc-router";
 
 /**
  * Home route
  */
 export const homeRoutes = route({
-  index: '/',
+  index: "/",
 });
 
 /**
  * Blog routes with params (relative paths - will be mounted at /blog)
  */
 export const blogRoutes = route({
-  index: '/',
-  post: '/:slug',
+  index: "/",
+  post: "/:slug",
 });
 
 /**
  * About route
  */
 export const aboutRoutes = route({
-  index: '/about',
+  index: "/about",
 });
 
 /**
  * Dashboard routes (for testing parallel routes)
  */
 export const dashboardRoutes = route({
-  index: '/',
-  settings: '/settings',
+  index: "/",
+  settings: "/settings",
 });
 
 /**
@@ -35,30 +35,30 @@ export const dashboardRoutes = route({
  * Tests nested routes, dynamic segments, layout composition, and parallel routes
  */
 export const shopRoutes = route({
-  index: '/',
+  index: "/",
   products: {
-    category: '/products/:category',
+    category: "/products/:category",
     detail: {
-      index: '/product/:slug',
+      view: "/product/:slug",
       reviews: {
-        index: '/product/:slug/reviews',
-        detail: '/product/:slug/reviews/:reviewId',
+        index: "/product/:slug/reviews",
+        detail: "/product/:slug/reviews/:reviewId",
         edit: {
-          index: '/product/:slug/reviews/:reviewId/edit',
+          index: "/product/:slug/reviews/:reviewId/edit",
         },
       },
     },
   },
-  cart: '/cart',
+  cart: "/cart",
   checkout: {
-    index: '/checkout',
-    payment: '/checkout/payment',
-    confirm: '/checkout/confirm',
+    index: "/checkout",
+    payment: "/checkout/payment",
+    confirm: "/checkout/confirm",
   },
   account: {
-    index: '/account',
-    orders: '/account/orders',
-    orderDetail: '/account/orders/:id',
+    index: "/account",
+    orders: "/account/orders",
+    orderDetail: "/account/orders/:id",
   },
 });
 
@@ -67,10 +67,10 @@ export const shopRoutes = route({
  * Tests global soft decisions with route-specific overrides
  */
 export const adminRoutes = route({
-  index: '/',
-  users: '/users',
-  user: '/users/:id',
-  settings: '/settings',
+  index: "/",
+  users: "/users",
+  user: "/users/:id",
+  settings: "/settings",
 });
 
 /**
@@ -78,7 +78,7 @@ export const adminRoutes = route({
  * Tests soft/hard redirects, error handling, transparent URLs
  */
 export const protectedRoutes = route({
-  index: '/',
-  dashboard: '/dashboard',
-  profile: '/profile/:username',
+  index: "/",
+  dashboard: "/dashboard",
+  profile: "/profile/:username",
 });

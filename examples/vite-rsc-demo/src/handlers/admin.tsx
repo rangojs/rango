@@ -1,4 +1,4 @@
-import { map, layout, revalidateRoute } from "rsc-router";
+import { map } from "rsc-router";
 import type { adminRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { IndexRoute, UsersRoute, UserRoute, SettingsRoute } from "./admin/routes.js";
@@ -11,27 +11,22 @@ import { globalRevalidation, settingsRevalidation, userRevalidation } from "./ad
  * - Soft decision: { defaultShouldRevalidate: boolean } - continues to next revalidator
  * - Hard decision: boolean - short-circuits immediately
  *
- * EXECUTION FLOW:
- * 1. Global revalidators provide soft defaults
- * 2. Route-specific can override with hard decisions
- * 3. If all soft → use final suggestion
- *
- * Now uses modular folder structure (routes/, revalidation/)
+ * Array-based API with nested structure
  */
-export default map<typeof adminRoutes>({
-  // Global layout
-  [layout("*", "root")]: <RootLayout />,
+export default map<typeof adminRoutes>(({ route, layout, revalidate }) => [
+  layout(<RootLayout />, [
+    // Global soft revalidation
+    revalidate(globalRevalidation),
 
-  // SOFT REVALIDATION - Global Default
-  [revalidateRoute("*", "global-default")]: globalRevalidation,
+    route("index", IndexRoute),
+    route("users", UsersRoute),
 
-  // HARD REVALIDATION - Route-Specific Overrides
-  [revalidateRoute("settings")]: settingsRevalidation,
-  [revalidateRoute("user")]: userRevalidation,
+    route("user", UserRoute, ({ revalidate }) => [
+      revalidate(userRevalidation),
+    ]),
 
-  // ROUTE HANDLERS
-  index: IndexRoute,
-  users: UsersRoute,
-  user: UserRoute,
-  settings: SettingsRoute,
-});
+    route("settings", SettingsRoute, ({ revalidate }) => [
+      revalidate(settingsRevalidation),
+    ]),
+  ]),
+]);

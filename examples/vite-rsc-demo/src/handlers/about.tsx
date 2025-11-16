@@ -1,16 +1,15 @@
-import { map, route, layout } from "rsc-router";
+import { map } from "rsc-router";
 import type { aboutRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { Outlet } from "rsc-router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 
 /**
- * About handlers
+ * About handlers - array-based API
  */
-export default map<typeof aboutRoutes>({
-  // Global layouts
-  [layout("*", "root")]: () => <RootLayout />,
-  [layout("*", "test")]: (
+export default map<typeof aboutRoutes>(({ route, layout }) => [
+  layout(<RootLayout />),
+  layout(
     <DebugSegmentWrapper type="layout" name="Test">
       <div>
         test
@@ -19,7 +18,7 @@ export default map<typeof aboutRoutes>({
     </DebugSegmentWrapper>
   ),
 
-  [route("index")]: () => (
+  route("index", () => (
     <DebugSegmentWrapper type="route" name="About">
       <div>
         <h1>ℹ️ About</h1>
@@ -30,5 +29,5 @@ export default map<typeof aboutRoutes>({
         </p>
       </div>
     </DebugSegmentWrapper>
-  ),
-});
+  )),
+]);

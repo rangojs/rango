@@ -82,7 +82,7 @@ export const ProductsCategoryRoute: RouteHandler<
 
 export const ProductsDetailRoute: RouteHandler<
   typeof shopRoutes,
-  "products.detail"
+  "products.detail.view"
 > = async (ctx) => {
   const product = products.find((p) => p.slug === ctx.params.slug);
   const renderTime = new Date().toISOString();

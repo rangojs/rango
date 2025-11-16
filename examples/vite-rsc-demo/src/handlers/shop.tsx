@@ -1,4 +1,5 @@
-import { map, layout, parallel, revalidateRoute, revalidateLayout, revalidateParallel, middleware } from "rsc-router";
+//#region Imports
+import { map } from "rsc-router";
 import type { shopRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { ShopLayout } from "../layouts/ShopLayout.js";
@@ -37,141 +38,153 @@ import {
   orderDetailRevalidation,
   productDetailRevalidation,
 } from "./shop/revalidation/index.js";
+import { ParallelOutlet } from "rsc-router/client";
+//#endregion
 
+//#region Handler Definition
 /**
  * Shop handlers - comprehensive ecommerce example
  * Tests all routing features: nested routes, dynamic segments, layout composition, parallel routes
  *
  * TYPE SAFETY NOTE:
- * - Uses GLOBAL module augmentation for AppEnv (see router.tsx)
- * - No need to import AppEnv or pass second generic
- * - ctx.get('user'), ctx.set('user'), ctx.var.user all type-safe via global!
- * - Alternative: Explicit import (see blog.tsx)
- * - Revalidation handlers are now type-safe for nested routes!
+ * - Array-based API with route-scoped helpers
+ * - Full type inference for inline handlers - no explicit types needed!
+ * - ctx.params automatically typed based on route pattern
+ * - parallel() handlers get params from parent route
  */
-export default map<typeof shopRoutes>({
-  // ← TEnv defaults to RSCRouter.Env (global)
-  // ===================
-  // GLOBAL - applies to all routes
-  // ===================
-  [layout("*", "root")]: <RootLayout />,
-  [layout("*", "shop")]: <ShopLayout />,
-  [middleware("*", "logger")]: loggerMiddleware,
-  [middleware("*", "mockAuth")]: mockAuthMiddleware,
-  [revalidateRoute("*", "global")]: globalRevalidation,
+export default map<typeof shopRoutes>(
+  ({ route, layout, middleware, revalidate }) => [
+    //#region Global Layout & Middleware
+    // Global root layout wraps everything
+    layout(
+      <>
+        <ParallelOutlet name="@promoBanner" />
+        <RootLayout />
+      </>,
+      ({ parallel }) => [
+        revalidate(globalRevalidation),
+        parallel({
+          "@promoBanner": () => (
+            <div
+              style={{
+                background: "#d1e7dd",
+                padding: "0.5rem",
+                textAlign: "center",
+              }}
+            >
+              <p>🔥 Summer Sale! Up to 50% off on selected items! 🔥</p>
+            </div>
+          ),
+        }),
 
-  // ===================
-  // SHOP HOMEPAGE
-  // ===================
-  index: IndexRoute,
-  [parallel("index", "sidebar")]: {
-    "@sidebar": () => <CategorySidebar />,
-  },
+        // Global middleware
+        middleware(...loggerMiddleware, ...mockAuthMiddleware),
+        //#endregion
 
-  // ===================
-  // PRODUCTS - CATEGORY
-  // ===================
-  "products.category": ProductsCategoryRoute,
+        //#region Shop Routes
+        // Shop layout wraps shop routes
+        layout(<ShopLayout />, [
+          // Homepage
+          route("index", IndexRoute, ({ parallel }) => [
+            parallel({
+              "@sidebar": () => <CategorySidebar />,
+            }),
+          ]),
 
-  // ===================
-  // PRODUCTS - DETAIL
-  // ===================
-  "products.detail.index": ProductsDetailRoute,
-  [revalidateRoute("products.detail.index", "demo")]: productDetailRevalidation,
-  [parallel("products.detail.index", "related")]: {
-    "@related": (ctx) => <RelatedProducts slug={ctx.params.slug} />,
-  },
+          // Category
+          route("products.category", ProductsCategoryRoute),
 
-  // ===================
-  // PRODUCTS - DETAIL - REVIEWS (Deeply nested - test param inference)
-  // ===================
-  "products.detail.reviews.index": (ctx) => {
-    // TypeScript should infer: ctx.params: { slug: string }
-    return (
-      <div>
-        <h2>Reviews for {ctx.params.slug}</h2>
-        <p>All reviews for this product</p>
-      </div>
-    );
-  },
+          // Product detail
+          route(
+            "products.detail.view",
+            ProductsDetailRoute,
+            ({ parallel, revalidate }) => [
+              revalidate(productDetailRevalidation),
 
-  "products.detail.reviews.detail": (ctx) => {
-    // TypeScript should infer: ctx.params: { slug: string; reviewId: string }
-    return (
-      <div>
-        <h2>Review {ctx.params.reviewId}</h2>
-        <p>For product: {ctx.params.slug}</p>
-      </div>
-    );
-  },
+              parallel({
+                "@related": (ctx) => <RelatedProducts slug={ctx.params.slug} />,
+              }),
+            ]
+          ),
 
-  "products.detail.reviews.edit.index": (ctx) => {
-    // TypeScript should infer: ctx.params: { slug: string; reviewId: string }
-    return (
-      <div>
-        <h2>Edit Review {ctx.params.reviewId}</h2>
-        <p>For product: {ctx.params.slug}</p>
-        <p>This is 4 levels deep! (products.detail.reviews.edit.index)</p>
-      </div>
-    );
-  },
+          // Deeply nested reviews
+          route("products.detail.reviews.index", (ctx) => (
+            <div>
+              <h2>Reviews for {ctx.params.slug}</h2>
+              <p>All reviews for this product</p>
+            </div>
+          )),
 
-  // ===================
-  // CART
-  // ===================
-  cart: CartRoute,
-  [revalidateRoute("cart")]: cartRevalidation,
-  [parallel("cart", "summary")]: {
-    "@summary": () => <OrderSummary variant="cart" />,
-  },
+          route("products.detail.reviews.detail", (ctx) => (
+            <div>
+              <h2>Review {ctx.params.reviewId}</h2>
+              <p>For product: {ctx.params.slug}</p>
+            </div>
+          )),
 
-  // ===================
-  // CHECKOUT - INDEX
-  // ===================
-  "checkout.index": CheckoutIndexRoute,
-  [layout("checkout.index", "checkout")]: <CheckoutLayout />,
-  [middleware("checkout.index", "requireAuth")]: requireAuthMiddleware,
-  [parallel("checkout.index", "summary")]: {
-    "@summary": () => <OrderSummary variant="checkout" />,
-  },
+          route("products.detail.reviews.edit.index", (ctx) => (
+            <div>
+              <h2>Edit Review {ctx.params.reviewId}</h2>
+              <p>For product: {ctx.params.slug}</p>
+              <p>4 levels deep!</p>
+            </div>
+          )),
 
-  // ===================
-  // CHECKOUT - PAYMENT
-  // ===================
-  "checkout.payment": CheckoutPaymentRoute,
-  [layout("checkout.payment", "checkout")]: <CheckoutLayout />,
-  [middleware("checkout.payment", "requireAuth")]: requireAuthMiddleware,
-  [parallel("checkout.payment", "summary")]: {
-    "@summary": () => <OrderSummary variant="payment" />,
-  },
+          // Cart
+          route("cart", CartRoute, ({ parallel, revalidate }) => [
+            revalidate(cartRevalidation),
+            parallel({
+              "@summary": () => <OrderSummary variant="cart" />,
+            }),
+          ]),
+        ]),
+        //#endregion
 
-  // ===================
-  // CHECKOUT - CONFIRM
-  // ===================
-  "checkout.confirm": CheckoutConfirmRoute,
-  [layout("checkout.confirm", "checkout")]: <CheckoutLayout />,
-  [revalidateRoute("checkout.confirm")]: checkoutConfirmRevalidation,
+        //#region Checkout Routes
+        // Checkout layout
+        layout(<CheckoutLayout />, [
+          middleware(...requireAuthMiddleware),
 
-  // ===================
-  // ACCOUNT - INDEX
-  // ===================
-  "account.index": AccountIndexRoute,
-  [layout("account.index", "account")]: <AccountLayout />,
-  [parallel("account.index", "orders")]: {
-    "@orders": () => <RecentOrders />,
-  },
+          route("checkout.index", CheckoutIndexRoute, ({ parallel }) => [
+            parallel({
+              "@summary": () => <OrderSummary variant="checkout" />,
+            }),
+          ]),
 
-  // ===================
-  // ACCOUNT - ORDERS
-  // ===================
-  "account.orders": AccountOrdersRoute,
-  [layout("account.orders", "account")]: <AccountLayout />,
-  [middleware("account.orders", "permissions")]: permissionsMiddleware,
+          route("checkout.payment", CheckoutPaymentRoute, ({ parallel }) => [
+            parallel({
+              "@summary": () => <OrderSummary variant="payment" />,
+            }),
+          ]),
 
-  // ===================
-  // ACCOUNT - ORDER DETAIL
-  // ===================
-  "account.orderDetail": AccountOrderDetailRoute,
-  [layout("account.orderDetail", "account")]: <AccountLayout />,
-  [revalidateRoute("account.orderDetail")]: orderDetailRevalidation,
-});
+          route("checkout.confirm", CheckoutConfirmRoute, ({ revalidate }) => [
+            revalidate(checkoutConfirmRevalidation),
+          ]),
+        ]),
+        //#endregion
+
+        //#region Account Routes
+        // Account layout
+        layout(<AccountLayout />, [
+          route("account.index", AccountIndexRoute, ({ parallel }) => [
+            parallel({
+              "@orders": () => <RecentOrders />,
+            }),
+          ]),
+
+          route("account.orders", AccountOrdersRoute, ({ middleware }) => [
+            middleware(...permissionsMiddleware),
+          ]),
+
+          route(
+            "account.orderDetail",
+            AccountOrderDetailRoute,
+            ({ revalidate }) => [revalidate(orderDetailRevalidation)]
+          ),
+        ]),
+        //#endregion
+      ]
+    ),
+  ]
+);
+//#endregion
