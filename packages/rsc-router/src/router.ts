@@ -92,10 +92,10 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       url: cleanUrl, // Clean URL
       env: bindings,
       var: variables,
-      get: (key: string) => variables[key],
-      set: (key: string, value: any) => {
+      get: ((key: string) => variables[key]) as HandlerContext<any, TEnv>["get"],
+      set: ((key: string, value: any) => {
         variables[key] = value;
-      },
+      }) as HandlerContext<any, TEnv>["set"],
       _originalRequest: request, // Raw request for advanced use
     };
   }
@@ -319,223 +319,199 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
   }
 
   /**
-   * Build segments from matched route using positional extraction
-   *
-   * @param skipMiddleware - If true, skip middleware execution (for building prev segments in comparison)
+   * Helper to check if metadata should apply to the current route
    */
-  async function buildSegments(
-    entry: RouteEntry<TEnv>,
-    routeKey: string,
-    params: Record<string, string>,
-    context: HandlerContext<any, TEnv>,
-    skipMiddleware = false
-  ): Promise<ResolvedSegment[]> {
-    const handlers = await loadHandlers(entry.handlers);
-    const segments: ResolvedSegment[] = [];
-    let index = 0;
+  function shouldApplyToRoute(keyInfo: { global: boolean; routeName?: string }, routeKey: string): boolean {
+    return keyInfo.global || keyInfo.routeName === routeKey;
+  }
 
-    // Track global metadata (wildcard '*' routes)
-    const globalLayouts: Array<{
-      component: ReactNode | Handler;
-      name: string;
-    }> = [];
-    const globalParallel: Record<string, Handler> = {};
-    const globalMiddleware: any[] = [];
+  /**
+   * Metadata container with disposable pattern for cleanup
+   * Extracted metadata from handlers - layouts, parallels, middleware, revalidations
+   */
+  interface RouteMetadata {
+    layouts: Array<{ component: ReactNode | Handler; isGlobal: boolean; name: string }>;
+    parallels: Array<{ slot: string; handler: Handler; isGlobal: boolean }>;
+    middleware: { global: any[]; perRoute: any[] };
+    revalidations: { global: Array<{ name: string; fn: any }>; perRoute: Array<{ name: string; fn: any }> };
+  }
 
-    // Track per-route metadata (specific to routeKey)
-    const perRouteLayouts: Array<{
-      component: ReactNode | Handler;
-      name: string;
-    }> = [];
-    const perRouteParallel: Record<string, Handler> = {};
-    const perRouteMiddleware: any[] = [];
+  /**
+   * Extract metadata from handlers using single-pass iteration
+   * Returns metadata object with all layouts, parallels, middleware, and revalidations
+   */
+  function extractMetadata(handlers: any, routeKey: string): RouteMetadata {
+    const metadata: RouteMetadata = {
+      layouts: [],
+      parallels: [],
+      middleware: { global: [], perRoute: [] },
+      revalidations: { global: [], perRoute: [] },
+    };
 
-    // Use Reflect.ownKeys to preserve insertion order (symbols + strings)
-    const keys = Reflect.ownKeys(handlers);
-
-    // PASS 1: Process all metadata keys to accumulate
-    for (const key of keys) {
+    // Single-pass extraction using iterator protocol
+    for (const key of Reflect.ownKeys(handlers)) {
       const keyInfo = getKeyType(key);
       if (!keyInfo) continue;
 
       const value = handlers[key as any];
 
-      if (keyInfo.type === "layout") {
-        const layouts = Array.isArray(value)
-          ? (value as unknown as (ReactNode | Handler)[])
-          : [value as unknown as ReactNode | Handler];
-        const layoutName = keyInfo.name || "unnamed";
-        if (keyInfo.global) {
-          // Global: Add to global layouts with name
-          globalLayouts.push(
-            ...layouts.map((component) => ({ component, name: layoutName }))
-          );
-        } else if (keyInfo.routeName === routeKey) {
-          // Per-route: Only add if routeName matches current routeKey
-          perRouteLayouts.push(
-            ...layouts.map((component) => ({ component, name: layoutName }))
-          );
+      switch (keyInfo.type) {
+        case "layout": {
+          if (shouldApplyToRoute(keyInfo, routeKey)) {
+            const layouts = Array.isArray(value) ? value : [value];
+            const layoutName = keyInfo.name || "unnamed";
+            metadata.layouts.push(
+              ...layouts.map((component: any) => ({
+                component,
+                isGlobal: keyInfo.global,
+                name: layoutName,
+              }))
+            );
+          }
+          break;
         }
-      } else if (keyInfo.type === "parallel") {
-        const slots = value as unknown as Record<string, Handler>;
-        if (keyInfo.global) {
-          // Global: Merge into global parallel
-          Object.assign(globalParallel, slots);
-        } else if (keyInfo.routeName === routeKey) {
-          // Per-route: Only add if routeName matches current routeKey
-          Object.assign(perRouteParallel, slots);
+
+        case "parallel": {
+          if (shouldApplyToRoute(keyInfo, routeKey)) {
+            const slots = value as Record<string, Handler>;
+            metadata.parallels.push(
+              ...Object.entries(slots).map(([slot, handler]) => ({
+                slot,
+                handler,
+                isGlobal: keyInfo.global,
+              }))
+            );
+          }
+          break;
         }
-      } else if (keyInfo.type === "middleware") {
-        const middlewareFns = value as any[];
-        if (keyInfo.global) {
-          // Global middleware: Apply to all routes
-          globalMiddleware.push(...middlewareFns);
-        } else if (keyInfo.routeName === routeKey) {
-          // Per-route middleware: Only add if routeName matches current routeKey
-          perRouteMiddleware.push(...middlewareFns);
+
+        case "middleware": {
+          const middlewareFns = value as any[];
+          const target = keyInfo.global ? metadata.middleware.global : metadata.middleware.perRoute;
+          if (shouldApplyToRoute(keyInfo, routeKey)) {
+            target.push(...middlewareFns);
+          }
+          break;
+        }
+
+        case "revalidate": {
+          const fn = value;
+          const target = keyInfo.global ? metadata.revalidations.global : metadata.revalidations.perRoute;
+          if (shouldApplyToRoute(keyInfo, routeKey)) {
+            target.push({ name: keyInfo.name || "unnamed", fn });
+          }
+          break;
         }
       }
-      // Skip revalidate (handled separately in matchPartial)
     }
 
-    // Execute middleware before processing handlers
-    // Global middleware runs first, then route-specific middleware
-    if (!skipMiddleware) {
-      const allMiddleware = [...globalMiddleware, ...perRouteMiddleware];
+    return metadata;
+  }
+
+  /**
+   * Generator-based segment builder - yields segments lazily
+   *
+   * Benefits:
+   * - Zero intermediate array allocations
+   * - Lazy evaluation - only build segments that pass filter
+   * - Clear single-responsibility
+   * - Easier to test and compose
+   *
+   * @param entry - Route entry with handlers
+   * @param routeKey - Current route key
+   * @param params - Route params
+   * @param context - Handler context
+   * @param options - Build options (skipMiddleware, filter)
+   */
+  async function* buildSegmentsStream(
+    entry: RouteEntry<TEnv>,
+    routeKey: string,
+    params: Record<string, string>,
+    context: HandlerContext<any, TEnv>,
+    options: {
+      skipMiddleware?: boolean;
+    } = {}
+  ): AsyncGenerator<ResolvedSegment> {
+    const handlers = await loadHandlers(entry.handlers);
+    let index = 0;
+
+    // Extract metadata using single-pass iterator
+    const metadata = extractMetadata(handlers, routeKey);
+
+    // Execute middleware if needed
+    if (!options.skipMiddleware) {
+      const allMiddleware = [...metadata.middleware.global, ...metadata.middleware.perRoute];
       if (allMiddleware.length > 0) {
         console.log(
-          `[Router.buildSegments] Executing ${allMiddleware.length} middleware for route: ${routeKey}`
+          `[Router.buildSegmentsStream] Executing ${allMiddleware.length} middleware for route: ${routeKey}`
         );
-        const middlewareResponse = await executeMiddleware(
-          allMiddleware,
-          context
-        );
+        const middlewareResponse = await executeMiddleware(allMiddleware, context);
 
         // If middleware returned Response, short-circuit the pipeline
         if (middlewareResponse) {
-          console.log(
-            `[Router.buildSegments] Middleware short-circuited with Response`
-          );
-          throw middlewareResponse; // Propagate Response to be caught by caller
+          console.log(`[Router.buildSegmentsStream] Middleware short-circuited with Response`);
+          throw middlewareResponse;
         }
 
-        console.log(`[Router.buildSegments] Middleware execution complete`);
+        console.log(`[Router.buildSegmentsStream] Middleware execution complete`);
       }
     }
 
-    // PASS 2: Process route handlers
-    for (const key of keys) {
-      if (typeof key === "string" && !key.startsWith("$")) {
-        // It's a route handler (not a metadata key)
-        if (key === routeKey) {
-          // Combine global layouts + per-route layouts
-          const allLayouts: Array<{
-            component: ReactNode | Handler;
-            isGlobal: boolean;
-            name: string;
-          }> = [
-            ...globalLayouts.map(({ component, name }) => ({
-              component,
-              isGlobal: true,
-              name,
-            })),
-            ...perRouteLayouts.map(({ component, name }) => ({
-              component,
-              isGlobal: false,
-              name,
-            })),
-          ];
+    // Yield layouts
+    for (const { component, isGlobal, name } of metadata.layouts) {
+      const resolved = typeof component === "function" ? await component(context) : component;
 
-          for (const { component: layout, isGlobal, name } of allLayouts) {
-            // Check if layout is a handler function
-            const component =
-              typeof layout === "function" ? await layout(context) : layout;
+      yield {
+        id: `L${index}.${entry.registrationId}`,
+        type: "layout",
+        index: index++,
+        component: resolved,
+        isGlobal,
+        layoutName: name,
+      };
+    }
 
-            segments.push({
-              id: `L${index}.${entry.registrationId}`,
-              type: "layout",
-              index,
-              component,
-              isGlobal, // Track if global or route-specific
-              layoutName: name, // Layout identifier
-            });
-            index++;
-          }
-
-          // Process route handler
-          const handler = handlers[key];
-          if (handler) {
-            try {
-              const component = await handler(context);
-              segments.push({
-                id: `R${index}.${entry.registrationId}`,
-                type: "route",
-                index,
-                component,
-                params,
-              });
-              index++;
-            } catch (error) {
-              // Handler can throw Response as escape hatch (e.g., throw redirect('/login'))
-              if (error instanceof Response) {
-                console.log(
-                  `[Router.buildSegments] Handler threw Response - propagating`
-                );
-                throw error;
-              }
-              // Re-throw actual errors
-              throw error;
-            }
-          }
-
-          // Process parallel routes (track global vs route-specific)
-          const allParallels: Array<{
-            slot: string;
-            handler: Handler;
-            isGlobal: boolean;
-          }> = [
-            ...Object.entries(globalParallel).map(([slot, handler]) => ({
-              slot,
-              handler,
-              isGlobal: true,
-            })),
-            ...Object.entries(perRouteParallel).map(([slot, handler]) => ({
-              slot,
-              handler,
-              isGlobal: false,
-            })),
-          ];
-
-          if (allParallels.length > 0) {
-            for (const {
-              slot,
-              handler: parallelHandler,
-              isGlobal,
-            } of allParallels) {
-              const component = await parallelHandler(context);
-              segments.push({
-                id: `P${index}.${entry.registrationId}`,
-                type: "parallel",
-                index,
-                component,
-                params,
-                slot,
-                isGlobal, // Track if global or route-specific
-              });
-              index++;
-            }
-          }
-
-          break; // Found our route, stop processing
+    // Yield route
+    const handler = handlers[routeKey];
+    if (handler) {
+      try {
+        const component = await handler(context);
+        yield {
+          id: `R${index}.${entry.registrationId}`,
+          type: "route",
+          index: index++,
+          component,
+          params,
+        };
+      } catch (error) {
+        // Handler can throw Response as escape hatch (e.g., throw redirect('/login'))
+        if (error instanceof Response) {
+          console.log(`[Router.buildSegmentsStream] Handler threw Response - propagating`);
+          throw error;
         }
+        // Re-throw actual errors
+        throw error;
       }
     }
 
-    return segments;
+    // Yield parallel routes
+    for (const { slot, handler: parallelHandler, isGlobal } of metadata.parallels) {
+      const component = await parallelHandler(context);
+      yield {
+        id: `P${index}.${entry.registrationId}`,
+        type: "parallel",
+        index: index++,
+        component,
+        params,
+        slot,
+        isGlobal,
+      };
+    }
   }
 
   /**
    * Match request and return segments
+   * Uses generator-based stream for efficient segment building
    */
   async function match(request: Request, context: TEnv): Promise<MatchResult> {
     const url = new URL(request.url);
@@ -564,12 +540,16 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     );
 
     try {
-      const segments = await buildSegments(
+      // Collect all segments from stream
+      const segments: ResolvedSegment[] = [];
+      for await (const segment of buildSegmentsStream(
         matched.entry,
         matched.routeKey,
         matched.params,
         handlerContext
-      );
+      )) {
+        segments.push(segment);
+      }
 
       const segmentIds = segments.map((s) => s.id);
 
@@ -594,34 +574,111 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
   }
 
   /**
-   * Extract revalidation functions from handlers
+   * Evaluate if a segment should revalidate using soft/hard decision pattern
+   * Extracted for single responsibility and testability
    */
-  async function extractRevalidations(
-    handlers: any,
-    routeKey: string
-  ): Promise<{ global: any[]; perRoute: any[] }> {
-    const loadedHandlers = await loadHandlers(handlers);
-    const global: any[] = [];
-    const perRoute: any[] = [];
+  function evaluateRevalidation(
+    segment: ResolvedSegment,
+    prevSegment: ResolvedSegment | undefined,
+    request: Request,
+    prevUrl: URL,
+    nextUrl: URL,
+    revalidations: Array<{ name: string; fn: any }>,
+    routeKey: string,
+    context: TEnv,
+    actionContext?: {
+      actionId?: string;
+      actionUrl?: URL;
+      actionResult?: any;
+      formData?: FormData;
+    }
+  ): boolean {
+    const prevParams = prevSegment?.params || {};
+    const nextParams = segment.params || {};
+    const paramsChanged =
+      Object.keys(nextParams).length !== Object.keys(prevParams).length ||
+      Object.keys(nextParams).some((key) => nextParams[key] !== prevParams[key]);
 
-    const keys = Reflect.ownKeys(loadedHandlers);
-    for (const key of keys) {
-      const keyInfo = getKeyType(key);
-      if (keyInfo?.type === "revalidate") {
-        const fn = loadedHandlers[key as any];
-        if (keyInfo.global) {
-          global.push({ name: keyInfo.name, fn });
-        } else if (keyInfo.routeName === routeKey) {
-          perRoute.push({ name: keyInfo.name, fn });
-        }
+    // Calculate default revalidation based on segment type and request method
+    let defaultShouldRevalidate: boolean;
+
+    if (request.method === "POST") {
+      // Actions: revalidate route-specific segments, skip global ones
+      if (segment.type === "layout" || segment.type === "parallel") {
+        // For layouts/parallels: only revalidate if route-specific (not global)
+        defaultShouldRevalidate = segment.isGlobal === false;
+      } else {
+        // Routes always revalidate on actions
+        defaultShouldRevalidate = true;
+      }
+    } else {
+      // Navigation: revalidate if params changed
+      defaultShouldRevalidate = paramsChanged;
+    }
+
+    // No custom revalidations - use default behavior
+    if (revalidations.length === 0) {
+      if (defaultShouldRevalidate) {
+        console.log(
+          `[Router.evaluateRevalidation] ${segment.id}: PARAMS CHANGED (default) - revalidating`,
+          { prev: prevParams, next: nextParams }
+        );
+      } else {
+        console.log(`[Router.evaluateRevalidation] ${segment.id}: UNCHANGED (default) - skipping`);
+      }
+      return defaultShouldRevalidate;
+    }
+
+    // Execute revalidation functions with soft/hard decision pattern
+    let currentSuggestion = defaultShouldRevalidate;
+
+    for (const { name, fn } of revalidations) {
+      const result = fn({
+        currentParams: prevParams,
+        currentUrl: prevUrl,
+        nextParams,
+        nextUrl,
+        defaultShouldRevalidate: currentSuggestion,
+        context,
+        // Segment metadata (which segment is being evaluated)
+        segmentType: segment.type,
+        layoutName: segment.layoutName,
+        slotName: segment.slot,
+        // Action context (only populated when triggered by server action)
+        actionId: actionContext?.actionId,
+        actionUrl: actionContext?.actionUrl,
+        actionResult: actionContext?.actionResult,
+        formData: actionContext?.formData,
+        method: request.method, // GET for navigation, POST for actions
+        routeName: routeKey, // User-friendly route name (e.g., "products.detail")
+      });
+
+      // Check if hard decision (boolean) or soft decision (object)
+      if (typeof result === "boolean") {
+        // Hard decision - short-circuit
+        console.log(
+          `[Router.evaluateRevalidation] ${segment.id}: REVALIDATE (${name}) HARD: ${result}`
+        );
+        return result;
+      } else {
+        // Soft decision - update suggestion and continue
+        currentSuggestion = result.defaultShouldRevalidate;
+        console.log(
+          `[Router.evaluateRevalidation] ${segment.id}: REVALIDATE (${name}) SOFT: ${currentSuggestion}`
+        );
       }
     }
 
-    return { global, perRoute };
+    // All revalidators returned soft decisions - use final suggestion
+    console.log(
+      `[Router.evaluateRevalidation] ${segment.id}: All SOFT decisions - final: ${currentSuggestion}`
+    );
+    return currentSuggestion;
   }
 
   /**
    * Match partial request with revalidation
+   * Uses generator-based streaming for efficient segment building and filtering
    */
   async function matchPartial(
     request: Request,
@@ -637,8 +694,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     const pathname = url.pathname;
 
     // Extract client state from query params and header
-    const clientSegmentIds =
-      url.searchParams.get("_rsc_segments")?.split(",") || [];
+    const clientSegmentIds = url.searchParams.get("_rsc_segments")?.split(",") || [];
     const previousUrl = request.headers.get("X-RSC-Router-Client-Path");
 
     if (!previousUrl) {
@@ -665,8 +721,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     // Extract bindings from context
     const bindings = (context as any)?.Bindings || {};
 
-    // Build previous segments for comparison
-    let prevSegments: ResolvedSegment[] = [];
+    // Build previous segments for comparison using Map for O(1) lookups
+    const prevSegmentsMap = new Map<string, ResolvedSegment>();
     if (prevMatch) {
       const prevContext = createHandlerContext(
         prevMatch.params,
@@ -676,13 +732,17 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         prevUrl,
         bindings
       );
-      prevSegments = await buildSegments(
+
+      // Stream previous segments into map (skip middleware)
+      for await (const segment of buildSegmentsStream(
         prevMatch.entry,
         prevMatch.routeKey,
         prevMatch.params,
         prevContext,
-        true // Skip middleware for prev segments (comparison only)
-      );
+        { skipMiddleware: true }
+      )) {
+        prevSegmentsMap.set(segment.id, segment);
+      }
     }
 
     const handlerContext = createHandlerContext(
@@ -694,159 +754,66 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       bindings
     );
 
-    // Build all segments for current route
-    let allSegments;
+    // Extract revalidations from metadata
+    const handlers = await loadHandlers(nextMatch.entry.handlers);
+    const metadata = extractMetadata(handlers, nextMatch.routeKey);
+    const allRevalidations = [...metadata.revalidations.global, ...metadata.revalidations.perRoute];
+
+    const clientSegmentSet = new Set(clientSegmentIds);
+    const segmentsToRender: ResolvedSegment[] = [];
+    const allSegmentIds: string[] = [];
+
     try {
-      allSegments = await buildSegments(
+      // Stream segments with inline filtering
+      for await (const segment of buildSegmentsStream(
         nextMatch.entry,
         nextMatch.routeKey,
         nextMatch.params,
         handlerContext
-      );
+      )) {
+        allSegmentIds.push(segment.id);
+
+        // Client doesn't have segment = include it
+        if (!clientSegmentSet.has(segment.id)) {
+          console.log(`[Router.matchPartial] ${segment.id}: NEW - including`);
+          segmentsToRender.push(segment);
+          continue;
+        }
+
+        // Check revalidation
+        const shouldRevalidate = evaluateRevalidation(
+          segment,
+          prevSegmentsMap.get(segment.id),
+          request,
+          prevUrl,
+          url,
+          allRevalidations,
+          nextMatch.routeKey,
+          context,
+          actionContext
+        );
+
+        if (shouldRevalidate) {
+          segmentsToRender.push(segment);
+        }
+      }
+
+      return {
+        segments: segmentsToRender,
+        matched: allSegmentIds,
+        diff: segmentsToRender.map((s) => s.id),
+      };
     } catch (error) {
       // Check if middleware/handler short-circuited with Response
       if (error instanceof Response) {
-        console.log(
-          `[Router.matchPartial] Response short-circuit - returning directly`
-        );
-        throw error; // Propagate to top-level handler
+        console.log(`[Router.matchPartial] Response short-circuit - returning directly`);
+        throw error;
       }
 
       // Sanitize error for production security
       console.error(`[Router.matchPartial] Error during matchPartial:`, error);
       throw sanitizeError(error);
     }
-
-    // Extract revalidation functions for this route
-    const revalidations = await extractRevalidations(
-      nextMatch.entry.handlers,
-      nextMatch.routeKey
-    );
-
-    // Filter: only render segments client doesn't have or need revalidation
-    const clientSegmentSet = new Set(clientSegmentIds);
-    const segmentsToRender: ResolvedSegment[] = [];
-
-    for (const segment of allSegments) {
-      if (!clientSegmentSet.has(segment.id)) {
-        // Client doesn't have this segment
-        console.log(`[Router.matchPartial] ${segment.id}: NEW - including`);
-        segmentsToRender.push(segment);
-        continue;
-      }
-
-      // Client has this segment - determine if it needs revalidation
-      const prevSegment = prevSegments.find((s) => s.id === segment.id);
-
-      // Calculate default revalidation based on segment type and request method
-      const prevParams = prevSegment?.params || {};
-      const nextParams = segment.params || {};
-      const paramsChanged =
-        Object.keys(nextParams).length !== Object.keys(prevParams).length ||
-        Object.keys(nextParams).some(
-          (key) => nextParams[key] !== prevParams[key]
-        );
-
-      let defaultShouldRevalidate: boolean;
-
-      if (request.method === "POST") {
-        // Actions: revalidate route-specific segments, skip global ones
-        if (segment.type === "layout" || segment.type === "parallel") {
-          // For layouts/parallels: only revalidate if route-specific (not global)
-          defaultShouldRevalidate = segment.isGlobal === false;
-        } else {
-          // Routes always revalidate on actions
-          defaultShouldRevalidate = true;
-        }
-      } else {
-        // Navigation: revalidate if params changed
-        defaultShouldRevalidate = paramsChanged;
-      }
-
-      // Execute revalidation functions with soft/hard decision pattern
-      // Order: global functions first, then route-specific functions
-      const allRevalidations = [
-        ...revalidations.global,
-        ...revalidations.perRoute,
-      ];
-      let shouldRevalidate = false;
-      let currentSuggestion = defaultShouldRevalidate;
-
-      if (allRevalidations.length > 0) {
-        // Custom revalidation functions exist - execute with soft/hard decision pattern
-        let hardDecisionMade = false;
-
-        for (const { name, fn } of allRevalidations) {
-          const result = fn({
-            currentParams: prevParams,
-            currentUrl: prevUrl,
-            nextParams,
-            nextUrl: url,
-            defaultShouldRevalidate: currentSuggestion,
-            context,
-            // Segment metadata (which segment is being evaluated)
-            segmentType: segment.type,
-            layoutName: segment.layoutName,
-            slotName: segment.slot,
-            // Action context (only populated when triggered by server action)
-            actionId: actionContext?.actionId,
-            actionUrl: actionContext?.actionUrl,
-            actionResult: actionContext?.actionResult,
-            formData: actionContext?.formData,
-            method: request.method, // GET for navigation, POST for actions
-            routeName: nextMatch.routeKey, // User-friendly route name (e.g., "products.detail")
-          });
-
-          // Check if hard decision (boolean) or soft decision (object)
-          if (typeof result === "boolean") {
-            // Hard decision - short-circuit
-            console.log(
-              `[Router.matchPartial] ${segment.id}: REVALIDATE (${name}) HARD decision: ${result} - short-circuit`
-            );
-            shouldRevalidate = result;
-            hardDecisionMade = true;
-            break;
-          } else {
-            // Soft decision - update suggestion and continue
-            currentSuggestion = result.defaultShouldRevalidate;
-            console.log(
-              `[Router.matchPartial] ${segment.id}: REVALIDATE (${name}) SOFT decision: ${currentSuggestion} - continuing`
-            );
-          }
-        }
-
-        if (!hardDecisionMade) {
-          // All revalidators returned soft decisions - use final suggestion
-          shouldRevalidate = currentSuggestion;
-          console.log(
-            `[Router.matchPartial] ${segment.id}: All SOFT decisions - final suggestion: ${shouldRevalidate}`
-          );
-        }
-      } else {
-        // No custom revalidations - use default behavior
-        shouldRevalidate = defaultShouldRevalidate;
-        if (shouldRevalidate) {
-          console.log(
-            `[Router.matchPartial] ${segment.id}: PARAMS CHANGED (default) - revalidating`,
-            { prev: prevParams, next: nextParams }
-          );
-        } else {
-          console.log(
-            `[Router.matchPartial] ${segment.id}: UNCHANGED (default) - skipping`
-          );
-        }
-      }
-
-      if (shouldRevalidate) {
-        segmentsToRender.push(segment);
-      }
-    }
-
-    return {
-      segments: segmentsToRender,
-      matched: allSegments.map((s) => s.id),
-      diff: segmentsToRender.map((s) => s.id),
-    };
   }
 
   /**

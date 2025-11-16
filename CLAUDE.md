@@ -1,0 +1,1 @@
+- When you start a session always read the docs and what is next for work
