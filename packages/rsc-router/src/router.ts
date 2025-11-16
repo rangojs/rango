@@ -92,7 +92,10 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       url: cleanUrl, // Clean URL
       env: bindings,
       var: variables,
-      get: ((key: string) => variables[key]) as HandlerContext<any, TEnv>["get"],
+      get: ((key: string) => variables[key]) as HandlerContext<
+        any,
+        TEnv
+      >["get"],
       set: ((key: string, value: any) => {
         variables[key] = value;
       }) as HandlerContext<any, TEnv>["set"],
@@ -321,7 +324,10 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
   /**
    * Helper to check if metadata should apply to the current route
    */
-  function shouldApplyToRoute(keyInfo: { global: boolean; routeName?: string }, routeKey: string): boolean {
+  function shouldApplyToRoute(
+    keyInfo: { global: boolean; routeName?: string },
+    routeKey: string
+  ): boolean {
     return keyInfo.global || keyInfo.routeName === routeKey;
   }
 
@@ -330,10 +336,17 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
    * Extracted metadata from handlers - layouts, parallels, middleware, revalidations
    */
   interface RouteMetadata {
-    layouts: Array<{ component: ReactNode | Handler; isGlobal: boolean; name: string }>;
+    layouts: Array<{
+      component: ReactNode | Handler;
+      isGlobal: boolean;
+      name: string;
+    }>;
     parallels: Array<{ slot: string; handler: Handler; isGlobal: boolean }>;
     middleware: { global: any[]; perRoute: any[] };
-    revalidations: { global: Array<{ name: string; fn: any }>; perRoute: Array<{ name: string; fn: any }> };
+    revalidations: {
+      global: Array<{ name: string; fn: any }>;
+      perRoute: Array<{ name: string; fn: any }>;
+    };
   }
 
   /**
@@ -387,7 +400,9 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
         case "middleware": {
           const middlewareFns = value as any[];
-          const target = keyInfo.global ? metadata.middleware.global : metadata.middleware.perRoute;
+          const target = keyInfo.global
+            ? metadata.middleware.global
+            : metadata.middleware.perRoute;
           if (shouldApplyToRoute(keyInfo, routeKey)) {
             target.push(...middlewareFns);
           }
@@ -396,7 +411,9 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
         case "revalidate": {
           const fn = value;
-          const target = keyInfo.global ? metadata.revalidations.global : metadata.revalidations.perRoute;
+          const target = keyInfo.global
+            ? metadata.revalidations.global
+            : metadata.revalidations.perRoute;
           if (shouldApplyToRoute(keyInfo, routeKey)) {
             target.push({ name: keyInfo.name || "unnamed", fn });
           }
@@ -421,7 +438,9 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
    * @param routeKey - Current route key
    * @param params - Route params
    * @param context - Handler context
-   * @param options - Build options (skipMiddleware, filter)
+   * @param options - Build options
+   * @param options.skipMiddleware - Skip middleware execution (for comparison builds)
+   * @param options.metadataOnly - Only build metadata, skip component execution (for comparison)
    */
   async function* buildSegmentsStream(
     entry: RouteEntry<TEnv>,
@@ -430,6 +449,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     context: HandlerContext<any, TEnv>,
     options: {
       skipMiddleware?: boolean;
+      metadataOnly?: boolean;
     } = {}
   ): AsyncGenerator<ResolvedSegment> {
     const handlers = await loadHandlers(entry.handlers);
@@ -440,26 +460,41 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
     // Execute middleware if needed
     if (!options.skipMiddleware) {
-      const allMiddleware = [...metadata.middleware.global, ...metadata.middleware.perRoute];
+      const allMiddleware = [
+        ...metadata.middleware.global,
+        ...metadata.middleware.perRoute,
+      ];
       if (allMiddleware.length > 0) {
         console.log(
           `[Router.buildSegmentsStream] Executing ${allMiddleware.length} middleware for route: ${routeKey}`
         );
-        const middlewareResponse = await executeMiddleware(allMiddleware, context);
+        const middlewareResponse = await executeMiddleware(
+          allMiddleware,
+          context
+        );
 
         // If middleware returned Response, short-circuit the pipeline
         if (middlewareResponse) {
-          console.log(`[Router.buildSegmentsStream] Middleware short-circuited with Response`);
+          console.log(
+            `[Router.buildSegmentsStream] Middleware short-circuited with Response`
+          );
           throw middlewareResponse;
         }
 
-        console.log(`[Router.buildSegmentsStream] Middleware execution complete`);
+        console.log(
+          `[Router.buildSegmentsStream] Middleware execution complete`
+        );
       }
     }
 
     // Yield layouts
     for (const { component, isGlobal, name } of metadata.layouts) {
-      const resolved = typeof component === "function" ? await component(context) : component;
+      // Skip component execution if only metadata needed (for comparison)
+      const resolved = options.metadataOnly
+        ? null
+        : typeof component === "function"
+        ? await component(context)
+        : component;
 
       yield {
         id: `L${index}.${entry.registrationId}`,
@@ -468,6 +503,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         component: resolved,
         isGlobal,
         layoutName: name,
+        params, // Include params for comparison
       };
     }
 
@@ -475,7 +511,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     const handler = handlers[routeKey];
     if (handler) {
       try {
-        const component = await handler(context);
+        // Skip handler execution if only metadata needed
+        const component = options.metadataOnly ? null : await handler(context);
         yield {
           id: `R${index}.${entry.registrationId}`,
           type: "route",
@@ -486,7 +523,9 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       } catch (error) {
         // Handler can throw Response as escape hatch (e.g., throw redirect('/login'))
         if (error instanceof Response) {
-          console.log(`[Router.buildSegmentsStream] Handler threw Response - propagating`);
+          console.log(
+            `[Router.buildSegmentsStream] Handler threw Response - propagating`
+          );
           throw error;
         }
         // Re-throw actual errors
@@ -495,8 +534,15 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     }
 
     // Yield parallel routes
-    for (const { slot, handler: parallelHandler, isGlobal } of metadata.parallels) {
-      const component = await parallelHandler(context);
+    for (const {
+      slot,
+      handler: parallelHandler,
+      isGlobal,
+    } of metadata.parallels) {
+      // Skip handler execution if only metadata needed
+      const component = options.metadataOnly
+        ? null
+        : await parallelHandler(context);
       yield {
         id: `P${index}.${entry.registrationId}`,
         type: "parallel",
@@ -575,11 +621,23 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
   /**
    * Evaluate if a segment should revalidate using soft/hard decision pattern
-   * Extracted for single responsibility and testability
+   * Optimized to use prevParams directly and avoid building previous segments
+   *
+   * @param segment - Current segment to evaluate
+   * @param prevParams - Previous route params (from route match, not segment)
+   * @param getPrevSegment - Lazy function to get previous segment if needed
+   * @param request - Current request
+   * @param prevUrl - Previous URL
+   * @param nextUrl - Next URL
+   * @param revalidations - Custom revalidation functions
+   * @param routeKey - Current route key
+   * @param context - Handler context
+   * @param actionContext - Action context if triggered by action
    */
-  function evaluateRevalidation(
+  async function evaluateRevalidation(
     segment: ResolvedSegment,
-    prevSegment: ResolvedSegment | undefined,
+    prevParams: Record<string, string>,
+    getPrevSegment: (() => Promise<ResolvedSegment | undefined>) | null,
     request: Request,
     prevUrl: URL,
     nextUrl: URL,
@@ -592,12 +650,13 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       actionResult?: any;
       formData?: FormData;
     }
-  ): boolean {
-    const prevParams = prevSegment?.params || {};
+  ): Promise<boolean> {
     const nextParams = segment.params || {};
     const paramsChanged =
       Object.keys(nextParams).length !== Object.keys(prevParams).length ||
-      Object.keys(nextParams).some((key) => nextParams[key] !== prevParams[key]);
+      Object.keys(nextParams).some(
+        (key) => nextParams[key] !== prevParams[key]
+      );
 
     // Calculate default revalidation based on segment type and request method
     let defaultShouldRevalidate: boolean;
@@ -612,11 +671,30 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         defaultShouldRevalidate = true;
       }
     } else {
-      // Navigation: revalidate if params changed
-      defaultShouldRevalidate = paramsChanged;
+      // Navigation (GET): Conservative defaults to minimize unnecessary revalidations
+      // Only the route segment revalidates by default - all others require explicit opt-in
+
+      if (segment.type === "route") {
+        // Route segments revalidate when params change
+        // Routes are the primary param-dependent content and always need updates
+        defaultShouldRevalidate = paramsChanged;
+        if (paramsChanged) {
+          console.log(
+            `[Router.evaluateRevalidation] ${segment.id}: ROUTE - params changed, revalidating`
+          );
+        }
+      } else {
+        // Layouts and parallels default to no revalidation
+        // Cannot assume these segments depend on params without explicit declaration
+        // Use custom revalidation functions to opt-in when needed
+        defaultShouldRevalidate = false;
+        console.log(
+          `[Router.evaluateRevalidation] ${segment.id}: ${segment.type.toUpperCase()} segment - skipping (override with custom revalidation if needed)`
+        );
+      }
     }
 
-    // No custom revalidations - use default behavior
+    // No custom revalidations defined - return default behavior without prev segment
     if (revalidations.length === 0) {
       if (defaultShouldRevalidate) {
         console.log(
@@ -624,17 +702,23 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           { prev: prevParams, next: nextParams }
         );
       } else {
-        console.log(`[Router.evaluateRevalidation] ${segment.id}: UNCHANGED (default) - skipping`);
+        console.log(
+          `[Router.evaluateRevalidation] ${segment.id}: UNCHANGED (default) - skipping`
+        );
       }
       return defaultShouldRevalidate;
     }
+
+    // Custom revalidations exist - may need full prev segment
+    // Lazy load prev segment only if getPrevSegment provided
+    const prevSegment = getPrevSegment ? await getPrevSegment() : null;
 
     // Execute revalidation functions with soft/hard decision pattern
     let currentSuggestion = defaultShouldRevalidate;
 
     for (const { name, fn } of revalidations) {
       const result = fn({
-        currentParams: prevParams,
+        currentParams: prevSegment?.params || prevParams, // Use segment params if available, else route params
         currentUrl: prevUrl,
         nextParams,
         nextUrl,
@@ -678,7 +762,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
   /**
    * Match partial request with revalidation
-   * Uses generator-based streaming for efficient segment building and filtering
+   * Optimized with lazy evaluation - only builds previous segments if needed
    */
   async function matchPartial(
     request: Request,
@@ -694,7 +778,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     const pathname = url.pathname;
 
     // Extract client state from query params and header
-    const clientSegmentIds = url.searchParams.get("_rsc_segments")?.split(",") || [];
+    const clientSegmentIds =
+      url.searchParams.get("_rsc_segments")?.split(",") || [];
     const previousUrl = request.headers.get("X-RSC-Router-Client-Path");
 
     if (!previousUrl) {
@@ -721,9 +806,32 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     // Extract bindings from context
     const bindings = (context as any)?.Bindings || {};
 
-    // Build previous segments for comparison using Map for O(1) lookups
-    const prevSegmentsMap = new Map<string, ResolvedSegment>();
-    if (prevMatch) {
+    // Extract previous params from route match without building segments
+    // Optimization: params available from findMatch result, no segment building needed
+    const prevParams = prevMatch?.params || {};
+
+    // Lazy loader for previous segments - only builds if custom revalidation needs them
+    // Most navigations skip this entirely when using default revalidation logic
+    let prevSegmentsMap: Map<string, ResolvedSegment> | null = null;
+    let prevSegmentsBuildStarted = false;
+
+    const buildPrevSegmentsLazy = async (): Promise<
+      Map<string, ResolvedSegment>
+    > => {
+      if (prevSegmentsMap) {
+        return prevSegmentsMap; // Already built
+      }
+
+      if (!prevSegmentsBuildStarted) {
+        prevSegmentsBuildStarted = true;
+        console.log(`[Router.matchPartial] Building prev segments (lazy)...`);
+      }
+
+      prevSegmentsMap = new Map();
+      if (!prevMatch) {
+        return prevSegmentsMap;
+      }
+
       const prevContext = createHandlerContext(
         prevMatch.params,
         request,
@@ -733,17 +841,23 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         bindings
       );
 
-      // Stream previous segments into map (skip middleware)
+      // Build metadata-only segments for comparison
+      // Skip middleware and component execution - only need segment structure and params
       for await (const segment of buildSegmentsStream(
         prevMatch.entry,
         prevMatch.routeKey,
         prevMatch.params,
         prevContext,
-        { skipMiddleware: true }
+        { skipMiddleware: true, metadataOnly: true }
       )) {
         prevSegmentsMap.set(segment.id, segment);
       }
-    }
+
+      console.log(
+        `[Router.matchPartial] Prev segments built: ${prevSegmentsMap.size}`
+      );
+      return prevSegmentsMap;
+    };
 
     const handlerContext = createHandlerContext(
       nextMatch.params,
@@ -757,14 +871,17 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     // Extract revalidations from metadata
     const handlers = await loadHandlers(nextMatch.entry.handlers);
     const metadata = extractMetadata(handlers, nextMatch.routeKey);
-    const allRevalidations = [...metadata.revalidations.global, ...metadata.revalidations.perRoute];
+    const allRevalidations = [
+      ...metadata.revalidations.global,
+      ...metadata.revalidations.perRoute,
+    ];
 
     const clientSegmentSet = new Set(clientSegmentIds);
     const segmentsToRender: ResolvedSegment[] = [];
     const allSegmentIds: string[] = [];
 
     try {
-      // Stream segments with inline filtering
+      // Stream next segments with inline filtering
       for await (const segment of buildSegmentsStream(
         nextMatch.entry,
         nextMatch.routeKey,
@@ -780,10 +897,20 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           continue;
         }
 
-        // Check revalidation
-        const shouldRevalidate = evaluateRevalidation(
+        // Provide lazy prev segment loader only if custom revalidations exist
+        // Without custom revalidation, default logic uses params only
+        const getPrevSegment =
+          allRevalidations.length > 0
+            ? async () => {
+                const map = await buildPrevSegmentsLazy();
+                return map.get(segment.id);
+              }
+            : null;
+
+        const shouldRevalidate = await evaluateRevalidation(
           segment,
-          prevSegmentsMap.get(segment.id),
+          prevParams,
+          getPrevSegment,
           request,
           prevUrl,
           url,
@@ -798,6 +925,13 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         }
       }
 
+      // Log if we avoided building prev segments
+      if (!prevSegmentsBuildStarted) {
+        console.log(
+          `[Router.matchPartial] Optimization: Skipped building prev segments entirely`
+        );
+      }
+
       return {
         segments: segmentsToRender,
         matched: allSegmentIds,
@@ -806,7 +940,9 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     } catch (error) {
       // Check if middleware/handler short-circuited with Response
       if (error instanceof Response) {
-        console.log(`[Router.matchPartial] Response short-circuit - returning directly`);
+        console.log(
+          `[Router.matchPartial] Response short-circuit - returning directly`
+        );
         throw error;
       }
 
