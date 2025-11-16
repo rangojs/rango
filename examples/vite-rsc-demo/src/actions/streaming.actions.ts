@@ -1,4 +1,4 @@
-'use server'
+"use server";
 
 /**
  * Streaming action demo - returns a Promise that resolves on the client
@@ -13,7 +13,7 @@ export async function addToCartSlowly(productId: string, quantity: number = 1) {
   // This Promise will be serialized and sent to the client
   const resultPromise = new Promise(async (resolve) => {
     // Simulate slow operation (3 seconds)
-    await new Promise(wait => setTimeout(wait, 3000));
+    await new Promise((wait) => setTimeout(wait, 3000));
 
     console.log(`[Action] addToCartSlowly: Completed after 3s`);
 
@@ -29,7 +29,9 @@ export async function addToCartSlowly(productId: string, quantity: number = 1) {
     });
   });
 
-  console.log(`[Action] addToCartSlowly: Returning Promise (will stream to client)`);
+  console.log(
+    `[Action] addToCartSlowly: Returning Promise (will stream to client)`
+  );
 
   // Return the Promise - RSC will serialize it and stream to client
   return resultPromise;
@@ -38,17 +40,20 @@ export async function addToCartSlowly(productId: string, quantity: number = 1) {
 /**
  * Alternative: Return promise that can reject
  */
-export async function addToCartWithValidation(productId: string, quantity: number = 1) {
+export async function addToCartWithValidation(
+  productId: string,
+  quantity: number = 1
+) {
   console.log(`[Action] addToCartWithValidation: ${productId} x${quantity}`);
 
   // Return Promise that might reject
   return new Promise(async (resolve, reject) => {
-    await new Promise(wait => setTimeout(wait, 2000));
+    await new Promise((wait) => setTimeout(wait, 2000));
 
     // Simulate validation
     if (quantity > 5) {
       console.log(`[Action] Validation failed: quantity too high`);
-      reject(new Error('Cannot add more than 5 items at once'));
+      reject(new Error("Cannot add more than 5 items at once"));
       return;
     }
 
