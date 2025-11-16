@@ -70,9 +70,20 @@ export interface RouterEnv<TBindings = {}, TVariables = {}> {
  * Extract param names from a route pattern
  * Example: "/blog/:slug/:id" => { slug: string, id: string }
  */
-export type ExtractParams<T extends string> =
-  T extends `${infer _Start}:${infer Param}/${infer Rest}`
-    ? { [K in Param | keyof ExtractParams<`/${Rest}`>]: string }
+/**
+ * Extract route params from a pattern with depth limit to prevent infinite recursion
+ * Examples:
+ * - "/products/:id" → { id: string }
+ * - "/products/:category/:id" → { category: string; id: string }
+ * - "/:slug/reviews/:reviewId" → { slug: string; reviewId: string }
+ */
+export type ExtractParams<
+  T extends string,
+  Depth extends readonly unknown[] = []
+> = Depth['length'] extends 10
+  ? { [key: string]: string } // Fallback to generic params if too deep
+  : T extends `${infer _Start}:${infer Param}/${infer Rest}`
+    ? { [K in Param | keyof ExtractParams<`/${Rest}`, readonly [...Depth, unknown]>]: string }
     : T extends `${infer _Start}:${infer Param}`
       ? { [K in Param]: string }
       : {};

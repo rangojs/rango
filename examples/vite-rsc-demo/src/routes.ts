@@ -38,7 +38,16 @@ export const shopRoutes = route({
   index: '/',
   products: {
     category: '/products/:category',
-    detail: '/product/:slug',
+    detail: {
+      index: '/product/:slug',
+      reviews: {
+        index: '/product/:slug/reviews',
+        detail: '/product/:slug/reviews/:reviewId',
+        edit: {
+          index: '/product/:slug/reviews/:reviewId/edit',
+        },
+      },
+    },
   },
   cart: '/cart',
   checkout: {

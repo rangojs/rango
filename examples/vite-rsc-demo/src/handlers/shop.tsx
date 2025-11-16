@@ -76,10 +76,44 @@ export default map<typeof shopRoutes>({
   // ===================
   // PRODUCTS - DETAIL
   // ===================
-  "products.detail": ProductsDetailRoute,
-  [revalidateRoute("products.detail", "demo")]: productDetailRevalidation,
-  [parallel("products.detail", "related")]: {
+  "products.detail.index": ProductsDetailRoute,
+  [revalidateRoute("products.detail.index", "demo")]: productDetailRevalidation,
+  [parallel("products.detail.index", "related")]: {
     "@related": (ctx) => <RelatedProducts slug={ctx.params.slug} />,
+  },
+
+  // ===================
+  // PRODUCTS - DETAIL - REVIEWS (Deeply nested - test param inference)
+  // ===================
+  "products.detail.reviews.index": (ctx) => {
+    // TypeScript should infer: ctx.params: { slug: string }
+    return (
+      <div>
+        <h2>Reviews for {ctx.params.slug}</h2>
+        <p>All reviews for this product</p>
+      </div>
+    );
+  },
+
+  "products.detail.reviews.detail": (ctx) => {
+    // TypeScript should infer: ctx.params: { slug: string; reviewId: string }
+    return (
+      <div>
+        <h2>Review {ctx.params.reviewId}</h2>
+        <p>For product: {ctx.params.slug}</p>
+      </div>
+    );
+  },
+
+  "products.detail.reviews.edit.index": (ctx) => {
+    // TypeScript should infer: ctx.params: { slug: string; reviewId: string }
+    return (
+      <div>
+        <h2>Edit Review {ctx.params.reviewId}</h2>
+        <p>For product: {ctx.params.slug}</p>
+        <p>This is 4 levels deep! (products.detail.reviews.edit.index)</p>
+      </div>
+    );
   },
 
   // ===================
