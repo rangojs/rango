@@ -1,4 +1,4 @@
-import { map, layout, middleware, revalidate } from "rsc-router";
+import { map, layout, middleware, revalidateRoute } from "rsc-router";
 import type { blogRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { BlogLayout } from "../layouts/BlogLayout.js";
@@ -19,8 +19,8 @@ export default map<typeof blogRoutes>({
   [middleware("*", "logger")]: loggerMiddleware,
 
   // Revalidation - demonstrates default behavior
-  // Only revalidate blog post if slug actually changes
-  [revalidate("post")]: postRevalidation,
+  // Only revalidate blog post if slug actually changes which is default but shown here for clarity
+  [revalidateRoute("post")]: postRevalidation,
 
   // Route handlers
   index: IndexRoute,

@@ -880,49 +880,68 @@ Revalidation **only applies during partial rendering** (SPA navigation):
 
 ### Custom Revalidation API
 
-#### Basic Example - Defer to Default
+Revalidation functions are **segment-specific** - you define them separately for routes, layouts, and parallel routes. This makes it crystal clear which segment is being revalidated.
+
+#### Segment-Specific Helpers
 
 ```typescript
-import { map, revalidate } from 'rsc-router';
+import { map, revalidateRoute, revalidateLayout, revalidateParallel } from 'rsc-router';
 
-export default map<typeof blogRoutes>({
-  // Simple revalidation - defer to default param checking
-  [revalidate('post')]: ({ defaultShouldRevalidate }) => {
-    console.log('[Blog] Checking if post should revalidate');
-    return defaultShouldRevalidate; // true if slug changed
+export default map<typeof shopRoutes>({
+  // Route handler revalidation - only called for the route itself
+  "products.detail": ProductsDetailRoute,
+  [revalidateRoute("products.detail")]: ({ defaultShouldRevalidate }) => {
+    console.log('[Route] Checking if product detail should revalidate');
+    return defaultShouldRevalidate; // true if params changed
   },
 
-  post: (ctx) => <BlogPost slug={ctx.params.slug} />
+  // Layout revalidation - only called for specific layout
+  [layout("products.detail", "shop")]: <ShopLayout />,
+  [revalidateLayout("products.detail", "shop")]: ({ context }) => {
+    // Only revalidate shop layout if user changed
+    return context.user?.id !== context.prevUser?.id;
+  },
+
+  // Parallel route revalidation - only called for specific parallel
+  [parallel("products.detail", "related")]: {
+    "@related": (ctx) => <RelatedProducts slug={ctx.params.slug} />,
+  },
+  [revalidateParallel("products.detail", "related", "@related")]: ({ currentParams, nextParams }) => {
+    // Revalidate related products if slug changed
+    return currentParams.slug !== nextParams.slug;
+  },
 });
 ```
 
 #### Multiple Named Revalidations - Short-Circuit OR
 
+Each segment type supports multiple named revalidations that execute in order and short-circuit on first `true`:
+
 ```typescript
 export default map<typeof shopRoutes>({
-  // Multiple revalidations execute in order, short-circuit on first true
-  [revalidate('products.detail', 'auth')]: ({ context }) => {
+  // Multiple route revalidations execute in order
+  [revalidateRoute('products.detail', 'auth')]: ({ context }) => {
     // Check 1: Did user login/logout?
     if (context.user?.id !== context.prevUser?.id) {
-      console.log('[Shop] User changed - force refresh');
+      console.log('[Route] User changed - force refresh');
       return true; // Stop here, re-render
     }
     return false; // Continue to next check
   },
 
-  [revalidate('products.detail', 'cache')]: ({ currentUrl, nextUrl }) => {
+  [revalidateRoute('products.detail', 'cache')]: ({ currentUrl, nextUrl }) => {
     // Check 2: Did cache-busting param change?
     if (currentUrl.searchParams.get('v') !== nextUrl.searchParams.get('v')) {
-      console.log('[Shop] Version changed - refresh');
+      console.log('[Route] Version changed - refresh');
       return true; // Stop here, re-render
     }
     return false; // Continue to next check
   },
 
-  [revalidate('products.detail', 'slug')]: ({ currentParams, nextParams }) => {
+  [revalidateRoute('products.detail', 'slug')]: ({ currentParams, nextParams }) => {
     // Check 3: Did slug change?
     const changed = currentParams.slug !== nextParams.slug;
-    console.log(`[Shop] Slug changed: ${changed}`);
+    console.log(`[Route] Slug changed: ${changed}`);
     return changed; // Final check
   },
 
@@ -930,20 +949,28 @@ export default map<typeof shopRoutes>({
 });
 ```
 
-#### Global Revalidation - Applies to All Routes
+#### Global Revalidation - Applies to All Routes/Layouts/Parallels
+
+Use `'*'` wildcard for global revalidations:
 
 ```typescript
 export default map<typeof shopRoutes>({
-  // Global revalidation runs for EVERY route in this handler
-  [revalidate('*', 'tracking')]: ({ currentUrl, nextUrl }) => {
-    console.log('[Shop] Global revalidation hook');
+  // Global route revalidation - runs for ALL route handlers
+  [revalidateRoute('*', 'tracking')]: ({ currentUrl, nextUrl }) => {
+    console.log('[Route] Global revalidation hook');
     // Could track analytics, check session, etc.
     return false; // Don't force revalidation
   },
 
+  // Global layout revalidation - runs for ALL "shop" layouts
+  [revalidateLayout('*', 'shop', 'theme')]: ({ context }) => {
+    // Revalidate if theme preference changed
+    return context.get('theme') !== context.get('prevTheme');
+  },
+
   // Still runs after global for specific routes
-  [revalidate('cart')]: () => {
-    console.log('[Shop] Cart always refreshes');
+  [revalidateRoute('cart')]: () => {
+    console.log('[Route] Cart always refreshes');
     return true; // Always get fresh cart data
   }
 });
@@ -952,14 +979,14 @@ export default map<typeof shopRoutes>({
 #### Always/Never Revalidate
 
 ```typescript
-// Always revalidate (ignore params, always fresh)
-[revalidate('dashboard')]: () => true;
+// Always revalidate route (ignore params, always fresh)
+[revalidateRoute('dashboard')]: () => true;
 
-// Never revalidate (static content, optimize)
-[revalidate('about')]: () => false;
+// Never revalidate layout (static content, optimize)
+[revalidateLayout('products.*', 'header')]: () => false;
 
-// Custom condition (ignore param changes)
-[revalidate('post')]: ({ currentUrl, nextUrl }) => {
+// Custom condition for parallel (ignore param changes)
+[revalidateParallel('post', 'comments', '@comments')]: ({ currentUrl, nextUrl }) => {
   // Only revalidate if ?refresh=true query param present
   return nextUrl.searchParams.has('refresh');
 };
@@ -993,12 +1020,12 @@ Revalidations execute with **soft/hard decision pattern**:
 **Example:**
 ```typescript
 // Global provides default, allows override
-[revalidate('*', 'global')]: () => {
+[revalidateRoute('*', 'global')]: () => {
   return { defaultShouldRevalidate: true }; // SOFT: suggest yes, but keep checking
 }
 
 // Route-specific can override
-[revalidate('post')]: ({ currentParams, nextParams }) => {
+[revalidateRoute('post')]: ({ currentParams, nextParams }) => {
   return currentParams.slug !== nextParams.slug; // HARD: definitive answer, stop
 }
 ```
@@ -1023,7 +1050,7 @@ type ShouldRevalidateFn = (args: {
 type RevalidateParams<TParams = GenericParams> = Parameters<ShouldRevalidateFn<TParams>>[0];
 
 // Usage with inline typing:
-[revalidate('post')]: ((params: RevalidateParams<{ slug: string }>) => {
+[revalidateRoute('post')]: ((params: RevalidateParams<{ slug: string }>) => {
   return params.currentParams.slug !== params.nextParams.slug;
 })
 ```
@@ -1033,7 +1060,8 @@ type RevalidateParams<TParams = GenericParams> = Parameters<ShouldRevalidateFn<T
 #### Ecommerce Product Page
 
 ```typescript
-[revalidate('product', 'inventory')]: ({ currentParams, nextParams, context }) => {
+// Route revalidation - check inventory
+[revalidateRoute('product', 'inventory')]: ({ currentParams, nextParams, context }) => {
   // Same product? Check if inventory changed in context
   if (currentParams.id === nextParams.id) {
     return context.inventoryVersion !== context.prevInventoryVersion;
@@ -1041,12 +1069,23 @@ type RevalidateParams<TParams = GenericParams> = Parameters<ShouldRevalidateFn<T
   // Different product - always revalidate
   return true;
 },
+
+// Layout revalidation - only when user changes
+[revalidateLayout('product', 'shop')]: ({ context }) => {
+  return context.user?.id !== context.prevUser?.id;
+},
+
+// Parallel revalidation - recommendations based on product
+[revalidateParallel('product', 'recommendations', '@recommendations')]: ({ currentParams, nextParams }) => {
+  return currentParams.id !== nextParams.id;
+},
 ```
 
 #### User Dashboard with Auth
 
 ```typescript
-[revalidate('*', 'auth')]: ({ context }) => {
+// Global route revalidation for auth
+[revalidateRoute('*', 'auth')]: ({ context }) => {
   // Force revalidation if user session changed
   return context.user?.sessionId !== context.prevUser?.sessionId;
 },
@@ -1055,10 +1094,10 @@ type RevalidateParams<TParams = GenericParams> = Parameters<ShouldRevalidateFn<T
 #### Static Marketing Pages
 
 ```typescript
-// Never revalidate (content doesn't change)
-[revalidate('about')]: () => false,
-[revalidate('pricing')]: () => false,
-[revalidate('features')]: () => false,
+// Never revalidate routes (content doesn't change)
+[revalidateRoute('about')]: () => false,
+[revalidateRoute('pricing')]: () => false,
+[revalidateRoute('features')]: () => false,
 ```
 
 ## Client-Side Reconstruction

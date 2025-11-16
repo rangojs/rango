@@ -190,12 +190,37 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
   /**
    * Helper to detect if a key is a route metadata key
    */
-  function getKeyType(key: string | symbol): {
-    type: "layout" | "parallel" | "middleware" | "revalidate";
-    global: boolean;
-    routeName?: string;
-    name?: string;
-  } | null {
+  function getKeyType(
+    key: string | symbol
+  ):
+    | {
+        type: "layout" | "parallel" | "middleware";
+        global: boolean;
+        routeName?: string;
+        name?: string;
+      }
+    | {
+        type: "revalidate-route";
+        global: boolean;
+        routeName?: string;
+        name?: string;
+      }
+    | {
+        type: "revalidate-layout";
+        global: boolean;
+        routeName?: string;
+        layoutName: string;
+        name?: string;
+      }
+    | {
+        type: "revalidate-parallel";
+        global: boolean;
+        routeName?: string;
+        parallelName: string;
+        slotName: string;
+        name?: string;
+      }
+    | null {
     if (typeof key !== "string") return null;
 
     // New pattern-based format: $layout.{routeName}.{layoutName}
@@ -253,20 +278,64 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       }
     }
 
-    // Check for revalidate: $revalidate.routeName.name
-    // Format: $revalidate.products.detail.demo → routeName: "products.detail", name: "demo"
-    if (key.startsWith("$revalidate.")) {
+    // Check for route revalidate: $revalidate.route.{routeName}.{name}
+    // Format: $revalidate.route.products.detail.demo → routeName: "products.detail", name: "demo"
+    if (key.startsWith("$revalidate.route.")) {
       const parts = key.split(".");
-      if (parts.length >= 3) {
-        // Extract: everything between '$revalidate.' and the last part (which is the name)
-        const name = parts[parts.length - 1]; // Last part is always the name
-        const routeNameParts = parts.slice(1, -1); // Everything between $revalidate. and .name
-        const routeName = routeNameParts.join("."); // Rejoin for nested routes
+      // Minimum: $revalidate.route.*.default (4 parts)
+      if (parts.length >= 4) {
+        const name = parts[parts.length - 1]; // Last part is the revalidation name
+        const routeNameParts = parts.slice(2, -1); // Between 'route.' and '.name'
+        const routeName = routeNameParts.join(".");
         const isGlobal = routeName === "*";
         return {
-          type: "revalidate",
+          type: "revalidate-route",
           global: isGlobal,
           routeName: isGlobal ? undefined : routeName,
+          name,
+        };
+      }
+    }
+
+    // Check for layout revalidate: $revalidate.layout.{routeName}.{layoutName}.{name}
+    // Format: $revalidate.layout.products.detail.shop.demo → routeName: "products.detail", layoutName: "shop", name: "demo"
+    if (key.startsWith("$revalidate.layout.")) {
+      const parts = key.split(".");
+      // Minimum: $revalidate.layout.*.shop.default (5 parts)
+      if (parts.length >= 5) {
+        const name = parts[parts.length - 1]; // Last part is the revalidation name
+        const layoutName = parts[parts.length - 2]; // Second to last is layout name
+        const routeNameParts = parts.slice(2, -2); // Between 'layout.' and '.{layoutName}.{name}'
+        const routeName = routeNameParts.join(".");
+        const isGlobal = routeName === "*";
+        return {
+          type: "revalidate-layout",
+          global: isGlobal,
+          routeName: isGlobal ? undefined : routeName,
+          layoutName,
+          name,
+        };
+      }
+    }
+
+    // Check for parallel revalidate: $revalidate.parallel.{routeName}.{parallelName}.{slotName}.{name}
+    // Format: $revalidate.parallel.products.detail.related.@related.demo
+    if (key.startsWith("$revalidate.parallel.")) {
+      const parts = key.split(".");
+      // Minimum: $revalidate.parallel.*.sidebar.@sidebar.default (6 parts)
+      if (parts.length >= 6) {
+        const name = parts[parts.length - 1]; // Last part is the revalidation name
+        const slotName = parts[parts.length - 2]; // Second to last is slot name
+        const parallelName = parts[parts.length - 3]; // Third to last is parallel name
+        const routeNameParts = parts.slice(2, -3); // Between 'parallel.' and '.{parallelName}.{slotName}.{name}'
+        const routeName = routeNameParts.join(".");
+        const isGlobal = routeName === "*";
+        return {
+          type: "revalidate-parallel",
+          global: isGlobal,
+          routeName: isGlobal ? undefined : routeName,
+          parallelName,
+          slotName,
           name,
         };
       }
@@ -340,10 +409,17 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       component: ReactNode | Handler;
       isGlobal: boolean;
       name: string;
+      revalidations: Array<{ name: string; fn: any }>; // Layout-specific revalidations
     }>;
-    parallels: Array<{ slot: string; handler: Handler; isGlobal: boolean }>;
+    parallels: Array<{
+      slot: string;
+      handler: Handler;
+      isGlobal: boolean;
+      parallelName: string; // Name used in parallel() helper
+      revalidations: Array<{ name: string; fn: any }>; // Parallel-specific revalidations
+    }>;
     middleware: { global: any[]; perRoute: any[] };
-    revalidations: {
+    routeRevalidations: {
       global: Array<{ name: string; fn: any }>;
       perRoute: Array<{ name: string; fn: any }>;
     };
@@ -358,10 +434,14 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       layouts: [],
       parallels: [],
       middleware: { global: [], perRoute: [] },
-      revalidations: { global: [], perRoute: [] },
+      routeRevalidations: { global: [], perRoute: [] },
     };
 
-    // Single-pass extraction using iterator protocol
+    // Temporary storage for revalidations by type
+    const layoutRevalidations = new Map<string, Array<{ name: string; fn: any }>>();
+    const parallelRevalidations = new Map<string, Array<{ name: string; fn: any }>>();
+
+    // First pass: Extract layouts, parallels, middleware
     for (const key of Reflect.ownKeys(handlers)) {
       const keyInfo = getKeyType(key);
       if (!keyInfo) continue;
@@ -378,6 +458,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
                 component,
                 isGlobal: keyInfo.global,
                 name: layoutName,
+                revalidations: [], // Will be populated in second pass
               }))
             );
           }
@@ -387,11 +468,14 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         case "parallel": {
           if (shouldApplyToRoute(keyInfo, routeKey)) {
             const slots = value as Record<string, Handler>;
+            const parallelName = keyInfo.name || "unnamed";
             metadata.parallels.push(
               ...Object.entries(slots).map(([slot, handler]) => ({
                 slot,
                 handler,
                 isGlobal: keyInfo.global,
+                parallelName,
+                revalidations: [], // Will be populated in second pass
               }))
             );
           }
@@ -408,17 +492,73 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           }
           break;
         }
+      }
+    }
 
-        case "revalidate": {
+    // Second pass: Extract revalidations and associate with segments
+    for (const key of Reflect.ownKeys(handlers)) {
+      const keyInfo = getKeyType(key);
+      if (!keyInfo) continue;
+
+      const value = handlers[key as any];
+
+      switch (keyInfo.type) {
+        case "revalidate-route": {
           const fn = value;
           const target = keyInfo.global
-            ? metadata.revalidations.global
-            : metadata.revalidations.perRoute;
+            ? metadata.routeRevalidations.global
+            : metadata.routeRevalidations.perRoute;
           if (shouldApplyToRoute(keyInfo, routeKey)) {
             target.push({ name: keyInfo.name || "unnamed", fn });
           }
           break;
         }
+
+        case "revalidate-layout": {
+          if (shouldApplyToRoute(keyInfo, routeKey)) {
+            const fn = value;
+            const layoutKey = `${keyInfo.layoutName}`;
+            if (!layoutRevalidations.has(layoutKey)) {
+              layoutRevalidations.set(layoutKey, []);
+            }
+            layoutRevalidations.get(layoutKey)!.push({
+              name: keyInfo.name || "unnamed",
+              fn,
+            });
+          }
+          break;
+        }
+
+        case "revalidate-parallel": {
+          if (shouldApplyToRoute(keyInfo, routeKey)) {
+            const fn = value;
+            // Key by parallelName.slotName for unique identification
+            const parallelKey = `${keyInfo.parallelName}.${keyInfo.slotName}`;
+            if (!parallelRevalidations.has(parallelKey)) {
+              parallelRevalidations.set(parallelKey, []);
+            }
+            parallelRevalidations.get(parallelKey)!.push({
+              name: keyInfo.name || "unnamed",
+              fn,
+            });
+          }
+          break;
+        }
+      }
+    }
+
+    // Third pass: Associate revalidations with their segments
+    for (const layout of metadata.layouts) {
+      const layoutKey = `${layout.name}`;
+      if (layoutRevalidations.has(layoutKey)) {
+        layout.revalidations = layoutRevalidations.get(layoutKey)!;
+      }
+    }
+
+    for (const parallel of metadata.parallels) {
+      const parallelKey = `${parallel.parallelName}.${parallel.slot}`;
+      if (parallelRevalidations.has(parallelKey)) {
+        parallel.revalidations = parallelRevalidations.get(parallelKey)!;
       }
     }
 
@@ -538,6 +678,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       slot,
       handler: parallelHandler,
       isGlobal,
+      parallelName,
     } of metadata.parallels) {
       // Skip handler execution if only metadata needed
       const component = options.metadataOnly
@@ -551,6 +692,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         params,
         slot,
         isGlobal,
+        parallelName,
       };
     }
   }
@@ -868,13 +1010,28 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       bindings
     );
 
-    // Extract revalidations from metadata
+    // Extract metadata to get revalidations (without loading components)
     const handlers = await loadHandlers(nextMatch.entry.handlers);
     const metadata = extractMetadata(handlers, nextMatch.routeKey);
-    const allRevalidations = [
-      ...metadata.revalidations.global,
-      ...metadata.revalidations.perRoute,
-    ];
+
+    // Helper to get revalidations for a specific segment
+    const getRevalidationsForSegment = (segment: ResolvedSegment): Array<{ name: string; fn: any }> => {
+      if (segment.type === "route") {
+        return [
+          ...metadata.routeRevalidations.global,
+          ...metadata.routeRevalidations.perRoute,
+        ];
+      } else if (segment.type === "layout" && segment.layoutName) {
+        const layout = metadata.layouts.find((l) => l.name === segment.layoutName);
+        return layout?.revalidations || [];
+      } else if (segment.type === "parallel" && segment.parallelName && segment.slot) {
+        const parallel = metadata.parallels.find(
+          (p) => p.parallelName === segment.parallelName && p.slot === segment.slot
+        );
+        return parallel?.revalidations || [];
+      }
+      return [];
+    };
 
     const clientSegmentSet = new Set(clientSegmentIds);
     const segmentsToRender: ResolvedSegment[] = [];
@@ -897,10 +1054,13 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           continue;
         }
 
+        // Get segment-specific revalidations from metadata
+        const segmentRevalidations = getRevalidationsForSegment(segment);
+
         // Provide lazy prev segment loader only if custom revalidations exist
         // Without custom revalidation, default logic uses params only
         const getPrevSegment =
-          allRevalidations.length > 0
+          segmentRevalidations.length > 0
             ? async () => {
                 const map = await buildPrevSegmentsLazy();
                 return map.get(segment.id);
@@ -914,7 +1074,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           request,
           prevUrl,
           url,
-          allRevalidations,
+          segmentRevalidations,
           nextMatch.routeKey,
           context,
           actionContext

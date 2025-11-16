@@ -1,4 +1,4 @@
-import { map, route, layout, parallel, revalidate, middleware } from "rsc-router";
+import { map, route, layout, parallel, revalidateRoute, middleware } from "rsc-router";
 import type { dashboardRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { DashboardLayout } from "../layouts/DashboardLayout.js";
@@ -50,7 +50,7 @@ export default map<typeof dashboardRoutes>({
 
   // Revalidation - demonstrates context usage
   // In real app, could check if user permissions changed, data expired, etc.
-  [revalidate("*", "context")]: ({ context, currentUrl, nextUrl }) => {
+  [revalidateRoute("*", "context")]: ({ context, currentUrl, nextUrl }) => {
     console.log("[Dashboard] Context-based revalidation check");
     // Example: Could check context.user?.updatedAt or other app state
     // For demo, just use URL change as proxy for "context changed"

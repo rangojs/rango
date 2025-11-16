@@ -1,4 +1,4 @@
-import { map, layout, revalidate } from "rsc-router";
+import { map, layout, revalidateRoute } from "rsc-router";
 import type { adminRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { IndexRoute, UsersRoute, UserRoute, SettingsRoute } from "./admin/routes.js";
@@ -23,11 +23,11 @@ export default map<typeof adminRoutes>({
   [layout("*", "root")]: <RootLayout />,
 
   // SOFT REVALIDATION - Global Default
-  [revalidate("*", "global-default")]: globalRevalidation,
+  [revalidateRoute("*", "global-default")]: globalRevalidation,
 
   // HARD REVALIDATION - Route-Specific Overrides
-  [revalidate("settings")]: settingsRevalidation,
-  [revalidate("user")]: userRevalidation,
+  [revalidateRoute("settings")]: settingsRevalidation,
+  [revalidateRoute("user")]: userRevalidation,
 
   // ROUTE HANDLERS
   index: IndexRoute,

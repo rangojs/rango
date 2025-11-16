@@ -1,4 +1,4 @@
-import { map, layout, parallel, revalidate, middleware } from "rsc-router";
+import { map, layout, parallel, revalidateRoute, revalidateLayout, revalidateParallel, middleware } from "rsc-router";
 import type { shopRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { ShopLayout } from "../layouts/ShopLayout.js";
@@ -58,7 +58,7 @@ export default map<typeof shopRoutes>({
   [layout("*", "shop")]: <ShopLayout />,
   [middleware("*", "logger")]: loggerMiddleware,
   [middleware("*", "mockAuth")]: mockAuthMiddleware,
-  [revalidate("*", "global")]: globalRevalidation,
+  [revalidateRoute("*", "global")]: globalRevalidation,
 
   // ===================
   // SHOP HOMEPAGE
@@ -77,7 +77,7 @@ export default map<typeof shopRoutes>({
   // PRODUCTS - DETAIL
   // ===================
   "products.detail": ProductsDetailRoute,
-  [revalidate("products.detail", "demo")]: productDetailRevalidation,
+  [revalidateRoute("products.detail", "demo")]: productDetailRevalidation,
   [parallel("products.detail", "related")]: {
     "@related": (ctx) => <RelatedProducts slug={ctx.params.slug} />,
   },
@@ -86,7 +86,7 @@ export default map<typeof shopRoutes>({
   // CART
   // ===================
   cart: CartRoute,
-  [revalidate("cart")]: cartRevalidation,
+  [revalidateRoute("cart")]: cartRevalidation,
   [parallel("cart", "summary")]: {
     "@summary": () => <OrderSummary variant="cart" />,
   },
@@ -116,7 +116,7 @@ export default map<typeof shopRoutes>({
   // ===================
   "checkout.confirm": CheckoutConfirmRoute,
   [layout("checkout.confirm", "checkout")]: <CheckoutLayout />,
-  [revalidate("checkout.confirm")]: checkoutConfirmRevalidation,
+  [revalidateRoute("checkout.confirm")]: checkoutConfirmRevalidation,
 
   // ===================
   // ACCOUNT - INDEX
@@ -139,5 +139,5 @@ export default map<typeof shopRoutes>({
   // ===================
   "account.orderDetail": AccountOrderDetailRoute,
   [layout("account.orderDetail", "account")]: <AccountLayout />,
-  [revalidate("account.orderDetail")]: orderDetailRevalidation,
+  [revalidateRoute("account.orderDetail")]: orderDetailRevalidation,
 });

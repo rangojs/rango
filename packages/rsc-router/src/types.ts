@@ -344,11 +344,23 @@ export type HandlersForRouteMap<T extends RouteDefinition, TEnv = any> = {
   // Params use GenericParams by default (can be narrowed with satisfies)
   [K in `$middleware.${RouteKeys<T> | '*'}.${string}`]?: MiddlewareFn<GenericParams, TEnv>[];
 } & {
-  // Revalidate patterns: $revalidate.{routeName}.{revalidateName}
-  // Supports '*' wildcard for global revalidations that apply to all routes
+  // Route revalidate patterns: $revalidate.route.{routeName}.{revalidateName}
+  // Only called when evaluating route handlers
+  // Supports '*' wildcard for global route revalidations
   // Multiple revalidations execute in order with short-circuit on first `true` (OR logic)
-  // Params use GenericParams by default (can be narrowed with satisfies)
-  [K in `$revalidate.${RouteKeys<T> | '*'}.${string}`]?: ShouldRevalidateFn<GenericParams, TEnv>;
+  [K in `$revalidate.route.${RouteKeys<T> | '*'}.${string}`]?: ShouldRevalidateFn<GenericParams, TEnv>;
+} & {
+  // Layout revalidate patterns: $revalidate.layout.{routeName}.{layoutName}.{revalidateName}
+  // Only called when evaluating specific layouts
+  // Supports '*' wildcard for global layout revalidations
+  // Multiple revalidations execute in order with short-circuit on first `true` (OR logic)
+  [K in `$revalidate.layout.${RouteKeys<T> | '*'}.${string}.${string}`]?: ShouldRevalidateFn<GenericParams, TEnv>;
+} & {
+  // Parallel revalidate patterns: $revalidate.parallel.{routeName}.{parallelName}.{slotName}.{revalidateName}
+  // Only called when evaluating specific parallel routes
+  // Supports '*' wildcard for global parallel revalidations
+  // Multiple revalidations execute in order with short-circuit on first `true` (OR logic)
+  [K in `$revalidate.parallel.${RouteKeys<T> | '*'}.${string}.${string}.${string}`]?: ShouldRevalidateFn<GenericParams, TEnv>;
 };
 
 /**
@@ -363,6 +375,7 @@ export interface ResolvedSegment {
   slot?: string; // For parallel routes: '@sidebar', '@modal', etc.
   isGlobal?: boolean; // For layouts/parallels: true if defined with '*', false if route-specific
   layoutName?: string; // For layouts: the layout name identifier
+  parallelName?: string; // For parallels: the parallel group name (used to match with revalidations)
 }
 
 /**

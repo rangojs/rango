@@ -112,34 +112,106 @@ export const middleware = <const T extends string, const Name extends string>(
 ): `$middleware.${T}.${Name}` => `$middleware.${routeName}.${name}` as const;
 
 /**
- * Define revalidation function for a specific route
+ * Define revalidation function for a route handler
  *
+ * Only called when evaluating whether to revalidate the route handler itself.
  * Supports multiple named revalidations per route. They execute in order
  * and short-circuit on first `true` (OR logic).
  *
  * @example
  * ```typescript
  * {
- *   // Global revalidation - applies to all routes
- *   [revalidate('*', 'default')]: ({ defaultShouldRevalidate }) => defaultShouldRevalidate,
+ *   // Global route revalidation - applies to all route handlers
+ *   [revalidateRoute('*', 'default')]: ({ defaultShouldRevalidate }) => defaultShouldRevalidate,
  *
- *   // Route-specific revalidations (multiple)
- *   [revalidate('post', 'auth')]: ({ context }) => context.user?.id !== context.prevUser?.id,
- *   [revalidate('post', 'cache')]: ({ currentParams, nextParams }) => {
+ *   // Route-specific revalidation
+ *   [revalidateRoute('products.detail', 'params')]: ({ currentParams, nextParams }) => {
  *     return currentParams.slug !== nextParams.slug;
  *   },
  *
  *   // Single name can be omitted for simple case
- *   [revalidate('about')]: () => false  // Never revalidate
+ *   [revalidateRoute('about')]: () => false  // Never revalidate
  * }
  * ```
  */
-export const revalidate = <const T extends string, const Name extends string = string>(
+export const revalidateRoute = <const T extends string, const Name extends string = string>(
   routeName: T,
   name?: Name
-): `$revalidate.${T}.${string}` => {
+): `$revalidate.route.${T}.${string}` => {
   const revalidateName = name || 'default';
-  return `$revalidate.${routeName}.${revalidateName}` as const;
+  return `$revalidate.route.${routeName}.${revalidateName}` as const;
+};
+
+/**
+ * Define revalidation function for a specific layout
+ *
+ * Only called when evaluating whether to revalidate the specified layout.
+ * Supports multiple named revalidations per layout. They execute in order
+ * and short-circuit on first `true` (OR logic).
+ *
+ * @example
+ * ```typescript
+ * {
+ *   // Global layout revalidation - applies to all layouts named "shop"
+ *   [revalidateLayout('*', 'shop', 'default')]: ({ context }) => context.get('shopChanged'),
+ *
+ *   // Route-specific layout revalidation
+ *   [revalidateLayout('products.detail', 'shop', 'user')]: ({ context }) => {
+ *     return context.user?.id !== context.prevUser?.id;
+ *   },
+ *
+ *   // Single name can be omitted for simple case
+ *   [revalidateLayout('checkout.*', 'checkout')]: () => true  // Always revalidate
+ * }
+ * ```
+ */
+export const revalidateLayout = <const T extends string, const L extends string, const Name extends string = string>(
+  routeName: T,
+  layoutName: L,
+  name?: Name
+): `$revalidate.layout.${T}.${L}.${string}` => {
+  const revalidateName = name || 'default';
+  return `$revalidate.layout.${routeName}.${layoutName}.${revalidateName}` as const;
+};
+
+/**
+ * Define revalidation function for a specific parallel route
+ *
+ * Only called when evaluating whether to revalidate the specified parallel route.
+ * Supports multiple named revalidations per parallel route. They execute in order
+ * and short-circuit on first `true` (OR logic).
+ *
+ * @example
+ * ```typescript
+ * {
+ *   // Global parallel revalidation - applies to all "@sidebar" parallels
+ *   [revalidateParallel('*', 'sidebar', '@sidebar', 'default')]: ({ context }) => {
+ *     return context.get('sidebarChanged');
+ *   },
+ *
+ *   // Route-specific parallel revalidation
+ *   [revalidateParallel('products.detail', 'related', '@related', 'params')]: ({ currentParams, nextParams }) => {
+ *     return currentParams.slug !== nextParams.slug;
+ *   },
+ *
+ *   // Single name can be omitted for simple case
+ *   [revalidateParallel('cart', 'summary', '@summary')]: () => true  // Always revalidate
+ * }
+ * ```
+ */
+export const revalidateParallel = <
+  const T extends string,
+  const P extends string,
+  const S extends string,
+  const Name extends string = string
+>(
+  routeName: T,
+  parallelName: P,
+  slotName: S,
+  name?: Name
+): `$revalidate.parallel.${T}.${P}.${S}.${string}` => {
+  const revalidateName = name || 'default';
+  return `$revalidate.parallel.${routeName}.${parallelName}.${slotName}.${revalidateName}` as const;
 };
 
 /**
