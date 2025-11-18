@@ -38,9 +38,14 @@ import {
   orderDetailRevalidation,
   productDetailRevalidation,
 } from "./shop/revalidation/index.js";
-import { ParallelOutlet } from "rsc-router/client";
+import { Outlet, ParallelOutlet } from "rsc-router/client";
 //#endregion
 
+const DummyLayout = (
+  <>
+    <Outlet />
+  </>
+);
 //#region Handler Definition
 /**
  * Shop handlers - comprehensive ecommerce example
@@ -58,12 +63,17 @@ export default map<typeof shopRoutes>(
   ({ route, layout, middleware, parallel, revalidate }) => [
     //#region Global Layout & Middleware
     // Global root layout wraps everything
+    // #1 $layoute.0
     layout(
       <>
         <ParallelOutlet name="@promoBanner" />
         <RootLayout />
       </>,
       () => [
+        // Orphan layout $layout.0.$layout.0 and $layout.0.$layout.1
+        layout(DummyLayout, () => [revalidate(() => false)]),
+        layout(DummyLayout, () => [revalidate(() => false)]),
+
         revalidate(globalRevalidation),
 
         parallel({
@@ -87,12 +97,16 @@ export default map<typeof shopRoutes>(
 
         //#region Shop Routes
         // Shop layout wraps shop routes
+        // #2 $layout.0.$layout.2
         layout(<ShopLayout />, () => [
           // Homepage
           route("index", IndexRoute, () => [
-            parallel({
-              "@sidebar": () => <CategorySidebar />,
-            }),
+            parallel(
+              {
+                "@sidebar": () => <CategorySidebar />,
+              },
+              () => [revalidate(() => false)]
+            ),
           ]),
 
           // Category

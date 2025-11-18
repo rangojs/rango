@@ -19,5 +19,8 @@
     "rootDir": "./src"
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "exclude": ["node_modules", "dist", "src/server"],
+  "references": [
+    { "path": "./src/server/tsconfig.json" }
+  ]
 }

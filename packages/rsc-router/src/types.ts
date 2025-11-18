@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { AllUseItems } from "./route-definition";
 
 /**
  * Global namespace for module augmentation
@@ -414,8 +415,10 @@ export interface MatchResult {
 export interface RouteEntry<TEnv = any> {
   prefix: string;
   routes: ResolvedRouteMap<any>;
-  handlers: any;
-  registrationId: number;
+  handler: () =>
+      | Array<AllUseItems>
+      | Promise<{ default: () => Array<AllUseItems> }>
+      | Promise<() => Array<AllUseItems>>
 }
 
 /**
