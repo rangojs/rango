@@ -11,8 +11,8 @@ import type {
   Handler,
 } from "./types";
 import { AllUseItems } from "./route-definition";
-import { get } from "http";
-import { getContext } from "./server/context";
+import { EntryData, getContext } from "./server/context";
+import { error } from "console";
 
 /**
  * Router builder for chaining .use() and .map()
@@ -30,8 +30,12 @@ interface RouteBuilder<T extends RouteDefinition, TEnv> {
  * RSC Router interface
  */
 export interface RSCRouter<TEnv = any> {
-  route<T extends RouteDefinition>(
+  routes<T extends RouteDefinition>(
     prefix: string,
+    routes: ResolvedRouteMap<T>
+  ): RouteBuilder<T, TEnv>;
+
+  routes<T extends RouteDefinition>(
     routes: ResolvedRouteMap<T>
   ): RouteBuilder<T, TEnv>;
 
@@ -58,7 +62,53 @@ export interface RSCRouter<TEnv = any> {
  * ```
  */
 export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
-  const routes: RouteEntry<TEnv>[] = [];
+  const routesEntries: RouteEntry<TEnv>[] = [];
+
+  /**
+   * Create HandlerContext with typed env/var/get/set
+   */
+  function createHandlerContext(
+    params: Record<string, string>,
+    request: Request,
+    searchParams: URLSearchParams,
+    pathname: string,
+    url: URL,
+    bindings: any = {}
+  ): HandlerContext<any, TEnv> {
+    // Variables object (mutable by middleware)
+    const variables: any = {};
+
+    // Filter system parameters (starting with _rsc) from searchParams
+    // This ensures handlers only see user-facing query params
+    const cleanSearchParams = new URLSearchParams();
+    searchParams.forEach((value, key) => {
+      if (!key.startsWith("_rsc")) {
+        cleanSearchParams.set(key, value);
+      }
+    });
+
+    // Create clean URL without system params
+    const cleanUrl = new URL(url);
+    cleanUrl.search = cleanSearchParams.toString();
+
+    return {
+      params,
+      request,
+      searchParams: cleanSearchParams, // Filtered params
+      pathname,
+      url: cleanUrl, // Clean URL
+      env: bindings,
+      var: variables,
+      get: ((key: string) => variables[key]) as HandlerContext<
+        any,
+        TEnv
+      >["get"],
+      set: ((key: string, value: any) => {
+        variables[key] = value;
+      }) as HandlerContext<any, TEnv>["set"],
+      _originalRequest: request, // Raw request for advanced use
+    };
+  }
 
   /**
    * Match a pathname against registered routes
@@ -68,7 +118,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     routeKey: string;
     params: Record<string, string>;
   } | null {
-    for (const entry of routes) {
+    for (const entry of routesEntries) {
       const routeEntries = Object.entries(entry.routes);
 
       for (const [routeKey, pattern] of routeEntries) {
@@ -81,6 +131,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         } else {
           fullPattern = entry.prefix + pattern;
         }
+        console.log(fullPattern);
 
         const { regex, paramNames } = compilePattern(fullPattern);
         const match = regex.exec(pathname);
@@ -156,6 +207,69 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
   }
 
   /**
+   * Load manifest from route entry with AsyncLocalStorage context
+   * Handles lazy imports, unwrapping, and validation
+   */
+  async function loadManifest(
+    entry: RouteEntry<TEnv>,
+    routeKey: string,
+    path: string
+  ): Promise<EntryData> {
+    const Store = getContext().getOrCreateStore(routeKey);
+    try {
+      const useItems = await getContext().runWithStore(
+        Store,
+        Store.namespace || "#" + routeKey + ".",
+        Store.parent,
+        async () => {
+          const load = await entry.handler();
+          if (
+            load &&
+            load !== null &&
+            typeof load === "object" &&
+            "default" in load
+          ) {
+            return load.default();
+          }
+          if (typeof load === "function") {
+            return load();
+          }
+          return load;
+        }
+      );
+
+      invariant(
+        useItems && useItems.length > 0,
+        "Did not receive any handler from router.map()"
+      );
+      invariant(
+        useItems.some((item) => item.type === "layout"),
+        "Top-level handler must be a layout"
+      );
+
+      invariant(
+        Store.manifest.has(routeKey),
+        `Route must be registered for ${routeKey}`
+      );
+
+      return Store.manifest.get(routeKey)!;
+    } catch (e) {
+      throw new RouteNotFoundError(
+        `Failed to load route handlers for ${path}: ${(e as Error).message}`,
+        {
+          cause: {
+            error: e,
+            state: {
+              path,
+              routeKey,
+            },
+          },
+        }
+      );
+    }
+  }
+
+  /**
    * Generator-based segment builder - yields segments lazily
    *
    * Benefits:
@@ -177,140 +291,15 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     routeKey: string,
     params: Record<string, string>,
     context: HandlerContext<any, TEnv>,
+    path: string,
     options: {
       skipMiddleware?: boolean;
       metadataOnly?: boolean;
     } = {}
   ): AsyncGenerator<ResolvedSegment> {
-    const handlers = await loadHandlers(entry.handlers);
-    let index = 0;
-
-    // Extract metadata using single-pass iterator
-    const metadata = extractMetadata(handlers, routeKey);
-
-    // Execute middleware if needed
-    if (!options.skipMiddleware) {
-      const allMiddleware = [
-        ...metadata.middleware.global,
-        ...metadata.middleware.perRoute,
-      ];
-      if (allMiddleware.length > 0) {
-        console.log(
-          `[Router.buildSegmentsStream] Executing ${allMiddleware.length} middleware for route: ${routeKey}`
-        );
-        const middlewareResponse = await executeMiddleware(
-          allMiddleware,
-          context
-        );
-
-        // If middleware returned Response, short-circuit the pipeline
-        if (middlewareResponse) {
-          console.log(
-            `[Router.buildSegmentsStream] Middleware short-circuited with Response`
-          );
-          throw middlewareResponse;
-        }
-
-        console.log(
-          `[Router.buildSegmentsStream] Middleware execution complete`
-        );
-      }
-    }
-
-    // Separate layout and route parallels
-    const layoutParallels = metadata.parallels.filter((p) => p.isGlobal);
-    const routeParallels = metadata.parallels.filter((p) => !p.isGlobal);
-
-    // Yield layouts
-    for (const { component, isGlobal, name } of metadata.layouts) {
-      // Skip component execution if only metadata needed (for comparison)
-      const resolved = options.metadataOnly
-        ? null
-        : typeof component === "function"
-        ? await component(context)
-        : component;
-
-      yield {
-        id: `L${index}.${entry.registrationId}`,
-        type: "layout",
-        index: index++,
-        component: resolved,
-        isGlobal,
-        layoutName: name,
-        params, // Include params for comparison
-      };
-    }
-
-    // Yield layout parallels (global parallels that belong to layouts)
-    for (const {
-      slot,
-      handler: parallelHandler,
-      isGlobal,
-      parallelName,
-    } of layoutParallels) {
-      // Skip handler execution if only metadata needed
-      const component = options.metadataOnly
-        ? null
-        : await parallelHandler(context);
-      yield {
-        id: `P${index}.${entry.registrationId}`,
-        type: "parallel",
-        index: index++,
-        component,
-        params,
-        slot,
-        isGlobal,
-        parallelName,
-      };
-    }
-
-    // Yield route
-    const handler = handlers[routeKey];
-    if (handler) {
-      try {
-        // Skip handler execution if only metadata needed
-        const component = options.metadataOnly ? null : await handler(context);
-        yield {
-          id: `R${index}.${entry.registrationId}`,
-          type: "route",
-          index: index++,
-          component,
-          params,
-        };
-      } catch (error) {
-        // Handler can throw Response as escape hatch (e.g., throw redirect('/login'))
-        if (error instanceof Response) {
-          console.log(
-            `[Router.buildSegmentsStream] Handler threw Response - propagating`
-          );
-          throw error;
-        }
-        // Re-throw actual errors
-        throw error;
-      }
-    }
-
-    // Yield route parallels (route-specific parallels)
-    for (const {
-      slot,
-      handler: parallelHandler,
-      isGlobal,
-      parallelName,
-    } of routeParallels) {
-      // Skip handler execution if only metadata needed
-      const component = options.metadataOnly
-        ? null
-        : await parallelHandler(context);
-      yield {
-        id: `P${index}.${entry.registrationId}`,
-        type: "parallel",
-        index: index++,
-        component,
-        params,
-        slot,
-        isGlobal,
-        parallelName,
-      };
+    const manifest = await loadManifest(entry, routeKey, path);
+    for (const node of traverseToRoot(manifest)) {
+      yield segment;
     }
   }
 
@@ -331,28 +320,10 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         },
       });
     }
-    const Store = getContext().getOrCreateStore();
 
-    const res = await getContext().context.run(Store, async () => {
-      const res = await matched.entry.handler();
-      if ("default" in res) {
-        return res.default();
-      }
-      if (typeof res === "function") {
-        return res();
-      }
-      return res;
-    });
+    // Load manifest with AsyncLocalStorage context and validation
+    await loadManifest(matched.entry, matched.routeKey, pathname);
 
-    invariant(
-      res && res.length > 0,
-      "Did not receive any handler from router.map()"
-    );
-    invariant(res[0].type === "layout", "Top-level handler must be a layout");
-
-    invariant(Store.manifest.has(matched.routeKey), "Route must be registered");
-
-    throw new Error("debug");
     // Extract bindings from context (if using RouterEnv pattern)
     const bindings = (context as any)?.Bindings || {};
 
@@ -372,7 +343,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         matched.entry,
         matched.routeKey,
         matched.params,
-        handlerContext
+        handlerContext,
+        pathname
       )) {
         segments.push(segment);
       }
@@ -392,6 +364,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         );
         throw error; // Propagate to top-level handler (entry.rsc.tsx)
       }
+      console.error((error as Error)?.stack || error);
 
       // Sanitize error for production security
       console.error(`[Router.match] Error during match:`, error);
@@ -651,7 +624,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     );
 
     // Extract metadata to get revalidations (without loading components)
-    const handlers = await loadHandlers(nextMatch.entry.handlers);
+    const handlers = await loadManifest(nextMatch.entry, nextMatch.routeKey);
     const metadata = extractMetadata(handlers, nextMatch.routeKey);
 
     // Helper to get revalidations for a specific segment
@@ -766,20 +739,19 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
    */
   function createRouteBuilder<T extends RouteDefinition>(
     prefix: string,
-    routeMap: ResolvedRouteMap<T>,
-    registrationId: number
+    routes: ResolvedRouteMap<T>
   ): RouteBuilder<T, TEnv> {
     return {
       map(
-        handlers:
-          | HandlersForRouteMap<T, TEnv>
-          | (() => Promise<{ default: HandlersForRouteMap<T, TEnv> }>)
+        handler: () =>
+          | Array<AllUseItems>
+          | Promise<{ default: () => Array<AllUseItems> }>
+          | Promise<() => Array<AllUseItems>>
       ) {
-        routes.push({
+        routesEntries.push({
           prefix,
-          routes: routeMap as ResolvedRouteMap<any>,
-          handlers,
-          registrationId,
+          routes: routes as ResolvedRouteMap<any>,
+          handler,
         });
         return router;
       },
@@ -790,16 +762,16 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
    * Router instance
    */
   const router: RSCRouter<TEnv> = {
-    route<T extends RouteDefinition>(
-      prefix: string,
-      _routes: ResolvedRouteMap<T>
+    routes<T extends RouteDefinition>(
+      prefixOrRoutes: string | ResolvedRouteMap<T>,
+      maybeRoutes?: ResolvedRouteMap<T>
     ): RouteBuilder<T, TEnv> {
-      routes;
-      routes.push({
-        prefix,
-        routes: _routes,
-      });
-      return;
+      // If second argument exists, first is prefix
+      if (maybeRoutes !== undefined) {
+        return createRouteBuilder<T>(prefixOrRoutes as string, maybeRoutes);
+      }
+      // Otherwise, first argument is routes with empty prefix
+      return createRouteBuilder<T>("", prefixOrRoutes as ResolvedRouteMap<T>);
     },
 
     match,
@@ -816,6 +788,8 @@ function compilePattern(pattern: string): {
   regex: RegExp;
   paramNames: string[];
 } {
+  console.log("pattern", pattern);
+
   const paramNames: string[] = [];
   const regexPattern = pattern
     .split("/")
@@ -837,4 +811,13 @@ function compilePattern(pattern: string): {
     regex: new RegExp(`^${regexPattern}$`),
     paramNames,
   };
+}
+
+function* traverseToRoot(entry: EntryData): Generator<EntryData> {
+  let current: EntryData | null = entry;
+
+  while (current !== null) {
+    yield current; // Yields current node
+    current = current.parent; // Move up to next parent
+  }
 }

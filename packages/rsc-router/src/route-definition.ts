@@ -12,6 +12,7 @@ import type {
 import { getContext, type EntryData } from "./server/context";
 import { invariant } from "./errors";
 import RootLayout from "./server/root-layout";
+// const __DEV__ = import.meta.MODE === "development";
 /**
  * Define routes or get a route key
  */
@@ -54,22 +55,40 @@ export declare const MiddlewareBrand: unique symbol;
 export declare const RevalidateBrand: unique symbol;
 export declare const LoaderBrand: unique symbol;
 
-export type LayoutItem = { name: string; type: "layout"; [LayoutBrand]: void };
-export type RouteItem = { name: string; type: "route"; [RouteBrand]: void };
+export type LayoutItem = {
+  name: string;
+  type: "layout";
+  uses?: AllUseItems[];
+  [LayoutBrand]: void;
+};
+export type RouteItem = {
+  name: string;
+  type: "route";
+  uses?: AllUseItems[];
+  [RouteBrand]: void;
+};
 export type ParallelItem = {
   name: string;
   type: "parallel";
+  uses?: AllUseItems[];
   [ParallelBrand]: void;
 };
-export type LoaderItem = { name: string; type: "loader"; [LoaderBrand]: void };
+export type LoaderItem = {
+  name: string;
+  type: "loader";
+  uses?: AllUseItems[];
+  [LoaderBrand]: void;
+};
 export type MiddlewareItem = {
   name: string;
   type: "middleware";
+  uses?: AllUseItems[];
   [MiddlewareBrand]: void;
 };
 export type RevalidateItem = {
   name: string;
   type: "revalidate";
+  uses?: AllUseItems[];
   [RevalidateBrand]: void;
 };
 
@@ -91,6 +110,7 @@ export type LayoutUseItem =
   | ParallelItem
   | LoaderItem;
 export type RouteUseItem =
+  | LayoutItem
   | ParallelItem
   | MiddlewareItem
   | RevalidateItem
@@ -129,7 +149,7 @@ const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
   if (!ctx.parent || !ctx.parent?.revalidate) {
     invariant(false, "No parent entry available for revalidate()");
   }
-  const name = `$${getContext().getNameForType("revalidate")}`;
+  const name = `$${getContext().getNextIndex("revalidate")}`;
   ctx.parent.revalidate.push(fn);
   return { name, type: "revalidate" } as RevalidateItem;
 };
@@ -142,7 +162,7 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...fn) => {
   if (!ctx.parent || !ctx.parent?.middleware) {
     invariant(false, "No parent entry available for middleware()");
   }
-  const name = `$${getContext().getNameForType("middleware")}`;
+  const name = `$${getContext().getNextIndex("middleware")}`;
   ctx.parent.middleware.push(...fn);
   return { name, type: "middleware" } as MiddlewareItem;
 };
@@ -155,7 +175,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots) => {
   if (!ctx.parent || !ctx.parent?.parallel) {
     invariant(false, "No parent entry available for parallel()");
   }
-  const name = `$${getContext().getNameForType("parallel")}`;
+  const name = `$${getContext().getNextIndex("parallel")}`;
   ctx.parent.parallel.push(slots);
   return { name, type: "parallel" } as ParallelItem;
 };
@@ -165,7 +185,7 @@ const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
   const ctx = store.getStore();
   if (!ctx) throw new Error("route() must be called inside map()");
 
-  const namespace = store.getNameForType("route") + `.${name}`;
+  const namespace = `${store.getNextIndex("route")}.${name}`;
 
   const entry = {
     id: namespace,
@@ -182,12 +202,19 @@ const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
   /* We will throw if user is registring same route name twice */
   invariant(
     ctx.manifest.get(name) === undefined,
-    `Duplicate route name: ${name}`
+    `Duplicate route name: ${name} at ${namespace}`
   );
   /* Register route entry */
   ctx.manifest.set(name, entry);
   /* Run use and attach handlers */
-  if (use && typeof use === "function") store.run(namespace, entry, use);
+  if (use && typeof use === "function") {
+    const result = store.run(namespace, entry, use);
+    invariant(
+      Array.isArray(result) && result.every((item) => isValidUseItem(item)),
+      `route() use() callback must return an array of use items [${namespace}]`
+    );
+    return { name: namespace, type: "route", uses: result } as RouteItem;
+  }
 
   /* typesafe item */
   return { name: namespace, type: "route" } as RouteItem;
@@ -197,8 +224,10 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
   const store = getContext();
   const ctx = store.getStore();
   if (!ctx) throw new Error("route() must be called inside map()");
-
-  const namespace = `$${store.getNameForType("layout")}`;
+  const isRoot = !ctx.parent || ctx.parent === null;
+  const namespace = `${ctx.namespace}${
+    isRoot ? "$root" : store.getNextIndex("layout")
+  }.`;
 
   const entry = {
     id: namespace,
@@ -214,6 +243,12 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
 
   if (use && typeof use === "function") {
     const result = store.run(namespace, entry, use);
+
+    invariant(
+      Array.isArray(result) && result.every((item) => isValidUseItem(item)),
+      `layout() use() callback must return an array of use items [${namespace}]`
+    );
+
     if (
       result &&
       Array.isArray(result) &&
@@ -224,21 +259,59 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
       // Orphan layout - extend parent
       invariant(
         parent || parent !== null,
-        "Orphan layout cannot be used at root level"
+        `Orphan layout cannot be used at root level [${namespace}]`
+      );
+
+      invariant(
+        result.some(isOrphanLayout) === false,
+        `Orphan layout cannot use other layouts [${namespace}]`
       );
 
       invariant(
         parent.type === "route" || parent.type === "layout",
-        "Orhant layouts can only be defined inside route or layout entries"
+        `Orhant layouts can only be defined inside route or layout  > check [${namespace}]`
       );
       parent.layout.push(entry);
     }
-  }
 
-  return { name: namespace, type: "layout" } as LayoutItem;
+    return { name: namespace, type: "layout", uses: result } as LayoutItem;
+  }
+  return {
+    name: namespace,
+    type: "layout",
+  } as LayoutItem;
 };
 
-/**
+const isValidUseItem = (item: any): item is AllUseItems | undefined | null => {
+  return (
+    typeof item === "undefined" ||
+    item === null ||
+    (item &&
+      typeof item === "object" &&
+      "type" in item &&
+      [
+        "layout",
+        "route",
+        "middleware",
+        "revalidate",
+        "parallel",
+        "loader",
+      ].includes(item.type))
+  );
+};
+
+const isOrphanLayout = (item: AllUseItems): boolean => {
+  return (
+    item.type === "layout" &&
+    !item.uses?.some(
+      (item) =>
+        item.type === "route" ||
+        (item.type === "layout" && !isOrphanLayout(item))
+    )
+  );
+};
+
+/*
  * Create revalidate helper
  */
 const createRevalidateHelper = <TEnv>(): RouteHelpers<
@@ -309,19 +382,8 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
     const store = getContext().getOrCreateStore();
     const parent = store.parent;
 
-    // Execute builder in AsyncLocalStorage context
-    const node = getContext()
-      // start with empty namespace and no parent
-      .run("", parent, () =>
-        parent ? builder(helpers) : [layout(RootLayout, () => builder(helpers))]
-      );
-
-    performance.mark("map-start");
-    console.dir(node, { depth: null });
-    console.log("manifest", store.manifest.entries());
-    const perf = performance.measure("map", "map-start");
-    console.log("perf", perf);
-
-    return node;
+    return parent
+      ? builder(helpers)
+      : [layout(RootLayout, () => builder(helpers))];
   };
 }

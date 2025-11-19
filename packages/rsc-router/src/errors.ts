@@ -120,7 +120,7 @@ export function sanitizeError(error: unknown): Response {
     return error;
   }
 
-  const isDev = (import.meta as any).env?.DEV ?? true; // Default to dev (safer for debugging)
+  const isDev = (import.meta as any).env?.DEV ?? true;
 
   if (isDev) {
     // Development: Send full error details for debugging

@@ -9,29 +9,39 @@ import { invariant } from "../errors";
 /**
  * Entry data structure for manifest
  */
+export type EntryPropCommon = {
+  id: string;
+  parent: EntryData | null;
+};
+export type EntryPropDatas = {
+  middleware: MiddlewareFn<any, any>[];
+  revalidate: ShouldRevalidateFn<any, any>[];
+  loader: [];
+};
+export type EntryPropSegments = {
+  layout: EntryData[];
+  parallel: Record<`@${string}`, Handler<any, any> | ReactNode>[];
+};
+
 export type EntryData =
-  | {
-      type: "route" | "layout";
-      id: string;
-      parent: EntryData | null;
+  | ({
+      type: "route";
+      handler: Handler<any, any>;
+    } & EntryPropCommon &
+      EntryPropDatas &
+      EntryPropSegments)
+  | ({
+      type: "layout";
       handler: ReactNode | Handler<any, any>;
-      middleware: MiddlewareFn<any, any>[];
-      revalidate: ShouldRevalidateFn<any, any>[];
-      parallel: Record<`@${string}`, Handler<any, any> | ReactNode>[];
-      layout: EntryData[];
-      loader: [];
-    }
-  | {
+    } & EntryPropCommon &
+      EntryPropDatas &
+      EntryPropSegments)
+  | ({
       type: "parallel";
-      id: string;
-      parent: EntryData | null;
       handler: Record<`@${string}`, Handler<any, any> | ReactNode>;
-      middleware: MiddlewareFn<any, any>[];
-      revalidate: ShouldRevalidateFn<any, any>[];
-      parallel: Record<`@${string}`, Handler<any, any> | ReactNode>[];
-      layout: EntryData[];
-      loader: [];
-    };
+    } & EntryPropCommon &
+      EntryPropDatas &
+      EntryPropSegments);
 
 /**
  * Context stored in AsyncLocalStorage
@@ -41,6 +51,7 @@ interface HelperContext {
   namespace: string;
   parent: EntryData | null;
   counters: Record<string, number>;
+  forRoute?: string;
 }
 export const RSCRouterContext: AsyncLocalStorage<HelperContext> =
   new AsyncLocalStorage<HelperContext>();
@@ -49,15 +60,17 @@ export const getContext = (): {
   context: AsyncLocalStorage<HelperContext>;
   getStore: () => HelperContext;
   getParent: () => EntryData | null;
-  getOrCreateStore: () => HelperContext;
-
-  getNameForType: (
-    type: (string & {}) | "layout" | "parallel" | "middleware" | "revalidate"
-  ) => string;
+  getOrCreateStore: (forRoute?: string) => HelperContext;
   getNextIndex: (
     type: (string & {}) | "layout" | "parallel" | "middleware" | "revalidate"
-  ) => number;
+  ) => string;
   run: <T>(
+    namespace: string,
+    parent: EntryData | null,
+    callback: (...args: any[]) => T
+  ) => T;
+  runWithStore: <T>(
+    store: HelperContext,
     namespace: string,
     parent: EntryData | null,
     callback: (...args: any[]) => T
@@ -67,15 +80,16 @@ export const getContext = (): {
 
   return {
     context,
-    getOrCreateStore: (): HelperContext => {
+    getOrCreateStore: (forRoute?: string): HelperContext => {
       let store = RSCRouterContext.getStore();
       if (!store) {
         store = {
           manifest: new Map<string, EntryData>(),
           namespace: "",
           parent: null,
+          forRoute,
           counters: {},
-        };
+        } satisfies HelperContext;
       }
       return store;
     },
@@ -96,14 +110,6 @@ export const getContext = (): {
 
       return store.parent;
     },
-    getNameForType: (
-      type: (string & {}) | "layout" | "parallel" | "middleware" | "revalidate"
-    ) => {
-      const store = context.getStore();
-      invariant(store, "No context RSCRouterContext available");
-      const index = store.counters[type] || 0;
-      return `${type}.${index}`;
-    },
     getNextIndex: (
       type: (string & {}) | "layout" | "parallel" | "middleware" | "revalidate"
     ) => {
@@ -111,8 +117,24 @@ export const getContext = (): {
       invariant(store, "No context RSCRouterContext available");
       store.counters[type] ??= 0;
       const index = store.counters[type];
-      store.counters[type]++;
-      return index;
+      store.counters[type] = index + 1;
+      return `$${type}.${index}`;
+    },
+    runWithStore: <T>(
+      store: HelperContext,
+      namespace: string,
+      parent: EntryData | null,
+      callback: (...args: any[]) => T
+    ): T => {
+      return context.run(
+        {
+          manifest: store.manifest,
+          namespace,
+          parent: parent || null,
+          counters: store.counters,
+        },
+        callback
+      );
     },
     run: <T>(
       namespace: string,

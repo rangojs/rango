@@ -2,7 +2,7 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "lib": ["ES2020"],
-    "types": ["node"],
+    "types": ["node", "vite/client"],
     "typeRoots": ["../../node_modules/@types"],
     "moduleResolution": "bundler",
     "rootDir": ".",

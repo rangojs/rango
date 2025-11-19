@@ -57,7 +57,7 @@ declare global {
 export const router = createRSCRouter<AppEnv>();
 
 // Register routes with lazy-loaded handlers
-router.route("", homeRoutes).map(() => import("./handlers/home.js"));
+router.routes(homeRoutes).map(() => import("./handlers/home.js"));
 
 // .route("/blog", blogRoutes) // Mount blog routes at /blog prefix
 // .map(() => import("./handlers/blog.js"))
