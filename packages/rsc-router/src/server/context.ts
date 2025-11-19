@@ -16,9 +16,9 @@ export type EntryPropCommon = {
 export type EntryPropDatas = {
   middleware: MiddlewareFn<any, any>[];
   revalidate: ShouldRevalidateFn<any, any>[];
-  loader: [];
 };
 export type EntryPropSegments = {
+  loader: [];
   layout: EntryData[];
   parallel: Record<`@${string}`, Handler<any, any> | ReactNode>[];
 };

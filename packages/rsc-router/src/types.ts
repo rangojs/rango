@@ -380,8 +380,7 @@ export interface ResolvedSegment {
   index: number;
   component: ReactNode;
   params?: Record<string, string>;
-  slot?: string; // For parallel routes: '@sidebar', '@modal', etc.
-  isGlobal?: boolean; // For layouts/parallels: true if defined with '*', false if route-specific
+  slot?: string; // For parallel segments: '@sidebar', '@modal', etc.
   layoutName?: string; // For layouts: the layout name identifier
   parallelName?: string; // For parallels: the parallel group name (used to match with revalidations)
 }

@@ -197,110 +197,206 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
   }
 
   /**
-   * Helper to check if metadata should apply to the current route
+   * Resolve segments from EntryData
+   * Executes middlewares, loaders, parallels, and handlers in correct order
+   * Returns array: [main segment, ...orphan layout segments]
    */
-  function shouldApplyToRoute(
-    keyInfo: { global: boolean; routeName?: string },
-    routeKey: string
-  ): boolean {
-    return keyInfo.global || keyInfo.routeName === routeKey;
-  }
-
-  /**
-   * Load manifest from route entry with AsyncLocalStorage context
-   * Handles lazy imports, unwrapping, and validation
-   */
-  async function loadManifest(
-    entry: RouteEntry<TEnv>,
-    routeKey: string,
-    path: string
-  ): Promise<EntryData> {
-    const Store = getContext().getOrCreateStore(routeKey);
-    try {
-      const useItems = await getContext().runWithStore(
-        Store,
-        Store.namespace || "#" + routeKey + ".",
-        Store.parent,
-        async () => {
-          const load = await entry.handler();
-          if (
-            load &&
-            load !== null &&
-            typeof load === "object" &&
-            "default" in load
-          ) {
-            return load.default();
-          }
-          if (typeof load === "function") {
-            return load();
-          }
-          return load;
-        }
-      );
-
-      invariant(
-        useItems && useItems.length > 0,
-        "Did not receive any handler from router.map()"
-      );
-      invariant(
-        useItems.some((item) => item.type === "layout"),
-        "Top-level handler must be a layout"
-      );
-
-      invariant(
-        Store.manifest.has(routeKey),
-        `Route must be registered for ${routeKey}`
-      );
-
-      return Store.manifest.get(routeKey)!;
-    } catch (e) {
-      throw new RouteNotFoundError(
-        `Failed to load route handlers for ${path}: ${(e as Error).message}`,
-        {
-          cause: {
-            error: e,
-            state: {
-              path,
-              routeKey,
-            },
-          },
-        }
-      );
-    }
-  }
-
-  /**
-   * Generator-based segment builder - yields segments lazily
-   *
-   * Benefits:
-   * - Zero intermediate array allocations
-   * - Lazy evaluation - only build segments that pass filter
-   * - Clear single-responsibility
-   * - Easier to test and compose
-   *
-   * @param entry - Route entry with handlers
-   * @param routeKey - Current route key
-   * @param params - Route params
-   * @param context - Handler context
-   * @param options - Build options
-   * @param options.skipMiddleware - Skip middleware execution (for comparison builds)
-   * @param options.metadataOnly - Only build metadata, skip component execution (for comparison)
-   */
-  async function* buildSegmentsStream(
-    entry: RouteEntry<TEnv>,
+  async function resolveSegment(
+    entry: EntryData,
     routeKey: string,
     params: Record<string, string>,
-    context: HandlerContext<any, TEnv>,
-    path: string,
-    options: {
-      skipMiddleware?: boolean;
-      metadataOnly?: boolean;
-    } = {}
-  ): AsyncGenerator<ResolvedSegment> {
-    const manifest = await loadManifest(entry, routeKey, path);
-    for (const node of traverseToRoot(manifest)) {
-      yield segment;
+    context: HandlerContext<any, TEnv>
+  ): Promise<ResolvedSegment[]> {
+    const segments: ResolvedSegment[] = [];
+
+    if (entry.type === "layout") {
+      // Layout execution order:
+      // 1. Layout MW → 2. Layout Loader → 3. Layout Parallels (emit segments) → 4. Layout Handler (emit segment) → 5. Orphan Layouts
+
+      // Step 1: Run layout middleware
+      if (entry.middleware.length > 0) {
+        const middlewareResponse = await executeMiddleware(
+          entry.middleware,
+          context
+        );
+        if (middlewareResponse) throw middlewareResponse;
+      }
+
+      // Step 2: Run layout loaders
+      // TODO: Run entry loaders (entry.loader)
+
+      // Step 3: Process and emit layout parallel segments
+      for (const parallelRecord of entry.parallel) {
+        // TODO: Run parallel loaders before executing handlers
+        for (const [slot, handler] of Object.entries(parallelRecord)) {
+          const component =
+            typeof handler === "function" ? await handler(context) : handler;
+
+          // Emit parallel segment
+          segments.push({
+            id: `P.${entry.id}.${slot}`,
+            type: "parallel",
+            index: 0,
+            component,
+            params,
+            slot,
+            parallelName: `${entry.id}.${slot}`,
+          });
+        }
+      }
+
+      // Step 4: Execute layout handler and emit layout segment
+      const component =
+        typeof entry.handler === "function"
+          ? await entry.handler(context)
+          : entry.handler;
+
+      segments.push({
+        id: `L.${entry.id}`,
+        type: "layout",
+        index: 0,
+        component,
+        params,
+        layoutName: entry.id,
+      });
+
+      // Step 5: Process orphan layouts
+      for (const orphan of entry.layout) {
+        const orphanSegments = await resolveOrphanLayout(
+          orphan,
+          params,
+          context
+        );
+        segments.push(...orphanSegments);
+      }
+    } else if (entry.type === "route") {
+      // Route execution order:
+      // 1. Route MW → 2. Route Loader → 3. Orphan Layouts → 4. Route Parallels (emit segments) → 5. Route Handler (emit segment)
+
+      // Step 1: Run route middleware
+      if (entry.middleware.length > 0) {
+        const middlewareResponse = await executeMiddleware(
+          entry.middleware,
+          context
+        );
+        if (middlewareResponse) throw middlewareResponse;
+      }
+
+      // Step 2: Run route loaders
+      // TODO: Run entry loaders (entry.loader)
+
+      // Step 3: Process orphan layouts first
+      for (const orphan of entry.layout) {
+        const orphanSegments = await resolveOrphanLayout(
+          orphan,
+          params,
+          context
+        );
+        segments.push(...orphanSegments);
+      }
+
+      // Step 4: Process and emit route parallel segments
+      for (const parallelRecord of entry.parallel) {
+        // TODO: Run parallel loaders before executing handlers
+        for (const [slot, handler] of Object.entries(parallelRecord)) {
+          const component =
+            typeof handler === "function" ? await handler(context) : handler;
+
+          // Emit parallel segment
+          segments.push({
+            id: `P.${entry.id}.${slot}`,
+            type: "parallel",
+            index: 0,
+            component,
+            params,
+            slot,
+            parallelName: `${entry.id}.${slot}`,
+          });
+        }
+      }
+
+      // Step 5: Execute route handler and emit route segment
+      const component = await entry.handler(context);
+
+      segments.push({
+        id: `R.${entry.id}`,
+        type: "route",
+        index: 0,
+        component,
+        params,
+      });
+    } else {
+      throw new Error(`Unknown entry type: ${(entry as any).type}`);
     }
+
+    return segments;
+  }
+
+  /**
+   * Helper: Resolve orphan layout with its middlewares, loaders, and parallels
+   */
+  async function resolveOrphanLayout(
+    orphan: EntryData,
+    params: Record<string, string>,
+    context: HandlerContext<any, TEnv>
+  ): Promise<ResolvedSegment[]> {
+    // Orphans must always be layouts
+    invariant(
+      orphan.type === "layout",
+      `Expected orphan to be a layout, got: ${orphan.type}`
+    );
+
+    // Orphan MW → Orphan Loader → Orphan Parallels → Orphan Handler
+
+    // Step 1: Run orphan middleware
+    if (orphan.middleware.length > 0) {
+      const middlewareResponse = await executeMiddleware(
+        orphan.middleware,
+        context
+      );
+      if (middlewareResponse) throw middlewareResponse;
+    }
+
+    // Step 2: Run orphan loaders
+    // TODO: Run orphan loaders (orphan.loader)
+
+    // Step 3: Process and emit orphan parallel segments
+    const segments: ResolvedSegment[] = [];
+    for (const parallelRecord of orphan.parallel) {
+      // TODO: Run parallel loaders
+      for (const [slot, handler] of Object.entries(parallelRecord)) {
+        const component =
+          typeof handler === "function" ? await handler(context) : handler;
+
+        // Emit parallel segment
+        segments.push({
+          id: `P.${orphan.id}.${slot}`,
+          type: "parallel",
+          index: 0,
+          component,
+          params,
+          slot,
+          parallelName: `${orphan.id}.${slot}`,
+        });
+      }
+    }
+
+    // Step 4: Execute orphan handler and emit layout segment
+    const component =
+      typeof orphan.handler === "function"
+        ? await orphan.handler(context)
+        : orphan.handler;
+
+    segments.push({
+      id: `L.${orphan.id}`,
+      type: "layout",
+      index: 0,
+      component,
+      params,
+      layoutName: orphan.id,
+    });
+
+    return segments;
   }
 
   /**
@@ -339,14 +435,20 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     try {
       // Collect all segments from stream
       const segments: ResolvedSegment[] = [];
-      for await (const segment of buildSegmentsStream(
+      for await (const entry of buildSegmentsStream(
         matched.entry,
         matched.routeKey,
-        matched.params,
-        handlerContext,
         pathname
       )) {
-        segments.push(segment);
+        // Resolve entry into segments (may return multiple for orphan layouts)
+        const resolvedSegments = await resolveSegment(
+          entry,
+          matched.routeKey,
+          matched.params,
+          handlerContext
+        );
+
+        segments.push(...resolvedSegments);
       }
 
       const segmentIds = segments.map((s) => s.id);
@@ -415,14 +517,9 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     let defaultShouldRevalidate: boolean;
 
     if (request.method === "POST") {
-      // Actions: revalidate route-specific segments, skip global ones
-      if (segment.type === "layout" || segment.type === "parallel") {
-        // For layouts/parallels: only revalidate if route-specific (not global)
-        defaultShouldRevalidate = segment.isGlobal === false;
-      } else {
-        // Routes always revalidate on actions
-        defaultShouldRevalidate = true;
-      }
+      // Actions: revalidate all segments by default
+      // TODO: Add global vs route-specific tracking for optimization
+      defaultShouldRevalidate = true;
     } else {
       // Navigation (GET): Conservative defaults to minimize unnecessary revalidations
       // Only the route segment revalidates by default - all others require explicit opt-in
@@ -812,12 +909,95 @@ function compilePattern(pattern: string): {
     paramNames,
   };
 }
-
-function* traverseToRoot(entry: EntryData): Generator<EntryData> {
+/**
+ * Traverse from entry to bottom to top, yielding each EntryData
+ * e.g. {child -> parent -> grandparent ...}
+ */
+function* traverseBack(entry: EntryData): Generator<EntryData> {
   let current: EntryData | null = entry;
-
+  const items = [] as EntryData[];
   while (current !== null) {
-    yield current; // Yields current node
-    current = current.parent; // Move up to next parent
+    items.push(current); // Move up to next parent
+    current = current.parent;
+  }
+  for (let i = items.length - 1; i >= 0; i--) {
+    yield items[i];
+  }
+}
+
+/**
+ * Generator-based segment builder - yields segments lazily
+ */
+async function* buildSegmentsStream(
+  entry: RouteEntry<any>,
+  routeKey: string,
+  path: string
+): AsyncGenerator<EntryData> {
+  const manifest = await loadManifest(entry, routeKey, path);
+  for (const node of traverseBack(manifest)) {
+    yield node;
+  }
+}
+
+/**
+ * Load manifest from route entry with AsyncLocalStorage context
+ * Handles lazy imports, unwrapping, and validation
+ */
+async function loadManifest(
+  entry: RouteEntry<any>,
+  routeKey: string,
+  path: string
+): Promise<EntryData> {
+  const Store = getContext().getOrCreateStore(routeKey);
+  try {
+    const useItems = await getContext().runWithStore(
+      Store,
+      Store.namespace || "#" + routeKey + ".",
+      Store.parent,
+      async () => {
+        const load = await entry.handler();
+        if (
+          load &&
+          load !== null &&
+          typeof load === "object" &&
+          "default" in load
+        ) {
+          return load.default();
+        }
+        if (typeof load === "function") {
+          return load();
+        }
+        return load;
+      }
+    );
+
+    invariant(
+      useItems && useItems.length > 0,
+      "Did not receive any handler from router.map()"
+    );
+    invariant(
+      useItems.some((item) => item.type === "layout"),
+      "Top-level handler must be a layout"
+    );
+
+    invariant(
+      Store.manifest.has(routeKey),
+      `Route must be registered for ${routeKey}`
+    );
+
+    return Store.manifest.get(routeKey)!;
+  } catch (e) {
+    throw new RouteNotFoundError(
+      `Failed to load route handlers for ${path}: ${(e as Error).message}`,
+      {
+        cause: {
+          error: e,
+          state: {
+            path,
+            routeKey,
+          },
+        },
+      }
+    );
   }
 }

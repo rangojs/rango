@@ -115,7 +115,7 @@ export type RouteUseItem =
   | MiddlewareItem
   | RevalidateItem
   | LoaderItem;
-export type ParallelUseItem = MiddlewareItem | RevalidateItem | LoaderItem;
+export type ParallelUseItem = RevalidateItem | LoaderItem;
 
 /**
  * Route helpers provided by map()
