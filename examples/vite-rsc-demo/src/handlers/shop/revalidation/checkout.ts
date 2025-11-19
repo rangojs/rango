@@ -1,4 +1,4 @@
-import type { RouteRevalidateFn } from "rsc-router";
+import type { RouteRevalidateFn } from "rsc-router/server";
 import type { shopRoutes } from "@/routes.js";
 
 export const checkoutConfirmRevalidation: RouteRevalidateFn<

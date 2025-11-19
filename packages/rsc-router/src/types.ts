@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { AllUseItems } from "./route-definition";
+import type { AllUseItems } from "./route-types.js";
 
 /**
  * Global namespace for module augmentation

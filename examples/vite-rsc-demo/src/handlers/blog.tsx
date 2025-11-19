@@ -1,4 +1,4 @@
-import { map } from "rsc-router";
+import { map } from "rsc-router/server";
 import type { blogRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { BlogLayout } from "../layouts/BlogLayout.js";

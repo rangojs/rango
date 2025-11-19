@@ -1,4 +1,4 @@
-import type { RouteHandler } from "rsc-router";
+import type { RouteHandler } from "rsc-router/server";
 import type { blogRoutes } from "@/routes.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";

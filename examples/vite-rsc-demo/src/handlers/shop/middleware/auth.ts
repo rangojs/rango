@@ -1,4 +1,4 @@
-import type { MiddlewareFn, RouteMiddlewareFn, GenericParams } from "rsc-router";
+import type { MiddlewareFn, RouteMiddlewareFn, GenericParams } from "rsc-router/server";
 import type { shopRoutes } from "@/routes.js";
 
 /**

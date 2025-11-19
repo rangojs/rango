@@ -1,4 +1,4 @@
-import { map } from "rsc-router";
+import { map } from "rsc-router/server";
 import type { aboutRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { Outlet } from "rsc-router/client";

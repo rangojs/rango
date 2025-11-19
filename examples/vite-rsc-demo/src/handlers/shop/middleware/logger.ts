@@ -1,4 +1,4 @@
-import type { MiddlewareFn, GenericParams } from "rsc-router";
+import type { MiddlewareFn, GenericParams } from "rsc-router/server";
 
 export const loggerMiddleware: MiddlewareFn<GenericParams, RSCRouter.Env>[] = [
   (ctx, next) => {

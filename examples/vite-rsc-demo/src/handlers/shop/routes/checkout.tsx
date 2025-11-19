@@ -1,4 +1,4 @@
-import type { RouteHandler } from "rsc-router";
+import type { RouteHandler } from "rsc-router/server";
 import type { shopRoutes } from "@/routes.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 

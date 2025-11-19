@@ -6,7 +6,7 @@ import {
   loadServerAction,
 } from "@vitejs/plugin-rsc/rsc";
 import { router } from "./router.js";
-import { renderSegments, ResolvedSegment } from "rsc-router";
+import { renderSegments, type ResolvedSegment } from "rsc-router/server";
 
 /**
  * RSC Payload Schema

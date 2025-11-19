@@ -1,19 +1,20 @@
 /**
- * rsc-router
+ * rsc-router/server
  *
- * Universal exports - types and utilities safe for both server and client
- *
- * For server-only exports (route, map, createRSCRouter, etc.):
- *   import from "rsc-router/server"
- *
- * For client-only exports (Outlet, useOutlet, etc.):
- *   import from "rsc-router/client"
+ * Server-only exports for route definition and building
+ * These should only be imported in server-side handler files
  */
 
-// Universal rendering utilities (work on both server and client)
+// Route definition helpers (server-only)
+export { route, map, type RouteHelpers } from "./route-definition.js";
+
+// Core router (server-only)
+export { createRSCRouter, type RSCRouter } from "./router.js";
+
+// Segment system (server-only)
 export { renderSegments } from "./segment-system.js";
 
-// Error classes (can be used on both server and client)
+// Error classes and utilities
 export {
   RouteNotFoundError,
   MiddlewareError,
@@ -23,7 +24,7 @@ export {
   sanitizeError,
 } from "./errors.js";
 
-// Types (safe to import anywhere - no runtime code)
+// Types (re-exported for convenience)
 export type {
   RouterEnv,
   DefaultEnv,

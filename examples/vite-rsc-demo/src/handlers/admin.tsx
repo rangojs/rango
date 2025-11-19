@@ -1,4 +1,4 @@
-import { map } from "rsc-router";
+import { map } from "rsc-router/server";
 import type { adminRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { IndexRoute, UsersRoute, UserRoute, SettingsRoute } from "./admin/routes.js";

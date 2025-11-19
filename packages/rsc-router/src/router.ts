@@ -10,7 +10,7 @@ import type {
   RouteEntry,
   Handler,
 } from "./types";
-import { AllUseItems } from "./route-definition";
+import type { AllUseItems } from "./route-types.js";
 import { EntryData, getContext } from "./server/context";
 import { error } from "console";
 

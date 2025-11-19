@@ -1,4 +1,4 @@
-import { createRSCRouter, type RouterEnv } from "rsc-router";
+import { createRSCRouter, type RouterEnv } from "rsc-router/server";
 import {
   homeRoutes,
   blogRoutes,

@@ -1,4 +1,4 @@
-import type { RouteMiddlewareFn } from "rsc-router";
+import type { RouteMiddlewareFn } from "rsc-router/server";
 import type { shopRoutes } from "@/routes.js";
 
 export const permissionsMiddleware: RouteMiddlewareFn<

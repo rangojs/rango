@@ -1,4 +1,4 @@
-import { map, redirect } from "rsc-router";
+import { map, redirect } from "rsc-router/server";
 import type { protectedRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 

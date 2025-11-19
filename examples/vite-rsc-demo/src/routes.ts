@@ -1,4 +1,4 @@
-import { route } from "rsc-router";
+import { route } from "rsc-router/server";
 
 /**
  * Home route

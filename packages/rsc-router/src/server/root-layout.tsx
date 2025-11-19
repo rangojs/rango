@@ -1,7 +1,10 @@
+import type { ReactNode } from "react";
 import { Outlet } from "rsc-router/client";
 
-export default (
+const RootLayout = (
   <>
     <Outlet />
   </>
-);
+) as ReactNode;
+
+export default RootLayout;
