@@ -234,7 +234,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
           // Emit parallel segment
           segments.push({
-            id: `P.${entry.id}.${slot}`,
+            id: `${entry.shortCode}.${slot}`,
             type: "parallel",
             index: 0,
             component,
@@ -252,7 +252,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           : entry.handler;
 
       segments.push({
-        id: `L.${entry.id}`,
+        id: entry.shortCode,
         type: "layout",
         index: 0,
         component,
@@ -304,7 +304,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
           // Emit parallel segment
           segments.push({
-            id: `P.${entry.id}.${slot}`,
+            id: `${entry.shortCode}.${slot}`,
             type: "parallel",
             index: 0,
             component,
@@ -319,7 +319,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       const component = await entry.handler(context);
 
       segments.push({
-        id: `R.${entry.id}`,
+        id: entry.shortCode,
         type: "route",
         index: 0,
         component,
@@ -370,7 +370,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
         // Emit parallel segment
         segments.push({
-          id: `P.${orphan.id}.${slot}`,
+          id: `${orphan.shortCode}.${slot}`,
           type: "parallel",
           index: 0,
           component,
@@ -388,7 +388,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         : orphan.handler;
 
     segments.push({
-      id: `L.${orphan.id}`,
+      id: orphan.shortCode,
       type: "layout",
       index: 0,
       component,

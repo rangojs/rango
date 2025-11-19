@@ -189,6 +189,7 @@ const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
 
   const entry = {
     id: namespace,
+    shortCode: store.getShortCode("route"),
     type: "route",
     parent: ctx.parent,
     handler,
@@ -231,6 +232,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
 
   const entry = {
     id: namespace,
+    shortCode: store.getShortCode("layout"),
     type: "layout",
     parent: ctx.parent,
     handler,

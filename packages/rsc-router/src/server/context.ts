@@ -11,6 +11,7 @@ import { invariant } from "../errors";
  */
 export type EntryPropCommon = {
   id: string;
+  shortCode: string; // Short identifier for network efficiency (e.g., "L0", "P1", "R2")
   parent: EntryData | null;
 };
 export type EntryPropDatas = {
@@ -63,6 +64,9 @@ export const getContext = (): {
   getOrCreateStore: (forRoute?: string) => HelperContext;
   getNextIndex: (
     type: (string & {}) | "layout" | "parallel" | "middleware" | "revalidate"
+  ) => string;
+  getShortCode: (
+    type: "layout" | "parallel" | "route"
   ) => string;
   run: <T>(
     namespace: string,
@@ -119,6 +123,16 @@ export const getContext = (): {
       const index = store.counters[type];
       store.counters[type] = index + 1;
       return `$${type}.${index}`;
+    },
+    getShortCode: (type: "layout" | "parallel" | "route") => {
+      const store = context.getStore();
+      invariant(store, "No context RSCRouterContext available");
+      const counterKey = `short_${type}`;
+      store.counters[counterKey] ??= 0;
+      const index = store.counters[counterKey];
+      store.counters[counterKey] = index + 1;
+      const prefix = type === "layout" ? "L" : type === "parallel" ? "P" : "R";
+      return `${prefix}${index}`;
     },
     runWithStore: <T>(
       store: HelperContext,
