@@ -197,6 +197,24 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
   }
 
   /**
+   * Conditional execution based on revalidation
+   * Evaluates revalidation logic lazily, then executes appropriate callback
+   *
+   * @param shouldRevalidate - Async function that determines if revalidation is needed
+   * @param onRevalidate - Callback executed if revalidation returns true
+   * @param onSkip - Callback executed if revalidation returns false
+   * @returns Result from either onRevalidate or onSkip
+   */
+  async function revalidate<T>(
+    shouldRevalidate: () => Promise<boolean>,
+    onRevalidate: () => Promise<T>,
+    onSkip: () => T
+  ): Promise<T> {
+    const needsRevalidation = await shouldRevalidate();
+    return needsRevalidation ? await onRevalidate() : onSkip();
+  }
+
+  /**
    * Resolve segments from EntryData
    * Executes middlewares, loaders, parallels, and handlers in correct order
    * Returns array: [main segment, ...orphan layout segments]
@@ -240,6 +258,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             component,
             params,
             slot,
+            isOwnedByEntry: true,
             parallelName: `${entry.id}.${slot}`,
           });
         }
@@ -257,6 +276,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         index: 0,
         component,
         params,
+        isOwnedByEntry: true, // Main entry segment
         layoutName: entry.id,
       });
 
@@ -310,6 +330,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             component,
             params,
             slot,
+            isOwnedByEntry: true,
             parallelName: `${entry.id}.${slot}`,
           });
         }
@@ -324,6 +345,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         index: 0,
         component,
         params,
+        isOwnedByEntry: true, // Route segment
       });
     } else {
       throw new Error(`Unknown entry type: ${(entry as any).type}`);
@@ -376,6 +398,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           component,
           params,
           slot,
+          isOwnedByEntry: true, // Orphan's parallel (child of entry)
           parallelName: `${orphan.id}.${slot}`,
         });
       }
@@ -393,6 +416,391 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       index: 0,
       component,
       params,
+      isOwnedByEntry: true, // Orphan layout (child of entry)
+      layoutName: orphan.id,
+    });
+
+    return segments;
+  }
+
+  /**
+   * Resolve segments with revalidation awareness (for partial rendering)
+   * Same as resolveSegment but conditionally executes handlers based on revalidation
+   */
+  async function resolveSegmentWithRevalidation(
+    entry: EntryData,
+    routeKey: string,
+    params: Record<string, string>,
+    context: HandlerContext<any, TEnv>,
+    clientSegmentIds: Set<string>,
+    prevParams: Record<string, string>,
+    request: Request,
+    prevUrl: URL,
+    nextUrl: URL
+  ): Promise<ResolvedSegment[]> {
+    const segments: ResolvedSegment[] = [];
+
+    if (entry.type === "layout") {
+      // Step 1: Run layout middleware
+      if (entry.middleware.length > 0) {
+        const middlewareResponse = await executeMiddleware(
+          entry.middleware,
+          context
+        );
+        if (middlewareResponse) throw middlewareResponse;
+      }
+
+      // Step 2: Run layout loaders
+      // TODO: Run entry loaders (entry.loader)
+
+      // Step 3: Process and emit layout parallel segments with revalidation
+      for (const parallelRecord of entry.parallel) {
+        for (const [slot, handler] of Object.entries(parallelRecord)) {
+          const parallelId = `${entry.shortCode}.${slot}`;
+
+          const component = await revalidate(
+            async () => {
+              // New segment or needs revalidation
+              if (!clientSegmentIds.has(parallelId)) return true;
+
+              const dummySegment: ResolvedSegment = {
+                id: parallelId,
+                type: "parallel",
+                index: 0,
+                component: null as any,
+                params,
+                slot,
+                isOwnedByEntry: true,
+                parallelName: `${entry.id}.${slot}`,
+              };
+
+              return await evaluateRevalidation(
+                dummySegment,
+                prevParams,
+                null,
+                request,
+                prevUrl,
+                nextUrl,
+                entry.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
+                routeKey,
+                context
+              );
+            },
+            async () => typeof handler === "function" ? await handler(context) : handler,
+            () => null
+          );
+
+          segments.push({
+            id: parallelId,
+            type: "parallel",
+            index: 0,
+            component,
+            params,
+            slot,
+            isOwnedByEntry: true,
+            parallelName: `${entry.id}.${slot}`,
+          });
+        }
+      }
+
+      // Step 4: Execute layout handler with revalidation
+      const component = await revalidate(
+        async () => {
+          if (!clientSegmentIds.has(entry.shortCode)) return true;
+
+          const dummySegment: ResolvedSegment = {
+            id: entry.shortCode,
+            type: "layout",
+            index: 0,
+            component: null as any,
+            params,
+            isOwnedByEntry: true,
+            layoutName: entry.id,
+          };
+
+          return await evaluateRevalidation(
+            dummySegment,
+            prevParams,
+            null,
+            request,
+            prevUrl,
+            nextUrl,
+            entry.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
+            routeKey,
+            context
+          );
+        },
+        async () => typeof entry.handler === "function" ? await entry.handler(context) : entry.handler,
+        () => null
+      );
+
+      segments.push({
+        id: entry.shortCode,
+        type: "layout",
+        index: 0,
+        component,
+        params,
+        isOwnedByEntry: true,
+        layoutName: entry.id,
+      });
+
+      // Step 5: Process orphan layouts with revalidation
+      for (const orphan of entry.layout) {
+        const orphanSegments = await resolveOrphanLayoutWithRevalidation(
+          orphan,
+          params,
+          context,
+          clientSegmentIds,
+          prevParams,
+          request,
+          prevUrl,
+          nextUrl,
+          routeKey
+        );
+        segments.push(...orphanSegments);
+      }
+    } else if (entry.type === "route") {
+      // Step 1: Run route middleware
+      if (entry.middleware.length > 0) {
+        const middlewareResponse = await executeMiddleware(
+          entry.middleware,
+          context
+        );
+        if (middlewareResponse) throw middlewareResponse;
+      }
+
+      // Step 2: Run route loaders
+      // TODO: Run entry loaders (entry.loader)
+
+      // Step 3: Process orphan layouts first
+      for (const orphan of entry.layout) {
+        const orphanSegments = await resolveOrphanLayoutWithRevalidation(
+          orphan,
+          params,
+          context,
+          clientSegmentIds,
+          prevParams,
+          request,
+          prevUrl,
+          nextUrl,
+          routeKey
+        );
+        segments.push(...orphanSegments);
+      }
+
+      // Step 4: Process and emit route parallel segments with revalidation
+      for (const parallelRecord of entry.parallel) {
+        for (const [slot, handler] of Object.entries(parallelRecord)) {
+          const parallelId = `${entry.shortCode}.${slot}`;
+
+          const component = await revalidate(
+            async () => {
+              if (!clientSegmentIds.has(parallelId)) return true;
+
+              const dummySegment: ResolvedSegment = {
+                id: parallelId,
+                type: "parallel",
+                index: 0,
+                component: null as any,
+                params,
+                slot,
+                isOwnedByEntry: true,
+                parallelName: `${entry.id}.${slot}`,
+              };
+
+              return await evaluateRevalidation(
+                dummySegment,
+                prevParams,
+                null,
+                request,
+                prevUrl,
+                nextUrl,
+                entry.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
+                routeKey,
+                context
+              );
+            },
+            async () => typeof handler === "function" ? await handler(context) : handler,
+            () => null
+          );
+
+          segments.push({
+            id: parallelId,
+            type: "parallel",
+            index: 0,
+            component,
+            params,
+            slot,
+            isOwnedByEntry: true,
+            parallelName: `${entry.id}.${slot}`,
+          });
+        }
+      }
+
+      // Step 5: Execute route handler with revalidation
+      const component = await revalidate(
+        async () => {
+          if (!clientSegmentIds.has(entry.shortCode)) return true;
+
+          const dummySegment: ResolvedSegment = {
+            id: entry.shortCode,
+            type: "route",
+            index: 0,
+            component: null as any,
+            params,
+            isOwnedByEntry: true,
+          };
+
+          return await evaluateRevalidation(
+            dummySegment,
+            prevParams,
+            null,
+            request,
+            prevUrl,
+            nextUrl,
+            entry.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
+            routeKey,
+            context
+          );
+        },
+        async () => await entry.handler(context),
+        () => null
+      );
+
+      segments.push({
+        id: entry.shortCode,
+        type: "route",
+        index: 0,
+        component,
+        params,
+        isOwnedByEntry: true,
+      });
+    } else {
+      throw new Error(`Unknown entry type: ${(entry as any).type}`);
+    }
+
+    return segments;
+  }
+
+  /**
+   * Helper: Resolve orphan layout with revalidation
+   */
+  async function resolveOrphanLayoutWithRevalidation(
+    orphan: EntryData,
+    params: Record<string, string>,
+    context: HandlerContext<any, TEnv>,
+    clientSegmentIds: Set<string>,
+    prevParams: Record<string, string>,
+    request: Request,
+    prevUrl: URL,
+    nextUrl: URL,
+    routeKey: string
+  ): Promise<ResolvedSegment[]> {
+    invariant(
+      orphan.type === "layout",
+      `Expected orphan to be a layout, got: ${orphan.type}`
+    );
+
+    // Step 1: Run orphan middleware
+    if (orphan.middleware.length > 0) {
+      const middlewareResponse = await executeMiddleware(
+        orphan.middleware,
+        context
+      );
+      if (middlewareResponse) throw middlewareResponse;
+    }
+
+    // Step 2: Run orphan loaders
+    // TODO: Run orphan loaders (orphan.loader)
+
+    // Step 3: Process and emit orphan parallel segments with revalidation
+    const segments: ResolvedSegment[] = [];
+    for (const parallelRecord of orphan.parallel) {
+      for (const [slot, handler] of Object.entries(parallelRecord)) {
+        const parallelId = `${orphan.shortCode}.${slot}`;
+
+        const component = await revalidate(
+          async () => {
+            if (!clientSegmentIds.has(parallelId)) return true;
+
+            const dummySegment: ResolvedSegment = {
+              id: parallelId,
+              type: "parallel",
+              index: 0,
+              component: null as any,
+              params,
+              slot,
+              isOwnedByEntry: true,
+              parallelName: `${orphan.id}.${slot}`,
+            };
+
+            return await evaluateRevalidation(
+              dummySegment,
+              prevParams,
+              null,
+              request,
+              prevUrl,
+              nextUrl,
+              orphan.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
+              routeKey,
+              context
+            );
+          },
+          async () => typeof handler === "function" ? await handler(context) : handler,
+          () => null
+        );
+
+        segments.push({
+          id: parallelId,
+          type: "parallel",
+          index: 0,
+          component,
+          params,
+          slot,
+          isOwnedByEntry: true,
+          parallelName: `${orphan.id}.${slot}`,
+        });
+      }
+    }
+
+    // Step 4: Execute orphan handler with revalidation
+    const component = await revalidate(
+      async () => {
+        if (!clientSegmentIds.has(orphan.shortCode)) return true;
+
+        const dummySegment: ResolvedSegment = {
+          id: orphan.shortCode,
+          type: "layout",
+          index: 0,
+          component: null as any,
+          params,
+          isOwnedByEntry: true,
+          layoutName: orphan.id,
+        };
+
+        return await evaluateRevalidation(
+          dummySegment,
+          prevParams,
+          null,
+          request,
+          prevUrl,
+          nextUrl,
+          orphan.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
+          routeKey,
+          context
+        );
+      },
+      async () => typeof orphan.handler === "function" ? await orphan.handler(context) : orphan.handler,
+      () => null
+    );
+
+    segments.push({
+      id: orphan.shortCode,
+      type: "layout",
+      index: 0,
+      component,
+      params,
+      isOwnedByEntry: true,
       layoutName: orphan.id,
     });
 
@@ -498,7 +906,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     nextUrl: URL,
     revalidations: Array<{ name: string; fn: any }>,
     routeKey: string,
-    context: TEnv,
+    context: HandlerContext<any, TEnv>,
     actionContext?: {
       actionId?: string;
       actionUrl?: URL;
@@ -517,9 +925,17 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     let defaultShouldRevalidate: boolean;
 
     if (request.method === "POST") {
-      // Actions: revalidate all segments by default
-      // TODO: Add global vs route-specific tracking for optimization
-      defaultShouldRevalidate = true;
+      // Actions: revalidate route-owned segments, skip inherited parent segments
+      if (segment.type === "route") {
+        // Route segment always revalidates on actions
+        defaultShouldRevalidate = true;
+      } else if (segment.isOwnedByEntry) {
+        // Segment owned by route entry (child layouts/parallels) - revalidate
+        defaultShouldRevalidate = true;
+      } else {
+        // Inherited from parent chain (outer layouts/parallels) - don't revalidate
+        defaultShouldRevalidate = false;
+      }
     } else {
       // Navigation (GET): Conservative defaults to minimize unnecessary revalidations
       // Only the route segment revalidates by default - all others require explicit opt-in
@@ -589,20 +1005,21 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         routeName: routeKey, // User-friendly route name (e.g., "products.detail")
       });
 
-      // Check if hard decision (boolean) or soft decision (object)
+      // Check return type: boolean (hard), object (soft), or null/undefined (defer)
       if (typeof result === "boolean") {
         // Hard decision - short-circuit
         console.log(
           `[Router.evaluateRevalidation] ${segment.id}: REVALIDATE (${name}) HARD: ${result}`
         );
         return result;
-      } else {
+      } else if (result && typeof result === "object" && "defaultShouldRevalidate" in result) {
         // Soft decision - update suggestion and continue
         currentSuggestion = result.defaultShouldRevalidate;
         console.log(
           `[Router.evaluateRevalidation] ${segment.id}: REVALIDATE (${name}) SOFT: ${currentSuggestion}`
         );
       }
+      // null/undefined - defer to current suggestion, continue to next function
     }
 
     // All revalidators returned soft decisions - use final suggestion
@@ -639,9 +1056,13 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       return null;
     }
 
+    const prevUrl = new URL(previousUrl);
+    const prevMatch = findMatch(prevUrl.pathname);
+    const prevParams = prevMatch?.params || {};
+
     // Match current route
-    const nextMatch = findMatch(pathname);
-    if (!nextMatch) {
+    const matched = findMatch(pathname);
+    if (!matched) {
       throw new RouteNotFoundError(`No route matched for ${pathname}`, {
         cause: {
           pathname,
@@ -651,68 +1072,14 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       });
     }
 
-    // Match previous route
-    const prevUrl = new URL(previousUrl);
-    const prevMatch = findMatch(prevUrl.pathname);
+    // Load manifest with AsyncLocalStorage context and validation
+    await loadManifest(matched.entry, matched.routeKey, pathname);
 
     // Extract bindings from context
     const bindings = (context as any)?.Bindings || {};
 
-    // Extract previous params from route match without building segments
-    // Optimization: params available from findMatch result, no segment building needed
-    const prevParams = prevMatch?.params || {};
-
-    // Lazy loader for previous segments - only builds if custom revalidation needs them
-    // Most navigations skip this entirely when using default revalidation logic
-    let prevSegmentsMap: Map<string, ResolvedSegment> | null = null;
-    let prevSegmentsBuildStarted = false;
-
-    const buildPrevSegmentsLazy = async (): Promise<
-      Map<string, ResolvedSegment>
-    > => {
-      if (prevSegmentsMap) {
-        return prevSegmentsMap; // Already built
-      }
-
-      if (!prevSegmentsBuildStarted) {
-        prevSegmentsBuildStarted = true;
-        console.log(`[Router.matchPartial] Building prev segments (lazy)...`);
-      }
-
-      prevSegmentsMap = new Map();
-      if (!prevMatch) {
-        return prevSegmentsMap;
-      }
-
-      const prevContext = createHandlerContext(
-        prevMatch.params,
-        request,
-        prevUrl.searchParams,
-        prevUrl.pathname,
-        prevUrl,
-        bindings
-      );
-
-      // Build metadata-only segments for comparison
-      // Skip middleware and component execution - only need segment structure and params
-      for await (const segment of buildSegmentsStream(
-        prevMatch.entry,
-        prevMatch.routeKey,
-        prevMatch.params,
-        prevContext,
-        { skipMiddleware: true, metadataOnly: true }
-      )) {
-        prevSegmentsMap.set(segment.id, segment);
-      }
-
-      console.log(
-        `[Router.matchPartial] Prev segments built: ${prevSegmentsMap.size}`
-      );
-      return prevSegmentsMap;
-    };
-
     const handlerContext = createHandlerContext(
-      nextMatch.params,
+      matched.params,
       request,
       url.searchParams,
       pathname,
@@ -720,100 +1087,40 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       bindings
     );
 
-    // Extract metadata to get revalidations (without loading components)
-    const handlers = await loadManifest(nextMatch.entry, nextMatch.routeKey);
-    const metadata = extractMetadata(handlers, nextMatch.routeKey);
-
-    // Helper to get revalidations for a specific segment
-    const getRevalidationsForSegment = (
-      segment: ResolvedSegment
-    ): Array<{ name: string; fn: any }> => {
-      if (segment.type === "route") {
-        return [
-          ...metadata.routeRevalidations.global,
-          ...metadata.routeRevalidations.perRoute,
-        ];
-      } else if (segment.type === "layout" && segment.layoutName) {
-        const layout = metadata.layouts.find(
-          (l) => l.name === segment.layoutName
-        );
-        return layout?.revalidations || [];
-      } else if (
-        segment.type === "parallel" &&
-        segment.parallelName &&
-        segment.slot
-      ) {
-        const parallel = metadata.parallels.find(
-          (p) =>
-            p.parallelName === segment.parallelName && p.slot === segment.slot
-        );
-        return parallel?.revalidations || [];
-      }
-      return [];
-    };
-
     const clientSegmentSet = new Set(clientSegmentIds);
-    const segmentsToRender: ResolvedSegment[] = [];
-    const allSegmentIds: string[] = [];
 
     try {
-      // Stream next segments with inline filtering
-      for await (const segment of buildSegmentsStream(
-        nextMatch.entry,
-        nextMatch.routeKey,
-        nextMatch.params,
-        handlerContext
+      // Collect all segments with revalidation-aware rendering
+      const segments: ResolvedSegment[] = [];
+      for await (const entry of buildSegmentsStream(
+        matched.entry,
+        matched.routeKey,
+        pathname
       )) {
-        allSegmentIds.push(segment.id);
-
-        // Client doesn't have segment = include it
-        if (!clientSegmentSet.has(segment.id)) {
-          console.log(`[Router.matchPartial] ${segment.id}: NEW - including`);
-          segmentsToRender.push(segment);
-          continue;
-        }
-
-        // Get segment-specific revalidations from metadata
-        const segmentRevalidations = getRevalidationsForSegment(segment);
-
-        // Provide lazy prev segment loader only if custom revalidations exist
-        // Without custom revalidation, default logic uses params only
-        const getPrevSegment =
-          segmentRevalidations.length > 0
-            ? async () => {
-                const map = await buildPrevSegmentsLazy();
-                return map.get(segment.id);
-              }
-            : null;
-
-        const shouldRevalidate = await evaluateRevalidation(
-          segment,
+        // Resolve entry into segments with revalidation checks
+        const resolvedSegments = await resolveSegmentWithRevalidation(
+          entry,
+          matched.routeKey,
+          matched.params,
+          handlerContext,
+          clientSegmentSet,
           prevParams,
-          getPrevSegment,
           request,
           prevUrl,
-          url,
-          segmentRevalidations,
-          nextMatch.routeKey,
-          context,
-          actionContext
+          url
         );
 
-        if (shouldRevalidate) {
-          segmentsToRender.push(segment);
-        }
+        segments.push(...resolvedSegments);
       }
 
-      // Log if we avoided building prev segments
-      if (!prevSegmentsBuildStarted) {
-        console.log(
-          `[Router.matchPartial] Optimization: Skipped building prev segments entirely`
-        );
-      }
+      const segmentIds = segments.map((s) => s.id);
+
+      // Filter out segments with null components (client already has them)
+      const segmentsToRender = segments.filter((s) => s.component !== null);
 
       return {
         segments: segmentsToRender,
-        matched: allSegmentIds,
+        matched: segmentIds,
         diff: segmentsToRender.map((s) => s.id),
       };
     } catch (error) {
