@@ -129,7 +129,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots) => {
   if (!ctx.parent || !ctx.parent?.parallel) {
     invariant(false, "No parent entry available for parallel()");
   }
-  const name = `$${getContext().getNextIndex("parallel")}`;
+  const name = `${ctx.namespace}.$${getContext().getNextIndex("parallel")}`;
   ctx.parent.parallel.push(slots);
   return { name, type: "parallel" } as ParallelItem;
 };
@@ -139,7 +139,7 @@ const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
   const ctx = store.getStore();
   if (!ctx) throw new Error("route() must be called inside map()");
 
-  const namespace = `${store.getNextIndex("route")}.${name}`;
+  const namespace = `${ctx.namespace}.${store.getNextIndex("route")}.${name}`;
 
   const entry = {
     id: namespace,
@@ -180,9 +180,9 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
   const ctx = store.getStore();
   if (!ctx) throw new Error("route() must be called inside map()");
   const isRoot = !ctx.parent || ctx.parent === null;
-  const namespace = `${ctx.namespace}${
+  const namespace = `${ctx.namespace}.${
     isRoot ? "$root" : store.getNextIndex("layout")
-  }.`;
+  }`;
 
   const entry = {
     id: namespace,
@@ -227,6 +227,11 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
         parent.type === "route" || parent.type === "layout",
         `Orhant layouts can only be defined inside route or layout  > check [${namespace}]`
       );
+
+      // Clear parent pointer for orphan layouts to prevent duplicate processing
+      // Orphans are managed only via parent.layout[] array, not via parent chain
+      entry.parent = null;
+
       parent.layout.push(entry);
     }
 
@@ -316,9 +321,7 @@ const createLayoutHelper = <TEnv>(): RouteHelpers<any, TEnv>["layout"] => {
  *
  */
 export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
-  builder: (
-    helpers: RouteHelpers<T, TEnv>
-  ) => Array<Exclude<AllUseItems, ParallelItem>>
+  builder: (helpers: RouteHelpers<T, TEnv>) => Array<AllUseItems>
 ): () => Array<AllUseItems> {
   return () => {
     // Check if it's a builder function (array-based API)
@@ -335,11 +338,6 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
       revalidate: createRevalidateHelper<TEnv>(),
     };
 
-    const store = getContext().getOrCreateStore();
-    const parent = store.parent;
-
-    return parent
-      ? builder(helpers)
-      : [layout(RootLayout, () => builder(helpers))];
+    return [layout(RootLayout, () => builder(helpers))].flat(3);
   };
 }

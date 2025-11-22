@@ -345,6 +345,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         index: 0,
         component,
         params,
+        routeName: entry.id,
         isOwnedByEntry: true, // Route segment
       });
     } else {
@@ -481,12 +482,16 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
                 request,
                 prevUrl,
                 nextUrl,
-                entry.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
+                entry.revalidate.map((fn, i) => ({
+                  name: `revalidate${i}`,
+                  fn,
+                })),
                 routeKey,
                 context
               );
             },
-            async () => typeof handler === "function" ? await handler(context) : handler,
+            async () =>
+              typeof handler === "function" ? await handler(context) : handler,
             () => null
           );
 
@@ -530,7 +535,10 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             context
           );
         },
-        async () => typeof entry.handler === "function" ? await entry.handler(context) : entry.handler,
+        async () =>
+          typeof entry.handler === "function"
+            ? await entry.handler(context)
+            : entry.handler,
         () => null
       );
 
@@ -615,12 +623,16 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
                 request,
                 prevUrl,
                 nextUrl,
-                entry.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
+                entry.revalidate.map((fn, i) => ({
+                  name: `revalidate${i}`,
+                  fn,
+                })),
                 routeKey,
                 context
               );
             },
-            async () => typeof handler === "function" ? await handler(context) : handler,
+            async () =>
+              typeof handler === "function" ? await handler(context) : handler,
             () => null
           );
 
@@ -741,12 +753,16 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
               request,
               prevUrl,
               nextUrl,
-              orphan.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
+              orphan.revalidate.map((fn, i) => ({
+                name: `revalidate${i}`,
+                fn,
+              })),
               routeKey,
               context
             );
           },
-          async () => typeof handler === "function" ? await handler(context) : handler,
+          async () =>
+            typeof handler === "function" ? await handler(context) : handler,
           () => null
         );
 
@@ -790,7 +806,10 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           context
         );
       },
-      async () => typeof orphan.handler === "function" ? await orphan.handler(context) : orphan.handler,
+      async () =>
+        typeof orphan.handler === "function"
+          ? await orphan.handler(context)
+          : orphan.handler,
       () => null
     );
 
@@ -1012,7 +1031,11 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           `[Router.evaluateRevalidation] ${segment.id}: REVALIDATE (${name}) HARD: ${result}`
         );
         return result;
-      } else if (result && typeof result === "object" && "defaultShouldRevalidate" in result) {
+      } else if (
+        result &&
+        typeof result === "object" &&
+        "defaultShouldRevalidate" in result
+      ) {
         // Soft decision - update suggestion and continue
         currentSuggestion = result.defaultShouldRevalidate;
         console.log(
@@ -1259,7 +1282,7 @@ async function loadManifest(
   try {
     const useItems = await getContext().runWithStore(
       Store,
-      Store.namespace || "#" + routeKey + ".",
+      Store.namespace || "#router",
       Store.parent,
       async () => {
         const load = await entry.handler();

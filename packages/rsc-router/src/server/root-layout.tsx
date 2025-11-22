@@ -1,10 +1,10 @@
 import type { ReactNode } from "react";
 import { Outlet } from "rsc-router/client";
 
-const RootLayout = (
+const MapRootLayout = (
   <>
     <Outlet />
   </>
 ) as ReactNode;
 
-export default RootLayout;
+export default MapRootLayout;
