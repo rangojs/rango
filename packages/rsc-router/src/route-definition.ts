@@ -212,27 +212,35 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     ) {
       /* for easy narrowing */
       const parent = ctx.parent;
-      // Orphan layout - extend parent
-      invariant(
-        parent || parent !== null,
-        `Orphan layout cannot be used at root level [${namespace}]`
-      );
 
-      invariant(
-        result.some(isOrphanLayout) === false,
-        `Orphan layout cannot use other layouts [${namespace}]`
-      );
+      // Allow orphan layouts at root level if they're part of map() builder result
+      // (siblings with other layouts)
+      if (!parent || parent === null) {
+        if (!isRoot) {
+          invariant(
+            false,
+            `Orphan layout cannot be used at non-root level without parent [${namespace}]`
+          );
+        }
+        // Root-level orphan is allowed (e.g., sibling layouts in map() builder)
+        // Don't add to parent.layout[] since there's no parent
+        // This layout will be processed directly as a root entry
+      } else {
+        // Has parent - standard orphan layout behavior
+        // Orphan layouts extend their parent with additional configuration
+        // (middleware, revalidation, nested layouts, etc.)
 
-      invariant(
-        parent.type === "route" || parent.type === "layout",
-        `Orhant layouts can only be defined inside route or layout  > check [${namespace}]`
-      );
+        invariant(
+          parent.type === "route" || parent.type === "layout",
+          `Orphan layouts can only be defined inside route or layout  > check [${namespace}]`
+        );
 
-      // Clear parent pointer for orphan layouts to prevent duplicate processing
-      // Orphans are managed only via parent.layout[] array, not via parent chain
-      entry.parent = null;
+        // Clear parent pointer for orphan layouts to prevent duplicate processing
+        // Orphans are managed only via parent.layout[] array, not via parent chain
+        entry.parent = null;
 
-      parent.layout.push(entry);
+        parent.layout.push(entry);
+      }
     }
 
     return { name: namespace, type: "layout", uses: result } as LayoutItem;

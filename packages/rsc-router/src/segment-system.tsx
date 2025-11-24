@@ -44,9 +44,17 @@ export function renderSegments(segments: ResolvedSegment[]): ReactNode {
     const { component, id, params } = node.segment;
     let nodeContent: ReactNode = component;
 
-    // Generate stable key with sorted params
+    // Only include params in key for segments that actually depend on them
+    // - Routes: always include params (they render param-specific content)
+    // - Route-owned layouts: include params (defined in route's use(), likely param-dependent)
+    // - Parent layouts: exclude params (param-agnostic, should stay mounted across param changes)
+    // This prevents unnecessary unmounting when params change
+    const includeParams =
+      node.segment.type === "route" ||
+      (node.segment.type === "layout" && node.segment.isOwnedByEntry);
+
     const paramStr =
-      params && Object.keys(params).length > 0
+      includeParams && params && Object.keys(params).length > 0
         ? Object.entries(params)
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([k, v]) => `${k}=${v}`)

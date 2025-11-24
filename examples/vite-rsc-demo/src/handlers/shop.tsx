@@ -63,7 +63,7 @@ export default map<typeof shopRoutes>(
   ({ route, layout, middleware, parallel, revalidate }) => [
     //#region Global Layout & Middleware
     // Global root layout wraps everything
-    // #1 $layoute.0
+    // #1 $layout.0
     layout(
       <>
         <ParallelOutlet name="@promoBanner" />
