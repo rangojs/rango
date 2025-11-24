@@ -224,7 +224,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     entry: EntryData,
     routeKey: string,
     params: Record<string, string>,
-    context: HandlerContext<any, TEnv>
+    context: HandlerContext<any, TEnv>,
+    isLeafEntry: boolean = false
   ): Promise<ResolvedSegment[]> {
     const segments: ResolvedSegment[] = [];
 
@@ -260,7 +261,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             component,
             params,
             slot,
-            isOwnedByEntry: true,
+            isOwnedByEntry: isLeafEntry,
             parallelName: `${entry.id}.${slot}`,
           });
         }
@@ -279,7 +280,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         index: 0,
         component,
         params,
-        isOwnedByEntry: true, // Main entry segment
+        isOwnedByEntry: isLeafEntry, // Only leaf entry segments are owned
         layoutName: entry.id,
       });
 
@@ -334,7 +335,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             component,
             params,
             slot,
-            isOwnedByEntry: true,
+            isOwnedByEntry: isLeafEntry,
             parallelName: `${entry.id}.${slot}`,
           });
         }
@@ -350,7 +351,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         index: 0,
         component,
         params,
-        isOwnedByEntry: true, // Route segment
+        isOwnedByEntry: isLeafEntry, // Only leaf route is owned
       });
     } else {
       throw new Error(`Unknown entry type: ${(entry as any).type}`);
@@ -443,7 +444,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     prevParams: Record<string, string>,
     request: Request,
     prevUrl: URL,
-    nextUrl: URL
+    nextUrl: URL,
+    isLeafEntry: boolean = false
   ): Promise<ResolvedSegment[]> {
     const segments: ResolvedSegment[] = [];
 
@@ -510,7 +512,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             component,
             params,
             slot,
-            isOwnedByEntry: true,
+            isOwnedByEntry: isLeafEntry,
             parallelName: `${entry.id}.${slot}`,
           });
         }
@@ -528,7 +530,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             index: 0,
             component: null as any,
             params,
-            isOwnedByEntry: true,
+            isOwnedByEntry: isLeafEntry,
             layoutName: entry.id,
           };
 
@@ -655,7 +657,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             component,
             params,
             slot,
-            isOwnedByEntry: true,
+            isOwnedByEntry: isLeafEntry,
             parallelName: `${entry.id}.${slot}`,
           });
         }
@@ -673,7 +675,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             index: 0,
             component: null as any,
             params,
-            isOwnedByEntry: true,
+            isOwnedByEntry: isLeafEntry,
           };
 
           return await evaluateRevalidation(
@@ -881,12 +883,16 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       // Collect all segments from stream
       const segments: ResolvedSegment[] = [];
       for (const entry of traverseBack(manifestEntry)) {
+        // Only the matched entry (leaf) owns its segments
+        const isLeafEntry = entry === manifestEntry;
+
         // Resolve entry into segments (may return multiple for orphan layouts)
         const resolvedSegments = await resolveSegment(
           entry,
           matched.routeKey,
           matched.params,
-          handlerContext
+          handlerContext,
+          isLeafEntry
         );
 
         segments.push(...resolvedSegments);
@@ -1130,6 +1136,9 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       // Collect all segments with revalidation-aware rendering
       const segments: ResolvedSegment[] = [];
       for (const entry of traverseBack(manifestEntry)) {
+        // Only the matched entry (leaf) owns its segments
+        const isLeafEntry = entry === manifestEntry;
+
         // Resolve entry into segments with revalidation checks
         const resolvedSegments = await resolveSegmentWithRevalidation(
           entry,
@@ -1140,7 +1149,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           prevParams,
           request,
           prevUrl,
-          url
+          url,
+          isLeafEntry
         );
 
         segments.push(...resolvedSegments);
