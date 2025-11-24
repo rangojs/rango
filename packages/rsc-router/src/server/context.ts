@@ -53,6 +53,7 @@ interface HelperContext {
   parent: EntryData | null;
   counters: Record<string, number>;
   forRoute?: string;
+  mountIndex?: number;
 }
 export const RSCRouterContext: AsyncLocalStorage<HelperContext> =
   new AsyncLocalStorage<HelperContext>();
@@ -127,12 +128,26 @@ export const getContext = (): {
     getShortCode: (type: "layout" | "parallel" | "route") => {
       const store = context.getStore();
       invariant(store, "No context RSCRouterContext available");
-      const counterKey = `short_${type}`;
-      store.counters[counterKey] ??= 0;
-      const index = store.counters[counterKey];
-      store.counters[counterKey] = index + 1;
+
+      const parent = store.parent;
       const prefix = type === "layout" ? "L" : type === "parallel" ? "P" : "R";
-      return `${prefix}${index}`;
+      const mountPrefix = store.mountIndex !== undefined ? `M${store.mountIndex}` : "";
+
+      if (!parent) {
+        // Root entry: prefix with mount index and use mount-scoped counter
+        const counterKey = mountPrefix ? `${mountPrefix}_root_${type}` : `root_${type}`;
+        store.counters[counterKey] ??= 0;
+        const index = store.counters[counterKey];
+        store.counters[counterKey] = index + 1;
+        return `${mountPrefix}${prefix}${index}`;
+      } else {
+        // Child entry: use parent-scoped counter (parent already has M prefix)
+        const counterKey = `${parent.shortCode}_${type}`;
+        store.counters[counterKey] ??= 0;
+        const index = store.counters[counterKey];
+        store.counters[counterKey] = index + 1;
+        return `${parent.shortCode}${prefix}${index}`;
+      }
     },
     runWithStore: <T>(
       store: HelperContext,
@@ -146,6 +161,8 @@ export const getContext = (): {
           namespace,
           parent: parent || null,
           counters: store.counters,
+          forRoute: store.forRoute,
+          mountIndex: store.mountIndex,
         },
         callback
       );
@@ -156,7 +173,8 @@ export const getContext = (): {
       callback: (...args: any[]) => T
     ) => {
       const store = context.getStore();
-      const counters = {};
+      // Preserve parent counters to ensure globally unique shortCodes
+      const counters = store?.counters || {};
       const manifest = store ? store.manifest : new Map<string, EntryData>();
       return context.run(
         {
@@ -164,6 +182,8 @@ export const getContext = (): {
           namespace,
           parent: parent || null,
           counters,
+          forRoute: store?.forRoute,
+          mountIndex: store?.mountIndex,
         },
         callback
       );

@@ -376,6 +376,7 @@ export type HandlersForRouteMap<T extends RouteDefinition, TEnv = any> = {
  */
 export interface ResolvedSegment {
   id: string;
+  namespace: string; // Optional namespace for segment (used for parallel groups)
   type: "layout" | "route" | "parallel";
   index: number;
   component: ReactNode;
@@ -418,7 +419,8 @@ export interface RouteEntry<TEnv = any> {
   handler: () =>
       | Array<AllUseItems>
       | Promise<{ default: () => Array<AllUseItems> }>
-      | Promise<() => Array<AllUseItems>>
+      | Promise<() => Array<AllUseItems>>;
+  mountIndex: number;
 }
 
 /**

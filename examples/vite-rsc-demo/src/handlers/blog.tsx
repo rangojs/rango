@@ -10,16 +10,16 @@ import { loggerMiddleware } from "./blog/middleware.js";
  * Blog handlers - demonstrates revalidation
  * Array-based API with use() pattern
  */
-export default map<typeof blogRoutes>(({ route, layout, middleware, revalidate }) => [
-  layout(<RootLayout />),
+export default map<typeof blogRoutes>(
+  ({ route, layout, middleware, revalidate }) => [
+    layout(<RootLayout />, () => []),
 
-  layout(<BlogLayout />, () => [
-    middleware(...loggerMiddleware),
+    layout(<BlogLayout />, () => [
+      middleware(...loggerMiddleware),
 
-    route("index", IndexRoute),
+      route("index", IndexRoute),
 
-    route("post", PostRoute, () => [
-      revalidate(postRevalidation),
+      route("post", PostRoute, () => [revalidate(postRevalidation)]),
     ]),
-  ]),
-]);
+  ]
+);

@@ -63,6 +63,7 @@ export interface RSCRouter<TEnv = any> {
  */
 export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
   const routesEntries: RouteEntry<TEnv>[] = [];
+  let mountIndex = 0;
 
   /**
    * Create HandlerContext with typed env/var/get/set
@@ -253,6 +254,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           // Emit parallel segment
           segments.push({
             id: `${entry.shortCode}.${slot}`,
+            namespace: entry.id,
             type: "parallel",
             index: 0,
             component,
@@ -272,6 +274,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
       segments.push({
         id: entry.shortCode,
+        namespace: entry.id,
         type: "layout",
         index: 0,
         component,
@@ -325,6 +328,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           // Emit parallel segment
           segments.push({
             id: `${entry.shortCode}.${slot}`,
+            namespace: entry.id,
             type: "parallel",
             index: 0,
             component,
@@ -341,11 +345,11 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
       segments.push({
         id: entry.shortCode,
+        namespace: entry.id,
         type: "route",
         index: 0,
         component,
         params,
-        routeName: entry.id,
         isOwnedByEntry: true, // Route segment
       });
     } else {
@@ -394,6 +398,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         // Emit parallel segment
         segments.push({
           id: `${orphan.shortCode}.${slot}`,
+          namespace: orphan.id,
           type: "parallel",
           index: 0,
           component,
@@ -413,6 +418,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
     segments.push({
       id: orphan.shortCode,
+      namespace: orphan.id,
       type: "layout",
       index: 0,
       component,
@@ -466,6 +472,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
               const dummySegment: ResolvedSegment = {
                 id: parallelId,
+                namespace: entry.id,
                 type: "parallel",
                 index: 0,
                 component: null as any,
@@ -497,6 +504,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
           segments.push({
             id: parallelId,
+            namespace: entry.id,
             type: "parallel",
             index: 0,
             component,
@@ -515,6 +523,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
           const dummySegment: ResolvedSegment = {
             id: entry.shortCode,
+            namespace: entry.id,
             type: "layout",
             index: 0,
             component: null as any,
@@ -544,6 +553,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
       segments.push({
         id: entry.shortCode,
+        namespace: entry.id,
         type: "layout",
         index: 0,
         component,
@@ -607,6 +617,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
               const dummySegment: ResolvedSegment = {
                 id: parallelId,
+                namespace: entry.id,
                 type: "parallel",
                 index: 0,
                 component: null as any,
@@ -638,6 +649,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
           segments.push({
             id: parallelId,
+            namespace: entry.id,
             type: "parallel",
             index: 0,
             component,
@@ -656,6 +668,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
           const dummySegment: ResolvedSegment = {
             id: entry.shortCode,
+            namespace: entry.id,
             type: "route",
             index: 0,
             component: null as any,
@@ -681,6 +694,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
       segments.push({
         id: entry.shortCode,
+        namespace: entry.id,
         type: "route",
         index: 0,
         component,
@@ -737,6 +751,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
             const dummySegment: ResolvedSegment = {
               id: parallelId,
+              namespace: orphan.id,
               type: "parallel",
               index: 0,
               component: null as any,
@@ -768,6 +783,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
         segments.push({
           id: parallelId,
+          namespace: orphan.id,
           type: "parallel",
           index: 0,
           component,
@@ -786,6 +802,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
         const dummySegment: ResolvedSegment = {
           id: orphan.shortCode,
+          namespace: orphan.id,
           type: "layout",
           index: 0,
           component: null as any,
@@ -815,6 +832,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
 
     segments.push({
       id: orphan.shortCode,
+      namespace: orphan.id,
       type: "layout",
       index: 0,
       component,
@@ -845,7 +863,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     }
 
     // Load manifest with AsyncLocalStorage context and validation
-    await loadManifest(matched.entry, matched.routeKey, pathname);
+    const manifestEntry = await loadManifest(matched.entry, matched.routeKey, pathname);
 
     // Extract bindings from context (if using RouterEnv pattern)
     const bindings = (context as any)?.Bindings || {};
@@ -862,11 +880,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     try {
       // Collect all segments from stream
       const segments: ResolvedSegment[] = [];
-      for await (const entry of buildSegmentsStream(
-        matched.entry,
-        matched.routeKey,
-        pathname
-      )) {
+      for (const entry of traverseBack(manifestEntry)) {
         // Resolve entry into segments (may return multiple for orphan layouts)
         const resolvedSegments = await resolveSegment(
           entry,
@@ -1096,7 +1110,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     }
 
     // Load manifest with AsyncLocalStorage context and validation
-    await loadManifest(matched.entry, matched.routeKey, pathname);
+    const manifestEntry = await loadManifest(matched.entry, matched.routeKey, pathname);
 
     // Extract bindings from context
     const bindings = (context as any)?.Bindings || {};
@@ -1115,11 +1129,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     try {
       // Collect all segments with revalidation-aware rendering
       const segments: ResolvedSegment[] = [];
-      for await (const entry of buildSegmentsStream(
-        matched.entry,
-        matched.routeKey,
-        pathname
-      )) {
+      for (const entry of traverseBack(manifestEntry)) {
         // Resolve entry into segments with revalidation checks
         const resolvedSegments = await resolveSegmentWithRevalidation(
           entry,
@@ -1168,6 +1178,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     prefix: string,
     routes: ResolvedRouteMap<T>
   ): RouteBuilder<T, TEnv> {
+    const currentMountIndex = mountIndex++;
     return {
       map(
         handler: () =>
@@ -1179,6 +1190,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           prefix,
           routes: routes as ResolvedRouteMap<any>,
           handler,
+          mountIndex: currentMountIndex,
         });
         return router;
       },
@@ -1279,6 +1291,13 @@ async function loadManifest(
   path: string
 ): Promise<EntryData> {
   const Store = getContext().getOrCreateStore(routeKey);
+
+  // Set mount index in store for unique shortCode prefixes
+  Store.mountIndex = entry.mountIndex;
+
+  // Clear manifest before rebuilding to prevent stale entry mutations
+  Store.manifest.clear();
+
   try {
     const useItems = await getContext().runWithStore(
       Store,

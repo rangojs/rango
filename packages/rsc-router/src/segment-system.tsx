@@ -35,7 +35,7 @@ export function renderSegments(segments: ResolvedSegment[]): ReactNode {
   const tree = segmentTreeWalk(segments);
   // Render content segments as siblings
   let content: ReactNode = null;
-
+  let position = 0;
   for (const node of tree) {
     invariant(
       node.segment.type === "layout" || node.segment.type === "route",
@@ -43,10 +43,18 @@ export function renderSegments(segments: ResolvedSegment[]): ReactNode {
     );
     const { component, id, params } = node.segment;
     let nodeContent: ReactNode = component;
-    const key = `${id}-${Object.entries(params ?? {})
-      .map(([k, v]) => `${k}=${v}`)
-      .join(",")}`;
-    console.log("node", { key, node });
+
+    // Generate stable key with sorted params
+    const paramStr =
+      params && Object.keys(params).length > 0
+        ? Object.entries(params)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([k, v]) => `${k}=${v}`)
+            .join(",")
+        : "";
+    const key = `${position++}-${paramStr ? `${id}-${paramStr}` : id}`;
+
+    console.log("node > ", { key, node });
 
     content = createElement(OutletProvider, {
       key: key,
@@ -60,29 +68,56 @@ export function renderSegments(segments: ResolvedSegment[]): ReactNode {
   return content;
 }
 
+/**
+ * Walk segments in bottom-to-top order for React nesting
+ *
+ * Segments from match() are in top-to-bottom order (root → leaf):
+ * Example: [L0, L0L0, L0R1L0.@sidebar, L0R1L0, L0R1]
+ *
+ * For proper React rendering, we need bottom-to-top (leaf → root):
+ * - Innermost content (route) wraps inside layouts
+ * - Each layer provides context via OutletProvider
+ * - Outer layouts receive inner content via <Outlet />
+ *
+ * Parallel segments must be matched to their parent by ID prefix:
+ * - "L0R1L0.@sidebar" belongs to "L0R1L0"
+ * - Pre-grouping prevents parallels from attaching to wrong parents
+ *   during the reversed iteration (which would cause "L0R1L0.@sidebar"
+ *   to incorrectly attach to "L0L0" instead of "L0R1L0")
+ */
 function* segmentTreeWalk(segments: ResolvedSegment[]): Generator<{
   segment: ResolvedSegment;
   parallel: ResolvedSegment[];
 }> {
-  const _segments = [...segments];
-  let parallelSegments: ResolvedSegment[] = [];
-  do {
-    const segment = _segments.pop();
-    if (!segment) {
-      return null;
-    }
+  // Pre-group parallel segments by their parent ID using prefix matching
+  // This ensures each parallel is associated with the correct parent segment
+  // regardless of the iteration order
+  const parallelsByParent = new Map<string, ResolvedSegment[]>();
+  const nonParallels: ResolvedSegment[] = [];
 
+  for (const segment of segments) {
     if (segment.type === "parallel") {
-      parallelSegments.push(segment);
-      continue;
+      // Extract parent ID from parallel ID
+      // Example: "L0R1L0.@sidebar" → "L0R1L0"
+      const parentId = segment.id.split(".")[0];
+      if (!parallelsByParent.has(parentId)) {
+        parallelsByParent.set(parentId, []);
+      }
+      parallelsByParent.get(parentId)!.push(segment);
+    } else {
+      nonParallels.push(segment);
     }
+  }
 
-    // type is layout or route
-    yield {
-      segment,
-      parallel: parallelSegments,
-    };
-    yield* segmentTreeWalk(_segments);
-    break;
-  } while (_segments.length > 0);
+  // Iterate bottom-to-top using reverse() to process leaf segments first
+  // This processes route/leaf layouts first, then parent layouts
+  // Note: We reverse the array to iterate from end to start (bottom-to-top)
+  for (let i = nonParallels.length - 1; i >= 0; i--) {
+    const segment = nonParallels[i];
+
+    // Lookup parallels that belong to this segment by ID prefix
+    const parallel = parallelsByParent.get(segment.id) || [];
+
+    yield { segment, parallel };
+  }
 }
