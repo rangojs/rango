@@ -18,7 +18,8 @@ import {
   ProductCard,
   ProductCardSimple,
 } from "@/handlers/shop/components.js";
-import { use } from "react";
+import { ProductLoader, CartLoader } from "@/handlers/shop/loaders/index.js";
+import { FeaturedProducts } from "@/components/FeaturedProducts.js";
 
 // ==================== PRODUCT ROUTES ====================
 
@@ -30,11 +31,16 @@ export const IndexRoute: RouteHandler<typeof shopRoutes, "index"> = () => (
       <div style={{ flex: 1 }}>
         <h2>All Products</h2>
         <p className="segment-id">Segment: Shop Index</p>
+
+        {/* RSC Streaming Demo - Promise<ReactNode> streams via RSC, resolved on client */}
+        <FeaturedProducts />
+
         <div
           style={{
             display: "grid",
             gridTemplateColumns: "repeat(2, 1fr)",
             gap: "1rem",
+            marginTop: "2rem",
           }}
         >
           {products.map((product) => (
@@ -84,24 +90,19 @@ export const ProductsDetailRoute: RouteHandler<
   typeof shopRoutes,
   "products.detail.view"
 > = async (ctx) => {
-  const product = products.find((p) => p.slug === ctx.params.slug);
+  // Use the ProductLoader to get product data
+  // ctx.use() returns a Promise since loaders run in parallel
+  const product = await ctx.use(ProductLoader);
+  console.log("ProductsDetailRoute product", product);
+
+  // Also get cart data from the global CartLoader
+  const cart = await ctx.use(CartLoader);
+  const cartCount = cart.itemCount;
+
   const renderTime = new Date().toISOString();
   const queryParams: [string, string][] = Array.from(
     ctx.searchParams.entries()
   );
-
-  if (!product) {
-    return (
-      <div>
-        <h2>Product Not Found</h2>
-        <p className="segment-id">Segment: Products Detail</p>
-        <p>Sorry, we couldn't find the product you're looking for.</p>
-      </div>
-    );
-  }
-
-  // Fetch cart count
-  const cartCount = await getCartCount();
 
   return (
     <DebugSegmentWrapper type="route" name="Product Detail">

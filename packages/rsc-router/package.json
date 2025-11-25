@@ -15,8 +15,9 @@
       "import": "./src/server.ts"
     },
     "./client": {
+      "react-server": "./src/client.rsc.tsx",
       "types": "./src/client.tsx",
-      "import": "./src/client.tsx"
+      "default": "./src/client.tsx"
     }
   },
   "files": [

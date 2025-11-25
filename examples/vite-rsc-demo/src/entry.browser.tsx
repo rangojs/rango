@@ -79,7 +79,9 @@ setServerCallback(async (id: string, args: any[]) => {
   );
   console.log(`[Browser] Sending action request to: ${url.href}`);
   console.log(
-    `[Browser] Current segments: ${navigationManager.currentSegmentIds.join(", ")}`
+    `[Browser] Current segments: ${navigationManager.currentSegmentIds.join(
+      ", "
+    )}`
   );
 
   // 4. Send action request (don't await - pass promise to createFromFetch)
@@ -133,7 +135,10 @@ setServerCallback(async (id: string, args: any[]) => {
     console.log(
       `[Browser] After storing, storedSegments has ${navigationManager.storedSegments.size} entries`
     );
-
+    if (!matched) {
+      console.log(`[Browser] Matched segments: ${matched.join(", ")}`);
+      throw new Error("Test error after action"); // --- IGNORE ---
+    }
     // Rebuild from matched (source of truth)
     const fullSegments = matched
       .map((id: string) => {
@@ -219,7 +224,11 @@ console.log("[Browser] ✓ Server action callback registered");
 // Fetch Partial Update
 // ============================================================================
 
-async function fetchPartialUpdate(targetUrl?: string, segmentIds?: string[]) {
+async function fetchPartialUpdate(
+  targetUrl?: string,
+  segmentIds?: string[],
+  isRetry = false
+) {
   const url = targetUrl || window.location.href;
   const segments = segmentIds ?? navigationManager.currentSegmentIds;
 
@@ -286,12 +295,25 @@ async function fetchPartialUpdate(targetUrl?: string, segmentIds?: string[]) {
     // If any segments are missing, refetch with empty segment list (server sends all)
     if (fullSegments.length < matchedIds.length) {
       const missingCount = matchedIds.length - fullSegments.length;
+      const missingIds = matchedIds.filter(
+        (id: string) => !navigationManager.storedSegments.has(id)
+      );
+
+      // If this is already a retry, don't retry again - throw error instead
+      if (isRetry) {
+        throw new Error(
+          `[Browser] Failed to fetch segments after retry. Missing: ${missingIds.join(
+            ", "
+          )}`
+        );
+      }
+
       console.warn(
         `[Browser] HMR detected: Missing ${missingCount} segments in storage. Refetching all segments...`
       );
 
       // Refetch with empty segments = tell server "I have nothing, send everything"
-      return fetchPartialUpdate(url, []); // Recursive call with empty segments
+      return fetchPartialUpdate(url, [], true); // Recursive call with retry flag
     }
 
     console.log(

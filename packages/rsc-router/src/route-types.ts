@@ -75,3 +75,4 @@ export type RouteUseItem =
   | RevalidateItem
   | LoaderItem;
 export type ParallelUseItem = RevalidateItem | LoaderItem;
+export type LoaderUseItem = RevalidateItem;

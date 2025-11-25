@@ -1,5 +1,6 @@
 import { Outlet } from 'rsc-router/client';
 import { DebugSegmentWrapper } from '../components/DebugSegmentWrapper.js';
+import { CartBadge, UserGreeting } from '../components/CartBadge.js';
 
 export function ShopLayout() {
   return (
@@ -16,8 +17,13 @@ export function ShopLayout() {
             <h1 style={{ margin: 0, color: 'white' }}>🛍️ Shop</h1>
             <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
               <a href="/shop" style={{ color: 'white', textDecoration: 'none' }}>Products</a>
-              <a href="/shop/cart" style={{ color: 'white', textDecoration: 'none' }}>Cart (0)</a>
+              <a href="/shop/cart" style={{ color: 'white', textDecoration: 'none' }}>
+                {/* CartBadge uses useLoader(CartLoader) to get cart data */}
+                <CartBadge />
+              </a>
               <a href="/shop/account" style={{ color: 'white', textDecoration: 'none' }}>Account</a>
+              {/* UserGreeting uses useLoader(UserLoader) to get user data */}
+              <UserGreeting />
             </div>
           </div>
         </header>

@@ -39,6 +39,16 @@ import {
   productDetailRevalidation,
 } from "./shop/revalidation/index.js";
 import { Outlet, ParallelOutlet } from "rsc-router/client";
+// Loaders - server-side data fetchers
+import {
+  UserLoader,
+  CartLoader,
+  CategoriesLoader,
+  ProductLoader,
+  RelatedProductsLoader,
+  OrdersLoader,
+  FeaturedProductsLoader,
+} from "./shop/loaders/index.js";
 //#endregion
 
 const DummyLayout = (
@@ -60,7 +70,7 @@ const DummyLayout = (
  * - Full type inference for inline handlers
  */
 export default map<typeof shopRoutes>(
-  ({ route, layout, middleware, parallel, revalidate }) => [
+  ({ route, layout, middleware, parallel, revalidate, loader }) => [
     //#region Global Layout & Middleware
     // Global root layout wraps everything
     // #1 $layout.0
@@ -75,6 +85,22 @@ export default map<typeof shopRoutes>(
         layout(DummyLayout, () => [revalidate(() => false)]),
 
         revalidate(globalRevalidation),
+
+        // Global loaders - available throughout the shop
+        // UserLoader: current user data for header, account, etc.
+        loader(UserLoader),
+        // CartLoader: cart data for header badge, cart page, checkout
+        // Revalidates when cart actions are performed
+        loader(CartLoader, () => [
+          revalidate(({ actionId }) =>
+            actionId?.startsWith("cart:") ?? false
+          ),
+        ]),
+        // CategoriesLoader: product categories for navigation
+        loader(CategoriesLoader),
+        // FeaturedProductsLoader: demonstrates streaming with Promise
+        // Returns { content: Promise<Product[]> } that streams to client
+        loader(FeaturedProductsLoader),
 
         parallel({
           "@promoBanner": () => (
@@ -113,7 +139,11 @@ export default map<typeof shopRoutes>(
           route("products.category", ProductsCategoryRoute),
 
           // Product detail
+          // ProductLoader fetches the specific product by slug
+          // RelatedProductsLoader depends on ProductLoader to get related items
           route("products.detail.view", ProductsDetailRoute, () => [
+            loader(ProductLoader),
+            loader(RelatedProductsLoader),
             revalidate(productDetailRevalidation),
 
             parallel({
@@ -179,7 +209,10 @@ export default map<typeof shopRoutes>(
 
         //#region Account Routes
         // Account layout
+        // OrdersLoader is scoped to account section - fetches user's orders
         layout(<AccountLayout />, () => [
+          loader(OrdersLoader),
+
           route("account.index", AccountIndexRoute, () => [
             parallel({
               "@orders": () => <RecentOrders />,

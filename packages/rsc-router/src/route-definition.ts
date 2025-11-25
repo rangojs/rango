@@ -4,6 +4,8 @@ import type {
   ExtractRouteParams,
   Handler,
   HandlersForRouteMap,
+  LoaderDefinition,
+  LoaderFn,
   MiddlewareFn,
   ResolvedRouteMap,
   RouteDefinition,
@@ -19,9 +21,11 @@ import type {
   ParallelItem,
   MiddlewareItem,
   RevalidateItem,
+  LoaderItem,
   LayoutUseItem,
   RouteUseItem,
   ParallelUseItem,
+  LoaderUseItem,
 } from "./route-types.js";
 // const __DEV__ = import.meta.MODE === "development";
 /**
@@ -93,6 +97,10 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
   ) => ParallelItem;
   middleware: (...fns: MiddlewareFn<any, TEnv>[]) => MiddlewareItem;
   revalidate: (fn: ShouldRevalidateFn<any, TEnv>) => RevalidateItem;
+  loader: <TData>(
+    loaderDef: LoaderDefinition<TData>,
+    use?: () => LoaderUseItem[]
+  ) => LoaderItem;
 };
 
 const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
@@ -132,6 +140,53 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots) => {
   const name = `${ctx.namespace}.$${getContext().getNextIndex("parallel")}`;
   ctx.parent.parallel.push(slots);
   return { name, type: "parallel" } as ParallelItem;
+};
+
+/**
+ * Loader helper - attaches a loader to the current entry
+ */
+const loaderFn: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
+  const store = getContext();
+  const ctx = store.getStore();
+  if (!ctx) throw new Error("loader() must be called inside map()");
+
+  // Attach to last entry in stack
+  if (!ctx.parent || !ctx.parent?.loader) {
+    invariant(false, "No parent entry available for loader()");
+  }
+
+  const name = `${ctx.namespace}.$${store.getNextIndex("loader")}`;
+
+  // Create loader entry with empty revalidate array
+  const loaderEntry = {
+    loader: loaderDef,
+    revalidate: [] as ShouldRevalidateFn<any, any>[],
+  };
+
+  // If use() callback provided, run it to collect revalidation rules
+  if (use && typeof use === "function") {
+    // Temporarily set context for revalidate() calls to target this loader
+    const originalParent = ctx.parent;
+    // Create a temporary "parent" that has the revalidate array we want to populate
+    const tempParent = {
+      ...originalParent,
+      revalidate: loaderEntry.revalidate,
+    };
+    ctx.parent = tempParent as EntryData;
+
+    const result = use();
+
+    // Restore original parent
+    ctx.parent = originalParent;
+
+    invariant(
+      Array.isArray(result) && result.every((item) => isValidUseItem(item)),
+      `loader() use() callback must return an array of use items [${name}]`
+    );
+  }
+
+  ctx.parent.loader.push(loaderEntry);
+  return { name, type: "loader" } as LoaderItem;
 };
 
 const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
@@ -308,6 +363,13 @@ const createParallelHelper = <TEnv>(): RouteHelpers<any, TEnv>["parallel"] => {
 };
 
 /**
+ * Create loader helper
+ */
+const createLoaderHelper = <TEnv>(): RouteHelpers<any, TEnv>["loader"] => {
+  return loaderFn as RouteHelpers<any, TEnv>["loader"];
+};
+
+/**
  * Create route helper
  */
 const createRouteHelper = <
@@ -344,8 +406,83 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
       parallel: createParallelHelper<TEnv>(),
       middleware: createMiddlewareHelper<TEnv>(),
       revalidate: createRevalidateHelper<TEnv>(),
+      loader: createLoaderHelper<TEnv>(),
     };
 
     return [layout(RootLayout, () => builder(helpers))].flat(3);
+  };
+}
+
+/**
+ * Create a loader definition
+ *
+ * Loaders are RSC-compatible data fetchers that:
+ * - Run after middleware, before handlers
+ * - Are scoped to where attached (layout/route subtree)
+ * - Revalidate independently from UI segments
+ * - Are memoized per request (multiple ctx.use() calls return same value)
+ *
+ * Use the `"use server"` directive inside the loader function to ensure
+ * the function is stripped from client bundles.
+ *
+ * Return type is automatically inferred from the callback.
+ *
+ * @param name - Unique identifier for the loader (used for client-side lookup)
+ * @param fn - Async function that fetches data (should contain "use server" directive)
+ *
+ * @example
+ * ```typescript
+ * // loaders/cart.ts - return type inferred from callback
+ * export const CartLoader = createLoader("cart", async (ctx) => {
+ *   "use server";
+ *   const user = ctx.get("user");
+ *   return await db.cart.get(user.id); // Return type inferred!
+ * });
+ *
+ * // loaders/product.ts - return type inferred
+ * export const ProductLoader = createLoader("product", async (ctx) => {
+ *   "use server";
+ *   const { slug } = ctx.params;
+ *   return await db.products.findBySlug(slug); // Return type inferred!
+ * });
+ *
+ * // Usage in handlers
+ * layout(<ShopLayout />, () => [
+ *   loader(CartLoader),
+ *   loader(CartLoader, () => [
+ *     revalidate(({ action }) => action === "cart:update"),
+ *   ]),
+ * ])
+ *
+ * // Server-side access
+ * route("cart", (ctx) => {
+ *   const cart = ctx.use(CartLoader);
+ *   return <CartPage cart={cart} />;
+ * });
+ *
+ * // Client-side access
+ * const cart = useLoader(CartLoader);
+ * ```
+ */
+// Overload 1: With function, infer return type
+export function createLoader<T>(
+  name: string,
+  fn: LoaderFn<T, Record<string, string | undefined>, any>
+): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
+
+// Overload 2: No function (client-side reference only)
+export function createLoader(
+  name: string
+): LoaderDefinition<any, Record<string, string | undefined>>;
+
+// Implementation
+export function createLoader(
+  name: string,
+  fn?: LoaderFn<any, Record<string, string | undefined>, any>
+): LoaderDefinition<any, Record<string, string | undefined>> {
+  return {
+    __brand: "loader",
+    name,
+    fn,
   };
 }

@@ -181,6 +181,21 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
     ? <K extends keyof V>(key: K, value: V[K]) => void
     : (key: string, value: any) => void;
   _originalRequest: Request;      // Raw request (includes all system params)
+  /**
+   * Access loader data (loaders must be defined in scope)
+   *
+   * Loaders are executed in parallel and memoized per request.
+   * Multiple calls to use() with the same loader return the same promise.
+   *
+   * @example
+   * ```typescript
+   * route("cart", async (ctx) => {
+   *   const cart = await ctx.use(CartLoader);
+   *   return <CartPage cart={cart} />;
+   * });
+   * ```
+   */
+  use: <T, TLoaderParams = any>(loader: LoaderDefinition<T, TLoaderParams>) => Promise<T>;
 };
 
 /**
@@ -373,11 +388,17 @@ export type HandlersForRouteMap<T extends RouteDefinition, TEnv = any> = {
 
 /**
  * Resolved segment with component
+ *
+ * Segment types:
+ * - layout: Wraps child content via <Outlet />
+ * - route: The leaf content for a URL
+ * - parallel: Named slots rendered via <ParallelOutlet name="@slot" />
+ * - loader: Data segment (no visual rendering, carries loaderData)
  */
 export interface ResolvedSegment {
   id: string;
   namespace: string; // Optional namespace for segment (used for parallel groups)
-  type: "layout" | "route" | "parallel";
+  type: "layout" | "route" | "parallel" | "loader";
   index: number;
   component: ReactNode;
   params?: Record<string, string>;
@@ -385,6 +406,9 @@ export interface ResolvedSegment {
   belongsToRoute?: boolean; // True if segment belongs to the matched route (route itself + its children)
   layoutName?: string; // For layouts: the layout name identifier
   parallelName?: string; // For parallels: the parallel group name (used to match with revalidations)
+  // Loader-specific fields
+  loaderName?: string; // For loaders: the loader name identifier
+  loaderData?: any; // For loaders: the resolved data from loader execution
 }
 
 /**
@@ -392,10 +416,11 @@ export interface ResolvedSegment {
  */
 export interface SegmentMetadata {
   id: string;
-  type: "layout" | "route" | "parallel";
+  type: "layout" | "route" | "parallel" | "loader";
   index: number;
   params?: Record<string, string>;
   slot?: string;
+  loaderName?: string;
 }
 
 // Note: route symbols are now defined in route-definition.ts
@@ -527,3 +552,112 @@ export type RouteMiddlewareFn<
   K extends keyof TRoutes,
   TEnv = DefaultEnv
 > = MiddlewareFn<ExtractRouteParams<TRoutes, K & string>, TEnv>;
+
+// ============================================================================
+// Loader Types
+// ============================================================================
+
+/**
+ * Context passed to loader functions during execution
+ *
+ * Loaders run after middleware but before handlers, so they have access
+ * to middleware-set variables via get().
+ *
+ * @template TParams - Route params type (e.g., { slug: string })
+ * @template TEnv - Environment type for bindings/variables
+ *
+ * @example
+ * ```typescript
+ * const CartLoader = createLoader("cart", async (ctx) => {
+ *   "use server";
+ *   const user = ctx.get("user");  // From auth middleware
+ *   return await db.cart.get(user.id);
+ * });
+ *
+ * // With typed params:
+ * const ProductLoader = createLoader<Product, { slug: string }>("product", async (ctx) => {
+ *   "use server";
+ *   const { slug } = ctx.params;  // slug is typed as string
+ *   return await db.products.findBySlug(slug);
+ * });
+ * ```
+ */
+export type LoaderContext<TParams = Record<string, string | undefined>, TEnv = any> = {
+  params: TParams;
+  request: Request;
+  searchParams: URLSearchParams;
+  pathname: string;
+  url: URL;
+  env: TEnv extends RouterEnv<infer B, any> ? B : {};
+  var: TEnv extends RouterEnv<any, infer V> ? V : {};
+  get: TEnv extends RouterEnv<any, infer V>
+    ? <K extends keyof V>(key: K) => V[K]
+    : (key: string) => any;
+  /**
+   * Access another loader's data (returns promise since loaders run in parallel)
+   */
+  use: <T, TLoaderParams = any>(loader: LoaderDefinition<T, TLoaderParams>) => Promise<T>;
+};
+
+/**
+ * Loader function signature
+ *
+ * @template T - The return type of the loader
+ * @template TParams - Route params type (defaults to generic Record)
+ * @template TEnv - Environment type for bindings/variables
+ *
+ * @example
+ * ```typescript
+ * const myLoader: LoaderFn<{ items: Item[] }> = async (ctx) => {
+ *   "use server";
+ *   return { items: await db.items.list() };
+ * };
+ *
+ * // With typed params:
+ * const productLoader: LoaderFn<Product, { slug: string }> = async (ctx) => {
+ *   "use server";
+ *   const { slug } = ctx.params;  // typed as string
+ *   return await db.products.findBySlug(slug);
+ * };
+ * ```
+ */
+export type LoaderFn<T, TParams = Record<string, string | undefined>, TEnv = any> = (
+  ctx: LoaderContext<TParams, TEnv>
+) => Promise<T> | T;
+
+/**
+ * Loader definition object
+ *
+ * Created via createLoader(). Contains the loader name and function.
+ * On client builds, the fn is stripped by the bundler (via "use server" directive).
+ *
+ * @template T - The return type of the loader
+ * @template TParams - Route params type (for type-safe params access)
+ *
+ * @example
+ * ```typescript
+ * // Definition (same file works on server and client)
+ * export const CartLoader = createLoader("cart", async (ctx) => {
+ *   "use server";
+ *   return await db.cart.get(ctx.get("user").id);
+ * });
+ *
+ * // With typed params:
+ * export const ProductLoader = createLoader<Product, { slug: string }>("product", async (ctx) => {
+ *   "use server";
+ *   const { slug } = ctx.params;  // slug is typed as string
+ *   return await db.products.findBySlug(slug);
+ * });
+ *
+ * // Server usage
+ * const cart = ctx.use(CartLoader);
+ *
+ * // Client usage (fn is stripped, only name remains)
+ * const cart = useLoader(CartLoader);
+ * ```
+ */
+export type LoaderDefinition<T = any, TParams = Record<string, string | undefined>> = {
+  __brand: "loader";
+  name: string;
+  fn?: LoaderFn<T, TParams, any>;  // Optional - stripped on client via "use server"
+};

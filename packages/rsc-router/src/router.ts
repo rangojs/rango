@@ -9,9 +9,11 @@ import type {
   MatchResult,
   RouteEntry,
   Handler,
+  LoaderDefinition,
+  LoaderContext,
 } from "./types";
 import type { AllUseItems } from "./route-types.js";
-import { EntryData, getContext } from "./server/context";
+import { EntryData, LoaderEntry, getContext } from "./server/context";
 import { error } from "console";
 
 /**
@@ -41,7 +43,16 @@ export interface RSCRouter<TEnv = any> {
 
   match(request: Request, context: TEnv): Promise<MatchResult>;
 
-  matchPartial(request: Request, context: TEnv): Promise<MatchResult | null>;
+  matchPartial(
+    request: Request,
+    context: TEnv,
+    actionContext?: {
+      actionId?: string;
+      actionUrl?: URL;
+      actionResult?: any;
+      formData?: FormData;
+    }
+  ): Promise<MatchResult | null>;
 }
 
 /**
@@ -108,6 +119,10 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         variables[key] = value;
       }) as HandlerContext<any, TEnv>["set"],
       _originalRequest: request, // Raw request for advanced use
+      // Placeholder use() - will be replaced with actual implementation during request
+      use: () => {
+        throw new Error("ctx.use() called before loaders were initialized");
+      },
     };
   }
 
@@ -198,6 +213,107 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
   }
 
   /**
+   * Execute loaders for an entry and return loader segments
+   * Loaders run in PARALLEL for performance - use await ctx.use() for dependencies
+   *
+   * @param entry - The entry containing loader definitions
+   * @param ctx - Handler context (will have use() method set)
+   * @param loaderPromises - Request-scoped map of loader promises (for parallel execution)
+   * @param belongsToRoute - Whether these loaders belong to the matched route
+   * @returns Array of loader segments with resolved data
+   */
+  async function resolveLoaders(
+    entry: EntryData,
+    ctx: HandlerContext<any, TEnv>,
+    loaderPromises: Map<string, Promise<any>>,
+    belongsToRoute: boolean
+  ): Promise<ResolvedSegment[]> {
+    const segments: ResolvedSegment[] = [];
+    const loaderEntries = entry.loader ?? [];
+
+    // Start all loaders in parallel (don't await yet)
+    for (let i = 0; i < loaderEntries.length; i++) {
+      const { loader } = loaderEntries[i];
+
+      // Skip if already started (memoization)
+      if (loaderPromises.has(loader.name)) {
+        continue;
+      }
+
+      // Ensure loader has a function (might be stripped on client)
+      if (!loader.fn) {
+        throw new Error(
+          `Loader "${loader.name}" has no function. This usually means the loader was defined without "use server" and the function was not included in the build.`
+        );
+      }
+
+      // Create loader context with async use() for parallel execution
+      const loaderCtx: LoaderContext<Record<string, string | undefined>, TEnv> = {
+        params: ctx.params,
+        request: ctx.request,
+        searchParams: ctx.searchParams,
+        pathname: ctx.pathname,
+        url: ctx.url,
+        env: ctx.env,
+        var: ctx.var,
+        get: ctx.get,
+        use: <T, TLoaderParams = any>(dep: LoaderDefinition<T, TLoaderParams>): Promise<T> => {
+          const promise = loaderPromises.get(dep.name);
+          if (!promise) {
+            throw new Error(
+              `Loader "${dep.name}" not available. Define it before "${loader.name}" in the handler chain.`
+            );
+          }
+          return promise as Promise<T>;
+        },
+      };
+
+      // Start loader execution (don't await - run in parallel)
+      const promise = Promise.resolve(loader.fn(loaderCtx));
+      loaderPromises.set(loader.name, promise);
+    }
+
+    // Wait for all loaders in this entry to complete and create segments
+    for (let i = 0; i < loaderEntries.length; i++) {
+      const { loader } = loaderEntries[i];
+      const data = await loaderPromises.get(loader.name);
+
+      // Create loader segment
+      segments.push({
+        id: `${entry.shortCode}D${i}.${loader.name}`,
+        namespace: entry.id,
+        type: "loader",
+        index: i,
+        component: null, // Loaders don't render directly
+        params: ctx.params,
+        loaderName: loader.name,
+        loaderData: data,
+        belongsToRoute,
+      });
+    }
+
+    return segments;
+  }
+
+  /**
+   * Set up the use() method on handler context to read from loader promises
+   */
+  function setupLoaderAccess(
+    ctx: HandlerContext<any, TEnv>,
+    loaderPromises: Map<string, Promise<any>>
+  ): void {
+    ctx.use = <T, TLoaderParams = any>(loader: LoaderDefinition<T, TLoaderParams>): Promise<T> => {
+      const promise = loaderPromises.get(loader.name);
+      if (!promise) {
+        throw new Error(
+          `Loader "${loader.name}" not defined in scope. Make sure it's attached to a parent layout or the current route.`
+        );
+      }
+      return promise as Promise<T>;
+    };
+  }
+
+  /**
    * Conditional execution based on revalidation
    * Evaluates revalidation logic lazily, then executes appropriate callback
    *
@@ -224,7 +340,9 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     entry: EntryData,
     routeKey: string,
     params: Record<string, string>,
-    context: HandlerContext<any, TEnv>
+    context: HandlerContext<any, TEnv>,
+    loaderPromises: Map<string, Promise<any>>,
+    isRouteEntry: boolean = false
   ): Promise<ResolvedSegment[]> {
     const segments: ResolvedSegment[] = [];
 
@@ -242,11 +360,16 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       }
 
       // Step 2: Run layout loaders
-      // TODO: Run entry loaders (entry.loader)
+      const loaderSegments = await resolveLoaders(
+        entry,
+        context,
+        loaderPromises,
+        false // Parent chain layouts don't belong to specific route
+      );
+      segments.push(...loaderSegments);
 
       // Step 3: Process and emit layout parallel segments
       for (const parallelRecord of entry.parallel) {
-        // TODO: Run parallel loaders before executing handlers
         for (const [slot, handler] of Object.entries(parallelRecord)) {
           const component =
             typeof handler === "function" ? await handler(context) : handler;
@@ -288,7 +411,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         const orphanSegments = await resolveOrphanLayout(
           orphan,
           params,
-          context
+          context,
+          loaderPromises
         );
         segments.push(...orphanSegments);
       }
@@ -306,21 +430,27 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       }
 
       // Step 2: Run route loaders
-      // TODO: Run entry loaders (entry.loader)
+      const loaderSegments = await resolveLoaders(
+        entry,
+        context,
+        loaderPromises,
+        true // Route loaders belong to the route
+      );
+      segments.push(...loaderSegments);
 
       // Step 3: Process orphan layouts first
       for (const orphan of entry.layout) {
         const orphanSegments = await resolveOrphanLayout(
           orphan,
           params,
-          context
+          context,
+          loaderPromises
         );
         segments.push(...orphanSegments);
       }
 
       // Step 4: Process and emit route parallel segments
       for (const parallelRecord of entry.parallel) {
-        // TODO: Run parallel loaders before executing handlers
         for (const [slot, handler] of Object.entries(parallelRecord)) {
           const component =
             typeof handler === "function" ? await handler(context) : handler;
@@ -365,7 +495,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
   async function resolveOrphanLayout(
     orphan: EntryData,
     params: Record<string, string>,
-    context: HandlerContext<any, TEnv>
+    context: HandlerContext<any, TEnv>,
+    loaderPromises: Map<string, Promise<any>>
   ): Promise<ResolvedSegment[]> {
     // Orphans must always be layouts
     invariant(
@@ -385,12 +516,16 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     }
 
     // Step 2: Run orphan loaders
-    // TODO: Run orphan loaders (orphan.loader)
+    const loaderSegments = await resolveLoaders(
+      orphan,
+      context,
+      loaderPromises,
+      true // Orphan loaders belong to the route
+    );
 
     // Step 3: Process and emit orphan parallel segments
-    const segments: ResolvedSegment[] = [];
+    const segments: ResolvedSegment[] = [...loaderSegments];
     for (const parallelRecord of orphan.parallel) {
-      // TODO: Run parallel loaders
       for (const [slot, handler] of Object.entries(parallelRecord)) {
         const component =
           typeof handler === "function" ? await handler(context) : handler;
@@ -443,7 +578,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     prevParams: Record<string, string>,
     request: Request,
     prevUrl: URL,
-    nextUrl: URL
+    nextUrl: URL,
+    loaderPromises: Map<string, Promise<any>>
   ): Promise<ResolvedSegment[]> {
     const segments: ResolvedSegment[] = [];
 
@@ -458,7 +594,13 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       }
 
       // Step 2: Run layout loaders
-      // TODO: Run entry loaders (entry.loader)
+      const loaderSegments = await resolveLoaders(
+        entry,
+        context,
+        loaderPromises,
+        false // Parent chain layouts don't belong to specific route
+      );
+      segments.push(...loaderSegments);
 
       // Step 3: Process and emit layout parallel segments with revalidation
       for (const parallelRecord of entry.parallel) {
@@ -573,7 +715,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           request,
           prevUrl,
           nextUrl,
-          routeKey
+          routeKey,
+          loaderPromises
         );
         segments.push(...orphanSegments);
       }
@@ -588,7 +731,13 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       }
 
       // Step 2: Run route loaders
-      // TODO: Run entry loaders (entry.loader)
+      const loaderSegments = await resolveLoaders(
+        entry,
+        context,
+        loaderPromises,
+        true // Route loaders belong to the route
+      );
+      segments.push(...loaderSegments);
 
       // Step 3: Process orphan layouts first
       for (const orphan of entry.layout) {
@@ -601,7 +750,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           request,
           prevUrl,
           nextUrl,
-          routeKey
+          routeKey,
+          loaderPromises
         );
         segments.push(...orphanSegments);
       }
@@ -720,7 +870,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     request: Request,
     prevUrl: URL,
     nextUrl: URL,
-    routeKey: string
+    routeKey: string,
+    loaderPromises: Map<string, Promise<any>>
   ): Promise<ResolvedSegment[]> {
     invariant(
       orphan.type === "layout",
@@ -737,10 +888,15 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     }
 
     // Step 2: Run orphan loaders
-    // TODO: Run orphan loaders (orphan.loader)
+    const loaderSegments = await resolveLoaders(
+      orphan,
+      context,
+      loaderPromises,
+      true // Orphan loaders belong to the route
+    );
 
     // Step 3: Process and emit orphan parallel segments with revalidation
-    const segments: ResolvedSegment[] = [];
+    const segments: ResolvedSegment[] = [...loaderSegments];
     for (const parallelRecord of orphan.parallel) {
       for (const [slot, handler] of Object.entries(parallelRecord)) {
         const parallelId = `${orphan.shortCode}.${slot}`;
@@ -878,6 +1034,12 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     );
 
     try {
+      // Create request-scoped loader promises map for parallel execution
+      const loaderPromises = new Map<string, Promise<any>>();
+
+      // Set up ctx.use() to access loader data
+      setupLoaderAccess(handlerContext, loaderPromises);
+
       // Collect all segments from stream
       const segments: ResolvedSegment[] = [];
       for (const entry of traverseBack(manifestEntry)) {
@@ -886,7 +1048,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           entry,
           matched.routeKey,
           matched.params,
-          handlerContext
+          handlerContext,
+          loaderPromises
         );
 
         segments.push(...resolvedSegments);
@@ -1127,6 +1290,12 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     const clientSegmentSet = new Set(clientSegmentIds);
 
     try {
+      // Create request-scoped loader promises map for parallel execution
+      const loaderPromises = new Map<string, Promise<any>>();
+
+      // Set up ctx.use() to access loader data
+      setupLoaderAccess(handlerContext, loaderPromises);
+
       // Collect all segments with revalidation-aware rendering
       const segments: ResolvedSegment[] = [];
       for (const entry of traverseBack(manifestEntry)) {
@@ -1140,7 +1309,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           prevParams,
           request,
           prevUrl,
-          url
+          url,
+          loaderPromises
         );
 
         segments.push(...resolvedSegments);
@@ -1149,7 +1319,10 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       const segmentIds = segments.map((s) => s.id);
 
       // Filter out segments with null components (client already has them)
-      const segmentsToRender = segments.filter((s) => s.component !== null);
+      // BUT always include loader segments - they carry data even with null component
+      const segmentsToRender = segments.filter(
+        (s) => s.component !== null || s.type === "loader"
+      );
 
       return {
         segments: segmentsToRender,

@@ -44,4 +44,7 @@ export type {
   RouteHandler,
   RouteRevalidateFn,
   RouteMiddlewareFn,
+  LoaderDefinition,
+  LoaderFn,
+  LoaderContext,
 } from "./types.js";

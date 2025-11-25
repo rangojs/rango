@@ -64,11 +64,21 @@ export function renderSegments(segments: ResolvedSegment[]): ReactNode {
 
     console.log("node > ", { key, node });
 
+    // Extract loader data from loader segments
+    // Each loader segment has loaderName and loaderData
+    const loaderData: Record<string, any> = {};
+    for (const loader of node.loaders) {
+      if (loader.loaderName && loader.loaderData !== undefined) {
+        loaderData[loader.loaderName] = loader.loaderData;
+      }
+    }
+
     content = createElement(OutletProvider, {
       key: key,
       content: node.segment.type === "layout" ? content : null,
       segment: node.segment,
       parallel: node.parallel,
+      loaderData: Object.keys(loaderData).length > 0 ? loaderData : undefined,
       children: nodeContent,
     });
   }
@@ -92,15 +102,21 @@ export function renderSegments(segments: ResolvedSegment[]): ReactNode {
  * - Pre-grouping prevents parallels from attaching to wrong parents
  *   during the reversed iteration (which would cause "L0R1L0.@sidebar"
  *   to incorrectly attach to "L0L0" instead of "L0R1L0")
+ *
+ * Loader segments are also grouped by parent:
+ * - "L0D0.cart" belongs to "L0"
+ * - Loaders don't render directly, their data is passed to context
  */
 function* segmentTreeWalk(segments: ResolvedSegment[]): Generator<{
   segment: ResolvedSegment;
   parallel: ResolvedSegment[];
+  loaders: ResolvedSegment[];
 }> {
-  // Pre-group parallel segments by their parent ID using prefix matching
-  // This ensures each parallel is associated with the correct parent segment
+  // Pre-group parallel and loader segments by their parent ID using prefix matching
+  // This ensures each parallel/loader is associated with the correct parent segment
   // regardless of the iteration order
   const parallelsByParent = new Map<string, ResolvedSegment[]>();
+  const loadersByParent = new Map<string, ResolvedSegment[]>();
   const nonParallels: ResolvedSegment[] = [];
 
   for (const segment of segments) {
@@ -112,6 +128,15 @@ function* segmentTreeWalk(segments: ResolvedSegment[]): Generator<{
         parallelsByParent.set(parentId, []);
       }
       parallelsByParent.get(parentId)!.push(segment);
+    } else if (segment.type === "loader") {
+      // Extract parent ID from loader ID
+      // Example: "L0D0.cart" → "L0"
+      // Loader ID format: {parentShortCode}D{index}.{loaderName}
+      const parentId = segment.id.split("D")[0];
+      if (!loadersByParent.has(parentId)) {
+        loadersByParent.set(parentId, []);
+      }
+      loadersByParent.get(parentId)!.push(segment);
     } else {
       nonParallels.push(segment);
     }
@@ -123,9 +148,10 @@ function* segmentTreeWalk(segments: ResolvedSegment[]): Generator<{
   for (let i = nonParallels.length - 1; i >= 0; i--) {
     const segment = nonParallels[i];
 
-    // Lookup parallels that belong to this segment by ID prefix
+    // Lookup parallels and loaders that belong to this segment by ID prefix
     const parallel = parallelsByParent.get(segment.id) || [];
+    const loaders = loadersByParent.get(segment.id) || [];
 
-    yield { segment, parallel };
+    yield { segment, parallel, loaders };
   }
 }

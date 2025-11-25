@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ReactNode } from "react";
-import type { Handler, MiddlewareFn, ShouldRevalidateFn } from "../types";
+import type { Handler, LoaderDefinition, MiddlewareFn, ShouldRevalidateFn } from "../types";
 import { invariant } from "../errors";
 // ============================================================================
 //  RSC Router Context
@@ -18,8 +18,17 @@ export type EntryPropDatas = {
   middleware: MiddlewareFn<any, any>[];
   revalidate: ShouldRevalidateFn<any, any>[];
 };
+/**
+ * Loader entry stored in EntryData
+ * Contains the loader definition and its revalidation rules
+ */
+export type LoaderEntry = {
+  loader: LoaderDefinition<any>;
+  revalidate: ShouldRevalidateFn<any, any>[];
+};
+
 export type EntryPropSegments = {
-  loader: [];
+  loader: LoaderEntry[];
   layout: EntryData[];
   parallel: Record<`@${string}`, Handler<any, any> | ReactNode>[];
 };
@@ -67,7 +76,7 @@ export const getContext = (): {
     type: (string & {}) | "layout" | "parallel" | "middleware" | "revalidate"
   ) => string;
   getShortCode: (
-    type: "layout" | "parallel" | "route"
+    type: "layout" | "parallel" | "route" | "loader"
   ) => string;
   run: <T>(
     namespace: string,
@@ -125,12 +134,12 @@ export const getContext = (): {
       store.counters[type] = index + 1;
       return `$${type}.${index}`;
     },
-    getShortCode: (type: "layout" | "parallel" | "route") => {
+    getShortCode: (type: "layout" | "parallel" | "route" | "loader") => {
       const store = context.getStore();
       invariant(store, "No context RSCRouterContext available");
 
       const parent = store.parent;
-      const prefix = type === "layout" ? "L" : type === "parallel" ? "P" : "R";
+      const prefix = type === "layout" ? "L" : type === "parallel" ? "P" : type === "loader" ? "D" : "R";
       const mountPrefix = store.mountIndex !== undefined ? `M${store.mountIndex}` : "";
 
       if (!parent) {
