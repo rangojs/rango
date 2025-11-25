@@ -13,8 +13,19 @@ import type {
   LoaderContext,
 } from "./types";
 import type { AllUseItems } from "./route-types.js";
-import { EntryData, LoaderEntry, getContext } from "./server/context";
+import { EntryData, LoaderEntry, getContext, track, MetricsStore, PerformanceMetric } from "./server/context";
 import { error } from "console";
+
+/**
+ * Router configuration options
+ */
+export interface RSCRouterOptions {
+  /**
+   * Enable performance metrics collection
+   * When enabled, metrics are output to console and available via Server-Timing header
+   */
+  debugPerformance?: boolean;
+}
 
 /**
  * Router builder for chaining .use() and .map()
@@ -65,16 +76,74 @@ export interface RSCRouter<TEnv = any> {
  *   user?: User;
  * }
  *
- * const router = createRSCRouter<AppContext>();
+ * const router = createRSCRouter<AppContext>({
+ *   debugPerformance: true  // Enable metrics
+ * });
  *
  * router
  *   .route('/blog', blogRoutes)
  *   .map(() => import('./blog.handlers'));
  * ```
  */
-export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
+export function createRSCRouter<TEnv = any>(
+  options: RSCRouterOptions = {}
+): RSCRouter<TEnv> {
+  const { debugPerformance = false } = options;
   const routesEntries: RouteEntry<TEnv>[] = [];
   let mountIndex = 0;
+
+  /**
+   * Create a metrics store for the request if debugPerformance is enabled
+   */
+  function createMetricsStore(): MetricsStore | undefined {
+    if (!debugPerformance) return undefined;
+    return {
+      enabled: true,
+      requestStart: performance.now(),
+      metrics: [],
+    };
+  }
+
+  /**
+   * Log metrics to console in a formatted way
+   */
+  function logMetrics(
+    method: string,
+    pathname: string,
+    metricsStore: MetricsStore
+  ): void {
+    const total = performance.now() - metricsStore.requestStart;
+
+    // Find max label length for alignment
+    const maxLabelLen = Math.max(
+      ...metricsStore.metrics.map((m) => m.label.length),
+      20
+    );
+
+    console.log(`[RSC Perf] ${method} ${pathname} (${total.toFixed(1)}ms)`);
+
+    for (const m of metricsStore.metrics) {
+      const paddedLabel = m.label.padEnd(maxLabelLen);
+      console.log(`  ${paddedLabel} ${m.duration.toFixed(1)}ms`);
+    }
+  }
+
+  /**
+   * Generate Server-Timing header value from metrics
+   * Format: metric-name;dur=X.XX
+   */
+  function generateServerTiming(metricsStore: MetricsStore): string {
+    return metricsStore.metrics
+      .map((m) => {
+        // Convert label to valid Server-Timing name (alphanumeric and hyphens)
+        const name = m.label
+          .replace(/:/g, "-")
+          .replace(/[^a-zA-Z0-9-]/g, "")
+          .toLowerCase();
+        return `${name};dur=${m.duration.toFixed(2)}`;
+      })
+      .join(", ");
+  }
 
   /**
    * Create HandlerContext with typed env/var/get/set
@@ -172,7 +241,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
    */
   async function executeMiddleware(
     middleware: any[],
-    ctx: HandlerContext<any, TEnv>
+    ctx: HandlerContext<any, TEnv>,
+    entryId?: string
   ): Promise<Response | null> {
     if (middleware.length === 0) {
       return null;
@@ -186,10 +256,17 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         return; // Stop if reached end or middleware returned Response
       }
 
-      const currentMiddleware = middleware[index++];
+      const currentIndex = index++;
+      const currentMiddleware = middleware[currentIndex];
+
+      // Track each middleware execution
+      const mwName = currentMiddleware.name || `mw${currentIndex}`;
+      const label = entryId ? `middleware:${entryId}.${mwName}` : `middleware:${mwName}`;
+      const done = track(label);
 
       try {
         const result = await currentMiddleware(ctx, next);
+        done();
 
         // Check if middleware short-circuited with Response
         if (result instanceof Response) {
@@ -199,6 +276,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           );
         }
       } catch (error) {
+        done();
         // Middleware threw error - propagate it
         console.error(
           `[Router.executeMiddleware] Middleware threw error:`,
@@ -268,8 +346,12 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         },
       };
 
-      // Start loader execution (don't await - run in parallel)
-      const promise = Promise.resolve(loader.fn(loaderCtx));
+      // Start loader execution with tracking (don't await - run in parallel)
+      const loaderName = loader.name;
+      const doneLoader = track(`loader:${loaderName}`);
+      const promise = Promise.resolve(loader.fn(loaderCtx)).finally(() => {
+        doneLoader();
+      });
       loaderPromises.set(loader.name, promise);
     }
 
@@ -354,7 +436,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       if (entry.middleware.length > 0) {
         const middlewareResponse = await executeMiddleware(
           entry.middleware,
-          context
+          context,
+          entry.id
         );
         if (middlewareResponse) throw middlewareResponse;
       }
@@ -424,7 +507,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       if (entry.middleware.length > 0) {
         const middlewareResponse = await executeMiddleware(
           entry.middleware,
-          context
+          context,
+          entry.id
         );
         if (middlewareResponse) throw middlewareResponse;
       }
@@ -510,7 +594,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     if (orphan.middleware.length > 0) {
       const middlewareResponse = await executeMiddleware(
         orphan.middleware,
-        context
+        context,
+        orphan.id
       );
       if (middlewareResponse) throw middlewareResponse;
     }
@@ -588,7 +673,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       if (entry.middleware.length > 0) {
         const middlewareResponse = await executeMiddleware(
           entry.middleware,
-          context
+          context,
+          entry.id
         );
         if (middlewareResponse) throw middlewareResponse;
       }
@@ -725,7 +811,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       if (entry.middleware.length > 0) {
         const middlewareResponse = await executeMiddleware(
           entry.middleware,
-          context
+          context,
+          entry.id
         );
         if (middlewareResponse) throw middlewareResponse;
       }
@@ -882,7 +969,8 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     if (orphan.middleware.length > 0) {
       const middlewareResponse = await executeMiddleware(
         orphan.middleware,
-        context
+        context,
+        orphan.id
       );
       if (middlewareResponse) throw middlewareResponse;
     }
@@ -1008,7 +1096,21 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
+    // Initialize metrics store for this request
+    const metricsStore = createMetricsStore();
+
+    // Track route matching (direct recording since ALS context not yet available)
+    const routeMatchStart = metricsStore ? performance.now() : 0;
     const matched = findMatch(pathname);
+    if (metricsStore) {
+      const duration = performance.now() - routeMatchStart;
+      metricsStore.metrics.push({
+        label: "route-matching",
+        duration,
+        startTime: routeMatchStart - metricsStore.requestStart,
+      });
+    }
+
     if (!matched) {
       throw new RouteNotFoundError(`No route matched for ${pathname}`, {
         cause: {
@@ -1019,7 +1121,23 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     }
 
     // Load manifest with AsyncLocalStorage context and validation
-    const manifestEntry = await loadManifest(matched.entry, matched.routeKey, pathname);
+    // Pass metrics store to be included in context
+    // Track manifest loading (direct recording since ALS context not yet available)
+    const manifestStart = metricsStore ? performance.now() : 0;
+    const manifestEntry = await loadManifest(
+      matched.entry,
+      matched.routeKey,
+      pathname,
+      metricsStore
+    );
+    if (metricsStore) {
+      const duration = performance.now() - manifestStart;
+      metricsStore.metrics.push({
+        label: "manifest-loading",
+        duration,
+        startTime: manifestStart - metricsStore.requestStart,
+      });
+    }
 
     // Extract bindings from context (if using RouterEnv pattern)
     const bindings = (context as any)?.Bindings || {};
@@ -1040,27 +1158,49 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       // Set up ctx.use() to access loader data
       setupLoaderAccess(handlerContext, loaderPromises);
 
-      // Collect all segments from stream
-      const segments: ResolvedSegment[] = [];
-      for (const entry of traverseBack(manifestEntry)) {
-        // Resolve entry into segments (may return multiple for orphan layouts)
-        const resolvedSegments = await resolveSegment(
-          entry,
-          matched.routeKey,
-          matched.params,
-          handlerContext,
-          loaderPromises
-        );
-
-        segments.push(...resolvedSegments);
+      // Get the store for running segment resolution within metrics context
+      const Store = getContext().getOrCreateStore(matched.routeKey);
+      if (metricsStore) {
+        Store.metrics = metricsStore;
       }
 
+      // Collect all segments from stream (run within store context for metrics tracking)
+      const segments: ResolvedSegment[] = await getContext().runWithStore(
+        Store,
+        Store.namespace || "#router",
+        Store.parent,
+        async () => {
+          const segs: ResolvedSegment[] = [];
+          for (const entry of traverseBack(manifestEntry)) {
+            // Resolve entry into segments (may return multiple for orphan layouts)
+            const resolvedSegments = await resolveSegment(
+              entry,
+              matched.routeKey,
+              matched.params,
+              handlerContext,
+              loaderPromises
+            );
+
+            segs.push(...resolvedSegments);
+          }
+          return segs;
+        }
+      );
+
       const segmentIds = segments.map((s) => s.id);
+
+      // Output metrics if enabled
+      let serverTiming: string | undefined;
+      if (metricsStore) {
+        logMetrics(request.method, pathname, metricsStore);
+        serverTiming = generateServerTiming(metricsStore);
+      }
 
       return {
         segments,
         matched: segmentIds,
         diff: segmentIds,
+        serverTiming,
       };
     } catch (error) {
       // Check if middleware/handler short-circuited with Response
@@ -1246,6 +1386,9 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
+    // Initialize metrics store for this request
+    const metricsStore = createMetricsStore();
+
     // Extract client state from query params and header
     const clientSegmentIds =
       url.searchParams.get("_rsc_segments")?.split(",") || [];
@@ -1257,11 +1400,23 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     }
 
     const prevUrl = new URL(previousUrl);
+
+    // Track route matching (direct recording since ALS context not yet available)
+    const routeMatchStart = metricsStore ? performance.now() : 0;
     const prevMatch = findMatch(prevUrl.pathname);
     const prevParams = prevMatch?.params || {};
 
     // Match current route
     const matched = findMatch(pathname);
+    if (metricsStore) {
+      const duration = performance.now() - routeMatchStart;
+      metricsStore.metrics.push({
+        label: "route-matching",
+        duration,
+        startTime: routeMatchStart - metricsStore.requestStart,
+      });
+    }
+
     if (!matched) {
       throw new RouteNotFoundError(`No route matched for ${pathname}`, {
         cause: {
@@ -1273,7 +1428,22 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     }
 
     // Load manifest with AsyncLocalStorage context and validation
-    const manifestEntry = await loadManifest(matched.entry, matched.routeKey, pathname);
+    // Track manifest loading (direct recording since ALS context not yet available)
+    const manifestStart = metricsStore ? performance.now() : 0;
+    const manifestEntry = await loadManifest(
+      matched.entry,
+      matched.routeKey,
+      pathname,
+      metricsStore
+    );
+    if (metricsStore) {
+      const duration = performance.now() - manifestStart;
+      metricsStore.metrics.push({
+        label: "manifest-loading",
+        duration,
+        startTime: manifestStart - metricsStore.requestStart,
+      });
+    }
 
     // Extract bindings from context
     const bindings = (context as any)?.Bindings || {};
@@ -1296,25 +1466,39 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       // Set up ctx.use() to access loader data
       setupLoaderAccess(handlerContext, loaderPromises);
 
-      // Collect all segments with revalidation-aware rendering
-      const segments: ResolvedSegment[] = [];
-      for (const entry of traverseBack(manifestEntry)) {
-        // Resolve entry into segments with revalidation checks
-        const resolvedSegments = await resolveSegmentWithRevalidation(
-          entry,
-          matched.routeKey,
-          matched.params,
-          handlerContext,
-          clientSegmentSet,
-          prevParams,
-          request,
-          prevUrl,
-          url,
-          loaderPromises
-        );
-
-        segments.push(...resolvedSegments);
+      // Get the store for running segment resolution within metrics context
+      const Store = getContext().getOrCreateStore(matched.routeKey);
+      if (metricsStore) {
+        Store.metrics = metricsStore;
       }
+
+      // Collect all segments with revalidation-aware rendering (run within store context for metrics tracking)
+      const segments: ResolvedSegment[] = await getContext().runWithStore(
+        Store,
+        Store.namespace || "#router",
+        Store.parent,
+        async () => {
+          const segs: ResolvedSegment[] = [];
+          for (const entry of traverseBack(manifestEntry)) {
+            // Resolve entry into segments with revalidation checks
+            const resolvedSegments = await resolveSegmentWithRevalidation(
+              entry,
+              matched.routeKey,
+              matched.params,
+              handlerContext,
+              clientSegmentSet,
+              prevParams,
+              request,
+              prevUrl,
+              url,
+              loaderPromises
+            );
+
+            segs.push(...resolvedSegments);
+          }
+          return segs;
+        }
+      );
 
       const segmentIds = segments.map((s) => s.id);
 
@@ -1324,10 +1508,18 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         (s) => s.component !== null || s.type === "loader"
       );
 
+      // Output metrics if enabled
+      let serverTiming: string | undefined;
+      if (metricsStore) {
+        logMetrics(request.method, pathname, metricsStore);
+        serverTiming = generateServerTiming(metricsStore);
+      }
+
       return {
         segments: segmentsToRender,
         matched: segmentIds,
         diff: segmentsToRender.map((s) => s.id),
+        serverTiming,
       };
     } catch (error) {
       // Check if middleware/handler short-circuited with Response
@@ -1461,12 +1653,18 @@ async function* buildSegmentsStream(
 async function loadManifest(
   entry: RouteEntry<any>,
   routeKey: string,
-  path: string
+  path: string,
+  metricsStore?: MetricsStore
 ): Promise<EntryData> {
   const Store = getContext().getOrCreateStore(routeKey);
 
   // Set mount index in store for unique shortCode prefixes
   Store.mountIndex = entry.mountIndex;
+
+  // Attach metrics store to context if provided
+  if (metricsStore) {
+    Store.metrics = metricsStore;
+  }
 
   // Clear manifest before rebuilding to prevent stale entry mutations
   Store.manifest.clear();

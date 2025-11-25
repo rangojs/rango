@@ -433,6 +433,11 @@ export interface MatchResult {
   segments: ResolvedSegment[];
   matched: string[];
   diff: string[];
+  /**
+   * Server-Timing header value (only present when debugPerformance is enabled)
+   * Can be added to response headers for DevTools integration
+   */
+  serverTiming?: string;
 }
 
 /**

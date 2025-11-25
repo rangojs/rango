@@ -14,6 +14,9 @@ export { createRSCRouter, type RSCRouter } from "./router.js";
 // Segment system (server-only)
 export { renderSegments } from "./segment-system.js";
 
+// Performance tracking (server-only)
+export { track } from "./server/context.js";
+
 // Error classes and utilities
 export {
   RouteNotFoundError,

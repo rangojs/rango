@@ -138,7 +138,12 @@ export default async function handler(request: Request): Promise<Response> {
           `[RSC] Partial match failed after action, falling back to full render`
         );
         const fullMatch = await router.match(request, {});
+        const renderStart = performance.now();
         const root = renderSegments(fullMatch.segments);
+        const renderDuration = performance.now() - renderStart;
+        const actionServerTiming = fullMatch.serverTiming
+          ? `${fullMatch.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
+          : `rendering;dur=${renderDuration.toFixed(2)}`;
 
         payload = {
           root,
@@ -158,16 +163,27 @@ export default async function handler(request: Request): Promise<Response> {
         console.log(
           `[RSC] Action complete - returning full render with returnValue`
         );
+
+        const headers: Record<string, string> = {
+          "content-type": "text/x-component;charset=utf-8",
+        };
+        if (actionServerTiming) {
+          headers["Server-Timing"] = actionServerTiming;
+        }
+
         return new Response(rscStream, {
           status: actionStatus,
-          headers: {
-            "content-type": "text/x-component;charset=utf-8",
-          },
+          headers,
         });
       }
 
       // 6. Return updated segments (same format as partial navigation)
+      const renderStart2 = performance.now();
       const root = renderSegments(matchResult.segments);
+      const renderDuration2 = performance.now() - renderStart2;
+      const partialServerTiming = matchResult.serverTiming
+        ? `${matchResult.serverTiming}, rendering;dur=${renderDuration2.toFixed(2)}`
+        : `rendering;dur=${renderDuration2.toFixed(2)}`;
 
       payload = {
         root: null,
@@ -192,17 +208,24 @@ export default async function handler(request: Request): Promise<Response> {
       console.log(`[RSC] Diff: ${matchResult.diff.join(", ")}`);
       console.log(`[RSC] Return value:`, returnValue);
 
+      const actionHeaders: Record<string, string> = {
+        "content-type": "text/x-component;charset=utf-8",
+      };
+      if (partialServerTiming) {
+        actionHeaders["Server-Timing"] = partialServerTiming;
+      }
+
       return new Response(rscStream, {
         status: actionStatus,
-        headers: {
-          "content-type": "text/x-component;charset=utf-8",
-        },
+        headers: actionHeaders,
       });
     }
 
     // ============================================================================
     // REGULAR RSC RENDERING (Navigation)
     // ============================================================================
+    let serverTiming: string | undefined;
+
     if (isPartial) {
       // Partial render (navigation)
       console.log(`[RSC] >>> PARTIAL RENDER`);
@@ -212,7 +235,12 @@ export default async function handler(request: Request): Promise<Response> {
         // Fall back to full render
         console.warn(`[RSC] Partial match failed, falling back to full`);
         const match = await router.match(request, {});
+        const renderStart = performance.now();
         const root = renderSegments(match.segments);
+        const renderDuration = performance.now() - renderStart;
+        serverTiming = match.serverTiming
+          ? `${match.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
+          : `rendering;dur=${renderDuration.toFixed(2)}`;
 
         payload = {
           root,
@@ -225,6 +253,7 @@ export default async function handler(request: Request): Promise<Response> {
           },
         };
       } else {
+        serverTiming = result.serverTiming;
         payload = {
           root: null,
           metadata: {
@@ -240,7 +269,12 @@ export default async function handler(request: Request): Promise<Response> {
       // Full render (initial page load)
       console.warn(`[RSC] >>> FULL RENDER`);
       const match = await router.match(request, {});
+      const renderStart = performance.now();
       const root = renderSegments(match.segments);
+      const renderDuration = performance.now() - renderStart;
+      serverTiming = match.serverTiming
+        ? `${match.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
+        : `rendering;dur=${renderDuration.toFixed(2)}`;
 
       payload = {
         root,
@@ -272,11 +306,15 @@ export default async function handler(request: Request): Promise<Response> {
     if (isRscRequest) {
       // Return RSC stream for client navigation
       console.log(`[RSC] → Returning RSC stream`);
+      const rscHeaders: Record<string, string> = {
+        "content-type": "text/x-component;charset=utf-8",
+        vary: "accept",
+      };
+      if (serverTiming) {
+        rscHeaders["Server-Timing"] = serverTiming;
+      }
       return new Response(rscStream, {
-        headers: {
-          "content-type": "text/x-component;charset=utf-8",
-          vary: "accept",
-        },
+        headers: rscHeaders,
       });
     }
 
@@ -288,10 +326,15 @@ export default async function handler(request: Request): Promise<Response> {
 
     const htmlStream = await ssrEntryModule.renderHTML(rscStream);
 
+    const htmlHeaders: Record<string, string> = {
+      "content-type": "text/html;charset=utf-8",
+    };
+    if (serverTiming) {
+      htmlHeaders["Server-Timing"] = serverTiming;
+    }
+
     return new Response(htmlStream, {
-      headers: {
-        "content-type": "text/html;charset=utf-8",
-      },
+      headers: htmlHeaders,
     });
   } catch (error) {
     // Check if middleware/handler returned Response (redirect, auth, etc.)

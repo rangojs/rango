@@ -48,3 +48,9 @@ export type {
   LoaderFn,
   LoaderContext,
 } from "./types.js";
+
+// Router options type
+export type { RSCRouterOptions } from "./router.js";
+
+// Metrics types
+export type { PerformanceMetric, MetricsStore } from "./server/context.js";

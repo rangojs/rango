@@ -2,6 +2,28 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { ReactNode } from "react";
 import type { Handler, LoaderDefinition, MiddlewareFn, ShouldRevalidateFn } from "../types";
 import { invariant } from "../errors";
+
+// ============================================================================
+//  Performance Metrics Types
+// ============================================================================
+
+/**
+ * Performance metric entry for a single measured operation
+ */
+export interface PerformanceMetric {
+  label: string;      // e.g., "route-matching", "loader:UserLoader"
+  duration: number;   // milliseconds
+  startTime: number;  // relative to request start
+}
+
+/**
+ * Request-scoped metrics store
+ */
+export interface MetricsStore {
+  enabled: boolean;
+  requestStart: number;
+  metrics: PerformanceMetric[];
+}
 // ============================================================================
 //  RSC Router Context
 // ============================================================================
@@ -63,6 +85,7 @@ interface HelperContext {
   counters: Record<string, number>;
   forRoute?: string;
   mountIndex?: number;
+  metrics?: MetricsStore;
 }
 export const RSCRouterContext: AsyncLocalStorage<HelperContext> =
   new AsyncLocalStorage<HelperContext>();
@@ -172,6 +195,7 @@ export const getContext = (): {
           counters: store.counters,
           forRoute: store.forRoute,
           mountIndex: store.mountIndex,
+          metrics: store.metrics,
         },
         callback
       );
@@ -193,9 +217,41 @@ export const getContext = (): {
           counters,
           forRoute: store?.forRoute,
           mountIndex: store?.mountIndex,
+          metrics: store?.metrics,
         },
         callback
       );
     },
   };
 };
+
+// ============================================================================
+//  Performance Metrics Helpers
+// ============================================================================
+
+/**
+ * Track performance of a code block (no-op if metrics not enabled)
+ * Returns a done() callback to mark completion and record duration
+ *
+ * @example
+ * ```typescript
+ * const done = track("route-matching");
+ * // ... do work ...
+ * done(); // Records duration
+ * ```
+ */
+export function track(label: string): () => void {
+  const store = RSCRouterContext.getStore();
+
+  // No-op if context unavailable or metrics not enabled
+  if (!store?.metrics?.enabled) {
+    return () => {};
+  }
+
+  const startTime = performance.now() - store.metrics.requestStart;
+
+  return () => {
+    const duration = performance.now() - store.metrics!.requestStart - startTime;
+    store.metrics!.metrics.push({ label, duration, startTime });
+  };
+}

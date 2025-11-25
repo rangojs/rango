@@ -54,7 +54,7 @@ declare global {
 /**
  * Create and configure the router with type-safe context
  */
-export const router = createRSCRouter<AppEnv>();
+export const router = createRSCRouter<AppEnv>({ debugPerformance: true });
 
 // Register routes with lazy-loaded handlers
 router
