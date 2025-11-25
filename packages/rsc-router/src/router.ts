@@ -224,8 +224,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     entry: EntryData,
     routeKey: string,
     params: Record<string, string>,
-    context: HandlerContext<any, TEnv>,
-    isLeafEntry: boolean = false
+    context: HandlerContext<any, TEnv>
   ): Promise<ResolvedSegment[]> {
     const segments: ResolvedSegment[] = [];
 
@@ -261,7 +260,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             component,
             params,
             slot,
-            isOwnedByEntry: isLeafEntry,
+            belongsToRoute: false, // Parent chain parallels don't belong to specific route
             parallelName: `${entry.id}.${slot}`,
           });
         }
@@ -280,7 +279,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         index: 0,
         component,
         params,
-        isOwnedByEntry: isLeafEntry, // Only leaf entry segments are owned
+        belongsToRoute: false, // Parent chain layouts don't belong to specific route
         layoutName: entry.id,
       });
 
@@ -335,7 +334,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             component,
             params,
             slot,
-            isOwnedByEntry: isLeafEntry,
+            belongsToRoute: true, // Route's parallels belong to the route
             parallelName: `${entry.id}.${slot}`,
           });
         }
@@ -351,7 +350,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         index: 0,
         component,
         params,
-        isOwnedByEntry: isLeafEntry, // Only leaf route is owned
+        belongsToRoute: true, // Route always belongs to itself
       });
     } else {
       throw new Error(`Unknown entry type: ${(entry as any).type}`);
@@ -405,7 +404,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           component,
           params,
           slot,
-          isOwnedByEntry: true, // Orphan's parallel (child of entry)
+          belongsToRoute: true, // Orphan's parallel belongs to the route
           parallelName: `${orphan.id}.${slot}`,
         });
       }
@@ -424,7 +423,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       index: 0,
       component,
       params,
-      isOwnedByEntry: true, // Orphan layout (child of entry)
+      belongsToRoute: true, // Orphan layout belongs to the route
       layoutName: orphan.id,
     });
 
@@ -444,8 +443,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     prevParams: Record<string, string>,
     request: Request,
     prevUrl: URL,
-    nextUrl: URL,
-    isLeafEntry: boolean = false
+    nextUrl: URL
   ): Promise<ResolvedSegment[]> {
     const segments: ResolvedSegment[] = [];
 
@@ -480,7 +478,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
                 component: null as any,
                 params,
                 slot,
-                isOwnedByEntry: true,
+                belongsToRoute: false, // Parent chain parallel
                 parallelName: `${entry.id}.${slot}`,
               };
 
@@ -512,7 +510,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             component,
             params,
             slot,
-            isOwnedByEntry: isLeafEntry,
+            belongsToRoute: false, // Parent chain parallel
             parallelName: `${entry.id}.${slot}`,
           });
         }
@@ -530,7 +528,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             index: 0,
             component: null as any,
             params,
-            isOwnedByEntry: isLeafEntry,
+            belongsToRoute: false, // Parent chain layout
             layoutName: entry.id,
           };
 
@@ -560,7 +558,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         index: 0,
         component,
         params,
-        isOwnedByEntry: true,
+        belongsToRoute: false, // Parent chain layout
         layoutName: entry.id,
       });
 
@@ -625,7 +623,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
                 component: null as any,
                 params,
                 slot,
-                isOwnedByEntry: true,
+                belongsToRoute: true, // Route's parallel
                 parallelName: `${entry.id}.${slot}`,
               };
 
@@ -657,7 +655,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             component,
             params,
             slot,
-            isOwnedByEntry: isLeafEntry,
+            belongsToRoute: true, // Route's parallel
             parallelName: `${entry.id}.${slot}`,
           });
         }
@@ -675,7 +673,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
             index: 0,
             component: null as any,
             params,
-            isOwnedByEntry: isLeafEntry,
+            belongsToRoute: true, // Route always belongs to itself
           };
 
           return await evaluateRevalidation(
@@ -701,7 +699,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
         index: 0,
         component,
         params,
-        isOwnedByEntry: true,
+        belongsToRoute: true, // Route always belongs to itself
       });
     } else {
       throw new Error(`Unknown entry type: ${(entry as any).type}`);
@@ -759,7 +757,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
               component: null as any,
               params,
               slot,
-              isOwnedByEntry: true,
+              belongsToRoute: true, // Orphan's parallel belongs to the route
               parallelName: `${orphan.id}.${slot}`,
             };
 
@@ -791,7 +789,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           component,
           params,
           slot,
-          isOwnedByEntry: true,
+          belongsToRoute: true, // Orphan's parallel belongs to the route
           parallelName: `${orphan.id}.${slot}`,
         });
       }
@@ -809,7 +807,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           index: 0,
           component: null as any,
           params,
-          isOwnedByEntry: true,
+          belongsToRoute: true, // Orphan layout belongs to the route
           layoutName: orphan.id,
         };
 
@@ -839,7 +837,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       index: 0,
       component,
       params,
-      isOwnedByEntry: true,
+      belongsToRoute: true, // Orphan layout belongs to the route
       layoutName: orphan.id,
     });
 
@@ -883,16 +881,12 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       // Collect all segments from stream
       const segments: ResolvedSegment[] = [];
       for (const entry of traverseBack(manifestEntry)) {
-        // Only the matched entry (leaf) owns its segments
-        const isLeafEntry = entry === manifestEntry;
-
         // Resolve entry into segments (may return multiple for orphan layouts)
         const resolvedSegments = await resolveSegment(
           entry,
           matched.routeKey,
           matched.params,
-          handlerContext,
-          isLeafEntry
+          handlerContext
         );
 
         segments.push(...resolvedSegments);
@@ -964,15 +958,15 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
     let defaultShouldRevalidate: boolean;
 
     if (request.method === "POST") {
-      // Actions: revalidate route-owned segments, skip inherited parent segments
+      // Actions: revalidate segments that belong to the route, skip parent chain
       if (segment.type === "route") {
         // Route segment always revalidates on actions
         defaultShouldRevalidate = true;
-      } else if (segment.isOwnedByEntry) {
-        // Segment owned by route entry (child layouts/parallels) - revalidate
+      } else if (segment.belongsToRoute) {
+        // Segment belongs to route (orphan layouts/parallels) - revalidate
         defaultShouldRevalidate = true;
       } else {
-        // Inherited from parent chain (outer layouts/parallels) - don't revalidate
+        // Parent chain segment (shared layouts/parallels) - don't revalidate
         defaultShouldRevalidate = false;
       }
     } else {
@@ -1136,9 +1130,6 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
       // Collect all segments with revalidation-aware rendering
       const segments: ResolvedSegment[] = [];
       for (const entry of traverseBack(manifestEntry)) {
-        // Only the matched entry (leaf) owns its segments
-        const isLeafEntry = entry === manifestEntry;
-
         // Resolve entry into segments with revalidation checks
         const resolvedSegments = await resolveSegmentWithRevalidation(
           entry,
@@ -1149,8 +1140,7 @@ export function createRSCRouter<TEnv = any>(): RSCRouter<TEnv> {
           prevParams,
           request,
           prevUrl,
-          url,
-          isLeafEntry
+          url
         );
 
         segments.push(...resolvedSegments);

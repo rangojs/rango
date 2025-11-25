@@ -382,7 +382,7 @@ export interface ResolvedSegment {
   component: ReactNode;
   params?: Record<string, string>;
   slot?: string; // For parallel segments: '@sidebar', '@modal', etc.
-  isOwnedByEntry?: boolean; // True if segment is from entry.layout[]/entry.parallel[], false if from parent chain
+  belongsToRoute?: boolean; // True if segment belongs to the matched route (route itself + its children)
   layoutName?: string; // For layouts: the layout name identifier
   parallelName?: string; // For parallels: the parallel group name (used to match with revalidations)
 }

@@ -44,14 +44,14 @@ export function renderSegments(segments: ResolvedSegment[]): ReactNode {
     const { component, id, params } = node.segment;
     let nodeContent: ReactNode = component;
 
-    // Only include params in key for segments that actually depend on them
+    // Only include params in key for segments that belong to the route
     // - Routes: always include params (they render param-specific content)
-    // - Route-owned layouts: include params (defined in route's use(), likely param-dependent)
-    // - Parent layouts: exclude params (param-agnostic, should stay mounted across param changes)
+    // - Route's layouts (orphans): include params (children of parameterized route)
+    // - Parent chain layouts: exclude params (shared across routes, param-agnostic)
     // This prevents unnecessary unmounting when params change
     const includeParams =
       node.segment.type === "route" ||
-      (node.segment.type === "layout" && node.segment.isOwnedByEntry);
+      (node.segment.type === "layout" && node.segment.belongsToRoute);
 
     const paramStr =
       includeParams && params && Object.keys(params).length > 0
