@@ -52,6 +52,8 @@ function abortAllControllersAndAdd(abortController: AbortController) {
 
 // Setup server action callback - React calls this when server actions are invoked
 setServerCallback(async (id: string, args: any[]) => {
+  console.log("ID", { id, args });
+
   const abortController = new AbortController();
 
   abortAllControllersAndAdd(abortController);

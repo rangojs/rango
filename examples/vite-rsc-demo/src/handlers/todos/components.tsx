@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, useRef } from "react";
+import { useState, useTransition, useRef, useEffect, use } from "react";
 import type { Todo } from "./data.js";
 import {
   addTodo,
@@ -10,7 +10,7 @@ import {
   clearCompleted,
 } from "./actions.js";
 import { flushSync } from "react-dom";
-
+const actionAddTodo = addTodo;
 const styles = {
   form: {
     display: "flex",
@@ -113,15 +113,26 @@ export function AddTodoForm() {
   const [isPending, startTransition] = useTransition();
   const formRef = useRef<HTMLFormElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
+  console.log("AddTodoForm renders.....");
+  useEffect(() => {
+    if (!isPending) {
+      inputRef.current?.focus({ preventScroll: true });
+    }
+  }, [isPending]);
   async function handleSubmit(formData: FormData) {
     const title = formData.get("title") as string;
 
     if (!title?.trim()) return;
 
     startTransition(async () => {
-      await addTodo(title);
-      formRef.current?.reset();
+      console.log("addd", actionAddTodo.name);
+      console.dir(actionAddTodo);
+
+      const res = await actionAddTodo(title);
+
+      // formRef.current?.reset();
+      inputRef.current?.focus({ preventScroll: true });
+      console.log("AddTodoForm handleSubmit Transition done");
     });
   }
 
@@ -132,6 +143,7 @@ export function AddTodoForm() {
       style={{ ...styles.form, ...(isPending ? styles.pending : {}) }}
     >
       <input
+        key="todo-input"
         ref={inputRef}
         type="text"
         name="title"
