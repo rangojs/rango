@@ -1,20 +1,8 @@
 "use client";
 
-import { createContext, useContext, useMemo, type ReactNode } from "react";
+import { useContext, useMemo, type ReactNode } from "react";
+import { OutletContext, type OutletContextValue } from "./outlet-context.js";
 import type { LoaderDefinition, LoaderFn, ResolvedSegment } from "./types";
-
-/**
- * Context for outlet content and loader data
- */
-interface OutletContextValue {
-  content: ReactNode;
-  parallel?: ResolvedSegment[];
-  segment?: ResolvedSegment;
-  loaderData?: Record<string, any>;
-  parent?: OutletContextValue | null;
-}
-
-const OutletContext = createContext<OutletContextValue | null>(null);
 
 /**
  * Outlet component - renders child content in layouts

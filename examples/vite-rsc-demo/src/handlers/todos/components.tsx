@@ -9,6 +9,7 @@ import {
   updateTodo,
   clearCompleted,
 } from "./actions.js";
+import { flushSync } from "react-dom";
 
 const styles = {
   form: {
@@ -111,9 +112,11 @@ const styles = {
 export function AddTodoForm() {
   const [isPending, startTransition] = useTransition();
   const formRef = useRef<HTMLFormElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   async function handleSubmit(formData: FormData) {
     const title = formData.get("title") as string;
+
     if (!title?.trim()) return;
 
     startTransition(async () => {
@@ -129,6 +132,7 @@ export function AddTodoForm() {
       style={{ ...styles.form, ...(isPending ? styles.pending : {}) }}
     >
       <input
+        ref={inputRef}
         type="text"
         name="title"
         placeholder="What needs to be done?"

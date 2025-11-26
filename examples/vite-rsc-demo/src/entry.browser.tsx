@@ -477,10 +477,29 @@ async function initializeApp() {
     </React.StrictMode>
   );
 
-  // implement server HMR by triggering re-fetch/render of RSC upon server code change
+  // HMR support - handle both client and server module updates
   if (import.meta.hot) {
-    import.meta.hot.on("rsc:update", () => {
-      fetchPartialUpdate(location.href, []);
+    // // Before any module update, mark HMR as pending
+    // // This prevents useLoader from throwing errors during React Fast Refresh
+    // import.meta.hot.on("vite:beforeUpdate", () => {
+    //   console.log("[Browser] HMR: Module update starting, suspending loaders");
+    //   setHmrPending();
+    // });
+
+    // // After client-only updates complete, resolve pending state
+    // import.meta.hot.on("vite:afterUpdate", () => {
+    //   fetchPartialUpdate(location.href, []).then(() => {
+    //     console.log("[Browser] HMR: Client update complete, resuming loaders");
+    //     // setHmrComplete();
+    //   });
+    // });
+
+    // Server code changes trigger RSC refetch
+    import.meta.hot.on("rsc:update", async () => {
+      console.log("[Browser] HMR: Server update, refetching RSC");
+      setHmrPending();
+      await fetchPartialUpdate(location.href, []);
+      setHmrComplete();
     });
   }
 
