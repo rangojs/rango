@@ -82,3 +82,12 @@ export const protectedRoutes = route({
   dashboard: "/dashboard",
   profile: "/profile/:username",
 });
+
+/**
+ * Todos routes - demonstrates loaders, actions, and streaming
+ * Tests CRUD operations with server actions and optimistic updates
+ */
+export const todosRoutes = route({
+  index: "/",
+  detail: "/:id",
+});

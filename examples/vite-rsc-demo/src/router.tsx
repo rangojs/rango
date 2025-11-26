@@ -7,6 +7,7 @@ import {
   shopRoutes,
   adminRoutes,
   protectedRoutes,
+  todosRoutes,
 } from "./routes.js";
 
 /**
@@ -77,6 +78,9 @@ router
   .map(() => import("./handlers/admin.js"))
 
   .routes("/protected", protectedRoutes) // Protected - demonstrates middleware short-circuit
-  .map(() => import("./handlers/protected.js"));
+  .map(() => import("./handlers/protected.js"))
 
-console.log("[Router] Configured with 7 route groups (lazy-loaded handlers)");
+  .routes("/todos", todosRoutes) // Todos - demonstrates loaders, actions, streaming
+  .map(() => import("./handlers/todos.js"));
+
+console.log("[Router] Configured with 8 route groups (lazy-loaded handlers)");

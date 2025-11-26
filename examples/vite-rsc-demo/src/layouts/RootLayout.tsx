@@ -48,6 +48,7 @@ export function RootLayout() {
           <a href="/blog">Blog</a>
           <a href="/dashboard">Dashboard</a>
           <a href="/shop">Shop</a>
+          <a href="/todos">Todos</a>
         </nav>
         <DebugSegmentWrapper type="layout" name="Root">
           <DebugSegmentWrapper type="outlet" name="Root Outlet">

@@ -90,9 +90,7 @@ export function OutletProvider({
   );
 
   return (
-    <OutletContext.Provider value={value}>
-      {children}
-    </OutletContext.Provider>
+    <OutletContext.Provider value={value}>{children}</OutletContext.Provider>
   );
 }
 
@@ -148,7 +146,7 @@ export function useOutlet(): ReactNode {
  * }
  * ```
  */
-export function useLoader<T>(loader: LoaderDefinition<T>): T | undefined {
+export function useLoader<T>(loader: LoaderDefinition<T>): T {
   const context = useContext(OutletContext);
 
   // Walk up the context chain to find this loader's data
@@ -160,7 +158,9 @@ export function useLoader<T>(loader: LoaderDefinition<T>): T | undefined {
     current = current.parent;
   }
 
-  return undefined;
+  throw new Error(
+    `Loader data for "${loader.name}" not found in current outlet context. Make sure the loader is attached to this route or a parent layout.`
+  );
 }
 
 /**

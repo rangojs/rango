@@ -291,74 +291,23 @@ export function createRSCRouter<TEnv = any>(
   }
 
   /**
-   * Execute loaders for an entry and return loader segments
-   * Loaders run in PARALLEL for performance - use await ctx.use() for dependencies
-   *
-   * @param entry - The entry containing loader definitions
-   * @param ctx - Handler context (will have use() method set)
-   * @param loaderPromises - Request-scoped map of loader promises (for parallel execution)
-   * @param belongsToRoute - Whether these loaders belong to the matched route
-   * @returns Array of loader segments with resolved data
+   * Resolve loaders for an entry and emit segments
+   * Loaders are run lazily via ctx.use() and memoized for parallel execution
    */
   async function resolveLoaders(
     entry: EntryData,
     ctx: HandlerContext<any, TEnv>,
-    loaderPromises: Map<string, Promise<any>>,
     belongsToRoute: boolean
   ): Promise<ResolvedSegment[]> {
     const segments: ResolvedSegment[] = [];
     const loaderEntries = entry.loader ?? [];
 
-    // Start all loaders in parallel (don't await yet)
+    // For each loader, trigger via ctx.use() and create segment
     for (let i = 0; i < loaderEntries.length; i++) {
       const { loader } = loaderEntries[i];
 
-      // Skip if already started (memoization)
-      if (loaderPromises.has(loader.name)) {
-        continue;
-      }
-
-      // Ensure loader has a function (might be stripped on client)
-      if (!loader.fn) {
-        throw new Error(
-          `Loader "${loader.name}" has no function. This usually means the loader was defined without "use server" and the function was not included in the build.`
-        );
-      }
-
-      // Create loader context with async use() for parallel execution
-      const loaderCtx: LoaderContext<Record<string, string | undefined>, TEnv> = {
-        params: ctx.params,
-        request: ctx.request,
-        searchParams: ctx.searchParams,
-        pathname: ctx.pathname,
-        url: ctx.url,
-        env: ctx.env,
-        var: ctx.var,
-        get: ctx.get,
-        use: <T, TLoaderParams = any>(dep: LoaderDefinition<T, TLoaderParams>): Promise<T> => {
-          const promise = loaderPromises.get(dep.name);
-          if (!promise) {
-            throw new Error(
-              `Loader "${dep.name}" not available. Define it before "${loader.name}" in the handler chain.`
-            );
-          }
-          return promise as Promise<T>;
-        },
-      };
-
-      // Start loader execution with tracking (don't await - run in parallel)
-      const loaderName = loader.name;
-      const doneLoader = track(`loader:${loaderName}`);
-      const promise = Promise.resolve(loader.fn(loaderCtx)).finally(() => {
-        doneLoader();
-      });
-      loaderPromises.set(loader.name, promise);
-    }
-
-    // Wait for all loaders in this entry to complete and create segments
-    for (let i = 0; i < loaderEntries.length; i++) {
-      const { loader } = loaderEntries[i];
-      const data = await loaderPromises.get(loader.name);
+      // Trigger loader via ctx.use() (lazy execution with memoization)
+      const data = await ctx.use(loader);
 
       // Create loader segment
       segments.push({
@@ -378,19 +327,159 @@ export function createRSCRouter<TEnv = any>(
   }
 
   /**
-   * Set up the use() method on handler context to read from loader promises
+   * Result of resolving loaders with revalidation
+   * Contains both segments to render and all matched segment IDs
+   */
+  interface LoaderRevalidationResult {
+    segments: ResolvedSegment[];
+    matchedIds: string[];
+  }
+
+  /**
+   * Resolve loaders with revalidation awareness (for partial rendering)
+   * Checks each loader's revalidation functions before deciding to emit segment
+   * Loaders are run lazily via ctx.use() - this function only handles segment emission
+   * Returns both segments to render AND all matched segment IDs (including skipped ones)
+   */
+  async function resolveLoadersWithRevalidation(
+    entry: EntryData,
+    ctx: HandlerContext<any, TEnv>,
+    belongsToRoute: boolean,
+    clientSegmentIds: Set<string>,
+    prevParams: Record<string, string>,
+    request: Request,
+    prevUrl: URL,
+    nextUrl: URL,
+    routeKey: string,
+    actionContext?: {
+      actionId?: string;
+      actionUrl?: URL;
+      actionResult?: any;
+      formData?: FormData;
+    }
+  ): Promise<LoaderRevalidationResult> {
+    const segments: ResolvedSegment[] = [];
+    const matchedIds: string[] = [];
+    const loaderEntries = entry.loader ?? [];
+
+    for (let i = 0; i < loaderEntries.length; i++) {
+      const { loader, revalidate: loaderRevalidateFns } = loaderEntries[i];
+      const segmentId = `${entry.shortCode}D${i}.${loader.name}`;
+
+      // Always add to matchedIds - this loader is part of the page structure
+      matchedIds.push(segmentId);
+
+      // Check if we need to revalidate this loader
+      const shouldRevalidate = await revalidate(
+        async () => {
+          // New segment - always run
+          if (!clientSegmentIds.has(segmentId)) return true;
+
+          // Create dummy segment for evaluation
+          const dummySegment: ResolvedSegment = {
+            id: segmentId,
+            namespace: entry.id,
+            type: "loader",
+            index: i,
+            component: null,
+            params: ctx.params,
+            loaderName: loader.name,
+            belongsToRoute,
+          };
+
+          // Evaluate loader's revalidation functions
+          return await evaluateRevalidation(
+            dummySegment,
+            prevParams,
+            null,
+            request,
+            prevUrl,
+            nextUrl,
+            loaderRevalidateFns.map((fn, j) => ({
+              name: `loader-revalidate${j}`,
+              fn,
+            })),
+            routeKey,
+            ctx,
+            actionContext
+          );
+        },
+        async () => true, // Return true if should revalidate
+        () => false // Return false if should not revalidate
+      );
+
+      // Only emit segment to client if revalidation is needed
+      if (shouldRevalidate) {
+        // Trigger loader via ctx.use() (lazy execution with memoization)
+        const data = await ctx.use(loader);
+        segments.push({
+          id: segmentId,
+          namespace: entry.id,
+          type: "loader",
+          index: i,
+          component: null,
+          params: ctx.params,
+          loaderName: loader.name,
+          loaderData: data,
+          belongsToRoute,
+        });
+      }
+      // If shouldRevalidate is false, don't emit the segment
+      // But the ID is still in matchedIds so client knows to keep its cached data
+      // Loader will run lazily if any handler calls ctx.use(loader)
+    }
+
+    return { segments, matchedIds };
+  }
+
+  /**
+   * Set up the use() method on handler context to lazily run loaders
+   * Loaders are started on first call to ctx.use() and memoized for subsequent calls
    */
   function setupLoaderAccess(
     ctx: HandlerContext<any, TEnv>,
     loaderPromises: Map<string, Promise<any>>
   ): void {
     ctx.use = <T, TLoaderParams = any>(loader: LoaderDefinition<T, TLoaderParams>): Promise<T> => {
-      const promise = loaderPromises.get(loader.name);
-      if (!promise) {
+      // Return cached promise if already started
+      if (loaderPromises.has(loader.name)) {
+        return loaderPromises.get(loader.name) as Promise<T>;
+      }
+
+      // Ensure loader has a function
+      if (!loader.fn) {
         throw new Error(
-          `Loader "${loader.name}" not defined in scope. Make sure it's attached to a parent layout or the current route.`
+          `Loader "${loader.name}" has no function. This usually means the loader was defined without "use server" and the function was not included in the build.`
         );
       }
+
+      // Create loader context with recursive use() support
+      const loaderCtx: LoaderContext<Record<string, string | undefined>, TEnv> = {
+        params: ctx.params,
+        request: ctx.request,
+        searchParams: ctx.searchParams,
+        pathname: ctx.pathname,
+        url: ctx.url,
+        env: ctx.env,
+        var: ctx.var,
+        get: ctx.get,
+        use: <TDep, TDepParams = any>(dep: LoaderDefinition<TDep, TDepParams>): Promise<TDep> => {
+          // Recursive call - will start dep loader if not already started
+          return ctx.use(dep);
+        },
+      };
+
+      // Start loader execution with tracking
+      const doneLoader = track(`loader:${loader.name}`);
+      const promise = Promise.resolve(
+        loader.fn(loaderCtx as LoaderContext<TLoaderParams, TEnv>)
+      ).finally(() => {
+        doneLoader();
+      });
+
+      // Memoize for subsequent calls
+      loaderPromises.set(loader.name, promise);
+
       return promise as Promise<T>;
     };
   }
@@ -446,7 +535,6 @@ export function createRSCRouter<TEnv = any>(
       const loaderSegments = await resolveLoaders(
         entry,
         context,
-        loaderPromises,
         false // Parent chain layouts don't belong to specific route
       );
       segments.push(...loaderSegments);
@@ -517,7 +605,6 @@ export function createRSCRouter<TEnv = any>(
       const loaderSegments = await resolveLoaders(
         entry,
         context,
-        loaderPromises,
         true // Route loaders belong to the route
       );
       segments.push(...loaderSegments);
@@ -604,7 +691,6 @@ export function createRSCRouter<TEnv = any>(
     const loaderSegments = await resolveLoaders(
       orphan,
       context,
-      loaderPromises,
       true // Orphan loaders belong to the route
     );
 
@@ -651,8 +737,179 @@ export function createRSCRouter<TEnv = any>(
   }
 
   /**
+   * Result of resolving segments with revalidation
+   * Contains both segments to render and all matched segment IDs
+   */
+  interface SegmentRevalidationResult {
+    segments: ResolvedSegment[];
+    matchedIds: string[];
+  }
+
+  /**
+   * Action context type for revalidation
+   */
+  type ActionContext = {
+    actionId?: string;
+    actionUrl?: URL;
+    actionResult?: any;
+    formData?: FormData;
+  };
+
+  /**
+   * Helper: Resolve parallel segments with revalidation
+   * Extracted to reduce duplication between layout and route branches
+   */
+  async function resolveParallelSegmentsWithRevalidation(
+    entry: EntryData,
+    params: Record<string, string>,
+    context: HandlerContext<any, TEnv>,
+    belongsToRoute: boolean,
+    clientSegmentIds: Set<string>,
+    prevParams: Record<string, string>,
+    request: Request,
+    prevUrl: URL,
+    nextUrl: URL,
+    routeKey: string,
+    actionContext?: ActionContext
+  ): Promise<SegmentRevalidationResult> {
+    const segments: ResolvedSegment[] = [];
+    const matchedIds: string[] = [];
+
+    for (const parallelRecord of entry.parallel) {
+      for (const [slot, handler] of Object.entries(parallelRecord)) {
+        const parallelId = `${entry.shortCode}.${slot}`;
+
+        matchedIds.push(parallelId);
+
+        const component = await revalidate(
+          async () => {
+            if (!clientSegmentIds.has(parallelId)) return true;
+
+            const dummySegment: ResolvedSegment = {
+              id: parallelId,
+              namespace: entry.id,
+              type: "parallel",
+              index: 0,
+              component: null as any,
+              params,
+              slot,
+              belongsToRoute,
+              parallelName: `${entry.id}.${slot}`,
+            };
+
+            return await evaluateRevalidation(
+              dummySegment,
+              prevParams,
+              null,
+              request,
+              prevUrl,
+              nextUrl,
+              entry.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
+              routeKey,
+              context,
+              actionContext
+            );
+          },
+          async () => (typeof handler === "function" ? await handler(context) : handler),
+          () => null
+        );
+
+        segments.push({
+          id: parallelId,
+          namespace: entry.id,
+          type: "parallel",
+          index: 0,
+          component,
+          params,
+          slot,
+          belongsToRoute,
+          parallelName: `${entry.id}.${slot}`,
+        });
+      }
+    }
+
+    return { segments, matchedIds };
+  }
+
+  /**
+   * Helper: Resolve entry handler (layout or route) with revalidation
+   * Extracted to reduce duplication between layout and route branches
+   */
+  async function resolveEntryHandlerWithRevalidation(
+    entry: EntryData,
+    params: Record<string, string>,
+    context: HandlerContext<any, TEnv>,
+    belongsToRoute: boolean,
+    clientSegmentIds: Set<string>,
+    prevParams: Record<string, string>,
+    request: Request,
+    prevUrl: URL,
+    nextUrl: URL,
+    routeKey: string,
+    actionContext?: ActionContext
+  ): Promise<{ segment: ResolvedSegment; matchedId: string }> {
+    const matchedId = entry.shortCode;
+
+    const component = await revalidate(
+      async () => {
+        if (!clientSegmentIds.has(entry.shortCode)) return true;
+
+        const dummySegment: ResolvedSegment = {
+          id: entry.shortCode,
+          namespace: entry.id,
+          type: entry.type as "layout" | "route",
+          index: 0,
+          component: null as any,
+          params,
+          belongsToRoute,
+          ...(entry.type === "layout" ? { layoutName: entry.id } : {}),
+        };
+
+        return await evaluateRevalidation(
+          dummySegment,
+          prevParams,
+          null,
+          request,
+          prevUrl,
+          nextUrl,
+          entry.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
+          routeKey,
+          context,
+          actionContext
+        );
+      },
+      async () => {
+        if (entry.type === "layout") {
+          return typeof entry.handler === "function"
+            ? await entry.handler(context)
+            : entry.handler;
+        }
+        // entry.type === "route" - handler is always callable
+        return await (entry as Extract<EntryData, { type: "route" }>).handler(
+          context
+        );
+      },
+      () => null
+    );
+
+    const segment: ResolvedSegment = {
+      id: entry.shortCode,
+      namespace: entry.id,
+      type: entry.type as "layout" | "route",
+      index: 0,
+      component,
+      params,
+      belongsToRoute,
+      ...(entry.type === "layout" ? { layoutName: entry.id } : {}),
+    };
+
+    return { segment, matchedId };
+  }
+
+  /**
    * Resolve segments with revalidation awareness (for partial rendering)
    * Same as resolveSegment but conditionally executes handlers based on revalidation
+   * Returns both segments to render AND all matched segment IDs (including skipped ones)
    */
   async function resolveSegmentWithRevalidation(
     entry: EntryData,
@@ -664,289 +921,74 @@ export function createRSCRouter<TEnv = any>(
     request: Request,
     prevUrl: URL,
     nextUrl: URL,
-    loaderPromises: Map<string, Promise<any>>
-  ): Promise<ResolvedSegment[]> {
+    loaderPromises: Map<string, Promise<any>>,
+    actionContext?: ActionContext
+  ): Promise<SegmentRevalidationResult> {
     const segments: ResolvedSegment[] = [];
+    const matchedIds: string[] = [];
 
-    if (entry.type === "layout") {
-      // Step 1: Run layout middleware
-      if (entry.middleware.length > 0) {
-        const middlewareResponse = await executeMiddleware(
-          entry.middleware,
-          context,
-          entry.id
-        );
-        if (middlewareResponse) throw middlewareResponse;
-      }
+    const belongsToRoute = entry.type === "route";
 
-      // Step 2: Run layout loaders
-      const loaderSegments = await resolveLoaders(
-        entry,
-        context,
-        loaderPromises,
-        false // Parent chain layouts don't belong to specific route
-      );
-      segments.push(...loaderSegments);
-
-      // Step 3: Process and emit layout parallel segments with revalidation
-      for (const parallelRecord of entry.parallel) {
-        for (const [slot, handler] of Object.entries(parallelRecord)) {
-          const parallelId = `${entry.shortCode}.${slot}`;
-
-          const component = await revalidate(
-            async () => {
-              // New segment or needs revalidation
-              if (!clientSegmentIds.has(parallelId)) return true;
-
-              const dummySegment: ResolvedSegment = {
-                id: parallelId,
-                namespace: entry.id,
-                type: "parallel",
-                index: 0,
-                component: null as any,
-                params,
-                slot,
-                belongsToRoute: false, // Parent chain parallel
-                parallelName: `${entry.id}.${slot}`,
-              };
-
-              return await evaluateRevalidation(
-                dummySegment,
-                prevParams,
-                null,
-                request,
-                prevUrl,
-                nextUrl,
-                entry.revalidate.map((fn, i) => ({
-                  name: `revalidate${i}`,
-                  fn,
-                })),
-                routeKey,
-                context
-              );
-            },
-            async () =>
-              typeof handler === "function" ? await handler(context) : handler,
-            () => null
-          );
-
-          segments.push({
-            id: parallelId,
-            namespace: entry.id,
-            type: "parallel",
-            index: 0,
-            component,
-            params,
-            slot,
-            belongsToRoute: false, // Parent chain parallel
-            parallelName: `${entry.id}.${slot}`,
-          });
-        }
-      }
-
-      // Step 4: Execute layout handler with revalidation
-      const component = await revalidate(
-        async () => {
-          if (!clientSegmentIds.has(entry.shortCode)) return true;
-
-          const dummySegment: ResolvedSegment = {
-            id: entry.shortCode,
-            namespace: entry.id,
-            type: "layout",
-            index: 0,
-            component: null as any,
-            params,
-            belongsToRoute: false, // Parent chain layout
-            layoutName: entry.id,
-          };
-
-          return await evaluateRevalidation(
-            dummySegment,
-            prevParams,
-            null,
-            request,
-            prevUrl,
-            nextUrl,
-            entry.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
-            routeKey,
-            context
-          );
-        },
-        async () =>
-          typeof entry.handler === "function"
-            ? await entry.handler(context)
-            : entry.handler,
-        () => null
-      );
-
-      segments.push({
-        id: entry.shortCode,
-        namespace: entry.id,
-        type: "layout",
-        index: 0,
-        component,
-        params,
-        belongsToRoute: false, // Parent chain layout
-        layoutName: entry.id,
-      });
-
-      // Step 5: Process orphan layouts with revalidation
-      for (const orphan of entry.layout) {
-        const orphanSegments = await resolveOrphanLayoutWithRevalidation(
-          orphan,
-          params,
-          context,
-          clientSegmentIds,
-          prevParams,
-          request,
-          prevUrl,
-          nextUrl,
-          routeKey,
-          loaderPromises
-        );
-        segments.push(...orphanSegments);
-      }
-    } else if (entry.type === "route") {
-      // Step 1: Run route middleware
-      if (entry.middleware.length > 0) {
-        const middlewareResponse = await executeMiddleware(
-          entry.middleware,
-          context,
-          entry.id
-        );
-        if (middlewareResponse) throw middlewareResponse;
-      }
-
-      // Step 2: Run route loaders
-      const loaderSegments = await resolveLoaders(
-        entry,
-        context,
-        loaderPromises,
-        true // Route loaders belong to the route
-      );
-      segments.push(...loaderSegments);
-
-      // Step 3: Process orphan layouts first
-      for (const orphan of entry.layout) {
-        const orphanSegments = await resolveOrphanLayoutWithRevalidation(
-          orphan,
-          params,
-          context,
-          clientSegmentIds,
-          prevParams,
-          request,
-          prevUrl,
-          nextUrl,
-          routeKey,
-          loaderPromises
-        );
-        segments.push(...orphanSegments);
-      }
-
-      // Step 4: Process and emit route parallel segments with revalidation
-      for (const parallelRecord of entry.parallel) {
-        for (const [slot, handler] of Object.entries(parallelRecord)) {
-          const parallelId = `${entry.shortCode}.${slot}`;
-
-          const component = await revalidate(
-            async () => {
-              if (!clientSegmentIds.has(parallelId)) return true;
-
-              const dummySegment: ResolvedSegment = {
-                id: parallelId,
-                namespace: entry.id,
-                type: "parallel",
-                index: 0,
-                component: null as any,
-                params,
-                slot,
-                belongsToRoute: true, // Route's parallel
-                parallelName: `${entry.id}.${slot}`,
-              };
-
-              return await evaluateRevalidation(
-                dummySegment,
-                prevParams,
-                null,
-                request,
-                prevUrl,
-                nextUrl,
-                entry.revalidate.map((fn, i) => ({
-                  name: `revalidate${i}`,
-                  fn,
-                })),
-                routeKey,
-                context
-              );
-            },
-            async () =>
-              typeof handler === "function" ? await handler(context) : handler,
-            () => null
-          );
-
-          segments.push({
-            id: parallelId,
-            namespace: entry.id,
-            type: "parallel",
-            index: 0,
-            component,
-            params,
-            slot,
-            belongsToRoute: true, // Route's parallel
-            parallelName: `${entry.id}.${slot}`,
-          });
-        }
-      }
-
-      // Step 5: Execute route handler with revalidation
-      const component = await revalidate(
-        async () => {
-          if (!clientSegmentIds.has(entry.shortCode)) return true;
-
-          const dummySegment: ResolvedSegment = {
-            id: entry.shortCode,
-            namespace: entry.id,
-            type: "route",
-            index: 0,
-            component: null as any,
-            params,
-            belongsToRoute: true, // Route always belongs to itself
-          };
-
-          return await evaluateRevalidation(
-            dummySegment,
-            prevParams,
-            null,
-            request,
-            prevUrl,
-            nextUrl,
-            entry.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
-            routeKey,
-            context
-          );
-        },
-        async () => await entry.handler(context),
-        () => null
-      );
-
-      segments.push({
-        id: entry.shortCode,
-        namespace: entry.id,
-        type: "route",
-        index: 0,
-        component,
-        params,
-        belongsToRoute: true, // Route always belongs to itself
-      });
-    } else {
-      throw new Error(`Unknown entry type: ${(entry as any).type}`);
+    // Step 1: Run middleware (same for both layout and route)
+    if (entry.middleware.length > 0) {
+      const response = await executeMiddleware(entry.middleware, context, entry.id);
+      if (response) throw response;
     }
 
-    return segments;
+    // Step 2: Run loaders with revalidation
+    const loaderResult = await resolveLoadersWithRevalidation(
+      entry, context, belongsToRoute,
+      clientSegmentIds, prevParams, request, prevUrl, nextUrl, routeKey, actionContext
+    );
+    segments.push(...loaderResult.segments);
+    matchedIds.push(...loaderResult.matchedIds);
+
+    // Step 3: Process orphan layouts (for routes, these come before parallels)
+    if (entry.type === "route") {
+      for (const orphan of entry.layout) {
+        const orphanResult = await resolveOrphanLayoutWithRevalidation(
+          orphan, params, context, clientSegmentIds, prevParams,
+          request, prevUrl, nextUrl, routeKey, loaderPromises, actionContext
+        );
+        segments.push(...orphanResult.segments);
+        matchedIds.push(...orphanResult.matchedIds);
+      }
+    }
+
+    // Step 4: Process parallel segments
+    const parallelResult = await resolveParallelSegmentsWithRevalidation(
+      entry, params, context, belongsToRoute,
+      clientSegmentIds, prevParams, request, prevUrl, nextUrl, routeKey, actionContext
+    );
+    segments.push(...parallelResult.segments);
+    matchedIds.push(...parallelResult.matchedIds);
+
+    // Step 5: Process orphan layouts (for layouts, these come after parallels)
+    if (entry.type === "layout") {
+      for (const orphan of entry.layout) {
+        const orphanResult = await resolveOrphanLayoutWithRevalidation(
+          orphan, params, context, clientSegmentIds, prevParams,
+          request, prevUrl, nextUrl, routeKey, loaderPromises, actionContext
+        );
+        segments.push(...orphanResult.segments);
+        matchedIds.push(...orphanResult.matchedIds);
+      }
+    }
+
+    // Step 6: Execute main handler with revalidation
+    const handlerResult = await resolveEntryHandlerWithRevalidation(
+      entry, params, context, belongsToRoute,
+      clientSegmentIds, prevParams, request, prevUrl, nextUrl, routeKey, actionContext
+    );
+    segments.push(handlerResult.segment);
+    matchedIds.push(handlerResult.matchedId);
+
+    return { segments, matchedIds };
   }
 
   /**
    * Helper: Resolve orphan layout with revalidation
+   * Returns both segments to render AND all matched segment IDs (including skipped ones)
    */
   async function resolveOrphanLayoutWithRevalidation(
     orphan: EntryData,
@@ -958,12 +1000,21 @@ export function createRSCRouter<TEnv = any>(
     prevUrl: URL,
     nextUrl: URL,
     routeKey: string,
-    loaderPromises: Map<string, Promise<any>>
-  ): Promise<ResolvedSegment[]> {
+    loaderPromises: Map<string, Promise<any>>,
+    actionContext?: {
+      actionId?: string;
+      actionUrl?: URL;
+      actionResult?: any;
+      formData?: FormData;
+    }
+  ): Promise<SegmentRevalidationResult> {
     invariant(
       orphan.type === "layout",
       `Expected orphan to be a layout, got: ${orphan.type}`
     );
+
+    const segments: ResolvedSegment[] = [];
+    const matchedIds: string[] = [];
 
     // Step 1: Run orphan middleware
     if (orphan.middleware.length > 0) {
@@ -975,19 +1026,29 @@ export function createRSCRouter<TEnv = any>(
       if (middlewareResponse) throw middlewareResponse;
     }
 
-    // Step 2: Run orphan loaders
-    const loaderSegments = await resolveLoaders(
+    // Step 2: Run orphan loaders with revalidation
+    const loaderResult = await resolveLoadersWithRevalidation(
       orphan,
       context,
-      loaderPromises,
-      true // Orphan loaders belong to the route
+      true, // Orphan loaders belong to the route
+      clientSegmentIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      routeKey,
+      actionContext
     );
+    segments.push(...loaderResult.segments);
+    matchedIds.push(...loaderResult.matchedIds);
 
     // Step 3: Process and emit orphan parallel segments with revalidation
-    const segments: ResolvedSegment[] = [...loaderSegments];
     for (const parallelRecord of orphan.parallel) {
       for (const [slot, handler] of Object.entries(parallelRecord)) {
         const parallelId = `${orphan.shortCode}.${slot}`;
+
+        // Always add to matchedIds
+        matchedIds.push(parallelId);
 
         const component = await revalidate(
           async () => {
@@ -1017,7 +1078,8 @@ export function createRSCRouter<TEnv = any>(
                 fn,
               })),
               routeKey,
-              context
+              context,
+              actionContext
             );
           },
           async () =>
@@ -1040,6 +1102,9 @@ export function createRSCRouter<TEnv = any>(
     }
 
     // Step 4: Execute orphan handler with revalidation
+    // Always add orphan layout ID to matchedIds
+    matchedIds.push(orphan.shortCode);
+
     const component = await revalidate(
       async () => {
         if (!clientSegmentIds.has(orphan.shortCode)) return true;
@@ -1064,7 +1129,8 @@ export function createRSCRouter<TEnv = any>(
           nextUrl,
           orphan.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
           routeKey,
-          context
+          context,
+          actionContext
         );
       },
       async () =>
@@ -1085,7 +1151,7 @@ export function createRSCRouter<TEnv = any>(
       layoutName: orphan.id,
     });
 
-    return segments;
+    return { segments, matchedIds };
   }
 
   /**
@@ -1341,7 +1407,10 @@ export function createRSCRouter<TEnv = any>(
         routeName: routeKey, // User-friendly route name (e.g., "products.detail")
       });
 
-      // Check return type: boolean (hard), object (soft), or null/undefined (defer)
+      // Check return type:
+      // - boolean: hard decision, short-circuit immediately
+      // - { defaultShouldRevalidate: boolean }: soft decision, update suggestion and continue
+      // - null/undefined: use default behavior (equivalent to returning { defaultShouldRevalidate })
       if (typeof result === "boolean") {
         // Hard decision - short-circuit
         console.log(
@@ -1358,13 +1427,19 @@ export function createRSCRouter<TEnv = any>(
         console.log(
           `[Router.evaluateRevalidation] ${segment.id}: REVALIDATE (${name}) SOFT: ${currentSuggestion}`
         );
+      } else if (result === null || result === undefined) {
+        // Defer to default - equivalent to { defaultShouldRevalidate: currentSuggestion }
+        // This means "I don't care, use whatever the default is"
+        console.log(
+          `[Router.evaluateRevalidation] ${segment.id}: REVALIDATE (${name}) DEFER to default: ${currentSuggestion}`
+        );
+        // currentSuggestion stays the same, continue to next function
       }
-      // null/undefined - defer to current suggestion, continue to next function
     }
 
-    // All revalidators returned soft decisions - use final suggestion
+    // All revalidators completed - use final suggestion
     console.log(
-      `[Router.evaluateRevalidation] ${segment.id}: All SOFT decisions - final: ${currentSuggestion}`
+      `[Router.evaluateRevalidation] ${segment.id}: Final decision: ${currentSuggestion}`
     );
     return currentSuggestion;
   }
@@ -1473,15 +1548,17 @@ export function createRSCRouter<TEnv = any>(
       }
 
       // Collect all segments with revalidation-aware rendering (run within store context for metrics tracking)
-      const segments: ResolvedSegment[] = await getContext().runWithStore(
+      // Now returns both segments to render AND all matched IDs (including skipped loaders)
+      const result = await getContext().runWithStore(
         Store,
         Store.namespace || "#router",
         Store.parent,
         async () => {
           const segs: ResolvedSegment[] = [];
+          const matchedIds: string[] = [];
           for (const entry of traverseBack(manifestEntry)) {
             // Resolve entry into segments with revalidation checks
-            const resolvedSegments = await resolveSegmentWithRevalidation(
+            const resolved = await resolveSegmentWithRevalidation(
               entry,
               matched.routeKey,
               matched.params,
@@ -1491,16 +1568,18 @@ export function createRSCRouter<TEnv = any>(
               request,
               prevUrl,
               url,
-              loaderPromises
+              loaderPromises,
+              actionContext
             );
 
-            segs.push(...resolvedSegments);
+            segs.push(...resolved.segments);
+            matchedIds.push(...resolved.matchedIds);
           }
-          return segs;
+          return { segments: segs, matchedIds };
         }
       );
 
-      const segmentIds = segments.map((s) => s.id);
+      const { segments, matchedIds: allMatchedIds } = result;
 
       // Filter out segments with null components (client already has them)
       // BUT always include loader segments - they carry data even with null component
@@ -1517,7 +1596,7 @@ export function createRSCRouter<TEnv = any>(
 
       return {
         segments: segmentsToRender,
-        matched: segmentIds,
+        matched: allMatchedIds, // Use the complete matched IDs including skipped loaders
         diff: segmentsToRender.map((s) => s.id),
         serverTiming,
       };
