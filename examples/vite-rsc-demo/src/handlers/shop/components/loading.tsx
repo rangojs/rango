@@ -5,8 +5,10 @@ export const LoadingSpinner = () => {
   const state = useNavigation((nav) => nav.state);
   const isStreaming = useNavigation((nav) => nav.isStreaming);
   const isLoading = state === "loading";
-
-  console.log("loading:", { isLoading, isStreaming });
+  const isLoadingOrStreaming = useNavigation(
+    (nav) => nav.state === "loading" || nav.isStreaming
+  );
+  console.log("loading:", { isLoadingOrStreaming, isLoading, isStreaming });
 
   return (
     <div

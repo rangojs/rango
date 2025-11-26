@@ -113,6 +113,42 @@ export function NavigationProvider({
     return unsubscribe;
   }, [store]);
 
+  // Track initial RSC stream completion (runs after hydration is complete)
+  useEffect(() => {
+    // Check if the initial stream is still open
+    // The rsc-html-stream closes on DOMContentLoaded
+    if (
+      document.readyState === "complete" ||
+      document.readyState === "interactive"
+    ) {
+      // DOMContentLoaded already fired - stream is closed, keep isStreaming: false
+      console.log(
+        "[Browser] Initial stream already complete (DOMContentLoaded already fired)"
+      );
+    } else {
+      // Stream is still open - set isStreaming: true now (after hydration)
+      store.setState({ isStreaming: true });
+      console.log("[Browser] RSC stream still open, tracking completion...");
+
+      // Wait for DOMContentLoaded to mark stream as complete
+      const handleDOMContentLoaded = () => {
+        store.setState({ isStreaming: false });
+        console.log("[Browser] Initial stream complete (DOMContentLoaded)");
+      };
+
+      document.addEventListener("DOMContentLoaded", handleDOMContentLoaded, {
+        once: true,
+      });
+
+      return () => {
+        document.removeEventListener(
+          "DOMContentLoaded",
+          handleDOMContentLoaded
+        );
+      };
+    }
+  }, [store]);
+
   return (
     <NavigationStoreContext.Provider value={contextValue}>
       {children ?? payload.root}

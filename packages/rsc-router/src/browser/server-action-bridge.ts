@@ -174,13 +174,19 @@ export function createServerActionBridge(
     const segmentState = store.getSegmentState();
     console.log(`[Browser] Args:`, args);
 
-    // Set navigation state to submitting
-    store.setState({
-      state: "submitting",
-      isStreaming: true,
+    // Generate unique ID for this action invocation
+    const actionInvocationId = `${id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+    // Track this action as inflight
+    store.addInflightAction({
+      id: actionInvocationId,
       actionId: id,
-      actionPayload: args,
+      payload: args,
+      startedAt: Date.now(),
     });
+
+    // Set streaming state
+    store.setState({ isStreaming: true });
 
     // Create temporary references for serialization
     const temporaryReferences = deps.createTemporaryReferenceSet();
@@ -203,7 +209,13 @@ export function createServerActionBridge(
       `[Browser] Current segments: ${segmentState.currentSegmentIds.join(", ")}`
     );
 
-    // Send action request
+    // Track when the stream completes
+    let resolveStreamComplete: () => void;
+    const streamComplete = new Promise<void>((resolve) => {
+      resolveStreamComplete = resolve;
+    });
+
+    // Send action request with stream tracking
     const responsePromise = fetch(url, {
       method: "POST",
       headers: {
@@ -211,6 +223,38 @@ export function createServerActionBridge(
         "X-RSC-Router-Client-Path": segmentState.currentUrl,
       },
       body: encodedBody,
+    }).then(async (response) => {
+      if (!response.body) {
+        // No body means stream is already complete
+        resolveStreamComplete!();
+        return response;
+      }
+
+      // Tee the stream: one for RSC runtime, one for tracking completion
+      const [rscStream, trackingStream] = response.body.tee();
+
+      // Consume the tracking stream to detect when it closes
+      (async () => {
+        const reader = trackingStream.getReader();
+        try {
+          
+          while (true) {
+            const { done ,value} = await reader.read();
+            if (done) break;
+          }
+          await reader.closed
+        } finally {
+          
+          resolveStreamComplete!();
+        }
+      })();
+
+      // Return response with the RSC stream
+      return new Response(rscStream, {
+        headers: response.headers,
+        status: response.status,
+        statusText: response.statusText,
+      });
     });
 
     // Deserialize response (MUST use same temporaryReferences)
@@ -285,6 +329,12 @@ export function createServerActionBridge(
         await fetchPartialUpdate(window.location.href, []);
         console.log(`[Browser] Refetch complete, now returning action result`);
 
+        // Wait for stream to complete before resetting state
+        await streamComplete;
+        // Remove from inflight actions and reset streaming
+        store.removeInflightAction(actionInvocationId);
+        store.setState({ isStreaming: false });
+
         // Return action result AFTER UI is refreshed
         if (savedReturnValue && !savedReturnValue.ok) {
           throw savedReturnValue.data;
@@ -305,18 +355,18 @@ export function createServerActionBridge(
       const returnData = returnValue?.data;
 
       if (returnValue && !returnValue.ok) {
-        // Reset navigation state on error
-        store.setState({
-          state: "idle",
-          isStreaming: false,
-          actionId: null,
-          actionPayload: null,
-          actionData: returnValue.data,
-        });
+        // Wait for stream to complete before resetting state
+        await streamComplete;
+        // Remove from inflight actions and reset streaming
+        store.removeInflightAction(actionInvocationId);
+        store.setState({ isStreaming: false });
         throw returnValue.data;
       }
 
       if (abortController.signal.aborted) {
+        await streamComplete;
+        store.removeInflightAction(actionInvocationId);
+        store.setState({ isStreaming: false });
         console.log(`[Browser] Action aborted - skipping UI update`);
         return returnData;
       }
@@ -324,28 +374,22 @@ export function createServerActionBridge(
       // Prepare new tree
       const newTree = renderSegments(fullSegments);
 
+      // Wait for stream to complete before updating UI
+      await streamComplete;
+
       if (!abortController.signal.aborted) {
-        // Reset navigation state on success
-        store.setState({
-          state: "idle",
-          isStreaming: false,
-          actionId: null,
-          actionPayload: null,
-          actionData: returnData,
-        });
+        // Remove from inflight actions and reset streaming
+        store.removeInflightAction(actionInvocationId);
+        store.setState({ isStreaming: false });
 
         onUpdate({ root: newTree, metadata: metadata! });
         console.log(
           `[Browser] Action complete - UI updated (after action state committed)`
         );
       } else {
-        // Reset navigation state on abort
-        store.setState({
-          state: "idle",
-          isStreaming: false,
-          actionId: null,
-          actionPayload: null,
-        });
+        // Remove from inflight actions on abort
+        store.removeInflightAction(actionInvocationId);
+        store.setState({ isStreaming: false });
         console.log(`[Browser] Action aborted - skipping UI update`);
       }
 

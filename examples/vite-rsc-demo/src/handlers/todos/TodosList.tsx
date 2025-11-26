@@ -27,8 +27,10 @@ export function TodosIndexContent({ serverValue }: { serverValue?: string }) {
   const data = useLoader(TodosLoader);
   const state = useNavigation((nav) => nav.state);
   const isStreaming = useNavigation((nav) => nav.isStreaming);
+  const inflightActions = useNavigation((nav) => nav.inflightActions);
   const isLoading = state === "loading";
-  console.log("state ", state, " isStreaming ", isStreaming);
+  const hasInflightActions = inflightActions.length > 0;
+  console.log("state ", state, " isStreaming ", isStreaming, " inflightActions ", inflightActions.length);
 
   return (
     <DebugSegmentWrapper type="route" name="Todos Index">
@@ -51,6 +53,7 @@ export function TodosIndexContent({ serverValue }: { serverValue?: string }) {
           </p>
           {isLoading && <p>Loading...</p>}
           {isStreaming && <p>Streaming...</p>}
+          {hasInflightActions && <p>Actions pending: {inflightActions.length}</p>}
         </div>
 
         <AddTodoForm />

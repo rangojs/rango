@@ -7,6 +7,7 @@ import type {
   UpdateSubscriber,
   StateListener,
   ResolvedSegment,
+  InflightAction,
 } from "./types.js";
 
 /**
@@ -96,9 +97,7 @@ export function createNavigationStore(
       : defaultLocation,
     formData: null,
     formAction: null,
-    actionId: null,
-    actionPayload: null,
-    actionData: null,
+    inflightActions: [],
   };
 
   // Internal segment state (for partial updates)
@@ -151,6 +150,32 @@ export function createNavigationStore(
       return () => {
         stateListeners.delete(listener);
       };
+    },
+
+    // ========================================================================
+    // Inflight Action Management
+    // ========================================================================
+
+    /**
+     * Add an inflight action to the list
+     */
+    addInflightAction(action: InflightAction): void {
+      navState = {
+        ...navState,
+        inflightActions: [...navState.inflightActions, action],
+      };
+      notifyStateListeners();
+    },
+
+    /**
+     * Remove an inflight action by ID
+     */
+    removeInflightAction(id: string): void {
+      navState = {
+        ...navState,
+        inflightActions: navState.inflightActions.filter((a) => a.id !== id),
+      };
+      notifyStateListeners();
     },
 
     // ========================================================================

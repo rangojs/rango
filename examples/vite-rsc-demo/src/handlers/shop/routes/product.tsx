@@ -20,6 +20,7 @@ import {
 } from "@/handlers/shop/components.js";
 import { ProductLoader, CartLoader } from "@/handlers/shop/loaders/index.js";
 import { FeaturedProducts } from "@/components/FeaturedProducts.js";
+import { LoadingSpinner } from "../components/loading";
 
 // ==================== PRODUCT ROUTES ====================
 
@@ -76,6 +77,8 @@ export const ProductsCategoryRoute: RouteHandler<
               gap: "1rem",
             }}
           >
+            <LoadingSpinner />
+
             {categoryProducts.map((product) => (
               <ProductCard key={product.id} product={product} />
             ))}
@@ -114,7 +117,7 @@ export const ProductsDetailRoute: RouteHandler<
             <h2>{product.name}</h2>
             <p>${product.price}</p>
             <p>{product.description}</p>
-
+            <LoadingSpinner />
             <div style={{ marginTop: "1rem" }}>
               <h3>Add to Cart - Tests multiple server action patterns</h3>
 
