@@ -497,7 +497,7 @@ async function initializeApp() {
     // Server code changes trigger RSC refetch
     import.meta.hot.on("rsc:update", async () => {
       console.log("[Browser] HMR: Server update, refetching RSC");
-      setHmrPending();
+
       await fetchPartialUpdate(location.href, []);
     });
   }
