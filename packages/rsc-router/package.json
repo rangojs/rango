@@ -18,6 +18,10 @@
       "react-server": "./src/client.rsc.tsx",
       "types": "./src/client.tsx",
       "default": "./src/client.tsx"
+    },
+    "./browser": {
+      "types": "./src/browser/index.ts",
+      "default": "./src/browser/index.ts"
     }
   },
   "files": [
