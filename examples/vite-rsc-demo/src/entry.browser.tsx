@@ -499,7 +499,6 @@ async function initializeApp() {
       console.log("[Browser] HMR: Server update, refetching RSC");
       setHmrPending();
       await fetchPartialUpdate(location.href, []);
-      setHmrComplete();
     });
   }
 
