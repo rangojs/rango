@@ -5,6 +5,7 @@ import { TodosLoader } from "./loader.js";
 import { DebugSegmentWrapper } from "../../components/DebugSegmentWrapper.js";
 import { SegmentTimer } from "../../components/SegmentTimer.js";
 import { AddTodoForm, TodoItem, TodoStats } from "./components.js";
+import { useNavigation } from "rsc-router/browser";
 
 export function TodosCount() {
   const data = useLoader(TodosLoader);
@@ -24,7 +25,8 @@ export function TodosCount() {
 
 export function TodosIndexContent({ serverValue }: { serverValue?: string }) {
   const data = useLoader(TodosLoader);
-
+  const state = useNavigation((nav) => nav.state);
+  const isLoading = state === "loading";
   return (
     <DebugSegmentWrapper type="route" name="Todos Index">
       <div style={{ maxWidth: "600px", margin: "0 auto" }}>
@@ -44,6 +46,7 @@ export function TodosIndexContent({ serverValue }: { serverValue?: string }) {
             updates. Add, edit, toggle, and delete todos - all powered by server
             actions with automatic revalidation.
           </p>
+          {isLoading && <p>Loading...</p>}
         </div>
 
         <AddTodoForm />

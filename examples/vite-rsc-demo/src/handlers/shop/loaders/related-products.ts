@@ -1,4 +1,4 @@
-import { createLoader } from "rsc-router/client";
+import { createLoader } from "rsc-router/loader";
 import { products } from "../data.js";
 import { ProductLoader } from "./product.js";
 

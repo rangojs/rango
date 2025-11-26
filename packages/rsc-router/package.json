@@ -19,6 +19,11 @@
       "types": "./src/client.tsx",
       "default": "./src/client.tsx"
     },
+    "./loader": {
+      "react-server": "./src/loader.rsc.ts",
+      "types": "./src/loader.ts",
+      "default": "./src/loader.ts"
+    },
     "./browser": {
       "types": "./src/browser/index.ts",
       "default": "./src/browser/index.ts"

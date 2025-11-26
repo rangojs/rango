@@ -1,4 +1,4 @@
-import { createLoader } from "rsc-router/client";
+import { createLoader } from "rsc-router/loader";
 
 export type User = {
   id: string;
