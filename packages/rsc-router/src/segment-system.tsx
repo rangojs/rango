@@ -35,7 +35,6 @@ export function renderSegments(segments: ResolvedSegment[]): ReactNode {
   const tree = segmentTreeWalk(segments);
   // Render content segments as siblings
   let content: ReactNode = null;
-  let position = 0;
   for (const node of tree) {
     invariant(
       node.segment.type === "layout" || node.segment.type === "route",
@@ -60,7 +59,7 @@ export function renderSegments(segments: ResolvedSegment[]): ReactNode {
             .map(([k, v]) => `${k}=${v}`)
             .join(",")
         : "";
-    const key = `${position++}-${paramStr ? `${id}-${paramStr}` : id}`;
+    const key = `${paramStr ? `${id}-${paramStr}` : id}`;
 
     console.log("node > ", { key, node });
 
@@ -141,6 +140,17 @@ function* segmentTreeWalk(segments: ResolvedSegment[]): Generator<{
       nonParallels.push(segment);
     }
   }
+
+  // Sort segments by ID to ensure consistent root-to-leaf ordering
+  // regardless of the order they arrive in the input array (which can differ
+  // between document requests and actions)
+  // Shorter IDs come first (closer to root), same length sorted lexicographically
+  nonParallels.sort((a, b) => {
+    if (a.id.length !== b.id.length) {
+      return a.id.length - b.id.length;
+    }
+    return a.id.localeCompare(b.id);
+  });
 
   // Iterate bottom-to-top using reverse() to process leaf segments first
   // This processes route/leaf layouts first, then parent layouts
