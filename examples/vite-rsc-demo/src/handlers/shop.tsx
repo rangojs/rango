@@ -92,9 +92,7 @@ export default map<typeof shopRoutes>(
         // CartLoader: cart data for header badge, cart page, checkout
         // Revalidates when cart actions are performed
         loader(CartLoader, () => [
-          revalidate(({ actionId }) =>
-            actionId?.startsWith("cart:") ?? false
-          ),
+          revalidate(({ actionId }) => actionId?.startsWith("cart:") ?? false),
         ]),
         // CategoriesLoader: product categories for navigation
         loader(CategoriesLoader),
@@ -142,8 +140,8 @@ export default map<typeof shopRoutes>(
           // ProductLoader fetches the specific product by slug
           // RelatedProductsLoader depends on ProductLoader to get related items
           route("products.detail.view", ProductsDetailRoute, () => [
-            loader(ProductLoader),
-            loader(RelatedProductsLoader),
+            loader(ProductLoader, () => [revalidate(() => false)]),
+            loader(RelatedProductsLoader, () => [revalidate(() => false)]),
             revalidate(productDetailRevalidation),
 
             parallel({
