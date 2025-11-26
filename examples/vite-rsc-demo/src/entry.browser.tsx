@@ -100,12 +100,32 @@ async function initializeApp() {
 
   console.log("[Browser] Hydrated\n");
 
+  // Track when initial RSC stream completes
+  // The rsc-html-stream closes on DOMContentLoaded
+  // We set isStreaming: true AFTER hydration to avoid hydration mismatch
+  if (document.readyState === "complete" || document.readyState === "interactive") {
+    // DOMContentLoaded already fired - stream is already closed, keep isStreaming: false
+    console.log("[Browser] Initial stream already complete (DOMContentLoaded already fired)");
+  } else {
+    // Stream is still open - set isStreaming: true now (after hydration)
+    store.setState({ isStreaming: true });
+    console.log("[Browser] RSC stream still open, tracking completion...");
+
+    // Wait for DOMContentLoaded to mark stream as complete
+    document.addEventListener("DOMContentLoaded", () => {
+      store.setState({ isStreaming: false });
+      console.log("[Browser] Initial stream complete (DOMContentLoaded)");
+    }, { once: true });
+  }
+
   // HMR support
   if (import.meta.hot) {
     import.meta.hot.on("rsc:update", async () => {
       console.log("[Browser] HMR: Server update, refetching RSC");
+      store.setState({ isStreaming: true });
+
       // Refetch with empty segments to get everything fresh
-      const payload = await client.fetchPartial({
+      const { payload, streamComplete } = await client.fetchPartial({
         targetUrl: window.location.href,
         segmentIds: [],
         previousUrl: store.getSegmentState().currentUrl,
@@ -125,6 +145,11 @@ async function initializeApp() {
           metadata: payload.metadata,
         });
       }
+
+      // Wait for RSC stream to fully close
+      await streamComplete;
+      store.setState({ isStreaming: false });
+      console.log("[Browser] HMR: RSC stream complete");
     });
   }
 }

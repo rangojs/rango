@@ -42,12 +42,13 @@ export function createServerActionBridge(
 
   /**
    * Fetch partial update for HMR recovery or navigation
+   * Returns a promise that resolves when the RSC stream is fully consumed
    */
   async function fetchPartialUpdate(
     targetUrl: string,
     segmentIds: string[],
     isRetry = false
-  ): Promise<void> {
+  ): Promise<Promise<void>> {
     const segmentState = store.getSegmentState();
     const url = targetUrl || window.location.href;
     const segments = segmentIds ?? segmentState.currentSegmentIds;
@@ -61,7 +62,7 @@ export function createServerActionBridge(
     store.setPath(new URL(url).pathname);
 
     // Fetch partial payload
-    const payload = await client.fetchPartial({
+    const { payload, streamComplete } = await client.fetchPartial({
       targetUrl: url,
       segmentIds: segments,
       previousUrl: segmentState.currentUrl,
@@ -81,7 +82,7 @@ export function createServerActionBridge(
         store.setCurrentUrl(url);
         store.setPath(new URL(url).pathname);
         console.log(`[Browser] Navigation complete (no re-render)\n`);
-        return;
+        return streamComplete;
       }
 
       // Update stored segments with new ones
@@ -138,6 +139,7 @@ export function createServerActionBridge(
       });
 
       console.log(`[Browser] Navigation complete\n`);
+      return streamComplete;
     } else {
       // Full update (fallback)
       console.warn(`[Browser] Full update (fallback)`);
@@ -151,6 +153,7 @@ export function createServerActionBridge(
         root: payload.root,
         metadata: payload.metadata!,
       });
+      return streamComplete;
     }
   }
 
@@ -174,6 +177,7 @@ export function createServerActionBridge(
     // Set navigation state to submitting
     store.setState({
       state: "submitting",
+      isStreaming: true,
       actionId: id,
       actionPayload: args,
     });
@@ -304,6 +308,7 @@ export function createServerActionBridge(
         // Reset navigation state on error
         store.setState({
           state: "idle",
+          isStreaming: false,
           actionId: null,
           actionPayload: null,
           actionData: returnValue.data,
@@ -323,6 +328,7 @@ export function createServerActionBridge(
         // Reset navigation state on success
         store.setState({
           state: "idle",
+          isStreaming: false,
           actionId: null,
           actionPayload: null,
           actionData: returnData,
@@ -336,6 +342,7 @@ export function createServerActionBridge(
         // Reset navigation state on abort
         store.setState({
           state: "idle",
+          isStreaming: false,
           actionId: null,
           actionPayload: null,
         });

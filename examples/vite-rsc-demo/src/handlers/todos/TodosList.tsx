@@ -26,7 +26,10 @@ export function TodosCount() {
 export function TodosIndexContent({ serverValue }: { serverValue?: string }) {
   const data = useLoader(TodosLoader);
   const state = useNavigation((nav) => nav.state);
+  const isStreaming = useNavigation((nav) => nav.isStreaming);
   const isLoading = state === "loading";
+  console.log("state ", state, " isStreaming ", isStreaming);
+
   return (
     <DebugSegmentWrapper type="route" name="Todos Index">
       <div style={{ maxWidth: "600px", margin: "0 auto" }}>
@@ -47,6 +50,7 @@ export function TodosIndexContent({ serverValue }: { serverValue?: string }) {
             actions with automatic revalidation.
           </p>
           {isLoading && <p>Loading...</p>}
+          {isStreaming && <p>Streaming...</p>}
         </div>
 
         <AddTodoForm />

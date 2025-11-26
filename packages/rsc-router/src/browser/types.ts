@@ -55,6 +55,9 @@ export interface NavigationState {
   /** Navigation lifecycle state */
   state: "idle" | "loading" | "submitting";
 
+  /** Whether RSC data is currently streaming (initial load or navigation) */
+  isStreaming: boolean;
+
   /** Current location (updated optimistically) */
   location: NavigationLocation;
 
@@ -196,10 +199,19 @@ export interface FetchPartialOptions {
 }
 
 /**
+ * Result of a partial fetch including stream completion tracking
+ */
+export interface FetchPartialResult {
+  payload: RscPayload;
+  /** Promise that resolves when the response stream is fully consumed */
+  streamComplete: Promise<void>;
+}
+
+/**
  * Navigation client for fetching RSC payloads
  */
 export interface NavigationClient {
-  fetchPartial(options: FetchPartialOptions): Promise<RscPayload>;
+  fetchPartial(options: FetchPartialOptions): Promise<FetchPartialResult>;
 }
 
 // ============================================================================
