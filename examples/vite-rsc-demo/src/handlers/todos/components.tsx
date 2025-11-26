@@ -7,7 +7,7 @@ import {
   toggleTodo,
   deleteTodo,
   updateTodo,
-  clearCompleted,
+  clearCompletedTodos,
 } from "./actions.js";
 import { flushSync } from "react-dom";
 const actionAddTodo = addTodo;
@@ -122,7 +122,10 @@ export function AddTodoForm() {
   async function handleSubmit(formData: FormData) {
     const title = formData.get("title") as string;
 
-    if (!title?.trim()) return;
+    if (!title?.trim()) {
+      inputRef.current?.focus({ preventScroll: true });
+      return;
+    }
 
     startTransition(async () => {
       console.log("addd", actionAddTodo.name);
@@ -257,7 +260,7 @@ export function TodoStats({
 
   function handleClearCompleted() {
     startTransition(async () => {
-      await clearCompleted();
+      await clearCompletedTodos();
     });
   }
 

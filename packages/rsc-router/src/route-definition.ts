@@ -486,3 +486,33 @@ export function createLoader(
     fn,
   };
 }
+
+/**
+ * Create a soft redirect Response for middleware short-circuit
+ *
+ * Returns a Response that signals a client-side navigation to the target URL.
+ * Unlike Response.redirect() which causes a full page reload, this redirect
+ * is handled by the router for SPA-style navigation.
+ *
+ * @param url - The URL to redirect to
+ * @param status - HTTP status code (default: 302)
+ *
+ * @example
+ * ```typescript
+ * middleware((ctx, next) => {
+ *   if (!ctx.get('user')) {
+ *     return redirect('/login');
+ *   }
+ *   next();
+ * })
+ * ```
+ */
+export function redirect(url: string, status: number = 302): Response {
+  return new Response(null, {
+    status,
+    headers: {
+      Location: url,
+      "X-RSC-Redirect": "soft",
+    },
+  });
+}

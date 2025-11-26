@@ -62,7 +62,10 @@ export async function deleteTodo(id: string): Promise<boolean> {
 /**
  * Update todo title
  */
-export async function updateTodo(id: string, title: string): Promise<Todo | null> {
+export async function updateTodo(
+  id: string,
+  title: string
+): Promise<Todo | null> {
   await new Promise((resolve) => setTimeout(resolve, 50));
 
   const todo = todosStore.find((t) => t.id === id);
@@ -81,7 +84,7 @@ export async function updateTodo(id: string, title: string): Promise<Todo | null
 /**
  * Clear all completed todos
  */
-export async function clearCompleted(): Promise<number> {
+export async function clearCompletedTodos(): Promise<number> {
   await new Promise((resolve) => setTimeout(resolve, 50));
 
   const initialLength = todosStore.length;

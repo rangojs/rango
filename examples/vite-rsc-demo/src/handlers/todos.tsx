@@ -64,7 +64,7 @@ export default map<typeof todosRoutes>(
 
           // On POST (action), revalidate if it's a todos action
           if (method === "POST" && actionId) {
-            const isTodosAction = actionId.includes("todos/actions");
+            const isTodosAction = actionId.toLocaleLowerCase().includes("todo");
             return isTodosAction;
           }
 

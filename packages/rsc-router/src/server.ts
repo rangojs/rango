@@ -6,7 +6,7 @@
  */
 
 // Route definition helpers (server-only)
-export { route, map, createLoader, type RouteHelpers } from "./route-definition.js";
+export { route, map, createLoader, redirect, type RouteHelpers } from "./route-definition.js";
 
 // Core router (server-only)
 export { createRSCRouter, type RSCRouter } from "./router.js";
