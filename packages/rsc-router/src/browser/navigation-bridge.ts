@@ -46,12 +46,13 @@ export function createNavigationBridge(
 
   /**
    * Fetch partial update and trigger UI update
+   * Returns a promise that resolves when the RSC stream is fully consumed
    */
   async function fetchPartialUpdate(
     targetUrl: string,
     segmentIds?: string[],
     isRetry = false
-  ): Promise<void> {
+  ): Promise<Promise<void>> {
     const segmentState = store.getSegmentState();
     const url = targetUrl || window.location.href;
     const segments = segmentIds ?? segmentState.currentSegmentIds;
@@ -65,7 +66,7 @@ export function createNavigationBridge(
     store.setPath(new URL(url).pathname);
 
     // Fetch partial payload
-    const payload = await client.fetchPartial({
+    const { payload, streamComplete } = await client.fetchPartial({
       targetUrl: url,
       segmentIds: segments,
       previousUrl: segmentState.currentUrl,
@@ -85,7 +86,7 @@ export function createNavigationBridge(
         store.setCurrentUrl(url);
         store.setPath(new URL(url).pathname);
         console.log(`[Browser] Navigation complete (no re-render)\n`);
-        return;
+        return streamComplete;
       }
 
       // Update stored segments with new ones
@@ -142,6 +143,7 @@ export function createNavigationBridge(
       });
 
       console.log(`[Browser] Navigation complete\n`);
+      return streamComplete;
     } else {
       // Full update (fallback)
       console.warn(`[Browser] Full update (fallback)`);
@@ -155,6 +157,7 @@ export function createNavigationBridge(
         root: payload.root,
         metadata: payload.metadata!,
       });
+      return streamComplete;
     }
   }
 
@@ -169,6 +172,7 @@ export function createNavigationBridge(
       // Update navigation state to loading with optimistic location
       store.setState({
         state: "loading",
+        isStreaming: true,
         location: {
           pathname: parsedUrl.pathname,
           search: parsedUrl.search,
@@ -185,15 +189,20 @@ export function createNavigationBridge(
           window.history.pushState({}, "", url);
         }
 
-        await fetchPartialUpdate(url);
+        const streamComplete = await fetchPartialUpdate(url);
 
         // Scroll to top if requested
         if (options?.scroll !== false) {
           window.scrollTo(0, 0);
         }
 
-        // Reset navigation state on success
+        // Reset state to idle (UI is ready), then wait for stream to finish
         store.setState({ state: "idle" });
+
+        // Wait for RSC stream to fully close before marking streaming as complete
+        await streamComplete;
+        store.setState({ isStreaming: false });
+        console.log("[Browser] RSC stream complete");
       } catch (error) {
         // Rollback URL on error
         window.history.back();
@@ -201,6 +210,7 @@ export function createNavigationBridge(
         // Reset navigation state with previous location
         store.setState({
           state: "idle",
+          isStreaming: false,
           location: {
             pathname: window.location.pathname,
             search: window.location.search,
@@ -220,14 +230,19 @@ export function createNavigationBridge(
      */
     async refresh(): Promise<void> {
       setPending(true);
-      store.setState({ state: "loading" });
+      store.setState({ state: "loading", isStreaming: true });
 
       try {
         // Refetch with empty segments to get everything fresh
-        await fetchPartialUpdate(window.location.href, []);
+        const streamComplete = await fetchPartialUpdate(window.location.href, []);
         store.setState({ state: "idle" });
+
+        // Wait for RSC stream to fully close
+        await streamComplete;
+        store.setState({ isStreaming: false });
+        console.log("[Browser] RSC stream complete (refresh)");
       } catch (error) {
-        store.setState({ state: "idle" });
+        store.setState({ state: "idle", isStreaming: false });
         throw error;
       } finally {
         setPending(false);
@@ -243,6 +258,7 @@ export function createNavigationBridge(
       // Update location from browser URL
       store.setState({
         state: "loading",
+        isStreaming: true,
         location: {
           pathname: window.location.pathname,
           search: window.location.search,
@@ -252,11 +268,16 @@ export function createNavigationBridge(
       });
 
       fetchPartialUpdate(window.location.href)
-        .then(() => {
+        .then((streamComplete) => {
           store.setState({ state: "idle" });
+          // Wait for RSC stream to fully close
+          return streamComplete.then(() => {
+            store.setState({ isStreaming: false });
+            console.log("[Browser] RSC stream complete (popstate)");
+          });
         })
         .catch(() => {
-          store.setState({ state: "idle" });
+          store.setState({ state: "idle", isStreaming: false });
         })
         .finally(() => {
           setPending(false);

@@ -86,8 +86,11 @@ export function createNavigationStore(
         };
 
   // Public navigation state (for useNavigation hook)
+  // isStreaming starts false to match SSR and avoid hydration mismatch
+  // After hydration, entry.browser.tsx sets it to true if stream is still open
   let navState: NavigationState = {
     state: "idle",
+    isStreaming: false,
     location: config?.initialLocation
       ? createLocation(config.initialLocation)
       : defaultLocation,

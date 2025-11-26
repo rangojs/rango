@@ -1,3 +1,4 @@
+import { useNavigation } from "rsc-router/browser";
 import { categories, products, orders } from "./data.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 
@@ -86,8 +87,8 @@ export function OrderSummary({
     variant === "cart"
       ? "@summary"
       : variant === "checkout"
-        ? "@summary (checkout)"
-        : "@summary (payment)";
+      ? "@summary (checkout)"
+      : "@summary (payment)";
 
   return (
     <DebugSegmentWrapper type="parallel" name={segmentLabel}>
