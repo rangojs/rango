@@ -1,17 +1,16 @@
-import rsc from '@vitejs/plugin-rsc';
-import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
-import path from 'path';
+import rsc from "@vitejs/plugin-rsc";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+import path from "path";
 
 export default defineConfig({
-  plugins: [
-    rsc(),
-    react(),
-  ],
-
+  plugins: [rsc(), react()],
+  esbuild: {
+    target: "es2022",
+  },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      "@": path.resolve(__dirname, "./src"),
     },
   },
 
@@ -21,7 +20,7 @@ export default defineConfig({
       build: {
         rollupOptions: {
           input: {
-            index: './src/entry.rsc.tsx',
+            index: "./src/entry.rsc.tsx",
           },
         },
       },
@@ -32,7 +31,7 @@ export default defineConfig({
       build: {
         rollupOptions: {
           input: {
-            index: './src/entry.ssr.tsx',
+            index: "./src/entry.ssr.tsx",
           },
         },
       },
@@ -43,7 +42,7 @@ export default defineConfig({
       build: {
         rollupOptions: {
           input: {
-            index: './src/entry.browser.tsx',
+            index: "./src/entry.browser.tsx",
           },
         },
       },
