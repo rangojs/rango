@@ -49,11 +49,25 @@ export interface NavigationLocation {
 }
 
 /**
+ * Inflight server action being tracked
+ */
+export interface InflightAction {
+  /** Unique identifier for this action invocation */
+  id: string;
+  /** Server action function ID */
+  actionId: string;
+  /** Action arguments */
+  payload: unknown[];
+  /** Timestamp when action started */
+  startedAt: number;
+}
+
+/**
  * Navigation state exposed via useNavigation hook
  */
 export interface NavigationState {
-  /** Navigation lifecycle state */
-  state: "idle" | "loading" | "submitting";
+  /** Navigation lifecycle state (idle or loading during navigation) */
+  state: "idle" | "loading";
 
   /** Whether RSC data is currently streaming (initial load or navigation) */
   isStreaming: boolean;
@@ -61,14 +75,12 @@ export interface NavigationState {
   /** Current location (updated optimistically) */
   location: NavigationLocation;
 
-  /** Form submission state (filled during submit) */
+  /** Form submission state (filled during navigation-based form submit) */
   formData: FormData | null;
   formAction: string | null;
 
-  /** Server action state (filled during action) */
-  actionId: string | null;
-  actionPayload: unknown[] | null;
-  actionData: unknown | null;
+  /** List of inflight server actions */
+  inflightActions: InflightAction[];
 }
 
 /**
@@ -149,6 +161,10 @@ export interface NavigationStore {
   getState(): NavigationState;
   setState(partial: Partial<NavigationState>): void;
   subscribe(listener: StateListener): () => void;
+
+  // Inflight action management
+  addInflightAction(action: InflightAction): void;
+  removeInflightAction(id: string): void;
 
   // Internal segment state (for bridges)
   getSegmentState(): SegmentState;

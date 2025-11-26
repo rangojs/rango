@@ -100,23 +100,8 @@ async function initializeApp() {
 
   console.log("[Browser] Hydrated\n");
 
-  // Track when initial RSC stream completes
-  // The rsc-html-stream closes on DOMContentLoaded
-  // We set isStreaming: true AFTER hydration to avoid hydration mismatch
-  if (document.readyState === "complete" || document.readyState === "interactive") {
-    // DOMContentLoaded already fired - stream is already closed, keep isStreaming: false
-    console.log("[Browser] Initial stream already complete (DOMContentLoaded already fired)");
-  } else {
-    // Stream is still open - set isStreaming: true now (after hydration)
-    store.setState({ isStreaming: true });
-    console.log("[Browser] RSC stream still open, tracking completion...");
-
-    // Wait for DOMContentLoaded to mark stream as complete
-    document.addEventListener("DOMContentLoaded", () => {
-      store.setState({ isStreaming: false });
-      console.log("[Browser] Initial stream complete (DOMContentLoaded)");
-    }, { once: true });
-  }
+  // Note: Initial stream tracking is handled inside NavigationProvider's useEffect
+  // to ensure it only runs AFTER hydration is complete (hydrateRoot doesn't complete synchronously)
 
   // HMR support
   if (import.meta.hot) {
