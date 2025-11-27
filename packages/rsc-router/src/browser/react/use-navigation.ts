@@ -1,9 +1,36 @@
 "use client";
 
-import { useContext, useState, useEffect } from "react";
+import { useContext, useState, useEffect, useRef, useEffectEvent } from "react";
 import { flushSync } from "react-dom";
 import { NavigationStoreContext } from "./context.js";
 import type { NavigationState, NavigateOptions } from "../types.js";
+
+/**
+ * Shallow equality check for selector results
+ */
+function shallowEqual<T>(a: T, b: T): boolean {
+  if (Object.is(a, b)) return true;
+  if (
+    typeof a !== "object" ||
+    a === null ||
+    typeof b !== "object" ||
+    b === null
+  ) {
+    return false;
+  }
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    if (
+      !Object.hasOwn(b, key) ||
+      !Object.is((a as any)[key], (b as any)[key])
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
 
 // SSR-safe default state
 const SSR_DEFAULT_STATE: NavigationState = {
@@ -56,6 +83,9 @@ export function useNavigation<T>(
     const state = ctx.store.getState();
     return selector ? selector(state) : state;
   });
+  const isSameValue = useEffectEvent((newValue: unknown) => {
+    return shallowEqual(value, newValue);
+  });
 
   // Subscribe to store changes (only runs on client)
   useEffect(() => {
@@ -63,18 +93,27 @@ export function useNavigation<T>(
 
     // Sync immediately in case state changed between render and effect
     const current = ctx.store.getState();
-    setValue(selector ? selector(current) : current);
+    const selected = selector ? selector(current) : current;
+    if (!isSameValue(selected)) {
+      setValue(selected);
+    }
 
     // Subscribe to updates
     return ctx.store.subscribe(() => {
       const next = ctx.store.getState();
-      console.log("useNavigation currentstate", { next });
+      const nextSelected = selector ? selector(next) : next;
+
+      // Skip update if value hasn't changed
+      if (isSameValue(nextSelected)) {
+        return;
+      }
+
       if (ctx.store.isActionInProgress()) {
         flushSync(() => {
-          setValue(selector ? selector(next) : next);
+          setValue(nextSelected);
         });
       } else {
-        setValue(selector ? selector(next) : next);
+        setValue(nextSelected);
       }
     });
   }, [selector]);
