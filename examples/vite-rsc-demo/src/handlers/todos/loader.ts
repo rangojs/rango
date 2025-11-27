@@ -17,7 +17,7 @@ export type TodosData = {
 export const TodosLoader = createLoader("todos", async (_ctx) => {
   "use server";
   // Simulate network latency
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await new Promise((resolve) => setTimeout(resolve, 5000));
 
   const todos = [...todosStore].sort(
     (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
@@ -38,7 +38,7 @@ export const TodosLoader = createLoader("todos", async (_ctx) => {
  */
 export const TodoDetailLoader = createLoader("todoDetail", async (ctx) => {
   "use server";
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  await new Promise((resolve) => setTimeout(resolve, 3000));
 
   const id = ctx.params.id;
   const todo = todosStore.find((t) => t.id === id);

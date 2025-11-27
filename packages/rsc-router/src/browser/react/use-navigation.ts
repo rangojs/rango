@@ -1,6 +1,7 @@
 "use client";
 
 import { useContext, useState, useEffect } from "react";
+import { flushSync } from "react-dom";
 import { NavigationStoreContext } from "./context.js";
 import type { NavigationState, NavigateOptions } from "../types.js";
 
@@ -67,9 +68,16 @@ export function useNavigation<T>(
     // Subscribe to updates
     return ctx.store.subscribe(() => {
       const next = ctx.store.getState();
-      setValue(selector ? selector(next) : next);
+      console.log("useNavigation currentstate", { next });
+      if (ctx.store.isActionInProgress()) {
+        flushSync(() => {
+          setValue(selector ? selector(next) : next);
+        });
+      } else {
+        setValue(selector ? selector(next) : next);
+      }
     });
-  }, [ctx, selector]);
+  }, [selector]);
 
   // If no selector, include navigation methods
   if (!selector) {

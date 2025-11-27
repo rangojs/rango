@@ -41,7 +41,9 @@ export function createNavigationClient(
      * @param options - Fetch options
      * @returns RSC payload with segments and metadata, plus stream completion promise
      */
-    async fetchPartial(options: FetchPartialOptions): Promise<FetchPartialResult> {
+    async fetchPartial(
+      options: FetchPartialOptions
+    ): Promise<FetchPartialResult> {
       const { targetUrl, segmentIds, previousUrl, signal } = options;
 
       console.log(`\n[Browser] >>> NAVIGATION`);
@@ -79,14 +81,15 @@ export function createNavigationClient(
         const [rscStream, trackingStream] = response.body.tee();
 
         // Consume the tracking stream to detect when it closes
-        const reader = trackingStream.getReader();
         (async () => {
+          const reader = trackingStream.getReader();
           try {
             while (true) {
               const { done } = await reader.read();
               if (done) break;
             }
           } finally {
+            console.log("[STREAMING] RSC stream complete");
             resolveStreamComplete();
           }
         })();

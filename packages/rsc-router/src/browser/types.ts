@@ -166,6 +166,10 @@ export interface NavigationStore {
   addInflightAction(action: InflightAction): void;
   removeInflightAction(id: string): void;
 
+  // Action state (for controlling update behavior during server actions)
+  isActionInProgress(): boolean;
+  setActionInProgress(value: boolean): void;
+
   // Internal segment state (for bridges)
   getSegmentState(): SegmentState;
   setPath(path: string): void;
@@ -277,7 +281,6 @@ export interface NavigationBridge {
   refresh(): Promise<void>;
   handlePopstate(): void;
   registerLinkInterception(): () => void;
-  onPendingChange(callback: (isPending: boolean) => void): () => void;
 }
 
 /**

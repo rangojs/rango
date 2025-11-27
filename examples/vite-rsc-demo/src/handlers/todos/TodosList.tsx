@@ -6,6 +6,7 @@ import { DebugSegmentWrapper } from "../../components/DebugSegmentWrapper.js";
 import { SegmentTimer } from "../../components/SegmentTimer.js";
 import { AddTodoForm, TodoItem, TodoStats } from "./components.js";
 import { useNavigation } from "rsc-router/browser";
+import { LoadingSpinner } from "../shop/components/loading.js";
 
 export function TodosCount() {
   const data = useLoader(TodosLoader);
@@ -25,12 +26,6 @@ export function TodosCount() {
 
 export function TodosIndexContent({ serverValue }: { serverValue?: string }) {
   const data = useLoader(TodosLoader);
-  const state = useNavigation((nav) => nav.state);
-  const isStreaming = useNavigation((nav) => nav.isStreaming);
-  const inflightActions = useNavigation((nav) => nav.inflightActions);
-  const isLoading = state === "loading";
-  const hasInflightActions = inflightActions.length > 0;
-  console.log("state ", state, " isStreaming ", isStreaming, " inflightActions ", inflightActions.length);
 
   return (
     <DebugSegmentWrapper type="route" name="Todos Index">
@@ -51,9 +46,10 @@ export function TodosIndexContent({ serverValue }: { serverValue?: string }) {
             updates. Add, edit, toggle, and delete todos - all powered by server
             actions with automatic revalidation.
           </p>
-          {isLoading && <p>Loading...</p>}
-          {isStreaming && <p>Streaming...</p>}
-          {hasInflightActions && <p>Actions pending: {inflightActions.length}</p>}
+          <div>
+            Status:
+            <LoadingSpinner />
+          </div>
         </div>
 
         <AddTodoForm />
