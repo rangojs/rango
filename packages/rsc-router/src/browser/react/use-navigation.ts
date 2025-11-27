@@ -9,7 +9,7 @@ import type { NavigationState, NavigateOptions } from "../types.js";
 const SSR_DEFAULT_STATE: NavigationState = {
   state: "idle",
   isStreaming: false,
-  location: { pathname: "", search: "", hash: "", href: "" },
+  location: new URL("/", "http://localhost"),
   formData: null,
   formAction: null,
   inflightActions: [],

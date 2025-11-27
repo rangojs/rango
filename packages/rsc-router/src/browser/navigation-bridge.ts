@@ -95,12 +95,7 @@ export function createNavigationBridge(
 
       // Update location optimistically
       store.setState({
-        location: {
-          pathname: parsedUrl.pathname,
-          search: parsedUrl.search,
-          hash: parsedUrl.hash,
-          href: parsedUrl.href,
-        },
+        location: parsedUrl,
       });
 
       // Update browser URL optimistically
@@ -146,12 +141,7 @@ export function createNavigationBridge(
       // Update location from browser URL
       store.setState({
         state: "loading",
-        location: {
-          pathname: window.location.pathname,
-          search: window.location.search,
-          hash: window.location.hash,
-          href: window.location.href,
-        },
+        location: new URL(window.location.href),
       });
 
       fetchPartialUpdate(window.location.href).finally(() => {
