@@ -15,6 +15,8 @@ import type {
 import type { AllUseItems } from "./route-types.js";
 import { EntryData, LoaderEntry, getContext, track, MetricsStore, PerformanceMetric } from "./server/context";
 import { error } from "console";
+import { createHref, type HrefFunction, type PrefixedRoutes, type SanitizePrefix } from "./href.js";
+import { registerRouteMap } from "./route-map-builder.js";
 
 /**
  * Router configuration options
@@ -29,28 +31,77 @@ export interface RSCRouterOptions {
 
 /**
  * Router builder for chaining .use() and .map()
+ * TRoutes accumulates all registered route types through the chain
  */
-interface RouteBuilder<T extends RouteDefinition, TEnv> {
+interface RouteBuilder<T extends RouteDefinition, TEnv, TRoutes extends Record<string, string>> {
   map(
     handler: () =>
       | Array<AllUseItems>
       | Promise<{ default: () => Array<AllUseItems> }>
       | Promise<() => Array<AllUseItems>>
-  ): RSCRouter<TEnv>;
+  ): RSCRouter<TEnv, TRoutes>;
+
+  /**
+   * Accumulated route map for typeof extraction
+   * Used for module augmentation: `type AppRoutes = typeof _router.routeMap`
+   */
+  readonly routeMap: TRoutes;
 }
 
 /**
  * RSC Router interface
+ * TRoutes accumulates all registered route types through the builder chain
  */
-export interface RSCRouter<TEnv = any> {
-  routes<T extends RouteDefinition>(
-    prefix: string,
-    routes: ResolvedRouteMap<T>
-  ): RouteBuilder<T, TEnv>;
+export interface RSCRouter<TEnv = any, TRoutes extends Record<string, string> = Record<string, string>> {
+  /**
+   * Register routes with a prefix
+   * Route types are accumulated through the chain
+   */
+  routes<TPrefix extends string, T extends ResolvedRouteMap<any>>(
+    prefix: TPrefix,
+    routes: T
+  ): RouteBuilder<RouteDefinition, TEnv, TRoutes & PrefixedRoutes<T, SanitizePrefix<TPrefix>>>;
 
-  routes<T extends RouteDefinition>(
-    routes: ResolvedRouteMap<T>
-  ): RouteBuilder<T, TEnv>;
+  /**
+   * Register routes without a prefix
+   * Route types are accumulated through the chain
+   */
+  routes<T extends ResolvedRouteMap<any>>(
+    routes: T
+  ): RouteBuilder<RouteDefinition, TEnv, TRoutes & T>;
+
+  /**
+   * Type-safe URL builder for registered routes
+   * Types are inferred from the accumulated route registrations
+   *
+   * @example
+   * ```typescript
+   * router.href("shop.cart"); // "/shop/cart"
+   * router.href("shop.products.detail", { slug: "widget" }); // "/shop/product/widget"
+   * ```
+   */
+  href: HrefFunction<TRoutes>;
+
+  /**
+   * Accumulated route map for typeof extraction
+   * Used for module augmentation: `type AppRoutes = typeof _router.routeMap`
+   *
+   * @example
+   * ```typescript
+   * const _router = createRSCRouter<AppEnv>()
+   *   .routes(homeRoutes).map(() => import('./home'))
+   *   .routes('/shop', shopRoutes).map(() => import('./shop'));
+   *
+   * type AppRoutes = typeof _router.routeMap;
+   *
+   * declare global {
+   *   namespace RSCRouter {
+   *     interface RegisteredRoutes extends AppRoutes {}
+   *   }
+   * }
+   * ```
+   */
+  readonly routeMap: TRoutes;
 
   match(request: Request, context: TEnv): Promise<MatchResult>;
 
@@ -68,6 +119,7 @@ export interface RSCRouter<TEnv = any> {
 
 /**
  * Create an RSC router with generic context type
+ * Route types are accumulated automatically through the builder chain
  *
  * @example
  * ```typescript
@@ -80,17 +132,26 @@ export interface RSCRouter<TEnv = any> {
  *   debugPerformance: true  // Enable metrics
  * });
  *
+ * // Route types accumulate through the chain - no module augmentation needed!
  * router
- *   .route('/blog', blogRoutes)
- *   .map(() => import('./blog.handlers'));
+ *   .routes(homeRoutes)          // accumulates homeRoutes
+ *   .map(() => import('./home'))
+ *   .routes('/shop', shopRoutes) // accumulates PrefixedRoutes<shopRoutes, "shop">
+ *   .map(() => import('./shop'));
+ *
+ * // router.href now has type-safe autocomplete for all registered routes
+ * router.href("shop.cart");
  * ```
  */
 export function createRSCRouter<TEnv = any>(
   options: RSCRouterOptions = {}
-): RSCRouter<TEnv> {
+): RSCRouter<TEnv, Record<string, string>> {
   const { debugPerformance = false } = options;
   const routesEntries: RouteEntry<TEnv>[] = [];
   let mountIndex = 0;
+
+  // Track all registered routes with their prefixes for href()
+  const mergedRouteMap: Record<string, string> = {};
 
   /**
    * Create a metrics store for the request if debugPerformance is enabled
@@ -1616,13 +1677,34 @@ export function createRSCRouter<TEnv = any>(
   }
 
   /**
-   * Create route builder
+   * Create route builder with accumulated route types
+   * The TNewRoutes type parameter captures the new routes being added
    */
-  function createRouteBuilder<T extends RouteDefinition>(
+  function createRouteBuilder<TNewRoutes extends Record<string, string>>(
     prefix: string,
-    routes: ResolvedRouteMap<T>
-  ): RouteBuilder<T, TEnv> {
+    routes: TNewRoutes
+  ): RouteBuilder<RouteDefinition, TEnv, TNewRoutes> {
     const currentMountIndex = mountIndex++;
+
+    // Merge routes into the href map with prefixes
+    // This enables type-safe router.href() calls
+    const routeEntries = routes as Record<string, string>;
+    for (const [key, pattern] of Object.entries(routeEntries)) {
+      // Build prefixed key: "shop" + "cart" -> "shop.cart"
+      const prefixedKey = prefix ? `${prefix.slice(1)}.${key}` : key;
+      // Build prefixed pattern: "/shop" + "/cart" -> "/shop/cart"
+      const prefixedPattern =
+        prefix && pattern !== "/"
+          ? `${prefix}${pattern}`
+          : prefix && pattern === "/"
+            ? prefix
+            : pattern;
+      mergedRouteMap[prefixedKey] = prefixedPattern;
+    }
+
+    // Auto-register route map for runtime href() usage
+    registerRouteMap(mergedRouteMap);
+
     return {
       map(
         handler: () =>
@@ -1636,25 +1718,42 @@ export function createRSCRouter<TEnv = any>(
           handler,
           mountIndex: currentMountIndex,
         });
-        return router;
+        // Return router with accumulated types
+        // At runtime this is the same object, but TypeScript tracks the accumulated route types
+        return router as any;
+      },
+
+      // Expose accumulated route map for typeof extraction
+      get routeMap() {
+        return mergedRouteMap as TNewRoutes;
       },
     };
   }
 
   /**
    * Router instance
+   * The type system tracks accumulated routes through the builder chain
    */
-  const router: RSCRouter<TEnv> = {
-    routes<T extends RouteDefinition>(
-      prefixOrRoutes: string | ResolvedRouteMap<T>,
-      maybeRoutes?: ResolvedRouteMap<T>
-    ): RouteBuilder<T, TEnv> {
+  const router: RSCRouter<TEnv, Record<string, string>> = {
+    routes(
+      prefixOrRoutes: string | Record<string, string>,
+      maybeRoutes?: Record<string, string>
+    ): any {
       // If second argument exists, first is prefix
       if (maybeRoutes !== undefined) {
-        return createRouteBuilder<T>(prefixOrRoutes as string, maybeRoutes);
+        return createRouteBuilder(prefixOrRoutes as string, maybeRoutes);
       }
       // Otherwise, first argument is routes with empty prefix
-      return createRouteBuilder<T>("", prefixOrRoutes as ResolvedRouteMap<T>);
+      return createRouteBuilder("", prefixOrRoutes as Record<string, string>);
+    },
+
+    // Type-safe URL builder using merged route map
+    // Types are tracked through the builder chain via TRoutes parameter
+    href: createHref(mergedRouteMap),
+
+    // Expose accumulated route map for typeof extraction
+    get routeMap() {
+      return mergedRouteMap as Record<string, string>;
     },
 
     match,

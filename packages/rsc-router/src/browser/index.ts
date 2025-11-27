@@ -2,6 +2,19 @@
 // Browser Module - Client-side navigation utilities for RSC Router
 // ============================================================================
 
+// Route map builder (client-safe)
+export {
+  createRouteMap,
+  registerRouteMap,
+  type RouteMapBuilder,
+} from "../route-map-builder.js";
+
+// Client-safe route helper
+export { route } from "../route-utils.js";
+
+// Type-safe href function
+export { href } from "./href.js";
+
 // Types
 export type {
   RscPayload,
@@ -56,4 +69,7 @@ export {
   type NavigationValue,
   NavigationProvider,
   type NavigationProviderProps,
+  Link,
+  type LinkProps,
+  type PrefetchStrategy,
 } from "./react/index.js";

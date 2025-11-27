@@ -31,8 +31,22 @@ declare global {
     interface Env {
       // Empty by default - users augment with their RouterEnv
     }
+
+    // eslint-disable-next-line @typescript-eslint/no-empty-interface
+    interface RegisteredRoutes {
+      // Empty by default - users augment with their merged route maps for type-safe href()
+    }
   }
 }
+
+/**
+ * Get registered routes or fallback to generic Record<string, string>
+ * When RSCRouter.RegisteredRoutes is augmented, provides autocomplete for route names
+ * When not augmented, allows any string (no autocomplete)
+ */
+export type GetRegisteredRoutes = keyof RSCRouter.RegisteredRoutes extends never
+  ? Record<string, string>
+  : RSCRouter.RegisteredRoutes;
 
 /**
  * Default environment type - uses global augmentation if available, any otherwise

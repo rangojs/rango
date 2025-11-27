@@ -53,12 +53,10 @@ declare global {
 }
 
 /**
- * Create and configure the router with type-safe context
+ * Create and configure the router with type-safe context.
+ * Route types are accumulated through the builder chain.
  */
-export const router = createRSCRouter<AppEnv>({ debugPerformance: true });
-
-// Register routes with lazy-loaded handlers
-router
+const router = createRSCRouter<AppEnv>({ debugPerformance: true })
   .routes(homeRoutes)
   .map(() => import("./handlers/home.js"))
 
@@ -82,5 +80,25 @@ router
 
   .routes("/todos", todosRoutes) // Todos - demonstrates loaders, actions, streaming
   .map(() => import("./handlers/todos.js"));
+
+/**
+ * Extract route types directly from the router chain
+ */
+type AppRoutes = typeof router.routeMap;
+
+/**
+ * Module augmentation - register types globally for type-safe href
+ */
+declare global {
+  namespace RSCRouter {
+    interface RegisteredRoutes extends AppRoutes {}
+  }
+}
+
+/**
+ * Export the router.
+ * Type-safe href is available via `import { href } from "rsc-router/browser"`
+ */
+export { router };
 
 console.log("[Router] Configured with 8 route groups (lazy-loaded handlers)");

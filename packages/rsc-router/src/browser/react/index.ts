@@ -18,3 +18,10 @@ export {
   NavigationStoreContext,
   type NavigationStoreContextValue,
 } from "./context.js";
+
+// Link component
+export {
+  Link,
+  type LinkProps,
+  type PrefetchStrategy,
+} from "./Link.js";

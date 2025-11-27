@@ -19,7 +19,7 @@ export default map<typeof aboutRoutes>(({ route, layout }) => [
     </DebugSegmentWrapper>
   ),
 
-  route("index", () => (
+  route("about", () => (
     <DebugSegmentWrapper type="route" name="About">
       <div>
         <h1>ℹ️ About</h1>

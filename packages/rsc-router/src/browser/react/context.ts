@@ -1,3 +1,5 @@
+"use client";
+
 import { createContext, type Context } from "react";
 import type { NavigationStore, NavigateOptions } from "../types.js";
 
