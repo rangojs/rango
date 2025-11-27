@@ -26,7 +26,7 @@ export async function addTodo(title: string): Promise<Todo> {
  * Toggle todo completion status
  */
 export async function toggleTodo(id: string): Promise<Todo | null> {
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await new Promise((resolve) => setTimeout(resolve, 3000));
 
   const todo = todosStore.find((t) => t.id === id);
   if (!todo) {
@@ -45,7 +45,7 @@ export async function toggleTodo(id: string): Promise<Todo | null> {
  * Delete a todo
  */
 export async function deleteTodo(id: string): Promise<boolean> {
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await new Promise((resolve) => setTimeout(resolve, 3000));
 
   const index = todosStore.findIndex((t) => t.id === id);
   if (index === -1) {
@@ -66,7 +66,7 @@ export async function updateTodo(
   id: string,
   title: string
 ): Promise<Todo | null> {
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  await new Promise((resolve) => setTimeout(resolve, 5000));
 
   const todo = todosStore.find((t) => t.id === id);
   if (!todo) {
@@ -85,7 +85,7 @@ export async function updateTodo(
  * Clear all completed todos
  */
 export async function clearCompletedTodos(): Promise<number> {
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  await new Promise((resolve) => setTimeout(resolve, 5000));
 
   const initialLength = todosStore.length;
   const remaining = todosStore.filter((t) => !t.completed);

@@ -114,6 +114,9 @@ export function createNavigationStore(
   // UI update subscribers (for re-rendering)
   const updateSubscribers = new Set<UpdateSubscriber>();
 
+  // Internal flag to track if a server action is in progress
+  let actionInProgress = false;
+
   /**
    * Notify all state listeners of a change
    */
@@ -176,6 +179,24 @@ export function createNavigationStore(
         inflightActions: navState.inflightActions.filter((a) => a.id !== id),
       };
       notifyStateListeners();
+    },
+
+    // ========================================================================
+    // Action State (for controlling update behavior during server actions)
+    // ========================================================================
+
+    /**
+     * Check if a server action is currently in progress
+     */
+    isActionInProgress(): boolean {
+      return actionInProgress;
+    },
+
+    /**
+     * Set the action in progress flag
+     */
+    setActionInProgress(value: boolean): void {
+      actionInProgress = value;
     },
 
     // ========================================================================

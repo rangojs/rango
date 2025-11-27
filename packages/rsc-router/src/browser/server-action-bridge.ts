@@ -4,6 +4,7 @@ import type {
   RscPayload,
   ResolvedSegment,
 } from "./types.js";
+import { createPartialUpdater } from "./partial-update.js";
 
 /**
  * Create a server action bridge for handling RSC server actions
@@ -41,121 +42,69 @@ export function createServerActionBridge(
   let isRegistered = false;
 
   /**
-   * Fetch partial update for HMR recovery or navigation
-   * Returns a promise that resolves when the RSC stream is fully consumed
+   * Creates an async disposable scope for tracking stream state.
+   * Releases the reader lock, resets streaming state, and signals completion when disposed.
    */
-  async function fetchPartialUpdate(
-    targetUrl: string,
-    segmentIds: string[],
-    isRetry = false
-  ): Promise<Promise<void>> {
-    const segmentState = store.getSegmentState();
-    const url = targetUrl || window.location.href;
-    const segments = segmentIds ?? segmentState.currentSegmentIds;
+  function createStreamScope(stream: ReadableStream, onComplete?: () => void) {
+    const reader = stream.getReader();
+    store.setState({ isStreaming: true });
+    return {
+      reader,
+      async [Symbol.asyncDispose]() {
+        reader.releaseLock();
+        store.setState({ isStreaming: false });
+        onComplete?.();
+      },
+    };
+  }
 
-    console.log(`\n[Browser] >>> NAVIGATION`);
-    console.log(`[Browser] From: ${segmentState.currentUrl}`);
-    console.log(`[Browser] To: ${url}`);
-    console.log(`[Browser] Segments to send: ${segments.join(", ")}`);
+  /**
+   * Creates a disposable transaction for action state and inflight tracking.
+   * Tracks the action as inflight, sets loading state, and cleans up on disposal.
+   * Only sets idle state when ALL actions are complete (supports concurrent actions).
+   */
+  function createActionTransaction(actionId: string, args: any[]) {
+    const id = `${actionId}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    let status: "pending" | "completed" | "error" = "pending";
 
-    // Optimistically set the new path
-    store.setPath(new URL(url).pathname);
-
-    // Fetch partial payload
-    const { payload, streamComplete } = await client.fetchPartial({
-      targetUrl: url,
-      segmentIds: segments,
-      previousUrl: segmentState.currentUrl,
+    // Add to inflight actions
+    store.addInflightAction({
+      id,
+      actionId,
+      payload: args,
+      startedAt: Date.now(),
     });
 
-    if (payload.metadata?.isPartial) {
-      const { segments: newSegments, matched, diff } = payload.metadata;
+    store.setActionInProgress(true);
+    store.setState({ state: "loading" });
 
-      console.log(`[Browser] Partial update - matched: ${matched?.join(", ")}`);
-      console.log(`[Browser] Diff: ${diff?.join(", ")}`);
+    return {
+      id,
+      commit() {
+        status = "completed";
+      },
+      error() {
+        status = "error";
+      },
+      [Symbol.dispose]() {
+        // Remove from inflight actions first
+        store.removeInflightAction(id);
 
-      // If diff is empty, nothing changed - skip update
-      if (!diff || diff.length === 0) {
-        console.log(
-          `[Browser] No changes - all revalidations returned false, keeping existing UI`
-        );
-        store.setCurrentUrl(url);
-        store.setPath(new URL(url).pathname);
-        console.log(`[Browser] Navigation complete (no re-render)\n`);
-        return streamComplete;
-      }
-
-      // Update stored segments with new ones
-      store.storeSegments(newSegments || []);
-
-      // Build full segment list by merging
-      const matchedIds = matched || [];
-      const fullSegments = matchedIds
-        .map((id: string) => {
-          const segment = store.getSegmentState().storedSegments.get(id);
-          if (!segment) {
-            console.warn(`[Browser] Missing segment: ${id}`);
-          }
-          return segment;
-        })
-        .filter(Boolean) as ResolvedSegment[];
-
-      // HMR RESILIENCE: Check if we're missing segments
-      if (fullSegments.length < matchedIds.length) {
-        const missingCount = matchedIds.length - fullSegments.length;
-        const missingIds = matchedIds.filter(
-          (id: string) => !store.getSegmentState().storedSegments.has(id)
-        );
-
-        if (isRetry) {
-          throw new Error(
-            `[Browser] Failed to fetch segments after retry. Missing: ${missingIds.join(", ")}`
-          );
+        // Only set idle if no other actions in flight
+        if (store.getState().inflightActions.length === 0) {
+          store.setState({ state: "idle" });
+          store.setActionInProgress(false);
         }
-
-        console.warn(
-          `[Browser] HMR detected: Missing ${missingCount} segments. Refetching all...`
-        );
-
-        // Refetch with empty segments = server sends everything
-        return fetchPartialUpdate(url, [], true);
-      }
-
-      console.log(
-        `[Browser] Merged segments: ${fullSegments.map((s) => s.id).join(", ")}`
-      );
-
-      // Rebuild tree on client
-      const newTree = renderSegments(fullSegments);
-
-      // Update segment IDs
-      store.setSegmentIds(matchedIds);
-      store.setCurrentUrl(url);
-
-      // Emit update
-      onUpdate({
-        root: newTree,
-        metadata: payload.metadata,
-      });
-
-      console.log(`[Browser] Navigation complete\n`);
-      return streamComplete;
-    } else {
-      // Full update (fallback)
-      console.warn(`[Browser] Full update (fallback)`);
-      store.setSegmentIds(
-        payload.metadata?.segments?.map((s: any) => s.id) || []
-      );
-      store.setCurrentUrl(url);
-      store.setPath(new URL(url).pathname);
-
-      onUpdate({
-        root: payload.root,
-        metadata: payload.metadata!,
-      });
-      return streamComplete;
-    }
+      },
+    };
   }
+
+  const fetchPartialUpdate = createPartialUpdater({
+    store,
+    client,
+    onUpdate,
+    renderSegments,
+  });
 
   /**
    * Server action callback handler
@@ -166,27 +115,15 @@ export function createServerActionBridge(
   ): Promise<unknown> {
     console.log("ID", { id, args });
 
-    // Abort previous requests first, then create new disposable controller
-    requestController.abortAll();
+    // Create new disposable controller (allow concurrent actions)
     using disposable = requestController.createDisposable();
     const abortController = disposable.controller;
 
     const segmentState = store.getSegmentState();
     console.log(`[Browser] Args:`, args);
 
-    // Generate unique ID for this action invocation
-    const actionInvocationId = `${id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-
-    // Track this action as inflight
-    store.addInflightAction({
-      id: actionInvocationId,
-      actionId: id,
-      payload: args,
-      startedAt: Date.now(),
-    });
-
-    // Set streaming state
-    store.setState({ isStreaming: true });
+    // Transaction for action state and inflight tracking (cleanup on scope exit)
+    using tx = createActionTransaction(id, args);
 
     // Create temporary references for serialization
     const temporaryReferences = deps.createTemporaryReferenceSet();
@@ -226,7 +163,7 @@ export function createServerActionBridge(
     }).then(async (response) => {
       if (!response.body) {
         // No body means stream is already complete
-        resolveStreamComplete!();
+        resolveStreamComplete();
         return response;
       }
 
@@ -235,19 +172,21 @@ export function createServerActionBridge(
 
       // Consume the tracking stream to detect when it closes
       (async () => {
-        const reader = trackingStream.getReader();
-        try {
-          
-          while (true) {
-            const { done ,value} = await reader.read();
-            if (done) break;
-          }
-          await reader.closed
-        } finally {
-          
-          resolveStreamComplete!();
+        await using streamScope = createStreamScope(trackingStream, () => {
+          console.log("[STREAMING] RSC stream complete");
+          resolveStreamComplete();
+        });
+        const { reader } = streamScope;
+
+        while (true) {
+          const { done } = await reader.read();
+          if (done) break;
         }
-      })();
+        await reader.closed;
+        // All cleanup (releaseLock, isStreaming: false, resolveStreamComplete) happens on scope exit
+      })().catch((error) => {
+        console.error("[STREAMING] Error reading tracking stream:", error);
+      });
 
       // Return response with the RSC stream
       return new Response(rscStream, {
@@ -329,12 +268,6 @@ export function createServerActionBridge(
         await fetchPartialUpdate(window.location.href, []);
         console.log(`[Browser] Refetch complete, now returning action result`);
 
-        // Wait for stream to complete before resetting state
-        await streamComplete;
-        // Remove from inflight actions and reset streaming
-        store.removeInflightAction(actionInvocationId);
-        store.setState({ isStreaming: false });
-
         // Return action result AFTER UI is refreshed
         if (savedReturnValue && !savedReturnValue.ok) {
           throw savedReturnValue.data;
@@ -342,6 +275,7 @@ export function createServerActionBridge(
 
         const dataToReturn = savedReturnValue?.data;
         console.log(`[Browser] Returning to React (HMR case):`, dataToReturn);
+        tx.commit();
         return dataToReturn;
       }
 
@@ -355,18 +289,10 @@ export function createServerActionBridge(
       const returnData = returnValue?.data;
 
       if (returnValue && !returnValue.ok) {
-        // Wait for stream to complete before resetting state
-        await streamComplete;
-        // Remove from inflight actions and reset streaming
-        store.removeInflightAction(actionInvocationId);
-        store.setState({ isStreaming: false });
         throw returnValue.data;
       }
 
       if (abortController.signal.aborted) {
-        await streamComplete;
-        store.removeInflightAction(actionInvocationId);
-        store.setState({ isStreaming: false });
         console.log(`[Browser] Action aborted - skipping UI update`);
         return returnData;
       }
@@ -374,27 +300,13 @@ export function createServerActionBridge(
       // Prepare new tree
       const newTree = renderSegments(fullSegments);
 
-      // Wait for stream to complete before updating UI
-      await streamComplete;
-
-      if (!abortController.signal.aborted) {
-        // Remove from inflight actions and reset streaming
-        store.removeInflightAction(actionInvocationId);
-        store.setState({ isStreaming: false });
-
-        onUpdate({ root: newTree, metadata: metadata! });
-        console.log(
-          `[Browser] Action complete - UI updated (after action state committed)`
-        );
-      } else {
-        // Remove from inflight actions on abort
-        store.removeInflightAction(actionInvocationId);
-        store.setState({ isStreaming: false });
-        console.log(`[Browser] Action aborted - skipping UI update`);
-      }
+      onUpdate({ root: newTree, metadata: metadata! });
+      console.log(
+        `[Browser] Action complete - UI updated (after action state committed)`
+      );
 
       console.log(`[Browser] Returning to React:`, returnData);
-
+      tx.commit();
       return returnData;
     } else {
       // Full update

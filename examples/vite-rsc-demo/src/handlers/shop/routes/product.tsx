@@ -176,6 +176,7 @@ export const ProductsDetailRoute: RouteHandler<
                   <p style={{ fontSize: "0.9rem", color: "#666" }}>
                     Real-time progress (3s delay)
                   </p>
+                  <LoadingSpinner />
                   <StreamingActionForm
                     productId={product.id}
                     action={addToCartSlowly}
