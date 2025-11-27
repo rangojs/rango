@@ -14,30 +14,15 @@ import type {
  * Configuration for creating a navigation store
  */
 export interface NavigationStoreConfig {
-  initialLocation?: {
-    pathname: string;
-    search: string;
-    hash: string;
-    href: string;
-  };
+  initialLocation?: { href: string };
   initialSegmentIds?: string[];
 }
 
 /**
- * Create a location object from window.location or custom values
+ * Create a URL instance from window.location or custom values
  */
-function createLocation(loc: {
-  pathname: string;
-  search: string;
-  hash: string;
-  href: string;
-}): NavigationLocation {
-  return {
-    pathname: loc.pathname,
-    search: loc.search,
-    hash: loc.hash,
-    href: loc.href,
-  };
+function createLocation(loc: { href: string }): NavigationLocation {
+  return new URL(loc.href);
 }
 
 /**
@@ -79,12 +64,7 @@ export function createNavigationStore(
   const defaultLocation: NavigationLocation =
     typeof window !== "undefined"
       ? createLocation(window.location)
-      : {
-          pathname: "/",
-          search: "",
-          hash: "",
-          href: "/",
-        };
+      : new URL("/", "http://localhost");
 
   // Public navigation state (for useNavigation hook)
   // isStreaming starts false to match SSR and avoid hydration mismatch
@@ -100,10 +80,15 @@ export function createNavigationStore(
     inflightActions: [],
   };
 
+  // Resolve the initial location for segment state
+  const initialLoc = config?.initialLocation
+    ? createLocation(config.initialLocation)
+    : defaultLocation;
+
   // Internal segment state (for partial updates)
   const segmentState: SegmentState = {
-    path: config?.initialLocation?.pathname ?? defaultLocation.pathname,
-    currentUrl: config?.initialLocation?.href ?? defaultLocation.href,
+    path: initialLoc.pathname,
+    currentUrl: initialLoc.href,
     currentSegmentIds: config?.initialSegmentIds ?? [],
     storedSegments: new Map(),
   };

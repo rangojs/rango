@@ -40,13 +40,9 @@ export interface ActionResult {
 
 /**
  * Location object representing current URL
+ * Uses URL for full URL parsing (origin, host, hostname, port, protocol, searchParams, etc.)
  */
-export interface NavigationLocation {
-  pathname: string;
-  search: string;
-  hash: string;
-  href: string;
-}
+export type NavigationLocation = URL;
 
 /**
  * Inflight server action being tracked
