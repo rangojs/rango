@@ -233,7 +233,7 @@ const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
 const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
   const store = getContext();
   const ctx = store.getStore();
-  if (!ctx) throw new Error("route() must be called inside map()");
+  if (!ctx) throw new Error("layout() must be called inside map()");
   const isRoot = !ctx.parent || ctx.parent === null;
   const namespace = `${ctx.namespace}.${
     isRoot ? "$root" : store.getNextIndex("layout")
@@ -252,52 +252,49 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     loader: [],
   } satisfies EntryData;
 
+  // Run use callback if provided
+  let result: AllUseItems[] | undefined;
   if (use && typeof use === "function") {
-    const result = store.run(namespace, entry, use);
+    result = store.run(namespace, entry, use);
 
     invariant(
       Array.isArray(result) && result.every((item) => isValidUseItem(item)),
       `layout() use() callback must return an array of use items [${namespace}]`
     );
+  }
 
-    if (
-      result &&
-      Array.isArray(result) &&
-      result.some((item) => item.type === "route") === false
-    ) {
-      /* for easy narrowing */
-      const parent = ctx.parent;
+  // Check if this is an orphan layout (no routes in children)
+  const hasRoutes =
+    result &&
+    Array.isArray(result) &&
+    result.some((item) => item.type === "route");
 
-      // Allow orphan layouts at root level if they're part of map() builder result
-      // (siblings with other layouts)
-      if (!parent || parent === null) {
-        if (!isRoot) {
-          invariant(
-            false,
-            `Orphan layout cannot be used at non-root level without parent [${namespace}]`
-          );
-        }
-        // Root-level orphan is allowed (e.g., sibling layouts in map() builder)
-        // Don't add to parent.layout[] since there's no parent
-        // This layout will be processed directly as a root entry
-      } else {
-        // Has parent - standard orphan layout behavior
-        // Orphan layouts extend their parent with additional configuration
-        // (middleware, revalidation, nested layouts, etc.)
+  if (!hasRoutes) {
+    const parent = ctx.parent;
 
+    // Allow orphan layouts at root level if they're part of map() builder result
+    if (!parent || parent === null) {
+      if (!isRoot) {
         invariant(
-          parent.type === "route" || parent.type === "layout",
-          `Orphan layouts can only be defined inside route or layout  > check [${namespace}]`
+          false,
+          `Orphan layout cannot be used at non-root level without parent [${namespace}]`
         );
-
-        // Clear parent pointer for orphan layouts to prevent duplicate processing
-        // Orphans are managed only via parent.layout[] array, not via parent chain
-        entry.parent = null;
-
-        parent.layout.push(entry);
       }
-    }
+      // Root-level orphan is allowed (e.g., sibling layouts in map() builder)
+    } else {
+      // Has parent - register as orphan layout
+      invariant(
+        parent.type === "route" || parent.type === "layout",
+        `Orphan layouts can only be defined inside route or layout > check [${namespace}]`
+      );
 
+      // Clear parent pointer for orphan layouts to prevent duplicate processing
+      entry.parent = null;
+      parent.layout.push(entry);
+    }
+  }
+
+  if (result) {
     return { name: namespace, type: "layout", uses: result } as LayoutItem;
   }
   return {

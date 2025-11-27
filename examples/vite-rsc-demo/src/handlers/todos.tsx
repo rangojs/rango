@@ -1,11 +1,11 @@
 import { map } from "rsc-router/server";
 import { Outlet } from "rsc-router/client";
 import type { todosRoutes } from "../routes.js";
+import { RootLayout } from "../layouts/RootLayout.js";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { TodosLoader, TodoDetailLoader } from "./todos/loader.js";
 import { TodosCount, TodosIndexContent } from "./todos/TodosList.js";
 import { TodoDetailContent } from "./todos/TodoDetail.js";
-import { r } from "@vitejs/plugin-rsc/browser-C8KlM-b7";
 
 // Layout component for Todos section (server component)
 function TodosLayout() {
@@ -53,7 +53,9 @@ function TodosLayout() {
  */
 export default map<typeof todosRoutes>(
   ({ route, layout, loader, revalidate }) => [
-    // Root layout with todos loader
+    layout(<RootLayout />),
+
+    // Todos section layout with loader
     layout(<TodosLayout />, () => [
       // Global todos loader
       loader(TodosLoader, () => [
