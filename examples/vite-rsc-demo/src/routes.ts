@@ -1,4 +1,4 @@
-import { route } from "rsc-router/server";
+import { route } from "rsc-router/browser";
 
 /**
  * Home route
@@ -19,7 +19,7 @@ export const blogRoutes = route({
  * About route
  */
 export const aboutRoutes = route({
-  index: "/about",
+  about: "/about",
 });
 
 /**
@@ -91,3 +91,4 @@ export const todosRoutes = route({
   index: "/",
   detail: "/:id",
 });
+

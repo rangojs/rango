@@ -1,5 +1,6 @@
-import { Outlet } from 'rsc-router/client';
-import { DebugSegmentWrapper } from '../components/DebugSegmentWrapper.js';
+import { Outlet } from "rsc-router/client";
+import { Link, href } from "rsc-router/browser";
+import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 
 export function RootLayout() {
   return (
@@ -43,12 +44,12 @@ export function RootLayout() {
       </head>
       <body>
         <nav>
-          <a href="/">Home</a>
-          <a href="/about">About</a>
-          <a href="/blog">Blog</a>
-          <a href="/dashboard">Dashboard</a>
-          <a href="/shop">Shop</a>
-          <a href="/todos">Todos</a>
+          <Link to={href("index")}>Home</Link>
+          <Link to={href("about")}>About</Link>
+          <Link to={href("blog.index")}>Blog</Link>
+          <Link to={href("dashboard.index")}>Dashboard</Link>
+          <Link to={href("shop.index")}>Shop</Link>
+          <Link to={href("todos.index")}>Todos</Link>
         </nav>
         <DebugSegmentWrapper type="layout" name="Root">
           <DebugSegmentWrapper type="outlet" name="Root Outlet">

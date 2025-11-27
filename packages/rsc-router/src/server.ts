@@ -11,6 +11,16 @@ export { route, map, createLoader, redirect, type RouteHelpers } from "./route-d
 // Core router (server-only)
 export { createRSCRouter, type RSCRouter } from "./router.js";
 
+// Type-safe href utilities
+export {
+  createHref,
+  type HrefFunction,
+  type PrefixedRoutes,
+  type ParamsFor,
+  type SanitizePrefix,
+  type MergeRoutes,
+} from "./href.js";
+
 // Segment system (server-only)
 export { renderSegments } from "./segment-system.js";
 
@@ -51,4 +61,5 @@ export type {
   LoaderDefinition,
   LoaderFn,
   LoaderContext,
+  GetRegisteredRoutes,
 } from "./types.js";
