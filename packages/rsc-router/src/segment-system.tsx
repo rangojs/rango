@@ -7,8 +7,17 @@ import { RouteContentWrapper } from "./route-content-wrapper.js";
 /**
  * Render segments into a React tree with proper layout nesting
  *
- * Layouts nest using OutletProvider, while route + parallel segments
+ * Layouts nest using OutletProvider, while route + parallel + error + notFound segments
  * render as siblings in a Fragment.
+ *
+ * Error segments are treated like route segments - they render their fallback
+ * component in place of the failed segment. When an error occurs in a handler,
+ * loader, or middleware, the router creates an error segment with the nearest
+ * error boundary's fallback component.
+ *
+ * NotFound segments are similar to error segments but are triggered by
+ * DataNotFoundError (thrown via notFound()). They render the nearest
+ * notFoundBoundary's fallback component.
  *
  * @param segments - Array of resolved segments to render
  * @returns ReactNode representing the component tree
@@ -38,8 +47,8 @@ export function renderSegments(segments: ResolvedSegment[]): ReactNode {
   let content: ReactNode = null;
   for (const node of tree) {
     invariant(
-      node.segment.type === "layout" || node.segment.type === "route",
-      `Expected layout or route segment, got ${node.segment.type}`
+      node.segment.type === "layout" || node.segment.type === "route" || node.segment.type === "error" || node.segment.type === "notFound",
+      `Expected layout, route, error, or notFound segment, got ${node.segment.type}`
     );
     const { component, id, params, loading } = node.segment;
 
@@ -54,11 +63,14 @@ export function renderSegments(segments: ResolvedSegment[]): ReactNode {
 
     // Only include params in key for segments that belong to the route
     // - Routes: always include params (they render param-specific content)
+    // - Error/notFound segments: always include params (they replace failed route content)
     // - Route's layouts (orphans): include params (children of parameterized route)
     // - Parent chain layouts: exclude params (shared across routes, param-agnostic)
     // This prevents unnecessary unmounting when params change
     const includeParams =
       node.segment.type === "route" ||
+      node.segment.type === "error" ||
+      node.segment.type === "notFound" ||
       (node.segment.type === "layout" && node.segment.belongsToRoute);
 
     const paramStr =
@@ -146,6 +158,8 @@ function* segmentTreeWalk(segments: ResolvedSegment[]): Generator<{
       }
       loadersByParent.get(parentId)!.push(segment);
     } else {
+      // Layout, route, error, and notFound segments are all rendered in the tree
+      // Error/notFound segments replace the failed segment with fallback UI
       nonParallels.push(segment);
     }
   }

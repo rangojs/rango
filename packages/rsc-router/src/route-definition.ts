@@ -1,12 +1,14 @@
 import type { ReactNode } from "react";
 import type {
   DefaultEnv,
+  ErrorBoundaryHandler,
   ExtractRouteParams,
   Handler,
   HandlersForRouteMap,
   LoaderDefinition,
   LoaderFn,
   MiddlewareFn,
+  NotFoundBoundaryHandler,
   ResolvedRouteMap,
   RouteDefinition,
   ShouldRevalidateFn,
@@ -23,6 +25,8 @@ import type {
   RevalidateItem,
   LoaderItem,
   LoadingItem,
+  ErrorBoundaryItem,
+  NotFoundBoundaryItem,
   LayoutUseItem,
   RouteUseItem,
   ParallelUseItem,
@@ -71,6 +75,8 @@ export type {
   MiddlewareItem,
   RevalidateItem,
   LoaderItem,
+  ErrorBoundaryItem,
+  NotFoundBoundaryItem,
   LayoutUseItem,
   RouteUseItem,
   ParallelUseItem,
@@ -103,6 +109,8 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
     use?: () => LoaderUseItem[]
   ) => LoaderItem;
   loading: (component: ReactNode) => LoadingItem;
+  errorBoundary: (fallback: ReactNode | ErrorBoundaryHandler) => ErrorBoundaryItem;
+  notFoundBoundary: (fallback: ReactNode | NotFoundBoundaryHandler) => NotFoundBoundaryItem;
 };
 
 const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
@@ -116,6 +124,95 @@ const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
   const name = `$${getContext().getNextIndex("revalidate")}`;
   ctx.parent.revalidate.push(fn);
   return { name, type: "revalidate" } as RevalidateItem;
+};
+
+/**
+ * Error boundary helper - attaches an error fallback to the current entry
+ *
+ * When an error occurs during rendering of this segment or its children,
+ * the fallback will be rendered instead. The fallback can be:
+ * - A static ReactNode (e.g., <ErrorPage />)
+ * - A handler function that receives error info and reset function
+ *
+ * Error boundaries catch errors from:
+ * - Middleware execution
+ * - Loader execution
+ * - Handler/component rendering
+ *
+ * @example
+ * ```typescript
+ * layout(<ShopLayout />, () => [
+ *   errorBoundary(<ShopErrorFallback />),
+ *   route("products.detail", ProductDetail),
+ * ])
+ *
+ * // Or with handler for dynamic error UI:
+ * route("products.detail", ProductDetail, () => [
+ *   errorBoundary(({ error, reset }) => (
+ *     <div>
+ *       <h2>Product failed to load</h2>
+ *       <p>{error.message}</p>
+ *       <button onClick={reset}>Retry</button>
+ *     </div>
+ *   )),
+ * ])
+ * ```
+ */
+const errorBoundary: RouteHelpers<any, any>["errorBoundary"] = (fallback) => {
+  const ctx = getContext().getStore();
+  if (!ctx) throw new Error("errorBoundary() must be called inside map()");
+
+  // Attach to parent entry in stack
+  if (!ctx.parent || !ctx.parent?.errorBoundary) {
+    invariant(false, "No parent entry available for errorBoundary()");
+  }
+  const name = `$${getContext().getNextIndex("errorBoundary")}`;
+  ctx.parent.errorBoundary.push(fallback);
+  return { name, type: "errorBoundary" } as ErrorBoundaryItem;
+};
+
+/**
+ * NotFound boundary helper - attaches a not-found fallback to the current entry
+ *
+ * When a DataNotFoundError is thrown (via notFound()) during rendering of this
+ * segment or its children, the fallback will be rendered instead. The fallback can be:
+ * - A static ReactNode (e.g., <ProductNotFound />)
+ * - A handler function that receives not found info
+ *
+ * NotFound boundaries catch DataNotFoundError from:
+ * - Loader execution
+ * - Handler/component rendering
+ *
+ * @example
+ * ```typescript
+ * layout(<ShopLayout />, () => [
+ *   notFoundBoundary(<ProductNotFound />),
+ *   route("products.detail", ProductDetail),
+ * ])
+ *
+ * // Or with handler for dynamic not found UI:
+ * route("products.detail", ProductDetail, () => [
+ *   notFoundBoundary(({ notFound }) => (
+ *     <div>
+ *       <h2>Product not found</h2>
+ *       <p>{notFound.message}</p>
+ *       <a href="/products">Browse all products</a>
+ *     </div>
+ *   )),
+ * ])
+ * ```
+ */
+const notFoundBoundary: RouteHelpers<any, any>["notFoundBoundary"] = (fallback) => {
+  const ctx = getContext().getStore();
+  if (!ctx) throw new Error("notFoundBoundary() must be called inside map()");
+
+  // Attach to parent entry in stack
+  if (!ctx.parent || !ctx.parent?.notFoundBoundary) {
+    invariant(false, "No parent entry available for notFoundBoundary()");
+  }
+  const name = `$${getContext().getNextIndex("notFoundBoundary")}`;
+  ctx.parent.notFoundBoundary.push(fallback);
+  return { name, type: "notFoundBoundary" } as NotFoundBoundaryItem;
 };
 
 const middleware: RouteHelpers<any, any>["middleware"] = (...fn) => {
@@ -251,6 +348,8 @@ const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
     handler,
     middleware: [],
     revalidate: [],
+    errorBoundary: [],
+    notFoundBoundary: [],
     layout: [],
     parallel: [],
     loader: [],
@@ -294,6 +393,8 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     handler,
     middleware: [],
     revalidate: [],
+    errorBoundary: [],
+    notFoundBoundary: [],
     parallel: [],
     layout: [],
     loader: [],
@@ -365,6 +466,8 @@ const isValidUseItem = (item: any): item is AllUseItems | undefined | null => {
         "parallel",
         "loader",
         "loading",
+        "errorBoundary",
+        "notFoundBoundary",
       ].includes(item.type))
   );
 };
@@ -388,6 +491,26 @@ const createRevalidateHelper = <TEnv>(): RouteHelpers<
   TEnv
 >["revalidate"] => {
   return revalidate as RouteHelpers<any, TEnv>["revalidate"];
+};
+
+/**
+ * Create errorBoundary helper
+ */
+const createErrorBoundaryHelper = <TEnv>(): RouteHelpers<
+  any,
+  TEnv
+>["errorBoundary"] => {
+  return errorBoundary as RouteHelpers<any, TEnv>["errorBoundary"];
+};
+
+/**
+ * Create notFoundBoundary helper
+ */
+const createNotFoundBoundaryHelper = <TEnv>(): RouteHelpers<
+  any,
+  TEnv
+>["notFoundBoundary"] => {
+  return notFoundBoundary as RouteHelpers<any, TEnv>["notFoundBoundary"];
 };
 
 /**
@@ -460,6 +583,8 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
       revalidate: createRevalidateHelper<TEnv>(),
       loader: createLoaderHelper<TEnv>(),
       loading: createLoadingHelper(),
+      errorBoundary: createErrorBoundaryHelper<TEnv>(),
+      notFoundBoundary: createNotFoundBoundaryHelper<TEnv>(),
     };
 
     return [layout(RootLayout, () => builder(helpers))].flat(3);

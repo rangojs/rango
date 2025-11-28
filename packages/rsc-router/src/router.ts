@@ -1,5 +1,5 @@
 import { Suspense, createElement, type ReactNode } from "react";
-import { invariant, RouteNotFoundError, sanitizeError } from "./errors";
+import { invariant, RouteNotFoundError, DataNotFoundError, sanitizeError } from "./errors";
 import { RouteContentWrapper } from "./route-content-wrapper.js";
 import type {
   RouteDefinition,
@@ -12,6 +12,12 @@ import type {
   Handler,
   LoaderDefinition,
   LoaderContext,
+  ErrorInfo,
+  ErrorBoundaryHandler,
+  ErrorBoundaryFallbackProps,
+  NotFoundInfo,
+  NotFoundBoundaryHandler,
+  NotFoundBoundaryFallbackProps,
 } from "./types";
 import type { AllUseItems } from "./route-types.js";
 import {
@@ -40,6 +46,18 @@ export interface RSCRouterOptions {
    * When enabled, metrics are output to console and available via Server-Timing header
    */
   debugPerformance?: boolean;
+
+  /**
+   * Default error boundary fallback used when no error boundary is defined in the route tree
+   * If not provided, errors will propagate and crash the request
+   */
+  defaultErrorBoundary?: ReactNode | ErrorBoundaryHandler;
+
+  /**
+   * Default not-found boundary fallback used when no notFoundBoundary is defined in the route tree
+   * If not provided, DataNotFoundError will be treated as a regular error
+   */
+  defaultNotFoundBoundary?: ReactNode | NotFoundBoundaryHandler;
 }
 
 /**
@@ -170,7 +188,7 @@ export interface RSCRouter<
 export function createRSCRouter<TEnv = any>(
   options: RSCRouterOptions = {}
 ): RSCRouter<TEnv, {}> {
-  const { debugPerformance = false } = options;
+  const { debugPerformance = false, defaultErrorBoundary, defaultNotFoundBoundary } = options;
   const routesEntries: RouteEntry<TEnv>[] = [];
   let mountIndex = 0;
 
@@ -228,6 +246,174 @@ export function createRSCRouter<TEnv = any>(
         return `${name};dur=${m.duration.toFixed(2)}`;
       })
       .join(", ");
+  }
+
+  /**
+   * Find the nearest error boundary by walking up the entry chain
+   * Returns the first fallback found, or the default error boundary if configured
+   */
+  function findNearestErrorBoundary(
+    entry: EntryData | null
+  ): ReactNode | ErrorBoundaryHandler | null {
+    let current: EntryData | null = entry;
+
+    while (current) {
+      // Check if this entry has error boundaries defined
+      if (current.errorBoundary && current.errorBoundary.length > 0) {
+        // Return the last error boundary (most recently defined takes precedence)
+        return current.errorBoundary[current.errorBoundary.length - 1];
+      }
+      current = current.parent;
+    }
+
+    // Return default error boundary if configured
+    return defaultErrorBoundary || null;
+  }
+
+  /**
+   * Find the nearest notFound boundary by walking up the entry chain
+   * Returns the first fallback found, or the default notFound boundary if configured
+   */
+  function findNearestNotFoundBoundary(
+    entry: EntryData | null
+  ): ReactNode | NotFoundBoundaryHandler | null {
+    let current: EntryData | null = entry;
+
+    while (current) {
+      // Check if this entry has notFound boundaries defined
+      if (current.notFoundBoundary && current.notFoundBoundary.length > 0) {
+        // Return the last notFound boundary (most recently defined takes precedence)
+        return current.notFoundBoundary[current.notFoundBoundary.length - 1];
+      }
+      current = current.parent;
+    }
+
+    // Return default notFound boundary if configured
+    return defaultNotFoundBoundary || null;
+  }
+
+  /**
+   * Create ErrorInfo from an error object
+   * Sanitizes error details in production
+   */
+  function createErrorInfo(
+    error: unknown,
+    segmentId: string,
+    segmentType: ErrorInfo["segmentType"]
+  ): ErrorInfo {
+    const isDev = process.env.NODE_ENV !== "production";
+
+    if (error instanceof Error) {
+      return {
+        message: isDev ? error.message : "An error occurred",
+        name: error.name,
+        code: (error as any).code,
+        stack: isDev ? error.stack : undefined,
+        cause: isDev ? error.cause : undefined,
+        segmentId,
+        segmentType,
+      };
+    }
+
+    // Non-Error thrown
+    return {
+      message: isDev ? String(error) : "An error occurred",
+      name: "Error",
+      segmentId,
+      segmentType,
+    };
+  }
+
+  /**
+   * Create an error segment with the fallback component
+   * Renders the fallback with error info and reset function
+   */
+  function createErrorSegment(
+    errorInfo: ErrorInfo,
+    fallback: ReactNode | ErrorBoundaryHandler,
+    entry: EntryData,
+    params: Record<string, string>
+  ): ResolvedSegment {
+    // Determine the component to render
+    let component: ReactNode;
+
+    if (typeof fallback === "function") {
+      // ErrorBoundaryHandler - call with props
+      // The reset function will trigger revalidation on the client
+      const props: ErrorBoundaryFallbackProps = {
+        error: errorInfo,
+        reset: () => {
+          // This will be replaced on the client with actual revalidation logic
+          console.warn("reset() called during server render - no-op");
+        },
+      };
+      component = fallback(props);
+    } else {
+      // Static ReactNode fallback
+      component = fallback;
+    }
+
+    return {
+      id: `${entry.shortCode}.error`,
+      namespace: entry.id,
+      type: "error",
+      index: 0,
+      component,
+      params,
+      error: errorInfo,
+    };
+  }
+
+  /**
+   * Create NotFoundInfo from a DataNotFoundError
+   */
+  function createNotFoundInfo(
+    error: DataNotFoundError,
+    segmentId: string,
+    segmentType: NotFoundInfo["segmentType"],
+    pathname?: string
+  ): NotFoundInfo {
+    return {
+      message: error.message,
+      segmentId,
+      segmentType,
+      pathname,
+    };
+  }
+
+  /**
+   * Create a notFound segment with the fallback component
+   * Renders the fallback with not found info
+   */
+  function createNotFoundSegment(
+    notFoundInfo: NotFoundInfo,
+    fallback: ReactNode | NotFoundBoundaryHandler,
+    entry: EntryData,
+    params: Record<string, string>
+  ): ResolvedSegment {
+    // Determine the component to render
+    let component: ReactNode;
+
+    if (typeof fallback === "function") {
+      // NotFoundBoundaryHandler - call with props
+      const props: NotFoundBoundaryFallbackProps = {
+        notFound: notFoundInfo,
+      };
+      component = fallback(props);
+    } else {
+      // Static ReactNode fallback
+      component = fallback;
+    }
+
+    return {
+      id: `${entry.shortCode}.notFound`,
+      namespace: entry.id,
+      type: "notFound",
+      index: 0,
+      component,
+      params,
+      notFoundInfo,
+    };
   }
 
   /**
@@ -900,6 +1086,171 @@ export function createRSCRouter<TEnv = any>(
   }
 
   /**
+   * Wrapper that adds error boundary handling to segment resolution
+   * Catches errors during execution and returns error segments if an error boundary exists
+   *
+   * @param entry - The entry to resolve
+   * @param routeKey - Route key for context
+   * @param params - URL parameters
+   * @param context - Handler context
+   * @param loaderPromises - Shared loader promise map
+   * @param resolveFn - The actual resolution function to call
+   * @returns Segments from successful resolution, or an error segment if error boundary caught
+   * @throws If error occurs and no error boundary is defined
+   */
+  async function resolveWithErrorHandling(
+    entry: EntryData,
+    routeKey: string,
+    params: Record<string, string>,
+    context: HandlerContext<any, TEnv>,
+    loaderPromises: Map<string, Promise<any>>,
+    resolveFn: () => Promise<ResolvedSegment[]>
+  ): Promise<ResolvedSegment[]> {
+    try {
+      return await resolveFn();
+    } catch (error) {
+      // Don't catch Response objects (middleware short-circuit)
+      if (error instanceof Response) {
+        throw error;
+      }
+
+      // Handle DataNotFoundError separately - look for notFoundBoundary first
+      if (error instanceof DataNotFoundError) {
+        const notFoundFallback = findNearestNotFoundBoundary(entry);
+
+        if (notFoundFallback) {
+          // Create notFound info
+          const notFoundInfo = createNotFoundInfo(
+            error,
+            entry.shortCode,
+            entry.type,
+            context.pathname
+          );
+
+          console.log(
+            `[Router] NotFound caught by notFoundBoundary in ${entry.shortCode}:`,
+            notFoundInfo.message
+          );
+
+          // Create and return notFound segment
+          const notFoundSegment = createNotFoundSegment(notFoundInfo, notFoundFallback, entry, params);
+          return [notFoundSegment];
+        }
+        // If no notFoundBoundary, fall through to error boundary handling
+      }
+
+      // Find nearest error boundary
+      const fallback = findNearestErrorBoundary(entry);
+
+      if (!fallback) {
+        // No error boundary - propagate the error
+        console.error(
+          `[Router] Error in segment ${entry.shortCode} with no error boundary:`,
+          error
+        );
+        throw error;
+      }
+
+      // Determine segment type for error info
+      const segmentType: ErrorInfo["segmentType"] = entry.type;
+
+      // Create error info
+      const errorInfo = createErrorInfo(error, entry.shortCode, segmentType);
+
+      console.log(
+        `[Router] Error caught by error boundary in ${entry.shortCode}:`,
+        errorInfo.message
+      );
+
+      // Create and return error segment
+      const errorSegment = createErrorSegment(errorInfo, fallback, entry, params);
+      return [errorSegment];
+    }
+  }
+
+  /**
+   * Wrapper for segment resolution with revalidation that adds error boundary handling
+   * Similar to resolveWithErrorHandling but returns SegmentRevalidationResult
+   */
+  async function resolveWithRevalidationErrorHandling(
+    entry: EntryData,
+    params: Record<string, string>,
+    resolveFn: () => Promise<SegmentRevalidationResult>,
+    pathname?: string
+  ): Promise<SegmentRevalidationResult> {
+    try {
+      return await resolveFn();
+    } catch (error) {
+      // Don't catch Response objects (middleware short-circuit)
+      if (error instanceof Response) {
+        throw error;
+      }
+
+      // Handle DataNotFoundError separately - look for notFoundBoundary first
+      if (error instanceof DataNotFoundError) {
+        const notFoundFallback = findNearestNotFoundBoundary(entry);
+
+        if (notFoundFallback) {
+          // Create notFound info
+          const notFoundInfo = createNotFoundInfo(
+            error,
+            entry.shortCode,
+            entry.type,
+            pathname
+          );
+
+          console.log(
+            `[Router] NotFound caught by notFoundBoundary in ${entry.shortCode}:`,
+            notFoundInfo.message
+          );
+
+          // Create notFound segment
+          const notFoundSegment = createNotFoundSegment(notFoundInfo, notFoundFallback, entry, params);
+
+          // Return with the notFound segment and its ID as matched
+          return {
+            segments: [notFoundSegment],
+            matchedIds: [notFoundSegment.id],
+          };
+        }
+        // If no notFoundBoundary, fall through to error boundary handling
+      }
+
+      // Find nearest error boundary
+      const fallback = findNearestErrorBoundary(entry);
+
+      if (!fallback) {
+        // No error boundary - propagate the error
+        console.error(
+          `[Router] Error in segment ${entry.shortCode} with no error boundary:`,
+          error
+        );
+        throw error;
+      }
+
+      // Determine segment type for error info
+      const segmentType: ErrorInfo["segmentType"] = entry.type;
+
+      // Create error info
+      const errorInfo = createErrorInfo(error, entry.shortCode, segmentType);
+
+      console.log(
+        `[Router] Error caught by error boundary in ${entry.shortCode}:`,
+        errorInfo.message
+      );
+
+      // Create error segment
+      const errorSegment = createErrorSegment(errorInfo, fallback, entry, params);
+
+      // Return with the error segment and its ID as matched
+      return {
+        segments: [errorSegment],
+        matchedIds: [errorSegment.id],
+      };
+    }
+  }
+
+  /**
    * Result of resolving segments with revalidation
    * Contains both segments to render and all matched segment IDs
    */
@@ -1545,13 +1896,20 @@ export function createRSCRouter<TEnv = any>(
         async () => {
           const segs: ResolvedSegment[] = [];
           for (const entry of traverseBack(manifestEntry)) {
-            // Resolve entry into segments (may return multiple for orphan layouts)
-            const resolvedSegments = await resolveSegment(
+            // Resolve entry into segments with error boundary handling
+            const resolvedSegments = await resolveWithErrorHandling(
               entry,
               matched.routeKey,
               matched.params,
               handlerContext,
-              loaderPromises
+              loaderPromises,
+              () => resolveSegment(
+                entry,
+                matched.routeKey,
+                matched.params,
+                handlerContext,
+                loaderPromises
+              )
             );
 
             segs.push(...resolvedSegments);
@@ -1876,19 +2234,24 @@ export function createRSCRouter<TEnv = any>(
           const segs: ResolvedSegment[] = [];
           const matchedIds: string[] = [];
           for (const entry of traverseBack(manifestEntry)) {
-            // Resolve entry into segments with revalidation checks
-            const resolved = await resolveSegmentWithRevalidation(
+            // Resolve entry into segments with revalidation checks and error handling
+            const resolved = await resolveWithRevalidationErrorHandling(
               entry,
-              matched.routeKey,
               matched.params,
-              handlerContext,
-              clientSegmentSet,
-              prevParams,
-              request,
-              prevUrl,
-              url,
-              loaderPromises,
-              actionContext
+              () => resolveSegmentWithRevalidation(
+                entry,
+                matched.routeKey,
+                matched.params,
+                handlerContext,
+                clientSegmentSet,
+                prevParams,
+                request,
+                prevUrl,
+                url,
+                loaderPromises,
+                actionContext
+              ),
+              pathname
             );
 
             segs.push(...resolved.segments);

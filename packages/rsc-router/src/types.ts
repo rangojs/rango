@@ -401,6 +401,94 @@ export type HandlersForRouteMap<T extends RouteDefinition, TEnv = any> = {
 };
 
 /**
+ * Error information passed to error boundary fallback components
+ */
+export interface ErrorInfo {
+  /** Error message (always available) */
+  message: string;
+  /** Error name/type (e.g., "RouteNotFoundError", "MiddlewareError") */
+  name: string;
+  /** Optional error code for programmatic handling */
+  code?: string;
+  /** Stack trace (only in development) */
+  stack?: string;
+  /** Original error cause if available */
+  cause?: unknown;
+  /** Segment ID where the error occurred */
+  segmentId: string;
+  /** Segment type where the error occurred */
+  segmentType: "layout" | "route" | "parallel" | "loader" | "middleware";
+}
+
+/**
+ * Props passed to error boundary fallback components
+ *
+ * @example
+ * ```typescript
+ * function ProductErrorFallback({ error, reset }: ErrorBoundaryFallbackProps) {
+ *   return (
+ *     <div>
+ *       <h2>Something went wrong loading the product</h2>
+ *       <p>{error.message}</p>
+ *       <button onClick={reset}>Try again</button>
+ *     </div>
+ *   );
+ * }
+ * ```
+ */
+export interface ErrorBoundaryFallbackProps {
+  /** Error information */
+  error: ErrorInfo;
+  /** Function to retry the failed operation (triggers revalidation) */
+  reset: () => void;
+}
+
+/**
+ * Error boundary handler - receives error info and returns fallback UI
+ */
+export type ErrorBoundaryHandler = (props: ErrorBoundaryFallbackProps) => ReactNode;
+
+/**
+ * Not found information passed to notFound boundary fallback components
+ */
+export interface NotFoundInfo {
+  /** Not found message */
+  message: string;
+  /** Segment ID where notFound was thrown */
+  segmentId: string;
+  /** Segment type where notFound was thrown */
+  segmentType: "layout" | "route" | "parallel" | "loader" | "middleware";
+  /** The pathname that triggered the not found */
+  pathname?: string;
+}
+
+/**
+ * Props passed to notFound boundary fallback components
+ *
+ * @example
+ * ```typescript
+ * function ProductNotFound({ notFound }: NotFoundBoundaryFallbackProps) {
+ *   return (
+ *     <div>
+ *       <h2>Product Not Found</h2>
+ *       <p>{notFound.message}</p>
+ *       <a href="/products">Browse all products</a>
+ *     </div>
+ *   );
+ * }
+ * ```
+ */
+export interface NotFoundBoundaryFallbackProps {
+  /** Not found information */
+  notFound: NotFoundInfo;
+}
+
+/**
+ * NotFound boundary handler - receives not found info and returns fallback UI
+ */
+export type NotFoundBoundaryHandler = (props: NotFoundBoundaryFallbackProps) => ReactNode;
+
+/**
  * Resolved segment with component
  *
  * Segment types:
@@ -408,11 +496,13 @@ export type HandlersForRouteMap<T extends RouteDefinition, TEnv = any> = {
  * - route: The leaf content for a URL
  * - parallel: Named slots rendered via <ParallelOutlet name="@slot" />
  * - loader: Data segment (no visual rendering, carries loaderData)
+ * - error: Error fallback segment (replaces failed segment with error UI)
+ * - notFound: Not found fallback segment (replaces segment when data not found)
  */
 export interface ResolvedSegment {
   id: string;
   namespace: string; // Optional namespace for segment (used for parallel groups)
-  type: "layout" | "route" | "parallel" | "loader";
+  type: "layout" | "route" | "parallel" | "loader" | "error" | "notFound";
   index: number;
   component: ReactNode | Promise<ReactNode>; // Component or handler promise
   loading?: ReactNode; // Loading component for this segment (shown during navigation)
@@ -424,6 +514,10 @@ export interface ResolvedSegment {
   // Loader-specific fields
   loaderName?: string; // For loaders: the loader name identifier
   loaderData?: any; // For loaders: the resolved data from loader execution
+  // Error-specific fields
+  error?: ErrorInfo; // For error segments: the error information
+  // NotFound-specific fields
+  notFoundInfo?: NotFoundInfo; // For notFound segments: the not found information
 }
 
 /**
@@ -431,11 +525,13 @@ export interface ResolvedSegment {
  */
 export interface SegmentMetadata {
   id: string;
-  type: "layout" | "route" | "parallel" | "loader";
+  type: "layout" | "route" | "parallel" | "loader" | "error" | "notFound";
   index: number;
   params?: Record<string, string>;
   slot?: string;
   loaderName?: string;
+  error?: ErrorInfo;
+  notFoundInfo?: NotFoundInfo;
 }
 
 // Note: route symbols are now defined in route-definition.ts
