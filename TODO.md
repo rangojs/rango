@@ -19,3 +19,24 @@ During SSR, `useNavigation()` returns a hardcoded `http://localhost` URL instead
 - `packages/rsc-router/src/browser/react/use-navigation.ts`
 - `examples/vite-rsc-demo/src/entry.rsc.tsx`
 - `examples/vite-rsc-demo/src/entry.ssr.tsx`
+
+## Preconnect on User Activity (Connection Warming)
+
+When a page has been idle beyond the Keep-Alive timeout (~60-120s), the TCP/TLS connection to the server is likely closed. Re-establishing costs 150-450ms (DNS + TCP + TLS handshakes).
+
+**Optimization:**
+Detect user activity after idle periods and preconnect to warm the connection before navigation.
+
+**Triggers:**
+- `visibilitychange` (tab becomes visible after being hidden)
+- `mousemove`, `keydown`, `scroll`, `touchstart` after idle threshold
+
+**Implementation options:**
+1. Inject `<link rel="preconnect" href={origin}>` dynamically
+2. Fire a lightweight `fetch('/ping', { method: 'HEAD', priority: 'low' })`
+
+**Considerations:**
+- TLS session resumption may already reduce TLS cost (cached 5-10 min)
+- HTTP/2 multiplexing makes single warm connection more valuable
+- Don't be too aggressive - each preconnect holds a server connection slot
+- Could integrate with router's link prefetch/hover logic

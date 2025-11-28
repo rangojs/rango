@@ -11,6 +11,8 @@ import { createPartialUpdater } from "./partial-update.js";
 /**
  * Creates a disposable transaction for navigation state management.
  * Handles state transitions and automatic rollback on error.
+ * Captures segment state (segmentIds, currentUrl, path) for rollback,
+ * but keeps storedSegments as-is (it's just a cache).
  */
 function createNavigationTransaction(
   store: NavigationStore,
@@ -18,6 +20,14 @@ function createNavigationTransaction(
   originalLocation: NavigationLocation
 ) {
   let committed = false;
+
+  // Capture original segment state for rollback
+  const segmentState = store.getSegmentState();
+  const originalSegmentState = {
+    segmentIds: [...segmentState.currentSegmentIds],
+    currentUrl: segmentState.currentUrl,
+    path: segmentState.path,
+  };
 
   store.setState({ state: "loading" });
 
@@ -30,6 +40,10 @@ function createNavigationTransaction(
 
       if (!committed) {
         window.history.back();
+        // Restore segment state (but not storedSegments - it's just a cache)
+        store.setSegmentIds(originalSegmentState.segmentIds);
+        store.setCurrentUrl(originalSegmentState.currentUrl);
+        store.setPath(originalSegmentState.path);
         store.setState({
           state: "idle",
           location: originalLocation,
