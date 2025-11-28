@@ -30,6 +30,8 @@ export { track } from "./server/context.js";
 // Error classes and utilities
 export {
   RouteNotFoundError,
+  DataNotFoundError,
+  notFound,
   MiddlewareError,
   HandlerError,
   BuildError,
@@ -62,4 +64,12 @@ export type {
   LoaderFn,
   LoaderContext,
   GetRegisteredRoutes,
+  // Error boundary types
+  ErrorInfo,
+  ErrorBoundaryFallbackProps,
+  ErrorBoundaryHandler,
+  // NotFound boundary types
+  NotFoundInfo,
+  NotFoundBoundaryFallbackProps,
+  NotFoundBoundaryHandler,
 } from "./types.js";

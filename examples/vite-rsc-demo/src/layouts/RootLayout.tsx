@@ -63,6 +63,9 @@ export function RootLayout() {
           <Link to={href("todos.index")} prefetch="hover">
             Todos
           </Link>
+          <Link to={href("errors.index")} prefetch="hover">
+            Errors
+          </Link>
         </nav>
         <DebugSegmentWrapper type="layout" name="Root">
           <DebugSegmentWrapper type="outlet" name="Root Outlet">

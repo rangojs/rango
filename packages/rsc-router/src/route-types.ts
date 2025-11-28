@@ -13,6 +13,8 @@ export declare const ParallelBrand: unique symbol;
 export declare const MiddlewareBrand: unique symbol;
 export declare const RevalidateBrand: unique symbol;
 export declare const LoaderBrand: unique symbol;
+export declare const ErrorBoundaryBrand: unique symbol;
+export declare const NotFoundBoundaryBrand: unique symbol;
 
 export type LayoutItem = {
   name: string;
@@ -50,6 +52,18 @@ export type RevalidateItem = {
   uses?: AllUseItems[];
   [RevalidateBrand]: void;
 };
+export type ErrorBoundaryItem = {
+  name: string;
+  type: "errorBoundary";
+  uses?: AllUseItems[];
+  [ErrorBoundaryBrand]: void;
+};
+export type NotFoundBoundaryItem = {
+  name: string;
+  type: "notFoundBoundary";
+  uses?: AllUseItems[];
+  [NotFoundBoundaryBrand]: void;
+};
 
 /**
  * Union types for use() callbacks
@@ -60,19 +74,25 @@ export type AllUseItems =
   | MiddlewareItem
   | RevalidateItem
   | ParallelItem
-  | LoaderItem;
+  | LoaderItem
+  | ErrorBoundaryItem
+  | NotFoundBoundaryItem;
 export type LayoutUseItem =
   | LayoutItem
   | RouteItem
   | MiddlewareItem
   | RevalidateItem
   | ParallelItem
-  | LoaderItem;
+  | LoaderItem
+  | ErrorBoundaryItem
+  | NotFoundBoundaryItem;
 export type RouteUseItem =
   | LayoutItem
   | ParallelItem
   | MiddlewareItem
   | RevalidateItem
-  | LoaderItem;
-export type ParallelUseItem = RevalidateItem | LoaderItem;
+  | LoaderItem
+  | ErrorBoundaryItem
+  | NotFoundBoundaryItem;
+export type ParallelUseItem = RevalidateItem | LoaderItem | ErrorBoundaryItem | NotFoundBoundaryItem;
 export type LoaderUseItem = RevalidateItem;

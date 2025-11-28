@@ -8,6 +8,7 @@ import {
   adminRoutes,
   protectedRoutes,
   todosRoutes,
+  errorRoutes,
 } from "./routes.js";
 
 /**
@@ -79,7 +80,10 @@ const router = createRSCRouter<AppEnv>({ debugPerformance: true })
   .map(() => import("./handlers/protected.js"))
 
   .routes("/todos", todosRoutes) // Todos - demonstrates loaders, actions, streaming
-  .map(() => import("./handlers/todos.js"));
+  .map(() => import("./handlers/todos.js"))
+
+  .routes("/errors", errorRoutes) // Errors - demonstrates error boundary handling
+  .map(() => import("./handlers/error.js"));
 
 /**
  * Extract route types directly from the router chain
@@ -102,4 +106,4 @@ declare global {
 export { router };
 export const href = router.href;
 
-console.log("[Router] Configured with 8 route groups (lazy-loaded handlers)");
+console.log("[Router] Configured with 9 route groups (lazy-loaded handlers)");

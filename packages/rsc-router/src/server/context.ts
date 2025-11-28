@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ReactNode } from "react";
-import type { Handler, LoaderDefinition, MiddlewareFn, ShouldRevalidateFn } from "../types";
+import type { ErrorBoundaryHandler, Handler, LoaderDefinition, MiddlewareFn, NotFoundBoundaryHandler, ShouldRevalidateFn } from "../types";
 import { invariant } from "../errors";
 
 // ============================================================================
@@ -39,6 +39,8 @@ export type EntryPropCommon = {
 export type EntryPropDatas = {
   middleware: MiddlewareFn<any, any>[];
   revalidate: ShouldRevalidateFn<any, any>[];
+  errorBoundary: (ReactNode | ErrorBoundaryHandler)[];
+  notFoundBoundary: (ReactNode | NotFoundBoundaryHandler)[];
 };
 /**
  * Loader entry stored in EntryData
