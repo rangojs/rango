@@ -27,6 +27,45 @@ export class RouteNotFoundError extends Error {
 }
 
 /**
+ * Thrown when data is not found (e.g., product with ID doesn't exist)
+ * Use this in handlers/loaders to trigger the nearest notFoundBoundary
+ *
+ * @example
+ * ```typescript
+ * route("products.detail", async (ctx) => {
+ *   const product = await db.products.get(ctx.params.slug);
+ *   if (!product) throw new DataNotFoundError("Product not found");
+ *   return <ProductDetail product={product} />;
+ * });
+ * ```
+ */
+export class DataNotFoundError extends Error {
+  name = "DataNotFoundError" as const;
+  cause?: unknown;
+
+  constructor(message: string = "Not found", options?: ErrorOptions) {
+    super(message);
+    this.cause = options?.cause;
+  }
+}
+
+/**
+ * Convenience function to throw a DataNotFoundError
+ * Shorter syntax for common not-found scenarios
+ *
+ * @example
+ * ```typescript
+ * const product = await db.products.get(slug);
+ * if (!product) throw notFound("Product not found");
+ * // or simply:
+ * if (!product) throw notFound();
+ * ```
+ */
+export function notFound(message?: string): never {
+  throw new DataNotFoundError(message);
+}
+
+/**
  * Thrown when middleware execution fails
  */
 export class MiddlewareError extends Error {

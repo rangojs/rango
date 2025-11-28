@@ -16,6 +16,8 @@ export { renderSegments } from "./segment-system.js";
 // Error classes (can be used on both server and client)
 export {
   RouteNotFoundError,
+  DataNotFoundError,
+  notFound,
   MiddlewareError,
   HandlerError,
   BuildError,
@@ -47,6 +49,14 @@ export type {
   LoaderDefinition,
   LoaderFn,
   LoaderContext,
+  // Error boundary types
+  ErrorInfo,
+  ErrorBoundaryFallbackProps,
+  ErrorBoundaryHandler,
+  // NotFound boundary types
+  NotFoundInfo,
+  NotFoundBoundaryFallbackProps,
+  NotFoundBoundaryHandler,
 } from "./types.js";
 
 // Router options type
