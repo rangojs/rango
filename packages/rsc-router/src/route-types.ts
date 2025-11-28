@@ -13,6 +13,7 @@ export declare const ParallelBrand: unique symbol;
 export declare const MiddlewareBrand: unique symbol;
 export declare const RevalidateBrand: unique symbol;
 export declare const LoaderBrand: unique symbol;
+export declare const LoadingBrand: unique symbol;
 
 export type LayoutItem = {
   name: string;
@@ -50,6 +51,11 @@ export type RevalidateItem = {
   uses?: AllUseItems[];
   [RevalidateBrand]: void;
 };
+export type LoadingItem = {
+  name: string;
+  type: "loading";
+  [LoadingBrand]: void;
+};
 
 /**
  * Union types for use() callbacks
@@ -60,19 +66,22 @@ export type AllUseItems =
   | MiddlewareItem
   | RevalidateItem
   | ParallelItem
-  | LoaderItem;
+  | LoaderItem
+  | LoadingItem;
 export type LayoutUseItem =
   | LayoutItem
   | RouteItem
   | MiddlewareItem
   | RevalidateItem
   | ParallelItem
-  | LoaderItem;
+  | LoaderItem
+  | LoadingItem;
 export type RouteUseItem =
   | LayoutItem
   | ParallelItem
   | MiddlewareItem
   | RevalidateItem
-  | LoaderItem;
-export type ParallelUseItem = RevalidateItem | LoaderItem;
+  | LoaderItem
+  | LoadingItem;
+export type ParallelUseItem = RevalidateItem | LoaderItem | LoadingItem;
 export type LoaderUseItem = RevalidateItem;

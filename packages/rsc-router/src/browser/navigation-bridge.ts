@@ -138,13 +138,15 @@ export function createNavigationBridge(
      * Handle browser back/forward navigation
      */
     handlePopstate(): void {
+      const url = window.location.href;
+
       // Update location from browser URL
       store.setState({
         state: "loading",
-        location: new URL(window.location.href),
+        location: new URL(url),
       });
 
-      fetchPartialUpdate(window.location.href).finally(() => {
+      fetchPartialUpdate(url).finally(() => {
         store.setState({ state: "idle" });
       });
     },

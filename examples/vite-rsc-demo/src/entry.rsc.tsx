@@ -6,7 +6,10 @@ import {
   loadServerAction,
 } from "@vitejs/plugin-rsc/rsc";
 import { router } from "./router.js";
-import { renderSegments, type ResolvedSegment } from "rsc-router/server";
+import {
+  renderSegments,
+  type ResolvedSegment,
+} from "rsc-router/server";
 
 /**
  * RSC Payload Schema
@@ -270,7 +273,10 @@ export default async function handler(request: Request): Promise<Response> {
       console.warn(`[RSC] >>> FULL RENDER`);
       const match = await router.match(request, {});
       const renderStart = performance.now();
+
+      // Render segments
       const root = renderSegments(match.segments);
+
       const renderDuration = performance.now() - renderStart;
       serverTiming = match.serverTiming
         ? `${match.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`

@@ -59,18 +59,21 @@ export type EntryData =
   | ({
       type: "route";
       handler: Handler<any, any>;
+      loading?: ReactNode;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments)
   | ({
       type: "layout";
       handler: ReactNode | Handler<any, any>;
+      loading?: ReactNode;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments)
   | ({
       type: "parallel";
       handler: Record<`@${string}`, Handler<any, any> | ReactNode>;
+      loading?: ReactNode;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments);

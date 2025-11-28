@@ -415,6 +415,7 @@ export interface ResolvedSegment {
   type: "layout" | "route" | "parallel" | "loader";
   index: number;
   component: ReactNode;
+  loading?: ReactNode; // Loading component for this segment (shown during navigation)
   params?: Record<string, string>;
   slot?: string; // For parallel segments: '@sidebar', '@modal', etc.
   belongsToRoute?: boolean; // True if segment belongs to the matched route (route itself + its children)

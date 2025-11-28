@@ -93,6 +93,9 @@ export const ProductsDetailRoute: RouteHandler<
   typeof shopRoutes,
   "products.detail.view"
 > = async (ctx) => {
+  // Artificial delay to demonstrate loading skeleton
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+
   // Use the ProductLoader to get product data
   // ctx.use() returns a Promise since loaders run in parallel
   const product = await ctx.use(ProductLoader);

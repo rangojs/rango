@@ -22,6 +22,7 @@ import type {
   MiddlewareItem,
   RevalidateItem,
   LoaderItem,
+  LoadingItem,
   LayoutUseItem,
   RouteUseItem,
   ParallelUseItem,
@@ -101,6 +102,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
     loaderDef: LoaderDefinition<TData>,
     use?: () => LoaderUseItem[]
   ) => LoaderItem;
+  loading: (component: ReactNode) => LoadingItem;
 };
 
 const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
@@ -187,6 +189,26 @@ const loaderFn: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
 
   ctx.parent.loader.push(loaderEntry);
   return { name, type: "loader" } as LoaderItem;
+};
+
+/**
+ * Loading helper - attaches a loading component to the current entry
+ * Loading components are static (no context) and shown during navigation
+ */
+const loadingFn: RouteHelpers<any, any>["loading"] = (component) => {
+  const store = getContext();
+  const ctx = store.getStore();
+  if (!ctx) throw new Error("loading() must be called inside map()");
+
+  if (!ctx.parent) {
+    invariant(false, "No parent entry available for loading()");
+  }
+
+  // Attach loading component to parent entry
+  ctx.parent.loading = component;
+
+  const name = `$${store.getNextIndex("loading")}`;
+  return { name, type: "loading" } as LoadingItem;
 };
 
 const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
@@ -317,6 +339,7 @@ const isValidUseItem = (item: any): item is AllUseItems | undefined | null => {
         "revalidate",
         "parallel",
         "loader",
+        "loading",
       ].includes(item.type))
   );
 };
@@ -367,6 +390,13 @@ const createLoaderHelper = <TEnv>(): RouteHelpers<any, TEnv>["loader"] => {
 };
 
 /**
+ * Create loading helper
+ */
+const createLoadingHelper = (): RouteHelpers<any, any>["loading"] => {
+  return loadingFn;
+};
+
+/**
  * Create route helper
  */
 const createRouteHelper = <
@@ -404,6 +434,7 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
       middleware: createMiddlewareHelper<TEnv>(),
       revalidate: createRevalidateHelper<TEnv>(),
       loader: createLoaderHelper<TEnv>(),
+      loading: createLoadingHelper(),
     };
 
     return [layout(RootLayout, () => builder(helpers))].flat(3);

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Suspense, createElement, type ReactNode } from "react";
 import { invariant, RouteNotFoundError, sanitizeError } from "./errors";
 import type {
   RouteDefinition,
@@ -633,6 +633,7 @@ export function createRSCRouter<TEnv = any>(
         type: "layout",
         index: 0,
         component,
+        loading: entry.loading,
         params,
         belongsToRoute: false, // Parent chain layouts don't belong to specific route
         layoutName: entry.id,
@@ -703,7 +704,25 @@ export function createRSCRouter<TEnv = any>(
       }
 
       // Step 5: Execute route handler and emit route segment
-      const component = await entry.handler(context);
+      // If loading is defined, wrap in Suspense for RSC streaming
+      // This allows the fallback to be sent immediately while content streams in
+      let component: ReactNode;
+      if (entry.loading) {
+        // Create the handler promise but don't await it
+        const handlerPromise = entry.handler(context);
+        // Async component that will suspend while handler resolves
+        // RSC handles async server components by streaming the result
+        async function AsyncRouteContent() {
+          return await handlerPromise;
+        }
+        component = createElement(
+          Suspense,
+          { fallback: entry.loading },
+          createElement(AsyncRouteContent, null)
+        );
+      } else {
+        component = await entry.handler(context);
+      }
 
       segments.push({
         id: entry.shortCode,
@@ -711,6 +730,7 @@ export function createRSCRouter<TEnv = any>(
         type: "route",
         index: 0,
         component,
+        loading: entry.loading,
         params,
         belongsToRoute: true, // Route always belongs to itself
       });
@@ -792,6 +812,7 @@ export function createRSCRouter<TEnv = any>(
       params,
       belongsToRoute: true, // Orphan layout belongs to the route
       layoutName: orphan.id,
+      loading: orphan.loading,
     });
 
     return segments;
@@ -946,9 +967,32 @@ export function createRSCRouter<TEnv = any>(
             : entry.handler;
         }
         // entry.type === "route" - handler is always callable
-        return await (entry as Extract<EntryData, { type: "route" }>).handler(
-          context
-        );
+        const routeEntry = entry as Extract<EntryData, { type: "route" }>;
+        // Always wrap in Suspense when loading is defined (for consistent tree structure)
+        // This ensures React reconciliation works correctly between navigation and action revalidation
+        if (routeEntry.loading) {
+          if (actionContext) {
+            // Action revalidation: await first, then wrap in Suspense (won't suspend)
+            const resolvedContent = await routeEntry.handler(context);
+            return createElement(
+              Suspense,
+              { fallback: routeEntry.loading },
+              resolvedContent
+            );
+          } else {
+            // Navigation: wrap async component in Suspense (will suspend, show loading)
+            const handlerPromise = routeEntry.handler(context);
+            async function AsyncRouteContent() {
+              return await handlerPromise;
+            }
+            return createElement(
+              Suspense,
+              { fallback: routeEntry.loading },
+              createElement(AsyncRouteContent, null)
+            );
+          }
+        }
+        return await routeEntry.handler(context);
       },
       () => null
     );
@@ -959,6 +1003,7 @@ export function createRSCRouter<TEnv = any>(
       type: entry.type as "layout" | "route",
       index: 0,
       component,
+      loading: entry.loading,
       params,
       belongsToRoute,
       ...(entry.type === "layout" ? { layoutName: entry.id } : {}),
@@ -1210,6 +1255,7 @@ export function createRSCRouter<TEnv = any>(
       params,
       belongsToRoute: true, // Orphan layout belongs to the route
       layoutName: orphan.id,
+      loading: orphan.loading,
     });
 
     return { segments, matchedIds };

@@ -1,11 +1,16 @@
 "use client";
 
-import { useContext, useMemo, type ReactNode } from "react";
+import { useContext, useMemo, Suspense, type ReactNode } from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
 import type { LoaderDefinition, LoaderFn, ResolvedSegment } from "./types";
 
 /**
  * Outlet component - renders child content in layouts
+ *
+ * If the current segment defines a loading component, the outlet content
+ * is wrapped in Suspense with the loading component as fallback.
+ * This means during navigation/streaming, React's Suspense will automatically
+ * show the loading skeleton until the content is ready.
  *
  * @example
  * ```tsx
@@ -21,7 +26,19 @@ import type { LoaderDefinition, LoaderFn, ResolvedSegment } from "./types";
  */
 export function Outlet(): ReactNode {
   const context = useContext(OutletContext);
-  return context?.content ?? null;
+  const content = context?.content ?? null;
+
+  // If this segment defines a loading component, wrap outlet content with Suspense
+  // The loading component becomes the Suspense fallback, shown during streaming/navigation
+  if (context?.loading) {
+    return (
+      <Suspense fallback={context.loading}>
+        {content}
+      </Suspense>
+    );
+  }
+
+  return content;
 }
 /**
  * ParallelOutlet component - renders content for a named parallel slot
@@ -54,7 +71,8 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
  * Provider for outlet content - used internally by renderSegments
  *
  * Stores a reference to parent context so useLoader can walk up the chain
- * to find loader data from parent layouts.
+ * to find loader data from parent layouts. If this segment defines a loading
+ * component, Outlet will wrap content with Suspense using that as fallback.
  */
 export function OutletProvider({
   content,
@@ -73,7 +91,14 @@ export function OutletProvider({
   const parentContext = useContext(OutletContext);
 
   const value = useMemo(
-    () => ({ content, parallel, segment, loaderData, parent: parentContext }),
+    () => ({
+      content,
+      parallel,
+      segment,
+      loaderData,
+      parent: parentContext,
+      loading: segment?.loading,
+    }),
     [content, parallel, segment, loaderData, parentContext]
   );
 

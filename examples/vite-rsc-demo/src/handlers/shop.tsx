@@ -49,6 +49,13 @@ import {
   OrdersLoader,
   FeaturedProductsLoader,
 } from "./shop/loaders/index.js";
+// Loading skeletons for instant feedback during navigation
+import {
+  ProductDetailSkeleton,
+  CartSkeleton,
+  CheckoutSkeleton,
+  ShopLayoutSkeleton,
+} from "./shop/components/loading.js";
 //#endregion
 
 const DummyLayout = (
@@ -70,7 +77,7 @@ const DummyLayout = (
  * - Full type inference for inline handlers
  */
 export default map<typeof shopRoutes>(
-  ({ route, layout, middleware, parallel, revalidate, loader }) => [
+  ({ route, layout, middleware, parallel, revalidate, loader, loading }) => [
     //#region Global Layout & Middleware
     // Global root layout wraps everything
     // #1 $layout.0
@@ -144,6 +151,7 @@ export default map<typeof shopRoutes>(
             // ProductLoader fetches the specific product by slug
             // RelatedProductsLoader depends on ProductLoader to get related items
             route("products.detail.view", ProductsDetailRoute, () => [
+              loading(<ProductDetailSkeleton />),
               loader(ProductLoader, () => [revalidate(() => false)]),
               loader(RelatedProductsLoader, () => [revalidate(() => false)]),
               revalidate(productDetailRevalidation),
@@ -178,6 +186,7 @@ export default map<typeof shopRoutes>(
 
             // Cart
             route("cart", CartRoute, () => [
+              loading(<CartSkeleton />),
               revalidate(cartRevalidation),
               parallel({
                 "@summary": () => <OrderSummary variant="cart" />,
@@ -190,6 +199,7 @@ export default map<typeof shopRoutes>(
         //#region Checkout Routes
         // Checkout layout
         layout(<CheckoutLayout />, () => [
+          loading(<CheckoutSkeleton />),
           middleware(...requireAuthMiddleware),
 
           route("checkout.index", CheckoutIndexRoute, () => [
