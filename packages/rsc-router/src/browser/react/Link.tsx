@@ -4,9 +4,38 @@ import React, { forwardRef, useCallback, useContext, type ForwardRefExoticCompon
 import { NavigationStoreContext } from "./context.js";
 import type { NavigateOptions } from "../types.js";
 
+// Track prefetched URLs to avoid duplicate <link> elements
+const prefetchedUrls = new Set<string>();
+
+/**
+ * Inject a <link rel="prefetch"> element into the document head
+ * for the given URL with RSC partial request parameters.
+ */
+function prefetchUrl(url: string, segmentIds: string[]): void {
+  if (prefetchedUrls.has(url)) return;
+  prefetchedUrls.add(url);
+
+  // Build RSC partial URL with segment IDs
+  const targetUrl = new URL(url, window.location.origin);
+  targetUrl.searchParams.set("_rsc_partial", "true");
+  if (segmentIds.length > 0) {
+    targetUrl.searchParams.set("_rsc_segments", segmentIds.join(","));
+  }
+
+  // Inject <link rel="prefetch"> into head
+  const link = document.createElement("link");
+  link.rel = "prefetch";
+  link.href = targetUrl.toString();
+  link.as = "fetch";
+  document.head.appendChild(link);
+}
+
 /**
  * Prefetch strategy for the Link component
- * Currently stubbed for future implementation
+ * - "hover": Prefetch on mouse enter (uses native <link rel="prefetch">)
+ * - "viewport": Prefetch when link enters viewport (not yet implemented)
+ * - "hybrid": Hover on desktop, viewport on mobile (not yet implemented)
+ * - "none": No prefetching (default)
  */
 export type PrefetchStrategy = "hover" | "viewport" | "hybrid" | "none";
 
@@ -32,7 +61,8 @@ export interface LinkProps
    */
   reloadDocument?: boolean;
   /**
-   * Prefetch strategy (for future implementation)
+   * Prefetch strategy for the link destination
+   * @default "none"
    */
   prefetch?: PrefetchStrategy;
   children: React.ReactNode;
@@ -129,8 +159,15 @@ export const Link: ForwardRefExoticComponent<LinkProps & RefAttributes<HTMLAncho
     [to, isExternal, reloadDocument, replace, scroll, ctx, onClick]
   );
 
+  const handleMouseEnter = useCallback(() => {
+    if (prefetch === "hover" && !isExternal && ctx?.store) {
+      const segmentState = ctx.store.getSegmentState();
+      prefetchUrl(to, segmentState.currentSegmentIds);
+    }
+  }, [prefetch, to, isExternal, ctx]);
+
   return (
-    <a ref={ref} href={to} onClick={handleClick} {...props}>
+    <a ref={ref} href={to} onClick={handleClick} onMouseEnter={handleMouseEnter} {...props}>
       {children}
     </a>
   );

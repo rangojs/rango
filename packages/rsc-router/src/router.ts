@@ -145,7 +145,7 @@ export interface RSCRouter<TEnv = any, TRoutes extends Record<string, string> = 
  */
 export function createRSCRouter<TEnv = any>(
   options: RSCRouterOptions = {}
-): RSCRouter<TEnv, Record<string, string>> {
+): RSCRouter<TEnv, {}> {
   const { debugPerformance = false } = options;
   const routesEntries: RouteEntry<TEnv>[] = [];
   let mountIndex = 0;
@@ -1733,8 +1733,9 @@ export function createRSCRouter<TEnv = any>(
   /**
    * Router instance
    * The type system tracks accumulated routes through the builder chain
+   * Initial TRoutes is {} (empty) to avoid poisoning accumulated types with Record<string, string>
    */
-  const router: RSCRouter<TEnv, Record<string, string>> = {
+  const router: RSCRouter<TEnv, {}> = {
     routes(
       prefixOrRoutes: string | Record<string, string>,
       maybeRoutes?: Record<string, string>
@@ -1752,8 +1753,9 @@ export function createRSCRouter<TEnv = any>(
     href: createHref(mergedRouteMap),
 
     // Expose accumulated route map for typeof extraction
+    // Returns {} initially, but builder chain accumulates specific route types
     get routeMap() {
-      return mergedRouteMap as Record<string, string>;
+      return mergedRouteMap as {};
     },
 
     match,

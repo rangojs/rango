@@ -96,9 +96,10 @@ declare global {
 }
 
 /**
- * Export the router.
- * Type-safe href is available via `import { href } from "rsc-router/browser"`
+ * Export the router and type-safe href.
+ * Import href from here for type safety: `import { href } from "./router.js"`
  */
 export { router };
+export const href = router.href;
 
 console.log("[Router] Configured with 8 route groups (lazy-loaded handlers)");

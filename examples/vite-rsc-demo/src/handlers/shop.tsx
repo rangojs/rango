@@ -76,7 +76,6 @@ export default map<typeof shopRoutes>(
     // #1 $layout.0
     layout(
       <>
-        <ParallelOutlet name="@promoBanner" />
         <RootLayout />
       </>,
       () => [
@@ -100,20 +99,6 @@ export default map<typeof shopRoutes>(
         // Returns { content: Promise<Product[]> } that streams to client
         loader(FeaturedProductsLoader),
 
-        parallel({
-          "@promoBanner": () => (
-            <div
-              style={{
-                background: "#d1e7dd",
-                padding: "0.5rem",
-                textAlign: "center",
-              }}
-            >
-              <p>🔥 Summer Sale! Up to 50% off on selected items! 🔥</p>
-            </div>
-          ),
-        }),
-
         // Global middleware
         middleware(...loggerMiddleware),
         middleware(...mockAuthMiddleware),
@@ -122,64 +107,84 @@ export default map<typeof shopRoutes>(
         //#region Shop Routes
         // Shop layout wraps shop routes
         // #2 $layout.0.$layout.2
-        layout(<ShopLayout />, () => [
-          // Homepage
-          route("index", IndexRoute, () => [
-            parallel(
-              {
-                "@sidebar": () => <CategorySidebar />,
-              },
-              () => [revalidate(() => false)]
-            ),
-          ]),
-
-          // Category
-          route("products.category", ProductsCategoryRoute),
-
-          // Product detail
-          // ProductLoader fetches the specific product by slug
-          // RelatedProductsLoader depends on ProductLoader to get related items
-          route("products.detail.view", ProductsDetailRoute, () => [
-            loader(ProductLoader, () => [revalidate(() => false)]),
-            loader(RelatedProductsLoader, () => [revalidate(() => false)]),
-            revalidate(productDetailRevalidation),
-
+        layout(
+          <>
+            <ParallelOutlet name="@promoBanner" />
+            <ShopLayout />
+          </>,
+          () => [
             parallel({
-              "@related": (ctx) => <RelatedProducts slug={ctx.params.slug} />,
+              "@promoBanner": () => (
+                <div
+                  style={{
+                    background: "#d1e7dd",
+                    padding: "0.5rem",
+                    textAlign: "center",
+                  }}
+                >
+                  <p>🔥 Summer Sale! Up to 50% off on selected items! 🔥</p>
+                </div>
+              ),
             }),
-          ]),
 
-          // Deeply nested reviews
-          route("products.detail.reviews.index", (ctx) => (
-            <div>
-              <h2>Reviews for {ctx.params.slug}</h2>
-              <p>All reviews for this product</p>
-            </div>
-          )),
+            // Homepage
+            route("index", IndexRoute, () => [
+              parallel(
+                {
+                  "@sidebar": () => <CategorySidebar />,
+                },
+                () => [revalidate(() => false)]
+              ),
+            ]),
 
-          route("products.detail.reviews.detail", (ctx) => (
-            <div>
-              <h2>Review {ctx.params.reviewId}</h2>
-              <p>For product: {ctx.params.slug}</p>
-            </div>
-          )),
+            // Category
+            route("products.category", ProductsCategoryRoute),
 
-          route("products.detail.reviews.edit.index", (ctx) => (
-            <div>
-              <h2>Edit Review {ctx.params.reviewId}</h2>
-              <p>For product: {ctx.params.slug}</p>
-              <p>4 levels deep!</p>
-            </div>
-          )),
+            // Product detail
+            // ProductLoader fetches the specific product by slug
+            // RelatedProductsLoader depends on ProductLoader to get related items
+            route("products.detail.view", ProductsDetailRoute, () => [
+              loader(ProductLoader, () => [revalidate(() => false)]),
+              loader(RelatedProductsLoader, () => [revalidate(() => false)]),
+              revalidate(productDetailRevalidation),
 
-          // Cart
-          route("cart", CartRoute, () => [
-            revalidate(cartRevalidation),
-            parallel({
-              "@summary": () => <OrderSummary variant="cart" />,
-            }),
-          ]),
-        ]),
+              parallel({
+                "@related": (ctx) => <RelatedProducts slug={ctx.params.slug} />,
+              }),
+            ]),
+
+            // Deeply nested reviews
+            route("products.detail.reviews.index", (ctx) => (
+              <div>
+                <h2>Reviews for {ctx.params.slug}</h2>
+                <p>All reviews for this product</p>
+              </div>
+            )),
+
+            route("products.detail.reviews.detail", (ctx) => (
+              <div>
+                <h2>Review {ctx.params.reviewId}</h2>
+                <p>For product: {ctx.params.slug}</p>
+              </div>
+            )),
+
+            route("products.detail.reviews.edit.index", (ctx) => (
+              <div>
+                <h2>Edit Review {ctx.params.reviewId}</h2>
+                <p>For product: {ctx.params.slug}</p>
+                <p>4 levels deep!</p>
+              </div>
+            )),
+
+            // Cart
+            route("cart", CartRoute, () => [
+              revalidate(cartRevalidation),
+              parallel({
+                "@summary": () => <OrderSummary variant="cart" />,
+              }),
+            ]),
+          ]
+        ),
         //#endregion
 
         //#region Checkout Routes
