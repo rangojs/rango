@@ -147,8 +147,9 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
       // Rebuild tree on client
       const newTree = renderSegments(fullSegments);
 
-      // Update segment IDs
+      // Update segment IDs and prune old segments to prevent memory leaks
       store.setSegmentIds(matchedIds);
+      store.pruneSegments(matchedIds);
       store.setCurrentUrl(url);
 
       // Emit update
@@ -162,9 +163,9 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
     } else {
       // Full update (fallback)
       console.warn(`[Browser] Full update (fallback)`);
-      store.setSegmentIds(
-        payload.metadata?.segments?.map((s: any) => s.id) || []
-      );
+      const segmentIds = payload.metadata?.segments?.map((s: any) => s.id) || [];
+      store.setSegmentIds(segmentIds);
+      store.pruneSegments(segmentIds);
       store.setCurrentUrl(url);
       store.setPath(new URL(url).pathname);
 

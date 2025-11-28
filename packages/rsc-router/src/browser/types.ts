@@ -173,6 +173,7 @@ export interface NavigationStore {
   setSegmentIds(ids: string[]): void;
   storeSegment(segment: ResolvedSegment): void;
   storeSegments(segments: ResolvedSegment[]): void;
+  pruneSegments(keepIds: string[]): void;
 
   // UI update notifications
   onUpdate(callback: UpdateSubscriber): () => void;
