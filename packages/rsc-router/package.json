@@ -24,6 +24,11 @@
       "types": "./src/browser/index.ts",
       "default": "./src/browser/index.ts"
     },
+    "./handler": {
+      "react-server": "./src/handler.ts",
+      "types": "./src/handler.ts",
+      "default": "./src/handler.ts"
+    },
     "./ssr": {
       "types": "./src/ssr/index.tsx",
       "default": "./src/ssr/index.tsx"

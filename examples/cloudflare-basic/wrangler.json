@@ -1,0 +1,9 @@
+{
+  "name": "cloudflare-basic",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "./src/entry.rsc.tsx",
+  "assets": {
+    "directory": "./dist/client"
+  }
+}
