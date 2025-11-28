@@ -1,8 +1,8 @@
 "use client";
 
-import { useContext, useMemo, Suspense, type ReactNode } from "react";
+import { Component, useContext, useMemo, Suspense, type ReactNode } from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
-import type { LoaderDefinition, LoaderFn, ResolvedSegment } from "./types";
+import type { ErrorBoundaryFallbackProps, ErrorInfo, LoaderDefinition, LoaderFn, ResolvedSegment } from "./types";
 
 /**
  * Outlet component - renders child content in layouts
@@ -269,4 +269,107 @@ export function createLoader(
     __brand: "loader",
     name,
   };
+}
+
+/**
+ * Props for the ErrorBoundary component
+ */
+export interface ErrorBoundaryProps {
+  /** Fallback UI to show when an error is caught */
+  fallback: ReactNode | ((props: ErrorBoundaryFallbackProps) => ReactNode);
+  /** Children to render */
+  children: ReactNode;
+  /** Optional callback when an error is caught */
+  onError?: (error: Error, errorInfo: React.ErrorInfo) => void;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+/**
+ * Client-side ErrorBoundary component
+ *
+ * Catches JavaScript errors in child components during rendering,
+ * in lifecycle methods, and in constructors of the whole tree below them.
+ * Displays a fallback UI instead of the component tree that crashed.
+ *
+ * Use this to wrap client components that might throw during hydration
+ * or user interaction. For server-side errors (middleware, loaders, handlers),
+ * use the errorBoundary() helper in route definitions instead.
+ *
+ * @example
+ * ```tsx
+ * "use client";
+ * import { ErrorBoundary } from "rsc-router/client";
+ *
+ * function MyComponent() {
+ *   return (
+ *     <ErrorBoundary fallback={<div>Something went wrong</div>}>
+ *       <ComponentThatMightThrow />
+ *     </ErrorBoundary>
+ *   );
+ * }
+ *
+ * // Or with a function fallback for more control:
+ * function MyComponent() {
+ *   return (
+ *     <ErrorBoundary
+ *       fallback={({ error, reset }) => (
+ *         <div>
+ *           <p>Error: {error.message}</p>
+ *           <button onClick={reset}>Try again</button>
+ *         </div>
+ *       )}
+ *     >
+ *       <ComponentThatMightThrow />
+ *     </ErrorBoundary>
+ *   );
+ * }
+ * ```
+ */
+export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
+    console.error("[ErrorBoundary] Error caught:", error, errorInfo);
+    this.props.onError?.(error, errorInfo);
+  }
+
+  reset = (): void => {
+    this.setState({ hasError: false, error: null });
+  };
+
+  render(): ReactNode {
+    if (this.state.hasError && this.state.error) {
+      const { fallback } = this.props;
+
+      // Create error info for the fallback
+      const errorInfo: ErrorInfo = {
+        message: this.state.error.message,
+        name: this.state.error.name,
+        stack: this.state.error.stack,
+        cause: this.state.error.cause,
+        segmentId: "client",
+        segmentType: "route",
+      };
+
+      // Render fallback
+      if (typeof fallback === "function") {
+        return fallback({ error: errorInfo, reset: this.reset });
+      }
+
+      return fallback;
+    }
+
+    return this.props.children;
+  }
 }

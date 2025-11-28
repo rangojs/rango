@@ -92,3 +92,15 @@ export const todosRoutes = route({
   detail: "/:id",
 });
 
+/**
+ * Error routes - demonstrates error boundary and notFound boundary handling
+ * Tests server-side error capture and fallback UI rendering
+ */
+export const errorRoutes = route({
+  index: "/",
+  throwError: "/throw",
+  loaderError: "/loader-error",
+  notFound: "/not-found",
+  notFoundLoader: "/not-found-loader",
+});
+

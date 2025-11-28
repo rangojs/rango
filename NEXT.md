@@ -11,6 +11,7 @@ Build a **code-first, type-safe RSC router** for serverless deployments (Cloudfl
 - ✅ Revalidation (soft/hard decision pattern)
 - ✅ Middleware (chaining, context, error handling)
 - ✅ Server Actions (with returnValue, streaming, useActionState)
+- ✅ Error Boundaries (server-side capture, segment-level fallbacks)
 
 **Up Next - Phase 2: Caching & Performance**
 
@@ -179,6 +180,142 @@ See detailed roadmap below ↓
 
 ---
 
+### 1.4 Error Boundaries ✅ COMPLETE
+**Status:** Fully implemented with server-side error capture
+**Priority:** IMPORTANT - Graceful error handling
+**Completed:** 2025-11-28
+
+**What's Implemented:**
+- ✅ `errorBoundary()` helper in route definitions
+- ✅ Server-side error capture in middleware, loaders, and handlers
+- ✅ Segment-level error boundaries (layouts, routes, parallels)
+- ✅ Nearest ancestor error boundary resolution
+- ✅ Error segment type with fallback component
+- ✅ `ErrorBoundaryFallbackProps` with error info and reset function
+- ✅ Client-side `ErrorBoundary` component for hydration errors
+- ✅ Error info includes: message, name, code, stack (dev only), segmentId, segmentType
+- ✅ `defaultErrorBoundary` router option for fallback when no boundary defined
+
+**API:**
+```typescript
+// Router-level default error boundary
+createRSCRouter({
+  defaultErrorBoundary: ({ error }) => <div>Error: {error.message}</div>
+})
+
+// Layout-level error boundary (catches all child errors)
+layout(<ShopLayout />, () => [
+  errorBoundary(({ error, reset }) => (
+    <div>
+      <h2>Something went wrong</h2>
+      <p>{error.message}</p>
+      <button onClick={reset}>Try again</button>
+    </div>
+  )),
+])
+
+// Route-specific error boundary (overrides parent)
+route("products.detail", ProductDetail, () => [
+  errorBoundary(<ProductErrorFallback />),
+])
+
+// Client-side error boundary for hydration errors
+import { ErrorBoundary } from "rsc-router/client";
+<ErrorBoundary fallback={<ErrorUI />}>
+  <ComponentThatMightThrow />
+</ErrorBoundary>
+```
+
+**Files Modified:**
+- `packages/rsc-router/src/route-types.ts` - ErrorBoundaryItem type
+- `packages/rsc-router/src/route-definition.ts` - errorBoundary() helper
+- `packages/rsc-router/src/types.ts` - ErrorInfo, ErrorBoundaryFallbackProps
+- `packages/rsc-router/src/router.ts` - Error capture and segment creation
+- `packages/rsc-router/src/segment-system.tsx` - Error segment rendering
+- `packages/rsc-router/src/client.tsx` - Client ErrorBoundary component
+- `packages/rsc-router/src/server/context.ts` - EntryData.errorBoundary storage
+- `examples/vite-rsc-demo/src/handlers/error.tsx` - Demo routes
+
+**Success Criteria:**
+- ✅ Server errors render fallback UI instead of breaking
+- ✅ Error info passed to fallback components
+- ✅ Nested error boundaries work (inner catches first)
+- ✅ Client-side errors caught during hydration
+- ✅ Error details sanitized in production
+- ✅ Demo route at `/errors` with test cases
+
+---
+
+### 1.5 NotFound Boundaries ✅ COMPLETE
+**Status:** Fully implemented with server-side notFound capture
+**Priority:** IMPORTANT - Better UX for missing data
+**Completed:** 2025-11-28
+
+**What's Implemented:**
+- ✅ `notFound()` helper to throw DataNotFoundError
+- ✅ `notFoundBoundary()` helper in route definitions
+- ✅ `DataNotFoundError` class for programmatic not-found handling
+- ✅ Server-side notFound capture in loaders and handlers
+- ✅ Segment-level notFound boundaries (layouts, routes, parallels)
+- ✅ Nearest ancestor notFound boundary resolution
+- ✅ NotFound segment type with fallback component
+- ✅ `NotFoundBoundaryFallbackProps` with notFound info
+- ✅ NotFound info includes: message, segmentId, segmentType, pathname
+- ✅ `defaultNotFoundBoundary` router option for fallback
+- ✅ Falls back to error boundary if no notFound boundary defined
+
+**API:**
+```typescript
+// Router-level default notFound boundary
+createRSCRouter({
+  defaultNotFoundBoundary: ({ notFound }) => <div>Not found: {notFound.message}</div>
+})
+
+// Throw notFound() in handlers or loaders
+route("products.detail", async (ctx) => {
+  const product = await db.products.get(ctx.params.slug);
+  if (!product) throw notFound("Product not found");
+  return <ProductDetail product={product} />;
+})
+
+// Layout-level notFound boundary (catches all child notFound)
+layout(<ShopLayout />, () => [
+  notFoundBoundary(({ notFound }) => (
+    <div>
+      <h2>Not Found</h2>
+      <p>{notFound.message}</p>
+      <a href="/products">Browse all products</a>
+    </div>
+  )),
+])
+
+// Route-specific notFound boundary (overrides parent)
+route("products.detail", ProductDetail, () => [
+  notFoundBoundary(<ProductNotFoundFallback />),
+])
+```
+
+**Files Modified:**
+- `packages/rsc-router/src/errors.ts` - DataNotFoundError, notFound()
+- `packages/rsc-router/src/route-types.ts` - NotFoundBoundaryItem type
+- `packages/rsc-router/src/route-definition.ts` - notFoundBoundary() helper
+- `packages/rsc-router/src/types.ts` - NotFoundInfo, NotFoundBoundaryFallbackProps
+- `packages/rsc-router/src/router.ts` - NotFound capture and segment creation
+- `packages/rsc-router/src/segment-system.tsx` - NotFound segment rendering
+- `packages/rsc-router/src/server/context.ts` - EntryData.notFoundBoundary storage
+- `packages/rsc-router/src/index.ts` - Export DataNotFoundError, notFound
+- `packages/rsc-router/src/server.ts` - Export DataNotFoundError, notFound
+- `examples/vite-rsc-demo/src/handlers/error.tsx` - Demo routes with notFound
+
+**Success Criteria:**
+- ✅ DataNotFoundError renders notFound fallback UI
+- ✅ notFound info passed to fallback components
+- ✅ Nested notFound boundaries work (inner catches first)
+- ✅ Falls back to error boundary if no notFoundBoundary
+- ✅ Demo routes at `/errors/not-found` and `/errors/not-found-loader`
+
+---
+
 ## Phase 2: Caching & Performance (NEXT WEEK)
 
 ### 4. Caching Strategy
@@ -283,7 +420,7 @@ For platform-agnostic deployment.
 - ✅ **RouteKeys type utility** - FIXED (recursive flattening now handles nested routes)
 - ❓ Router-level layouts (`.layouts()` method) - DEFERRED (handlers work fine)
 - ❓ Lazy route flattening - DEFERRED (no performance issue yet)
-- ❓ Error boundaries
+- ✅ **Error boundaries** - IMPLEMENTED (server-side error capture, segment-level fallbacks)
 - ❓ Loading states
 - ❓ Streaming patterns
 - ❓ Route groups/prefixes
@@ -361,4 +498,4 @@ For platform-agnostic deployment.
 
 ---
 
-Last Updated: 2025-11-14 (Phase 1 Complete! 🎉)
+Last Updated: 2025-11-28 (Phase 1 Complete - Added Error & NotFound Boundaries)
