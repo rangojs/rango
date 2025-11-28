@@ -1,5 +1,6 @@
 import { Suspense, createElement, type ReactNode } from "react";
 import { invariant, RouteNotFoundError, sanitizeError } from "./errors";
+import { RouteContentWrapper } from "./route-content-wrapper.js";
 import type {
   RouteDefinition,
   ResolvedRouteMap,
@@ -13,9 +14,21 @@ import type {
   LoaderContext,
 } from "./types";
 import type { AllUseItems } from "./route-types.js";
-import { EntryData, LoaderEntry, getContext, track, MetricsStore, PerformanceMetric } from "./server/context";
+import {
+  EntryData,
+  LoaderEntry,
+  getContext,
+  track,
+  MetricsStore,
+  PerformanceMetric,
+} from "./server/context";
 import { error } from "console";
-import { createHref, type HrefFunction, type PrefixedRoutes, type SanitizePrefix } from "./href.js";
+import {
+  createHref,
+  type HrefFunction,
+  type PrefixedRoutes,
+  type SanitizePrefix,
+} from "./href.js";
 import { registerRouteMap } from "./route-map-builder.js";
 
 /**
@@ -33,7 +46,11 @@ export interface RSCRouterOptions {
  * Router builder for chaining .use() and .map()
  * TRoutes accumulates all registered route types through the chain
  */
-interface RouteBuilder<T extends RouteDefinition, TEnv, TRoutes extends Record<string, string>> {
+interface RouteBuilder<
+  T extends RouteDefinition,
+  TEnv,
+  TRoutes extends Record<string, string>
+> {
   map(
     handler: () =>
       | Array<AllUseItems>
@@ -52,7 +69,10 @@ interface RouteBuilder<T extends RouteDefinition, TEnv, TRoutes extends Record<s
  * RSC Router interface
  * TRoutes accumulates all registered route types through the builder chain
  */
-export interface RSCRouter<TEnv = any, TRoutes extends Record<string, string> = Record<string, string>> {
+export interface RSCRouter<
+  TEnv = any,
+  TRoutes extends Record<string, string> = Record<string, string>
+> {
   /**
    * Register routes with a prefix
    * Route types are accumulated through the chain
@@ -60,7 +80,11 @@ export interface RSCRouter<TEnv = any, TRoutes extends Record<string, string> = 
   routes<TPrefix extends string, T extends ResolvedRouteMap<any>>(
     prefix: TPrefix,
     routes: T
-  ): RouteBuilder<RouteDefinition, TEnv, TRoutes & PrefixedRoutes<T, SanitizePrefix<TPrefix>>>;
+  ): RouteBuilder<
+    RouteDefinition,
+    TEnv,
+    TRoutes & PrefixedRoutes<T, SanitizePrefix<TPrefix>>
+  >;
 
   /**
    * Register routes without a prefix
@@ -322,7 +346,9 @@ export function createRSCRouter<TEnv = any>(
 
       // Track each middleware execution
       const mwName = currentMiddleware.name || `mw${currentIndex}`;
-      const label = entryId ? `middleware:${entryId}.${mwName}` : `middleware:${mwName}`;
+      const label = entryId
+        ? `middleware:${entryId}.${mwName}`
+        : `middleware:${mwName}`;
       const done = track(label);
 
       try {
@@ -501,7 +527,9 @@ export function createRSCRouter<TEnv = any>(
     ctx: HandlerContext<any, TEnv>,
     loaderPromises: Map<string, Promise<any>>
   ): void {
-    ctx.use = <T, TLoaderParams = any>(loader: LoaderDefinition<T, TLoaderParams>): Promise<T> => {
+    ctx.use = <T, TLoaderParams = any>(
+      loader: LoaderDefinition<T, TLoaderParams>
+    ): Promise<T> => {
       // Return cached promise if already started
       if (loaderPromises.has(loader.name)) {
         return loaderPromises.get(loader.name) as Promise<T>;
@@ -515,7 +543,10 @@ export function createRSCRouter<TEnv = any>(
       }
 
       // Create loader context with recursive use() support
-      const loaderCtx: LoaderContext<Record<string, string | undefined>, TEnv> = {
+      const loaderCtx: LoaderContext<
+        Record<string, string | undefined>,
+        TEnv
+      > = {
         params: ctx.params,
         request: ctx.request,
         searchParams: ctx.searchParams,
@@ -524,7 +555,9 @@ export function createRSCRouter<TEnv = any>(
         env: ctx.env,
         var: ctx.var,
         get: ctx.get,
-        use: <TDep, TDepParams = any>(dep: LoaderDefinition<TDep, TDepParams>): Promise<TDep> => {
+        use: <TDep, TDepParams = any>(
+          dep: LoaderDefinition<TDep, TDepParams>
+        ): Promise<TDep> => {
           // Recursive call - will start dep loader if not already started
           return ctx.use(dep);
         },
@@ -706,23 +739,9 @@ export function createRSCRouter<TEnv = any>(
       // Step 5: Execute route handler and emit route segment
       // If loading is defined, wrap in Suspense for RSC streaming
       // This allows the fallback to be sent immediately while content streams in
-      let component: ReactNode;
-      if (entry.loading) {
-        // Create the handler promise but don't await it
-        const handlerPromise = entry.handler(context);
-        // Async component that will suspend while handler resolves
-        // RSC handles async server components by streaming the result
-        async function AsyncRouteContent() {
-          return await handlerPromise;
-        }
-        component = createElement(
-          Suspense,
-          { fallback: entry.loading },
-          createElement(AsyncRouteContent, null)
-        );
-      } else {
-        component = await entry.handler(context);
-      }
+      let component = entry.loading
+        ? entry.handler(context)
+        : await entry.handler(context);
 
       segments.push({
         id: entry.shortCode,
@@ -892,7 +911,8 @@ export function createRSCRouter<TEnv = any>(
               actionContext
             );
           },
-          async () => (typeof handler === "function" ? await handler(context) : handler),
+          async () =>
+            typeof handler === "function" ? await handler(context) : handler,
           () => null
         );
 
@@ -968,41 +988,28 @@ export function createRSCRouter<TEnv = any>(
         }
         // entry.type === "route" - handler is always callable
         const routeEntry = entry as Extract<EntryData, { type: "route" }>;
-        // Always wrap in Suspense when loading is defined (for consistent tree structure)
-        // This ensures React reconciliation works correctly between navigation and action revalidation
-        if (routeEntry.loading) {
-          if (actionContext) {
-            // Action revalidation: await first, then wrap in Suspense (won't suspend)
-            const resolvedContent = await routeEntry.handler(context);
-            return createElement(
-              Suspense,
-              { fallback: routeEntry.loading },
-              resolvedContent
-            );
-          } else {
-            // Navigation: wrap async component in Suspense (will suspend, show loading)
-            const handlerPromise = routeEntry.handler(context);
-            async function AsyncRouteContent() {
-              return await handlerPromise;
-            }
-            return createElement(
-              Suspense,
-              { fallback: routeEntry.loading },
-              createElement(AsyncRouteContent, null)
-            );
-          }
+        // For routes with loading: keep promise pending for navigation (not actions)
+        // This allows client's use() to suspend and show loading skeleton
+        if (routeEntry.loading && !actionContext) {
+          return { content: routeEntry.handler(context) }; // NOT awaited - keeps promise pending
         }
         return await routeEntry.handler(context);
       },
       () => null
     );
 
+    // Extract component from wrapper object if needed (used to prevent promise auto-resolution)
+    const resolvedComponent =
+      component && typeof component === "object" && "content" in component
+        ? (component as { content: ReactNode }).content
+        : component;
+
     const segment: ResolvedSegment = {
       id: entry.shortCode,
       namespace: entry.id,
       type: entry.type as "layout" | "route",
       index: 0,
-      component,
+      component: resolvedComponent,
       loading: entry.loading,
       params,
       belongsToRoute,
@@ -1037,14 +1044,26 @@ export function createRSCRouter<TEnv = any>(
 
     // Step 1: Run middleware (same for both layout and route)
     if (entry.middleware.length > 0) {
-      const response = await executeMiddleware(entry.middleware, context, entry.id);
+      const response = await executeMiddleware(
+        entry.middleware,
+        context,
+        entry.id
+      );
       if (response) throw response;
     }
 
     // Step 2: Run loaders with revalidation
     const loaderResult = await resolveLoadersWithRevalidation(
-      entry, context, belongsToRoute,
-      clientSegmentIds, prevParams, request, prevUrl, nextUrl, routeKey, actionContext
+      entry,
+      context,
+      belongsToRoute,
+      clientSegmentIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      routeKey,
+      actionContext
     );
     segments.push(...loaderResult.segments);
     matchedIds.push(...loaderResult.matchedIds);
@@ -1053,8 +1072,17 @@ export function createRSCRouter<TEnv = any>(
     if (entry.type === "route") {
       for (const orphan of entry.layout) {
         const orphanResult = await resolveOrphanLayoutWithRevalidation(
-          orphan, params, context, clientSegmentIds, prevParams,
-          request, prevUrl, nextUrl, routeKey, loaderPromises, actionContext
+          orphan,
+          params,
+          context,
+          clientSegmentIds,
+          prevParams,
+          request,
+          prevUrl,
+          nextUrl,
+          routeKey,
+          loaderPromises,
+          actionContext
         );
         segments.push(...orphanResult.segments);
         matchedIds.push(...orphanResult.matchedIds);
@@ -1063,8 +1091,17 @@ export function createRSCRouter<TEnv = any>(
 
     // Step 4: Process parallel segments
     const parallelResult = await resolveParallelSegmentsWithRevalidation(
-      entry, params, context, belongsToRoute,
-      clientSegmentIds, prevParams, request, prevUrl, nextUrl, routeKey, actionContext
+      entry,
+      params,
+      context,
+      belongsToRoute,
+      clientSegmentIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      routeKey,
+      actionContext
     );
     segments.push(...parallelResult.segments);
     matchedIds.push(...parallelResult.matchedIds);
@@ -1073,8 +1110,17 @@ export function createRSCRouter<TEnv = any>(
     if (entry.type === "layout") {
       for (const orphan of entry.layout) {
         const orphanResult = await resolveOrphanLayoutWithRevalidation(
-          orphan, params, context, clientSegmentIds, prevParams,
-          request, prevUrl, nextUrl, routeKey, loaderPromises, actionContext
+          orphan,
+          params,
+          context,
+          clientSegmentIds,
+          prevParams,
+          request,
+          prevUrl,
+          nextUrl,
+          routeKey,
+          loaderPromises,
+          actionContext
         );
         segments.push(...orphanResult.segments);
         matchedIds.push(...orphanResult.matchedIds);
@@ -1083,8 +1129,17 @@ export function createRSCRouter<TEnv = any>(
 
     // Step 6: Execute main handler with revalidation
     const handlerResult = await resolveEntryHandlerWithRevalidation(
-      entry, params, context, belongsToRoute,
-      clientSegmentIds, prevParams, request, prevUrl, nextUrl, routeKey, actionContext
+      entry,
+      params,
+      context,
+      belongsToRoute,
+      clientSegmentIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      routeKey,
+      actionContext
     );
     segments.push(handlerResult.segment);
     matchedIds.push(handlerResult.matchedId);
@@ -1743,8 +1798,8 @@ export function createRSCRouter<TEnv = any>(
         prefix && pattern !== "/"
           ? `${prefix}${pattern}`
           : prefix && pattern === "/"
-            ? prefix
-            : pattern;
+          ? prefix
+          : pattern;
       mergedRouteMap[prefixedKey] = prefixedPattern;
     }
 

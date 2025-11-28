@@ -2,6 +2,7 @@ import { createElement, Fragment, type ReactNode } from "react";
 import { OutletProvider } from "./client.js";
 import type { ResolvedSegment } from "./types.js";
 import { invariant } from "./errors.js";
+import { RouteContentWrapper } from "./route-content-wrapper.js";
 
 /**
  * Render segments into a React tree with proper layout nesting
@@ -40,8 +41,16 @@ export function renderSegments(segments: ResolvedSegment[]): ReactNode {
       node.segment.type === "layout" || node.segment.type === "route",
       `Expected layout or route segment, got ${node.segment.type}`
     );
-    const { component, id, params } = node.segment;
-    let nodeContent: ReactNode = component;
+    const { component, id, params, loading } = node.segment;
+
+    let nodeContent: ReactNode =
+      loading || component instanceof Promise
+        ? createElement(RouteContentWrapper, {
+            key: `suspense-loading-${id}`,
+            content: component,
+            fallback: loading,
+          })
+        : component;
 
     // Only include params in key for segments that belong to the route
     // - Routes: always include params (they render param-specific content)

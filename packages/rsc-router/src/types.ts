@@ -414,7 +414,7 @@ export interface ResolvedSegment {
   namespace: string; // Optional namespace for segment (used for parallel groups)
   type: "layout" | "route" | "parallel" | "loader";
   index: number;
-  component: ReactNode;
+  component: ReactNode | Promise<ReactNode>; // Component or handler promise
   loading?: ReactNode; // Loading component for this segment (shown during navigation)
   params?: Record<string, string>;
   slot?: string; // For parallel segments: '@sidebar', '@modal', etc.

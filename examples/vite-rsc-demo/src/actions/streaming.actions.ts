@@ -13,13 +13,13 @@ export async function addToCartSlowly(productId: string, quantity: number = 1) {
   // This Promise will be serialized and sent to the client
   const resultPromise = new Promise(async (resolve) => {
     // Simulate slow operation (3 seconds)
-    await new Promise((wait) => setTimeout(wait, 3000));
+    await new Promise((wait) => setTimeout(wait, 1000));
 
     console.log(`[Action] addToCartSlowly: Completed after 3s`);
 
     resolve({
       success: true,
-      message: `Successfully added ${quantity} ${productId} after 3 seconds!`,
+      message: `Successfully added ${quantity} ${productId} after 1 seconds!`,
       timestamp: new Date().toISOString(),
       cart: {
         productId,
