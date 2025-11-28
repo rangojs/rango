@@ -990,10 +990,18 @@ export function createRSCRouter<TEnv = any>(
         const routeEntry = entry as Extract<EntryData, { type: "route" }>;
         // For routes with loading: keep promise pending for navigation (not actions)
         // This allows client's use() to suspend and show loading skeleton
-        if (routeEntry.loading && !actionContext) {
+        if (!routeEntry.loading) {
+          return await routeEntry.handler(context);
+        }
+        if (!actionContext) {
           return { content: routeEntry.handler(context) }; // NOT awaited - keeps promise pending
         }
-        return await routeEntry.handler(context);
+        console.log(
+          `[Router] Resolving action route with resolved promise: ${entry.id}`
+        );
+        return {
+          content: Promise.resolve(await routeEntry.handler(context)),
+        };
       },
       () => null
     );

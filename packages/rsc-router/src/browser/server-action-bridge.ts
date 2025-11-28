@@ -299,8 +299,15 @@ export function createServerActionBridge(
 
       // Prepare new tree
       const newTree = renderSegments(fullSegments);
+      const queue = window.requestIdleCallback || function (cb: () => void , opt:{timeout:number}) { return setTimeout(cb, opt.timeout); };
 
-      onUpdate({ root: newTree, metadata: metadata! });
+      queue(() => {
+        setTimeout(() => {
+          if (!abortController.signal.aborted) {
+            onUpdate({ root: newTree, metadata: metadata! });
+          }
+        }, 100);
+      },{timeout:100});
       console.log(
         `[Browser] Action complete - UI updated (after action state committed)`
       );

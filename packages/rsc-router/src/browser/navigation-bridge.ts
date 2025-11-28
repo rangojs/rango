@@ -105,7 +105,7 @@ export function createNavigationBridge(
         window.history.pushState(window.history.state, "", url);
       }
 
-      await fetchPartialUpdate(url);
+      await fetchPartialUpdate(url, undefined, false, disposable.controller.signal);
 
       // Scroll to top if requested
       if (options?.scroll !== false) {
@@ -129,7 +129,7 @@ export function createNavigationBridge(
       );
 
       // Refetch with empty segments to get everything fresh
-      await fetchPartialUpdate(window.location.href, []);
+      await fetchPartialUpdate(window.location.href, [], false, disposable.controller.signal);
 
       tx.commit();
     },

@@ -22,7 +22,8 @@ export interface PartialUpdateConfig {
 export type PartialUpdater = (
   targetUrl: string,
   segmentIds?: string[],
-  isRetry?: boolean
+  isRetry?: boolean,
+  signal?: AbortSignal
 ) => Promise<Promise<void>>;
 
 /**
@@ -52,11 +53,14 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
   /**
    * Fetch partial update and trigger UI update
    * Returns a promise that resolves when the RSC stream is fully consumed
+   *
+   * @param signal - AbortSignal to check if navigation is stale (not for aborting fetch)
    */
   async function fetchPartialUpdate(
     targetUrl: string,
     segmentIds?: string[],
-    isRetry = false
+    isRetry = false,
+    signal?: AbortSignal
   ): Promise<Promise<void>> {
     const segmentState = store.getSegmentState();
     const url = targetUrl || window.location.href;
@@ -70,12 +74,18 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
     // Optimistically set the new path
     store.setPath(new URL(url).pathname);
 
-    // Fetch partial payload
+    // Fetch partial payload (no abort signal - RSC doesn't support it well)
     const { payload, streamComplete } = await client.fetchPartial({
       targetUrl: url,
       segmentIds: segments,
       previousUrl: segmentState.currentUrl,
     });
+
+    // Check if this navigation is stale (a newer one started)
+    if (signal?.aborted) {
+      console.log(`[Browser] Ignoring stale navigation (aborted)`);
+      return streamComplete;
+    }
 
     if (payload.metadata?.isPartial) {
       const { segments: newSegments, matched, diff } = payload.metadata;
@@ -127,7 +137,7 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
         );
 
         // Refetch with empty segments = server sends everything
-        return fetchPartialUpdate(url, [], true);
+        return fetchPartialUpdate(url, [], true, signal);
       }
 
       console.log(
