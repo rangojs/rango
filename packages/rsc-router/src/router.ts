@@ -391,32 +391,29 @@ export function createRSCRouter<TEnv = any>(
     belongsToRoute: boolean,
     shortCodeOverride?: string
   ): Promise<ResolvedSegment[]> {
-    const segments: ResolvedSegment[] = [];
     const loaderEntries = entry.loader ?? [];
+    if (loaderEntries.length === 0) return [];
+
     const shortCode = shortCodeOverride ?? entry.shortCode;
 
-    // For each loader, trigger via ctx.use() and create segment
-    for (let i = 0; i < loaderEntries.length; i++) {
-      const { loader } = loaderEntries[i];
+    // Trigger all loaders in parallel via ctx.use() (memoized, so safe to call multiple times)
+    const loaderPromises = loaderEntries.map(({ loader }) => ctx.use(loader));
 
-      // Trigger loader via ctx.use() (lazy execution with memoization)
-      const data = await ctx.use(loader);
+    // Wait for all loaders to complete
+    const results = await Promise.all(loaderPromises);
 
-      // Create loader segment
-      segments.push({
-        id: `${shortCode}D${i}.${loader.name}`,
-        namespace: entry.id,
-        type: "loader",
-        index: i,
-        component: null, // Loaders don't render directly
-        params: ctx.params,
-        loaderName: loader.name,
-        loaderData: data,
-        belongsToRoute,
-      });
-    }
-
-    return segments;
+    // Build segments from results
+    return results.map((data, i) => ({
+      id: `${shortCode}D${i}.${loaderEntries[i].loader.name}`,
+      namespace: entry.id,
+      type: "loader" as const,
+      index: i,
+      component: null, // Loaders don't render directly
+      params: ctx.params,
+      loaderName: loaderEntries[i].loader.name,
+      loaderData: data,
+      belongsToRoute,
+    }));
   }
 
   /**
@@ -456,77 +453,86 @@ export function createRSCRouter<TEnv = any>(
     },
     shortCodeOverride?: string
   ): Promise<LoaderRevalidationResult> {
-    const segments: ResolvedSegment[] = [];
-    const matchedIds: string[] = [];
     const loaderEntries = entry.loader ?? [];
+    if (loaderEntries.length === 0) return { segments: [], matchedIds: [] };
+
     const shortCode = shortCodeOverride ?? entry.shortCode;
 
-    for (let i = 0; i < loaderEntries.length; i++) {
-      const { loader, revalidate: loaderRevalidateFns } = loaderEntries[i];
-      const segmentId = `${shortCode}D${i}.${loader.name}`;
+    // Build segment IDs and matchedIds upfront
+    const loaderMeta = loaderEntries.map(({ loader, revalidate: loaderRevalidateFns }, i) => ({
+      loader,
+      loaderRevalidateFns,
+      segmentId: `${shortCode}D${i}.${loader.name}`,
+      index: i,
+    }));
 
-      // Always add to matchedIds - this loader is part of the page structure
-      matchedIds.push(segmentId);
+    const matchedIds = loaderMeta.map((m) => m.segmentId);
 
-      // Check if we need to revalidate this loader
-      const shouldRevalidate = await revalidate(
-        async () => {
-          // New segment - always run
-          if (!clientSegmentIds.has(segmentId)) return true;
+    // Phase 1: Check all revalidation in parallel
+    const revalidationChecks = await Promise.all(
+      loaderMeta.map(async ({ loader, loaderRevalidateFns, segmentId, index }) => {
+        const shouldRun = await revalidate(
+          async () => {
+            // New segment - always run
+            if (!clientSegmentIds.has(segmentId)) return true;
 
-          // Create dummy segment for evaluation
-          const dummySegment: ResolvedSegment = {
-            id: segmentId,
-            namespace: entry.id,
-            type: "loader",
-            index: i,
-            component: null,
-            params: ctx.params,
-            loaderName: loader.name,
-            belongsToRoute,
-          };
+            // Create dummy segment for evaluation
+            const dummySegment: ResolvedSegment = {
+              id: segmentId,
+              namespace: entry.id,
+              type: "loader",
+              index,
+              component: null,
+              params: ctx.params,
+              loaderName: loader.name,
+              belongsToRoute,
+            };
 
-          // Evaluate loader's revalidation functions
-          return await evaluateRevalidation(
-            dummySegment,
-            prevParams,
-            null,
-            request,
-            prevUrl,
-            nextUrl,
-            loaderRevalidateFns.map((fn, j) => ({
-              name: `loader-revalidate${j}`,
-              fn,
-            })),
-            routeKey,
-            ctx,
-            actionContext
-          );
-        },
-        async () => true, // Return true if should revalidate
-        () => false // Return false if should not revalidate
-      );
+            // Evaluate loader's revalidation functions
+            return await evaluateRevalidation(
+              dummySegment,
+              prevParams,
+              null,
+              request,
+              prevUrl,
+              nextUrl,
+              loaderRevalidateFns.map((fn, j) => ({
+                name: `loader-revalidate${j}`,
+                fn,
+              })),
+              routeKey,
+              ctx,
+              actionContext
+            );
+          },
+          async () => true,
+          () => false
+        );
+        return { shouldRun, loader, segmentId, index };
+      })
+    );
 
-      // Only emit segment to client if revalidation is needed
-      if (shouldRevalidate) {
-        // Trigger loader via ctx.use() (lazy execution with memoization)
+    // Phase 2: Run loaders that need revalidation in parallel
+    const loadersToRun = revalidationChecks.filter((c) => c.shouldRun);
+    const loaderResults = await Promise.all(
+      loadersToRun.map(async ({ loader, segmentId, index }) => {
         const data = await ctx.use(loader);
-        segments.push({
-          id: segmentId,
-          namespace: entry.id,
-          type: "loader",
-          index: i,
-          component: null,
-          params: ctx.params,
-          loaderName: loader.name,
-          loaderData: data,
-          belongsToRoute,
-        });
-      }
-      // If shouldRevalidate is false, don't emit the segment
-      // But the ID is still in matchedIds so client knows to keep its cached data
-      // Loader will run lazily if any handler calls ctx.use(loader)
-    }
+        return { data, loader, segmentId, index };
+      })
+    );
+
+    // Phase 3: Build segments from results
+    const segments: ResolvedSegment[] = loaderResults.map(({ data, loader, segmentId, index }) => ({
+      id: segmentId,
+      namespace: entry.id,
+      type: "loader" as const,
+      index,
+      component: null,
+      params: ctx.params,
+      loaderName: loader.name,
+      loaderData: data,
+      belongsToRoute,
+    }));
 
     return { segments, matchedIds };
   }
