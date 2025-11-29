@@ -5,17 +5,33 @@ import { BlogLayout } from "../layouts/BlogLayout.js";
 import { IndexRoute, PostRoute } from "./blog/routes.js";
 import { postRevalidation } from "./blog/revalidation.js";
 import { loggerMiddleware } from "./blog/middleware.js";
+import { BlogSidebarLoader } from "./blog/loaders/sidebar.js";
+import { BlogSidebar, BlogSidebarSkeleton } from "./blog/components/sidebar.js";
 
 /**
- * Blog handlers - demonstrates revalidation
+ * Blog handlers - demonstrates revalidation and parallel routes
  * Array-based API with use() pattern
  */
 export default map<typeof blogRoutes>(
-  ({ route, layout, middleware, revalidate }) => [
+  ({ route, layout, middleware, revalidate, parallel, loader, loading }) => [
     layout(<RootLayout />, () => []),
 
     layout(<BlogLayout />, () => [
       middleware(...loggerMiddleware),
+
+      parallel(
+        {
+          "@sidebar": async (ctx) => {
+            const data = await ctx.use(BlogSidebarLoader);
+            return <BlogSidebar data={data} />;
+          },
+        },
+        () => [
+          loader(BlogSidebarLoader),
+          revalidate(({ actionId }) => actionId?.includes("sidebar") ?? false),
+          loading(<BlogSidebarSkeleton />),
+        ]
+      ),
 
       route("index", IndexRoute),
 

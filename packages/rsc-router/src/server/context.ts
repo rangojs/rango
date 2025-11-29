@@ -52,7 +52,7 @@ export type LoaderEntry = {
 export type EntryPropSegments = {
   loader: LoaderEntry[];
   layout: EntryData[];
-  parallel: Record<`@${string}`, Handler<any, any> | ReactNode>[];
+  parallel: EntryData[]; // type: "parallel" entries with their own loaders/revalidate/loading
 };
 
 export type EntryData =

@@ -3,6 +3,7 @@
 import { useContext, useMemo, Suspense, type ReactNode } from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
 import type { LoaderDefinition, LoaderFn, ResolvedSegment } from "./types";
+import { RouteContentWrapper } from "./route-content-wrapper.js";
 
 /**
  * Outlet component - renders child content in layouts
@@ -43,6 +44,10 @@ export function Outlet(): ReactNode {
 /**
  * ParallelOutlet component - renders content for a named parallel slot
  *
+ * If the parallel segment defines a loading component, the content
+ * is wrapped in Suspense with the loading component as fallback.
+ * This enables streaming and navigation loading states for parallels.
+ *
  * @param name - The slot name (must start with @, e.g., "@modal", "@sidebar")
  *
  * @example
@@ -60,11 +65,25 @@ export function Outlet(): ReactNode {
  */
 export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
   const context = useContext(OutletContext);
-  return useMemo(() => {
+  const segment = useMemo(() => {
     if (!context?.parallel) return null;
-    const segment = context.parallel.find((seg) => seg.slot === name);
-    return segment?.component ?? null;
+    return context.parallel.find((seg) => seg.slot === name) ?? null;
   }, [context, name]);
+
+  if (!segment) return null;
+
+  // If this parallel segment defines a loading component or has a promise component,
+  // use RouteContentWrapper to handle Suspense wrapping properly
+  if (segment.loading || segment.component instanceof Promise) {
+    return (
+      <RouteContentWrapper
+        content={segment.component}
+        fallback={segment.loading}
+      />
+    );
+  }
+
+  return segment.component ?? null;
 }
 
 /**

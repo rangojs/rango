@@ -131,17 +131,42 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...fn) => {
   return { name, type: "middleware" } as MiddlewareItem;
 };
 
-const parallel: RouteHelpers<any, any>["parallel"] = (slots) => {
-  const ctx = getContext().getStore();
+const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
+  const store = getContext();
+  const ctx = store.getStore();
   if (!ctx) throw new Error("parallel() must be called inside map()");
 
-  // Attach to last entry in stack
   if (!ctx.parent || !ctx.parent?.parallel) {
     invariant(false, "No parent entry available for parallel()");
   }
-  const name = `${ctx.namespace}.$${getContext().getNextIndex("parallel")}`;
-  ctx.parent.parallel.push(slots);
-  return { name, type: "parallel" } as ParallelItem;
+
+  const namespace = `${ctx.namespace}.$${store.getNextIndex("parallel")}`;
+
+  // Create full EntryData for parallel with its own loaders/revalidate/loading
+  const entry = {
+    id: namespace,
+    shortCode: store.getShortCode("parallel"),
+    type: "parallel",
+    parent: null, // Parallels don't participate in parent chain traversal
+    handler: slots,
+    middleware: [],
+    revalidate: [],
+    layout: [],
+    parallel: [],
+    loader: [],
+  } satisfies EntryData;
+
+  // Run use callback if provided to collect loaders, revalidate, loading
+  if (use && typeof use === "function") {
+    const result = store.run(namespace, entry, use);
+    invariant(
+      Array.isArray(result) && result.every((item) => isValidUseItem(item)),
+      `parallel() use() callback must return an array of use items [${namespace}]`
+    );
+  }
+
+  ctx.parent.parallel.push(entry);
+  return { name: namespace, type: "parallel" } as ParallelItem;
 };
 
 /**

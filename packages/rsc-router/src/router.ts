@@ -380,14 +380,20 @@ export function createRSCRouter<TEnv = any>(
   /**
    * Resolve loaders for an entry and emit segments
    * Loaders are run lazily via ctx.use() and memoized for parallel execution
+   *
+   * @param shortCodeOverride - Optional override for the shortCode used in segment IDs.
+   *   For parallel entries, pass the parent layout/route's shortCode so loaders
+   *   are correctly associated in the segment tree.
    */
   async function resolveLoaders(
     entry: EntryData,
     ctx: HandlerContext<any, TEnv>,
-    belongsToRoute: boolean
+    belongsToRoute: boolean,
+    shortCodeOverride?: string
   ): Promise<ResolvedSegment[]> {
     const segments: ResolvedSegment[] = [];
     const loaderEntries = entry.loader ?? [];
+    const shortCode = shortCodeOverride ?? entry.shortCode;
 
     // For each loader, trigger via ctx.use() and create segment
     for (let i = 0; i < loaderEntries.length; i++) {
@@ -398,7 +404,7 @@ export function createRSCRouter<TEnv = any>(
 
       // Create loader segment
       segments.push({
-        id: `${entry.shortCode}D${i}.${loader.name}`,
+        id: `${shortCode}D${i}.${loader.name}`,
         namespace: entry.id,
         type: "loader",
         index: i,
@@ -427,6 +433,10 @@ export function createRSCRouter<TEnv = any>(
    * Checks each loader's revalidation functions before deciding to emit segment
    * Loaders are run lazily via ctx.use() - this function only handles segment emission
    * Returns both segments to render AND all matched segment IDs (including skipped ones)
+   *
+   * @param shortCodeOverride - Optional override for the shortCode used in segment IDs.
+   *   For parallel entries, pass the parent layout/route's shortCode so loaders
+   *   are correctly associated in the segment tree.
    */
   async function resolveLoadersWithRevalidation(
     entry: EntryData,
@@ -443,15 +453,17 @@ export function createRSCRouter<TEnv = any>(
       actionUrl?: URL;
       actionResult?: any;
       formData?: FormData;
-    }
+    },
+    shortCodeOverride?: string
   ): Promise<LoaderRevalidationResult> {
     const segments: ResolvedSegment[] = [];
     const matchedIds: string[] = [];
     const loaderEntries = entry.loader ?? [];
+    const shortCode = shortCodeOverride ?? entry.shortCode;
 
     for (let i = 0; i < loaderEntries.length; i++) {
       const { loader, revalidate: loaderRevalidateFns } = loaderEntries[i];
-      const segmentId = `${entry.shortCode}D${i}.${loader.name}`;
+      const segmentId = `${shortCode}D${i}.${loader.name}`;
 
       // Always add to matchedIds - this loader is part of the page structure
       matchedIds.push(segmentId);
@@ -634,24 +646,15 @@ export function createRSCRouter<TEnv = any>(
       segments.push(...loaderSegments);
 
       // Step 3: Process and emit layout parallel segments
-      for (const parallelRecord of entry.parallel) {
-        for (const [slot, handler] of Object.entries(parallelRecord)) {
-          const component =
-            typeof handler === "function" ? await handler(context) : handler;
-
-          // Emit parallel segment
-          segments.push({
-            id: `${entry.shortCode}.${slot}`,
-            namespace: entry.id,
-            type: "parallel",
-            index: 0,
-            component,
-            params,
-            slot,
-            belongsToRoute: false, // Parent chain parallels don't belong to specific route
-            parallelName: `${entry.id}.${slot}`,
-          });
-        }
+      for (const parallelEntry of entry.parallel) {
+        const parallelSegments = await resolveParallelEntry(
+          parallelEntry,
+          params,
+          context,
+          false, // Parent chain parallels don't belong to specific route
+          entry.shortCode // Pass parent layout's shortCode for segment ID association
+        );
+        segments.push(...parallelSegments);
       }
 
       // Step 4: Execute layout handler and emit layout segment
@@ -716,24 +719,15 @@ export function createRSCRouter<TEnv = any>(
       }
 
       // Step 4: Process and emit route parallel segments
-      for (const parallelRecord of entry.parallel) {
-        for (const [slot, handler] of Object.entries(parallelRecord)) {
-          const component =
-            typeof handler === "function" ? await handler(context) : handler;
-
-          // Emit parallel segment
-          segments.push({
-            id: `${entry.shortCode}.${slot}`,
-            namespace: entry.id,
-            type: "parallel",
-            index: 0,
-            component,
-            params,
-            slot,
-            belongsToRoute: true, // Route's parallels belong to the route
-            parallelName: `${entry.id}.${slot}`,
-          });
-        }
+      for (const parallelEntry of entry.parallel) {
+        const parallelSegments = await resolveParallelEntry(
+          parallelEntry,
+          params,
+          context,
+          true, // Route's parallels belong to the route
+          entry.shortCode // Pass parent route's shortCode for segment ID association
+        );
+        segments.push(...parallelSegments);
       }
 
       // Step 5: Execute route handler and emit route segment
@@ -796,24 +790,15 @@ export function createRSCRouter<TEnv = any>(
 
     // Step 3: Process and emit orphan parallel segments
     const segments: ResolvedSegment[] = [...loaderSegments];
-    for (const parallelRecord of orphan.parallel) {
-      for (const [slot, handler] of Object.entries(parallelRecord)) {
-        const component =
-          typeof handler === "function" ? await handler(context) : handler;
-
-        // Emit parallel segment
-        segments.push({
-          id: `${orphan.shortCode}.${slot}`,
-          namespace: orphan.id,
-          type: "parallel",
-          index: 0,
-          component,
-          params,
-          slot,
-          belongsToRoute: true, // Orphan's parallel belongs to the route
-          parallelName: `${orphan.id}.${slot}`,
-        });
-      }
+    for (const parallelEntry of orphan.parallel) {
+      const parallelSegments = await resolveParallelEntry(
+        parallelEntry,
+        params,
+        context,
+        true, // Orphan's parallel belongs to the route
+        orphan.shortCode // Pass parent orphan layout's shortCode for segment ID association
+      );
+      segments.push(...parallelSegments);
     }
 
     // Step 4: Execute orphan handler and emit layout segment
@@ -833,6 +818,77 @@ export function createRSCRouter<TEnv = any>(
       layoutName: orphan.id,
       loading: orphan.loading,
     });
+
+    return segments;
+  }
+
+  /**
+   * Helper: Resolve parallel EntryData with its loaders and slot handlers
+   * Parallels now have their own loaders, revalidate functions, and loading components
+   *
+   * @param parentShortCode - The shortCode of the parent layout/route that owns this parallel.
+   *   Used for segment IDs so the segment tree can correctly associate parallels with their parent.
+   */
+  async function resolveParallelEntry(
+    parallelEntry: EntryData,
+    params: Record<string, string>,
+    context: HandlerContext<any, TEnv>,
+    belongsToRoute: boolean,
+    parentShortCode: string
+  ): Promise<ResolvedSegment[]> {
+    invariant(
+      parallelEntry.type === "parallel",
+      `Expected parallel entry, got: ${parallelEntry.type}`
+    );
+
+    const segments: ResolvedSegment[] = [];
+
+    // Step 1: Execute each slot handler first (they trigger loaders via ctx.use())
+    // Handlers are NOT awaited if loading is defined - this keeps Promises pending for Suspense
+    const slots = parallelEntry.handler as Record<
+      `@${string}`,
+      ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>) | ReactNode
+    >;
+
+    for (const [slot, handler] of Object.entries(slots)) {
+      // If loading is defined, don't await the handler (stream with Suspense)
+      let component: ReactNode | Promise<ReactNode>;
+      if (parallelEntry.loading) {
+        component =
+          typeof handler === "function" ? handler(context) : handler;
+      } else {
+        component =
+          typeof handler === "function" ? await handler(context) : handler;
+      }
+
+      // Use parent's shortCode so segment tree correctly associates this parallel with its parent
+      segments.push({
+        id: `${parentShortCode}.${slot}`,
+        namespace: parallelEntry.id,
+        type: "parallel",
+        index: 0,
+        component,
+        loading: parallelEntry.loading,
+        params,
+        slot,
+        belongsToRoute,
+        parallelName: `${parallelEntry.id}.${slot}`,
+      });
+    }
+
+    // Step 2: Resolve loaders AFTER handlers have run
+    // If loading is defined, do NOT await loaders - this keeps handler Promises pending for Suspense
+    // Loader data flows through component props (via ctx.use() in handler)
+    // If no loading, await loaders to create segments for useLoader() support
+    if (!parallelEntry.loading) {
+      const loaderSegments = await resolveLoaders(
+        parallelEntry,
+        context,
+        belongsToRoute,
+        parentShortCode
+      );
+      segments.push(...loaderSegments);
+    }
 
     return segments;
   }
@@ -858,7 +914,7 @@ export function createRSCRouter<TEnv = any>(
 
   /**
    * Helper: Resolve parallel segments with revalidation
-   * Extracted to reduce duplication between layout and route branches
+   * Parallels now have their own loaders, revalidate functions, and loading components
    */
   async function resolveParallelSegmentsWithRevalidation(
     entry: EntryData,
@@ -876,8 +932,20 @@ export function createRSCRouter<TEnv = any>(
     const segments: ResolvedSegment[] = [];
     const matchedIds: string[] = [];
 
-    for (const parallelRecord of entry.parallel) {
-      for (const [slot, handler] of Object.entries(parallelRecord)) {
+    for (const parallelEntry of entry.parallel) {
+      invariant(
+        parallelEntry.type === "parallel",
+        `Expected parallel entry, got: ${parallelEntry.type}`
+      );
+
+      // Step 1: Process each slot handler FIRST (they trigger loaders via ctx.use())
+      const slots = parallelEntry.handler as Record<
+        `@${string}`,
+        ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>) | ReactNode
+      >;
+
+      for (const [slot, handler] of Object.entries(slots)) {
+        // Use parent entry's shortCode so segment tree correctly associates parallel with parent
         const parallelId = `${entry.shortCode}.${slot}`;
 
         matchedIds.push(parallelId);
@@ -888,16 +956,17 @@ export function createRSCRouter<TEnv = any>(
 
             const dummySegment: ResolvedSegment = {
               id: parallelId,
-              namespace: entry.id,
+              namespace: parallelEntry.id,
               type: "parallel",
               index: 0,
               component: null as any,
               params,
               slot,
               belongsToRoute,
-              parallelName: `${entry.id}.${slot}`,
+              parallelName: `${parallelEntry.id}.${slot}`,
             };
 
+            // Use parallel's own revalidate functions
             return await evaluateRevalidation(
               dummySegment,
               prevParams,
@@ -905,28 +974,55 @@ export function createRSCRouter<TEnv = any>(
               request,
               prevUrl,
               nextUrl,
-              entry.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
+              parallelEntry.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
               routeKey,
               context,
               actionContext
             );
           },
-          async () =>
-            typeof handler === "function" ? await handler(context) : handler,
+          async () => {
+            // If loading is defined, don't await (stream with Suspense)
+            if (parallelEntry.loading) {
+              return typeof handler === "function" ? handler(context) : handler;
+            }
+            return typeof handler === "function" ? await handler(context) : handler;
+          },
           () => null
         );
 
         segments.push({
           id: parallelId,
-          namespace: entry.id,
+          namespace: parallelEntry.id,
           type: "parallel",
           index: 0,
           component,
+          loading: parallelEntry.loading,
           params,
           slot,
           belongsToRoute,
-          parallelName: `${entry.id}.${slot}`,
+          parallelName: `${parallelEntry.id}.${slot}`,
         });
+      }
+
+      // Step 2: Resolve loaders AFTER handlers have run
+      // If loading is defined, do NOT await loaders - keeps handler Promises pending for Suspense
+      // Loader data flows through component props (via ctx.use() in handler)
+      if (!parallelEntry.loading) {
+        const loaderResult = await resolveLoadersWithRevalidation(
+          parallelEntry,
+          context,
+          belongsToRoute,
+          clientSegmentIds,
+          prevParams,
+          request,
+          prevUrl,
+          nextUrl,
+          routeKey,
+          actionContext,
+          entry.shortCode // Pass parent's shortCode for segment ID association
+        );
+        segments.push(...loaderResult.segments);
+        matchedIds.push(...loaderResult.matchedIds);
       }
     }
 
@@ -1211,10 +1307,38 @@ export function createRSCRouter<TEnv = any>(
     segments.push(...loaderResult.segments);
     matchedIds.push(...loaderResult.matchedIds);
 
-    // Step 3: Process and emit orphan parallel segments with revalidation
-    for (const parallelRecord of orphan.parallel) {
-      for (const [slot, handler] of Object.entries(parallelRecord)) {
-        const parallelId = `${orphan.shortCode}.${slot}`;
+    // Step 3: Process orphan parallel segments with revalidation
+    // Parallels now have their own loaders, revalidate functions, and loading components
+    for (const parallelEntry of orphan.parallel) {
+      invariant(
+        parallelEntry.type === "parallel",
+        `Expected parallel entry, got: ${parallelEntry.type}`
+      );
+
+      // Step 3a: Resolve parallel's loaders with revalidation
+      const loaderResult = await resolveLoadersWithRevalidation(
+        parallelEntry,
+        context,
+        true, // Orphan's parallel belongs to the route
+        clientSegmentIds,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey,
+        actionContext
+      );
+      segments.push(...loaderResult.segments);
+      matchedIds.push(...loaderResult.matchedIds);
+
+      // Step 3b: Process each slot in the parallel handler
+      const slots = parallelEntry.handler as Record<
+        `@${string}`,
+        ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>) | ReactNode
+      >;
+
+      for (const [slot, handler] of Object.entries(slots)) {
+        const parallelId = `${parallelEntry.shortCode}.${slot}`;
 
         // Always add to matchedIds
         matchedIds.push(parallelId);
@@ -1225,16 +1349,17 @@ export function createRSCRouter<TEnv = any>(
 
             const dummySegment: ResolvedSegment = {
               id: parallelId,
-              namespace: orphan.id,
+              namespace: parallelEntry.id,
               type: "parallel",
               index: 0,
               component: null as any,
               params,
               slot,
               belongsToRoute: true, // Orphan's parallel belongs to the route
-              parallelName: `${orphan.id}.${slot}`,
+              parallelName: `${parallelEntry.id}.${slot}`,
             };
 
+            // Use parallel's own revalidate functions
             return await evaluateRevalidation(
               dummySegment,
               prevParams,
@@ -1242,7 +1367,7 @@ export function createRSCRouter<TEnv = any>(
               request,
               prevUrl,
               nextUrl,
-              orphan.revalidate.map((fn, i) => ({
+              parallelEntry.revalidate.map((fn, i) => ({
                 name: `revalidate${i}`,
                 fn,
               })),
@@ -1251,21 +1376,27 @@ export function createRSCRouter<TEnv = any>(
               actionContext
             );
           },
-          async () =>
-            typeof handler === "function" ? await handler(context) : handler,
+          async () => {
+            // If loading is defined, don't await (stream with Suspense)
+            if (parallelEntry.loading) {
+              return typeof handler === "function" ? handler(context) : handler;
+            }
+            return typeof handler === "function" ? await handler(context) : handler;
+          },
           () => null
         );
 
         segments.push({
           id: parallelId,
-          namespace: orphan.id,
+          namespace: parallelEntry.id,
           type: "parallel",
           index: 0,
           component,
+          loading: parallelEntry.loading,
           params,
           slot,
           belongsToRoute: true, // Orphan's parallel belongs to the route
-          parallelName: `${orphan.id}.${slot}`,
+          parallelName: `${parallelEntry.id}.${slot}`,
         });
       }
     }
@@ -1670,6 +1801,18 @@ export function createRSCRouter<TEnv = any>(
           previousUrl,
         },
       });
+    }
+
+    // Check if routes are from different route groups (different matchers)
+    // When navigating between route groups (e.g., /about → /blog), segment IDs
+    // have completely different prefixes (M2 vs M1). The client cannot merge
+    // segments from different groups, so fall back to full render.
+    // Compare the route entry (handler group), not the individual routeKey (which varies within a group)
+    if (prevMatch && prevMatch.entry !== matched.entry) {
+      console.log(
+        `[Router.matchPartial] Route group changed: ${prevMatch.routeKey} → ${matched.routeKey}, falling back to full render`
+      );
+      return null;
     }
 
     // Load manifest with AsyncLocalStorage context and validation
