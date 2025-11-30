@@ -95,6 +95,15 @@ export async function renderSegments(segments: ResolvedSegment[]): Promise<React
     );
 
     if (loaderEntries.length > 0) {
+      // Debug: Check loader data types
+      console.log("[renderSegments] Loader entries:", loaderEntries.map(l => ({
+        name: l.loaderName,
+        isPromise: l.loaderData instanceof Promise,
+        isThenable: l.loaderData && typeof l.loaderData.then === 'function',
+        type: typeof l.loaderData,
+        constructor: l.loaderData?.constructor?.name,
+      })));
+
       // Await all loader data in parallel
       const resolvedData = await Promise.all(
         loaderEntries.map((loader) =>
@@ -103,6 +112,8 @@ export async function renderSegments(segments: ResolvedSegment[]): Promise<React
             : Promise.resolve(loader.loaderData)
         )
       );
+
+      console.log("[renderSegments] Loaders resolved");
 
       // Process results, checking for wrapped loader results with errors
       loaderEntries.forEach((loader, i) => {

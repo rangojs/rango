@@ -17,13 +17,22 @@ export interface PartialUpdateConfig {
 }
 
 /**
+ * Commit context passed to partial updater for URL updates
+ * Transaction encapsulates all store mutations for atomic commit
+ */
+export interface PartialUpdateCommit {
+  commit(segmentIds: string[]): void;
+}
+
+/**
  * Type for the fetchPartialUpdate function
  */
 export type PartialUpdater = (
   targetUrl: string,
-  segmentIds?: string[],
-  isRetry?: boolean,
-  signal?: AbortSignal
+  segmentIds: string[] | undefined,
+  isRetry: boolean,
+  signal: AbortSignal | undefined,
+  tx: PartialUpdateCommit
 ) => Promise<Promise<void>>;
 
 /**
@@ -54,13 +63,15 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
    * Fetch partial update and trigger UI update
    * Returns a promise that resolves when the RSC stream is fully consumed
    *
+   * @param tx - Transaction for committing segment state (required)
    * @param signal - AbortSignal to check if navigation is stale (not for aborting fetch)
    */
   async function fetchPartialUpdate(
     targetUrl: string,
-    segmentIds?: string[],
-    isRetry = false,
-    signal?: AbortSignal
+    segmentIds: string[] | undefined,
+    isRetry: boolean,
+    signal: AbortSignal | undefined,
+    tx: PartialUpdateCommit
   ): Promise<Promise<void>> {
     const segmentState = store.getSegmentState();
     const url = targetUrl || window.location.href;
@@ -70,9 +81,6 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
     console.log(`[Browser] From: ${segmentState.currentUrl}`);
     console.log(`[Browser] To: ${url}`);
     console.log(`[Browser] Segments to send: ${segments.join(", ")}`);
-
-    // Optimistically set the new path
-    store.setPath(new URL(url).pathname);
 
     // Fetch partial payload (no abort signal - RSC doesn't support it well)
     const { payload, streamComplete } = await client.fetchPartial({
@@ -98,13 +106,12 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
       console.log(`[Browser] Partial update - matched: ${matched?.join(", ")}`);
       console.log(`[Browser] Diff: ${diff?.join(", ")}`);
 
-      // If diff is empty, nothing changed - skip update
+      // If diff is empty, nothing changed - skip UI update but commit URL
       if (!diff || diff.length === 0) {
         console.log(
           `[Browser] No changes - all revalidations returned false, keeping existing UI`
         );
-        store.setCurrentUrl(url);
-        store.setPath(new URL(url).pathname);
+        tx.commit(matched || []);
         console.log(`[Browser] Navigation complete (no re-render)\n`);
         return streamComplete;
       }
@@ -139,7 +146,7 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
         );
 
         // Refetch with empty segments = server sends everything
-        return fetchPartialUpdate(url, [], true, signal);
+        return fetchPartialUpdate(url, [], true, signal, tx);
       }
 
       console.log(
@@ -148,6 +155,8 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
 
       // Rebuild tree on client (await for loader data resolution)
       // Race against abort signal to allow cancellation during loader awaiting
+      console.log("[partial-update] Starting renderSegments...");
+      const startTime = Date.now();
       const newTree = await (signal
         ? Promise.race([
             renderSegments(fullSegments),
@@ -161,13 +170,12 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
             }),
           ])
         : renderSegments(fullSegments));
+      console.log(`[partial-update] renderSegments completed in ${Date.now() - startTime}ms`);
 
-      // Update segment IDs and prune old segments to prevent memory leaks
-      store.setSegmentIds(matchedIds);
-      store.pruneSegments(matchedIds);
-      store.setCurrentUrl(url);
+      // Commit navigation - transaction handles all store mutations atomically
+      tx.commit(matchedIds);
 
-      // Emit update
+      // Emit update to trigger React render
       onUpdate({
         root: newTree,
         metadata: payload.metadata,
@@ -189,16 +197,34 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
         return streamComplete;
       }
 
-      const segmentIds = segments.map((s: any) => s.id);
-      store.setSegmentIds(segmentIds);
-      store.pruneSegments(segmentIds);
-      store.setCurrentUrl(url);
-      store.setPath(new URL(url).pathname);
+      // Await loader data from segments before committing URL
+      // This ensures URL only updates after loaders resolve
+      const loaderSegments = segments.filter(
+        (s: ResolvedSegment) => s.type === "loader" && s.loaderData !== undefined
+      );
+      if (loaderSegments.length > 0) {
+        console.log(`[Browser] Awaiting ${loaderSegments.length} loader(s)...`);
+        await Promise.all(
+          loaderSegments.map((s: ResolvedSegment) =>
+            s.loaderData instanceof Promise
+              ? s.loaderData
+              : Promise.resolve(s.loaderData)
+          )
+        );
+        console.log(`[Browser] Loaders resolved`);
+      }
 
+      const segmentIds = segments.map((s: any) => s.id);
+
+      // Commit navigation - transaction handles all store mutations atomically
+      tx.commit(segmentIds);
+
+      // Emit update to trigger React render
       onUpdate({
         root: payload.root,
         metadata: payload.metadata!,
       });
+
       return streamComplete;
     }
   }

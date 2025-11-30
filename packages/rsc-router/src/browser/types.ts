@@ -80,13 +80,26 @@ export interface NavigationState {
 }
 
 /**
+ * Cache interface for storing segments
+ * Compatible with both Map and LRUCache
+ */
+export interface SegmentCache {
+  get(key: string): ResolvedSegment | undefined;
+  set(key: string, value: ResolvedSegment): void;
+  has(key: string): boolean;
+  delete(key: string): boolean;
+  keys(): IterableIterator<string>;
+  readonly size: number;
+}
+
+/**
  * Internal segment state managed by the store
  */
 export interface SegmentState {
   path: string;
   currentUrl: string;
   currentSegmentIds: string[];
-  storedSegments: Map<string, ResolvedSegment>;
+  storedSegments: SegmentCache;
 }
 
 /**
@@ -276,7 +289,7 @@ export interface ServerActionBridgeConfig {
 export interface NavigationBridge {
   navigate(url: string, options?: NavigateOptions): Promise<void>;
   refresh(): Promise<void>;
-  handlePopstate(): void;
+  handlePopstate(): Promise<void>;
   registerLinkInterception(): () => void;
 }
 
