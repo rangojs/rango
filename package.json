@@ -17,6 +17,7 @@
     "type-check": "turbo run type-check"
   },
   "devDependencies": {
+    "prettier": "^3.7.3",
     "turbo": "^2.6.0",
     "typescript": "^5.7.3"
   }
