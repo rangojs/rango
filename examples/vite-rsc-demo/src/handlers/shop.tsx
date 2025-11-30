@@ -151,7 +151,7 @@ export default map<typeof shopRoutes>(
             // ProductLoader fetches the specific product by slug
             // RelatedProductsLoader depends on ProductLoader to get related items
             route("products.detail.view", ProductsDetailRoute, () => [
-              loading(<ProductDetailSkeleton />, (ctx) => ctx.isPartial),
+              loading(<ProductDetailSkeleton />, true),
               loader(ProductLoader, () => [revalidate(() => false)]),
               loader(RelatedProductsLoader, () => [revalidate(() => false)]),
               revalidate(productDetailRevalidation),

@@ -87,23 +87,135 @@ export type {
  * These are the only typed helpers users interact with
  */
 export type RouteHelpers<T extends RouteDefinition, TEnv> = {
+  /**
+   * Define a route handler for a specific route pattern
+   * ```typescript
+   * route("products.detail", async (ctx) => {
+   *   const product = await getProduct(ctx.params.slug);
+   *   return <ProductPage product={product} />;
+   * })
+   *
+   * // With nested use() for middleware, loaders, etc.
+   * route("products.detail", ProductHandler, () => [
+   *   loader(ProductLoader),
+   *   loading(<ProductSkeleton />),
+   * ])
+   * ```
+   * @param name - Route name matching a key from route definitions
+   * @param handler - Async function that returns JSX for the route
+   * @param use - Optional callback returning middleware, loaders, loading, etc.
+   */
   route: <K extends keyof ResolvedRouteMap<T> & string>(
     name: K,
     handler: Handler<ExtractRouteParams<T, K & string>, TEnv>,
     use?: () => RouteUseItem[]
   ) => RouteItem;
+  /**
+   * Define a layout that wraps child routes
+   * ```typescript
+   * layout(<AppShell />, () => [
+   *   route("home", HomePage),
+   *   route("about", AboutPage),
+   * ])
+   *
+   * // With dynamic layout handler
+   * layout(async (ctx) => {
+   *   const user = ctx.get("user");
+   *   return <DashboardShell user={user} />;
+   * }, () => [
+   *   middleware(authMiddleware),
+   *   route("dashboard", DashboardPage),
+   * ])
+   * ```
+   * @param component - Static JSX or async handler for the layout
+   * @param use - Callback returning child routes, middleware, loaders, etc.
+   */
   layout: (
     component: ReactNode | Handler<any, TEnv>,
     use?: () => LayoutUseItem[]
   ) => LayoutItem;
+  /**
+   * Define parallel routes that render simultaneously in named slots
+   * ```typescript
+   * parallel({
+   *   "@sidebar": <Sidebar />,
+   *   "@main": async (ctx) => <MainContent data={ctx.use(DataLoader)} />,
+   * })
+   *
+   * // With loaders and loading states
+   * parallel({
+   *   "@analytics": AnalyticsPanel,
+   *   "@metrics": MetricsPanel,
+   * }, () => [
+   *   loader(DashboardLoader),
+   *   loading(<DashboardSkeleton />),
+   * ])
+   * ```
+   * @param slots - Object with slot names (prefixed with @) mapped to handlers
+   * @param use - Optional callback for loaders, loading, revalidate, etc.
+   */
   parallel: <
     TSlots extends Record<`@${string}`, Handler<any, TEnv> | ReactNode>,
   >(
     slots: TSlots,
     use?: () => ParallelUseItem[]
   ) => ParallelItem;
+  /**
+   * Attach middleware to the current route/layout
+   * ```typescript
+   * middleware(async (ctx, next) => {
+   *   const session = await getSession(ctx.request);
+   *   if (!session) return redirect("/login");
+   *   ctx.set("user", session.user);
+   *   next();
+   * })
+   *
+   * // Chain multiple middleware
+   * middleware(authMiddleware, loggingMiddleware, rateLimitMiddleware)
+   * ```
+   * @param fns - One or more middleware functions to execute in order
+   */
   middleware: (...fns: MiddlewareFn<any, TEnv>[]) => MiddlewareItem;
+  /**
+   * Control when a segment should revalidate during navigation
+   * ```typescript
+   * // Revalidate when params change
+   * revalidate(({ currentParams, nextParams }) =>
+   *   currentParams.slug !== nextParams.slug
+   * )
+   *
+   * // Revalidate after specific actions
+   * revalidate(({ actionId }) =>
+   *   actionId === "cartUpdate" || actionId === "cartRemove"
+   * )
+   *
+   * // Soft decision (suggest but allow override)
+   * revalidate(({ defaultShouldRevalidate }) =>
+   *   ({ defaultShouldRevalidate: true })
+   * )
+   * ```
+   * @param fn - Function that returns boolean (hard) or { defaultShouldRevalidate } (soft)
+   */
   revalidate: (fn: ShouldRevalidateFn<any, TEnv>) => RevalidateItem;
+  /**
+   * Attach a data loader to the current route/layout
+   * ```typescript
+   * loader(ProductLoader)
+   *
+   * // With loader-specific revalidation
+   * loader(CartLoader, () => [
+   *   revalidate(({ actionId }) => actionId?.startsWith("cart:")),
+   * ])
+   *
+   * // Access loader data in handlers via ctx.use()
+   * route("products.detail", async (ctx) => {
+   *   const product = await ctx.use(ProductLoader);
+   *   return <ProductPage product={product} />;
+   * })
+   * ```
+   * @param loaderDef - Loader created with createLoader()
+   * @param use - Optional callback for loader-specific revalidation rules
+   */
   loader: <TData>(
     loaderDef: LoaderDefinition<TData>,
     use?: () => LoaderUseItem[]
@@ -121,9 +233,40 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * @param skipSSR - If true, skip showing loading on document requests (SSR)
    */
   loading: (component: ReactNode, skipSSR?: boolean) => LoadingItem;
+  /**
+   * Attach an error boundary to catch errors in this segment and children
+   * ```typescript
+   * errorBoundary(<ErrorFallback />)
+   *
+   * // With dynamic error handler
+   * errorBoundary(({ error, reset }) => (
+   *   <div>
+   *     <h2>Something went wrong</h2>
+   *     <p>{error.message}</p>
+   *     <button onClick={reset}>Try again</button>
+   *   </div>
+   * ))
+   * ```
+   * @param fallback - Static JSX or handler receiving error info and reset function
+   */
   errorBoundary: (
     fallback: ReactNode | ErrorBoundaryHandler
   ) => ErrorBoundaryItem;
+  /**
+   * Attach a not-found boundary to handle notFound() calls in this segment
+   * ```typescript
+   * notFoundBoundary(<ProductNotFound />)
+   *
+   * // With dynamic handler
+   * notFoundBoundary(({ notFound }) => (
+   *   <div>
+   *     <h2>{notFound.message}</h2>
+   *     <a href="/products">Browse all products</a>
+   *   </div>
+   * ))
+   * ```
+   * @param fallback - Static JSX or handler receiving not-found info
+   */
   notFoundBoundary: (
     fallback: ReactNode | NotFoundBoundaryHandler
   ) => NotFoundBoundaryItem;
