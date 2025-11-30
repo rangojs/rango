@@ -119,7 +119,16 @@ export function createNavigationBridge(
         window.history.pushState(window.history.state, "", url);
       }
 
-      await fetchPartialUpdate(url, undefined, false, disposable.controller.signal);
+      try {
+        await fetchPartialUpdate(url, undefined, false, disposable.controller.signal);
+      } catch (error) {
+        // Ignore AbortError - navigation was cancelled by a newer navigation
+        if (error instanceof DOMException && error.name === "AbortError") {
+          console.log("[Browser] Navigation aborted by newer navigation");
+          return;
+        }
+        throw error;
+      }
 
       // Scroll to top if requested
       if (options?.scroll !== false) {

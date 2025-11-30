@@ -263,7 +263,7 @@ export interface ServerActionBridgeConfig {
   requestController: RequestController;
   deps: RscBrowserDependencies;
   onUpdate: UpdateSubscriber;
-  renderSegments: (segments: ResolvedSegment[]) => ReactNode;
+  renderSegments: (segments: ResolvedSegment[]) => Promise<ReactNode> | ReactNode;
 }
 
 // ============================================================================
@@ -288,7 +288,7 @@ export interface NavigationBridgeConfig {
   client: NavigationClient;
   requestController: RequestController;
   onUpdate: UpdateSubscriber;
-  renderSegments: (segments: ResolvedSegment[]) => ReactNode;
+  renderSegments: (segments: ResolvedSegment[]) => Promise<ReactNode> | ReactNode;
 }
 
 // Re-export ResolvedSegment for convenience

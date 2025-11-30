@@ -18,6 +18,7 @@ import type {
   NotFoundInfo,
   NotFoundBoundaryHandler,
   NotFoundBoundaryFallbackProps,
+  LoaderDataResult,
 } from "./types";
 import type { AllUseItems } from "./route-types.js";
 import {
@@ -417,6 +418,70 @@ export function createRSCRouter<TEnv = any>(
   }
 
   /**
+   * Wrap a loader promise with error handling for deferred client-side resolution.
+   * Catches errors and converts them to LoaderDataResult objects that include
+   * error info and pre-rendered fallback UI when an error boundary is available.
+   */
+  function wrapLoaderWithErrorHandling<T>(
+    promise: Promise<T>,
+    entry: EntryData,
+    segmentId: string,
+    pathname: string
+  ): Promise<LoaderDataResult<T>> {
+    return promise
+      .then((data): LoaderDataResult<T> => ({
+        __loaderResult: true,
+        ok: true,
+        data,
+      }))
+      .catch((error): LoaderDataResult<T> => {
+        // Find nearest error boundary
+        const fallback = findNearestErrorBoundary(entry);
+
+        // Create error info
+        const errorInfo = createErrorInfo(error, segmentId, "loader");
+
+        if (!fallback) {
+          // No error boundary - return error result without fallback
+          // Client will throw this error
+          return {
+            __loaderResult: true,
+            ok: false,
+            error: errorInfo,
+            fallback: null,
+          };
+        }
+
+        // Render fallback on server
+        let renderedFallback: ReactNode;
+        if (typeof fallback === "function") {
+          // ErrorBoundaryHandler - call with props (reset is a no-op on server)
+          const props: ErrorBoundaryFallbackProps = {
+            error: errorInfo,
+            reset: () => {
+              // Server-side reset is a no-op, client will handle
+            },
+          };
+          renderedFallback = fallback(props);
+        } else {
+          renderedFallback = fallback;
+        }
+
+        console.log(
+          `[Router] Loader error wrapped with boundary fallback in ${segmentId}:`,
+          errorInfo.message
+        );
+
+        return {
+          __loaderResult: true,
+          ok: false,
+          error: errorInfo,
+          fallback: renderedFallback,
+        };
+      });
+  }
+
+  /**
    * Create HandlerContext with typed env/var/get/set
    */
   function createHandlerContext(
@@ -571,35 +636,38 @@ export function createRSCRouter<TEnv = any>(
    *   For parallel entries, pass the parent layout/route's shortCode so loaders
    *   are correctly associated in the segment tree.
    */
-  async function resolveLoaders(
+  function resolveLoaders(
     entry: EntryData,
     ctx: HandlerContext<any, TEnv>,
     belongsToRoute: boolean,
     shortCodeOverride?: string
-  ): Promise<ResolvedSegment[]> {
+  ): ResolvedSegment[] {
     const loaderEntries = entry.loader ?? [];
     if (loaderEntries.length === 0) return [];
 
     const shortCode = shortCodeOverride ?? entry.shortCode;
 
     // Trigger all loaders in parallel via ctx.use() (memoized, so safe to call multiple times)
-    const loaderPromises = loaderEntries.map(({ loader }) => ctx.use(loader));
-
-    // Wait for all loaders to complete
-    const results = await Promise.all(loaderPromises);
-
-    // Build segments from results
-    return results.map((data, i) => ({
-      id: `${shortCode}D${i}.${loaderEntries[i].loader.name}`,
-      namespace: entry.id,
-      type: "loader" as const,
-      index: i,
-      component: null, // Loaders don't render directly
-      params: ctx.params,
-      loaderName: loaderEntries[i].loader.name,
-      loaderData: data,
-      belongsToRoute,
-    }));
+    // Don't await - wrap promises with error handling for deferred client-side resolution
+    return loaderEntries.map(({ loader }, i) => {
+      const segmentId = `${shortCode}D${i}.${loader.name}`;
+      return {
+        id: segmentId,
+        namespace: entry.id,
+        type: "loader" as const,
+        index: i,
+        component: null, // Loaders don't render directly
+        params: ctx.params,
+        loaderName: loader.name,
+        loaderData: wrapLoaderWithErrorHandling(
+          ctx.use(loader),
+          entry,
+          segmentId,
+          ctx.pathname
+        ),
+        belongsToRoute,
+      };
+    });
   }
 
   /**
@@ -698,17 +766,10 @@ export function createRSCRouter<TEnv = any>(
       })
     );
 
-    // Phase 2: Run loaders that need revalidation in parallel
+    // Phase 2: Build segments for loaders that need revalidation
+    // Don't await - wrap promises with error handling for deferred client-side resolution
     const loadersToRun = revalidationChecks.filter((c) => c.shouldRun);
-    const loaderResults = await Promise.all(
-      loadersToRun.map(async ({ loader, segmentId, index }) => {
-        const data = await ctx.use(loader);
-        return { data, loader, segmentId, index };
-      })
-    );
-
-    // Phase 3: Build segments from results
-    const segments: ResolvedSegment[] = loaderResults.map(({ data, loader, segmentId, index }) => ({
+    const segments: ResolvedSegment[] = loadersToRun.map(({ loader, segmentId, index }) => ({
       id: segmentId,
       namespace: entry.id,
       type: "loader" as const,
@@ -716,7 +777,12 @@ export function createRSCRouter<TEnv = any>(
       component: null,
       params: ctx.params,
       loaderName: loader.name,
-      loaderData: data,
+      loaderData: wrapLoaderWithErrorHandling(
+        ctx.use(loader),
+        entry,
+        segmentId,
+        ctx.pathname
+      ),
       belongsToRoute,
     }));
 

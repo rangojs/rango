@@ -449,6 +449,27 @@ export interface ErrorBoundaryFallbackProps {
 export type ErrorBoundaryHandler = (props: ErrorBoundaryFallbackProps) => ReactNode;
 
 /**
+ * Wrapped loader data result for deferred resolution with error handling.
+ * When loaders are deferred to client-side resolution, errors need to be
+ * wrapped so the client can handle them appropriately.
+ */
+export type LoaderDataResult<T = unknown> =
+  | { __loaderResult: true; ok: true; data: T }
+  | { __loaderResult: true; ok: false; error: ErrorInfo; fallback: ReactNode | null };
+
+/**
+ * Type guard to check if a value is a wrapped loader result
+ */
+export function isLoaderDataResult(value: unknown): value is LoaderDataResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "__loaderResult" in value &&
+    (value as any).__loaderResult === true
+  );
+}
+
+/**
  * Not found information passed to notFound boundary fallback components
  */
 export interface NotFoundInfo {

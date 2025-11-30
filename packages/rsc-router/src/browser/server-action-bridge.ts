@@ -297,8 +297,8 @@ export function createServerActionBridge(
         return returnData;
       }
 
-      // Prepare new tree
-      const newTree = renderSegments(fullSegments);
+      // Prepare new tree (await loader data resolution)
+      const newTree = await renderSegments(fullSegments);
       const queue = window.requestIdleCallback || function (cb: () => void , opt:{timeout:number}) { return setTimeout(cb, opt.timeout); };
 
       queue(() => {

@@ -1,6 +1,7 @@
 import { createElement, Fragment, type ReactNode } from "react";
 import { OutletProvider } from "./client.js";
 import type { ResolvedSegment } from "./types.js";
+import { isLoaderDataResult } from "./types.js";
 import { invariant } from "./errors.js";
 import { RouteContentWrapper } from "./route-content-wrapper.js";
 
@@ -40,7 +41,7 @@ import { RouteContentWrapper } from "./route-content-wrapper.js";
  * // </RootLayout></OutletProvider>
  * ```
  */
-export function renderSegments(segments: ResolvedSegment[]): ReactNode {
+export async function renderSegments(segments: ResolvedSegment[]): Promise<ReactNode> {
   // Separate segments by type
   const tree = segmentTreeWalk(segments);
   // Render content segments as siblings
@@ -85,12 +86,60 @@ export function renderSegments(segments: ResolvedSegment[]): ReactNode {
     console.log("node > ", { key, node });
 
     // Extract loader data from loader segments
-    // Each loader segment has loaderName and loaderData
+    // Each loader segment has loaderName and loaderData (may be Promise<LoaderDataResult>)
+    // Await all loader promises in parallel for this node
     const loaderData: Record<string, any> = {};
-    for (const loader of node.loaders) {
-      if (loader.loaderName && loader.loaderData !== undefined) {
-        loaderData[loader.loaderName] = loader.loaderData;
-      }
+    let loaderErrorFallback: ReactNode = null;
+    const loaderEntries = node.loaders.filter(
+      (loader) => loader.loaderName && loader.loaderData !== undefined
+    );
+
+    if (loaderEntries.length > 0) {
+      // Await all loader data in parallel
+      const resolvedData = await Promise.all(
+        loaderEntries.map((loader) =>
+          loader.loaderData instanceof Promise
+            ? loader.loaderData
+            : Promise.resolve(loader.loaderData)
+        )
+      );
+
+      // Process results, checking for wrapped loader results with errors
+      loaderEntries.forEach((loader, i) => {
+        const result = resolvedData[i];
+
+        if (isLoaderDataResult(result)) {
+          if (result.ok) {
+            // Success - extract the data
+            loaderData[loader.loaderName!] = result.data;
+          } else {
+            // Error - check for fallback
+            if (result.fallback) {
+              // Use the pre-rendered fallback from server
+              loaderErrorFallback = result.fallback;
+              console.log(
+                `[renderSegments] Loader error with fallback for ${loader.loaderName}:`,
+                result.error.message
+              );
+            } else {
+              // No fallback - throw the error
+              console.error(
+                `[renderSegments] Loader error without fallback for ${loader.loaderName}:`,
+                result.error.message
+              );
+              throw new Error(result.error.message);
+            }
+          }
+        } else {
+          // Legacy format - direct data (for backwards compatibility)
+          loaderData[loader.loaderName!] = result;
+        }
+      });
+    }
+
+    // If any loader had an error with a fallback, replace the segment content
+    if (loaderErrorFallback) {
+      nodeContent = loaderErrorFallback;
     }
 
     content = createElement(OutletProvider, {

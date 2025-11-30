@@ -13,7 +13,7 @@ export interface PartialUpdateConfig {
   store: NavigationStore;
   client: NavigationClient;
   onUpdate: UpdateSubscriber;
-  renderSegments: (segments: ResolvedSegment[]) => ReactNode;
+  renderSegments: (segments: ResolvedSegment[]) => Promise<ReactNode> | ReactNode;
 }
 
 /**
@@ -81,14 +81,19 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
       previousUrl: segmentState.currentUrl,
     });
 
-    // Check if this navigation is stale (a newer one started)
-    if (signal?.aborted) {
-      console.log(`[Browser] Ignoring stale navigation (aborted)`);
-      return streamComplete;
-    }
-
     if (payload.metadata?.isPartial) {
       const { segments: newSegments, matched, diff } = payload.metadata;
+
+      // Always store received segments, even if navigation is aborted.
+      // The segment data is still valid and might be needed by the next navigation.
+      // This prevents the "missing segments" HMR retry when navigations overlap.
+      store.storeSegments(newSegments || []);
+
+      // Check if this navigation is stale (a newer one started)
+      if (signal?.aborted) {
+        console.log(`[Browser] Ignoring stale navigation (aborted, but segments stored)`);
+        return streamComplete;
+      }
 
       console.log(`[Browser] Partial update - matched: ${matched?.join(", ")}`);
       console.log(`[Browser] Diff: ${diff?.join(", ")}`);
@@ -103,9 +108,6 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
         console.log(`[Browser] Navigation complete (no re-render)\n`);
         return streamComplete;
       }
-
-      // Update stored segments with new ones
-      store.storeSegments(newSegments || []);
 
       // Build full segment list by merging
       const matchedIds = matched || [];
@@ -144,8 +146,21 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
         `[Browser] Merged segments: ${fullSegments.map((s) => s.id).join(", ")}`
       );
 
-      // Rebuild tree on client
-      const newTree = renderSegments(fullSegments);
+      // Rebuild tree on client (await for loader data resolution)
+      // Race against abort signal to allow cancellation during loader awaiting
+      const newTree = await (signal
+        ? Promise.race([
+            renderSegments(fullSegments),
+            new Promise<never>((_, reject) => {
+              if (signal.aborted) {
+                reject(new DOMException("Navigation aborted", "AbortError"));
+              }
+              signal.addEventListener("abort", () => {
+                reject(new DOMException("Navigation aborted", "AbortError"));
+              });
+            }),
+          ])
+        : renderSegments(fullSegments));
 
       // Update segment IDs and prune old segments to prevent memory leaks
       store.setSegmentIds(matchedIds);
@@ -163,7 +178,18 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
     } else {
       // Full update (fallback)
       console.warn(`[Browser] Full update (fallback)`);
-      const segmentIds = payload.metadata?.segments?.map((s: any) => s.id) || [];
+
+      // Always store received segments, even if navigation is aborted
+      const segments = payload.metadata?.segments || [];
+      store.storeSegments(segments);
+
+      // Check if this navigation is stale (a newer one started)
+      if (signal?.aborted) {
+        console.log(`[Browser] Ignoring stale navigation (aborted, but segments stored)`);
+        return streamComplete;
+      }
+
+      const segmentIds = segments.map((s: any) => s.id);
       store.setSegmentIds(segmentIds);
       store.pruneSegments(segmentIds);
       store.setCurrentUrl(url);
