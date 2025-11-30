@@ -248,6 +248,8 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     handler: slots,
     middleware: [],
     revalidate: [],
+    errorBoundary: [],
+    notFoundBoundary: [],
     layout: [],
     parallel: [],
     loader: [],
