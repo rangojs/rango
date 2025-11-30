@@ -19,15 +19,7 @@ export function RouteContentWrapper({
   fallback?: ReactNode;
 }): ReactNode {
   const id = useId();
-  if (
-    typeof content !== "object" ||
-    !(
-      typeof content === "object" &&
-      content !== null &&
-      "then" in content &&
-      typeof content.then === "function"
-    )
-  ) {
+  if (!content) {
     // Already resolved
     return content as ReactNode;
   }
@@ -38,6 +30,10 @@ export function RouteContentWrapper({
   );
 }
 
-const Suspender = ({ content }: { content: Promise<ReactNode> }): ReactNode => {
-  return use(content);
+const Suspender = ({
+  content,
+}: {
+  content: Promise<ReactNode> | ReactNode;
+}): ReactNode => {
+  return use(content instanceof Promise ? content : Promise.resolve(content));
 };
