@@ -24,6 +24,7 @@ import type {
   MiddlewareItem,
   RevalidateItem,
   LoaderItem,
+  LoadingItem,
   ErrorBoundaryItem,
   NotFoundBoundaryItem,
   LayoutUseItem,
@@ -107,6 +108,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
     loaderDef: LoaderDefinition<TData>,
     use?: () => LoaderUseItem[]
   ) => LoaderItem;
+  loading: (component: ReactNode) => LoadingItem;
   errorBoundary: (fallback: ReactNode | ErrorBoundaryHandler) => ErrorBoundaryItem;
   notFoundBoundary: (fallback: ReactNode | NotFoundBoundaryHandler) => NotFoundBoundaryItem;
 };
@@ -226,17 +228,44 @@ const middleware: RouteHelpers<any, any>["middleware"] = (...fn) => {
   return { name, type: "middleware" } as MiddlewareItem;
 };
 
-const parallel: RouteHelpers<any, any>["parallel"] = (slots) => {
-  const ctx = getContext().getStore();
+const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
+  const store = getContext();
+  const ctx = store.getStore();
   if (!ctx) throw new Error("parallel() must be called inside map()");
 
-  // Attach to last entry in stack
   if (!ctx.parent || !ctx.parent?.parallel) {
     invariant(false, "No parent entry available for parallel()");
   }
-  const name = `${ctx.namespace}.$${getContext().getNextIndex("parallel")}`;
-  ctx.parent.parallel.push(slots);
-  return { name, type: "parallel" } as ParallelItem;
+
+  const namespace = `${ctx.namespace}.$${store.getNextIndex("parallel")}`;
+
+  // Create full EntryData for parallel with its own loaders/revalidate/loading
+  const entry = {
+    id: namespace,
+    shortCode: store.getShortCode("parallel"),
+    type: "parallel",
+    parent: null, // Parallels don't participate in parent chain traversal
+    handler: slots,
+    middleware: [],
+    revalidate: [],
+    errorBoundary: [],
+    notFoundBoundary: [],
+    layout: [],
+    parallel: [],
+    loader: [],
+  } satisfies EntryData;
+
+  // Run use callback if provided to collect loaders, revalidate, loading
+  if (use && typeof use === "function") {
+    const result = store.run(namespace, entry, use);
+    invariant(
+      Array.isArray(result) && result.every((item) => isValidUseItem(item)),
+      `parallel() use() callback must return an array of use items [${namespace}]`
+    );
+  }
+
+  ctx.parent.parallel.push(entry);
+  return { name: namespace, type: "parallel" } as ParallelItem;
 };
 
 /**
@@ -284,6 +313,26 @@ const loaderFn: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
 
   ctx.parent.loader.push(loaderEntry);
   return { name, type: "loader" } as LoaderItem;
+};
+
+/**
+ * Loading helper - attaches a loading component to the current entry
+ * Loading components are static (no context) and shown during navigation
+ */
+const loadingFn: RouteHelpers<any, any>["loading"] = (component) => {
+  const store = getContext();
+  const ctx = store.getStore();
+  if (!ctx) throw new Error("loading() must be called inside map()");
+
+  if (!ctx.parent) {
+    invariant(false, "No parent entry available for loading()");
+  }
+
+  // Attach loading component to parent entry
+  ctx.parent.loading = component;
+
+  const name = `$${store.getNextIndex("loading")}`;
+  return { name, type: "loading" } as LoadingItem;
 };
 
 const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
@@ -418,6 +467,7 @@ const isValidUseItem = (item: any): item is AllUseItems | undefined | null => {
         "revalidate",
         "parallel",
         "loader",
+        "loading",
         "errorBoundary",
         "notFoundBoundary",
       ].includes(item.type))
@@ -490,6 +540,13 @@ const createLoaderHelper = <TEnv>(): RouteHelpers<any, TEnv>["loader"] => {
 };
 
 /**
+ * Create loading helper
+ */
+const createLoadingHelper = (): RouteHelpers<any, any>["loading"] => {
+  return loadingFn;
+};
+
+/**
  * Create route helper
  */
 const createRouteHelper = <
@@ -527,6 +584,7 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
       middleware: createMiddlewareHelper<TEnv>(),
       revalidate: createRevalidateHelper<TEnv>(),
       loader: createLoaderHelper<TEnv>(),
+      loading: createLoadingHelper(),
       errorBoundary: createErrorBoundaryHelper<TEnv>(),
       notFoundBoundary: createNotFoundBoundaryHelper<TEnv>(),
     };

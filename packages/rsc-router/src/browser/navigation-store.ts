@@ -232,6 +232,19 @@ export function createNavigationStore(
       });
     },
 
+    /**
+     * Prune stored segments, keeping only those in the provided list
+     * Call after navigation completes to prevent memory leaks
+     */
+    pruneSegments(keepIds: string[]): void {
+      const keepSet = new Set(keepIds);
+      for (const id of segmentState.storedSegments.keys()) {
+        if (!keepSet.has(id)) {
+          segmentState.storedSegments.delete(id);
+        }
+      }
+    },
+
     // ========================================================================
     // UI Update Notifications
     // ========================================================================

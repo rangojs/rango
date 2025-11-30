@@ -1,11 +1,17 @@
 "use client";
 
-import { Component, useContext, useMemo, type ReactNode } from "react";
+import { Component, useContext, useMemo, Suspense, type ReactNode } from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
 import type { ErrorBoundaryFallbackProps, ErrorInfo, LoaderDefinition, LoaderFn, ResolvedSegment } from "./types";
+import { RouteContentWrapper } from "./route-content-wrapper.js";
 
 /**
  * Outlet component - renders child content in layouts
+ *
+ * If the current segment defines a loading component, the outlet content
+ * is wrapped in Suspense with the loading component as fallback.
+ * This means during navigation/streaming, React's Suspense will automatically
+ * show the loading skeleton until the content is ready.
  *
  * @example
  * ```tsx
@@ -21,10 +27,26 @@ import type { ErrorBoundaryFallbackProps, ErrorInfo, LoaderDefinition, LoaderFn,
  */
 export function Outlet(): ReactNode {
   const context = useContext(OutletContext);
-  return context?.content ?? null;
+  const content = context?.content ?? null;
+
+  // If this segment defines a loading component, wrap outlet content with Suspense
+  // The loading component becomes the Suspense fallback, shown during streaming/navigation
+  if (context?.loading) {
+    return (
+      <Suspense fallback={context.loading}>
+        {content}
+      </Suspense>
+    );
+  }
+
+  return content;
 }
 /**
  * ParallelOutlet component - renders content for a named parallel slot
+ *
+ * If the parallel segment defines a loading component, the content
+ * is wrapped in Suspense with the loading component as fallback.
+ * This enables streaming and navigation loading states for parallels.
  *
  * @param name - The slot name (must start with @, e.g., "@modal", "@sidebar")
  *
@@ -43,18 +65,33 @@ export function Outlet(): ReactNode {
  */
 export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
   const context = useContext(OutletContext);
-  return useMemo(() => {
+  const segment = useMemo(() => {
     if (!context?.parallel) return null;
-    const segment = context.parallel.find((seg) => seg.slot === name);
-    return segment?.component ?? null;
+    return context.parallel.find((seg) => seg.slot === name) ?? null;
   }, [context, name]);
+
+  if (!segment) return null;
+
+  // If this parallel segment defines a loading component or has a promise component,
+  // use RouteContentWrapper to handle Suspense wrapping properly
+  if (segment.loading || segment.component instanceof Promise) {
+    return (
+      <RouteContentWrapper
+        content={segment.component}
+        fallback={segment.loading}
+      />
+    );
+  }
+
+  return segment.component ?? null;
 }
 
 /**
  * Provider for outlet content - used internally by renderSegments
  *
  * Stores a reference to parent context so useLoader can walk up the chain
- * to find loader data from parent layouts.
+ * to find loader data from parent layouts. If this segment defines a loading
+ * component, Outlet will wrap content with Suspense using that as fallback.
  */
 export function OutletProvider({
   content,
@@ -73,7 +110,14 @@ export function OutletProvider({
   const parentContext = useContext(OutletContext);
 
   const value = useMemo(
-    () => ({ content, parallel, segment, loaderData, parent: parentContext }),
+    () => ({
+      content,
+      parallel,
+      segment,
+      loaderData,
+      parent: parentContext,
+      loading: segment?.loading,
+    }),
     [content, parallel, segment, loaderData, parentContext]
   );
 

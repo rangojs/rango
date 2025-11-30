@@ -1,4 +1,6 @@
-import { useNavigation } from "rsc-router/browser";
+"use client";
+
+import { useNavigation, Link } from "rsc-router/browser";
 import { categories, products, orders } from "./data.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 
@@ -242,9 +244,9 @@ export function ProductCard({
   };
 }) {
   return (
-    <a
+    <Link
       key={product.id}
-      href={`/shop/product/${product.slug}`}
+      to={`/shop/product/${product.slug}`}
       style={{
         display: "block",
         background: "#fff",
@@ -271,7 +273,7 @@ export function ProductCard({
       <p style={{ margin: 0, fontWeight: "bold", color: "#667eea" }}>
         ${product.price}
       </p>
-    </a>
+    </Link>
   );
 }
 
@@ -281,9 +283,9 @@ export function ProductCardSimple({
   product: { id: number; slug: string; name: string; price: number };
 }) {
   return (
-    <a
+    <Link
       key={product.id}
-      href={`/shop/product/${product.slug}`}
+      to={`/shop/product/${product.slug}`}
       style={{
         display: "block",
         background: "#fff",
@@ -300,6 +302,6 @@ export function ProductCardSimple({
       <p style={{ margin: 0, fontWeight: "bold", color: "#667eea" }}>
         ${product.price}
       </p>
-    </a>
+    </Link>
   );
 }

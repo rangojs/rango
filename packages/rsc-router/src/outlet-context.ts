@@ -7,6 +7,8 @@ export interface OutletContextValue {
   segment?: ResolvedSegment;
   loaderData?: Record<string, any>;
   parent?: OutletContextValue | null;
+  /** Loading component for Suspense fallback (from segment's loading() definition) */
+  loading?: ReactNode;
 }
 
 export const OutletContext: Context<OutletContextValue | null> =

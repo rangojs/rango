@@ -173,6 +173,7 @@ export interface NavigationStore {
   setSegmentIds(ids: string[]): void;
   storeSegment(segment: ResolvedSegment): void;
   storeSegments(segments: ResolvedSegment[]): void;
+  pruneSegments(keepIds: string[]): void;
 
   // UI update notifications
   onUpdate(callback: UpdateSubscriber): () => void;
@@ -262,7 +263,7 @@ export interface ServerActionBridgeConfig {
   requestController: RequestController;
   deps: RscBrowserDependencies;
   onUpdate: UpdateSubscriber;
-  renderSegments: (segments: ResolvedSegment[]) => ReactNode;
+  renderSegments: (segments: ResolvedSegment[]) => Promise<ReactNode> | ReactNode;
 }
 
 // ============================================================================
@@ -287,7 +288,7 @@ export interface NavigationBridgeConfig {
   client: NavigationClient;
   requestController: RequestController;
   onUpdate: UpdateSubscriber;
-  renderSegments: (segments: ResolvedSegment[]) => ReactNode;
+  renderSegments: (segments: ResolvedSegment[]) => Promise<ReactNode> | ReactNode;
 }
 
 // Re-export ResolvedSegment for convenience

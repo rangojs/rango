@@ -11,6 +11,8 @@ import { createPartialUpdater } from "./partial-update.js";
 /**
  * Creates a disposable transaction for navigation state management.
  * Handles state transitions and automatic rollback on error.
+ * Captures segment state (segmentIds, currentUrl, path) for rollback,
+ * but keeps storedSegments as-is (it's just a cache).
  */
 function createNavigationTransaction(
   store: NavigationStore,
@@ -18,6 +20,14 @@ function createNavigationTransaction(
   originalLocation: NavigationLocation
 ) {
   let committed = false;
+
+  // Capture original segment state for rollback
+  const segmentState = store.getSegmentState();
+  const originalSegmentState = {
+    segmentIds: [...segmentState.currentSegmentIds],
+    currentUrl: segmentState.currentUrl,
+    path: segmentState.path,
+  };
 
   store.setState({ state: "loading" });
 
@@ -30,6 +40,10 @@ function createNavigationTransaction(
 
       if (!committed) {
         window.history.back();
+        // Restore segment state (but not storedSegments - it's just a cache)
+        store.setSegmentIds(originalSegmentState.segmentIds);
+        store.setCurrentUrl(originalSegmentState.currentUrl);
+        store.setPath(originalSegmentState.path);
         store.setState({
           state: "idle",
           location: originalLocation,
@@ -105,7 +119,16 @@ export function createNavigationBridge(
         window.history.pushState(window.history.state, "", url);
       }
 
-      await fetchPartialUpdate(url);
+      try {
+        await fetchPartialUpdate(url, undefined, false, disposable.controller.signal);
+      } catch (error) {
+        // Ignore AbortError - navigation was cancelled by a newer navigation
+        if (error instanceof DOMException && error.name === "AbortError") {
+          console.log("[Browser] Navigation aborted by newer navigation");
+          return;
+        }
+        throw error;
+      }
 
       // Scroll to top if requested
       if (options?.scroll !== false) {
@@ -129,7 +152,7 @@ export function createNavigationBridge(
       );
 
       // Refetch with empty segments to get everything fresh
-      await fetchPartialUpdate(window.location.href, []);
+      await fetchPartialUpdate(window.location.href, [], false, disposable.controller.signal);
 
       tx.commit();
     },
@@ -138,13 +161,15 @@ export function createNavigationBridge(
      * Handle browser back/forward navigation
      */
     handlePopstate(): void {
+      const url = window.location.href;
+
       // Update location from browser URL
       store.setState({
         state: "loading",
-        location: new URL(window.location.href),
+        location: new URL(url),
       });
 
-      fetchPartialUpdate(window.location.href).finally(() => {
+      fetchPartialUpdate(url).finally(() => {
         store.setState({ state: "idle" });
       });
     },
