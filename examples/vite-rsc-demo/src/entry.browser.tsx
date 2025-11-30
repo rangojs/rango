@@ -16,7 +16,9 @@ import {
   createServerActionBridge,
   createNavigationBridge,
   NavigationProvider,
+  generateHistoryKey,
   type RscPayload,
+  type ResolvedSegment,
 } from "rsc-router/browser";
 
 console.log("[Browser] Initializing...");
@@ -36,17 +38,16 @@ async function initializeApp() {
   const initialPayload = await createFromReadableStream<RscPayload>(rscStream);
   console.log("[Browser] Initial payload:", initialPayload.metadata);
 
-  // Create navigation store
+  // Get initial segments and compute history key from current URL
+  const initialSegments = (initialPayload.metadata?.segments ?? []) as ResolvedSegment[];
+  const initialHistoryKey = generateHistoryKey(window.location.href);
+
+  // Create navigation store with history-based caching
   const store = createNavigationStore({
     initialLocation: window.location,
-    initialSegmentIds:
-      initialPayload.metadata?.segments?.map((s) => s.id) ?? [],
-  });
-
-  // Store initial segments for partial rendering
-  initialPayload.metadata?.segments?.forEach((segment) => {
-    console.log(`[Browser] Storing initial segment: ${segment.id}`);
-    store.storeSegment(segment);
+    initialSegmentIds: initialSegments.map((s) => s.id),
+    initialHistoryKey,
+    initialSegments,
   });
 
   console.log(
@@ -54,7 +55,7 @@ async function initializeApp() {
     store.getSegmentState().currentSegmentIds.join(", ")
   );
   console.log(
-    `[Browser] Stored ${store.getSegmentState().storedSegments.size} segments for partial rendering`
+    `[Browser] Cached segments for: ${initialHistoryKey}`
   );
 
   // Create composable utilities
@@ -117,16 +118,20 @@ async function initializeApp() {
       });
 
       if (payload.metadata?.isPartial) {
-        store.storeSegments(payload.metadata.segments || []);
-        store.setSegmentIds(payload.metadata.matched || []);
+        const segments = payload.metadata.segments || [];
+        const matched = payload.metadata.matched || [];
+
+        // Update store state
+        store.setSegmentIds(matched);
         store.setCurrentUrl(window.location.href);
 
-        const fullSegments = (payload.metadata.matched || [])
-          .map((id: string) => store.getSegmentState().storedSegments.get(id))
-          .filter(Boolean);
+        // Update cache with fresh segments
+        const historyKey = generateHistoryKey(window.location.href);
+        store.setHistoryKey(historyKey);
+        store.cacheSegmentsForHistory(historyKey, segments);
 
         store.emitUpdate({
-          root: renderSegments(fullSegments as any),
+          root: renderSegments(segments),
           metadata: payload.metadata,
         });
       }

@@ -21,7 +21,7 @@ export interface PartialUpdateConfig {
  * Transaction encapsulates all store mutations for atomic commit
  */
 export interface PartialUpdateCommit {
-  commit(segmentIds: string[]): void;
+  commit(segmentIds: string[], segments: ResolvedSegment[]): void;
 }
 
 /**
@@ -60,6 +60,17 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
   const { store, client, onUpdate, renderSegments } = config;
 
   /**
+   * Build a lookup map from current page's cached segments
+   */
+  function getCurrentSegmentMap(): Map<string, ResolvedSegment> {
+    const currentKey = store.getHistoryKey();
+    const cachedSegments = store.getCachedSegments(currentKey) || [];
+    const map = new Map<string, ResolvedSegment>();
+    cachedSegments.forEach((s) => map.set(s.id, s));
+    return map;
+  }
+
+  /**
    * Fetch partial update and trigger UI update
    * Returns a promise that resolves when the RSC stream is fully consumed
    *
@@ -82,6 +93,9 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
     console.log(`[Browser] To: ${url}`);
     console.log(`[Browser] Segments to send: ${segments.join(", ")}`);
 
+    // Get current page's segments for merging with server diff
+    const currentSegmentMap = getCurrentSegmentMap();
+
     // Fetch partial payload (no abort signal - RSC doesn't support it well)
     const { payload, streamComplete } = await client.fetchPartial({
       targetUrl: url,
@@ -92,39 +106,49 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
     if (payload.metadata?.isPartial) {
       const { segments: newSegments, matched, diff } = payload.metadata;
 
-      // Always store received segments, even if navigation is aborted.
-      // The segment data is still valid and might be needed by the next navigation.
-      // This prevents the "missing segments" HMR retry when navigations overlap.
-      store.storeSegments(newSegments || []);
-
       // Check if this navigation is stale (a newer one started)
       if (signal?.aborted) {
-        console.log(`[Browser] Ignoring stale navigation (aborted, but segments stored)`);
+        console.log(`[Browser] Ignoring stale navigation (aborted)`);
         return streamComplete;
       }
 
       console.log(`[Browser] Partial update - matched: ${matched?.join(", ")}`);
       console.log(`[Browser] Diff: ${diff?.join(", ")}`);
 
+      // Create lookup for new segments from server
+      const newSegmentMap = new Map<string, ResolvedSegment>();
+      (newSegments || []).forEach((s: ResolvedSegment) => newSegmentMap.set(s.id, s));
+
       // If diff is empty, nothing changed - skip UI update but commit URL
+      // Still need to collect full segments for history cache
       if (!diff || diff.length === 0) {
         console.log(
           `[Browser] No changes - all revalidations returned false, keeping existing UI`
         );
-        tx.commit(matched || []);
+        const matchedIds = matched || [];
+        const existingSegments = matchedIds
+          .map((id: string) => currentSegmentMap.get(id))
+          .filter(Boolean) as ResolvedSegment[];
+        tx.commit(matchedIds, existingSegments);
         console.log(`[Browser] Navigation complete (no re-render)\n`);
         return streamComplete;
       }
 
-      // Build full segment list by merging
+      // Build full segment list by merging:
+      // - New/changed segments from server response (diff)
+      // - Unchanged segments from current page's cache
       const matchedIds = matched || [];
       const fullSegments = matchedIds
         .map((id: string) => {
-          const segment = store.getSegmentState().storedSegments.get(id);
-          if (!segment) {
+          // First check server response (new/updated segments)
+          const fromServer = newSegmentMap.get(id);
+          if (fromServer) return fromServer;
+          // Fall back to current page's cached segments
+          const fromCache = currentSegmentMap.get(id);
+          if (!fromCache) {
             console.warn(`[Browser] Missing segment: ${id}`);
           }
-          return segment;
+          return fromCache;
         })
         .filter(Boolean) as ResolvedSegment[];
 
@@ -132,7 +156,7 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
       if (fullSegments.length < matchedIds.length) {
         const missingCount = matchedIds.length - fullSegments.length;
         const missingIds = matchedIds.filter(
-          (id: string) => !store.getSegmentState().storedSegments.has(id)
+          (id: string) => !newSegmentMap.has(id) && !currentSegmentMap.has(id)
         );
 
         if (isRetry) {
@@ -173,7 +197,7 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
       console.log(`[partial-update] renderSegments completed in ${Date.now() - startTime}ms`);
 
       // Commit navigation - transaction handles all store mutations atomically
-      tx.commit(matchedIds);
+      tx.commit(matchedIds, fullSegments);
 
       // Emit update to trigger React render
       onUpdate({
@@ -187,13 +211,11 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
       // Full update (fallback)
       console.warn(`[Browser] Full update (fallback)`);
 
-      // Always store received segments, even if navigation is aborted
       const segments = payload.metadata?.segments || [];
-      store.storeSegments(segments);
 
       // Check if this navigation is stale (a newer one started)
       if (signal?.aborted) {
-        console.log(`[Browser] Ignoring stale navigation (aborted, but segments stored)`);
+        console.log(`[Browser] Ignoring stale navigation (aborted)`);
         return streamComplete;
       }
 
@@ -214,10 +236,10 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
         console.log(`[Browser] Loaders resolved`);
       }
 
-      const segmentIds = segments.map((s: any) => s.id);
+      const segmentIds = segments.map((s: ResolvedSegment) => s.id);
 
       // Commit navigation - transaction handles all store mutations atomically
-      tx.commit(segmentIds);
+      tx.commit(segmentIds, segments);
 
       // Emit update to trigger React render
       onUpdate({

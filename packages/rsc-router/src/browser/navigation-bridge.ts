@@ -3,21 +3,17 @@ import type {
   NavigationBridgeConfig,
   NavigateOptions,
   NavigationStore,
+  ResolvedSegment,
 } from "./types.js";
 import { setupLinkInterception } from "./link-interceptor.js";
 import { createPartialUpdater } from "./partial-update.js";
+import { generateHistoryKey } from "./navigation-store.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
   (Symbol as any).dispose = Symbol("Symbol.dispose");
 }
 
-/**
- * History state stored for back/forward navigation caching
- */
-interface NavigationHistoryState {
-  __rsc_router_segmentIds: string[];
-}
 
 /**
  * Options for committing a navigation transaction
@@ -25,6 +21,7 @@ interface NavigationHistoryState {
 interface CommitOptions {
   url: string;
   segmentIds: string[];
+  segments: ResolvedSegment[];
   replace?: boolean;
   scroll?: boolean;
   /** If true, only update store without changing URL/history (for server actions) */
@@ -32,10 +29,10 @@ interface CommitOptions {
 }
 
 /**
- * Bound transaction with pre-configured commit options (without segmentIds)
+ * Bound transaction with pre-configured commit options (without segmentIds/segments)
  */
 interface BoundTransaction {
-  commit(segmentIds: string[]): void;
+  commit(segmentIds: string[], segments: ResolvedSegment[]): void;
 }
 
 /**
@@ -43,7 +40,7 @@ interface BoundTransaction {
  */
 interface NavigationTransaction extends Disposable {
   commit(options: CommitOptions): void;
-  with(options: Omit<CommitOptions, "segmentIds">): BoundTransaction;
+  with(options: Omit<CommitOptions, "segmentIds" | "segments">): BoundTransaction;
 }
 
 /**
@@ -64,29 +61,32 @@ function createNavigationTransaction(store: NavigationStore, signal: AbortSignal
   function commit(options: CommitOptions): void {
     committed = true;
 
-    const { url, segmentIds, replace, scroll, storeOnly } = options;
+    const { url, segmentIds, segments, replace, scroll, storeOnly } = options;
     const parsedUrl = new URL(url, window.location.origin);
 
     // Update segment state atomically
     store.setSegmentIds(segmentIds);
-    store.pruneSegments(segmentIds);
     store.setCurrentUrl(url);
     store.setPath(parsedUrl.pathname);
 
+    // Generate history key from URL (deterministic hash)
+    const historyKey = generateHistoryKey(url);
+    store.setHistoryKey(historyKey);
+
+    // Cache segments for this URL
+    store.cacheSegmentsForHistory(historyKey, segments);
+
     // For server actions, skip URL/history updates
     if (storeOnly) {
-      console.log("[Browser] Store updated (action), segments:", segmentIds);
+      console.log("[Browser] Store updated (action), historyKey:", historyKey);
       return;
     }
 
-    // Store segment IDs in history state for back/forward caching
-    const historyState: NavigationHistoryState = { __rsc_router_segmentIds: segmentIds };
-
-    // Update browser URL
+    // Update browser URL (no need to store key in state - we can compute it from URL)
     if (replace) {
-      window.history.replaceState(historyState, "", url);
+      window.history.replaceState(null, "", url);
     } else {
-      window.history.pushState(historyState, "", url);
+      window.history.pushState(null, "", url);
     }
 
     // Update store with new location and idle state
@@ -100,7 +100,7 @@ function createNavigationTransaction(store: NavigationStore, signal: AbortSignal
       window.scrollTo(0, 0);
     }
 
-    console.log("[Browser] Navigation committed, cached segments:", segmentIds);
+    console.log("[Browser] Navigation committed, historyKey:", historyKey);
   }
 
   return {
@@ -108,11 +108,12 @@ function createNavigationTransaction(store: NavigationStore, signal: AbortSignal
 
     /**
      * Create a bound transaction with pre-configured URL options
-     * segmentIds provided at commit time (after they're resolved)
+     * segmentIds and segments provided at commit time (after they're resolved)
      */
-    with(options: Omit<CommitOptions, "segmentIds">): BoundTransaction {
+    with(options: Omit<CommitOptions, "segmentIds" | "segments">): BoundTransaction {
       return {
-        commit: (segmentIds: string[]) => commit({ ...options, segmentIds }),
+        commit: (segmentIds: string[], segments: ResolvedSegment[]) =>
+          commit({ ...options, segmentIds, segments }),
       };
     },
 
@@ -222,8 +223,8 @@ export function createNavigationBridge(
       requestController.abortAll();
 
       const url = window.location.href;
-      const historyState = window.history.state as NavigationHistoryState | null;
-      const cachedSegmentIds = historyState?.__rsc_router_segmentIds;
+      // Compute history key from URL (deterministic hash)
+      const historyKey = generateHistoryKey(url);
 
       // Update location from browser URL
       store.setState({
@@ -231,47 +232,39 @@ export function createNavigationBridge(
         location: new URL(url),
       });
 
-      // Check if we can restore from cache
-      if (cachedSegmentIds && cachedSegmentIds.length > 0) {
-        const segmentCache = store.getSegmentState().storedSegments;
-        const allCached = cachedSegmentIds.every((id) => segmentCache.has(id));
+      // Check if we can restore from history cache
+      const cachedSegments = store.getCachedSegments(historyKey);
 
-        if (allCached) {
-          console.log("[Browser] Restoring from cache:", cachedSegmentIds);
+      if (cachedSegments && cachedSegments.length > 0) {
+        console.log("[Browser] Restoring from history cache, key:", historyKey);
 
-          // Collect cached segments
-          const segments = cachedSegmentIds
-            .map((id) => segmentCache.get(id))
-            .filter((s): s is NonNullable<typeof s> => s !== undefined);
+        // Update store to point to this history entry
+        store.setHistoryKey(historyKey);
+        store.setSegmentIds(cachedSegments.map((s) => s.id));
+        store.setCurrentUrl(url);
+        store.setPath(new URL(url).pathname);
 
-          // Update segment state
-          store.setSegmentIds(cachedSegmentIds);
-          store.setCurrentUrl(url);
-          store.setPath(new URL(url).pathname);
-
-          // Render from cache
-          try {
-            const root = await renderSegments(segments);
-            onUpdate({
-              root,
-              metadata: {
-                pathname: new URL(url).pathname,
-                segments,
-                isPartial: true,
-                matched: cachedSegmentIds,
-                diff: [],
-              },
-            });
-            store.setState({ state: "idle" });
-            return;
-          } catch (error) {
-            console.warn("[Browser] Failed to render from cache, fetching:", error);
-            // Fall through to fetch
-          }
-        } else {
-          console.log("[Browser] Cache miss, fetching. Missing segments:",
-            cachedSegmentIds.filter((id) => !segmentCache.has(id)));
+        // Render from cache
+        try {
+          const root = await renderSegments(cachedSegments);
+          onUpdate({
+            root,
+            metadata: {
+              pathname: new URL(url).pathname,
+              segments: cachedSegments,
+              isPartial: true,
+              matched: cachedSegments.map((s) => s.id),
+              diff: [],
+            },
+          });
+          store.setState({ state: "idle" });
+          return;
+        } catch (error) {
+          console.warn("[Browser] Failed to render from cache, fetching:", error);
+          // Fall through to fetch
         }
+      } else {
+        console.log("[Browser] History cache miss for key:", historyKey);
       }
 
       // Fetch if not cached

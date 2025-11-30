@@ -99,7 +99,6 @@ export interface SegmentState {
   path: string;
   currentUrl: string;
   currentSegmentIds: string[];
-  storedSegments: SegmentCache;
 }
 
 /**
@@ -184,9 +183,14 @@ export interface NavigationStore {
   setPath(path: string): void;
   setCurrentUrl(url: string): void;
   setSegmentIds(ids: string[]): void;
-  storeSegment(segment: ResolvedSegment): void;
-  storeSegments(segments: ResolvedSegment[]): void;
-  pruneSegments(keepIds: string[]): void;
+
+  // History-based segment cache (for back/forward navigation and partial merging)
+  getHistoryKey(): string;
+  setHistoryKey(key: string): void;
+  cacheSegmentsForHistory(historyKey: string, segments: ResolvedSegment[]): void;
+  getCachedSegments(historyKey: string): ResolvedSegment[] | undefined;
+  hasHistoryCache(historyKey: string): boolean;
+  clearHistoryCache(): void;
 
   // UI update notifications
   onUpdate(callback: UpdateSubscriber): () => void;

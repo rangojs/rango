@@ -9,11 +9,30 @@ import type {
   ResolvedSegment,
   InflightAction,
 } from "./types.js";
-import { LRUCache } from "./lru-cache.js";
 
-// Maximum number of segments to keep in cache
-// This allows for ~10 pages worth of segments assuming ~5 segments per page
-const SEGMENT_CACHE_SIZE = 50;
+// Maximum number of history entries to cache (URLs visited)
+const HISTORY_CACHE_SIZE = 20;
+
+// Cache entry: [url-key, segments]
+type HistoryCacheEntry = [string, ResolvedSegment[]];
+
+// BroadcastChannel for cross-tab cache invalidation
+const CACHE_INVALIDATION_CHANNEL = "rsc-router-cache-invalidation";
+
+/**
+ * Generate a cache key from a URL.
+ * Uses pathname + search (query params) directly as the key.
+ * Hash fragments (#) are excluded since they don't affect server data.
+ */
+export function generateHistoryKey(url?: string): string {
+  if (!url) {
+    url = typeof window !== "undefined" ? window.location.href : "/";
+  }
+
+  // Parse URL and use only pathname + search (exclude hash fragment)
+  const parsed = new URL(url, "http://localhost");
+  return parsed.pathname + parsed.search;
+}
 
 /**
  * Configuration for creating a navigation store
@@ -21,6 +40,8 @@ const SEGMENT_CACHE_SIZE = 50;
 export interface NavigationStoreConfig {
   initialLocation?: { href: string };
   initialSegmentIds?: string[];
+  initialHistoryKey?: string;
+  initialSegments?: ResolvedSegment[];
 }
 
 /**
@@ -91,13 +112,37 @@ export function createNavigationStore(
     : defaultLocation;
 
   // Internal segment state (for partial updates)
-  // Uses LRU cache to keep segments for back/forward navigation
   const segmentState: SegmentState = {
     path: initialLoc.pathname,
     currentUrl: initialLoc.href,
     currentSegmentIds: config?.initialSegmentIds ?? [],
-    storedSegments: new LRUCache<string, ResolvedSegment>(SEGMENT_CACHE_SIZE),
   };
+
+  // History-based segment cache: array of [url-key, segments] tuples
+  // Each URL gets its own complete snapshot of segments for back/forward and partial merging
+  // Oldest entries (at front) are removed when over HISTORY_CACHE_SIZE
+  const historyCache: HistoryCacheEntry[] = [];
+
+  // Current history key (set on navigation, stored in history.state)
+  let currentHistoryKey = config?.initialHistoryKey || generateHistoryKey();
+
+  // Store initial segments if provided
+  if (config?.initialHistoryKey && config?.initialSegments) {
+    historyCache.push([config.initialHistoryKey, config.initialSegments]);
+  }
+
+  // BroadcastChannel for cross-tab cache invalidation
+  // When a server action completes in one tab, all other tabs clear their cache
+  let broadcastChannel: BroadcastChannel | null = null;
+  if (typeof BroadcastChannel !== "undefined") {
+    broadcastChannel = new BroadcastChannel(CACHE_INVALIDATION_CHANNEL);
+    broadcastChannel.onmessage = (event) => {
+      if (event.data?.type === "cache-invalidate") {
+        console.log("[Browser] Received cache invalidation from another tab");
+        historyCache.length = 0;
+      }
+    };
+  }
 
   // State change listeners (for useNavigation subscriptions)
   const stateListeners = new Set<StateListener>();
@@ -222,30 +267,67 @@ export function createNavigationStore(
       segmentState.currentSegmentIds = ids;
     },
 
+    // ========================================================================
+    // History-based Segment Cache (for back/forward navigation and partial merging)
+    // ========================================================================
+
     /**
-     * Store a single segment
+     * Get the current history key
      */
-    storeSegment(segment: ResolvedSegment): void {
-      segmentState.storedSegments.set(segment.id, segment);
+    getHistoryKey(): string {
+      return currentHistoryKey;
     },
 
     /**
-     * Store multiple segments
+     * Set the current history key (called when navigating to a new entry)
      */
-    storeSegments(segments: ResolvedSegment[]): void {
-      segments.forEach((segment) => {
-        segmentState.storedSegments.set(segment.id, segment);
-      });
+    setHistoryKey(key: string): void {
+      currentHistoryKey = key;
     },
 
     /**
-     * Prune stored segments (no-op with LRU cache)
-     * LRU cache automatically evicts oldest entries when at capacity,
-     * allowing back/forward navigation to use cached segments.
+     * Store segments for a history entry
+     * Updates existing entry if key exists, otherwise adds new entry
+     * Removes oldest entries (from front) when over HISTORY_CACHE_SIZE
      */
-    pruneSegments(_keepIds: string[]): void {
-      // No-op: LRU cache handles eviction automatically
-      // Keeping segments allows instant back/forward navigation
+    cacheSegmentsForHistory(historyKey: string, segments: ResolvedSegment[]): void {
+      // Check if entry already exists and update it
+      const existingIndex = historyCache.findIndex(([key]) => key === historyKey);
+      if (existingIndex !== -1) {
+        historyCache[existingIndex] = [historyKey, segments];
+      } else {
+        // Add new entry at the end
+        historyCache.push([historyKey, segments]);
+        // Remove oldest entries if over limit
+        while (historyCache.length > HISTORY_CACHE_SIZE) {
+          historyCache.shift();
+        }
+      }
+    },
+
+    /**
+     * Get cached segments for a history entry
+     */
+    getCachedSegments(historyKey: string): ResolvedSegment[] | undefined {
+      const entry = historyCache.find(([key]) => key === historyKey);
+      return entry?.[1];
+    },
+
+    /**
+     * Check if segments are cached for a history entry
+     */
+    hasHistoryCache(historyKey: string): boolean {
+      return historyCache.some(([key]) => key === historyKey);
+    },
+
+    /**
+     * Clear the history cache (e.g., after server actions that modify data)
+     * Also broadcasts to other tabs to clear their caches
+     */
+    clearHistoryCache(): void {
+      historyCache.length = 0;
+      // Notify other tabs to clear their cache
+      broadcastChannel?.postMessage({ type: "cache-invalidate" });
     },
 
     // ========================================================================

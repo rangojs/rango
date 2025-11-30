@@ -89,12 +89,19 @@ export function createServerActionBridge(
 
     return {
       id,
-      commit(segmentIds?: string[]) {
+      commit(segmentIds?: string[], segments?: ResolvedSegment[]) {
         status = "completed";
         // Update segment state if provided
         if (segmentIds) {
           store.setSegmentIds(segmentIds);
-          store.pruneSegments(segmentIds);
+        }
+        // Clear history cache to prevent stale data on back/forward
+        // (e.g., cart badge in layout would show old count on cached pages)
+        store.clearHistoryCache();
+        // Cache only the current page with fresh segments
+        if (segments) {
+          const currentKey = store.getHistoryKey();
+          store.cacheSegmentsForHistory(currentKey, segments);
         }
       },
       error() {
@@ -236,33 +243,41 @@ export function createServerActionBridge(
         diff
       );
       console.log(`[Browser] Server expects client to have:`, matched);
+
+      // Get current page's cached segments for merging
+      const currentKey = store.getHistoryKey();
+      const cachedSegments = store.getCachedSegments(currentKey) || [];
+      const currentSegmentMap = new Map<string, ResolvedSegment>();
+      cachedSegments.forEach((s) => currentSegmentMap.set(s.id, s));
+
       console.log(
-        `[Browser] Client storedSegments has ${segmentState.storedSegments.size} entries:`,
-        Array.from(segmentState.storedSegments.keys())
+        `[Browser] Client cache has ${currentSegmentMap.size} entries:`,
+        Array.from(currentSegmentMap.keys())
       );
 
-      // Store new segments
-      store.storeSegments(segments || []);
-
-      console.log(
-        `[Browser] After storing, storedSegments has ${store.getSegmentState().storedSegments.size} entries`
-      );
+      // Create lookup for new segments from server
+      const newSegmentMap = new Map<string, ResolvedSegment>();
+      (segments || []).forEach((s: ResolvedSegment) => newSegmentMap.set(s.id, s));
 
       if (!matched) {
         console.log(`[Browser] Matched segments: ${matched}`);
         throw new Error("No matched segments in response");
       }
 
-      // Rebuild from matched (source of truth)
+      // Rebuild from matched: server segments first, then cached segments
       const fullSegments = matched
         .map((segId: string) => {
-          const segment = store.getSegmentState().storedSegments.get(segId);
-          if (!segment) {
+          // First check server response (new/updated segments)
+          const fromServer = newSegmentMap.get(segId);
+          if (fromServer) return fromServer;
+          // Fall back to current page's cached segments
+          const fromCache = currentSegmentMap.get(segId);
+          if (!fromCache) {
             console.error(
-              `[Browser] MISSING SEGMENT: ${segId} not in storedSegments!`
+              `[Browser] MISSING SEGMENT: ${segId} not in cache!`
             );
           }
-          return segment;
+          return fromCache;
         })
         .filter(Boolean) as ResolvedSegment[];
 
@@ -337,7 +352,7 @@ export function createServerActionBridge(
       );
 
       console.log(`[Browser] Returning to React:`, returnData);
-      tx.commit(matched);
+      tx.commit(matched, fullSegments);
       return returnData;
     } else {
       // Full update not supported for actions

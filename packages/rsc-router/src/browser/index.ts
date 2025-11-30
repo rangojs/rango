@@ -46,6 +46,7 @@ export {
   initNavigationStore,
   getNavigationStore,
   resetNavigationStore,
+  generateHistoryKey,
   type NavigationStoreConfig,
 } from "./navigation-store.js";
 export { createRequestController } from "./request-controller.js";
