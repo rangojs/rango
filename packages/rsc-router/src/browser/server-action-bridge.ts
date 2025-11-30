@@ -5,6 +5,15 @@ import type {
   ResolvedSegment,
 } from "./types.js";
 import { createPartialUpdater } from "./partial-update.js";
+import { createNavigationTransaction } from "./navigation-bridge.js";
+
+// Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
+if (typeof Symbol.dispose === "undefined") {
+  (Symbol as any).dispose = Symbol("Symbol.dispose");
+}
+if (typeof Symbol.asyncDispose === "undefined") {
+  (Symbol as any).asyncDispose = Symbol("Symbol.asyncDispose");
+}
 
 /**
  * Create a server action bridge for handling RSC server actions
@@ -80,8 +89,13 @@ export function createServerActionBridge(
 
     return {
       id,
-      commit() {
+      commit(segmentIds?: string[]) {
         status = "completed";
+        // Update segment state if provided
+        if (segmentIds) {
+          store.setSegmentIds(segmentIds);
+          store.pruneSegments(segmentIds);
+        }
       },
       error() {
         status = "error";
@@ -264,8 +278,15 @@ export function createServerActionBridge(
         // Save return value before refetch
         const savedReturnValue = returnValue;
 
-        // Refetch and update UI FIRST
-        await fetchPartialUpdate(window.location.href, []);
+        // Refetch and update UI FIRST (storeOnly - don't change URL)
+        const navTx = createNavigationTransaction(store, abortController.signal);
+        await fetchPartialUpdate(
+          window.location.href,
+          [],
+          false,
+          abortController.signal,
+          navTx.with({ url: window.location.href, storeOnly: true })
+        );
         console.log(`[Browser] Refetch complete, now returning action result`);
 
         // Return action result AFTER UI is refreshed
@@ -284,9 +305,6 @@ export function createServerActionBridge(
           `[Browser] Path changed during action, skipping UI update`
         );
       }
-
-      // Update segment state
-      store.setSegmentIds(matched);
 
       const returnData = returnValue?.data;
 
@@ -319,11 +337,10 @@ export function createServerActionBridge(
       );
 
       console.log(`[Browser] Returning to React:`, returnData);
-      tx.commit();
+      tx.commit(matched);
       return returnData;
     } else {
-      // Full update
-      store.setSegmentIds(matched || []);
+      // Full update not supported for actions
       throw new Error(
         `[Browser] Full update after action is not supported yet`
       );

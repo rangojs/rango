@@ -1,5 +1,10 @@
 import type { RequestController, DisposableAbortController } from "./types.js";
 
+// Polyfill Symbol.dispose for Safari and older browsers
+if (typeof Symbol.dispose === "undefined") {
+  (Symbol as any).dispose = Symbol("Symbol.dispose");
+}
+
 /**
  * Create a request controller for managing concurrent abort controllers
  *

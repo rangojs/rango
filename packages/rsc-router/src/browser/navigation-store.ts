@@ -9,6 +9,11 @@ import type {
   ResolvedSegment,
   InflightAction,
 } from "./types.js";
+import { LRUCache } from "./lru-cache.js";
+
+// Maximum number of segments to keep in cache
+// This allows for ~10 pages worth of segments assuming ~5 segments per page
+const SEGMENT_CACHE_SIZE = 50;
 
 /**
  * Configuration for creating a navigation store
@@ -86,11 +91,12 @@ export function createNavigationStore(
     : defaultLocation;
 
   // Internal segment state (for partial updates)
+  // Uses LRU cache to keep segments for back/forward navigation
   const segmentState: SegmentState = {
     path: initialLoc.pathname,
     currentUrl: initialLoc.href,
     currentSegmentIds: config?.initialSegmentIds ?? [],
-    storedSegments: new Map(),
+    storedSegments: new LRUCache<string, ResolvedSegment>(SEGMENT_CACHE_SIZE),
   };
 
   // State change listeners (for useNavigation subscriptions)
@@ -233,16 +239,13 @@ export function createNavigationStore(
     },
 
     /**
-     * Prune stored segments, keeping only those in the provided list
-     * Call after navigation completes to prevent memory leaks
+     * Prune stored segments (no-op with LRU cache)
+     * LRU cache automatically evicts oldest entries when at capacity,
+     * allowing back/forward navigation to use cached segments.
      */
-    pruneSegments(keepIds: string[]): void {
-      const keepSet = new Set(keepIds);
-      for (const id of segmentState.storedSegments.keys()) {
-        if (!keepSet.has(id)) {
-          segmentState.storedSegments.delete(id);
-        }
-      }
+    pruneSegments(_keepIds: string[]): void {
+      // No-op: LRU cache handles eviction automatically
+      // Keeping segments allows instant back/forward navigation
     },
 
     // ========================================================================
