@@ -16,8 +16,6 @@ const HISTORY_CACHE_SIZE = 20;
 // Cache entry: [url-key, segments]
 type HistoryCacheEntry = [string, ResolvedSegment[]];
 
-// BroadcastChannel for cross-tab cache invalidation
-const CACHE_INVALIDATION_CHANNEL = "rsc-router-cache-invalidation";
 
 /**
  * Generate a cache key from a URL.
@@ -129,19 +127,6 @@ export function createNavigationStore(
   // Store initial segments if provided
   if (config?.initialHistoryKey && config?.initialSegments) {
     historyCache.push([config.initialHistoryKey, config.initialSegments]);
-  }
-
-  // BroadcastChannel for cross-tab cache invalidation
-  // When a server action completes in one tab, all other tabs clear their cache
-  let broadcastChannel: BroadcastChannel | null = null;
-  if (typeof BroadcastChannel !== "undefined") {
-    broadcastChannel = new BroadcastChannel(CACHE_INVALIDATION_CHANNEL);
-    broadcastChannel.onmessage = (event) => {
-      if (event.data?.type === "cache-invalidate") {
-        console.log("[Browser] Received cache invalidation from another tab");
-        historyCache.length = 0;
-      }
-    };
   }
 
   // State change listeners (for useNavigation subscriptions)
@@ -321,13 +306,10 @@ export function createNavigationStore(
     },
 
     /**
-     * Clear the history cache (e.g., after server actions that modify data)
-     * Also broadcasts to other tabs to clear their caches
+     * Clear the history cache (called after navigation/action commit)
      */
     clearHistoryCache(): void {
       historyCache.length = 0;
-      // Notify other tabs to clear their cache
-      broadcastChannel?.postMessage({ type: "cache-invalidate" });
     },
 
     // ========================================================================

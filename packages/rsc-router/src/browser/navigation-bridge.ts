@@ -69,16 +69,17 @@ function createNavigationTransaction(store: NavigationStore, signal: AbortSignal
     store.setCurrentUrl(url);
     store.setPath(parsedUrl.pathname);
 
-    // Generate history key from URL (deterministic hash)
+    // Generate history key from URL
     const historyKey = generateHistoryKey(url);
     store.setHistoryKey(historyKey);
 
-    // Cache segments for this URL
+    // Clear old cache and store new segments for next navigation's merging
+    store.clearHistoryCache();
     store.cacheSegmentsForHistory(historyKey, segments);
 
     // For server actions, skip URL/history updates
     if (storeOnly) {
-      console.log("[Browser] Store updated (action), historyKey:", historyKey);
+      console.log("[Browser] Store updated (action)");
       return;
     }
 

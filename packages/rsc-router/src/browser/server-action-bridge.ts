@@ -95,10 +95,8 @@ export function createServerActionBridge(
         if (segmentIds) {
           store.setSegmentIds(segmentIds);
         }
-        // Clear history cache to prevent stale data on back/forward
-        // (e.g., cart badge in layout would show old count on cached pages)
+        // Clear old cache and store new segments for next navigation's merging
         store.clearHistoryCache();
-        // Cache only the current page with fresh segments
         if (segments) {
           const currentKey = store.getHistoryKey();
           store.cacheSegmentsForHistory(currentKey, segments);
