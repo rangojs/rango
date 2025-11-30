@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ReactNode } from "react";
-import type { ErrorBoundaryHandler, Handler, LoaderDefinition, MiddlewareFn, NotFoundBoundaryHandler, ShouldRevalidateFn } from "../types";
+import type { ErrorBoundaryHandler, Handler, LoaderDefinition, LoadingShow, MiddlewareFn, NotFoundBoundaryHandler, ShouldRevalidateFn } from "../types";
 import { invariant } from "../errors";
 
 // ============================================================================
@@ -62,6 +62,7 @@ export type EntryData =
       type: "route";
       handler: Handler<any, any>;
       loading?: ReactNode;
+      loadingShow?: LoadingShow;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments)
@@ -69,6 +70,7 @@ export type EntryData =
       type: "layout";
       handler: ReactNode | Handler<any, any>;
       loading?: ReactNode;
+      loadingShow?: LoadingShow;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments)
@@ -76,6 +78,7 @@ export type EntryData =
       type: "parallel";
       handler: Record<`@${string}`, Handler<any, any> | ReactNode>;
       loading?: ReactNode;
+      loadingShow?: LoadingShow;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments);

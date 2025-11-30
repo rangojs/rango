@@ -7,6 +7,7 @@ import type {
   HandlersForRouteMap,
   LoaderDefinition,
   LoaderFn,
+  LoadingShow,
   MiddlewareFn,
   NotFoundBoundaryHandler,
   ResolvedRouteMap,
@@ -97,7 +98,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
     use?: () => LayoutUseItem[]
   ) => LayoutItem;
   parallel: <
-    TSlots extends Record<`@${string}`, Handler<any, TEnv> | ReactNode>
+    TSlots extends Record<`@${string}`, Handler<any, TEnv> | ReactNode>,
   >(
     slots: TSlots,
     use?: () => ParallelUseItem[]
@@ -108,9 +109,26 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
     loaderDef: LoaderDefinition<TData>,
     use?: () => LoaderUseItem[]
   ) => LoaderItem;
-  loading: (component: ReactNode) => LoadingItem;
-  errorBoundary: (fallback: ReactNode | ErrorBoundaryHandler) => ErrorBoundaryItem;
-  notFoundBoundary: (fallback: ReactNode | NotFoundBoundaryHandler) => NotFoundBoundaryItem;
+  /**
+   * Attach a loading component to the current route/layout
+   * ```typescript
+   * // Always show loading on navigation
+   * loading(<Skeleton />)
+   *
+   * // Only show loading on partial requests (not on initial SSR)
+   * loading(<Skeleton />, ({ isPartial }) => isPartial)
+   * ```
+   * @param component - The loading UI to show during navigation
+   * @param show - Optional callback to control when loading appears
+   *
+   */
+  loading: (component: ReactNode, show?: LoadingShow) => LoadingItem;
+  errorBoundary: (
+    fallback: ReactNode | ErrorBoundaryHandler
+  ) => ErrorBoundaryItem;
+  notFoundBoundary: (
+    fallback: ReactNode | NotFoundBoundaryHandler
+  ) => NotFoundBoundaryItem;
 };
 
 const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
@@ -202,7 +220,9 @@ const errorBoundary: RouteHelpers<any, any>["errorBoundary"] = (fallback) => {
  * ])
  * ```
  */
-const notFoundBoundary: RouteHelpers<any, any>["notFoundBoundary"] = (fallback) => {
+const notFoundBoundary: RouteHelpers<any, any>["notFoundBoundary"] = (
+  fallback
+) => {
   const ctx = getContext().getStore();
   if (!ctx) throw new Error("notFoundBoundary() must be called inside map()");
 
@@ -319,7 +339,7 @@ const loaderFn: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
  * Loading helper - attaches a loading component to the current entry
  * Loading components are static (no context) and shown during navigation
  */
-const loadingFn: RouteHelpers<any, any>["loading"] = (component) => {
+const loadingFn: RouteHelpers<any, any>["loading"] = (component, show) => {
   const store = getContext();
   const ctx = store.getStore();
   if (!ctx) throw new Error("loading() must be called inside map()");
@@ -328,8 +348,11 @@ const loadingFn: RouteHelpers<any, any>["loading"] = (component) => {
     invariant(false, "No parent entry available for loading()");
   }
 
-  // Attach loading component to parent entry
+  // Attach loading component and optional show callback to parent entry
   ctx.parent.loading = component;
+  if (show) {
+    ctx.parent.loadingShow = show;
+  }
 
   const name = `$${store.getNextIndex("loading")}`;
   return { name, type: "loading" } as LoadingItem;
@@ -551,7 +574,7 @@ const createLoadingHelper = (): RouteHelpers<any, any>["loading"] => {
  */
 const createRouteHelper = <
   const T extends RouteDefinition,
-  TEnv
+  TEnv,
 >(): RouteHelpers<T, TEnv>["route"] => {
   return routeFn as RouteHelpers<T, TEnv>["route"];
 };
