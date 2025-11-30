@@ -7,7 +7,6 @@ import type {
   HandlersForRouteMap,
   LoaderDefinition,
   LoaderFn,
-  LoadingShow,
   MiddlewareFn,
   NotFoundBoundaryHandler,
   ResolvedRouteMap,
@@ -112,17 +111,16 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
   /**
    * Attach a loading component to the current route/layout
    * ```typescript
-   * // Always show loading on navigation
+   * // Show loading on all requests (including SSR)
    * loading(<Skeleton />)
    *
-   * // Only show loading on partial requests (not on initial SSR)
-   * loading(<Skeleton />, ({ isPartial }) => isPartial)
+   * // Skip loading on SSR, only show on navigation
+   * loading(<Skeleton />, true)
    * ```
    * @param component - The loading UI to show during navigation
-   * @param show - Optional callback to control when loading appears
-   *
+   * @param skipSSR - If true, skip showing loading on document requests (SSR)
    */
-  loading: (component: ReactNode, show?: LoadingShow) => LoadingItem;
+  loading: (component: ReactNode, skipSSR?: boolean) => LoadingItem;
   errorBoundary: (
     fallback: ReactNode | ErrorBoundaryHandler
   ) => ErrorBoundaryItem;
@@ -339,7 +337,7 @@ const loaderFn: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
  * Loading helper - attaches a loading component to the current entry
  * Loading components are static (no context) and shown during navigation
  */
-const loadingFn: RouteHelpers<any, any>["loading"] = (component, show) => {
+const loadingFn: RouteHelpers<any, any>["loading"] = (component, skipSSR) => {
   const store = getContext();
   const ctx = store.getStore();
   if (!ctx) throw new Error("loading() must be called inside map()");
@@ -348,10 +346,11 @@ const loadingFn: RouteHelpers<any, any>["loading"] = (component, show) => {
     invariant(false, "No parent entry available for loading()");
   }
 
-  // Attach loading component and optional show callback to parent entry
-  ctx.parent.loading = component;
-  if (show) {
-    ctx.parent.loadingShow = show;
+  // If skipSSR is true and we're in SSR, set loading to false
+  if (skipSSR && ctx.isSSR) {
+    ctx.parent.loading = false;
+  } else {
+    ctx.parent.loading = component;
   }
 
   const name = `$${store.getNextIndex("loading")}`;

@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ReactNode } from "react";
-import type { ErrorBoundaryHandler, Handler, LoaderDefinition, LoadingShow, MiddlewareFn, NotFoundBoundaryHandler, ShouldRevalidateFn } from "../types";
+import type { ErrorBoundaryHandler, Handler, LoaderDefinition, MiddlewareFn, NotFoundBoundaryHandler, ShouldRevalidateFn } from "../types";
 import { invariant } from "../errors";
 
 // ============================================================================
@@ -61,24 +61,21 @@ export type EntryData =
   | ({
       type: "route";
       handler: Handler<any, any>;
-      loading?: ReactNode;
-      loadingShow?: LoadingShow;
+      loading?: ReactNode | false;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments)
   | ({
       type: "layout";
       handler: ReactNode | Handler<any, any>;
-      loading?: ReactNode;
-      loadingShow?: LoadingShow;
+      loading?: ReactNode | false;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments)
   | ({
       type: "parallel";
       handler: Record<`@${string}`, Handler<any, any> | ReactNode>;
-      loading?: ReactNode;
-      loadingShow?: LoadingShow;
+      loading?: ReactNode | false;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments);
@@ -94,6 +91,8 @@ interface HelperContext {
   forRoute?: string;
   mountIndex?: number;
   metrics?: MetricsStore;
+  /** True when rendering for SSR (document requests) */
+  isSSR?: boolean;
 }
 export const RSCRouterContext: AsyncLocalStorage<HelperContext> =
   new AsyncLocalStorage<HelperContext>();
@@ -204,6 +203,7 @@ export const getContext = (): {
           forRoute: store.forRoute,
           mountIndex: store.mountIndex,
           metrics: store.metrics,
+          isSSR: store.isSSR,
         },
         callback
       );
@@ -226,6 +226,7 @@ export const getContext = (): {
           forRoute: store?.forRoute,
           mountIndex: store?.mountIndex,
           metrics: store?.metrics,
+          isSSR: store?.isSSR,
         },
         callback
       );

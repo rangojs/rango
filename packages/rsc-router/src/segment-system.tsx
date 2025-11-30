@@ -41,20 +41,25 @@ import { RouteContentWrapper } from "./route-content-wrapper.js";
  * // </RootLayout></OutletProvider>
  * ```
  */
-export async function renderSegments(segments: ResolvedSegment[]): Promise<ReactNode> {
+export async function renderSegments(
+  segments: ResolvedSegment[]
+): Promise<ReactNode> {
   // Separate segments by type
   const tree = segmentTreeWalk(segments);
   // Render content segments as siblings
   let content: ReactNode = null;
   for (const node of tree) {
     invariant(
-      node.segment.type === "layout" || node.segment.type === "route" || node.segment.type === "error" || node.segment.type === "notFound",
+      node.segment.type === "layout" ||
+        node.segment.type === "route" ||
+        node.segment.type === "error" ||
+        node.segment.type === "notFound",
       `Expected layout, route, error, or notFound segment, got ${node.segment.type}`
     );
     const { component, id, params, loading } = node.segment;
 
     let nodeContent: ReactNode =
-      loading || component instanceof Promise
+      loading || loading === null || component instanceof Promise
         ? createElement(RouteContentWrapper, {
             key: `suspense-loading-${id}`,
             content: component,
@@ -96,13 +101,16 @@ export async function renderSegments(segments: ResolvedSegment[]): Promise<React
 
     if (loaderEntries.length > 0) {
       // Debug: Check loader data types
-      console.log("[renderSegments] Loader entries:", loaderEntries.map(l => ({
-        name: l.loaderName,
-        isPromise: l.loaderData instanceof Promise,
-        isThenable: l.loaderData && typeof l.loaderData.then === 'function',
-        type: typeof l.loaderData,
-        constructor: l.loaderData?.constructor?.name,
-      })));
+      console.log(
+        "[renderSegments] Loader entries:",
+        loaderEntries.map((l) => ({
+          name: l.loaderName,
+          isPromise: l.loaderData instanceof Promise,
+          isThenable: l.loaderData && typeof l.loaderData.then === "function",
+          type: typeof l.loaderData,
+          constructor: l.loaderData?.constructor?.name,
+        }))
+      );
 
       // Await all loader data in parallel
       const resolvedData = await Promise.all(

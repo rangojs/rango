@@ -799,37 +799,3 @@ export type LoaderDefinition<T = any, TParams = Record<string, string | undefine
   fn?: LoaderFn<T, TParams, any>;  // Optional - stripped on client via "use server"
 };
 
-// ============================================================================
-// Loading Condition Types
-// ============================================================================
-
-/**
- * Context passed to loading condition callbacks
- * Used to determine whether to show loading UI based on request type
- */
-export interface LoadingConditionContext {
-  /** True for document requests (initial page load / SSR) */
-  isDocument: boolean;
-  /** True for partial requests (client navigation + server actions) */
-  isPartial: boolean;
-}
-
-/**
- * Loading show callback - determines whether to show loading UI
- *
- * @param ctx - Context with request type information
- * @returns `true` to show loading, falsy (`false`/`null`/`undefined`) to skip loading
- *
- * @example
- * ```typescript
- * // Only show loading on navigation, not on initial page load
- * loading(<Skeleton />, ({ isPartial }) => isPartial)
- *
- * // Always show loading (same as omitting the callback)
- * loading(<Skeleton />, () => true)
- *
- * // Never show loading (equivalent to not using loading())
- * loading(<Skeleton />, () => false)
- * ```
- */
-export type LoadingShow = (ctx: LoadingConditionContext) => true | false | null | undefined;

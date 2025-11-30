@@ -927,7 +927,7 @@ export function createRSCRouter<TEnv = any>(
         type: "layout",
         index: 0,
         component,
-        loading: entry.loading,
+        loading: entry.loading === false ? null : entry.loading,
         params,
         belongsToRoute: false, // Parent chain layouts don't belong to specific route
         layoutName: entry.id,
@@ -1001,7 +1001,7 @@ export function createRSCRouter<TEnv = any>(
         type: "route",
         index: 0,
         component,
-        loading: entry.loading,
+        loading: entry.loading === false ? null : entry.loading,
         params,
         belongsToRoute: true, // Route always belongs to itself
       });
@@ -1074,7 +1074,7 @@ export function createRSCRouter<TEnv = any>(
       params,
       belongsToRoute: true, // Orphan layout belongs to the route
       layoutName: orphan.id,
-      loading: orphan.loading,
+      loading: orphan.loading === false ? null : orphan.loading,
     });
 
     return segments;
@@ -1126,7 +1126,7 @@ export function createRSCRouter<TEnv = any>(
         type: "parallel",
         index: 0,
         component,
-        loading: parallelEntry.loading,
+        loading: parallelEntry.loading === false ? null : parallelEntry.loading,
         params,
         slot,
         belongsToRoute,
@@ -1419,7 +1419,7 @@ export function createRSCRouter<TEnv = any>(
           type: "parallel",
           index: 0,
           component,
-          loading: parallelEntry.loading,
+          loading: parallelEntry.loading === false ? null : parallelEntry.loading,
           params,
           slot,
           belongsToRoute,
@@ -1537,7 +1537,7 @@ export function createRSCRouter<TEnv = any>(
       type: entry.type as "layout" | "route",
       index: 0,
       component: resolvedComponent,
-      loading: entry.loading,
+      loading: entry.loading === false ? null : entry.loading,
       params,
       belongsToRoute,
       ...(entry.type === "layout" ? { layoutName: entry.id } : {}),
@@ -1815,7 +1815,7 @@ export function createRSCRouter<TEnv = any>(
           type: "parallel",
           index: 0,
           component,
-          loading: parallelEntry.loading,
+          loading: parallelEntry.loading === false ? null : parallelEntry.loading,
           params,
           slot,
           belongsToRoute: true, // Orphan's parallel belongs to the route
@@ -1872,7 +1872,7 @@ export function createRSCRouter<TEnv = any>(
       params,
       belongsToRoute: true, // Orphan layout belongs to the route
       layoutName: orphan.id,
-      loading: orphan.loading,
+      loading: orphan.loading === false ? null : orphan.loading,
     });
 
     return { segments, matchedIds };
@@ -1913,12 +1913,14 @@ export function createRSCRouter<TEnv = any>(
     // Load manifest with AsyncLocalStorage context and validation
     // Pass metrics store to be included in context
     // Track manifest loading (direct recording since ALS context not yet available)
+    // isSSR=true for document requests so loading() with skipSSR can disable itself
     const manifestStart = metricsStore ? performance.now() : 0;
     const manifestEntry = await loadManifest(
       matched.entry,
       matched.routeKey,
       pathname,
-      metricsStore
+      metricsStore,
+      true // isSSR
     );
     if (metricsStore) {
       const duration = performance.now() - manifestStart;
@@ -2247,12 +2249,14 @@ export function createRSCRouter<TEnv = any>(
 
     // Load manifest with AsyncLocalStorage context and validation
     // Track manifest loading (direct recording since ALS context not yet available)
+    // isSSR=false for partial requests (navigation/actions)
     const manifestStart = metricsStore ? performance.now() : 0;
     const manifestEntry = await loadManifest(
       matched.entry,
       matched.routeKey,
       pathname,
-      metricsStore
+      metricsStore,
+      false // isSSR
     );
     if (metricsStore) {
       const duration = performance.now() - manifestStart;
@@ -2500,20 +2504,6 @@ function* traverseBack(entry: EntryData): Generator<EntryData> {
 }
 
 /**
- * Generator-based segment builder - yields segments lazily
- */
-async function* buildSegmentsStream(
-  entry: RouteEntry<any>,
-  routeKey: string,
-  path: string
-): AsyncGenerator<EntryData> {
-  const manifest = await loadManifest(entry, routeKey, path);
-  for (const node of traverseBack(manifest)) {
-    yield node;
-  }
-}
-
-/**
  * Load manifest from route entry with AsyncLocalStorage context
  * Handles lazy imports, unwrapping, and validation
  */
@@ -2521,12 +2511,16 @@ async function loadManifest(
   entry: RouteEntry<any>,
   routeKey: string,
   path: string,
-  metricsStore?: MetricsStore
+  metricsStore?: MetricsStore,
+  isSSR?: boolean
 ): Promise<EntryData> {
   const Store = getContext().getOrCreateStore(routeKey);
 
   // Set mount index in store for unique shortCode prefixes
   Store.mountIndex = entry.mountIndex;
+
+  // Set isSSR flag so loading() can check if we're in SSR
+  Store.isSSR = isSSR;
 
   // Attach metrics store to context if provided
   if (metricsStore) {
