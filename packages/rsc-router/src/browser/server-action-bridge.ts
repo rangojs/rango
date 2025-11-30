@@ -109,10 +109,7 @@ export function createServerActionBridge(
   /**
    * Server action callback handler
    */
-  async function handleServerAction(
-    id: string,
-    args: any[]
-  ): Promise<unknown> {
+  async function handleServerAction(id: string, args: any[]): Promise<unknown> {
     console.log("ID", { id, args });
 
     // Create new disposable controller (allow concurrent actions)
@@ -131,7 +128,10 @@ export function createServerActionBridge(
     // Build action request URL with current segments
     const url = new URL(window.location.href);
     url.searchParams.set("_rsc_action", id);
-    url.searchParams.set("_rsc_segments", segmentState.currentSegmentIds.join(","));
+    url.searchParams.set(
+      "_rsc_segments",
+      segmentState.currentSegmentIds.join(",")
+    );
 
     // Encode arguments
     const encodedBody = await deps.encodeReply(args, { temporaryReferences });
@@ -280,7 +280,9 @@ export function createServerActionBridge(
       }
 
       if (segmentState.path !== metadata?.pathname) {
-        console.warn(`[Browser] Path changed during action, skipping UI update`);
+        console.warn(
+          `[Browser] Path changed during action, skipping UI update`
+        );
       }
 
       // Update segment state
@@ -299,15 +301,19 @@ export function createServerActionBridge(
 
       // Prepare new tree (await loader data resolution)
       const newTree = await renderSegments(fullSegments);
-      const queue = window.requestIdleCallback || function (cb: () => void , opt:{timeout:number}) { return setTimeout(cb, opt.timeout); };
 
-      queue(() => {
-        setTimeout(() => {
-          if (!abortController.signal.aborted) {
-            onUpdate({ root: newTree, metadata: metadata! });
-          }
-        }, 100);
-      },{timeout:100});
+      // Schedule UI update after React processes the action return value.
+      // queueMicrotask: waits for React's synchronous work + promise callbacks
+      // double queueMicrotask + requestAnimationFrame ensures we yield to React
+      queueMicrotask(() => {
+        queueMicrotask(() => {
+          requestAnimationFrame(() => {
+            if (!abortController.signal.aborted) {
+              onUpdate({ root: newTree, metadata: metadata! });
+            }
+          });
+        });
+      });
       console.log(
         `[Browser] Action complete - UI updated (after action state committed)`
       );
@@ -318,7 +324,9 @@ export function createServerActionBridge(
     } else {
       // Full update
       store.setSegmentIds(matched || []);
-      throw new Error(`[Browser] Full update after action is not supported yet`);
+      throw new Error(
+        `[Browser] Full update after action is not supported yet`
+      );
     }
   }
 
