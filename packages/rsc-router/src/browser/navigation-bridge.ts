@@ -73,8 +73,8 @@ function createNavigationTransaction(store: NavigationStore, signal: AbortSignal
     const historyKey = generateHistoryKey(url);
     store.setHistoryKey(historyKey);
 
-    // Clear old cache and store new segments for next navigation's merging
-    store.clearHistoryCache();
+    // Cache segments for this history entry (for back/forward navigation)
+    // Don't clear cache on navigation - only server actions clear the cache
     store.cacheSegmentsForHistory(historyKey, segments);
 
     // For server actions, skip URL/history updates

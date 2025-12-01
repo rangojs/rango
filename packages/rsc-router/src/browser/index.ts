@@ -68,6 +68,8 @@ export {
   useNavigation,
   type NavigationMethods,
   type NavigationValue,
+  useClientCache,
+  type ClientCacheControls,
   NavigationProvider,
   type NavigationProviderProps,
   Link,

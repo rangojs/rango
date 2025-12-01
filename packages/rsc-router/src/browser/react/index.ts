@@ -7,6 +7,12 @@ export {
   type NavigationValue,
 } from "./use-navigation.js";
 
+// Client cache controls hook
+export {
+  useClientCache,
+  type ClientCacheControls,
+} from "./use-client-cache.js";
+
 // Provider
 export {
   NavigationProvider,

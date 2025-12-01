@@ -16,6 +16,24 @@ const HISTORY_CACHE_SIZE = 20;
 // Cache entry: [url-key, segments]
 type HistoryCacheEntry = [string, ResolvedSegment[]];
 
+// BroadcastChannel for cross-tab cache invalidation
+const CACHE_INVALIDATION_CHANNEL = "rsc-router-cache-invalidation";
+
+// BroadcastChannel instance (lazily initialized)
+let cacheInvalidationChannel: BroadcastChannel | null = null;
+
+/**
+ * Get or create the BroadcastChannel for cache invalidation
+ */
+function getCacheInvalidationChannel(): BroadcastChannel | null {
+  if (typeof window === "undefined" || typeof BroadcastChannel === "undefined") {
+    return null;
+  }
+  if (!cacheInvalidationChannel) {
+    cacheInvalidationChannel = new BroadcastChannel(CACHE_INVALIDATION_CHANNEL);
+  }
+  return cacheInvalidationChannel;
+}
 
 /**
  * Generate a cache key from a URL.
@@ -143,6 +161,35 @@ export function createNavigationStore(
    */
   function notifyStateListeners(): void {
     stateListeners.forEach((listener) => listener());
+  }
+
+  /**
+   * Clear the history cache (internal - does not broadcast)
+   */
+  function clearCacheInternal(): void {
+    historyCache.length = 0;
+  }
+
+  /**
+   * Clear the history cache and broadcast to other tabs
+   */
+  function clearCacheAndBroadcast(): void {
+    clearCacheInternal();
+    const channel = getCacheInvalidationChannel();
+    if (channel) {
+      channel.postMessage({ type: "invalidate" });
+    }
+  }
+
+  // Set up cross-tab cache invalidation listener
+  const channel = getCacheInvalidationChannel();
+  if (channel) {
+    channel.onmessage = (event) => {
+      if (event.data?.type === "invalidate") {
+        console.log("[Browser] Cache invalidated by another tab");
+        clearCacheInternal();
+      }
+    };
   }
 
   return {
@@ -306,10 +353,11 @@ export function createNavigationStore(
     },
 
     /**
-     * Clear the history cache (called after navigation/action commit)
+     * Clear the history cache and broadcast to other tabs
+     * Called after server action commit to invalidate stale data
      */
     clearHistoryCache(): void {
-      historyCache.length = 0;
+      clearCacheAndBroadcast();
     },
 
     // ========================================================================
