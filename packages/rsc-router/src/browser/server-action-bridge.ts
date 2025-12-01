@@ -485,6 +485,9 @@ export function createServerActionBridge(
         // Clear consolidation tracking before fetch
         tx.clearConsolidation();
 
+        // Clear cache and broadcast to other tabs BEFORE storing new data
+        store.clearHistoryCache();
+
         // Do consolidation fetch to get fresh data for all revalidated segments
         // This will handle the UI update via onUpdate in partial-update
         const navTx = createNavigationTransaction(
@@ -509,13 +512,13 @@ export function createServerActionBridge(
       }
 
       // Check if there are still other actions pending
-      // If so, skip UI update - the last action will handle consolidation
+      // If so, skip UI update and cache broadcast - the last action will handle consolidation
       if (pendingActionCount > 1) {
         console.log(
           `[Browser] Skipping UI update - ${pendingActionCount - 1} other action(s) still pending`
         );
         console.log(`[Browser] Returning to React:`, returnData);
-        tx.commit(matched, fullSegments);
+        tx.commit(matched, fullSegments, true); // Skip cache clear - last action will broadcast
         return returnData;
       }
 

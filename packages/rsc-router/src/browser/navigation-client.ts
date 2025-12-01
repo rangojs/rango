@@ -52,7 +52,7 @@ export function createNavigationClient(
       console.log(`[Browser] Segments to send: ${segmentIds.join(", ")}`);
 
       // Build fetch URL with partial rendering params
-      const fetchUrl = new URL(targetUrl);
+      const fetchUrl = new URL(targetUrl, window.location.origin);
       fetchUrl.searchParams.set("_rsc_partial", "true");
       fetchUrl.searchParams.set("_rsc_segments", segmentIds.join(","));
 

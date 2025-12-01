@@ -525,10 +525,13 @@ function KanbanCard({
 }: KanbanCardProps) {
   const [showActions, setShowActions] = useState(false);
 
+  // Only prevent dragging for unsaved cards (temp IDs) - saved cards can be moved even while pending
+  const isUnsaved = card.id.startsWith("temp-");
+
   return (
     <div
-      draggable
-      onDragStart={() => onDragStart(card.id)}
+      draggable={!isUnsaved}
+      onDragStart={() => !isUnsaved && onDragStart(card.id)}
       onDragEnd={onDragEnd}
       onDragOver={(e) => {
         e.preventDefault();
