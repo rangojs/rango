@@ -5,6 +5,7 @@ import type {
   ResolvedSegment,
 } from "./types.js";
 import type { ReactNode } from "react";
+import type { RenderSegmentsOptions } from "../segment-system.js";
 
 /**
  * Configuration for creating a partial updater
@@ -13,7 +14,7 @@ export interface PartialUpdateConfig {
   store: NavigationStore;
   client: NavigationClient;
   onUpdate: UpdateSubscriber;
-  renderSegments: (segments: ResolvedSegment[]) => Promise<ReactNode> | ReactNode;
+  renderSegments: (segments: ResolvedSegment[], options?: RenderSegmentsOptions) => Promise<ReactNode> | ReactNode;
 }
 
 /**

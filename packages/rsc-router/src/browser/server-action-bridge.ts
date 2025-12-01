@@ -50,6 +50,13 @@ export function createServerActionBridge(
 
   let isRegistered = false;
 
+  // Track segments revalidated by concurrent actions
+  // When multiple actions run concurrently, we collect all revalidated segments
+  // and do a consolidation fetch after the last one completes
+  const concurrentRevalidatedSegments = new Set<string>();
+  let pendingActionCount = 0;
+  let hadAnyConcurrentActions = false; // True if any concurrent actions occurred
+
   /**
    * Creates an async disposable scope for tracking stream state.
    * Releases the reader lock, resets streaming state, and signals completion when disposed.
@@ -71,10 +78,20 @@ export function createServerActionBridge(
    * Creates a disposable transaction for action state and inflight tracking.
    * Tracks the action as inflight, sets loading state, and cleans up on disposal.
    * Only sets idle state when ALL actions are complete (supports concurrent actions).
+   *
+   * For concurrent actions: tracks revalidated segments and triggers consolidation
+   * fetch after all actions complete to ensure data consistency.
    */
   function createActionTransaction(actionId: string, args: any[]) {
     const id = `${actionId}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     let status: "pending" | "completed" | "error" = "pending";
+
+    // Track if this action started while others were pending (concurrent)
+    const hadConcurrentActions = pendingActionCount > 0;
+    if (hadConcurrentActions) {
+      hadAnyConcurrentActions = true;
+    }
+    pendingActionCount++;
 
     // Add to inflight actions
     store.addInflightAction({
@@ -89,6 +106,42 @@ export function createServerActionBridge(
 
     return {
       id,
+      hadConcurrentActions,
+      /**
+       * Record segments that were revalidated by this action
+       * Used for consolidation fetch when actions are concurrent
+       */
+      recordRevalidatedSegments(diff: string[]) {
+        if (diff && diff.length > 0) {
+          diff.forEach((segId) => concurrentRevalidatedSegments.add(segId));
+        }
+      },
+      /**
+       * Check if consolidation fetch is needed and return segments to refresh
+       * Returns null if no consolidation needed, or array of segment IDs to exclude
+       */
+      getConsolidationSegments(): string[] | null {
+        // Only consolidate if this was the last action AND there were concurrent actions
+        if (pendingActionCount > 1) {
+          return null; // More actions still pending
+        }
+        if (!hadAnyConcurrentActions) {
+          return null; // No concurrent actions occurred
+        }
+        if (concurrentRevalidatedSegments.size === 0) {
+          return null; // No segments to consolidate
+        }
+        // Return segments that need fresh data
+        const segments = Array.from(concurrentRevalidatedSegments);
+        return segments;
+      },
+      /**
+       * Clear consolidation tracking (call after consolidation fetch)
+       */
+      clearConsolidation() {
+        concurrentRevalidatedSegments.clear();
+        hadAnyConcurrentActions = false;
+      },
       commit(segmentIds?: string[], segments?: ResolvedSegment[]) {
         status = "completed";
         // Update segment state if provided
@@ -106,7 +159,10 @@ export function createServerActionBridge(
         status = "error";
       },
       [Symbol.dispose]() {
-        // Remove from inflight actions first
+        // Decrement pending count
+        pendingActionCount--;
+
+        // Remove from inflight actions
         store.removeInflightAction(id);
 
         // Only set idle if no other actions in flight
@@ -242,6 +298,11 @@ export function createServerActionBridge(
       );
       console.log(`[Browser] Server expects client to have:`, matched);
 
+      // Record revalidated segments for concurrent action tracking
+      if (diff) {
+        tx.recordRevalidatedSegments(diff);
+      }
+
       // Get current page's cached segments for merging
       const currentKey = store.getHistoryKey();
       const cachedSegments = store.getCachedSegments(currentKey) || [];
@@ -331,8 +392,46 @@ export function createServerActionBridge(
       }
 
       // Prepare new tree (await loader data resolution)
-      const newTree = await renderSegments(fullSegments);
+      // Pass isAction: true to await component promises on client
+      const newTree = await renderSegments(fullSegments, { isAction: true });
 
+      // Check if we need a consolidation fetch due to concurrent actions
+      const consolidationSegments = tx.getConsolidationSegments();
+
+      if (consolidationSegments && consolidationSegments.length > 0) {
+        console.log(
+          `[Browser] Concurrent actions detected - consolidation fetch needed for:`,
+          consolidationSegments
+        );
+
+        // Calculate segments to send (exclude the ones we want fresh)
+        const currentSegmentIds = store.getSegmentState().currentSegmentIds;
+        const segmentsToSend = currentSegmentIds.filter(
+          (id) => !consolidationSegments.includes(id)
+        );
+
+        console.log(`[Browser] Sending segments (excluding revalidated):`, segmentsToSend);
+
+        // Clear consolidation tracking before fetch
+        tx.clearConsolidation();
+
+        // Do consolidation fetch to get fresh data for all revalidated segments
+        const navTx = createNavigationTransaction(store, abortController.signal);
+        await fetchPartialUpdate(
+          window.location.href,
+          segmentsToSend,
+          false,
+          abortController.signal,
+          navTx.with({ url: window.location.href, storeOnly: true })
+        );
+
+        console.log(`[Browser] Consolidation fetch complete`);
+        console.log(`[Browser] Returning to React:`, returnData);
+        tx.commit();
+        return returnData;
+      }
+
+      // No concurrent actions - normal flow
       // Schedule UI update after React processes the action return value.
       // queueMicrotask: waits for React's synchronous work + promise callbacks
       // double queueMicrotask + requestAnimationFrame ensures we yield to React

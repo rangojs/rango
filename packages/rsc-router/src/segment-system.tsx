@@ -6,6 +6,26 @@ import { invariant } from "./errors.js";
 import { RouteContentWrapper } from "./route-content-wrapper.js";
 
 /**
+ * Check if code is running in browser environment
+ * Checks both window and document to handle edge cases (SSR, workers, etc.)
+ */
+function isBrowser(): boolean {
+  return typeof window !== "undefined" && typeof document !== "undefined";
+}
+
+/**
+ * Options for renderSegments
+ */
+export interface RenderSegmentsOptions {
+  /**
+   * If true, this render is for a server action response.
+   * In browser during actions, we await component promises to prevent
+   * UI flickering/suspense during optimistic updates.
+   */
+  isAction?: boolean;
+}
+
+/**
  * Render segments into a React tree with proper layout nesting
  *
  * Layouts nest using OutletProvider, while route + parallel + error + notFound segments
@@ -39,11 +59,16 @@ import { RouteContentWrapper } from "./route-content-wrapper.js";
  * //     <><BlogPost /><Sidebar /></>
  * //   </BlogLayout></OutletProvider>
  * // </RootLayout></OutletProvider>
+ *
+ * // For server actions, pass isAction to await components:
+ * const tree = renderSegments(segments, { isAction: true });
  * ```
  */
 export async function renderSegments(
-  segments: ResolvedSegment[]
+  segments: ResolvedSegment[],
+  options?: RenderSegmentsOptions
 ): Promise<ReactNode> {
+  const { isAction = false } = options || {};
   // Separate segments by type
   const tree = segmentTreeWalk(segments);
   // Render content segments as siblings
@@ -58,11 +83,13 @@ export async function renderSegments(
     );
     const { component, id, params, loading } = node.segment;
 
-    // if (typeof window !== "undefined") {
-    //   console.log(`suspense-loading awaiting ${id}`);
-
-    //   await component; // Preload component on client
-    // }
+    // During server actions on client, await component promises to prevent
+    // UI flickering/suspense. This ensures the new UI is fully resolved
+    // before React commits the update.
+    if (isAction && isBrowser() && component instanceof Promise) {
+      console.log(`[renderSegments] Action: awaiting component ${id}`);
+      await component;
+    }
 
     // Only include params in key for segments that belong to the route
     // - Routes: always include params (they render param-specific content)

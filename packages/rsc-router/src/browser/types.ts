@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { ResolvedSegment } from "../types.js";
+import type { RenderSegmentsOptions } from "../segment-system.js";
 
 // ============================================================================
 // RSC Payload Types
@@ -280,7 +281,7 @@ export interface ServerActionBridgeConfig {
   requestController: RequestController;
   deps: RscBrowserDependencies;
   onUpdate: UpdateSubscriber;
-  renderSegments: (segments: ResolvedSegment[]) => Promise<ReactNode> | ReactNode;
+  renderSegments: (segments: ResolvedSegment[], options?: RenderSegmentsOptions) => Promise<ReactNode> | ReactNode;
 }
 
 // ============================================================================
@@ -305,7 +306,7 @@ export interface NavigationBridgeConfig {
   client: NavigationClient;
   requestController: RequestController;
   onUpdate: UpdateSubscriber;
-  renderSegments: (segments: ResolvedSegment[]) => Promise<ReactNode> | ReactNode;
+  renderSegments: (segments: ResolvedSegment[], options?: RenderSegmentsOptions) => Promise<ReactNode> | ReactNode;
 }
 
 // Re-export ResolvedSegment for convenience
