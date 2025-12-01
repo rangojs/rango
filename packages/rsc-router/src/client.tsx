@@ -1,8 +1,20 @@
 "use client";
 
-import { Component, useContext, useMemo, Suspense, type ReactNode } from "react";
+import {
+  Component,
+  useContext,
+  useMemo,
+  Suspense,
+  type ReactNode,
+} from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
-import type { ClientErrorBoundaryFallbackProps, ErrorInfo, LoaderDefinition, LoaderFn, ResolvedSegment } from "./types";
+import type {
+  ClientErrorBoundaryFallbackProps,
+  ErrorInfo,
+  LoaderDefinition,
+  LoaderFn,
+  ResolvedSegment,
+} from "./types";
 import { RouteContentWrapper } from "./route-content-wrapper.js";
 
 /**
@@ -32,11 +44,7 @@ export function Outlet(): ReactNode {
   // If this segment defines a loading component, wrap outlet content with Suspense
   // The loading component becomes the Suspense fallback, shown during streaming/navigation
   if (context?.loading) {
-    return (
-      <Suspense fallback={context.loading}>
-        {content}
-      </Suspense>
-    );
+    return <Suspense fallback={context.loading}>{content}</Suspense>;
   }
 
   return content;
@@ -77,7 +85,11 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
   if (segment.loading || segment.component instanceof Promise) {
     return (
       <RouteContentWrapper
-        content={Promise.resolve(segment.component)}
+        content={
+          segment.component instanceof Promise
+            ? segment.component
+            : Promise.resolve(segment.component)
+        }
         fallback={segment.loading}
       />
     );
@@ -295,7 +307,9 @@ export function createLoader(
  */
 export interface ErrorBoundaryProps {
   /** Fallback UI to show when an error is caught */
-  fallback: ReactNode | ((props: ClientErrorBoundaryFallbackProps) => ReactNode);
+  fallback:
+    | ReactNode
+    | ((props: ClientErrorBoundaryFallbackProps) => ReactNode);
   /** Children to render */
   children: ReactNode;
   /** Optional callback when an error is caught */
@@ -348,7 +362,10 @@ interface ErrorBoundaryState {
  * }
  * ```
  */
-export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+export class ErrorBoundary extends Component<
+  ErrorBoundaryProps,
+  ErrorBoundaryState
+> {
   constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false, error: null };
