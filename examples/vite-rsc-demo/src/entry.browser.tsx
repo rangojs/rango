@@ -92,7 +92,7 @@ async function initializeApp() {
     <React.StrictMode>
       <NavigationProvider
         store={store}
-        initialPayload={{ ...initialPayload, root: await initialTree }}
+        initialPayload={{ ...initialPayload, root: initialTree }}
         bridge={navigationBridge}
       />
     </React.StrictMode>
@@ -136,7 +136,7 @@ async function initializeApp() {
       }
 
       // Wait for RSC stream to fully close
-      await streamComplete;
+      streamComplete;
       store.setState({ isStreaming: false });
       console.log("[Browser] HMR: RSC stream complete");
     });
