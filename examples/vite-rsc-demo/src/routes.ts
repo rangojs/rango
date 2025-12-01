@@ -104,3 +104,12 @@ export const errorRoutes = route({
   notFoundLoader: "/not-found-loader",
 });
 
+/**
+ * Kanban routes - Trello-like board with columns and cards
+ * Tests optimistic updates with drag-and-drop card management
+ */
+export const kanbanRoutes = route({
+  index: "/",
+  card: "/card/:cardId",
+});
+
