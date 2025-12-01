@@ -284,7 +284,7 @@ export function createServerActionBridge(
 
     // Process response
     const { metadata, returnValue } = payload;
-    const { matched, diff, segments, isPartial } = metadata || {};
+    const { matched, diff, segments, isPartial, isError } = metadata || {};
 
     // Log action result
     if (returnValue) {
@@ -292,6 +292,68 @@ export function createServerActionBridge(
       if (!returnValue.ok) {
         console.error(`[Browser] Action failed:`, returnValue.data);
       }
+    }
+
+    // Handle error responses with error boundary UI
+    if (isError && isPartial && segments && diff) {
+      console.log(`[Browser] Processing error boundary response`);
+
+      // Abort all other pending action requests - error takes precedence
+      // This prevents other actions from completing and overwriting the error UI
+      requestController.abortAll();
+
+      // Clear concurrent action tracking - no consolidation needed when showing error
+      tx.clearConsolidation();
+
+      // Get current page's cached segments
+      const currentKey = store.getHistoryKey();
+      const cachedSegments = store.getCachedSegments(currentKey) || [];
+
+      // Create lookup for error segment from server
+      const errorSegmentMap = new Map<string, ResolvedSegment>();
+      segments.forEach((s: ResolvedSegment) => errorSegmentMap.set(s.id, s));
+
+      // For error responses, use ALL cached segments but replace the errored one
+      // This preserves sibling layouts that aren't in the parent chain
+      const fullSegments = cachedSegments.map((cached) => {
+        // Replace the error segment with the one from server
+        const fromServer = errorSegmentMap.get(cached.id);
+        if (fromServer) return fromServer;
+        return cached;
+      });
+
+      // Render the full tree with error segment merged with parent layouts
+      const errorTree = await renderSegments(fullSegments, { isAction: true });
+
+      // Update UI with error boundary
+      startTransition(() => {
+        onUpdate({ root: errorTree, metadata: metadata! });
+      });
+
+      console.log(`[Browser] Error boundary UI rendered`);
+
+      // Update segment tracking to exclude error segment IDs
+      // This ensures the next navigation will re-fetch these segments
+      // instead of assuming they're still cached
+      const errorSegmentIds = new Set(diff);
+      const segmentIdsAfterError = segmentState.currentSegmentIds.filter(
+        (id) => !errorSegmentIds.has(id)
+      );
+      tx.commit(segmentIdsAfterError, fullSegments);
+      console.log(
+        `[Browser] Segment IDs updated (excluding error segments):`,
+        segmentIdsAfterError
+      );
+
+      // Throw the error so the action promise rejects
+      // This allows the calling component to catch it if needed
+      if (returnValue && !returnValue.ok) {
+        tx.error();
+        throw returnValue.data;
+      }
+
+      // No error in returnValue (shouldn't happen with isError: true, but handle gracefully)
+      return undefined;
     }
 
     if (isPartial) {

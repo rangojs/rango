@@ -68,6 +68,7 @@ export type {
   ErrorInfo,
   ErrorBoundaryFallbackProps,
   ErrorBoundaryHandler,
+  ClientErrorBoundaryFallbackProps,
   // NotFound boundary types
   NotFoundInfo,
   NotFoundBoundaryFallbackProps,

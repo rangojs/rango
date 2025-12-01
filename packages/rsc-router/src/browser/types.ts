@@ -23,6 +23,7 @@ export interface RscMetadata {
   pathname: string;
   segments: ResolvedSegment[];
   isPartial?: boolean;
+  isError?: boolean;
   matched?: string[];
   diff?: string[];
 }

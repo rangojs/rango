@@ -53,21 +53,40 @@ function TodosLayout() {
  */
 export default map<typeof todosRoutes>(
   ({ route, layout, loader, revalidate, errorBoundary }) => [
-    layout(<RootLayout />),
-    errorBoundary(({ error, reset }) => (
-      <div
-        style={{
-          color: "red",
-          padding: "1rem",
-          border: "1px solid red",
-          borderRadius: "8px",
-          margin: "1rem 0",
-        }}
-      >
-        Error: {error.message} <button onClick={reset}>Try again</button>
-      </div>
-    )),
-    // Todos section layout with loader
+    layout(<RootLayout />, () => [
+      errorBoundary(({ error }) => (
+        <div
+          style={{
+            color: "#dc2626",
+            padding: "1.5rem",
+            border: "2px solid #dc2626",
+            borderRadius: "8px",
+            margin: "1rem 0",
+            background: "#fef2f2",
+          }}
+        >
+          <h3 style={{ margin: "0 0 0.5rem 0", color: "#991b1b" }}>
+            Something went wrong in RootLayout outlet
+          </h3>
+          <p style={{ margin: "0 0 1rem 0" }}>{error.message}</p>
+          <a
+            href="/todos"
+            style={{
+              display: "inline-block",
+              padding: "0.5rem 1rem",
+              background: "#dc2626",
+              color: "white",
+              borderRadius: "6px",
+              textDecoration: "none",
+            }}
+          >
+            Go back to Todos
+          </a>
+        </div>
+      )),
+    ]),
+
+    // Todos section layout with loader (orphan layout - sibling to RootLayout)
     layout(<TodosLayout />, () => [
       // Global todos loader
       loader(TodosLoader, () => [

@@ -37,6 +37,7 @@ import {
   type SanitizePrefix,
 } from "./href.js";
 import { registerRouteMap } from "./route-map-builder.js";
+import { DefaultErrorFallback } from "./default-error-boundary.js";
 
 /**
  * Router configuration options
@@ -158,6 +159,26 @@ export interface RSCRouter<
       formData?: FormData;
     }
   ): Promise<MatchResult | null>;
+
+  /**
+   * Match an error to the nearest error boundary and return error segments
+   *
+   * Used when an action or other operation fails and we need to render
+   * the error boundary UI. Finds the nearest errorBoundary in the route tree
+   * for the current URL and renders it with the error info.
+   *
+   * @param request - The current request (used to match the route)
+   * @param context - Environment context
+   * @param error - The error that occurred
+   * @param segmentType - Type of segment where error occurred (default: "route")
+   * @returns MatchResult with error segment, or null if no error boundary found
+   */
+  matchError(
+    request: Request,
+    context: TEnv,
+    error: unknown,
+    segmentType?: ErrorInfo["segmentType"]
+  ): Promise<MatchResult | null>;
 }
 
 /**
@@ -251,6 +272,7 @@ export function createRSCRouter<TEnv = any>(
 
   /**
    * Find the nearest error boundary by walking up the entry chain
+   * Also checks sibling layouts (orphan layouts) for error boundaries
    * Returns the first fallback found, or the default error boundary if configured
    */
   function findNearestErrorBoundary(
@@ -264,6 +286,19 @@ export function createRSCRouter<TEnv = any>(
         // Return the last error boundary (most recently defined takes precedence)
         return current.errorBoundary[current.errorBoundary.length - 1];
       }
+
+      // Check orphan layouts for error boundaries
+      // Orphan layouts are siblings that render alongside the main route chain
+      // They can define error boundaries that catch errors from routes in the same route group
+      // Check from first to last (first sibling takes precedence as the "outer" wrapper)
+      if (current.layout && current.layout.length > 0) {
+        for (const orphan of current.layout) {
+          if (orphan.errorBoundary && orphan.errorBoundary.length > 0) {
+            return orphan.errorBoundary[orphan.errorBoundary.length - 1];
+          }
+        }
+      }
+
       current = current.parent;
     }
 
@@ -339,14 +374,9 @@ export function createRSCRouter<TEnv = any>(
     let component: ReactNode;
 
     if (typeof fallback === "function") {
-      // ErrorBoundaryHandler - call with props
-      // The reset function will trigger revalidation on the client
+      // ErrorBoundaryHandler - call with error info
       const props: ErrorBoundaryFallbackProps = {
         error: errorInfo,
-        reset: () => {
-          // This will be replaced on the client with actual revalidation logic
-          console.warn("reset() called during server render - no-op");
-        },
       };
       component = fallback(props);
     } else {
@@ -354,8 +384,10 @@ export function createRSCRouter<TEnv = any>(
       component = fallback;
     }
 
+    // Error segment uses the same ID as the layout that has the error boundary
+    // The error boundary content replaces the layout's outlet content
     return {
-      id: `${entry.shortCode}.error`,
+      id: entry.shortCode,
       namespace: entry.id,
       type: "error",
       index: 0,
@@ -455,12 +487,9 @@ export function createRSCRouter<TEnv = any>(
         // Render fallback on server
         let renderedFallback: ReactNode;
         if (typeof fallback === "function") {
-          // ErrorBoundaryHandler - call with props (reset is a no-op on server)
+          // ErrorBoundaryHandler - call with error info
           const props: ErrorBoundaryFallbackProps = {
             error: errorInfo,
-            reset: () => {
-              // Server-side reset is a no-op, client will handle
-            },
           };
           renderedFallback = fallback(props);
         } else {
@@ -2018,6 +2047,180 @@ export function createRSCRouter<TEnv = any>(
   }
 
   /**
+   * Match an error to the nearest error boundary and return error segments
+   *
+   * This method is used when an action or other operation fails and we need
+   * to render the error boundary UI. It finds the nearest errorBoundary in
+   * the route tree and renders it with the error info.
+   *
+   * The returned segments include all segments up to and including the error
+   * boundary, with the error boundary's fallback rendered in place of its
+   * normal outlet content.
+   */
+  async function matchError(
+    request: Request,
+    _context: TEnv,
+    error: unknown,
+    segmentType: ErrorInfo["segmentType"] = "route"
+  ): Promise<MatchResult | null> {
+    const url = new URL(request.url);
+    const pathname = url.pathname;
+
+    console.log(`[Router.matchError] Matching error for ${pathname}`);
+
+    // Find the route match for the current URL
+    const matched = findMatch(pathname);
+    if (!matched) {
+      console.warn(`[Router.matchError] No route matched for ${pathname}`);
+      return null;
+    }
+
+    // Load manifest to get the entry chain
+    const manifestEntry = await loadManifest(
+      matched.entry,
+      matched.routeKey,
+      pathname,
+      undefined, // No metrics for error matching
+      false // Not SSR
+    );
+
+    // Find the nearest error boundary in the entry chain
+    // If none found, use a default "Internal Server Error" fallback
+    const fallback = findNearestErrorBoundary(manifestEntry);
+    const useDefaultFallback = !fallback;
+
+    // Create error info
+    const errorInfo = createErrorInfo(
+      error,
+      manifestEntry.shortCode || "unknown",
+      segmentType
+    );
+
+    // Find which entry has the error boundary
+    // Also checks orphan layouts (siblings) since they can have error boundaries too
+    let entryWithBoundary: EntryData | null = null;
+    let current: EntryData | null = manifestEntry;
+    while (current) {
+      // Check if this entry has an error boundary
+      if (current.errorBoundary && current.errorBoundary.length > 0) {
+        entryWithBoundary = current;
+        break;
+      }
+
+      // Check orphan layouts for error boundaries
+      if (current.layout && current.layout.length > 0) {
+        for (const orphan of current.layout) {
+          if (orphan.errorBoundary && orphan.errorBoundary.length > 0) {
+            entryWithBoundary = orphan;
+            break;
+          }
+        }
+        if (entryWithBoundary) break;
+      }
+
+      current = current.parent;
+    }
+
+    // Determine which entry has the error boundary and which entry should be replaced
+    // The error content renders in the boundary's <Outlet />, not replacing the boundary itself
+    let boundaryEntry: EntryData;
+    let outletEntry: EntryData; // The entry that renders in boundaryEntry's outlet (gets replaced)
+
+    if (entryWithBoundary) {
+      boundaryEntry = entryWithBoundary;
+
+      // Find the entry that renders in boundaryEntry's <Outlet />
+      // Walk from manifestEntry toward boundaryEntry to find the direct outlet child
+      outletEntry = manifestEntry;
+      current = manifestEntry;
+
+      while (current) {
+        // Case 1: current's direct parent is boundaryEntry
+        if (current.parent === boundaryEntry) {
+          outletEntry = current;
+          break;
+        }
+
+        // Case 2: boundaryEntry is an orphan layout of current's parent
+        // In this case, current renders in the orphan's outlet
+        if (current.parent && current.parent.layout) {
+          if (current.parent.layout.includes(boundaryEntry)) {
+            outletEntry = current;
+            break;
+          }
+        }
+
+        current = current.parent;
+      }
+    } else {
+      // No user-defined error boundary - use root layout for the default fallback
+      // Walk up to find the root entry (no parent)
+      let rootEntry = manifestEntry;
+      while (rootEntry.parent) {
+        rootEntry = rootEntry.parent;
+      }
+      boundaryEntry = rootEntry;
+      outletEntry = rootEntry; // For default, replace at root level
+    }
+
+    // Build the matched IDs list: all entries from root to the error boundary (inclusive)
+    // These segments will be fetched from client cache (parent layouts + their loaders)
+    const matchedIds: string[] = [];
+
+    // Walk from error boundary up to root and collect parent IDs
+    current = boundaryEntry;
+    const stack: { shortCode: string; loaderEntries: { loader: { name: string } }[] }[] = [];
+    while (current) {
+      if (current.shortCode) {
+        stack.push({
+          shortCode: current.shortCode,
+          loaderEntries: current.loader || [],
+        });
+      }
+      current = current.parent;
+    }
+    // Reverse to get root-first order and build matchedIds including loaders
+    for (const item of stack.reverse()) {
+      matchedIds.push(item.shortCode);
+      // Add loader segment IDs for this entry
+      for (let i = 0; i < item.loaderEntries.length; i++) {
+        const loaderName = item.loaderEntries[i].loader?.name || "unknown";
+        matchedIds.push(`${item.shortCode}D${i}.${loaderName}`);
+      }
+    }
+
+    // Create the error segment using user's fallback or default
+    // The error segment uses the outlet entry's ID so it replaces the outlet content
+    // while keeping the boundary layout (and its UI) rendered
+    const effectiveFallback = fallback || DefaultErrorFallback;
+    const errorSegment = createErrorSegment(
+      errorInfo,
+      effectiveFallback,
+      outletEntry, // Use outletEntry so error content renders in the boundary's outlet
+      matched.params
+    );
+
+    if (useDefaultFallback) {
+      console.log(
+        `[Router.matchError] Using default error boundary (no user-defined boundary found)`
+      );
+    }
+
+    console.log(
+      `[Router.matchError] Boundary: ${boundaryEntry.shortCode}, outlet replaced: ${outletEntry.shortCode}`
+    );
+
+    // Error segment replaces the outlet content, not the boundary layout itself
+    // matched contains all IDs from root to boundary (for caching parent layouts)
+    // diff contains the outlet entry ID that is being replaced with error content
+    return {
+      segments: [errorSegment],
+      matched: matchedIds,
+      diff: [errorSegment.id],
+    };
+  }
+
+  /**
    * Evaluate if a segment should revalidate using soft/hard decision pattern
    * Optimized to use prevParams directly and avoid building previous segments
    *
@@ -2451,6 +2654,7 @@ export function createRSCRouter<TEnv = any>(
 
     match,
     matchPartial,
+    matchError,
   };
 
   return router;
