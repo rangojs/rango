@@ -92,7 +92,7 @@ async function initializeApp() {
     <React.StrictMode>
       <NavigationProvider
         store={store}
-        initialPayload={{ ...initialPayload, root: initialTree }}
+        initialPayload={{ ...initialPayload, root: await initialTree }}
         bridge={navigationBridge}
       />
     </React.StrictMode>
