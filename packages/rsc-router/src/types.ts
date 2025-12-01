@@ -421,16 +421,19 @@ export interface ErrorInfo {
 }
 
 /**
- * Props passed to error boundary fallback components
+ * Props passed to server-side error boundary fallback components
+ *
+ * Server error boundaries don't have a reset function since the error
+ * occurred during server rendering. Users can navigate away or refresh.
  *
  * @example
  * ```typescript
- * function ProductErrorFallback({ error, reset }: ErrorBoundaryFallbackProps) {
+ * function ProductErrorFallback({ error }: ErrorBoundaryFallbackProps) {
  *   return (
  *     <div>
  *       <h2>Something went wrong loading the product</h2>
  *       <p>{error.message}</p>
- *       <button onClick={reset}>Try again</button>
+ *       <a href="/">Go home</a>
  *     </div>
  *   );
  * }
@@ -439,14 +442,38 @@ export interface ErrorInfo {
 export interface ErrorBoundaryFallbackProps {
   /** Error information */
   error: ErrorInfo;
-  /** Function to retry the failed operation (triggers revalidation) */
-  reset: () => void;
 }
 
 /**
  * Error boundary handler - receives error info and returns fallback UI
  */
 export type ErrorBoundaryHandler = (props: ErrorBoundaryFallbackProps) => ReactNode;
+
+/**
+ * Props passed to client-side error boundary fallback components
+ *
+ * Client error boundaries have a reset function that clears the error state
+ * and re-renders the children.
+ *
+ * @example
+ * ```typescript
+ * function ClientErrorFallback({ error, reset }: ClientErrorBoundaryFallbackProps) {
+ *   return (
+ *     <div>
+ *       <h2>Something went wrong</h2>
+ *       <p>{error.message}</p>
+ *       <button onClick={reset}>Try again</button>
+ *     </div>
+ *   );
+ * }
+ * ```
+ */
+export interface ClientErrorBoundaryFallbackProps {
+  /** Error information */
+  error: ErrorInfo;
+  /** Function to reset error state and retry rendering */
+  reset: () => void;
+}
 
 /**
  * Wrapped loader data result for deferred resolution with error handling.

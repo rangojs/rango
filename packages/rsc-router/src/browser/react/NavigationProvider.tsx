@@ -36,11 +36,6 @@ export interface NavigationProviderProps {
    * Navigation bridge for handling navigation
    */
   bridge: NavigationBridge;
-
-  /**
-   * Children to render (optional, defaults to payload.root)
-   */
-  children?: ReactNode;
 }
 
 /**
@@ -67,7 +62,6 @@ export function NavigationProvider({
   store,
   initialPayload,
   bridge,
-  children,
 }: NavigationProviderProps): ReactNode {
   // Track current payload for rendering (this triggers re-renders)
   const [payload, setPayload] = useState(initialPayload);
@@ -119,12 +113,14 @@ export function NavigationProvider({
   // because the server rendered with isStreaming: false.
   // isStreaming is only set to true during client-side navigations and HMR updates.
   useEffect(() => {
-    console.log("[Browser] Initial page load - isStreaming stays false (SSR content already visible)");
+    console.log(
+      "[Browser] Initial page load - isStreaming stays false (SSR content already visible)"
+    );
   }, []);
 
   return (
     <NavigationStoreContext.Provider value={contextValue}>
-      {children ?? payload.root}
+      {payload.root}
     </NavigationStoreContext.Provider>
   );
 }

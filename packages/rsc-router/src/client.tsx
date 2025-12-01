@@ -2,7 +2,7 @@
 
 import { Component, useContext, useMemo, Suspense, type ReactNode } from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
-import type { ErrorBoundaryFallbackProps, ErrorInfo, LoaderDefinition, LoaderFn, ResolvedSegment } from "./types";
+import type { ClientErrorBoundaryFallbackProps, ErrorInfo, LoaderDefinition, LoaderFn, ResolvedSegment } from "./types";
 import { RouteContentWrapper } from "./route-content-wrapper.js";
 
 /**
@@ -77,7 +77,7 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
   if (segment.loading || segment.component instanceof Promise) {
     return (
       <RouteContentWrapper
-        content={segment.component}
+        content={Promise.resolve(segment.component)}
         fallback={segment.loading}
       />
     );
@@ -295,7 +295,7 @@ export function createLoader(
  */
 export interface ErrorBoundaryProps {
   /** Fallback UI to show when an error is caught */
-  fallback: ReactNode | ((props: ErrorBoundaryFallbackProps) => ReactNode);
+  fallback: ReactNode | ((props: ClientErrorBoundaryFallbackProps) => ReactNode);
   /** Children to render */
   children: ReactNode;
   /** Optional callback when an error is caught */

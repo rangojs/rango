@@ -6,6 +6,26 @@ import { invariant } from "./errors.js";
 import { RouteContentWrapper } from "./route-content-wrapper.js";
 
 /**
+ * Check if code is running in browser environment
+ * Checks both window and document to handle edge cases (SSR, workers, etc.)
+ */
+function isBrowser(): boolean {
+  return typeof window !== "undefined" && typeof document !== "undefined";
+}
+
+/**
+ * Options for renderSegments
+ */
+export interface RenderSegmentsOptions {
+  /**
+   * If true, this render is for a server action response.
+   * In browser during actions, we await component promises to prevent
+   * UI flickering/suspense during optimistic updates.
+   */
+  isAction?: boolean;
+}
+
+/**
  * Render segments into a React tree with proper layout nesting
  *
  * Layouts nest using OutletProvider, while route + parallel + error + notFound segments
@@ -39,11 +59,16 @@ import { RouteContentWrapper } from "./route-content-wrapper.js";
  * //     <><BlogPost /><Sidebar /></>
  * //   </BlogLayout></OutletProvider>
  * // </RootLayout></OutletProvider>
+ *
+ * // For server actions, pass isAction to await components:
+ * const tree = renderSegments(segments, { isAction: true });
  * ```
  */
 export async function renderSegments(
-  segments: ResolvedSegment[]
+  segments: ResolvedSegment[],
+  options?: RenderSegmentsOptions
 ): Promise<ReactNode> {
+  const { isAction = false } = options || {};
   // Separate segments by type
   const tree = segmentTreeWalk(segments);
   // Render content segments as siblings
@@ -57,15 +82,6 @@ export async function renderSegments(
       `Expected layout, route, error, or notFound segment, got ${node.segment.type}`
     );
     const { component, id, params, loading } = node.segment;
-
-    let nodeContent: ReactNode =
-      loading || loading === null || component instanceof Promise
-        ? createElement(RouteContentWrapper, {
-            key: `suspense-loading-${id}`,
-            content: component,
-            fallback: loading,
-          })
-        : component;
 
     // Only include params in key for segments that belong to the route
     // - Routes: always include params (they render param-specific content)
@@ -155,7 +171,17 @@ export async function renderSegments(
         }
       });
     }
-
+    let nodeContent: ReactNode =
+      loading || loading === null || component instanceof Promise
+        ? createElement(RouteContentWrapper, {
+            key: `suspense-loading-${id}`,
+            content:
+              component instanceof Promise
+                ? component
+                : Promise.resolve(component),
+            fallback: loading,
+          })
+        : component;
     // If any loader had an error with a fallback, replace the segment content
     if (loaderErrorFallback) {
       nodeContent = loaderErrorFallback;

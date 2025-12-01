@@ -6,6 +6,7 @@ import type {
 } from "./types.js";
 import { createPartialUpdater } from "./partial-update.js";
 import { createNavigationTransaction } from "./navigation-bridge.js";
+import { startTransition } from "react";
 
 // Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -50,6 +51,13 @@ export function createServerActionBridge(
 
   let isRegistered = false;
 
+  // Track segments revalidated by concurrent actions
+  // When multiple actions run concurrently, we collect all revalidated segments
+  // and do a consolidation fetch after the last one completes
+  const concurrentRevalidatedSegments = new Set<string>();
+  let pendingActionCount = 0;
+  let hadAnyConcurrentActions = false; // True if any concurrent actions occurred
+
   /**
    * Creates an async disposable scope for tracking stream state.
    * Releases the reader lock, resets streaming state, and signals completion when disposed.
@@ -71,10 +79,20 @@ export function createServerActionBridge(
    * Creates a disposable transaction for action state and inflight tracking.
    * Tracks the action as inflight, sets loading state, and cleans up on disposal.
    * Only sets idle state when ALL actions are complete (supports concurrent actions).
+   *
+   * For concurrent actions: tracks revalidated segments and triggers consolidation
+   * fetch after all actions complete to ensure data consistency.
    */
   function createActionTransaction(actionId: string, args: any[]) {
     const id = `${actionId}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     let status: "pending" | "completed" | "error" = "pending";
+
+    // Track if this action started while others were pending (concurrent)
+    const hadConcurrentActions = pendingActionCount > 0;
+    if (hadConcurrentActions) {
+      hadAnyConcurrentActions = true;
+    }
+    pendingActionCount++;
 
     // Add to inflight actions
     store.addInflightAction({
@@ -89,14 +107,53 @@ export function createServerActionBridge(
 
     return {
       id,
-      commit(segmentIds?: string[], segments?: ResolvedSegment[]) {
+      hadConcurrentActions,
+      /**
+       * Record segments that were revalidated by this action
+       * Used for consolidation fetch when actions are concurrent
+       */
+      recordRevalidatedSegments(diff: string[]) {
+        if (diff && diff.length > 0) {
+          diff.forEach((segId) => concurrentRevalidatedSegments.add(segId));
+        }
+      },
+      /**
+       * Check if consolidation fetch is needed and return segments to refresh
+       * Returns null if no consolidation needed, or array of segment IDs to exclude
+       */
+      getConsolidationSegments(): string[] | null {
+        // Only consolidate if this was the last action AND there were concurrent actions
+        if (pendingActionCount > 1) {
+          return null; // More actions still pending
+        }
+        if (!hadAnyConcurrentActions) {
+          return null; // No concurrent actions occurred
+        }
+        if (concurrentRevalidatedSegments.size === 0) {
+          return null; // No segments to consolidate
+        }
+        // Return segments that need fresh data
+        const segments = Array.from(concurrentRevalidatedSegments);
+        return segments;
+      },
+      /**
+       * Clear consolidation tracking (call after consolidation fetch)
+       */
+      clearConsolidation() {
+        concurrentRevalidatedSegments.clear();
+        hadAnyConcurrentActions = false;
+      },
+      commit(segmentIds?: string[], segments?: ResolvedSegment[], skipCacheClear?: boolean) {
         status = "completed";
         // Update segment state if provided
         if (segmentIds) {
           store.setSegmentIds(segmentIds);
         }
         // Clear old cache and store new segments for next navigation's merging
-        store.clearHistoryCache();
+        // Skip if consolidation fetch already handled the cache
+        if (!skipCacheClear) {
+          store.clearHistoryCache();
+        }
         if (segments) {
           const currentKey = store.getHistoryKey();
           store.cacheSegmentsForHistory(currentKey, segments);
@@ -106,7 +163,10 @@ export function createServerActionBridge(
         status = "error";
       },
       [Symbol.dispose]() {
-        // Remove from inflight actions first
+        // Decrement pending count
+        pendingActionCount--;
+
+        // Remove from inflight actions
         store.removeInflightAction(id);
 
         // Only set idle if no other actions in flight
@@ -224,7 +284,7 @@ export function createServerActionBridge(
 
     // Process response
     const { metadata, returnValue } = payload;
-    const { matched, diff, segments, isPartial } = metadata || {};
+    const { matched, diff, segments, isPartial, isError } = metadata || {};
 
     // Log action result
     if (returnValue) {
@@ -234,6 +294,68 @@ export function createServerActionBridge(
       }
     }
 
+    // Handle error responses with error boundary UI
+    if (isError && isPartial && segments && diff) {
+      console.log(`[Browser] Processing error boundary response`);
+
+      // Abort all other pending action requests - error takes precedence
+      // This prevents other actions from completing and overwriting the error UI
+      requestController.abortAll();
+
+      // Clear concurrent action tracking - no consolidation needed when showing error
+      tx.clearConsolidation();
+
+      // Get current page's cached segments
+      const currentKey = store.getHistoryKey();
+      const cachedSegments = store.getCachedSegments(currentKey) || [];
+
+      // Create lookup for error segment from server
+      const errorSegmentMap = new Map<string, ResolvedSegment>();
+      segments.forEach((s: ResolvedSegment) => errorSegmentMap.set(s.id, s));
+
+      // For error responses, use ALL cached segments but replace the errored one
+      // This preserves sibling layouts that aren't in the parent chain
+      const fullSegments = cachedSegments.map((cached) => {
+        // Replace the error segment with the one from server
+        const fromServer = errorSegmentMap.get(cached.id);
+        if (fromServer) return fromServer;
+        return cached;
+      });
+
+      // Render the full tree with error segment merged with parent layouts
+      const errorTree = await renderSegments(fullSegments, { isAction: true });
+
+      // Update UI with error boundary
+      startTransition(() => {
+        onUpdate({ root: errorTree, metadata: metadata! });
+      });
+
+      console.log(`[Browser] Error boundary UI rendered`);
+
+      // Update segment tracking to exclude error segment IDs
+      // This ensures the next navigation will re-fetch these segments
+      // instead of assuming they're still cached
+      const errorSegmentIds = new Set(diff);
+      const segmentIdsAfterError = segmentState.currentSegmentIds.filter(
+        (id) => !errorSegmentIds.has(id)
+      );
+      tx.commit(segmentIdsAfterError, fullSegments);
+      console.log(
+        `[Browser] Segment IDs updated (excluding error segments):`,
+        segmentIdsAfterError
+      );
+
+      // Throw the error so the action promise rejects
+      // This allows the calling component to catch it if needed
+      if (returnValue && !returnValue.ok) {
+        tx.error();
+        throw returnValue.data;
+      }
+
+      // No error in returnValue (shouldn't happen with isError: true, but handle gracefully)
+      return undefined;
+    }
+
     if (isPartial) {
       console.log(`[Browser] Processing partial update`);
       console.log(
@@ -241,6 +363,11 @@ export function createServerActionBridge(
         diff
       );
       console.log(`[Browser] Server expects client to have:`, matched);
+
+      // Record revalidated segments for concurrent action tracking
+      if (diff) {
+        tx.recordRevalidatedSegments(diff);
+      }
 
       // Get current page's cached segments for merging
       const currentKey = store.getHistoryKey();
@@ -255,7 +382,9 @@ export function createServerActionBridge(
 
       // Create lookup for new segments from server
       const newSegmentMap = new Map<string, ResolvedSegment>();
-      (segments || []).forEach((s: ResolvedSegment) => newSegmentMap.set(s.id, s));
+      (segments || []).forEach((s: ResolvedSegment) =>
+        newSegmentMap.set(s.id, s)
+      );
 
       if (!matched) {
         console.log(`[Browser] Matched segments: ${matched}`);
@@ -271,9 +400,7 @@ export function createServerActionBridge(
           // Fall back to current page's cached segments
           const fromCache = currentSegmentMap.get(segId);
           if (!fromCache) {
-            console.error(
-              `[Browser] MISSING SEGMENT: ${segId} not in cache!`
-            );
+            console.error(`[Browser] MISSING SEGMENT: ${segId} not in cache!`);
           }
           return fromCache;
         })
@@ -292,13 +419,17 @@ export function createServerActionBridge(
         const savedReturnValue = returnValue;
 
         // Refetch and update UI FIRST (storeOnly - don't change URL)
-        const navTx = createNavigationTransaction(store, abortController.signal);
+        const navTx = createNavigationTransaction(
+          store,
+          abortController.signal
+        );
         await fetchPartialUpdate(
           window.location.href,
           [],
           false,
           abortController.signal,
-          navTx.with({ url: window.location.href, storeOnly: true })
+          navTx.with({ url: window.location.href, storeOnly: true }),
+          { isAction: true }
         );
         console.log(`[Browser] Refetch complete, now returning action result`);
 
@@ -330,8 +461,68 @@ export function createServerActionBridge(
         return returnData;
       }
 
+      // Check if we need a consolidation fetch due to concurrent actions
+      const consolidationSegments = tx.getConsolidationSegments();
+
+      if (consolidationSegments && consolidationSegments.length > 0) {
+        // This is the last concurrent action - do consolidation fetch
+        console.log(
+          `[Browser] Concurrent actions detected - consolidation fetch needed for:`,
+          consolidationSegments
+        );
+
+        // Calculate segments to send (exclude the ones we want fresh)
+        const currentSegmentIds = store.getSegmentState().currentSegmentIds;
+        const segmentsToSend = currentSegmentIds.filter(
+          (id) => !consolidationSegments.includes(id)
+        );
+
+        console.log(
+          `[Browser] Sending segments (excluding revalidated):`,
+          segmentsToSend
+        );
+
+        // Clear consolidation tracking before fetch
+        tx.clearConsolidation();
+
+        // Do consolidation fetch to get fresh data for all revalidated segments
+        // This will handle the UI update via onUpdate in partial-update
+        const navTx = createNavigationTransaction(
+          store,
+          abortController.signal
+        );
+        console.warn("Fetch partial", id);
+        await fetchPartialUpdate(
+          window.location.href,
+          segmentsToSend,
+          false,
+          abortController.signal,
+          navTx.with({ url: window.location.href, storeOnly: true }),
+          { isAction: true }
+        );
+
+        console.log(`[Browser] Consolidation fetch complete`);
+        console.log(`[Browser] Returning to React:`, returnData);
+        // Skip cache clear - consolidation fetch already handled the cache via navTx
+        tx.commit(undefined, undefined, true);
+        return returnData;
+      }
+
+      // Check if there are still other actions pending
+      // If so, skip UI update - the last action will handle consolidation
+      if (pendingActionCount > 1) {
+        console.log(
+          `[Browser] Skipping UI update - ${pendingActionCount - 1} other action(s) still pending`
+        );
+        console.log(`[Browser] Returning to React:`, returnData);
+        tx.commit(matched, fullSegments);
+        return returnData;
+      }
+
+      // No concurrent actions - normal flow with single action
       // Prepare new tree (await loader data resolution)
-      const newTree = await renderSegments(fullSegments);
+      // Pass isAction: true to await component promises on client
+      const newTree = await renderSegments(fullSegments, { isAction: true });
 
       // Schedule UI update after React processes the action return value.
       // queueMicrotask: waits for React's synchronous work + promise callbacks
@@ -340,7 +531,10 @@ export function createServerActionBridge(
         queueMicrotask(() => {
           requestAnimationFrame(() => {
             if (!abortController.signal.aborted) {
-              onUpdate({ root: newTree, metadata: metadata! });
+              console.warn("Update", id);
+              startTransition(() => {
+                onUpdate({ root: newTree, metadata: metadata! });
+              });
             }
           });
         });

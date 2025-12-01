@@ -14,7 +14,6 @@ if (typeof Symbol.dispose === "undefined") {
   (Symbol as any).dispose = Symbol("Symbol.dispose");
 }
 
-
 /**
  * Options for committing a navigation transaction
  */
@@ -40,7 +39,9 @@ interface BoundTransaction {
  */
 interface NavigationTransaction extends Disposable {
   commit(options: CommitOptions): void;
-  with(options: Omit<CommitOptions, "segmentIds" | "segments">): BoundTransaction;
+  with(
+    options: Omit<CommitOptions, "segmentIds" | "segments">
+  ): BoundTransaction;
 }
 
 /**
@@ -50,7 +51,10 @@ interface NavigationTransaction extends Disposable {
  * With non-optimistic navigation, we don't need URL rollback since
  * URL is only updated after successful fetch via commit().
  */
-function createNavigationTransaction(store: NavigationStore, signal: AbortSignal): NavigationTransaction {
+function createNavigationTransaction(
+  store: NavigationStore,
+  signal: AbortSignal
+): NavigationTransaction {
   let committed = false;
 
   store.setState({ state: "loading" });
@@ -111,7 +115,9 @@ function createNavigationTransaction(store: NavigationStore, signal: AbortSignal
      * Create a bound transaction with pre-configured URL options
      * segmentIds and segments provided at commit time (after they're resolved)
      */
-    with(options: Omit<CommitOptions, "segmentIds" | "segments">): BoundTransaction {
+    with(
+      options: Omit<CommitOptions, "segmentIds" | "segments">
+    ): BoundTransaction {
       return {
         commit: (segmentIds: string[], segments: ResolvedSegment[]) =>
           commit({ ...options, segmentIds, segments }),
@@ -175,9 +181,18 @@ export function createNavigationBridge(
      * Navigate to a URL
      */
     async navigate(url: string, options?: NavigateOptions): Promise<void> {
-      requestController.abortAll();
+      // Only abort pending requests when navigating to a different route
+      // Same-route navigation (e.g., /todos -> /todos) should not cancel in-flight actions
+      const currentPath = new URL(window.location.href).pathname;
+      const targetPath = new URL(url, window.location.origin).pathname;
+      if (currentPath !== targetPath) {
+        requestController.abortAll();
+      }
       using disposable = requestController.createDisposable();
-      using tx = createNavigationTransaction(store, disposable.controller.signal);
+      using tx = createNavigationTransaction(
+        store,
+        disposable.controller.signal
+      );
 
       try {
         await fetchPartialUpdate(
@@ -203,7 +218,10 @@ export function createNavigationBridge(
     async refresh(): Promise<void> {
       requestController.abortAll();
       using disposable = requestController.createDisposable();
-      using tx = createNavigationTransaction(store, disposable.controller.signal);
+      using tx = createNavigationTransaction(
+        store,
+        disposable.controller.signal
+      );
 
       // Refetch with empty segments to get everything fresh
       await fetchPartialUpdate(
@@ -261,7 +279,10 @@ export function createNavigationBridge(
           store.setState({ state: "idle" });
           return;
         } catch (error) {
-          console.warn("[Browser] Failed to render from cache, fetching:", error);
+          console.warn(
+            "[Browser] Failed to render from cache, fetching:",
+            error
+          );
           // Fall through to fetch
         }
       } else {
@@ -270,7 +291,10 @@ export function createNavigationBridge(
 
       // Fetch if not cached
       using disposable = requestController.createDisposable();
-      using tx = createNavigationTransaction(store, disposable.controller.signal);
+      using tx = createNavigationTransaction(
+        store,
+        disposable.controller.signal
+      );
 
       try {
         await fetchPartialUpdate(

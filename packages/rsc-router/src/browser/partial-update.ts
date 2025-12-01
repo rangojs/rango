@@ -5,6 +5,8 @@ import type {
   ResolvedSegment,
 } from "./types.js";
 import type { ReactNode } from "react";
+import { startTransition } from "react";
+import type { RenderSegmentsOptions } from "../segment-system.js";
 
 /**
  * Configuration for creating a partial updater
@@ -13,7 +15,10 @@ export interface PartialUpdateConfig {
   store: NavigationStore;
   client: NavigationClient;
   onUpdate: UpdateSubscriber;
-  renderSegments: (segments: ResolvedSegment[]) => Promise<ReactNode> | ReactNode;
+  renderSegments: (
+    segments: ResolvedSegment[],
+    options?: RenderSegmentsOptions
+  ) => Promise<ReactNode> | ReactNode;
 }
 
 /**
@@ -32,7 +37,8 @@ export type PartialUpdater = (
   segmentIds: string[] | undefined,
   isRetry: boolean,
   signal: AbortSignal | undefined,
-  tx: PartialUpdateCommit
+  tx: PartialUpdateCommit,
+  options?: { isAction?: boolean }
 ) => Promise<Promise<void>>;
 
 /**
@@ -56,7 +62,9 @@ export type PartialUpdater = (
  * await fetchPartialUpdate('/new-page');
  * ```
  */
-export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdater {
+export function createPartialUpdater(
+  config: PartialUpdateConfig
+): PartialUpdater {
   const { store, client, onUpdate, renderSegments } = config;
 
   /**
@@ -82,8 +90,10 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
     segmentIds: string[] | undefined,
     isRetry: boolean,
     signal: AbortSignal | undefined,
-    tx: PartialUpdateCommit
+    tx: PartialUpdateCommit,
+    options?: { isAction?: boolean }
   ): Promise<Promise<void>> {
+    const { isAction = false } = options || {};
     const segmentState = store.getSegmentState();
     const url = targetUrl || window.location.href;
     const segments = segmentIds ?? segmentState.currentSegmentIds;
@@ -117,7 +127,9 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
 
       // Create lookup for new segments from server
       const newSegmentMap = new Map<string, ResolvedSegment>();
-      (newSegments || []).forEach((s: ResolvedSegment) => newSegmentMap.set(s.id, s));
+      (newSegments || []).forEach((s: ResolvedSegment) =>
+        newSegmentMap.set(s.id, s)
+      );
 
       // If diff is empty, nothing changed - skip UI update but commit URL
       // Still need to collect full segments for history cache
@@ -170,12 +182,19 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
         );
 
         // Refetch with empty segments = server sends everything
-        return fetchPartialUpdate(url, [], true, signal, tx);
+        return fetchPartialUpdate(url, [], true, signal, tx, { isAction });
       }
 
       console.log(
         `[Browser] Merged segments: ${fullSegments.map((s) => s.id).join(", ")}`
       );
+
+      if (signal?.aborted) {
+        console.log(
+          `[Browser] Ignoring stale navigation (aborted before render)`
+        );
+        return streamComplete;
+      }
 
       // Rebuild tree on client (await for loader data resolution)
       // Race against abort signal to allow cancellation during loader awaiting
@@ -183,7 +202,7 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
       const startTime = Date.now();
       const newTree = await (signal
         ? Promise.race([
-            renderSegments(fullSegments),
+            renderSegments(fullSegments, { isAction }),
             new Promise<never>((_, reject) => {
               if (signal.aborted) {
                 reject(new DOMException("Navigation aborted", "AbortError"));
@@ -193,17 +212,37 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
               });
             }),
           ])
-        : renderSegments(fullSegments));
-      console.log(`[partial-update] renderSegments completed in ${Date.now() - startTime}ms`);
+        : renderSegments(fullSegments, { isAction }));
+      console.log(
+        `[partial-update] renderSegments completed in ${Date.now() - startTime}ms`
+      );
+
+      // Final abort check before committing - another navigation may have started
+      if (signal?.aborted) {
+        console.log(
+          `[Browser] Ignoring stale navigation (aborted before commit)`
+        );
+        return streamComplete;
+      }
 
       // Commit navigation - transaction handles all store mutations atomically
       tx.commit(matchedIds, fullSegments);
 
       // Emit update to trigger React render
-      onUpdate({
-        root: newTree,
-        metadata: payload.metadata,
-      });
+      // For actions, wrap in startTransition to avoid UI flickering
+      if (isAction) {
+        startTransition(() => {
+          onUpdate({
+            root: newTree,
+            metadata: payload.metadata!,
+          });
+        });
+      } else {
+        onUpdate({
+          root: newTree,
+          metadata: payload.metadata!,
+        });
+      }
 
       console.log(`[Browser] Navigation complete\n`);
       return streamComplete;
@@ -222,7 +261,8 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
       // Await loader data from segments before committing URL
       // This ensures URL only updates after loaders resolve
       const loaderSegments = segments.filter(
-        (s: ResolvedSegment) => s.type === "loader" && s.loaderData !== undefined
+        (s: ResolvedSegment) =>
+          s.type === "loader" && s.loaderData !== undefined
       );
       if (loaderSegments.length > 0) {
         console.log(`[Browser] Awaiting ${loaderSegments.length} loader(s)...`);
@@ -238,14 +278,32 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
 
       const segmentIds = segments.map((s: ResolvedSegment) => s.id);
 
+      // Final abort check before committing - another navigation may have started
+      if (signal?.aborted) {
+        console.log(
+          `[Browser] Ignoring stale navigation (aborted before commit)`
+        );
+        return streamComplete;
+      }
+
       // Commit navigation - transaction handles all store mutations atomically
       tx.commit(segmentIds, segments);
 
       // Emit update to trigger React render
-      onUpdate({
-        root: payload.root,
-        metadata: payload.metadata!,
-      });
+      // For actions, wrap in startTransition to avoid UI flickering
+      if (isAction) {
+        startTransition(() => {
+          onUpdate({
+            root: payload.root,
+            metadata: payload.metadata!,
+          });
+        });
+      } else {
+        onUpdate({
+          root: payload.root,
+          metadata: payload.metadata!,
+        });
+      }
 
       return streamComplete;
     }

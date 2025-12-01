@@ -20,6 +20,7 @@ export type RscPayload = {
     pathname: string;
     segments: ResolvedSegment[];
     isPartial?: boolean;
+    isError?: boolean;
     matched?: string[];
     diff?: string[];
   };
@@ -113,6 +114,47 @@ export default async function handler(request: Request): Promise<Response> {
         console.error(`[RSC] Action execution error:`, error);
         returnValue = { ok: false, data: error };
         actionStatus = 500;
+
+        // Use matchError to render the error boundary
+        const errorResult = await router.matchError(request, {}, error, "route");
+
+        if (errorResult) {
+          console.log(`[RSC] Rendering error boundary for action error`);
+
+          const renderStart = performance.now();
+          const root = renderSegments(errorResult.segments);
+          const renderDuration = performance.now() - renderStart;
+
+          payload = {
+            root: null,
+            metadata: {
+              pathname: url.pathname,
+              segments: errorResult.segments,
+              isPartial: true,
+              matched: errorResult.matched,
+              diff: errorResult.diff,
+              isError: true, // Flag to indicate this is an error response
+            },
+            returnValue, // Include the error for client-side awareness
+          };
+
+          const rscStream = renderToReadableStream<RscPayload>(payload, {
+            temporaryReferences,
+          });
+
+          console.log(`[RSC] Action error - returning error boundary UI`);
+
+          return new Response(rscStream, {
+            status: actionStatus,
+            headers: {
+              "content-type": "text/x-component;charset=utf-8",
+              "Server-Timing": `rendering;dur=${renderDuration.toFixed(2)}`,
+            },
+          });
+        }
+
+        // If matchError returns null (shouldn't happen with default fallback), continue to normal flow
+        console.warn(`[RSC] matchError returned null, continuing with normal flow`);
       }
 
       // 5. Revalidate to determine which segments need updating

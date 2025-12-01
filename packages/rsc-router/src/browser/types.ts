@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { ResolvedSegment } from "../types.js";
+import type { RenderSegmentsOptions } from "../segment-system.js";
 
 // ============================================================================
 // RSC Payload Types
@@ -9,7 +10,7 @@ import type { ResolvedSegment } from "../types.js";
  * RSC payload received from server
  */
 export interface RscPayload<TMetadata = RscMetadata> {
-  root: ReactNode;
+  root: ReactNode | Promise<ReactNode> | null;
   metadata?: TMetadata;
   returnValue?: ActionResult;
   formState?: unknown;
@@ -22,6 +23,7 @@ export interface RscMetadata {
   pathname: string;
   segments: ResolvedSegment[];
   isPartial?: boolean;
+  isError?: boolean;
   matched?: string[];
   diff?: string[];
 }
@@ -187,7 +189,10 @@ export interface NavigationStore {
   // History-based segment cache (for back/forward navigation and partial merging)
   getHistoryKey(): string;
   setHistoryKey(key: string): void;
-  cacheSegmentsForHistory(historyKey: string, segments: ResolvedSegment[]): void;
+  cacheSegmentsForHistory(
+    historyKey: string,
+    segments: ResolvedSegment[]
+  ): void;
   getCachedSegments(historyKey: string): ResolvedSegment[] | undefined;
   hasHistoryCache(historyKey: string): boolean;
   clearHistoryCache(): void;
@@ -280,7 +285,10 @@ export interface ServerActionBridgeConfig {
   requestController: RequestController;
   deps: RscBrowserDependencies;
   onUpdate: UpdateSubscriber;
-  renderSegments: (segments: ResolvedSegment[]) => Promise<ReactNode> | ReactNode;
+  renderSegments: (
+    segments: ResolvedSegment[],
+    options?: RenderSegmentsOptions
+  ) => Promise<ReactNode> | ReactNode;
 }
 
 // ============================================================================
@@ -305,7 +313,10 @@ export interface NavigationBridgeConfig {
   client: NavigationClient;
   requestController: RequestController;
   onUpdate: UpdateSubscriber;
-  renderSegments: (segments: ResolvedSegment[]) => Promise<ReactNode> | ReactNode;
+  renderSegments: (
+    segments: ResolvedSegment[],
+    options?: RenderSegmentsOptions
+  ) => Promise<ReactNode> | ReactNode;
 }
 
 // Re-export ResolvedSegment for convenience
