@@ -58,6 +58,26 @@ export interface NavigationStoreConfig {
   initialSegmentIds?: string[];
   initialHistoryKey?: string;
   initialSegments?: ResolvedSegment[];
+
+  /**
+   * Maximum number of history entries to cache (default: 20)
+   * Older entries are evicted when limit is reached
+   */
+  cacheSize?: number;
+
+  /**
+   * Enable cross-tab cache invalidation via BroadcastChannel (default: true)
+   * When cache is cleared (via server actions or useClientCache().clear()),
+   * other tabs will also clear their cache
+   */
+  crossTabSync?: boolean;
+
+  /**
+   * Auto-refresh when another tab mutates data on the same path (default: true)
+   * Triggered when cache is cleared via server actions or useClientCache().clear()
+   * Requires crossTabSync to be enabled
+   */
+  crossTabAutoRefresh?: boolean;
 }
 
 /**
@@ -134,9 +154,14 @@ export function createNavigationStore(
     currentSegmentIds: config?.initialSegmentIds ?? [],
   };
 
+  // Configuration with defaults
+  const cacheSize = config?.cacheSize ?? HISTORY_CACHE_SIZE;
+  const crossTabSync = config?.crossTabSync !== false; // Default: true
+  const crossTabAutoRefresh = config?.crossTabAutoRefresh !== false; // Default: true
+
   // History-based segment cache: array of [url-key, segments] tuples
   // Each URL gets its own complete snapshot of segments for back/forward and partial merging
-  // Oldest entries (at front) are removed when over HISTORY_CACHE_SIZE
+  // Oldest entries (at front) are removed when over cacheSize limit
   const historyCache: HistoryCacheEntry[] = [];
 
   // Current history key (set on navigation, stored in history.state)
@@ -174,22 +199,49 @@ export function createNavigationStore(
    * Clear the history cache and broadcast to other tabs
    */
   function clearCacheAndBroadcast(): void {
+    console.log("[Browser] Clearing cache and broadcasting to other tabs");
     clearCacheInternal();
+
+    // Only broadcast if cross-tab sync is enabled
+    if (!crossTabSync) return;
+
     const channel = getCacheInvalidationChannel();
     if (channel) {
-      channel.postMessage({ type: "invalidate" });
+      // Include current path so other tabs can auto-refresh if on same route
+      const currentPath = window.location.pathname;
+      channel.postMessage({ type: "invalidate", path: currentPath });
+      console.log("[Browser] Broadcast sent for path:", currentPath);
+    } else {
+      console.warn("[Browser] No BroadcastChannel available");
     }
   }
 
-  // Set up cross-tab cache invalidation listener
-  const channel = getCacheInvalidationChannel();
-  if (channel) {
-    channel.onmessage = (event) => {
-      if (event.data?.type === "invalidate") {
-        console.log("[Browser] Cache invalidated by another tab");
-        clearCacheInternal();
-      }
-    };
+  // Set up cross-tab cache invalidation listener (only if enabled)
+  if (crossTabSync) {
+    const channel = getCacheInvalidationChannel();
+    if (channel) {
+      channel.onmessage = (event) => {
+        if (event.data?.type === "invalidate") {
+          console.log("[Browser] Cache invalidated by another tab");
+          clearCacheInternal();
+
+          // Auto-refresh if enabled and we're on the same path that was mutated
+          if (crossTabAutoRefresh) {
+            const mutatedPath = event.data.path;
+            const currentPath = window.location.pathname;
+            if (mutatedPath && mutatedPath === currentPath) {
+              console.log("[Browser] Same path - triggering auto-refresh");
+              // Dispatch event for navigation bridge to handle refresh
+              window.dispatchEvent(
+                new CustomEvent("rsc-router:cross-tab-refresh", {
+                  detail: { path: mutatedPath },
+                })
+              );
+            }
+          }
+        }
+      };
+    }
   }
 
   return {
@@ -320,7 +372,7 @@ export function createNavigationStore(
     /**
      * Store segments for a history entry
      * Updates existing entry if key exists, otherwise adds new entry
-     * Removes oldest entries (from front) when over HISTORY_CACHE_SIZE
+     * Removes oldest entries (from front) when over configured cacheSize
      */
     cacheSegmentsForHistory(historyKey: string, segments: ResolvedSegment[]): void {
       // Check if entry already exists and update it
@@ -331,7 +383,7 @@ export function createNavigationStore(
         // Add new entry at the end
         historyCache.push([historyKey, segments]);
         // Remove oldest entries if over limit
-        while (historyCache.length > HISTORY_CACHE_SIZE) {
+        while (historyCache.length > cacheSize) {
           historyCache.shift();
         }
       }
