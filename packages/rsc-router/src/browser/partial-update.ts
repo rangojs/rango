@@ -15,7 +15,10 @@ export interface PartialUpdateConfig {
   store: NavigationStore;
   client: NavigationClient;
   onUpdate: UpdateSubscriber;
-  renderSegments: (segments: ResolvedSegment[], options?: RenderSegmentsOptions) => Promise<ReactNode> | ReactNode;
+  renderSegments: (
+    segments: ResolvedSegment[],
+    options?: RenderSegmentsOptions
+  ) => Promise<ReactNode> | ReactNode;
 }
 
 /**
@@ -59,7 +62,9 @@ export type PartialUpdater = (
  * await fetchPartialUpdate('/new-page');
  * ```
  */
-export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdater {
+export function createPartialUpdater(
+  config: PartialUpdateConfig
+): PartialUpdater {
   const { store, client, onUpdate, renderSegments } = config;
 
   /**
@@ -122,7 +127,9 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
 
       // Create lookup for new segments from server
       const newSegmentMap = new Map<string, ResolvedSegment>();
-      (newSegments || []).forEach((s: ResolvedSegment) => newSegmentMap.set(s.id, s));
+      (newSegments || []).forEach((s: ResolvedSegment) =>
+        newSegmentMap.set(s.id, s)
+      );
 
       // If diff is empty, nothing changed - skip UI update but commit URL
       // Still need to collect full segments for history cache
@@ -182,6 +189,13 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
         `[Browser] Merged segments: ${fullSegments.map((s) => s.id).join(", ")}`
       );
 
+      if (signal?.aborted) {
+        console.log(
+          `[Browser] Ignoring stale navigation (aborted before render)`
+        );
+        return streamComplete;
+      }
+
       // Rebuild tree on client (await for loader data resolution)
       // Race against abort signal to allow cancellation during loader awaiting
       console.log("[partial-update] Starting renderSegments...");
@@ -199,7 +213,17 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
             }),
           ])
         : renderSegments(fullSegments, { isAction }));
-      console.log(`[partial-update] renderSegments completed in ${Date.now() - startTime}ms`);
+      console.log(
+        `[partial-update] renderSegments completed in ${Date.now() - startTime}ms`
+      );
+
+      // Final abort check before committing - another navigation may have started
+      if (signal?.aborted) {
+        console.log(
+          `[Browser] Ignoring stale navigation (aborted before commit)`
+        );
+        return streamComplete;
+      }
 
       // Commit navigation - transaction handles all store mutations atomically
       tx.commit(matchedIds, fullSegments);
@@ -237,7 +261,8 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
       // Await loader data from segments before committing URL
       // This ensures URL only updates after loaders resolve
       const loaderSegments = segments.filter(
-        (s: ResolvedSegment) => s.type === "loader" && s.loaderData !== undefined
+        (s: ResolvedSegment) =>
+          s.type === "loader" && s.loaderData !== undefined
       );
       if (loaderSegments.length > 0) {
         console.log(`[Browser] Awaiting ${loaderSegments.length} loader(s)...`);
@@ -252,6 +277,14 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
       }
 
       const segmentIds = segments.map((s: ResolvedSegment) => s.id);
+
+      // Final abort check before committing - another navigation may have started
+      if (signal?.aborted) {
+        console.log(
+          `[Browser] Ignoring stale navigation (aborted before commit)`
+        );
+        return streamComplete;
+      }
 
       // Commit navigation - transaction handles all store mutations atomically
       tx.commit(segmentIds, segments);

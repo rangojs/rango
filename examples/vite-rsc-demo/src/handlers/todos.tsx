@@ -52,9 +52,21 @@ function TodosLayout() {
  * Todos handler - demonstrates loaders, actions, and revalidation
  */
 export default map<typeof todosRoutes>(
-  ({ route, layout, loader, revalidate }) => [
+  ({ route, layout, loader, revalidate, errorBoundary }) => [
     layout(<RootLayout />),
-
+    errorBoundary(({ error, reset }) => (
+      <div
+        style={{
+          color: "red",
+          padding: "1rem",
+          border: "1px solid red",
+          borderRadius: "8px",
+          margin: "1rem 0",
+        }}
+      >
+        Error: {error.message} <button onClick={reset}>Try again</button>
+      </div>
+    )),
     // Todos section layout with loader
     layout(<TodosLayout />, () => [
       // Global todos loader

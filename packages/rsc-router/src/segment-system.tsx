@@ -83,14 +83,6 @@ export async function renderSegments(
     );
     const { component, id, params, loading } = node.segment;
 
-    // During server actions on client, await component promises to prevent
-    // UI flickering/suspense. This ensures the new UI is fully resolved
-    // before React commits the update.
-    if (isAction && isBrowser() && component instanceof Promise) {
-      console.log(`[renderSegments] Action: awaiting component ${id}`);
-      await component;
-    }
-
     // Only include params in key for segments that belong to the route
     // - Routes: always include params (they render param-specific content)
     // - Error/notFound segments: always include params (they replace failed route content)

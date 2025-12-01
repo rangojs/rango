@@ -6,6 +6,9 @@ import { todosStore, generateId, type Todo } from "./data.js";
  * Add a new todo
  */
 export async function addTodo(title: string): Promise<Todo> {
+  if (title.includes("error")) {
+    throw new Error("Simulated server action error");
+  }
   await new Promise((resolve) => setTimeout(resolve, 100));
 
   const newTodo: Todo = {
