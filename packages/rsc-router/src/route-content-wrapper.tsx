@@ -1,6 +1,7 @@
 "use client";
 import type { ReactNode } from "react";
 import { Suspense, use, useId } from "react";
+import { invariant } from "./errors";
 
 /**
  * Stable async wrapper component for route content
@@ -15,7 +16,7 @@ export function RouteContentWrapper({
   content,
   fallback,
 }: {
-  content: Promise<ReactNode> | ReactNode;
+  content: Promise<ReactNode>;
   fallback?: ReactNode;
 }): ReactNode {
   const id = useId();
@@ -35,5 +36,7 @@ const Suspender = ({
 }: {
   content: Promise<ReactNode> | ReactNode;
 }): ReactNode => {
-  return use(content instanceof Promise ? content : Promise.resolve(content));
+  invariant(content instanceof Promise, "Suspender expects a Promise content");
+
+  return use(content);
 };

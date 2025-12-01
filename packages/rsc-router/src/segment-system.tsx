@@ -58,14 +58,11 @@ export async function renderSegments(
     );
     const { component, id, params, loading } = node.segment;
 
-    let nodeContent: ReactNode =
-      loading || loading === null || component instanceof Promise
-        ? createElement(RouteContentWrapper, {
-            key: `suspense-loading-${id}`,
-            content: component,
-            fallback: loading,
-          })
-        : component;
+    // if (typeof window !== "undefined") {
+    //   console.log(`suspense-loading awaiting ${id}`);
+
+    //   await component; // Preload component on client
+    // }
 
     // Only include params in key for segments that belong to the route
     // - Routes: always include params (they render param-specific content)
@@ -155,7 +152,14 @@ export async function renderSegments(
         }
       });
     }
-
+    let nodeContent: ReactNode =
+      loading || loading === null || component instanceof Promise
+        ? createElement(RouteContentWrapper, {
+            key: `suspense-loading-${id}`,
+            content: Promise.resolve(component),
+            fallback: loading,
+          })
+        : component;
     // If any loader had an error with a fallback, replace the segment content
     if (loaderErrorFallback) {
       nodeContent = loaderErrorFallback;

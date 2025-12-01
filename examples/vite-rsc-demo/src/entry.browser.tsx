@@ -39,7 +39,8 @@ async function initializeApp() {
   console.log("[Browser] Initial payload:", initialPayload.metadata);
 
   // Get initial segments and compute history key from current URL
-  const initialSegments = (initialPayload.metadata?.segments ?? []) as ResolvedSegment[];
+  const initialSegments = (initialPayload.metadata?.segments ??
+    []) as ResolvedSegment[];
   const initialHistoryKey = generateHistoryKey(window.location.href);
 
   // Create navigation store with history-based caching
@@ -54,9 +55,7 @@ async function initializeApp() {
     "[Browser] Initial segments:",
     store.getSegmentState().currentSegmentIds.join(", ")
   );
-  console.log(
-    `[Browser] Cached segments for: ${initialHistoryKey}`
-  );
+  console.log(`[Browser] Cached segments for: ${initialHistoryKey}`);
 
   // Create composable utilities
   const requestController = createRequestController();
@@ -93,7 +92,7 @@ async function initializeApp() {
     <React.StrictMode>
       <NavigationProvider
         store={store}
-        initialPayload={{ ...initialPayload, root: initialTree }}
+        initialPayload={{ ...initialPayload, root: await initialTree }}
         bridge={navigationBridge}
       />
     </React.StrictMode>
@@ -131,7 +130,7 @@ async function initializeApp() {
         store.cacheSegmentsForHistory(historyKey, segments);
 
         store.emitUpdate({
-          root: renderSegments(segments),
+          root: await renderSegments(segments),
           metadata: payload.metadata,
         });
       }
