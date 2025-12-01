@@ -2410,7 +2410,7 @@ export function createRSCRouter<TEnv = any>(
       return null;
     }
 
-    const prevUrl = new URL(previousUrl);
+    const prevUrl = new URL(previousUrl, url.origin);
 
     // Track route matching (direct recording since ALS context not yet available)
     const routeMatchStart = metricsStore ? performance.now() : 0;

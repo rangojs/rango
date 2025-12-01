@@ -154,8 +154,7 @@ const styles = {
     marginLeft: "auto",
   },
   pending: {
-    opacity: 0.6,
-    pointerEvents: "none" as const,
+    cursor: "wait" as const,
   },
   meta: {
     fontSize: "0.75rem",

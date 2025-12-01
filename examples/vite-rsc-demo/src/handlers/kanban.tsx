@@ -14,40 +14,41 @@ function KanbanLayout() {
     <DebugSegmentWrapper type="layout" name="Kanban">
       <FullWidthLayout>
         <div>
-        <header
-          style={{
-            background: "linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%)",
-            color: "white",
-            padding: "1rem 1.5rem",
-            marginBottom: "0",
-            borderRadius: "8px 8px 0 0",
-          }}
-        >
-          <div
+          <header
             style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
+              background: "linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%)",
+              color: "white",
+              padding: "1rem 1.5rem",
+              marginBottom: "0",
+              borderRadius: "8px 8px 0 0",
             }}
           >
-            <h1 style={{ margin: 0, color: "white", fontSize: "1.5rem" }}>
-              Kanban Board
-            </h1>
-            <span
+            <div
               style={{
-                background: "rgba(255,255,255,0.2)",
-                padding: "0.25rem 0.75rem",
-                borderRadius: "12px",
-                fontSize: "0.875rem",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
               }}
             >
-              Drag cards to reorder
-            </span>
-          </div>
-        </header>
-        <DebugSegmentWrapper type="outlet" name="Kanban Outlet">
+              <h1 style={{ margin: 0, color: "white", fontSize: "1.5rem" }}>
+                Kanban Board
+              </h1>
+              <span
+                style={{
+                  background: "rgba(255,255,255,0.2)",
+                  padding: "0.25rem 0.75rem",
+                  borderRadius: "12px",
+                  fontSize: "0.875rem",
+                }}
+              >
+                Drag cards to reorder
+              </span>
+            </div>
+          </header>
+          {/* Board is always visible */}
+          <KanbanBoardContent />
+          {/* Route content (modal) renders here with position:fixed */}
           <Outlet />
-        </DebugSegmentWrapper>
         </div>
       </FullWidthLayout>
     </DebugSegmentWrapper>
@@ -75,19 +76,14 @@ export default map<typeof kanbanRoutes>(
         }),
       ]),
 
-      // Index route - board view
-      route(
-        "index",
-        () => <KanbanBoardContent />,
-        () => [revalidate(() => false)]
-      ),
+      // Index route - board is in layout, nothing extra needed here
+      route("index", () => <></>),
 
-      // Card detail route - modal view
-      route(
-        "card",
-        () => <CardDetailContent />,
-        () => [loader(CardDetailLoader), revalidate(() => false)]
-      ),
+      // Card detail route - modal overlay (position:fixed)
+      route("card", () => <CardDetailContent />, () => [
+        loader(CardDetailLoader),
+        revalidate(() => false),
+      ]),
     ]),
   ]
 );
