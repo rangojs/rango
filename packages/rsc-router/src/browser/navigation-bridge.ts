@@ -35,9 +35,20 @@ interface BoundTransaction {
 }
 
 /**
+ * Options for creating a navigation transaction
+ */
+interface TransactionOptions {
+  /** If true, skip setting loading state (for optimistic renders with cache) */
+  skipLoadingState?: boolean;
+}
+
+/**
  * Navigation transaction for managing state during navigation
  */
 interface NavigationTransaction extends Disposable {
+  /** Optimistically commit from cache - instant render before revalidation */
+  optimisticCommit(options: CommitOptions): void;
+  /** Final commit with server data (or reconciliation after optimistic) */
   commit(options: CommitOptions): void;
   with(
     options: Omit<CommitOptions, "segmentIds" | "segments">
@@ -48,24 +59,82 @@ interface NavigationTransaction extends Disposable {
  * Creates a disposable transaction for navigation state management.
  * Handles loading state transitions and cleanup on completion/abort.
  *
- * With non-optimistic navigation, we don't need URL rollback since
- * URL is only updated after successful fetch via commit().
+ * Supports optimistic navigation: render from cache immediately,
+ * then revalidate in background and reconcile if data changed.
  */
 function createNavigationTransaction(
   store: NavigationStore,
-  signal: AbortSignal
+  signal: AbortSignal,
+  options?: TransactionOptions
 ): NavigationTransaction {
   let committed = false;
+  let optimisticallyCommitted = false;
 
-  store.setState({ state: "loading" });
+  // Only set loading state if not doing optimistic render from cache
+  if (!options?.skipLoadingState) {
+    store.setState({ state: "loading" });
+  }
+
+  /**
+   * Optimistically commit from cache - renders immediately before revalidation
+   * Sets optimisticallyCommitted flag so final commit() knows to reconcile
+   */
+  function optimisticCommit(opts: CommitOptions): void {
+    optimisticallyCommitted = true;
+
+    const { url, segmentIds, segments, replace, scroll } = opts;
+    const parsedUrl = new URL(url, window.location.origin);
+
+    // Update segment state
+    store.setSegmentIds(segmentIds);
+    store.setCurrentUrl(url);
+    store.setPath(parsedUrl.pathname);
+
+    // Generate history key from URL
+    const historyKey = generateHistoryKey(url);
+    store.setHistoryKey(historyKey);
+
+    // Cache segments (will be overwritten by fresh data on final commit)
+    store.cacheSegmentsForHistory(historyKey, segments);
+
+    // Update browser URL
+    if (replace) {
+      window.history.replaceState(null, "", url);
+    } else {
+      window.history.pushState(null, "", url);
+    }
+
+    // Set idle state (content is visible from cache)
+    store.setState({
+      state: "idle",
+      location: parsedUrl,
+    });
+
+    // Scroll to top
+    if (scroll !== false) {
+      window.scrollTo(0, 0);
+    }
+
+    console.log(
+      "[Browser] Optimistic commit from cache, historyKey:",
+      historyKey
+    );
+  }
 
   /**
    * Commit the navigation - updates store and URL atomically
+   * If optimisticCommit was called, this becomes a reconciliation
    */
-  function commit(options: CommitOptions): void {
+  function commit(opts: CommitOptions): void {
     committed = true;
 
-    const { url, segmentIds, segments, replace, scroll, storeOnly } = options;
+    // If optimistic commit already done, adjust options for reconciliation
+    const isReconciliation = optimisticallyCommitted;
+    const { url, segmentIds, segments, storeOnly } = opts;
+    // For reconciliation: always replace (URL already pushed), no scroll
+    const replace = isReconciliation ? true : opts.replace;
+    const scroll = isReconciliation ? false : opts.scroll;
+
     const parsedUrl = new URL(url, window.location.origin);
 
     // Update segment state atomically
@@ -77,8 +146,7 @@ function createNavigationTransaction(
     const historyKey = generateHistoryKey(url);
     store.setHistoryKey(historyKey);
 
-    // Cache segments for this history entry (for back/forward navigation)
-    // Don't clear cache on navigation - only server actions clear the cache
+    // Cache segments for this history entry (fresh data overwrites optimistic)
     store.cacheSegmentsForHistory(historyKey, segments);
 
     // For server actions, skip URL/history updates
@@ -87,11 +155,13 @@ function createNavigationTransaction(
       return;
     }
 
-    // Update browser URL (no need to store key in state - we can compute it from URL)
-    if (replace) {
-      window.history.replaceState(null, "", url);
-    } else {
-      window.history.pushState(null, "", url);
+    // Update browser URL (skip if reconciliation - already done in optimisticCommit)
+    if (!isReconciliation) {
+      if (replace) {
+        window.history.replaceState(null, "", url);
+      } else {
+        window.history.pushState(null, "", url);
+      }
     }
 
     // Update store with new location and idle state
@@ -100,15 +170,20 @@ function createNavigationTransaction(
       location: parsedUrl,
     });
 
-    // Scroll to top if requested
-    if (scroll !== false) {
+    // Scroll to top if requested (skip if reconciliation)
+    if (!isReconciliation && scroll !== false) {
       window.scrollTo(0, 0);
     }
 
-    console.log("[Browser] Navigation committed, historyKey:", historyKey);
+    if (isReconciliation) {
+      console.log("[Browser] Reconciliation commit, historyKey:", historyKey);
+    } else {
+      console.log("[Browser] Navigation committed, historyKey:", historyKey);
+    }
   }
 
   return {
+    optimisticCommit,
     commit,
 
     /**
@@ -116,11 +191,11 @@ function createNavigationTransaction(
      * segmentIds and segments provided at commit time (after they're resolved)
      */
     with(
-      options: Omit<CommitOptions, "segmentIds" | "segments">
+      opts: Omit<CommitOptions, "segmentIds" | "segments">
     ): BoundTransaction {
       return {
         commit: (segmentIds: string[], segments: ResolvedSegment[]) =>
-          commit({ ...options, segmentIds, segments }),
+          commit({ ...opts, segmentIds, segments }),
       };
     },
 
@@ -128,8 +203,8 @@ function createNavigationTransaction(
       // If aborted, another navigation took over - don't touch state
       if (signal.aborted) return;
 
-      // If not committed, reset to idle (error case)
-      if (!committed) {
+      // If not committed (and not optimistically committed), reset to idle
+      if (!committed && !optimisticallyCommitted) {
         store.setState({ state: "idle" });
       }
     },
@@ -179,6 +254,7 @@ export function createNavigationBridge(
   return {
     /**
      * Navigate to a URL
+     * Uses optimistic rendering from cache when available (SWR pattern)
      */
     async navigate(url: string, options?: NavigateOptions): Promise<void> {
       // Only abort pending requests when navigating to a different route
@@ -188,16 +264,52 @@ export function createNavigationBridge(
       if (currentPath !== targetPath) {
         requestController.abortAll();
       }
+
+      // Check if we have cached segments for target URL
+      const historyKey = generateHistoryKey(url);
+      const cachedSegments = store.getCachedSegments(historyKey);
+      const hasCache = cachedSegments && cachedSegments.length > 0;
+
       using disposable = requestController.createDisposable();
       using tx = createNavigationTransaction(
         store,
-        disposable.controller.signal
+        disposable.controller.signal,
+        { skipLoadingState: hasCache } // Skip loading state if we have cache
       );
 
+      // OPTIMISTIC: If we have cache, render immediately
+      if (hasCache) {
+        console.log("[Browser] Optimistic render from cache for:", historyKey);
+
+        // Render cached segments
+        const root = await renderSegments(cachedSegments);
+        onUpdate({
+          root,
+          metadata: {
+            pathname: new URL(url, window.location.origin).pathname,
+            segments: cachedSegments,
+            isPartial: true,
+            matched: cachedSegments.map((s) => s.id),
+            diff: [],
+          },
+        });
+
+        // Commit optimistically (updates URL, store, scrolls)
+        tx.optimisticCommit({
+          url,
+          segmentIds: cachedSegments.map((s) => s.id),
+          segments: cachedSegments,
+          replace: options?.replace,
+          scroll: options?.scroll,
+        });
+      }
+
+      // REVALIDATE: Fetch fresh data from server
+      // If optimistic, this reconciles; if not, this is the first fetch
       try {
         await fetchPartialUpdate(
           url,
-          undefined,
+          hasCache ? cachedSegments.map((s) => s.id) : undefined,
           false,
           disposable.controller.signal,
           tx.with({ url, replace: options?.replace, scroll: options?.scroll })
@@ -326,12 +438,26 @@ export function createNavigationBridge(
         this.handlePopstate();
       };
 
+      // Auto-refresh when another tab mutates data on the same path
+      const handleCrossTabRefresh = () => {
+        console.log("[Browser] Cross-tab refresh triggered");
+        this.refresh();
+      };
+
       window.addEventListener("popstate", handlePopstate);
+      window.addEventListener(
+        "rsc-router:cross-tab-refresh",
+        handleCrossTabRefresh
+      );
       console.log("[Browser] Navigation bridge ready");
 
       return () => {
         cleanupLinks();
         window.removeEventListener("popstate", handlePopstate);
+        window.removeEventListener(
+          "rsc-router:cross-tab-refresh",
+          handleCrossTabRefresh
+        );
       };
     },
   };
