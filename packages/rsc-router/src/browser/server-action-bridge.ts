@@ -524,6 +524,43 @@ export function createServerActionBridge(
       // Pass isAction: true to await component promises on client
       const newTree = await renderSegments(fullSegments, { isAction: true });
 
+      // Check if we need a consolidation fetch due to concurrent actions
+      const consolidationSegments = tx.getConsolidationSegments();
+
+      if (consolidationSegments && consolidationSegments.length > 0) {
+        console.log(
+          `[Browser] Concurrent actions detected - consolidation fetch needed for:`,
+          consolidationSegments
+        );
+
+        // Calculate segments to send (exclude the ones we want fresh)
+        const currentSegmentIds = store.getSegmentState().currentSegmentIds;
+        const segmentsToSend = currentSegmentIds.filter(
+          (id) => !consolidationSegments.includes(id)
+        );
+
+        console.log(`[Browser] Sending segments (excluding revalidated):`, segmentsToSend);
+
+        // Clear consolidation tracking before fetch
+        tx.clearConsolidation();
+
+        // Do consolidation fetch to get fresh data for all revalidated segments
+        const navTx = createNavigationTransaction(store, abortController.signal);
+        await fetchPartialUpdate(
+          window.location.href,
+          segmentsToSend,
+          false,
+          abortController.signal,
+          navTx.with({ url: window.location.href, storeOnly: true })
+        );
+
+        console.log(`[Browser] Consolidation fetch complete`);
+        console.log(`[Browser] Returning to React:`, returnData);
+        tx.commit();
+        return returnData;
+      }
+
+      // No concurrent actions - normal flow
       // Schedule UI update after React processes the action return value.
       // queueMicrotask: waits for React's synchronous work + promise callbacks
       // double queueMicrotask + requestAnimationFrame ensures we yield to React
