@@ -18,6 +18,10 @@ export function RootLayout() {
             padding: 2rem;
             line-height: 1.6;
           }
+          body.full-width {
+            max-width: none;
+            padding: 1rem;
+          }
           nav {
             background: #f0f0f0;
             padding: 1rem;

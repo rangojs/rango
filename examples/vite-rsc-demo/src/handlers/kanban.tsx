@@ -6,12 +6,14 @@ import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { KanbanLoader, CardDetailLoader } from "./kanban/loader.js";
 import { KanbanBoardContent } from "./kanban/KanbanBoard.js";
 import { CardDetailContent } from "./kanban/CardDetail.js";
+import { FullWidthLayout } from "./kanban/FullWidthLayout.js";
 
 // Layout component for Kanban section
 function KanbanLayout() {
   return (
     <DebugSegmentWrapper type="layout" name="Kanban">
-      <div>
+      <FullWidthLayout>
+        <div>
         <header
           style={{
             background: "linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%)",
@@ -46,7 +48,8 @@ function KanbanLayout() {
         <DebugSegmentWrapper type="outlet" name="Kanban Outlet">
           <Outlet />
         </DebugSegmentWrapper>
-      </div>
+        </div>
+      </FullWidthLayout>
     </DebugSegmentWrapper>
   );
 }

@@ -10,7 +10,7 @@ export async function addCard(
   title: string,
   description: string = ""
 ): Promise<Card> {
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  await new Promise((resolve) => setTimeout(resolve, 2000));
 
   const cardsInColumn = boardStore.cards.filter((c) => c.columnId === columnId);
   const maxOrder = cardsInColumn.length > 0
@@ -42,7 +42,7 @@ export async function moveCard(
   targetColumnId: string,
   targetIndex: number
 ): Promise<Card | null> {
-  await new Promise((resolve) => setTimeout(resolve, 150));
+  await new Promise((resolve) => setTimeout(resolve, 2000));
 
   const card = boardStore.cards.find((c) => c.id === cardId);
   if (!card) {
@@ -92,7 +92,7 @@ export async function updateCard(
   cardId: string,
   updates: { title?: string; description?: string; labels?: string[] }
 ): Promise<Card | null> {
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  await new Promise((resolve) => setTimeout(resolve, 2000));
 
   const card = boardStore.cards.find((c) => c.id === cardId);
   if (!card) {
@@ -120,7 +120,7 @@ export async function updateCard(
  * Delete a card
  */
 export async function deleteCard(cardId: string): Promise<boolean> {
-  await new Promise((resolve) => setTimeout(resolve, 200));
+  await new Promise((resolve) => setTimeout(resolve, 2000));
 
   const index = boardStore.cards.findIndex((c) => c.id === cardId);
   if (index === -1) {

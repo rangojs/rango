@@ -343,6 +343,7 @@ function KanbanColumn({
   const [isAddingCard, setIsAddingCard] = useState(false);
   const [newCardTitle, setNewCardTitle] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const cardListRef = useRef<HTMLDivElement>(null);
 
   function handleAddClick() {
     setIsAddingCard(true);
@@ -355,7 +356,11 @@ function KanbanColumn({
 
     onAddCard(column.id, newCardTitle.trim());
     setNewCardTitle("");
-    setIsAddingCard(false);
+    // Keep form open, focus for next card, and scroll to bottom to show new card
+    setTimeout(() => {
+      inputRef.current?.focus();
+      cardListRef.current?.scrollTo({ top: cardListRef.current.scrollHeight, behavior: "smooth" });
+    }, 0);
   }
 
   function handleCancel() {
@@ -386,7 +391,25 @@ function KanbanColumn({
         <span style={styles.columnCount}>{cards.length}</span>
       </div>
 
-      <div style={styles.cardList}>
+      <div
+        ref={cardListRef}
+        style={styles.cardList}
+        onDragOver={(e) => {
+          e.preventDefault();
+          // When dragging over the card list area (not a card), set index to end
+          const target = e.target as HTMLElement;
+          if (target === e.currentTarget) {
+            onDragOver(e, column.id, cards.length);
+          }
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          // Allow dropping at the end of the list
+          if (dragOverIndex !== null) {
+            onDrop(column.id, dragOverIndex);
+          }
+        }}
+      >
         {cards.map((card, index) => (
           <div key={card.id}>
             {dragOverIndex === index && isDragOver && draggedCardId !== card.id && (
@@ -396,6 +419,16 @@ function KanbanColumn({
                   background: "#3b82f6",
                   borderRadius: "2px",
                   marginBottom: "0.5rem",
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onDragOver(e, column.id, index);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onDrop(column.id, index);
                 }}
               />
             )}
@@ -416,6 +449,16 @@ function KanbanColumn({
               height: "4px",
               background: "#3b82f6",
               borderRadius: "2px",
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onDragOver(e, column.id, cards.length);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onDrop(column.id, cards.length);
             }}
           />
         )}
