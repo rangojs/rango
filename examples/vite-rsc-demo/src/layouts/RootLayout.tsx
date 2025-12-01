@@ -63,6 +63,9 @@ export function RootLayout() {
           <Link to={href("todos.index")} prefetch="hover">
             Todos
           </Link>
+          <Link to={href("kanban.index")} prefetch="hover">
+            Kanban
+          </Link>
           <Link to={href("errors.index")} prefetch="hover">
             Errors
           </Link>
