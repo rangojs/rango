@@ -6,6 +6,7 @@ import type {
 } from "./types.js";
 import { createPartialUpdater } from "./partial-update.js";
 import { createNavigationTransaction } from "./navigation-bridge.js";
+import { startTransition } from "react";
 
 // Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -142,14 +143,17 @@ export function createServerActionBridge(
         concurrentRevalidatedSegments.clear();
         hadAnyConcurrentActions = false;
       },
-      commit(segmentIds?: string[], segments?: ResolvedSegment[]) {
+      commit(segmentIds?: string[], segments?: ResolvedSegment[], skipCacheClear?: boolean) {
         status = "completed";
         // Update segment state if provided
         if (segmentIds) {
           store.setSegmentIds(segmentIds);
         }
         // Clear old cache and store new segments for next navigation's merging
-        store.clearHistoryCache();
+        // Skip if consolidation fetch already handled the cache
+        if (!skipCacheClear) {
+          store.clearHistoryCache();
+        }
         if (segments) {
           const currentKey = store.getHistoryKey();
           store.cacheSegmentsForHistory(currentKey, segments);
@@ -316,7 +320,9 @@ export function createServerActionBridge(
 
       // Create lookup for new segments from server
       const newSegmentMap = new Map<string, ResolvedSegment>();
-      (segments || []).forEach((s: ResolvedSegment) => newSegmentMap.set(s.id, s));
+      (segments || []).forEach((s: ResolvedSegment) =>
+        newSegmentMap.set(s.id, s)
+      );
 
       if (!matched) {
         console.log(`[Browser] Matched segments: ${matched}`);
@@ -332,9 +338,7 @@ export function createServerActionBridge(
           // Fall back to current page's cached segments
           const fromCache = currentSegmentMap.get(segId);
           if (!fromCache) {
-            console.error(
-              `[Browser] MISSING SEGMENT: ${segId} not in cache!`
-            );
+            console.error(`[Browser] MISSING SEGMENT: ${segId} not in cache!`);
           }
           return fromCache;
         })
@@ -353,13 +357,17 @@ export function createServerActionBridge(
         const savedReturnValue = returnValue;
 
         // Refetch and update UI FIRST (storeOnly - don't change URL)
-        const navTx = createNavigationTransaction(store, abortController.signal);
+        const navTx = createNavigationTransaction(
+          store,
+          abortController.signal
+        );
         await fetchPartialUpdate(
           window.location.href,
           [],
           false,
           abortController.signal,
-          navTx.with({ url: window.location.href, storeOnly: true })
+          navTx.with({ url: window.location.href, storeOnly: true }),
+          { isAction: true }
         );
         console.log(`[Browser] Refetch complete, now returning action result`);
 
@@ -391,14 +399,11 @@ export function createServerActionBridge(
         return returnData;
       }
 
-      // Prepare new tree (await loader data resolution)
-      // Pass isAction: true to await component promises on client
-      const newTree = await renderSegments(fullSegments, { isAction: true });
-
       // Check if we need a consolidation fetch due to concurrent actions
       const consolidationSegments = tx.getConsolidationSegments();
 
       if (consolidationSegments && consolidationSegments.length > 0) {
+        // This is the last concurrent action - do consolidation fetch
         console.log(
           `[Browser] Concurrent actions detected - consolidation fetch needed for:`,
           consolidationSegments
@@ -410,28 +415,53 @@ export function createServerActionBridge(
           (id) => !consolidationSegments.includes(id)
         );
 
-        console.log(`[Browser] Sending segments (excluding revalidated):`, segmentsToSend);
+        console.log(
+          `[Browser] Sending segments (excluding revalidated):`,
+          segmentsToSend
+        );
 
         // Clear consolidation tracking before fetch
         tx.clearConsolidation();
 
         // Do consolidation fetch to get fresh data for all revalidated segments
-        const navTx = createNavigationTransaction(store, abortController.signal);
+        // This will handle the UI update via onUpdate in partial-update
+        const navTx = createNavigationTransaction(
+          store,
+          abortController.signal
+        );
+        console.warn("Fetch partial", id);
         await fetchPartialUpdate(
           window.location.href,
           segmentsToSend,
           false,
           abortController.signal,
-          navTx.with({ url: window.location.href, storeOnly: true })
+          navTx.with({ url: window.location.href, storeOnly: true }),
+          { isAction: true }
         );
 
         console.log(`[Browser] Consolidation fetch complete`);
         console.log(`[Browser] Returning to React:`, returnData);
-        tx.commit();
+        // Skip cache clear - consolidation fetch already handled the cache via navTx
+        tx.commit(undefined, undefined, true);
         return returnData;
       }
 
-      // No concurrent actions - normal flow
+      // Check if there are still other actions pending
+      // If so, skip UI update - the last action will handle consolidation
+      if (pendingActionCount > 1) {
+        console.log(
+          `[Browser] Skipping UI update - ${pendingActionCount - 1} other action(s) still pending`
+        );
+        console.log(`[Browser] Returning to React:`, returnData);
+        tx.commit(matched, fullSegments);
+        return returnData;
+      }
+
+      // No concurrent actions - normal flow with single action
+      // Prepare new tree (await loader data resolution)
+      // Pass isAction: true to await component promises on client
+      const newTree = await renderSegments(fullSegments, { isAction: true });
+
       // Schedule UI update after React processes the action return value.
       // queueMicrotask: waits for React's synchronous work + promise callbacks
       // double queueMicrotask + requestAnimationFrame ensures we yield to React
@@ -439,7 +469,10 @@ export function createServerActionBridge(
         queueMicrotask(() => {
           requestAnimationFrame(() => {
             if (!abortController.signal.aborted) {
-              onUpdate({ root: newTree, metadata: metadata! });
+              console.warn("Update", id);
+              startTransition(() => {
+                onUpdate({ root: newTree, metadata: metadata! });
+              });
             }
           });
         });

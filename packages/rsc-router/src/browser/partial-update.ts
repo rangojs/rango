@@ -5,6 +5,7 @@ import type {
   ResolvedSegment,
 } from "./types.js";
 import type { ReactNode } from "react";
+import { startTransition } from "react";
 import type { RenderSegmentsOptions } from "../segment-system.js";
 
 /**
@@ -33,7 +34,8 @@ export type PartialUpdater = (
   segmentIds: string[] | undefined,
   isRetry: boolean,
   signal: AbortSignal | undefined,
-  tx: PartialUpdateCommit
+  tx: PartialUpdateCommit,
+  options?: { isAction?: boolean }
 ) => Promise<Promise<void>>;
 
 /**
@@ -83,8 +85,10 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
     segmentIds: string[] | undefined,
     isRetry: boolean,
     signal: AbortSignal | undefined,
-    tx: PartialUpdateCommit
+    tx: PartialUpdateCommit,
+    options?: { isAction?: boolean }
   ): Promise<Promise<void>> {
+    const { isAction = false } = options || {};
     const segmentState = store.getSegmentState();
     const url = targetUrl || window.location.href;
     const segments = segmentIds ?? segmentState.currentSegmentIds;
@@ -171,7 +175,7 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
         );
 
         // Refetch with empty segments = server sends everything
-        return fetchPartialUpdate(url, [], true, signal, tx);
+        return fetchPartialUpdate(url, [], true, signal, tx, { isAction });
       }
 
       console.log(
@@ -184,7 +188,7 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
       const startTime = Date.now();
       const newTree = await (signal
         ? Promise.race([
-            renderSegments(fullSegments),
+            renderSegments(fullSegments, { isAction }),
             new Promise<never>((_, reject) => {
               if (signal.aborted) {
                 reject(new DOMException("Navigation aborted", "AbortError"));
@@ -194,17 +198,27 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
               });
             }),
           ])
-        : renderSegments(fullSegments));
+        : renderSegments(fullSegments, { isAction }));
       console.log(`[partial-update] renderSegments completed in ${Date.now() - startTime}ms`);
 
       // Commit navigation - transaction handles all store mutations atomically
       tx.commit(matchedIds, fullSegments);
 
       // Emit update to trigger React render
-      onUpdate({
-        root: newTree,
-        metadata: payload.metadata,
-      });
+      // For actions, wrap in startTransition to avoid UI flickering
+      if (isAction) {
+        startTransition(() => {
+          onUpdate({
+            root: newTree,
+            metadata: payload.metadata!,
+          });
+        });
+      } else {
+        onUpdate({
+          root: newTree,
+          metadata: payload.metadata!,
+        });
+      }
 
       console.log(`[Browser] Navigation complete\n`);
       return streamComplete;
@@ -243,10 +257,20 @@ export function createPartialUpdater(config: PartialUpdateConfig): PartialUpdate
       tx.commit(segmentIds, segments);
 
       // Emit update to trigger React render
-      onUpdate({
-        root: payload.root,
-        metadata: payload.metadata!,
-      });
+      // For actions, wrap in startTransition to avoid UI flickering
+      if (isAction) {
+        startTransition(() => {
+          onUpdate({
+            root: payload.root,
+            metadata: payload.metadata!,
+          });
+        });
+      } else {
+        onUpdate({
+          root: payload.root,
+          metadata: payload.metadata!,
+        });
+      }
 
       return streamComplete;
     }
