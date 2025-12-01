@@ -175,7 +175,10 @@ export async function renderSegments(
       loading || loading === null || component instanceof Promise
         ? createElement(RouteContentWrapper, {
             key: `suspense-loading-${id}`,
-            content: Promise.resolve(component),
+            content:
+              component instanceof Promise
+                ? component
+                : Promise.resolve(component),
             fallback: loading,
           })
         : component;
