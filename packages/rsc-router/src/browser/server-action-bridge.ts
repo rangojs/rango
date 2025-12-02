@@ -205,6 +205,11 @@ export function createServerActionBridge(
     // Create temporary references for serialization
     const temporaryReferences = deps.createTemporaryReferenceSet();
 
+    // Capture URL pathname at action start to detect navigation during action
+    // Must use window.location (not store.path) because intercepts change URL
+    // without changing store.path (e.g., /kanban -> /kanban/card/1)
+    const actionStartPathname = window.location.pathname;
+
     // Build action request URL with current segments
     const url = new URL(window.location.href);
     url.searchParams.set("_rsc_action", id);
@@ -452,17 +457,36 @@ export function createServerActionBridge(
       }
 
       // Check if user navigated away during the action
-      // Compare CURRENT store path (not captured segmentState) with action's original path
-      const currentPath = store.getSegmentState().path;
-      const actionOriginalPath = segmentState.path;
-      const userNavigatedAway = currentPath !== actionOriginalPath;
+      // We compare window.location.pathname (not store.path) because:
+      // - For intercepts, store.path stays as base route while URL changes
+      // - For regular routes, both change but pathname is the source of truth
+      const currentPathname = window.location.pathname;
+      const userNavigatedAway = currentPathname !== actionStartPathname;
 
       if (userNavigatedAway) {
         console.log(
-          `[Browser] User navigated away during action (${actionOriginalPath} -> ${currentPath}), skipping UI update`
+          `[Browser] User navigated away during action (${actionStartPathname} -> ${currentPathname}), refetching current route`
         );
-        // Still commit to update cache for cross-tab sync, but skip UI render
-        tx.commit(matched, fullSegments);
+        // Clear concurrent action tracking - don't consolidate for old route's segments
+        tx.clearConsolidation();
+        // Refetch current route to show fresh data. This is correct for all cases:
+        // - Intercepts: action on /kanban/card/1 may update data visible on /kanban
+        // - Regular routes: action on /page-a may update shared data visible on /page-b
+        // Without refetch, user would see stale data until manual navigation
+        store.clearHistoryCache();
+        const navTx = createNavigationTransaction(
+          store,
+          abortController.signal
+        );
+        await fetchPartialUpdate(
+          window.location.href,
+          [], // Empty array = refetch all segments for current route
+          false,
+          abortController.signal,
+          navTx.with({ url: window.location.href, storeOnly: true }),
+          { isAction: true }
+        );
+        console.log(`[Browser] Refetch after navigation complete`);
         return returnData;
       }
 
@@ -539,8 +563,8 @@ export function createServerActionBridge(
         queueMicrotask(() => {
           requestAnimationFrame(() => {
             // Re-check if user navigated away (could happen during async wait)
-            const currentPathNow = store.getSegmentState().path;
-            if (currentPathNow !== actionOriginalPath) {
+            const currentPathnameNow = window.location.pathname;
+            if (currentPathnameNow !== actionStartPathname) {
               console.log(
                 `[Browser] User navigated during UI update scheduling, skipping`
               );

@@ -8,12 +8,12 @@ import {
   type ReactNode,
 } from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
-import type {
-  ClientErrorBoundaryFallbackProps,
-  ErrorInfo,
-  LoaderDefinition,
-  LoaderFn,
-  ResolvedSegment,
+import {
+  type ClientErrorBoundaryFallbackProps,
+  type ErrorInfo,
+  type LoaderDefinition,
+  type LoaderFn,
+  type ResolvedSegment,
 } from "./types";
 import { RouteContentWrapper } from "./route-content-wrapper.js";
 
@@ -25,6 +25,12 @@ import { RouteContentWrapper } from "./route-content-wrapper.js";
  * This means during navigation/streaming, React's Suspense will automatically
  * show the loading skeleton until the content is ready.
  *
+ * When a name prop is provided (e.g., "@modal"), renders content from
+ * the parallel segment with that slot name instead of the default content.
+ * This is used for parallel routes and intercepting routes.
+ *
+ * @param name - Optional slot name for parallel/intercept content (must start with @)
+ *
  * @example
  * ```tsx
  * function BlogLayout() {
@@ -35,10 +41,50 @@ import { RouteContentWrapper } from "./route-content-wrapper.js";
  *     </div>
  *   );
  * }
+ *
+ * // With named slot for modal/parallel content:
+ * function KanbanLayout() {
+ *   return (
+ *     <div>
+ *       <KanbanBoard />
+ *       <Outlet name="@modal" />
+ *       <Outlet />
+ *     </div>
+ *   );
+ * }
  * ```
  */
-export function Outlet(): ReactNode {
+export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
   const context = useContext(OutletContext);
+
+  // If name provided, render parallel/intercept content for that slot
+  if (name) {
+    const segment = context?.parallel?.find((seg) => seg.slot === name) ?? null;
+
+    if (!segment) return null;
+
+    // Determine the content to render
+    let content: ReactNode;
+    if (segment.loading || segment.component instanceof Promise) {
+      // Use RouteContentWrapper to handle Suspense wrapping properly
+      content = (
+        <RouteContentWrapper
+          content={
+            segment.component instanceof Promise
+              ? segment.component
+              : Promise.resolve(segment.component)
+          }
+          fallback={segment.loading}
+        />
+      );
+    } else {
+      content = segment.component ?? null;
+    }
+
+    return content;
+  }
+
+  // Default: render child content
   const content = context?.content ?? null;
 
   // If this segment defines a loading component, wrap outlet content with Suspense
@@ -80,10 +126,11 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
 
   if (!segment) return null;
 
-  // If this parallel segment defines a loading component or has a promise component,
-  // use RouteContentWrapper to handle Suspense wrapping properly
+  // Determine the content to render
+  let content: ReactNode;
   if (segment.loading || segment.component instanceof Promise) {
-    return (
+    // Use RouteContentWrapper to handle Suspense wrapping properly
+    content = (
       <RouteContentWrapper
         content={
           segment.component instanceof Promise
@@ -93,9 +140,11 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
         fallback={segment.loading}
       />
     );
+  } else {
+    content = segment.component ?? null;
   }
 
-  return segment.component ?? null;
+  return content;
 }
 
 /**

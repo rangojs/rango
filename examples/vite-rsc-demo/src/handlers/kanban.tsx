@@ -47,7 +47,9 @@ function KanbanLayout() {
           </header>
           {/* Board is always visible */}
           <KanbanBoardContent />
-          {/* Route content (modal) renders here with position:fixed */}
+          {/* Intercept modal slot - for soft navigation to card route */}
+          <Outlet name="@modal" />
+          {/* Route content - for hard navigation (direct URL) */}
           <Outlet />
         </div>
       </FullWidthLayout>
@@ -55,14 +57,25 @@ function KanbanLayout() {
   );
 }
 
+// Modal wrapper for intercepted card route
+// Uses type="parallel" since intercepts render in slots like parallels
+function CardModal() {
+  return (
+    <DebugSegmentWrapper type="parallel" name="CardModal (@modal)">
+      <CardDetailContent />
+    </DebugSegmentWrapper>
+  );
+}
+
 /**
  * Kanban handler - demonstrates optimistic updates with drag-and-drop
+ * Uses intercepting routes to show card detail as modal during soft navigation
  */
 export default map<typeof kanbanRoutes>(
-  ({ route, layout, loader, revalidate }) => [
+  ({ route, layout, loader, revalidate, intercept }) => [
     layout(<RootLayout />),
 
-    // Kanban section layout with loader
+    // Kanban section layout with loader and intercept
     layout(<KanbanLayout />, () => [
       // Board loader
       loader(KanbanLoader, () => [
@@ -75,12 +88,19 @@ export default map<typeof kanbanRoutes>(
           return { defaultShouldRevalidate };
         }),
       ]),
+
+      // Intercept card route during soft navigation
+      // Renders in @modal slot instead of default Outlet
+      intercept("@modal", "card", <CardModal />, () => [
+        loader(CardDetailLoader),
+        revalidate(() => false),
+      ]),
     ]),
 
     // Index route - board is in layout, nothing extra needed here
     route("index", () => <></>),
 
-    // Card detail route - modal overlay (position:fixed)
+    // Card detail route - full page for hard navigation (direct URL)
     route(
       "card",
       () => <CardDetailContent />,

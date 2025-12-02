@@ -24,6 +24,7 @@ import type { AllUseItems } from "./route-types.js";
 import {
   EntryData,
   LoaderEntry,
+  InterceptEntry,
   getContext,
   track,
   MetricsStore,
@@ -1104,6 +1105,146 @@ export function createRSCRouter<TEnv = any>(
       belongsToRoute: true, // Orphan layout belongs to the route
       layoutName: orphan.id,
       loading: orphan.loading === false ? null : orphan.loading,
+    });
+
+    return segments;
+  }
+
+  /**
+   * Find an intercept for the target route by walking up the entry chain
+   * Returns the first (innermost) matching intercept along with the entry that defines it
+   *
+   * Intercepts are "lazy parallels" that only activate during soft navigation.
+   * They render alternative content in a named slot (like @modal) instead of the
+   * route's normal handler.
+   *
+   * @param targetRouteKey - The route key to find an intercept for (e.g., "card")
+   * @param fromEntry - Starting entry to walk up from (usually the route entry)
+   * @returns The matching intercept and its defining entry, or null if none found
+   */
+  function findInterceptForRoute(
+    targetRouteKey: string,
+    fromEntry: EntryData | null
+  ): { intercept: InterceptEntry; entry: EntryData } | null {
+    let current: EntryData | null = fromEntry;
+
+    while (current) {
+      // Check if this entry has intercepts defined
+      if (current.intercept && current.intercept.length > 0) {
+        // Find intercept matching the target route name
+        for (const intercept of current.intercept) {
+          if (intercept.routeName === targetRouteKey) {
+            return { intercept, entry: current };
+          }
+        }
+      }
+
+      // Also check sibling layouts for intercepts
+      // Intercepts are defined as siblings in the route tree - e.g., an intercept
+      // like (.)card/[cardId] is placed alongside the parent route's layouts
+      if (current.layout && current.layout.length > 0) {
+        for (const siblingLayout of current.layout) {
+          if (siblingLayout.intercept && siblingLayout.intercept.length > 0) {
+            for (const intercept of siblingLayout.intercept) {
+              if (intercept.routeName === targetRouteKey) {
+                return { intercept, entry: siblingLayout };
+              }
+            }
+          }
+        }
+      }
+
+      current = current.parent;
+    }
+
+    return null;
+  }
+
+  /**
+   * Resolve an intercept entry and emit segment with the slot name
+   * Similar to parallel entry resolution but for intercept handlers.
+   *
+   * Intercepts can have their own middleware, loaders, revalidate, and loading.
+   * The handler is rendered in the named slot (e.g., @modal).
+   *
+   * @param interceptEntry - The intercept definition
+   * @param parentEntry - The entry that defines the intercept (for shortCode)
+   * @param params - URL parameters
+   * @param context - Handler context
+   * @param belongsToRoute - Whether this intercept belongs to the matched route
+   */
+  async function resolveInterceptEntry(
+    interceptEntry: InterceptEntry,
+    parentEntry: EntryData,
+    params: Record<string, string>,
+    context: HandlerContext<any, TEnv>,
+    belongsToRoute: boolean = true
+  ): Promise<ResolvedSegment[]> {
+    const segments: ResolvedSegment[] = [];
+
+    // Step 1: Execute intercept middleware
+    if (interceptEntry.middleware.length > 0) {
+      const middlewareResponse = await executeMiddleware(
+        interceptEntry.middleware,
+        context,
+        `intercept:${interceptEntry.routeName}`
+      );
+      if (middlewareResponse) throw middlewareResponse;
+    }
+
+    // Step 2: Collect intercept loaders (executed via ctx.use() in handler)
+    // Emit loader segments - loaderData flows through segment-system.tsx renderSegments
+    // which resolves the Promise and unwraps LoaderDataResult before providing to context
+    for (let i = 0; i < interceptEntry.loader.length; i++) {
+      const { loader } = interceptEntry.loader[i];
+      const segmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}D${i}.${loader.name}`;
+
+      // Emit loader segment for processing by segment-system
+      segments.push({
+        id: segmentId,
+        namespace: `intercept:${interceptEntry.routeName}`,
+        type: "loader" as const,
+        index: i,
+        component: null,
+        params,
+        loaderName: loader.name,
+        loaderData: wrapLoaderWithErrorHandling(
+          context.use(loader),
+          parentEntry,
+          segmentId,
+          context.pathname
+        ),
+        belongsToRoute,
+      });
+    }
+
+    // Step 3: Execute intercept handler and emit segment with slot name
+    // Use type "parallel" since client renders slots the same way
+    let component: ReactNode | Promise<ReactNode>;
+    if (interceptEntry.loading) {
+      // Don't await - stream with Suspense
+      component =
+        typeof interceptEntry.handler === "function"
+          ? interceptEntry.handler(context)
+          : interceptEntry.handler;
+    } else {
+      component =
+        typeof interceptEntry.handler === "function"
+          ? await interceptEntry.handler(context)
+          : interceptEntry.handler;
+    }
+
+    segments.push({
+      id: `${parentEntry.shortCode}.${interceptEntry.slotName}`,
+      namespace: `intercept:${interceptEntry.routeName}`,
+      type: "parallel" as const, // Reuse parallel type for slot rendering
+      index: 0,
+      component,
+      loading: interceptEntry.loading === false ? null : interceptEntry.loading,
+      params,
+      slot: interceptEntry.slotName,
+      belongsToRoute,
+      parallelName: `intercept:${interceptEntry.routeName}.${interceptEntry.slotName}`,
     });
 
     return segments;
@@ -2497,6 +2638,22 @@ export function createRSCRouter<TEnv = any>(
         Store.metrics = metricsStore;
       }
 
+      // Check for intercepting routes
+      // Intercepts are "lazy parallels" that activate during soft navigation
+      // Extract local route name from routeKey (last segment after dot, or full key if no prefix)
+      const localRouteName = matched.routeKey.includes(".")
+        ? matched.routeKey.split(".").pop()!
+        : matched.routeKey;
+
+      // Walk up from route's parent to find intercept (parent layouts can intercept child routes)
+      const interceptResult = findInterceptForRoute(localRouteName, manifestEntry.parent);
+
+      if (interceptResult) {
+        console.log(
+          `[Router.matchPartial] Intercepting route "${localRouteName}" with slot "${interceptResult.intercept.slotName}"`
+        );
+      }
+
       // Collect all segments with revalidation-aware rendering (run within store context for metrics tracking)
       // Now returns both segments to render AND all matched IDs (including skipped loaders)
       const result = await getContext().runWithStore(
@@ -2507,28 +2664,62 @@ export function createRSCRouter<TEnv = any>(
           const segs: ResolvedSegment[] = [];
           const matchedIds: string[] = [];
           for (const entry of traverseBack(manifestEntry)) {
-            // Resolve entry into segments with revalidation checks and error handling
-            const resolved = await resolveWithRevalidationErrorHandling(
-              entry,
-              matched.params,
-              () => resolveSegmentWithRevalidation(
-                entry,
-                matched.routeKey,
+            // Check if this is the route entry and we have an intercept
+            const isRouteEntry = entry.type === "route";
+            const shouldIntercept = isRouteEntry && interceptResult !== null;
+
+            if (shouldIntercept) {
+              // Intercepted route: resolve intercept instead of route handler
+              // Still run route middleware and loaders, but skip route handler
+              // The intercept handler renders in its named slot
+
+              // Step 1: Run route middleware
+              if (entry.middleware.length > 0) {
+                const middlewareResponse = await executeMiddleware(
+                  entry.middleware,
+                  handlerContext,
+                  entry.id
+                );
+                if (middlewareResponse) throw middlewareResponse;
+              }
+
+              // Step 2: Resolve intercept entry (middleware, loaders, handler)
+              const interceptSegments = await resolveInterceptEntry(
+                interceptResult.intercept,
+                interceptResult.entry,
                 matched.params,
                 handlerContext,
-                clientSegmentSet,
-                prevParams,
-                request,
-                prevUrl,
-                url,
-                loaderPromises,
-                actionContext
-              ),
-              pathname
-            );
+                true // belongsToRoute
+              );
+              segs.push(...interceptSegments);
+              matchedIds.push(...interceptSegments.map(s => s.id));
 
-            segs.push(...resolved.segments);
-            matchedIds.push(...resolved.matchedIds);
+              // Note: We skip the route handler entirely - the intercept takes over
+              // Parent layouts still render normally (via other iterations)
+            } else {
+              // Normal resolution: no intercept or layout entry
+              const resolved = await resolveWithRevalidationErrorHandling(
+                entry,
+                matched.params,
+                () => resolveSegmentWithRevalidation(
+                  entry,
+                  matched.routeKey,
+                  matched.params,
+                  handlerContext,
+                  clientSegmentSet,
+                  prevParams,
+                  request,
+                  prevUrl,
+                  url,
+                  loaderPromises,
+                  actionContext
+                ),
+                pathname
+              );
+
+              segs.push(...resolved.segments);
+              matchedIds.push(...resolved.matchedIds);
+            }
           }
           return { segments: segs, matchedIds };
         }

@@ -279,6 +279,15 @@ function* segmentTreeWalk(segments: ResolvedSegment[]): Generator<{
     const parallel = parallelsByParent.get(segment.id) || [];
     const loaders = loadersByParent.get(segment.id) || [];
 
+    // Also include loaders from parallel segments (e.g., intercept loaders)
+    // These have parent IDs like "M9L0L1.@modal" which match the parallel segment ID
+    for (const p of parallel) {
+      const parallelLoaders = loadersByParent.get(p.id);
+      if (parallelLoaders) {
+        loaders.push(...parallelLoaders);
+      }
+    }
+
     yield { segment, parallel, loaders };
   }
 }
