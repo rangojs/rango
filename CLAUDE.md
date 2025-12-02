@@ -20,3 +20,42 @@ route("y"),                                 // Shared → y
 ```
 
 Revalidation: route-scoped layouts get `defaultShouldRevalidate: true` when their route revalidates. Top-level layouts don't.
+
+## Intercepting Routes
+
+Intercepts render alternative content in a named slot during soft navigation (client-side). Hard navigation (direct URL) renders the normal route.
+
+```typescript
+layout(<KanbanLayout />, () => [
+  loader(KanbanLoader),
+
+  // Intercept card route - renders in @modal slot instead of default Outlet
+  intercept("@modal", "card", <CardModal />, () => [
+    loader(CardDetailLoader),
+    revalidate(() => false),
+  ]),
+]),
+
+route("card", () => <CardDetailPage />),  // Hard navigation renders this
+```
+
+API:
+- `intercept(slotName, routeName, component, children?)`
+  - `slotName`: Named slot (e.g., `"@modal"`)
+  - `routeName`: Route key to intercept
+  - `component`: React element to render
+  - `children`: Optional - loaders, revalidate, middleware
+
+In the layout, use `<Outlet name="@modal" />` to render intercept content:
+
+```tsx
+function KanbanLayout() {
+  return (
+    <div>
+      <KanbanBoard />
+      <Outlet name="@modal" />  {/* Intercept content renders here */}
+      <Outlet />                 {/* Normal route content */}
+    </div>
+  );
+}
+```
