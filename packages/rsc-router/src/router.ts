@@ -2691,8 +2691,22 @@ export function createRSCRouter<TEnv = any>(
       //
       // Skip short-circuit when _rsc_full flag is set - this happens when client
       // cache is empty (e.g., cross-tab refresh) and needs full page + intercept.
+      //
+      // Also skip if SOURCE is already on the intercepted route.
+      // e.g., navigating from /shop/product/x to /shop/product/y shouldn't intercept
+      // because the source page is the full product page, not a page with a modal slot.
       const skipInterceptShortCircuit = url.searchParams.has("_rsc_full");
-      if (interceptResult && !skipInterceptShortCircuit) {
+      const sourceIsInterceptedRoute = interceptResult
+        ? prevMatch?.routeKey === interceptResult.intercept.routeName
+        : false;
+
+      if (interceptResult && sourceIsInterceptedRoute) {
+        console.log(
+          `[Router.matchPartial] Skipping intercept - source "${prevMatch?.routeKey}" is already on intercepted route "${interceptResult.intercept.routeName}"`
+        );
+      }
+
+      if (interceptResult && !skipInterceptShortCircuit && !sourceIsInterceptedRoute) {
         console.log(
           `[Router.matchPartial] Intercepting route "${localRouteName}" with slot "${interceptResult.intercept.slotName}"`
         );

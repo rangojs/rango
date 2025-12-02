@@ -31,7 +31,7 @@ interface CommitOptions {
  * Bound transaction with pre-configured commit options (without segmentIds/segments)
  */
 interface BoundTransaction {
-  commit(segmentIds: string[], segments: ResolvedSegment[]): void;
+  commit(segmentIds: string[], segments: ResolvedSegment[], options?: { scroll?: boolean }): void;
 }
 
 /**
@@ -189,13 +189,14 @@ function createNavigationTransaction(
     /**
      * Create a bound transaction with pre-configured URL options
      * segmentIds and segments provided at commit time (after they're resolved)
+     * scroll option can be overridden at commit time (e.g., for intercepts)
      */
     with(
       opts: Omit<CommitOptions, "segmentIds" | "segments">
     ): BoundTransaction {
       return {
-        commit: (segmentIds: string[], segments: ResolvedSegment[]) =>
-          commit({ ...opts, segmentIds, segments }),
+        commit: (segmentIds: string[], segments: ResolvedSegment[], overrides?: { scroll?: boolean }) =>
+          commit({ ...opts, ...overrides, segmentIds, segments }),
       };
     },
 

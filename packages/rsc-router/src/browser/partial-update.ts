@@ -26,7 +26,7 @@ export interface PartialUpdateConfig {
  * Transaction encapsulates all store mutations for atomic commit
  */
 export interface PartialUpdateCommit {
-  commit(segmentIds: string[], segments: ResolvedSegment[]): void;
+  commit(segmentIds: string[], segments: ResolvedSegment[], options?: { scroll?: boolean }): void;
 }
 
 /**
@@ -154,9 +154,9 @@ export function createPartialUpdater(
             .map((id: string) => currentSegmentMap.get(id))
             .filter(Boolean) as ResolvedSegment[];
 
-          // Render and update
+          // Render and update - skip scroll since we're just removing the modal
           const newTree = await renderSegments(existingSegments);
-          tx.commit(matchedIds, existingSegments);
+          tx.commit(matchedIds, existingSegments, { scroll: false });
           onUpdate({
             root: newTree,
             metadata: payload.metadata!,
@@ -171,7 +171,8 @@ export function createPartialUpdater(
         const existingSegments = matchedIds
           .map((id: string) => currentSegmentMap.get(id))
           .filter(Boolean) as ResolvedSegment[];
-        tx.commit(matchedIds, existingSegments);
+        // Skip scroll for intercept revalidation (staying in place)
+        tx.commit(matchedIds, existingSegments, isIntercept ? { scroll: false } : undefined);
         console.log(`[Browser] Navigation complete (no re-render)\n`);
         return streamComplete;
       }
@@ -301,7 +302,8 @@ export function createPartialUpdater(
       }
 
       // Commit navigation - transaction handles all store mutations atomically
-      tx.commit(matchedIds, fullSegments);
+      // For intercepts, skip scroll to top since the background page should stay in place
+      tx.commit(matchedIds, fullSegments, isIntercept ? { scroll: false } : undefined);
 
       // Emit update to trigger React render
       // For actions, wrap in startTransition to avoid UI flickering

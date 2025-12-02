@@ -1,15 +1,12 @@
 "use client";
 
-import { useEffect } from "react";
+import { useRef, useEffect } from "react";
 import { Outlet } from "rsc-router/client";
 
 const styles = {
   overlay: {
     position: "fixed" as const,
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    inset: 0,
     background: "rgba(0,0,0,0.5)",
     display: "flex",
     alignItems: "flex-start",
@@ -19,14 +16,15 @@ const styles = {
     overflow: "auto",
   },
   modal: {
+    position: "relative" as const,
     background: "white",
     borderRadius: "8px",
-    width: "100%",
+    width: "calc(100% - 2rem)",
     maxWidth: "900px",
     maxHeight: "90vh",
     overflow: "auto",
     boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)",
-    margin: "0 1rem 2rem",
+    marginBottom: "2rem",
   },
   closeButton: {
     position: "absolute" as const,
@@ -40,33 +38,36 @@ const styles = {
     padding: "0.25rem 0.75rem",
     lineHeight: 1,
     borderRadius: "4px",
-    zIndex: 1001,
+    zIndex: 1,
   },
 };
 
 // Modal layout that wraps intercept content via <Outlet />
-// This is used with layout() inside intercept() to separate modal chrome from content
+// Simple implementation without Radix to avoid layout shifts from aria-hidden
 export function ProductModalOverlay() {
-  // Lock body scroll when modal is open
+  const isClosing = useRef(false);
+
+  // Handle escape key
   useEffect(() => {
-    const originalOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = originalOverflow;
-    };
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key === "Escape") handleClose();
+    }
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
   }, []);
 
-  function handleClose(e?: React.MouseEvent) {
-    e?.stopPropagation();
+  function handleClose() {
+    if (isClosing.current) return;
+    isClosing.current = true;
     window.history.back();
   }
 
   return (
     <div style={styles.overlay} onClick={handleClose}>
-      <button style={styles.closeButton} onClick={handleClose}>
-        ×
-      </button>
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+        <button style={styles.closeButton} onClick={handleClose}>
+          ×
+        </button>
         <Outlet />
       </div>
     </div>
