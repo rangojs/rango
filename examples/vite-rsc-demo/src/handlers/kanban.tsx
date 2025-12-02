@@ -75,15 +75,16 @@ export default map<typeof kanbanRoutes>(
           return { defaultShouldRevalidate };
         }),
       ]),
-
-      // Index route - board is in layout, nothing extra needed here
-      route("index", () => <></>),
-
-      // Card detail route - modal overlay (position:fixed)
-      route("card", () => <CardDetailContent />, () => [
-        loader(CardDetailLoader),
-        revalidate(() => false),
-      ]),
     ]),
+
+    // Index route - board is in layout, nothing extra needed here
+    route("index", () => <></>),
+
+    // Card detail route - modal overlay (position:fixed)
+    route(
+      "card",
+      () => <CardDetailContent />,
+      () => [loader(CardDetailLoader), revalidate(() => false)]
+    ),
   ]
 );

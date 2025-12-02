@@ -215,11 +215,19 @@ export interface DisposableAbortController extends Disposable {
 
 /**
  * Request controller for managing concurrent requests
+ *
+ * Separates navigation requests (aborted on new navigation) from
+ * action requests (complete independently of navigation).
  */
 export interface RequestController {
   create(): AbortController;
   createDisposable(): DisposableAbortController;
+  /** Create a disposable controller for actions (not aborted by navigation) */
+  createActionDisposable(): DisposableAbortController;
+  /** Abort all navigation requests (not actions) */
   abortAll(): void;
+  /** Abort all action requests (used for error handling) */
+  abortAllActions(): void;
   remove(controller: AbortController): void;
 }
 

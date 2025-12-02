@@ -29,11 +29,14 @@ if (typeof Symbol.dispose === "undefined") {
  * ```
  */
 export function createRequestController(): RequestController {
+  // Navigation controllers - aborted on new navigation
   const controllers: AbortController[] = [];
+  // Action controllers - NOT aborted by navigation, only by errors
+  const actionControllers: AbortController[] = [];
 
   return {
     /**
-     * Create a new abort controller and track it
+     * Create a new abort controller and track it for navigation
      *
      * @returns A new AbortController
      */
@@ -45,7 +48,7 @@ export function createRequestController(): RequestController {
     },
 
     /**
-     * Create a disposable abort controller for use with `using` keyword
+     * Create a disposable abort controller for navigation use with `using` keyword
      *
      * The controller will be automatically removed from tracking when
      * it goes out of scope, regardless of how the scope is exited.
@@ -54,7 +57,7 @@ export function createRequestController(): RequestController {
      *
      * @example
      * ```typescript
-     * async function handleRequest() {
+     * async function handleNavigation() {
      *   requestController.abortAll();
      *   using { controller } = requestController.createDisposable();
      *   // ... use controller.signal ...
@@ -73,15 +76,51 @@ export function createRequestController(): RequestController {
     },
 
     /**
-     * Abort all tracked controllers
+     * Create a disposable abort controller for actions
      *
-     * Useful when starting a new navigation that should cancel
-     * any pending requests.
+     * Action controllers are NOT aborted by navigation - they complete
+     * independently. Only aborted by abortAllActions() on error.
+     *
+     * @returns A DisposableAbortController
+     */
+    createActionDisposable(): DisposableAbortController {
+      const controller = new AbortController();
+      actionControllers.push(controller);
+      console.log(`[Browser] Created action controller, total: ${actionControllers.length}`);
+      return {
+        controller,
+        [Symbol.dispose]: () => {
+          const index = actionControllers.indexOf(controller);
+          if (index !== -1) {
+            actionControllers.splice(index, 1);
+            console.log(`[Browser] Removed action controller, remaining: ${actionControllers.length}`);
+          }
+        },
+      };
+    },
+
+    /**
+     * Abort all navigation controllers (NOT actions)
+     *
+     * Called when starting new navigation. Actions continue
+     * to complete in the background.
      */
     abortAll(): void {
       controllers.forEach((controller) => controller.abort());
       controllers.length = 0;
-      console.log(`[Browser] Aborted all controllers`);
+      console.log(`[Browser] Aborted all navigation controllers`);
+    },
+
+    /**
+     * Abort all action controllers
+     *
+     * Called when an action error occurs - prevents other actions
+     * from completing and overwriting the error UI.
+     */
+    abortAllActions(): void {
+      actionControllers.forEach((controller) => controller.abort());
+      actionControllers.length = 0;
+      console.log(`[Browser] Aborted all action controllers`);
     },
 
     /**

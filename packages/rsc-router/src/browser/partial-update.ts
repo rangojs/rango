@@ -292,15 +292,15 @@ export function createPartialUpdater(
       // Emit update to trigger React render
       // For actions, wrap in startTransition to avoid UI flickering
       if (isAction) {
-        startTransition(() => {
+        startTransition(async () => {
           onUpdate({
-            root: payload.root,
+            root: await payload.root,
             metadata: payload.metadata!,
           });
         });
       } else {
         onUpdate({
-          root: payload.root,
+          root: await payload.root,
           metadata: payload.metadata!,
         });
       }

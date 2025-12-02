@@ -191,8 +191,9 @@ export function createServerActionBridge(
   async function handleServerAction(id: string, args: any[]): Promise<unknown> {
     console.log("ID", { id, args });
 
-    // Create new disposable controller (allow concurrent actions)
-    using disposable = requestController.createDisposable();
+    // Create action-specific disposable controller
+    // Actions use separate tracking - NOT aborted by navigation
+    using disposable = requestController.createActionDisposable();
     const abortController = disposable.controller;
 
     const segmentState = store.getSegmentState();
@@ -300,7 +301,7 @@ export function createServerActionBridge(
 
       // Abort all other pending action requests - error takes precedence
       // This prevents other actions from completing and overwriting the error UI
-      requestController.abortAll();
+      requestController.abortAllActions();
 
       // Clear concurrent action tracking - no consolidation needed when showing error
       tx.clearConsolidation();
@@ -444,20 +445,24 @@ export function createServerActionBridge(
         return dataToReturn;
       }
 
-      if (segmentState.path !== metadata?.pathname) {
-        console.warn(
-          `[Browser] Path changed during action, skipping UI update`
-        );
-      }
-
       const returnData = returnValue?.data;
 
       if (returnValue && !returnValue.ok) {
         throw returnValue.data;
       }
 
-      if (abortController.signal.aborted) {
-        console.log(`[Browser] Action aborted - skipping UI update`);
+      // Check if user navigated away during the action
+      // Compare CURRENT store path (not captured segmentState) with action's original path
+      const currentPath = store.getSegmentState().path;
+      const actionOriginalPath = segmentState.path;
+      const userNavigatedAway = currentPath !== actionOriginalPath;
+
+      if (userNavigatedAway) {
+        console.log(
+          `[Browser] User navigated away during action (${actionOriginalPath} -> ${currentPath}), skipping UI update`
+        );
+        // Still commit to update cache for cross-tab sync, but skip UI render
+        tx.commit(matched, fullSegments);
         return returnData;
       }
 
@@ -533,12 +538,18 @@ export function createServerActionBridge(
       queueMicrotask(() => {
         queueMicrotask(() => {
           requestAnimationFrame(() => {
-            if (!abortController.signal.aborted) {
-              console.warn("Update", id);
-              startTransition(() => {
-                onUpdate({ root: newTree, metadata: metadata! });
-              });
+            // Re-check if user navigated away (could happen during async wait)
+            const currentPathNow = store.getSegmentState().path;
+            if (currentPathNow !== actionOriginalPath) {
+              console.log(
+                `[Browser] User navigated during UI update scheduling, skipping`
+              );
+              return;
             }
+            console.log("Update", id);
+            startTransition(() => {
+              onUpdate({ root: newTree, metadata: metadata! });
+            });
           });
         });
       });
