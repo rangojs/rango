@@ -333,8 +333,8 @@ export function CardDetailContent() {
           <div style={styles.section}>
             <div style={styles.sectionTitle}>Details</div>
             <div style={styles.meta}>
-              <div>Created: {card.createdAt.toLocaleDateString()}</div>
-              <div>Updated: {card.updatedAt.toLocaleDateString()}</div>
+              <div>Created: {card.createdAt.toLocaleDateString("en-US")}</div>
+              <div>Updated: {card.updatedAt.toLocaleDateString("en-US")}</div>
             </div>
           </div>
 
