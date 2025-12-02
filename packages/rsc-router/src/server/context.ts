@@ -51,10 +51,27 @@ export type LoaderEntry = {
   revalidate: ShouldRevalidateFn<any, any>[];
 };
 
+/**
+ * Intercept entry stored in EntryData
+ * Contains the slot name, route to intercept, and handler
+ */
+export type InterceptEntry = {
+  slotName: `@${string}`;  // e.g., "@modal"
+  routeName: string;        // e.g., "card"
+  handler: ReactNode | Handler<any, any>;
+  middleware: MiddlewareFn<any, any>[];
+  revalidate: ShouldRevalidateFn<any, any>[];
+  errorBoundary: (ReactNode | ErrorBoundaryHandler)[];
+  notFoundBoundary: (ReactNode | NotFoundBoundaryHandler)[];
+  loader: LoaderEntry[];
+  loading?: ReactNode | false;
+};
+
 export type EntryPropSegments = {
   loader: LoaderEntry[];
   layout: EntryData[];
   parallel: EntryData[]; // type: "parallel" entries with their own loaders/revalidate/loading
+  intercept: InterceptEntry[]; // intercept definitions for soft navigation
 };
 
 export type EntryData =

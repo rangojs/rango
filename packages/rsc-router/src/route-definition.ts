@@ -13,7 +13,7 @@ import type {
   RouteDefinition,
   ShouldRevalidateFn,
 } from "./types.js";
-import { getContext, type EntryData } from "./server/context";
+import { getContext, type EntryData, type InterceptEntry } from "./server/context";
 import { invariant } from "./errors";
 import RootLayout from "./server/root-layout";
 import type {
@@ -21,6 +21,7 @@ import type {
   LayoutItem,
   RouteItem,
   ParallelItem,
+  InterceptItem,
   MiddlewareItem,
   RevalidateItem,
   LoaderItem,
@@ -30,6 +31,7 @@ import type {
   LayoutUseItem,
   RouteUseItem,
   ParallelUseItem,
+  InterceptUseItem,
   LoaderUseItem,
 } from "./route-types.js";
 // const __DEV__ = import.meta.MODE === "development";
@@ -72,6 +74,7 @@ export type {
   LayoutItem,
   RouteItem,
   ParallelItem,
+  InterceptItem,
   MiddlewareItem,
   RevalidateItem,
   LoaderItem,
@@ -80,6 +83,7 @@ export type {
   LayoutUseItem,
   RouteUseItem,
   ParallelUseItem,
+  InterceptUseItem,
 } from "./route-types.js";
 
 /**
@@ -160,6 +164,36 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
     slots: TSlots,
     use?: () => ParallelUseItem[]
   ) => ParallelItem;
+  /**
+   * Define an intercepting route for soft navigation
+   *
+   * When soft-navigating to the target route from within the current layout,
+   * the intercept handler renders in the named slot instead of the route's
+   * default handler. Direct navigation uses the route's handler.
+   *
+   * ```typescript
+   * // In a layout - intercept "card" route as modal
+   * layout(<KanbanLayout />, () => [
+   *   intercept("@modal", "card", () => <CardModal />),
+   * ])
+   *
+   * // With loaders and revalidation
+   * intercept("@modal", "card", () => <CardModal />, () => [
+   *   loader(CardModalLoader),
+   *   revalidate(() => false),
+   * ])
+   * ```
+   * @param slotName - Named slot (prefixed with @) where intercept renders
+   * @param routeName - Route name to intercept
+   * @param handler - Component or handler for intercepted render
+   * @param use - Optional callback for loaders, middleware, revalidate, etc.
+   */
+  intercept: <K extends keyof ResolvedRouteMap<T> & string>(
+    slotName: `@${string}`,
+    routeName: K,
+    handler: ReactNode | Handler<ExtractRouteParams<T, K>, TEnv>,
+    use?: () => InterceptUseItem[]
+  ) => InterceptItem;
   /**
    * Attach middleware to the current route/layout
    * ```typescript
@@ -413,6 +447,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     notFoundBoundary: [],
     layout: [],
     parallel: [],
+    intercept: [],
     loader: [],
   } satisfies EntryData;
 
@@ -427,6 +462,67 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
 
   ctx.parent.parallel.push(entry);
   return { name: namespace, type: "parallel" } as ParallelItem;
+};
+
+/**
+ * Intercept helper - defines an intercepting route for soft navigation
+ */
+const intercept: RouteHelpers<any, any>["intercept"] = (
+  slotName,
+  routeName,
+  handler,
+  use
+) => {
+  const store = getContext();
+  const ctx = store.getStore();
+  if (!ctx) throw new Error("intercept() must be called inside map()");
+
+  if (!ctx.parent || !ctx.parent?.intercept) {
+    invariant(false, "No parent entry available for intercept()");
+  }
+
+  const namespace = `${ctx.namespace}.$${store.getNextIndex("intercept")}.${slotName}`;
+
+  // Create intercept entry with its own loaders/revalidate/middleware
+  const entry: InterceptEntry = {
+    slotName: slotName as `@${string}`,
+    routeName,
+    handler,
+    middleware: [],
+    revalidate: [],
+    errorBoundary: [],
+    notFoundBoundary: [],
+    loader: [],
+  };
+
+  // Run use callback if provided to collect loaders, revalidate, middleware, etc.
+  if (use && typeof use === "function") {
+    // Create a temporary parent context for the use() callback
+    // so that middleware, loader, revalidate attach to the intercept entry
+    const originalParent = ctx.parent;
+    const tempParent = {
+      ...originalParent,
+      middleware: entry.middleware,
+      revalidate: entry.revalidate,
+      errorBoundary: entry.errorBoundary,
+      notFoundBoundary: entry.notFoundBoundary,
+      loader: entry.loader,
+    };
+    ctx.parent = tempParent as EntryData;
+
+    const result = use();
+
+    // Restore original parent
+    ctx.parent = originalParent;
+
+    invariant(
+      Array.isArray(result) && result.every((item) => isValidUseItem(item)),
+      `intercept() use() callback must return an array of use items [${namespace}]`
+    );
+  }
+
+  ctx.parent.intercept.push(entry);
+  return { name: namespace, type: "intercept" } as InterceptItem;
 };
 
 /**
@@ -519,6 +615,7 @@ const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
     notFoundBoundary: [],
     layout: [],
     parallel: [],
+    intercept: [],
     loader: [],
   } satisfies EntryData;
 
@@ -563,6 +660,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     errorBoundary: [],
     notFoundBoundary: [],
     parallel: [],
+    intercept: [],
     layout: [],
     loader: [],
   } satisfies EntryData;
@@ -631,6 +729,7 @@ const isValidUseItem = (item: any): item is AllUseItems | undefined | null => {
         "middleware",
         "revalidate",
         "parallel",
+        "intercept",
         "loader",
         "loading",
         "errorBoundary",
@@ -691,10 +790,20 @@ const createMiddlewareHelper = <TEnv>(): RouteHelpers<
 };
 
 /**
- * Create middleware helper
+ * Create parallel helper
  */
 const createParallelHelper = <TEnv>(): RouteHelpers<any, TEnv>["parallel"] => {
   return parallel as RouteHelpers<any, TEnv>["parallel"];
+};
+
+/**
+ * Create intercept helper
+ */
+const createInterceptHelper = <
+  const T extends RouteDefinition,
+  TEnv,
+>(): RouteHelpers<T, TEnv>["intercept"] => {
+  return intercept as RouteHelpers<T, TEnv>["intercept"];
 };
 
 /**
@@ -746,6 +855,7 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
       route: createRouteHelper<T, TEnv>(),
       layout: createLayoutHelper<TEnv>(),
       parallel: createParallelHelper<TEnv>(),
+      intercept: createInterceptHelper<T, TEnv>(),
       middleware: createMiddlewareHelper<TEnv>(),
       revalidate: createRevalidateHelper<TEnv>(),
       loader: createLoaderHelper<TEnv>(),

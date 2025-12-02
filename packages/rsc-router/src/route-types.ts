@@ -10,6 +10,7 @@
 export declare const LayoutBrand: unique symbol;
 export declare const RouteBrand: unique symbol;
 export declare const ParallelBrand: unique symbol;
+export declare const InterceptBrand: unique symbol;
 export declare const MiddlewareBrand: unique symbol;
 export declare const RevalidateBrand: unique symbol;
 export declare const LoaderBrand: unique symbol;
@@ -34,6 +35,12 @@ export type ParallelItem = {
   type: "parallel";
   uses?: AllUseItems[];
   [ParallelBrand]: void;
+};
+export type InterceptItem = {
+  name: string;
+  type: "intercept";
+  uses?: InterceptUseItem[];
+  [InterceptBrand]: void;
 };
 export type LoaderItem = {
   name: string;
@@ -80,6 +87,7 @@ export type AllUseItems =
   | MiddlewareItem
   | RevalidateItem
   | ParallelItem
+  | InterceptItem
   | LoaderItem
   | LoadingItem
   | ErrorBoundaryItem
@@ -90,6 +98,7 @@ export type LayoutUseItem =
   | MiddlewareItem
   | RevalidateItem
   | ParallelItem
+  | InterceptItem
   | LoaderItem
   | LoadingItem
   | ErrorBoundaryItem
@@ -97,6 +106,7 @@ export type LayoutUseItem =
 export type RouteUseItem =
   | LayoutItem
   | ParallelItem
+  | InterceptItem
   | MiddlewareItem
   | RevalidateItem
   | LoaderItem
@@ -104,4 +114,5 @@ export type RouteUseItem =
   | ErrorBoundaryItem
   | NotFoundBoundaryItem;
 export type ParallelUseItem = RevalidateItem | LoaderItem | LoadingItem | ErrorBoundaryItem | NotFoundBoundaryItem;
+export type InterceptUseItem = MiddlewareItem | RevalidateItem | LoaderItem | LoadingItem | ErrorBoundaryItem | NotFoundBoundaryItem;
 export type LoaderUseItem = RevalidateItem;
