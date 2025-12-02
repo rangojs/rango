@@ -597,6 +597,11 @@ export interface MatchResult {
    * Can be added to response headers for DevTools integration
    */
   serverTiming?: string;
+  /**
+   * True when this is an intercept response (soft navigation to an intercepted route).
+   * Client should merge segments with existing page instead of replacing.
+   */
+  isIntercept?: boolean;
 }
 
 /**

@@ -1218,22 +1218,51 @@ export function createRSCRouter<TEnv = any>(
       });
     }
 
-    // Step 3: Execute intercept handler and emit segment with slot name
-    // Use type "parallel" since client renders slots the same way
-    let component: ReactNode | Promise<ReactNode>;
+    // Step 3: Execute intercept handler
+    // If loading() is defined, don't await - stream with Suspense
+    let handlerContent: ReactNode | Promise<ReactNode>;
     if (interceptEntry.loading) {
       // Don't await - stream with Suspense
-      component =
+      handlerContent =
         typeof interceptEntry.handler === "function"
           ? interceptEntry.handler(context)
           : interceptEntry.handler;
     } else {
-      component =
+      handlerContent =
         typeof interceptEntry.handler === "function"
           ? await interceptEntry.handler(context)
           : interceptEntry.handler;
     }
 
+    // Step 4: If layout exists, wrap handler in layout using OutletProvider
+    // The layout component renders with <Outlet /> which gets the handler content
+    let component: ReactNode | Promise<ReactNode> = handlerContent;
+    if (interceptEntry.layout) {
+      const layoutComponent =
+        typeof interceptEntry.layout === "function"
+          ? interceptEntry.layout(context)
+          : interceptEntry.layout;
+
+      // Wrap layout around handler content
+      // OutletProvider makes handler available to <Outlet /> inside the layout
+      const { OutletProvider } = await import("./client.js");
+      // Type assertion needed because React 19 supports async components
+      // but TypeScript types don't fully reflect this yet
+      component = createElement(OutletProvider, {
+        content: handlerContent as ReactNode,  // Handler goes in the outlet
+        segment: {
+          id: `${parentEntry.shortCode}.${interceptEntry.slotName}`,
+          type: "layout" as const,
+          index: 0,
+          params,
+          namespace: `intercept:${interceptEntry.routeName}`,
+        } as ResolvedSegment,
+        children: layoutComponent as ReactNode,  // Layout wraps the outlet
+      });
+    }
+
+    // Step 5: Emit segment with slot name
+    // Use type "parallel" since client renders slots the same way
     segments.push({
       id: `${parentEntry.shortCode}.${interceptEntry.slotName}`,
       namespace: `intercept:${interceptEntry.routeName}`,
@@ -2646,14 +2675,120 @@ export function createRSCRouter<TEnv = any>(
         : matched.routeKey;
 
       // Walk up from route's parent to find intercept (parent layouts can intercept child routes)
-      const interceptResult = findInterceptForRoute(localRouteName, manifestEntry.parent);
+      // Try both full route key and local name for flexible matching:
+      // - "products.detail.view" matches intercept("@modal", "products.detail.view", ...)
+      // - "view" matches intercept("@modal", "view", ...)
+      const interceptResult = findInterceptForRoute(matched.routeKey, manifestEntry.parent)
+        || (localRouteName !== matched.routeKey
+            ? findInterceptForRoute(localRouteName, manifestEntry.parent)
+            : null);
 
-      if (interceptResult) {
+      // INTERCEPT SHORT-CIRCUIT:
+      // When intercepting, we DON'T navigate to the target route at all.
+      // Instead, we stay on the current route and just populate the intercept slot.
+      // The client keeps all its existing segments (layouts, current route) and only
+      // updates the @modal slot with the intercept content.
+      //
+      // Skip short-circuit when _rsc_full flag is set - this happens when client
+      // cache is empty (e.g., cross-tab refresh) and needs full page + intercept.
+      const skipInterceptShortCircuit = url.searchParams.has("_rsc_full");
+      if (interceptResult && !skipInterceptShortCircuit) {
         console.log(
           `[Router.matchPartial] Intercepting route "${localRouteName}" with slot "${interceptResult.intercept.slotName}"`
         );
+
+        // Check if client already has the intercept segments
+        // Build expected segment IDs for this intercept
+        const interceptSlotId = `${interceptResult.entry.shortCode}.${interceptResult.intercept.slotName}`;
+        const clientHasIntercept = clientSegmentSet.has(interceptSlotId);
+
+        // Check if revalidation is needed (run intercept's revalidation functions)
+        let shouldRevalidate = !clientHasIntercept; // Always revalidate if client doesn't have it
+        if (clientHasIntercept && interceptResult.intercept.revalidate.length > 0) {
+          // Run revalidation functions
+          for (const revalidateFn of interceptResult.intercept.revalidate) {
+            const result = await revalidateFn({
+              currentParams: prevParams,
+              currentUrl: prevUrl,
+              nextParams: matched.params,
+              nextUrl: url,
+              defaultShouldRevalidate: false, // Intercepts don't revalidate by default
+              context: handlerContext,
+              segmentType: "parallel",
+              slotName: interceptResult.intercept.slotName,
+              actionId: actionContext?.actionId,
+              actionUrl: actionContext?.actionUrl,
+              actionResult: actionContext?.actionResult,
+              formData: actionContext?.formData,
+              method: request.method,
+            });
+            if (result === true) {
+              shouldRevalidate = true;
+              break;
+            }
+          }
+        }
+
+        // If client has intercept and no revalidation needed, return empty diff
+        if (clientHasIntercept && !shouldRevalidate) {
+          console.log(
+            `[Router.matchPartial] Client has intercept, no revalidation needed - returning empty diff`
+          );
+
+          // Output metrics if enabled
+          let serverTiming: string | undefined;
+          if (metricsStore) {
+            logMetrics(request.method, pathname, metricsStore);
+            serverTiming = generateServerTiming(metricsStore);
+          }
+
+          // Return ALL client segment IDs in matched - client needs these to rebuild from cache
+          // Use clientSegmentIds (what client sent) so client can find all segments in its cache
+          return {
+            segments: [],
+            matched: clientSegmentIds,
+            diff: [],
+            serverTiming,
+            isIntercept: true,
+          };
+        }
+
+        console.log(
+          `[Router.matchPartial] Short-circuiting - only sending intercept segments, client keeps current route`
+        );
+
+        // Only resolve the intercept entry - nothing else
+        const interceptSegments = await getContext().runWithStore(
+          Store,
+          Store.namespace || "#router",
+          Store.parent,
+          () => resolveInterceptEntry(
+            interceptResult.intercept,
+            interceptResult.entry,
+            matched.params,
+            handlerContext,
+            true // belongsToRoute
+          )
+        );
+
+        // Output metrics if enabled
+        let serverTiming: string | undefined;
+        if (metricsStore) {
+          logMetrics(request.method, pathname, metricsStore);
+          serverTiming = generateServerTiming(metricsStore);
+        }
+
+        const interceptIds = interceptSegments.map(s => s.id);
+        return {
+          segments: interceptSegments,
+          matched: interceptIds,
+          diff: interceptIds,
+          serverTiming,
+          isIntercept: true, // Signal client to merge with existing segments
+        };
       }
 
+      // Normal navigation (no intercept)
       // Collect all segments with revalidation-aware rendering (run within store context for metrics tracking)
       // Now returns both segments to render AND all matched IDs (including skipped loaders)
       const result = await getContext().runWithStore(
@@ -2664,62 +2799,28 @@ export function createRSCRouter<TEnv = any>(
           const segs: ResolvedSegment[] = [];
           const matchedIds: string[] = [];
           for (const entry of traverseBack(manifestEntry)) {
-            // Check if this is the route entry and we have an intercept
-            const isRouteEntry = entry.type === "route";
-            const shouldIntercept = isRouteEntry && interceptResult !== null;
-
-            if (shouldIntercept) {
-              // Intercepted route: resolve intercept instead of route handler
-              // Still run route middleware and loaders, but skip route handler
-              // The intercept handler renders in its named slot
-
-              // Step 1: Run route middleware
-              if (entry.middleware.length > 0) {
-                const middlewareResponse = await executeMiddleware(
-                  entry.middleware,
-                  handlerContext,
-                  entry.id
-                );
-                if (middlewareResponse) throw middlewareResponse;
-              }
-
-              // Step 2: Resolve intercept entry (middleware, loaders, handler)
-              const interceptSegments = await resolveInterceptEntry(
-                interceptResult.intercept,
-                interceptResult.entry,
+            // Normal resolution for all entries
+            const resolved = await resolveWithRevalidationErrorHandling(
+              entry,
+              matched.params,
+              () => resolveSegmentWithRevalidation(
+                entry,
+                matched.routeKey,
                 matched.params,
                 handlerContext,
-                true // belongsToRoute
-              );
-              segs.push(...interceptSegments);
-              matchedIds.push(...interceptSegments.map(s => s.id));
+                clientSegmentSet,
+                prevParams,
+                request,
+                prevUrl,
+                url,
+                loaderPromises,
+                actionContext
+              ),
+              pathname
+            );
 
-              // Note: We skip the route handler entirely - the intercept takes over
-              // Parent layouts still render normally (via other iterations)
-            } else {
-              // Normal resolution: no intercept or layout entry
-              const resolved = await resolveWithRevalidationErrorHandling(
-                entry,
-                matched.params,
-                () => resolveSegmentWithRevalidation(
-                  entry,
-                  matched.routeKey,
-                  matched.params,
-                  handlerContext,
-                  clientSegmentSet,
-                  prevParams,
-                  request,
-                  prevUrl,
-                  url,
-                  loaderPromises,
-                  actionContext
-                ),
-                pathname
-              );
-
-              segs.push(...resolved.segments);
-              matchedIds.push(...resolved.matchedIds);
-            }
+            segs.push(...resolved.segments);
+            matchedIds.push(...resolved.matchedIds);
           }
           return { segments: segs, matchedIds };
         }

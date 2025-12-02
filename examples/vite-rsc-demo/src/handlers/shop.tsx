@@ -25,6 +25,8 @@ import {
   OrderSummary,
   RecentOrders,
 } from "./shop/components.js";
+import { ProductDetailContent } from "./shop/routes/ProductDetailContent.js";
+import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import {
   loggerMiddleware,
   mockAuthMiddleware,
@@ -56,6 +58,7 @@ import {
   CheckoutSkeleton,
   ShopLayoutSkeleton,
 } from "./shop/components/loading.js";
+import { ProductModalSkeleton } from "./shop/components/ProductModalSkeleton.js";
 //#endregion
 
 const DummyLayout = (
@@ -63,6 +66,19 @@ const DummyLayout = (
     <Outlet />
   </>
 );
+
+// Modal content for intercepted product detail route
+// Content component that goes inside the modal layout
+async function ProductModalContent() {
+  // Delay to demonstrate loading() fallback
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+  return <ProductDetailContent />;
+}
+
+// Modal layout wrapper with Outlet for content
+// This uses the ProductModalOverlay which has <Outlet /> inside
+import { ProductModalOverlay } from "./shop/routes/ProductModalOverlay.js";
+
 //#region Handler Definition
 /**
  * Shop handlers - comprehensive ecommerce example
@@ -77,7 +93,16 @@ const DummyLayout = (
  * - Full type inference for inline handlers
  */
 export default map<typeof shopRoutes>(
-  ({ route, layout, middleware, parallel, revalidate, loader, loading }) => [
+  ({
+    route,
+    layout,
+    middleware,
+    parallel,
+    revalidate,
+    loader,
+    loading,
+    intercept,
+  }) => [
     //#region Global Layout & Middleware
     // Global root layout wraps everything
     // #1 $layout.0
@@ -134,6 +159,20 @@ export default map<typeof shopRoutes>(
               ),
             }),
 
+            // Intercept product detail during soft navigation
+            // Uses layout() for modal wrapper, content goes in its <Outlet />
+            intercept(
+              "@modal",
+              "products.detail.view",
+              <ProductModalContent />,
+              () => [
+                layout(<ProductModalOverlay />), // Modal wrapper with <Outlet />
+                loading(<ProductModalSkeleton />),
+                loader(ProductLoader),
+                loader(CartLoader),
+              ]
+            ),
+
             // Homepage
             route("index", IndexRoute, () => [
               parallel(
@@ -147,7 +186,7 @@ export default map<typeof shopRoutes>(
             // Category
             route("products.category", ProductsCategoryRoute),
 
-            // Product detail
+            // Product detail (hard navigation shows full page)
             // ProductLoader fetches the specific product by slug
             // RelatedProductsLoader depends on ProductLoader to get related items
             route("products.detail.view", ProductsDetailRoute, () => [

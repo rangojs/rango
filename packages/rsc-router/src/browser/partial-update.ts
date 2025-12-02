@@ -114,7 +114,7 @@ export function createPartialUpdater(
     });
 
     if (payload.metadata?.isPartial) {
-      const { segments: newSegments, matched, diff } = payload.metadata;
+      const { segments: newSegments, matched, diff, isIntercept } = payload.metadata;
 
       // Check if this navigation is stale (a newer one started)
       if (signal?.aborted) {
@@ -124,6 +124,9 @@ export function createPartialUpdater(
 
       console.log(`[Browser] Partial update - matched: ${matched?.join(", ")}`);
       console.log(`[Browser] Diff: ${diff?.join(", ")}`);
+      if (isIntercept) {
+        console.log(`[Browser] INTERCEPT: Merging with existing page segments`);
+      }
 
       // Create lookup for new segments from server
       const newSegmentMap = new Map<string, ResolvedSegment>();
@@ -131,13 +134,40 @@ export function createPartialUpdater(
         newSegmentMap.set(s.id, s)
       );
 
-      // If diff is empty, nothing changed - skip UI update but commit URL
-      // Still need to collect full segments for history cache
+      // If diff is empty, check if we need to update due to segment removal
+      // This happens when navigating FROM an intercept (has @modal) TO a regular route (no @modal)
       if (!diff || diff.length === 0) {
+        const matchedIds = matched || [];
+        const currentIds = Array.from(currentSegmentMap.keys());
+
+        // Check if current has @modal but matched doesn't - need to re-render to remove modal
+        const currentHasModal = currentIds.some(id => id.includes("@modal"));
+        const matchedHasModal = matchedIds.some((id: string) => id.includes("@modal"));
+        const needsModalRemoval = currentHasModal && !matchedHasModal;
+
+        if (needsModalRemoval) {
+          console.log(
+            `[Browser] No diff but @modal needs removal - forcing re-render`
+          );
+          // Build segments from matched IDs using cache
+          const existingSegments = matchedIds
+            .map((id: string) => currentSegmentMap.get(id))
+            .filter(Boolean) as ResolvedSegment[];
+
+          // Render and update
+          const newTree = await renderSegments(existingSegments);
+          tx.commit(matchedIds, existingSegments);
+          onUpdate({
+            root: newTree,
+            metadata: payload.metadata!,
+          });
+          console.log(`[Browser] Navigation complete (modal removed)\n`);
+          return streamComplete;
+        }
+
         console.log(
           `[Browser] No changes - all revalidations returned false, keeping existing UI`
         );
-        const matchedIds = matched || [];
         const existingSegments = matchedIds
           .map((id: string) => currentSegmentMap.get(id))
           .filter(Boolean) as ResolvedSegment[];
@@ -146,26 +176,71 @@ export function createPartialUpdater(
         return streamComplete;
       }
 
-      // Build full segment list by merging:
-      // - New/changed segments from server response (diff)
-      // - Unchanged segments from current page's cache
-      const matchedIds = matched || [];
-      const fullSegments = matchedIds
-        .map((id: string) => {
-          // First check server response (new/updated segments)
-          const fromServer = newSegmentMap.get(id);
-          if (fromServer) return fromServer;
-          // Fall back to current page's cached segments
-          const fromCache = currentSegmentMap.get(id);
-          if (!fromCache) {
-            console.warn(`[Browser] Missing segment: ${id}`);
+      // INTERCEPT HANDLING:
+      // When intercepting, we keep the current page's segments and merge in the intercept.
+      // This allows the main content (shop index) to stay visible while the modal (@modal) shows.
+      let fullSegments: ResolvedSegment[];
+      let finalMatchedIds: string[];
+      let interceptCacheEmpty = false; // Track if intercept had empty cache (needs HMR resilience)
+
+      if (isIntercept) {
+        // Start with all current segments
+        const existingSegments = Array.from(currentSegmentMap.values());
+
+        // If cache is empty, we can't merge - need full page segments
+        // This happens during cross-tab refresh when cache was cleared
+        if (existingSegments.length === 0) {
+          console.warn(`[Browser] Intercept but cache is empty - doing full page fetch`);
+
+          if (isRetry) {
+            // If already retrying and still intercept with empty cache, something is wrong
+            // Just use what we have (intercept segments only)
+            console.error(`[Browser] Intercept cache still empty after retry, proceeding with partial content`);
+            finalMatchedIds = matched || [];
+            fullSegments = (newSegments || []) as ResolvedSegment[];
+          } else {
+            // Refetch with _rsc_full flag to tell server not to short-circuit for intercept
+            // This will return full page + intercept segments
+            const fullUrl = new URL(url, window.location.origin);
+            fullUrl.searchParams.set("_rsc_full", "1");
+            return fetchPartialUpdate(fullUrl.href, [], true, signal, tx, { isAction });
           }
-          return fromCache;
-        })
-        .filter(Boolean) as ResolvedSegment[];
+        } else {
+          // Merge intercept segments: add new or update existing slots
+          const mergedMap = new Map<string, ResolvedSegment>();
+          existingSegments.forEach(s => mergedMap.set(s.id, s));
+          newSegments?.forEach((s: ResolvedSegment) => mergedMap.set(s.id, s));
+
+          fullSegments = Array.from(mergedMap.values());
+          finalMatchedIds = fullSegments.map(s => s.id);
+
+          console.log(`[Browser] Intercept merge: ${existingSegments.length} existing + ${newSegments?.length || 0} new = ${fullSegments.length} total`);
+        }
+      } else {
+        // Normal navigation: build full segment list by merging:
+        // - New/changed segments from server response (diff)
+        // - Unchanged segments from current page's cache
+        finalMatchedIds = matched || [];
+        fullSegments = finalMatchedIds
+          .map((id: string) => {
+            // First check server response (new/updated segments)
+            const fromServer = newSegmentMap.get(id);
+            if (fromServer) return fromServer;
+            // Fall back to current page's cached segments
+            const fromCache = currentSegmentMap.get(id);
+            if (!fromCache) {
+              console.warn(`[Browser] Missing segment: ${id}`);
+            }
+            return fromCache;
+          })
+          .filter(Boolean) as ResolvedSegment[];
+      }
+
+      const matchedIds = finalMatchedIds;
 
       // HMR RESILIENCE: Check if we're missing segments
-      if (fullSegments.length < matchedIds.length) {
+      // Skip for intercepts since we're merging with existing segments
+      if (!isIntercept && fullSegments.length < matchedIds.length) {
         const missingCount = matchedIds.length - fullSegments.length;
         const missingIds = matchedIds.filter(
           (id: string) => !newSegmentMap.has(id) && !currentSegmentMap.has(id)

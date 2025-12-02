@@ -238,6 +238,7 @@ export default async function handler(request: Request): Promise<Response> {
           isPartial: true,
           matched: matchResult.matched,
           diff: matchResult.diff,
+          isIntercept: matchResult.isIntercept,
         },
         returnValue, // Include action result
       };
@@ -307,6 +308,7 @@ export default async function handler(request: Request): Promise<Response> {
             matched: result.matched,
             diff: result.diff,
             isPartial: true,
+            isIntercept: result.isIntercept,
           },
         };
       }

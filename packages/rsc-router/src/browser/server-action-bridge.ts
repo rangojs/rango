@@ -341,8 +341,11 @@ export function createServerActionBridge(
       // Update segment tracking to exclude error segment IDs
       // This ensures the next navigation will re-fetch these segments
       // instead of assuming they're still cached
+      // Use fullSegments.map(s => s.id) as base instead of currentSegmentIds
+      // because currentSegmentIds might be incomplete (e.g., only intercept IDs after an action)
       const errorSegmentIds = new Set(diff);
-      const segmentIdsAfterError = segmentState.currentSegmentIds.filter(
+      const fullSegmentIds = fullSegments.map(s => s.id);
+      const segmentIdsAfterError = fullSegmentIds.filter(
         (id) => !errorSegmentIds.has(id)
       );
       tx.commit(segmentIdsAfterError, fullSegments);
@@ -397,24 +400,39 @@ export function createServerActionBridge(
         throw new Error("No matched segments in response");
       }
 
-      // Rebuild from matched: server segments first, then cached segments
-      const fullSegments = matched
-        .map((segId: string) => {
-          // First check server response (new/updated segments)
-          const fromServer = newSegmentMap.get(segId);
-          if (fromServer) return fromServer;
-          // Fall back to current page's cached segments
-          const fromCache = currentSegmentMap.get(segId);
-          if (!fromCache) {
-            console.error(`[Browser] MISSING SEGMENT: ${segId} not in cache!`);
-          }
-          return fromCache;
-        })
-        .filter(Boolean) as ResolvedSegment[];
+      // INTERCEPT HANDLING:
+      // When action runs during intercept, server returns only intercept segments.
+      // We need to merge with existing page segments to keep the background visible.
+      const isIntercept = metadata?.isIntercept;
+      let fullSegments: ResolvedSegment[];
 
-      console.log(
-        `[Browser] Rebuilt ${fullSegments.length} segments from matched array`
-      );
+      if (isIntercept) {
+        console.log(`[Browser] Action during INTERCEPT: merging with existing page segments`);
+        // Keep all cached segments, merge/update with intercept segments from server
+        const mergedMap = new Map<string, ResolvedSegment>();
+        cachedSegments.forEach(s => mergedMap.set(s.id, s));
+        (segments || []).forEach((s: ResolvedSegment) => mergedMap.set(s.id, s));
+        fullSegments = Array.from(mergedMap.values());
+        console.log(`[Browser] Intercept merge: ${cachedSegments.length} cached + ${segments?.length || 0} new = ${fullSegments.length} total`);
+      } else {
+        // Normal action: rebuild from matched array
+        fullSegments = matched
+          .map((segId: string) => {
+            // First check server response (new/updated segments)
+            const fromServer = newSegmentMap.get(segId);
+            if (fromServer) return fromServer;
+            // Fall back to current page's cached segments
+            const fromCache = currentSegmentMap.get(segId);
+            if (!fromCache) {
+              console.error(`[Browser] MISSING SEGMENT: ${segId} not in cache!`);
+            }
+            return fromCache;
+          })
+          .filter(Boolean) as ResolvedSegment[];
+        console.log(
+          `[Browser] Rebuilt ${fullSegments.length} segments from matched array`
+        );
+      }
 
       // HMR resilience check
       if (fullSegments.length < matched.length) {
@@ -547,7 +565,9 @@ export function createServerActionBridge(
           `[Browser] Skipping UI update - ${pendingActionCount - 1} other action(s) still pending`
         );
         console.log(`[Browser] Returning to React:`, returnData);
-        tx.commit(matched, fullSegments, true); // Skip cache clear - last action will broadcast
+        // For intercepts, use merged segment IDs
+        const pendingCommitIds = isIntercept ? fullSegments.map(s => s.id) : matched;
+        tx.commit(pendingCommitIds, fullSegments, true); // Skip cache clear - last action will broadcast
         return returnData;
       }
 
@@ -582,7 +602,10 @@ export function createServerActionBridge(
       );
 
       console.log(`[Browser] Returning to React:`, returnData);
-      tx.commit(matched, fullSegments);
+      // For intercepts, use merged segment IDs so currentSegmentIds includes page + intercept
+      // Server's `matched` only contains intercept IDs, but fullSegments has the merged set
+      const commitSegmentIds = isIntercept ? fullSegments.map(s => s.id) : matched;
+      tx.commit(commitSegmentIds, fullSegments);
       return returnData;
     } else {
       // Full update not supported for actions

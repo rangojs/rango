@@ -24,6 +24,7 @@ export interface RscMetadata {
   segments: ResolvedSegment[];
   isPartial?: boolean;
   isError?: boolean;
+  isIntercept?: boolean;
   matched?: string[];
   diff?: string[];
 }
