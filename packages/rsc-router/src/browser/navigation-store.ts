@@ -207,7 +207,8 @@ export function createNavigationStore(
 
     const channel = getCacheInvalidationChannel();
     if (channel) {
-      // Include current path so other tabs can auto-refresh if on same route
+      // Broadcast only current path - receiver checks for related paths
+      // (exact match or prefix relationship for intercepts)
       const currentPath = window.location.pathname;
       channel.postMessage({ type: "invalidate", path: currentPath });
       console.log("[Browser] Broadcast sent for path:", currentPath);
@@ -225,12 +226,18 @@ export function createNavigationStore(
           console.log("[Browser] Cache invalidated by another tab");
           clearCacheInternal();
 
-          // Auto-refresh if enabled and we're on the same path that was mutated
+          // Auto-refresh if enabled and we're on a related path
+          // Related means: exact match, or one is a prefix of the other
+          // This handles intercepts where /kanban and /kanban/card/1 share data
           if (crossTabAutoRefresh) {
             const mutatedPath = event.data.path;
             const currentPath = window.location.pathname;
-            if (mutatedPath && mutatedPath === currentPath) {
-              console.log("[Browser] Same path - triggering auto-refresh");
+            const isRelated = mutatedPath && (
+              mutatedPath === currentPath ||
+              currentPath.startsWith(mutatedPath + "/") ||
+              mutatedPath.startsWith(currentPath + "/")
+            );
+            if (isRelated) {
               // Dispatch event for navigation bridge to handle refresh
               window.dispatchEvent(
                 new CustomEvent("rsc-router:cross-tab-refresh", {

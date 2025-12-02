@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useEffect } from "react";
 import { useLoader } from "rsc-router/client";
 import { Link, useNavigation } from "rsc-router/browser";
 import { CardDetailLoader } from "./loader.js";
@@ -174,6 +174,11 @@ export function CardDetailContent() {
   const [editTitle, setEditTitle] = useState(card.title);
   const [editDescription, setEditDescription] = useState(card.description);
   const [selectedLabels, setSelectedLabels] = useState<string[]>(card.labels);
+
+  // Sync labels when card data changes (e.g., from cross-tab sync)
+  useEffect(() => {
+    setSelectedLabels(card.labels);
+  }, [card.labels]);
 
   function handleClose() {
     navigate("/kanban");
