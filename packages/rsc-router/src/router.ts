@@ -1434,30 +1434,24 @@ export function createRSCRouter<TEnv = any>(
       // Find nearest error boundary
       const fallback = findNearestErrorBoundary(entry);
 
-      if (!fallback) {
-        // No error boundary - propagate the error
-        console.error(
-          `[Router] Error in segment ${entry.shortCode} with no error boundary:`,
-          error
-        );
-        throw error;
-      }
-
       // Determine segment type for error info
       const segmentType: ErrorInfo["segmentType"] = entry.type;
 
       // Create error info
       const errorInfo = createErrorInfo(error, entry.shortCode, segmentType);
 
+      // Use default fallback if no error boundary found
+      const effectiveFallback = fallback ?? DefaultErrorFallback;
+
       console.log(
-        `[Router] Error caught by error boundary in ${entry.shortCode}:`,
+        `[Router] Error caught by ${fallback ? "error boundary" : "default fallback"} in ${entry.shortCode}:`,
         errorInfo.message
       );
 
       // Create and return error segment
       const errorSegment = createErrorSegment(
         errorInfo,
-        fallback,
+        effectiveFallback,
         entry,
         params
       );
@@ -1521,30 +1515,24 @@ export function createRSCRouter<TEnv = any>(
       // Find nearest error boundary
       const fallback = findNearestErrorBoundary(entry);
 
-      if (!fallback) {
-        // No error boundary - propagate the error
-        console.error(
-          `[Router] Error in segment ${entry.shortCode} with no error boundary:`,
-          error
-        );
-        throw error;
-      }
-
       // Determine segment type for error info
       const segmentType: ErrorInfo["segmentType"] = entry.type;
 
       // Create error info
       const errorInfo = createErrorInfo(error, entry.shortCode, segmentType);
 
+      // Use default fallback if no error boundary found
+      const effectiveFallback = fallback ?? DefaultErrorFallback;
+
       console.log(
-        `[Router] Error caught by error boundary in ${entry.shortCode}:`,
+        `[Router] Error caught by ${fallback ? "error boundary" : "default fallback"} in ${entry.shortCode}:`,
         errorInfo.message
       );
 
       // Create error segment
       const errorSegment = createErrorSegment(
         errorInfo,
-        fallback,
+        effectiveFallback,
         entry,
         params
       );
