@@ -2628,8 +2628,9 @@ export function createRSCRouter<TEnv = any>(
     const metricsStore = createMetricsStore();
 
     // Extract client state from query params and header
+    // Filter out empty strings - "".split(",") returns [""] not []
     const clientSegmentIds =
-      url.searchParams.get("_rsc_segments")?.split(",") || [];
+      url.searchParams.get("_rsc_segments")?.split(",").filter(Boolean) || [];
     const previousUrl = request.headers.get("X-RSC-Router-Client-Path");
     // Intercept source URL - tracks where an intercept was triggered from
     // Used during action revalidation to maintain intercept context

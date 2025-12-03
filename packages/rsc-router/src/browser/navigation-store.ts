@@ -205,7 +205,14 @@ export function createNavigationStore(
   function clearCacheAndBroadcast(): void {
     console.log("[Browser] Clearing cache and broadcasting to other tabs");
     clearCacheInternal();
+    broadcastInvalidation();
+  }
 
+  /**
+   * Broadcast cache invalidation to other tabs without clearing local cache
+   * Used after consolidation fetch where local cache has fresh data
+   */
+  function broadcastInvalidation(): void {
     // Only broadcast if cross-tab sync is enabled
     if (!crossTabSync) return;
 
@@ -421,6 +428,14 @@ export function createNavigationStore(
      */
     clearHistoryCache(): void {
       clearCacheAndBroadcast();
+    },
+
+    /**
+     * Broadcast cache invalidation to other tabs without clearing local cache
+     * Used after consolidation fetch where local cache has fresh data
+     */
+    broadcastCacheInvalidation(): void {
+      broadcastInvalidation();
     },
 
     // ========================================================================

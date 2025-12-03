@@ -202,6 +202,7 @@ export interface NavigationStore {
   getCachedSegments(historyKey: string): ResolvedSegment[] | undefined;
   hasHistoryCache(historyKey: string): boolean;
   clearHistoryCache(): void;
+  broadcastCacheInvalidation(): void;
 
   // Intercept context tracking (for action revalidation)
   getInterceptSourceUrl(): string | null;

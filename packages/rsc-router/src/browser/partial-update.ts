@@ -187,16 +187,27 @@ export function createPartialUpdater(
       // HMR RESILIENCE: Check if we're missing segments
       if (allSegments.length < matchedIds.length) {
         const missingCount = matchedIds.length - allSegments.length;
-        const missingIds = matchedIds.filter(
-          (id: string) => !newSegmentMap.has(id) && !currentSegmentMap.has(id)
-        );
+        const missingIds = matchedIds
+          .filter(
+            (id: string) => !newSegmentMap.has(id) && !currentSegmentMap.has(id)
+          )
+          .filter((s) => !!s);
 
         if (isRetry) {
+          console.warn("Missing ids", { missingIds });
           throw new Error(
-            `[Browser] Failed to fetch segments after retry. Missing: ${missingIds.join(", ")}`
+            `[Browser] Failed to fetch segments after retry. Missing: [${missingIds.join(", ")}]`
           );
         }
-
+        if (signal?.aborted) {
+          console.log(
+            `[Browser] Ignoring stale navigation (aborted during HMR retry)`
+          );
+          return streamComplete;
+        }
+        if (isAction) {
+          return streamComplete;
+        }
         console.warn(
           `[Browser] HMR detected: Missing ${missingCount} segments. Refetching all...`
         );
@@ -276,6 +287,7 @@ export function createPartialUpdater(
         allSegments,
         hasActiveIntercept ? { scroll: false } : undefined
       );
+      console.log("[partial-update] updating document");
 
       // Emit update to trigger React render
       // For actions, wrap in startTransition to avoid UI flickering

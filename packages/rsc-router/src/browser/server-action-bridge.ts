@@ -423,40 +423,6 @@ export function createServerActionBridge(
         `[Browser] Rebuilt ${fullSegments.length} segments from matched array`
       );
 
-      // HMR resilience check
-      if (fullSegments.length < matched.length) {
-        console.warn(`[Browser] Missing segments after action, refetching...`);
-        console.log(`[Browser] returnValue before refetch:`, returnValue);
-
-        // Save return value before refetch
-        const savedReturnValue = returnValue;
-
-        // Refetch and update UI FIRST (storeOnly - don't change URL)
-        const navTx = createNavigationTransaction(
-          store,
-          abortController.signal
-        );
-        await fetchPartialUpdate(
-          window.location.href,
-          [],
-          false,
-          abortController.signal,
-          navTx.with({ url: window.location.href, storeOnly: true }),
-          { isAction: true }
-        );
-        console.log(`[Browser] Refetch complete, now returning action result`);
-
-        // Return action result AFTER UI is refreshed
-        if (savedReturnValue && !savedReturnValue.ok) {
-          throw savedReturnValue.data;
-        }
-
-        const dataToReturn = savedReturnValue?.data;
-        console.log(`[Browser] Returning to React (HMR case):`, dataToReturn);
-        tx.commit();
-        return dataToReturn;
-      }
-
       const returnData = returnValue?.data;
 
       if (returnValue && !returnValue.ok) {
@@ -464,6 +430,11 @@ export function createServerActionBridge(
       }
 
       // Check if user navigated away during the action
+      // IMPORTANT: This check MUST come before HMR resilience check because:
+      // - If user navigated away, the current cache has segments for the NEW route
+      // - The action response expects segments from the OLD route
+      // - Missing segments are NOT due to HMR, but due to navigation
+      // - HMR refetch would use window.location.href (new route), causing mismatch
       // We compare window.location.pathname (not store.path) because:
       // - For intercepts, store.path stays as base route while URL changes
       // - For regular routes, both change but pathname is the source of truth
@@ -497,6 +468,34 @@ export function createServerActionBridge(
         return returnData;
       }
 
+      // HMR resilience check - only runs if user DIDN'T navigate away
+      // At this point we know user is still on the same route, but segments are missing
+      // This indicates actual HMR (module hot reload cleared the segment modules)
+      if (fullSegments.length < matched.length) {
+        console.warn(`[Browser] Missing segments after action (HMR detected), refetching...`);
+
+        // Refetch and update UI FIRST (storeOnly - don't change URL)
+        const navTx = createNavigationTransaction(
+          store,
+          abortController.signal
+        );
+        await fetchPartialUpdate(
+          window.location.href,
+          [],
+          false,
+          abortController.signal,
+          navTx.with({ url: window.location.href, storeOnly: true }),
+          { isAction: true }
+        );
+        console.log(`[Browser] Refetch complete (HMR), now returning action result`);
+
+        // Broadcast to other tabs (local cache has fresh data from navTx.commit)
+        store.broadcastCacheInvalidation();
+        // Skip cache clear since we just refetched fresh data
+        tx.commit(undefined, undefined, true);
+        return returnData;
+      }
+
       // Check if we need a consolidation fetch due to concurrent actions
       const consolidationSegments = tx.getConsolidationSegments();
 
@@ -521,11 +520,9 @@ export function createServerActionBridge(
         // Clear consolidation tracking before fetch
         tx.clearConsolidation();
 
-        // Clear cache and broadcast to other tabs BEFORE storing new data
-        store.clearHistoryCache();
-
         // Do consolidation fetch to get fresh data for all revalidated segments
         // This will handle the UI update via onUpdate in partial-update
+        // NOTE: Don't clear cache before fetch - it's needed for segment merging
         const navTx = createNavigationTransaction(
           store,
           abortController.signal
@@ -541,8 +538,10 @@ export function createServerActionBridge(
         );
 
         console.log(`[Browser] Consolidation fetch complete`);
+        // Broadcast to other tabs (local cache has fresh data from navTx.commit)
+        store.broadcastCacheInvalidation();
         console.log(`[Browser] Returning to React:`, returnData);
-        // Skip cache clear - consolidation fetch already handled the cache via navTx
+        // Skip the normal tx cache clear since we just cleared it
         tx.commit(undefined, undefined, true);
         return returnData;
       }

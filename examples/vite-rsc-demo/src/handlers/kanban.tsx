@@ -5,7 +5,7 @@ import { RootLayout } from "../layouts/RootLayout.js";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { KanbanLoader, CardDetailLoader } from "./kanban/loader.js";
 import { KanbanBoardContent } from "./kanban/KanbanBoard.js";
-import { CardDetailContent } from "./kanban/CardDetail.js";
+import { CardDetailContent, CardDetailSkeleton } from "./kanban/CardDetail.js";
 import { FullWidthLayout } from "./kanban/FullWidthLayout.js";
 
 // Layout component for Kanban section
@@ -57,12 +57,12 @@ function KanbanLayout() {
   );
 }
 
-// Modal wrapper for intercepted card route
-// Uses type="parallel" since intercepts render in slots like parallels
-function CardModal() {
+// Modal wrapper layout for intercepted card route
+// Uses Outlet to receive loader data context
+function CardModalWrapper() {
   return (
     <DebugSegmentWrapper type="parallel" name="CardModal (@modal)">
-      <CardDetailContent />
+      <Outlet />
     </DebugSegmentWrapper>
   );
 }
@@ -72,7 +72,7 @@ function CardModal() {
  * Uses intercepting routes to show card detail as modal during soft navigation
  */
 export default map<typeof kanbanRoutes>(
-  ({ route, layout, loader, revalidate, intercept }) => [
+  ({ route, layout, loader, revalidate, intercept, loading }) => [
     layout(<RootLayout />),
 
     // Kanban section layout with loader and intercept
@@ -91,7 +91,10 @@ export default map<typeof kanbanRoutes>(
 
       // Intercept card route during soft navigation
       // Renders in @modal slot instead of default Outlet
-      intercept("@modal", "card", <CardModal />, () => [
+      // Uses layout(<CardModalWrapper />) to properly chain loader data context via Outlet
+      intercept("@modal", "card", <CardDetailContent />, () => [
+        layout(<CardModalWrapper />),
+        loading(<CardDetailSkeleton />),
         loader(CardDetailLoader),
         revalidate(() => false),
       ]),

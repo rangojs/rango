@@ -164,6 +164,45 @@ const styles = {
 
 const allLabels = Object.keys(labelColors);
 
+// Loading skeleton for card detail modal
+export function CardDetailSkeleton() {
+  const skeletonStyle = {
+    background: "linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%)",
+    backgroundSize: "200% 100%",
+    animation: "shimmer 1.5s infinite",
+    borderRadius: "4px",
+  };
+
+  return (
+    <div style={styles.overlay}>
+      <div style={styles.modal}>
+        <div style={styles.header}>
+          <div style={{ ...skeletonStyle, height: "24px", width: "60%", flex: 1 }} />
+          <button style={styles.closeButton}>x</button>
+        </div>
+        <div style={styles.body}>
+          <div style={styles.section}>
+            <div style={styles.sectionTitle}>Column</div>
+            <div style={{ ...skeletonStyle, height: "28px", width: "100px" }} />
+          </div>
+          <div style={styles.section}>
+            <div style={styles.sectionTitle}>Description</div>
+            <div style={{ ...skeletonStyle, height: "80px", width: "100%" }} />
+          </div>
+          <div style={styles.section}>
+            <div style={styles.sectionTitle}>Labels</div>
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <div style={{ ...skeletonStyle, height: "24px", width: "60px" }} />
+              <div style={{ ...skeletonStyle, height: "24px", width: "50px" }} />
+              <div style={{ ...skeletonStyle, height: "24px", width: "70px" }} />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function CardDetailContent() {
   const { card, columnTitle } = useLoader(CardDetailLoader);
   const { navigate } = useNavigation();
