@@ -51,6 +51,40 @@ import {
 import { registerRouteMap } from "./route-map-builder.js";
 import { DefaultErrorFallback } from "./default-error-boundary.js";
 
+// Extracted router utilities
+import {
+  createMetricsStore,
+  logMetrics,
+  generateServerTiming,
+} from "./router/metrics.js";
+import {
+  findNearestErrorBoundary as findErrorBoundary,
+  findNearestNotFoundBoundary as findNotFoundBoundary,
+  createErrorInfo,
+  createErrorSegment,
+  createNotFoundInfo,
+  createNotFoundSegment,
+} from "./router/error-handling.js";
+import { createHandlerContext } from "./router/handler-context.js";
+import {
+  compilePattern,
+  findMatch as findRouteMatch,
+  traverseBack,
+} from "./router/pattern-matching.js";
+import { executeMiddleware } from "./router/middleware.js";
+import {
+  wrapLoaderWithErrorHandling,
+  setupLoaderAccess,
+  revalidate,
+} from "./router/loader-resolution.js";
+import { evaluateRevalidation } from "./router/revalidation.js";
+import { loadManifest } from "./router/manifest.js";
+import type {
+  LoaderRevalidationResult,
+  SegmentRevalidationResult,
+  ActionContext,
+} from "./router/types.js";
+
 /**
  * Router configuration options
  */
@@ -233,446 +267,36 @@ export function createRSCRouter<TEnv = any>(
   // Track all registered routes with their prefixes for href()
   const mergedRouteMap: Record<string, string> = {};
 
-  /**
-   * Create a metrics store for the request if debugPerformance is enabled
-   */
-  function createMetricsStore(): MetricsStore | undefined {
-    if (!debugPerformance) return undefined;
-    return {
-      enabled: true,
-      requestStart: performance.now(),
-      metrics: [],
-    };
-  }
+  // Wrapper to pass debugPerformance to external createMetricsStore
+  const getMetricsStore = () => createMetricsStore(debugPerformance);
 
-  /**
-   * Log metrics to console in a formatted way
-   */
-  function logMetrics(
-    method: string,
-    pathname: string,
-    metricsStore: MetricsStore
-  ): void {
-    const total = performance.now() - metricsStore.requestStart;
+  // Wrapper to pass defaults to error/notFound boundary finders
+  const findNearestErrorBoundary = (entry: EntryData | null) =>
+    findErrorBoundary(entry, defaultErrorBoundary);
 
-    // Find max label length for alignment
-    const maxLabelLen = Math.max(
-      ...metricsStore.metrics.map((m) => m.label.length),
-      20
-    );
+  const findNearestNotFoundBoundary = (entry: EntryData | null) =>
+    findNotFoundBoundary(entry, defaultNotFoundBoundary);
 
-    console.log(`[RSC Perf] ${method} ${pathname} (${total.toFixed(1)}ms)`);
-
-    for (const m of metricsStore.metrics) {
-      const paddedLabel = m.label.padEnd(maxLabelLen);
-      console.log(`  ${paddedLabel} ${m.duration.toFixed(1)}ms`);
-    }
-  }
-
-  /**
-   * Generate Server-Timing header value from metrics
-   * Format: metric-name;dur=X.XX
-   */
-  function generateServerTiming(metricsStore: MetricsStore): string {
-    return metricsStore.metrics
-      .map((m) => {
-        // Convert label to valid Server-Timing name (alphanumeric and hyphens)
-        const name = m.label
-          .replace(/:/g, "-")
-          .replace(/[^a-zA-Z0-9-]/g, "")
-          .toLowerCase();
-        return `${name};dur=${m.duration.toFixed(2)}`;
-      })
-      .join(", ");
-  }
-
-  /**
-   * Find the nearest error boundary by walking up the entry chain
-   * Also checks sibling layouts (orphan layouts) for error boundaries
-   * Returns the first fallback found, or the default error boundary if configured
-   */
-  function findNearestErrorBoundary(
-    entry: EntryData | null
-  ): ReactNode | ErrorBoundaryHandler | null {
-    let current: EntryData | null = entry;
-
-    while (current) {
-      // Check if this entry has error boundaries defined
-      if (current.errorBoundary && current.errorBoundary.length > 0) {
-        // Return the last error boundary (most recently defined takes precedence)
-        return current.errorBoundary[current.errorBoundary.length - 1];
-      }
-
-      // Check orphan layouts for error boundaries
-      // Orphan layouts are siblings that render alongside the main route chain
-      // They can define error boundaries that catch errors from routes in the same route group
-      // Check from first to last (first sibling takes precedence as the "outer" wrapper)
-      if (current.layout && current.layout.length > 0) {
-        for (const orphan of current.layout) {
-          if (orphan.errorBoundary && orphan.errorBoundary.length > 0) {
-            return orphan.errorBoundary[orphan.errorBoundary.length - 1];
-          }
-        }
-      }
-
-      current = current.parent;
-    }
-
-    // Return default error boundary if configured
-    return defaultErrorBoundary || null;
-  }
-
-  /**
-   * Find the nearest notFound boundary by walking up the entry chain
-   * Returns the first fallback found, or the default notFound boundary if configured
-   */
-  function findNearestNotFoundBoundary(
-    entry: EntryData | null
-  ): ReactNode | NotFoundBoundaryHandler | null {
-    let current: EntryData | null = entry;
-
-    while (current) {
-      // Check if this entry has notFound boundaries defined
-      if (current.notFoundBoundary && current.notFoundBoundary.length > 0) {
-        // Return the last notFound boundary (most recently defined takes precedence)
-        return current.notFoundBoundary[current.notFoundBoundary.length - 1];
-      }
-      current = current.parent;
-    }
-
-    // Return default notFound boundary if configured
-    return defaultNotFoundBoundary || null;
-  }
-
-  /**
-   * Create ErrorInfo from an error object
-   * Sanitizes error details in production
-   */
-  function createErrorInfo(
-    error: unknown,
-    segmentId: string,
-    segmentType: ErrorInfo["segmentType"]
-  ): ErrorInfo {
-    const isDev = process.env.NODE_ENV !== "production";
-
-    if (error instanceof Error) {
-      return {
-        message: isDev ? error.message : "An error occurred",
-        name: error.name,
-        code: (error as any).code,
-        stack: isDev ? error.stack : undefined,
-        cause: isDev ? error.cause : undefined,
-        segmentId,
-        segmentType,
-      };
-    }
-
-    // Non-Error thrown
-    return {
-      message: isDev ? String(error) : "An error occurred",
-      name: "Error",
-      segmentId,
-      segmentType,
-    };
-  }
-
-  /**
-   * Create an error segment with the fallback component
-   * Renders the fallback with error info and reset function
-   */
-  function createErrorSegment(
-    errorInfo: ErrorInfo,
-    fallback: ReactNode | ErrorBoundaryHandler,
-    entry: EntryData,
-    params: Record<string, string>
-  ): ResolvedSegment {
-    // Determine the component to render
-    let component: ReactNode;
-
-    if (typeof fallback === "function") {
-      // ErrorBoundaryHandler - call with error info
-      const props: ErrorBoundaryFallbackProps = {
-        error: errorInfo,
-      };
-      component = fallback(props);
-    } else {
-      // Static ReactNode fallback
-      component = fallback;
-    }
-
-    // Error segment uses the same ID as the layout that has the error boundary
-    // The error boundary content replaces the layout's outlet content
-    return {
-      id: entry.shortCode,
-      namespace: entry.id,
-      type: "error",
-      index: 0,
-      component,
-      params,
-      error: errorInfo,
-    };
-  }
-
-  /**
-   * Create NotFoundInfo from a DataNotFoundError
-   */
-  function createNotFoundInfo(
-    error: DataNotFoundError,
-    segmentId: string,
-    segmentType: NotFoundInfo["segmentType"],
-    pathname?: string
-  ): NotFoundInfo {
-    return {
-      message: error.message,
-      segmentId,
-      segmentType,
-      pathname,
-    };
-  }
-
-  /**
-   * Create a notFound segment with the fallback component
-   * Renders the fallback with not found info
-   */
-  function createNotFoundSegment(
-    notFoundInfo: NotFoundInfo,
-    fallback: ReactNode | NotFoundBoundaryHandler,
-    entry: EntryData,
-    params: Record<string, string>
-  ): ResolvedSegment {
-    // Determine the component to render
-    let component: ReactNode;
-
-    if (typeof fallback === "function") {
-      // NotFoundBoundaryHandler - call with props
-      const props: NotFoundBoundaryFallbackProps = {
-        notFound: notFoundInfo,
-      };
-      component = fallback(props);
-    } else {
-      // Static ReactNode fallback
-      component = fallback;
-    }
-
-    return {
-      id: `${entry.shortCode}.notFound`,
-      namespace: entry.id,
-      type: "notFound",
-      index: 0,
-      component,
-      params,
-      notFoundInfo,
-    };
-  }
-
-  /**
-   * Wrap a loader promise with error handling for deferred client-side resolution.
-   * Catches errors and converts them to LoaderDataResult objects that include
-   * error info and pre-rendered fallback UI when an error boundary is available.
-   */
-  function wrapLoaderWithErrorHandling<T>(
+  // Wrapper for wrapLoaderWithErrorHandling that uses router's error boundary finder
+  function wrapLoaderPromise<T>(
     promise: Promise<T>,
     entry: EntryData,
     segmentId: string,
     pathname: string
   ): Promise<LoaderDataResult<T>> {
-    return promise
-      .then(
-        (data): LoaderDataResult<T> => ({
-          __loaderResult: true,
-          ok: true,
-          data,
-        })
-      )
-      .catch((error): LoaderDataResult<T> => {
-        // Find nearest error boundary
-        const fallback = findNearestErrorBoundary(entry);
-
-        // Create error info
-        const errorInfo = createErrorInfo(error, segmentId, "loader");
-
-        if (!fallback) {
-          // No error boundary - return error result without fallback
-          // Client will throw this error
-          return {
-            __loaderResult: true,
-            ok: false,
-            error: errorInfo,
-            fallback: null,
-          };
-        }
-
-        // Render fallback on server
-        let renderedFallback: ReactNode;
-        if (typeof fallback === "function") {
-          // ErrorBoundaryHandler - call with error info
-          const props: ErrorBoundaryFallbackProps = {
-            error: errorInfo,
-          };
-          renderedFallback = fallback(props);
-        } else {
-          renderedFallback = fallback;
-        }
-
-        console.log(
-          `[Router] Loader error wrapped with boundary fallback in ${segmentId}:`,
-          errorInfo.message
-        );
-
-        return {
-          __loaderResult: true,
-          ok: false,
-          error: errorInfo,
-          fallback: renderedFallback,
-        };
-      });
-  }
-
-  /**
-   * Create HandlerContext with typed env/var/get/set
-   */
-  function createHandlerContext(
-    params: Record<string, string>,
-    request: Request,
-    searchParams: URLSearchParams,
-    pathname: string,
-    url: URL,
-    bindings: any = {}
-  ): HandlerContext<any, TEnv> {
-    // Variables object (mutable by middleware)
-    const variables: any = {};
-
-    // Filter system parameters (starting with _rsc) from searchParams
-    // This ensures handlers only see user-facing query params
-    const cleanSearchParams = new URLSearchParams();
-    searchParams.forEach((value, key) => {
-      if (!key.startsWith("_rsc")) {
-        cleanSearchParams.set(key, value);
-      }
-    });
-
-    // Create clean URL without system params
-    const cleanUrl = new URL(url);
-    cleanUrl.search = cleanSearchParams.toString();
-
-    return {
-      params,
-      request,
-      searchParams: cleanSearchParams, // Filtered params
+    return wrapLoaderWithErrorHandling(
+      promise,
+      entry,
+      segmentId,
       pathname,
-      url: cleanUrl, // Clean URL
-      env: bindings,
-      var: variables,
-      get: ((key: string) => variables[key]) as HandlerContext<
-        any,
-        TEnv
-      >["get"],
-      set: ((key: string, value: any) => {
-        variables[key] = value;
-      }) as HandlerContext<any, TEnv>["set"],
-      _originalRequest: request, // Raw request for advanced use
-      // Placeholder use() - will be replaced with actual implementation during request
-      use: () => {
-        throw new Error("ctx.use() called before loaders were initialized");
-      },
-    };
+      findNearestErrorBoundary,
+      createErrorInfo
+    );
   }
 
-  /**
-   * Match a pathname against registered routes
-   */
-  function findMatch(pathname: string): {
-    entry: RouteEntry<TEnv>;
-    routeKey: string;
-    params: Record<string, string>;
-  } | null {
-    for (const entry of routesEntries) {
-      const routeEntries = Object.entries(entry.routes);
-
-      for (const [routeKey, pattern] of routeEntries) {
-        // Join prefix and pattern, handling edge cases
-        let fullPattern: string;
-        if (entry.prefix === "" || entry.prefix === "/") {
-          fullPattern = pattern;
-        } else if (pattern === "/" || pattern === "") {
-          fullPattern = entry.prefix;
-        } else {
-          fullPattern = entry.prefix + pattern;
-        }
-        console.log(fullPattern);
-
-        const { regex, paramNames } = compilePattern(fullPattern);
-        const match = regex.exec(pathname);
-
-        if (match) {
-          const params: Record<string, string> = {};
-          paramNames.forEach((name, index) => {
-            params[name] = match[index + 1] || "";
-          });
-
-          return { entry, routeKey, params };
-        }
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Execute middleware chain with recursive chaining
-   * Returns Response if middleware short-circuits, null otherwise
-   */
-  async function executeMiddleware(
-    middleware: any[],
-    ctx: HandlerContext<any, TEnv>,
-    entryId?: string
-  ): Promise<Response | null> {
-    if (middleware.length === 0) {
-      return null;
-    }
-
-    let index = 0;
-    let earlyResponse: Response | null = null;
-
-    const next = async (): Promise<void> => {
-      if (index >= middleware.length || earlyResponse) {
-        return; // Stop if reached end or middleware returned Response
-      }
-
-      const currentIndex = index++;
-      const currentMiddleware = middleware[currentIndex];
-
-      // Track each middleware execution
-      const mwName = currentMiddleware.name || `mw${currentIndex}`;
-      const label = entryId
-        ? `middleware:${entryId}.${mwName}`
-        : `middleware:${mwName}`;
-      const done = track(label);
-
-      try {
-        const result = await currentMiddleware(ctx, next);
-        done();
-
-        // Check if middleware short-circuited with Response
-        if (result instanceof Response) {
-          earlyResponse = result;
-          console.log(
-            `[Router.executeMiddleware] Middleware returned Response - short-circuit`
-          );
-        }
-      } catch (error) {
-        done();
-        // Middleware threw error - propagate it
-        console.error(
-          `[Router.executeMiddleware] Middleware threw error:`,
-          error
-        );
-        throw error;
-      }
-    };
-
-    await next();
-    return earlyResponse; // null if all middleware called next()
+  // Wrapper for findMatch that uses routesEntries
+  function findMatch(pathname: string) {
+    return findRouteMatch(pathname, routesEntries);
   }
 
   /**
@@ -706,7 +330,7 @@ export function createRSCRouter<TEnv = any>(
         component: null, // Loaders don't render directly
         params: ctx.params,
         loaderName: loader.name,
-        loaderData: wrapLoaderWithErrorHandling(
+        loaderData: wrapLoaderPromise(
           ctx.use(loader),
           entry,
           segmentId,
@@ -829,7 +453,7 @@ export function createRSCRouter<TEnv = any>(
         component: null,
         params: ctx.params,
         loaderName: loader.name,
-        loaderData: wrapLoaderWithErrorHandling(
+        loaderData: wrapLoaderPromise(
           ctx.use(loader),
           entry,
           segmentId,
@@ -841,84 +465,6 @@ export function createRSCRouter<TEnv = any>(
 
     return { segments, matchedIds };
   }
-
-  /**
-   * Set up the use() method on handler context to lazily run loaders
-   * Loaders are started on first call to ctx.use() and memoized for subsequent calls
-   */
-  function setupLoaderAccess(
-    ctx: HandlerContext<any, TEnv>,
-    loaderPromises: Map<string, Promise<any>>
-  ): void {
-    ctx.use = <T, TLoaderParams = any>(
-      loader: LoaderDefinition<T, TLoaderParams>
-    ): Promise<T> => {
-      // Return cached promise if already started
-      if (loaderPromises.has(loader.name)) {
-        return loaderPromises.get(loader.name) as Promise<T>;
-      }
-
-      // Ensure loader has a function
-      if (!loader.fn) {
-        throw new Error(
-          `Loader "${loader.name}" has no function. This usually means the loader was defined without "use server" and the function was not included in the build.`
-        );
-      }
-
-      // Create loader context with recursive use() support
-      const loaderCtx: LoaderContext<
-        Record<string, string | undefined>,
-        TEnv
-      > = {
-        params: ctx.params,
-        request: ctx.request,
-        searchParams: ctx.searchParams,
-        pathname: ctx.pathname,
-        url: ctx.url,
-        env: ctx.env,
-        var: ctx.var,
-        get: ctx.get,
-        use: <TDep, TDepParams = any>(
-          dep: LoaderDefinition<TDep, TDepParams>
-        ): Promise<TDep> => {
-          // Recursive call - will start dep loader if not already started
-          return ctx.use(dep);
-        },
-      };
-
-      // Start loader execution with tracking
-      const doneLoader = track(`loader:${loader.name}`);
-      const promise = Promise.resolve(
-        loader.fn(loaderCtx as LoaderContext<TLoaderParams, TEnv>)
-      ).finally(() => {
-        doneLoader();
-      });
-
-      // Memoize for subsequent calls
-      loaderPromises.set(loader.name, promise);
-
-      return promise as Promise<T>;
-    };
-  }
-
-  /**
-   * Conditional execution based on revalidation
-   * Evaluates revalidation logic lazily, then executes appropriate callback
-   *
-   * @param shouldRevalidate - Async function that determines if revalidation is needed
-   * @param onRevalidate - Callback executed if revalidation returns true
-   * @param onSkip - Callback executed if revalidation returns false
-   * @returns Result from either onRevalidate or onSkip
-   */
-  async function revalidate<T>(
-    shouldRevalidate: () => Promise<boolean>,
-    onRevalidate: () => Promise<T>,
-    onSkip: () => T
-  ): Promise<T> {
-    const needsRevalidation = await shouldRevalidate();
-    return needsRevalidation ? await onRevalidate() : onSkip();
-  }
-
   /**
    * Resolve segments from EntryData
    * Executes middlewares, loaders, parallels, and handlers in correct order
@@ -1226,7 +772,7 @@ export function createRSCRouter<TEnv = any>(
 
       loaderNames.push(loader.name);
       loaderPromises.push(
-        wrapLoaderWithErrorHandling(
+        wrapLoaderPromise(
           context.use(loader),
           parentEntry,
           segmentId,
@@ -1360,7 +906,7 @@ export function createRSCRouter<TEnv = any>(
     // Loader data flows through component props (via ctx.use() in handler)
     // If no loading, await loaders to create segments for useLoader() support
     if (!parallelEntry.loading) {
-      const loaderSegments = await resolveLoaders(
+      const loaderSegments = resolveLoaders(
         parallelEntry,
         context,
         belongsToRoute,
@@ -2127,7 +1673,7 @@ export function createRSCRouter<TEnv = any>(
     const pathname = url.pathname;
 
     // Initialize metrics store for this request
-    const metricsStore = createMetricsStore();
+    const metricsStore = getMetricsStore();
 
     // Track route matching (direct recording since ALS context not yet available)
     const routeMatchStart = metricsStore ? performance.now() : 0;
@@ -2436,166 +1982,6 @@ export function createRSCRouter<TEnv = any>(
   }
 
   /**
-   * Evaluate if a segment should revalidate using soft/hard decision pattern
-   * Optimized to use prevParams directly and avoid building previous segments
-   *
-   * @param segment - Current segment to evaluate
-   * @param prevParams - Previous route params (from route match, not segment)
-   * @param getPrevSegment - Lazy function to get previous segment if needed
-   * @param request - Current request
-   * @param prevUrl - Previous URL
-   * @param nextUrl - Next URL
-   * @param revalidations - Custom revalidation functions
-   * @param routeKey - Current route key
-   * @param context - Handler context
-   * @param actionContext - Action context if triggered by action
-   */
-  async function evaluateRevalidation(
-    segment: ResolvedSegment,
-    prevParams: Record<string, string>,
-    getPrevSegment: (() => Promise<ResolvedSegment | undefined>) | null,
-    request: Request,
-    prevUrl: URL,
-    nextUrl: URL,
-    revalidations: Array<{ name: string; fn: any }>,
-    routeKey: string,
-    context: HandlerContext<any, TEnv>,
-    actionContext?: {
-      actionId?: string;
-      actionUrl?: URL;
-      actionResult?: any;
-      formData?: FormData;
-    }
-  ): Promise<boolean> {
-    const nextParams = segment.params || {};
-    const paramsChanged =
-      Object.keys(nextParams).length !== Object.keys(prevParams).length ||
-      Object.keys(nextParams).some(
-        (key) => nextParams[key] !== prevParams[key]
-      );
-
-    // Calculate default revalidation based on segment type and request method
-    let defaultShouldRevalidate: boolean;
-
-    if (request.method === "POST") {
-      // Actions: revalidate segments that belong to the route, skip parent chain
-      if (segment.type === "route") {
-        // Route segment always revalidates on actions
-        defaultShouldRevalidate = true;
-      } else if (segment.belongsToRoute) {
-        // Segment belongs to route (orphan layouts/parallels) - revalidate
-        defaultShouldRevalidate = true;
-      } else {
-        // Parent chain segment (shared layouts/parallels) - don't revalidate
-        defaultShouldRevalidate = false;
-      }
-    } else {
-      // Navigation (GET): Conservative defaults to minimize unnecessary revalidations
-      // Only the route segment revalidates by default - all others require explicit opt-in
-
-      if (segment.type === "route") {
-        // Route segments revalidate when params change
-        // Routes are the primary param-dependent content and always need updates
-        defaultShouldRevalidate = paramsChanged;
-        if (paramsChanged) {
-          console.log(
-            `[Router.evaluateRevalidation] ${segment.id}: ROUTE - params changed, revalidating`
-          );
-        }
-      } else {
-        // Layouts and parallels default to no revalidation
-        // Cannot assume these segments depend on params without explicit declaration
-        // Use custom revalidation functions to opt-in when needed
-        defaultShouldRevalidate = false;
-        console.log(
-          `[Router.evaluateRevalidation] ${
-            segment.id
-          }: ${segment.type.toUpperCase()} segment - skipping (override with custom revalidation if needed)`
-        );
-      }
-    }
-
-    // No custom revalidations defined - return default behavior without prev segment
-    if (revalidations.length === 0) {
-      if (defaultShouldRevalidate) {
-        console.log(
-          `[Router.evaluateRevalidation] ${segment.id}: PARAMS CHANGED (default) - revalidating`,
-          { prev: prevParams, next: nextParams }
-        );
-      } else {
-        console.log(
-          `[Router.evaluateRevalidation] ${segment.id}: UNCHANGED (default) - skipping`
-        );
-      }
-      return defaultShouldRevalidate;
-    }
-
-    // Custom revalidations exist - may need full prev segment
-    // Lazy load prev segment only if getPrevSegment provided
-    const prevSegment = getPrevSegment ? await getPrevSegment() : null;
-
-    // Execute revalidation functions with soft/hard decision pattern
-    let currentSuggestion = defaultShouldRevalidate;
-
-    for (const { name, fn } of revalidations) {
-      const result = fn({
-        currentParams: prevSegment?.params || prevParams, // Use segment params if available, else route params
-        currentUrl: prevUrl,
-        nextParams,
-        nextUrl,
-        defaultShouldRevalidate: currentSuggestion,
-        context,
-        // Segment metadata (which segment is being evaluated)
-        segmentType: segment.type,
-        layoutName: segment.layoutName,
-        slotName: segment.slot,
-        // Action context (only populated when triggered by server action)
-        actionId: actionContext?.actionId,
-        actionUrl: actionContext?.actionUrl,
-        actionResult: actionContext?.actionResult,
-        formData: actionContext?.formData,
-        method: request.method, // GET for navigation, POST for actions
-        routeName: routeKey, // User-friendly route name (e.g., "products.detail")
-      });
-
-      // Check return type:
-      // - boolean: hard decision, short-circuit immediately
-      // - { defaultShouldRevalidate: boolean }: soft decision, update suggestion and continue
-      // - null/undefined: use default behavior (equivalent to returning { defaultShouldRevalidate })
-      if (typeof result === "boolean") {
-        // Hard decision - short-circuit
-        console.log(
-          `[Router.evaluateRevalidation] ${segment.id}: REVALIDATE (${name}) HARD: ${result}`
-        );
-        return result;
-      } else if (
-        result &&
-        typeof result === "object" &&
-        "defaultShouldRevalidate" in result
-      ) {
-        // Soft decision - update suggestion and continue
-        currentSuggestion = result.defaultShouldRevalidate;
-        console.log(
-          `[Router.evaluateRevalidation] ${segment.id}: REVALIDATE (${name}) SOFT: ${currentSuggestion}`
-        );
-      } else if (result === null || result === undefined) {
-        // Defer to default - equivalent to { defaultShouldRevalidate: currentSuggestion }
-        // This means "I don't care, use whatever the default is"
-        console.log(
-          `[Router.evaluateRevalidation] ${segment.id}: REVALIDATE (${name}) DEFER to default: ${currentSuggestion}`
-        );
-        // currentSuggestion stays the same, continue to next function
-      }
-    }
-
-    // All revalidators completed - use final suggestion
-    console.log(
-      `[Router.evaluateRevalidation] ${segment.id}: Final decision: ${currentSuggestion}`
-    );
-    return currentSuggestion;
-  }
-
-  /**
    * Match partial request with revalidation
    * Optimized with lazy evaluation - only builds previous segments if needed
    */
@@ -2613,7 +1999,7 @@ export function createRSCRouter<TEnv = any>(
     const pathname = url.pathname;
 
     // Initialize metrics store for this request
-    const metricsStore = createMetricsStore();
+    const metricsStore = getMetricsStore();
 
     // Extract client state from query params and header
     // Filter out empty strings - "".split(",") returns [""] not []
@@ -2984,131 +2370,4 @@ export function createRSCRouter<TEnv = any>(
   };
 
   return router;
-}
-
-/**
- * Compile a route pattern to regex
- */
-function compilePattern(pattern: string): {
-  regex: RegExp;
-  paramNames: string[];
-} {
-  console.log("pattern", pattern);
-
-  const paramNames: string[] = [];
-  const regexPattern = pattern
-    .split("/")
-    .map((segment) => {
-      if (segment.startsWith(":")) {
-        const paramName = segment.slice(1);
-        paramNames.push(paramName);
-        return "([^/]+)";
-      }
-      if (segment === "*") {
-        paramNames.push("*");
-        return "(.*)";
-      }
-      return segment;
-    })
-    .join("/");
-
-  return {
-    regex: new RegExp(`^${regexPattern}$`),
-    paramNames,
-  };
-}
-/**
- * Traverse from entry to bottom to top, yielding each EntryData
- * e.g. {child -> parent -> grandparent ...}
- */
-function* traverseBack(entry: EntryData): Generator<EntryData> {
-  let current: EntryData | null = entry;
-  const items = [] as EntryData[];
-  while (current !== null) {
-    items.push(current); // Move up to next parent
-    current = current.parent;
-  }
-  for (let i = items.length - 1; i >= 0; i--) {
-    yield items[i];
-  }
-}
-
-/**
- * Load manifest from route entry with AsyncLocalStorage context
- * Handles lazy imports, unwrapping, and validation
- */
-async function loadManifest(
-  entry: RouteEntry<any>,
-  routeKey: string,
-  path: string,
-  metricsStore?: MetricsStore,
-  isSSR?: boolean
-): Promise<EntryData> {
-  const Store = getContext().getOrCreateStore(routeKey);
-
-  // Set mount index in store for unique shortCode prefixes
-  Store.mountIndex = entry.mountIndex;
-
-  // Set isSSR flag so loading() can check if we're in SSR
-  Store.isSSR = isSSR;
-
-  // Attach metrics store to context if provided
-  if (metricsStore) {
-    Store.metrics = metricsStore;
-  }
-
-  // Clear manifest before rebuilding to prevent stale entry mutations
-  Store.manifest.clear();
-
-  try {
-    const useItems = await getContext().runWithStore(
-      Store,
-      Store.namespace || "#router",
-      Store.parent,
-      async () => {
-        const load = await entry.handler();
-        if (
-          load &&
-          load !== null &&
-          typeof load === "object" &&
-          "default" in load
-        ) {
-          return load.default();
-        }
-        if (typeof load === "function") {
-          return load();
-        }
-        return load;
-      }
-    );
-
-    invariant(
-      useItems && useItems.length > 0,
-      "Did not receive any handler from router.map()"
-    );
-    invariant(
-      useItems.some((item) => item.type === "layout"),
-      "Top-level handler must be a layout"
-    );
-
-    invariant(
-      Store.manifest.has(routeKey),
-      `Route must be registered for ${routeKey}`
-    );
-
-    return Store.manifest.get(routeKey)!;
-  } catch (e) {
-    throw new RouteNotFoundError(
-      `Failed to load route handlers for ${path}: ${(e as Error).message}`,
-      {
-        cause: {
-          error: e,
-          state: {
-            path,
-            routeKey,
-          },
-        },
-      }
-    );
-  }
 }
