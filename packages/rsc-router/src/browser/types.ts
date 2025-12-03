@@ -113,7 +113,7 @@ export interface SegmentState {
  * Navigation update emitted when UI should re-render
  */
 export interface NavigationUpdate {
-  root: ReactNode;
+  root: ReactNode | Promise<ReactNode>;
   metadata: RscMetadata;
 }
 

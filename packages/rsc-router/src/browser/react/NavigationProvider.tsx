@@ -5,6 +5,7 @@ import React, {
   useEffect,
   useCallback,
   useMemo,
+  use,
   type ReactNode,
 } from "react";
 import {
@@ -118,9 +119,12 @@ export function NavigationProvider({
     );
   }, []);
 
+  // Handle promise case - use() will suspend until resolved
+  const root = payload.root instanceof Promise ? use(payload.root) : payload.root;
+
   return (
     <NavigationStoreContext.Provider value={contextValue}>
-      {payload.root}
+      {root}
     </NavigationStoreContext.Provider>
   );
 }
