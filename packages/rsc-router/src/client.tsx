@@ -2,6 +2,7 @@
 
 import {
   Component,
+  createElement,
   useContext,
   useMemo,
   Suspense,
@@ -514,9 +515,9 @@ export class ErrorBoundary extends Component<
         segmentType: "route",
       };
 
-      // Render fallback
+      // Render fallback - use createElement so hooks work in function fallbacks
       if (typeof fallback === "function") {
-        return fallback({ error: errorInfo, reset: this.reset });
+        return createElement(fallback, { error: errorInfo, reset: this.reset });
       }
 
       return fallback;

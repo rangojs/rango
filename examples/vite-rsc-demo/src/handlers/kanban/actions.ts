@@ -12,6 +12,16 @@ export async function addCard(
 ): Promise<Card> {
   await new Promise((resolve) => setTimeout(resolve, 2000));
 
+  // Error trigger: adding to error column
+  if (columnId === "col-error") {
+    throw new Error("Cannot add cards to the Error Test column - this is a simulated server error");
+  }
+
+  // Error trigger: card named "error"
+  if (title.trim().toLowerCase() === "error") {
+    throw new Error("Card title 'error' triggers a simulated server error");
+  }
+
   const cardsInColumn = boardStore.cards.filter((c) => c.columnId === columnId);
   const maxOrder = cardsInColumn.length > 0
     ? Math.max(...cardsInColumn.map((c) => c.order))
@@ -43,6 +53,11 @@ export async function moveCard(
   targetIndex: number
 ): Promise<Card | null> {
   await new Promise((resolve) => setTimeout(resolve, 2000));
+
+  // Error trigger: moving to error column
+  if (targetColumnId === "col-error") {
+    throw new Error("Cannot move cards to the Error Test column - this is a simulated server error");
+  }
 
   const card = boardStore.cards.find((c) => c.id === cardId);
   if (!card) {
@@ -93,6 +108,11 @@ export async function updateCard(
   updates: { title?: string; description?: string; labels?: string[] }
 ): Promise<Card | null> {
   await new Promise((resolve) => setTimeout(resolve, 2000));
+
+  // Error trigger: renaming to "error"
+  if (updates.title?.trim().toLowerCase() === "error") {
+    throw new Error("Card title 'error' triggers a simulated server error");
+  }
 
   const card = boardStore.cards.find((c) => c.id === cardId);
   if (!card) {

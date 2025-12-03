@@ -33,6 +33,7 @@ const initialBoard: Board = {
     { id: "col-progress", title: "In Progress", order: 1 },
     { id: "col-review", title: "In Review", order: 2 },
     { id: "col-done", title: "Done", order: 3 },
+    { id: "col-error", title: "Error Test", order: 4 },
   ],
   cards: [
     {

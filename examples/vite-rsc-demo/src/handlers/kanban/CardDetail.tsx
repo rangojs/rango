@@ -214,6 +214,11 @@ export function CardDetailContent() {
   const [editDescription, setEditDescription] = useState(card.description);
   const [selectedLabels, setSelectedLabels] = useState<string[]>(card.labels);
 
+  // Client-side error trigger: if description contains "error", throw during render
+  if (card.description.toLowerCase().includes("error")) {
+    throw new Error("Card description contains 'error' - this is a simulated client-side error");
+  }
+
   // Sync labels when card data changes (e.g., from cross-tab sync)
   useEffect(() => {
     setSelectedLabels(card.labels);
