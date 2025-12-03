@@ -3,12 +3,5 @@
 import { useEffect, type ReactNode } from "react";
 
 export function FullWidthLayout({ children }: { children: ReactNode }) {
-  useEffect(() => {
-    document.body.classList.add("full-width");
-    return () => {
-      document.body.classList.remove("full-width");
-    };
-  }, []);
-
-  return <>{children}</>;
+  return <div style={{ width: "100%", minHeight: "100%" }}>{children}</div>;
 }

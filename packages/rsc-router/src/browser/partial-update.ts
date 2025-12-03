@@ -355,7 +355,7 @@ export function createPartialUpdater(
       if (isAction) {
         startTransition(async () => {
           onUpdate({
-            root: await payload.root,
+            root: payload.root,
             metadata: payload.metadata!,
           });
         });

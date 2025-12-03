@@ -47,7 +47,7 @@ export function RootLayout() {
           }
         `}</style>
       </head>
-      <body>
+      <body className="full-width">
         <nav>
           <Link to={href("index")} prefetch="hover">
             Home
