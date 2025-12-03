@@ -234,28 +234,33 @@ export function createNavigationStore(
     if (channel) {
       channel.onmessage = (event) => {
         if (event.data?.type === "invalidate") {
+          const mutatedPath = event.data.path;
+          const currentPath = window.location.pathname;
+
+          // Only invalidate cache for related paths
+          // Related means: exact match, or one is a prefix of the other
+          // This handles intercepts where /kanban and /kanban/card/1 share data
+          const isRelated = mutatedPath && (
+            mutatedPath === currentPath ||
+            currentPath.startsWith(mutatedPath + "/") ||
+            mutatedPath.startsWith(currentPath + "/")
+          );
+
+          if (!isRelated) {
+            // Unrelated route - ignore invalidation
+            return;
+          }
+
           console.log("[Browser] Cache invalidated by another tab");
           clearCacheInternal();
 
-          // Auto-refresh if enabled and we're on a related path
-          // Related means: exact match, or one is a prefix of the other
-          // This handles intercepts where /kanban and /kanban/card/1 share data
+          // Auto-refresh if enabled
           if (crossTabAutoRefresh) {
-            const mutatedPath = event.data.path;
-            const currentPath = window.location.pathname;
-            const isRelated = mutatedPath && (
-              mutatedPath === currentPath ||
-              currentPath.startsWith(mutatedPath + "/") ||
-              mutatedPath.startsWith(currentPath + "/")
+            window.dispatchEvent(
+              new CustomEvent("rsc-router:cross-tab-refresh", {
+                detail: { path: mutatedPath },
+              })
             );
-            if (isRelated) {
-              // Dispatch event for navigation bridge to handle refresh
-              window.dispatchEvent(
-                new CustomEvent("rsc-router:cross-tab-refresh", {
-                  detail: { path: mutatedPath },
-                })
-              );
-            }
           }
         }
       };
