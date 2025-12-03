@@ -90,3 +90,47 @@ export const ShopLayoutSkeleton = () => (
     </div>
   </div>
 );
+
+export const ProductModalSkeleton = () => (
+  <div
+    style={{
+      position: "fixed",
+      inset: 0,
+      background: "rgba(0,0,0,0.5)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 1000,
+    }}
+  >
+    <div
+      style={{
+        background: "white",
+        borderRadius: "12px",
+        width: "90%",
+        maxWidth: "500px",
+        overflow: "hidden",
+        boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)",
+      }}
+    >
+      <div
+        style={{
+          padding: "1.5rem",
+          background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+        }}
+      >
+        <div style={{ ...skeletonStyle, height: "24px", width: "60%", background: "rgba(255,255,255,0.3)" }} />
+      </div>
+      <div style={{ padding: "1.5rem" }}>
+        <div style={{ ...skeletonStyle, height: "32px", width: "40%", marginBottom: "1rem" }} />
+        <div style={{ ...skeletonStyle, height: "16px", width: "100%", marginBottom: "0.5rem" }} />
+        <div style={{ ...skeletonStyle, height: "16px", width: "90%", marginBottom: "0.5rem" }} />
+        <div style={{ ...skeletonStyle, height: "16px", width: "75%", marginBottom: "1.5rem" }} />
+        <div style={{ display: "flex", gap: "0.75rem" }}>
+          <div style={{ ...skeletonStyle, height: "44px", flex: 1 }} />
+          <div style={{ ...skeletonStyle, height: "44px", width: "80px" }} />
+        </div>
+      </div>
+    </div>
+  </div>
+);

@@ -5,7 +5,9 @@ import {
   useContext,
   useMemo,
   Suspense,
+  cloneElement,
   type ReactNode,
+  type ReactElement,
 } from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
 import {
@@ -81,6 +83,13 @@ export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
       content = segment.component ?? null;
     }
 
+    // If segment has a layout, wrap content with it
+    // The layout wraps both the content AND the Suspense/loading
+    if (segment.layout) {
+      const layoutElement = segment.layout as ReactElement<{ children?: ReactNode }>;
+      return cloneElement(layoutElement, { children: content });
+    }
+
     return content;
   }
 
@@ -142,6 +151,12 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
     );
   } else {
     content = segment.component ?? null;
+  }
+
+  // If segment has a layout, wrap content with it
+  if (segment.layout) {
+    const layoutElement = segment.layout as ReactElement<{ children?: ReactNode }>;
+    return cloneElement(layoutElement, { children: content });
   }
 
   return content;

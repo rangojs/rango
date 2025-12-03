@@ -22,11 +22,19 @@ export interface PartialUpdateConfig {
 }
 
 /**
+ * Options that can override the pre-configured commit settings
+ */
+export interface CommitOverrides {
+  /** Override scroll behavior (e.g., disable for intercepts) */
+  scroll?: boolean;
+}
+
+/**
  * Commit context passed to partial updater for URL updates
  * Transaction encapsulates all store mutations for atomic commit
  */
 export interface PartialUpdateCommit {
-  commit(segmentIds: string[], segments: ResolvedSegment[]): void;
+  commit(segmentIds: string[], segments: ResolvedSegment[], overrides?: CommitOverrides): void;
 }
 
 /**
@@ -150,7 +158,10 @@ export function createPartialUpdater(
       // - New/changed segments from server response (diff)
       // - Unchanged segments from current page's cache
       const matchedIds = matched || [];
-      const fullSegments = matchedIds
+      console.log(`[Browser] matchedIds: ${matchedIds.join(", ")}`);
+      console.log(`[Browser] currentSegmentMap keys: ${[...currentSegmentMap.keys()].join(", ")}`);
+      console.log(`[Browser] newSegmentMap keys: ${[...newSegmentMap.keys()].join(", ")}`);
+      const allSegments = matchedIds
         .map((id: string) => {
           // First check server response (new/updated segments)
           const fromServer = newSegmentMap.get(id);
@@ -165,8 +176,8 @@ export function createPartialUpdater(
         .filter(Boolean) as ResolvedSegment[];
 
       // HMR RESILIENCE: Check if we're missing segments
-      if (fullSegments.length < matchedIds.length) {
-        const missingCount = matchedIds.length - fullSegments.length;
+      if (allSegments.length < matchedIds.length) {
+        const missingCount = matchedIds.length - allSegments.length;
         const missingIds = matchedIds.filter(
           (id: string) => !newSegmentMap.has(id) && !currentSegmentMap.has(id)
         );
@@ -185,9 +196,14 @@ export function createPartialUpdater(
         return fetchPartialUpdate(url, [], true, signal, tx, { isAction });
       }
 
-      console.log(
-        `[Browser] Merged segments: ${fullSegments.map((s) => s.id).join(", ")}`
-      );
+      // INTERCEPT HANDLING: Separate intercept segments for explicit injection
+      // Intercept segments have namespace starting with "intercept:" or ID containing .@
+      // This makes the flow clearer and easier to debug
+      const isInterceptSegment = (s: ResolvedSegment) =>
+        s.namespace?.startsWith("intercept:") || (s.type === "parallel" && s.id.includes(".@"));
+
+      const interceptSegments = allSegments.filter(isInterceptSegment);
+      const mainSegments = allSegments.filter((s) => !isInterceptSegment(s));
 
       if (signal?.aborted) {
         console.log(
@@ -198,11 +214,14 @@ export function createPartialUpdater(
 
       // Rebuild tree on client (await for loader data resolution)
       // Race against abort signal to allow cancellation during loader awaiting
-      console.log("[partial-update] Starting renderSegments...");
-      const startTime = Date.now();
+      // Pass intercept segments separately for explicit handling
+      const renderOptions = {
+        isAction,
+        interceptSegments: interceptSegments.length > 0 ? interceptSegments : undefined,
+      };
       const newTree = await (signal
         ? Promise.race([
-            renderSegments(fullSegments, { isAction }),
+            renderSegments(mainSegments, renderOptions),
             new Promise<never>((_, reject) => {
               if (signal.aborted) {
                 reject(new DOMException("Navigation aborted", "AbortError"));
@@ -212,10 +231,7 @@ export function createPartialUpdater(
               });
             }),
           ])
-        : renderSegments(fullSegments, { isAction }));
-      console.log(
-        `[partial-update] renderSegments completed in ${Date.now() - startTime}ms`
-      );
+        : renderSegments(mainSegments, renderOptions));
 
       // Final abort check before committing - another navigation may have started
       if (signal?.aborted) {
@@ -225,8 +241,15 @@ export function createPartialUpdater(
         return streamComplete;
       }
 
+      // Check if this is an intercept response (any slot is active)
+      // If so, disable scroll to keep the current scroll position
+      const hasActiveIntercept = payload.metadata?.slots
+        ? Object.values(payload.metadata.slots).some(slot => slot.active)
+        : false;
+
       // Commit navigation - transaction handles all store mutations atomically
-      tx.commit(matchedIds, fullSegments);
+      // Disable scroll for intercept responses to keep scroll position
+      tx.commit(matchedIds, allSegments, hasActiveIntercept ? { scroll: false } : undefined);
 
       // Emit update to trigger React render
       // For actions, wrap in startTransition to avoid UI flickering

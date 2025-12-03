@@ -1,16 +1,47 @@
-import { createElement, Fragment, type ReactNode } from "react";
+import { createElement, type ReactNode } from "react";
 import { OutletProvider } from "./client.js";
-import type { ResolvedSegment } from "./types.js";
+import type { ResolvedSegment, LoaderDataResult } from "./types.js";
 import { isLoaderDataResult } from "./types.js";
 import { invariant } from "./errors.js";
-import { RouteContentWrapper } from "./route-content-wrapper.js";
+import {
+  RouteContentWrapper,
+  LoaderBoundary,
+} from "./route-content-wrapper.js";
 
 /**
- * Check if code is running in browser environment
- * Checks both window and document to handle edge cases (SSR, workers, etc.)
+ * Resolve loader data from raw results, unwrapping LoaderDataResult wrappers
  */
-function isBrowser(): boolean {
-  return typeof window !== "undefined" && typeof document !== "undefined";
+function resolveLoaderData(
+  resolvedData: any[],
+  loaderNames: string[]
+): { loaderData: Record<string, any>; errorFallback: ReactNode } {
+  const loaderData: Record<string, any> = {};
+  let errorFallback: ReactNode = null;
+
+  for (let i = 0; i < loaderNames.length; i++) {
+    const name = loaderNames[i];
+    const result = resolvedData[i];
+
+    if (!isLoaderDataResult(result)) {
+      // Legacy format - direct data
+      loaderData[name] = result;
+      continue;
+    }
+
+    if (result.ok) {
+      loaderData[name] = result.data;
+      continue;
+    }
+
+    // Error case
+    if (result.fallback) {
+      errorFallback = result.fallback;
+    } else {
+      throw new Error(result.error.message);
+    }
+  }
+
+  return { loaderData, errorFallback };
 }
 
 /**
@@ -23,6 +54,23 @@ export interface RenderSegmentsOptions {
    * UI flickering/suspense during optimistic updates.
    */
   isAction?: boolean;
+
+  /**
+   * If true, force awaiting all loaders instead of streaming with Suspense.
+   * Used for popstate (back/forward) navigation where we want instant rendering
+   * from cache without showing loading skeletons.
+   */
+  forceAwait?: boolean;
+
+  /**
+   * Intercept segments to inject into the tree.
+   * These are parallel segments from intercept routes that need to be
+   * associated with their parent layout's named outlet.
+   *
+   * Passed separately for explicit handling - makes the flow clearer
+   * and easier to debug than relying on ID pattern matching.
+   */
+  interceptSegments?: ResolvedSegment[];
 }
 
 /**
@@ -68,9 +116,10 @@ export async function renderSegments(
   segments: ResolvedSegment[],
   options?: RenderSegmentsOptions
 ): Promise<ReactNode> {
-  const { isAction = false } = options || {};
-  // Separate segments by type
-  const tree = segmentTreeWalk(segments);
+  const { interceptSegments, forceAwait } = options || {};
+
+  // Separate segments by type, passing intercept segments for explicit injection
+  const tree = segmentTreeWalk(segments, interceptSegments);
   // Render content segments as siblings
   let content: ReactNode = null;
   for (const node of tree) {
@@ -104,73 +153,12 @@ export async function renderSegments(
         : "";
     const key = `${paramStr ? `${id}-${paramStr}` : id}`;
 
-    console.log("node > ", { key, node });
-
-    // Extract loader data from loader segments
-    // Each loader segment has loaderName and loaderData (may be Promise<LoaderDataResult>)
-    // Await all loader promises in parallel for this node
-    const loaderData: Record<string, any> = {};
-    let loaderErrorFallback: ReactNode = null;
+    // Get loader entries for this node
     const loaderEntries = node.loaders.filter(
       (loader) => loader.loaderName && loader.loaderData !== undefined
     );
 
-    if (loaderEntries.length > 0) {
-      // Debug: Check loader data types
-      console.log(
-        "[renderSegments] Loader entries:",
-        loaderEntries.map((l) => ({
-          name: l.loaderName,
-          isPromise: l.loaderData instanceof Promise,
-          isThenable: l.loaderData && typeof l.loaderData.then === "function",
-          type: typeof l.loaderData,
-          constructor: l.loaderData?.constructor?.name,
-        }))
-      );
-
-      // Await all loader data in parallel
-      const resolvedData = await Promise.all(
-        loaderEntries.map((loader) =>
-          loader.loaderData instanceof Promise
-            ? loader.loaderData
-            : Promise.resolve(loader.loaderData)
-        )
-      );
-
-      console.log("[renderSegments] Loaders resolved");
-
-      // Process results, checking for wrapped loader results with errors
-      loaderEntries.forEach((loader, i) => {
-        const result = resolvedData[i];
-
-        if (isLoaderDataResult(result)) {
-          if (result.ok) {
-            // Success - extract the data
-            loaderData[loader.loaderName!] = result.data;
-          } else {
-            // Error - check for fallback
-            if (result.fallback) {
-              // Use the pre-rendered fallback from server
-              loaderErrorFallback = result.fallback;
-              console.log(
-                `[renderSegments] Loader error with fallback for ${loader.loaderName}:`,
-                result.error.message
-              );
-            } else {
-              // No fallback - throw the error
-              console.error(
-                `[renderSegments] Loader error without fallback for ${loader.loaderName}:`,
-                result.error.message
-              );
-              throw new Error(result.error.message);
-            }
-          }
-        } else {
-          // Legacy format - direct data (for backwards compatibility)
-          loaderData[loader.loaderName!] = result;
-        }
-      });
-    }
+    // Determine the component content (with or without Suspense wrapper)
     let nodeContent: ReactNode =
       loading || loading === null || component instanceof Promise
         ? createElement(RouteContentWrapper, {
@@ -182,18 +170,66 @@ export async function renderSegments(
             fallback: loading,
           })
         : component;
-    // If any loader had an error with a fallback, replace the segment content
-    if (loaderErrorFallback) {
-      nodeContent = loaderErrorFallback;
+
+    // Common props for OutletProvider
+    const outletContent: ReactNode =
+      node.segment.type === "layout" ? content : null;
+
+    // No loaders - create OutletProvider directly
+    if (loaderEntries.length === 0) {
+      content = createElement(OutletProvider, {
+        key,
+        content: outletContent,
+        segment: node.segment,
+        parallel: node.parallel,
+        children: nodeContent,
+      });
+      continue;
     }
 
+    // Has loaders - prepare loader data
+    const loaderNames = loaderEntries.map((loader) => loader.loaderName!);
+    const loaderDataPromise = Promise.all(
+      loaderEntries.map((loader) =>
+        loader.loaderData instanceof Promise
+          ? loader.loaderData
+          : Promise.resolve(loader.loaderData)
+      )
+    );
+
+    // Use LoaderBoundary for streaming when loading skeleton is defined
+    // If forceAwait was set, promises are pre-resolved so LoaderBoundary won't suspend
+    if (loading) {
+      content = createElement(LoaderBoundary, {
+        key: `loader-boundary-${key}`,
+        loaderDataPromise: forceAwait
+          ? await loaderDataPromise
+          : loaderDataPromise,
+        loaderNames,
+        fallback: loading,
+        outletKey: key,
+        outletContent,
+        segment: node.segment,
+        parallel: node.parallel,
+        children: nodeContent,
+      });
+      continue;
+    }
+
+    // No loading skeleton - await loaders and render directly
+    const resolvedData = await loaderDataPromise;
+    const { loaderData, errorFallback } = resolveLoaderData(
+      resolvedData,
+      loaderNames
+    );
+
     content = createElement(OutletProvider, {
-      key: key,
-      content: node.segment.type === "layout" ? content : null,
+      key,
+      content: outletContent,
       segment: node.segment,
       parallel: node.parallel,
       loaderData: Object.keys(loaderData).length > 0 ? loaderData : undefined,
-      children: nodeContent,
+      children: errorFallback ?? nodeContent,
     });
   }
 
@@ -220,8 +256,18 @@ export async function renderSegments(
  * Loader segments are also grouped by parent:
  * - "L0D0.cart" belongs to "L0"
  * - Loaders don't render directly, their data is passed to context
+ *
+ * Intercept segments are passed separately for explicit handling:
+ * - They are injected into the correct parent's parallel array
+ * - This makes the flow clearer than relying on ID pattern matching
+ *
+ * @param segments - Main segments from the route tree
+ * @param interceptSegments - Optional intercept segments to inject
  */
-function* segmentTreeWalk(segments: ResolvedSegment[]): Generator<{
+function* segmentTreeWalk(
+  segments: ResolvedSegment[],
+  interceptSegments?: ResolvedSegment[]
+): Generator<{
   segment: ResolvedSegment;
   parallel: ResolvedSegment[];
   loaders: ResolvedSegment[];
@@ -255,6 +301,28 @@ function* segmentTreeWalk(segments: ResolvedSegment[]): Generator<{
       // Layout, route, error, and notFound segments are all rendered in the tree
       // Error/notFound segments replace the failed segment with fallback UI
       nonParallels.push(segment);
+    }
+  }
+
+  // INTERCEPT SEGMENTS: Explicitly inject into parent's parallel array
+  // Intercept segments are passed separately for explicit handling
+  if (interceptSegments && interceptSegments.length > 0) {
+    for (const intercept of interceptSegments) {
+      if (intercept.type === "parallel" && intercept.slot) {
+        // Extract parent ID from intercept ID (e.g., "M4L0L0L2.@modal" → "M4L0L0L2")
+        const parentId = intercept.id.split(".")[0];
+        if (!parallelsByParent.has(parentId)) {
+          parallelsByParent.set(parentId, []);
+        }
+        parallelsByParent.get(parentId)!.push(intercept);
+      } else if (intercept.type === "loader") {
+        // Intercept loaders - extract parent from loader ID
+        const parentId = intercept.id.split("D")[0];
+        if (!loadersByParent.has(parentId)) {
+          loadersByParent.set(parentId, []);
+        }
+        loadersByParent.get(parentId)!.push(intercept);
+      }
     }
   }
 

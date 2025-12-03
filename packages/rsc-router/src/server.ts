@@ -51,6 +51,7 @@ export type {
   ResolvedSegment,
   SegmentMetadata,
   MatchResult,
+  SlotState,
   ExtractParams,
   GenericParams,
   RevalidateParams,

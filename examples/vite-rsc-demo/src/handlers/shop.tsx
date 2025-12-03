@@ -76,8 +76,24 @@ const DummyLayout = (
  * - AsyncLocalStorage for implicit context
  * - Full type inference for inline handlers
  */
+// Modal components for intercepted product route
+import {
+  ModalWrapper,
+  ProductModalContent,
+  ProductModalContentSkeleton,
+} from "./shop/components/ProductModal.js";
+
 export default map<typeof shopRoutes>(
-  ({ route, layout, middleware, parallel, revalidate, loader, loading }) => [
+  ({
+    route,
+    layout,
+    middleware,
+    parallel,
+    revalidate,
+    loader,
+    loading,
+    intercept,
+  }) => [
     //#region Global Layout & Middleware
     // Global root layout wraps everything
     // #1 $layout.0
@@ -133,6 +149,20 @@ export default map<typeof shopRoutes>(
                 </div>
               ),
             }),
+
+            // Intercept product detail - shows modal during soft navigation
+            // Hard navigation (direct URL) shows the full ProductsDetailRoute
+            // layout() wraps both content and loading skeleton with ModalWrapper
+            // intercept(
+            //   "@modal",
+            //   "products.detail.view",
+            //   <ProductModalContent />,
+            //   () => [
+            //     layout(<ModalWrapper />),
+            //     loading(<ProductModalContentSkeleton />),
+            //     loader(ProductLoader),
+            //   ]
+            // ),
 
             // Homepage
             route("index", IndexRoute, () => [

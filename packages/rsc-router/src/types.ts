@@ -554,6 +554,7 @@ export interface ResolvedSegment {
   index: number;
   component: ReactNode | Promise<ReactNode>; // Component or handler promise
   loading?: ReactNode; // Loading component for this segment (shown during navigation)
+  layout?: ReactNode; // Layout element to wrap content (used by intercept segments)
   params?: Record<string, string>;
   slot?: string; // For parallel segments: '@sidebar', '@modal', etc.
   belongsToRoute?: boolean; // True if segment belongs to the matched route (route itself + its children)
@@ -586,6 +587,21 @@ export interface SegmentMetadata {
 // as properties on the route() function
 
 /**
+ * State of a named slot (e.g., @modal, @sidebar)
+ * Used for intercepting routes where slots render alternative content
+ */
+export interface SlotState {
+  /**
+   * Whether the slot is currently active (has content to render)
+   */
+  active: boolean;
+  /**
+   * Segments for this slot when active
+   */
+  segments?: ResolvedSegment[];
+}
+
+/**
  * Router match result
  */
 export interface MatchResult {
@@ -597,6 +613,12 @@ export interface MatchResult {
    * Can be added to response headers for DevTools integration
    */
   serverTiming?: string;
+  /**
+   * State of named slots for this route match
+   * Key is slot name (e.g., "@modal"), value is slot state
+   * Slots are used for intercepting routes during soft navigation
+   */
+  slots?: Record<string, SlotState>;
 }
 
 /**

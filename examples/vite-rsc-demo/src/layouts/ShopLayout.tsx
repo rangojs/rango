@@ -55,6 +55,8 @@ export function ShopLayout() {
           {/* Route components handle their own parallel outlets */}
           <Outlet />
         </DebugSegmentWrapper>
+        {/* Intercept slot - shows modal during soft navigation to product */}
+        <Outlet name="@modal" />
       </div>
     </DebugSegmentWrapper>
   );

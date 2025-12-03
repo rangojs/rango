@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { ResolvedSegment } from "../types.js";
+import type { ResolvedSegment, SlotState } from "../types.js";
 import type { RenderSegmentsOptions } from "../segment-system.js";
 
 // ============================================================================
@@ -26,6 +26,12 @@ export interface RscMetadata {
   isError?: boolean;
   matched?: string[];
   diff?: string[];
+  /**
+   * State of named slots for this route match
+   * Key is slot name (e.g., "@modal"), value is slot state
+   * Slots are used for intercepting routes during soft navigation
+   */
+  slots?: Record<string, SlotState>;
 }
 
 /**

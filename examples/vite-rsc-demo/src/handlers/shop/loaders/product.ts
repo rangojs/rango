@@ -22,7 +22,8 @@ export const ProductLoader = createLoader("product", async (ctx) => {
   "use server";
 
   const { slug } = ctx.params;
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  // 2 second delay to demonstrate loading skeleton
+  await new Promise((resolve) => setTimeout(resolve, 2000));
 
   const product = products.find((p) => p.slug === slug);
   if (!product) {

@@ -28,10 +28,18 @@ interface CommitOptions {
 }
 
 /**
+ * Options that can override the pre-configured commit settings
+ */
+interface BoundCommitOverrides {
+  /** Override scroll behavior (e.g., disable for intercepts) */
+  scroll?: boolean;
+}
+
+/**
  * Bound transaction with pre-configured commit options (without segmentIds/segments)
  */
 interface BoundTransaction {
-  commit(segmentIds: string[], segments: ResolvedSegment[]): void;
+  commit(segmentIds: string[], segments: ResolvedSegment[], overrides?: BoundCommitOverrides): void;
 }
 
 /**
@@ -194,8 +202,11 @@ function createNavigationTransaction(
       opts: Omit<CommitOptions, "segmentIds" | "segments">
     ): BoundTransaction {
       return {
-        commit: (segmentIds: string[], segments: ResolvedSegment[]) =>
-          commit({ ...opts, segmentIds, segments }),
+        commit: (segmentIds: string[], segments: ResolvedSegment[], overrides?: BoundCommitOverrides) => {
+          // Allow overrides to disable scroll (e.g., for intercepts)
+          const finalScroll = overrides?.scroll !== undefined ? overrides.scroll : opts.scroll;
+          commit({ ...opts, segmentIds, segments, scroll: finalScroll });
+        },
       };
     },
 
@@ -375,9 +386,9 @@ export function createNavigationBridge(
         store.setCurrentUrl(url);
         store.setPath(new URL(url).pathname);
 
-        // Render from cache
+        // Render from cache - force await to skip loading fallbacks
         try {
-          const root = await renderSegments(cachedSegments);
+          const root = await renderSegments(cachedSegments, { forceAwait: true });
           onUpdate({
             root,
             metadata: {

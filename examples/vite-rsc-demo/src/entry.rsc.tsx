@@ -9,6 +9,7 @@ import { router } from "./router.js";
 import {
   renderSegments,
   type ResolvedSegment,
+  type SlotState,
 } from "rsc-router/server";
 
 /**
@@ -23,6 +24,8 @@ export type RscPayload = {
     isError?: boolean;
     matched?: string[];
     diff?: string[];
+    /** State of named slots for this route match (used for intercepting routes) */
+    slots?: Record<string, SlotState>;
   };
   returnValue?: { ok: boolean; data: any }; // Action return value
   formState?: any; // Form state (future)
@@ -238,6 +241,7 @@ export default async function handler(request: Request): Promise<Response> {
           isPartial: true,
           matched: matchResult.matched,
           diff: matchResult.diff,
+          slots: matchResult.slots,
         },
         returnValue, // Include action result
       };
@@ -307,6 +311,7 @@ export default async function handler(request: Request): Promise<Response> {
             matched: result.matched,
             diff: result.diff,
             isPartial: true,
+            slots: result.slots,
           },
         };
       }

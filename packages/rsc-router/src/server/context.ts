@@ -65,6 +65,7 @@ export type InterceptEntry = {
   notFoundBoundary: (ReactNode | NotFoundBoundaryHandler)[];
   loader: LoaderEntry[];
   loading?: ReactNode | false;
+  layout?: ReactNode | Handler<any, any>;  // Wrapper layout with <Outlet /> for content
 };
 
 export type EntryPropSegments = {

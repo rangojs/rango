@@ -500,6 +500,10 @@ const intercept: RouteHelpers<any, any>["intercept"] = (
     // Create a temporary parent context for the use() callback
     // so that middleware, loader, revalidate attach to the intercept entry
     const originalParent = ctx.parent;
+
+    // Capture layouts in a temporary array
+    const capturedLayouts: EntryData[] = [];
+
     const tempParent = {
       ...originalParent,
       middleware: entry.middleware,
@@ -507,6 +511,14 @@ const intercept: RouteHelpers<any, any>["intercept"] = (
       errorBoundary: entry.errorBoundary,
       notFoundBoundary: entry.notFoundBoundary,
       loader: entry.loader,
+      layout: capturedLayouts,  // Capture layout() calls
+      // Use getter/setter to capture loading on the entry
+      get loading() {
+        return entry.loading;
+      },
+      set loading(value: ReactNode | false | undefined) {
+        entry.loading = value;
+      },
     };
     ctx.parent = tempParent as EntryData;
 
@@ -514,6 +526,12 @@ const intercept: RouteHelpers<any, any>["intercept"] = (
 
     // Restore original parent
     ctx.parent = originalParent;
+
+    // Extract layout from captured layouts (use first one if multiple)
+    // Layout inside intercept should always be ReactNode or Handler, not Record slots
+    if (capturedLayouts.length > 0 && capturedLayouts[0].type === "layout") {
+      entry.layout = capturedLayouts[0].handler as ReactNode | Handler<any, any>;
+    }
 
     invariant(
       Array.isArray(result) && result.every((item) => isValidUseItem(item)),

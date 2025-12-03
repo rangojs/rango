@@ -113,6 +113,19 @@ export type RouteUseItem =
   | LoadingItem
   | ErrorBoundaryItem
   | NotFoundBoundaryItem;
-export type ParallelUseItem = RevalidateItem | LoaderItem | LoadingItem | ErrorBoundaryItem | NotFoundBoundaryItem;
-export type InterceptUseItem = MiddlewareItem | RevalidateItem | LoaderItem | LoadingItem | ErrorBoundaryItem | NotFoundBoundaryItem;
+export type ParallelUseItem =
+  | RevalidateItem
+  | LoaderItem
+  | LoadingItem
+  | ErrorBoundaryItem
+  | NotFoundBoundaryItem;
+export type InterceptUseItem =
+  | MiddlewareItem
+  | RevalidateItem
+  | LoaderItem
+  | LoadingItem
+  | ErrorBoundaryItem
+  | NotFoundBoundaryItem
+  | LayoutItem
+  | RouteItem;
 export type LoaderUseItem = RevalidateItem;
