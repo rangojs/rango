@@ -3,6 +3,7 @@ import type { errorRoutes } from "../routes.js";
 import type { ErrorBoundaryFallbackProps, NotFoundBoundaryFallbackProps } from "rsc-router";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { Outlet } from "rsc-router/client";
+import { ClientErrorThrower } from "../components/ClientErrorThrower.js";
 
 /**
  * Error fallback component that shows error info.
@@ -99,7 +100,9 @@ function ErrorTestLayout({ children }: { children: React.ReactNode }) {
         <a href="/errors/throw">Handler Error</a> |{" "}
         <a href="/errors/loader-error">Loader Error</a> |{" "}
         <a href="/errors/not-found">NotFound (Handler)</a> |{" "}
-        <a href="/errors/not-found-loader">NotFound (Loader)</a>
+        <a href="/errors/not-found-loader">NotFound (Loader)</a> |{" "}
+        <a href="/errors/unhandled">Unhandled (Root Boundary)</a> |{" "}
+        <a href="/errors/client-error">Client Error</a>
       </nav>
       <hr />
       {children}
@@ -113,8 +116,14 @@ function ErrorTestLayout({ children }: { children: React.ReactNode }) {
  */
 export default map<typeof errorRoutes>(
   ({ route, layout, errorBoundary, notFoundBoundary, loader }) => [
-    // Root layout (no error boundary)
+    // Root layout (no error boundary - errors bubble to root ErrorBoundary)
     layout(<RootLayout />),
+
+    // Unhandled error route - NO error boundary in parent chain
+    // This tests the root ErrorBoundary added by renderSegments
+    route("unhandled", () => {
+      throw new Error("This error is NOT caught by any route error boundary - it bubbles to root");
+    }),
 
     // Error test layout with global error boundary and notFound boundary
     // Routes must be inside the layout's use() callback to inherit the boundaries
@@ -145,6 +154,12 @@ export default map<typeof errorRoutes>(
               </li>
               <li>
                 <strong>NotFound (Loader):</strong> A loader throws notFound() during data fetching
+              </li>
+              <li>
+                <strong>Unhandled (Root Boundary):</strong> Error without route error boundary - caught by root
+              </li>
+              <li>
+                <strong>Client Error:</strong> A client component throws an error during interaction
               </li>
             </ul>
           </div>
@@ -195,6 +210,10 @@ export default map<typeof errorRoutes>(
             notFoundBoundary(SimpleNotFoundFallback),
           ]
         ),
+
+        // Route that renders a client component which throws an error
+        // Tests the client-side ErrorBoundary behavior
+        route("clientError", () => <ClientErrorThrower />),
       ]
     ),
   ]

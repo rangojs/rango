@@ -102,6 +102,8 @@ export const errorRoutes = route({
   loaderError: "/loader-error",
   notFound: "/not-found",
   notFoundLoader: "/not-found-loader",
+  unhandled: "/unhandled",
+  clientError: "/client-error",
 });
 
 /**

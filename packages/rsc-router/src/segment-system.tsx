@@ -7,6 +7,7 @@ import {
   RouteContentWrapper,
   LoaderBoundary,
 } from "./route-content-wrapper.js";
+import { RootErrorBoundary } from "./root-error-boundary.js";
 
 /**
  * Resolve loader data from raw results, unwrapping LoaderDataResult wrappers
@@ -235,7 +236,11 @@ export async function renderSegments(
     });
   }
 
-  return content;
+  // Always wrap with root error boundary to prevent white screens
+  // This catches any unhandled errors that bubble up from the segment tree
+  return createElement(RootErrorBoundary, {
+    children: content,
+  });
 }
 
 /**
