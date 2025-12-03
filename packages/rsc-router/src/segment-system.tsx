@@ -123,6 +123,8 @@ export async function renderSegments(
   // Render content segments as siblings
   let content: ReactNode = null;
   for (const node of tree) {
+    console.log("node > ", node);
+
     invariant(
       node.segment.type === "layout" ||
         node.segment.type === "route" ||

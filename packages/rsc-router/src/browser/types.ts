@@ -203,6 +203,10 @@ export interface NavigationStore {
   hasHistoryCache(historyKey: string): boolean;
   clearHistoryCache(): void;
 
+  // Intercept context tracking (for action revalidation)
+  getInterceptSourceUrl(): string | null;
+  setInterceptSourceUrl(url: string | null): void;
+
   // UI update notifications
   onUpdate(callback: UpdateSubscriber): () => void;
   emitUpdate(update: NavigationUpdate): void;

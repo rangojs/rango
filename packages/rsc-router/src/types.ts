@@ -563,6 +563,9 @@ export interface ResolvedSegment {
   // Loader-specific fields
   loaderName?: string; // For loaders: the loader name identifier
   loaderData?: any; // For loaders: the resolved data from loader execution
+  // Intercept loader fields (for streaming loader data in parallel segments)
+  loaderDataPromise?: Promise<any[]> | any[]; // Loader data promise or resolved array
+  loaderNames?: string[]; // Names of loaders for this segment
   // Error-specific fields
   error?: ErrorInfo; // For error segments: the error information
   // NotFound-specific fields

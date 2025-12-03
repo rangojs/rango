@@ -5,9 +5,7 @@ import {
   useContext,
   useMemo,
   Suspense,
-  cloneElement,
   type ReactNode,
-  type ReactElement,
 } from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
 import {
@@ -17,7 +15,7 @@ import {
   type LoaderFn,
   type ResolvedSegment,
 } from "./types";
-import { RouteContentWrapper } from "./route-content-wrapper.js";
+import { RouteContentWrapper, LoaderBoundary } from "./route-content-wrapper.js";
 
 /**
  * Outlet component - renders child content in layouts
@@ -83,11 +81,38 @@ export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
       content = segment.component ?? null;
     }
 
-    // If segment has a layout, wrap content with it
-    // The layout wraps both the content AND the Suspense/loading
+    // If segment has a layout, wrap appropriately
     if (segment.layout) {
-      const layoutElement = segment.layout as ReactElement<{ children?: ReactNode }>;
-      return cloneElement(layoutElement, { children: content });
+      // Check if this segment has loaders that need streaming
+      // The layout renders immediately, LoaderBoundary becomes the outlet content
+      // When layout renders <Outlet />, it gets the LoaderBoundary which suspends
+      if (segment.loaderDataPromise && segment.loaderNames) {
+        const loaderAwareContent = (
+          <LoaderBoundary
+            loaderDataPromise={segment.loaderDataPromise}
+            loaderNames={segment.loaderNames}
+            fallback={segment.loading}
+            outletKey={segment.id + "-loader"}
+            outletContent={null}
+            segment={segment}
+          >
+            {content}
+          </LoaderBoundary>
+        );
+
+        return (
+          <OutletProvider content={loaderAwareContent} segment={segment}>
+            {segment.layout}
+          </OutletProvider>
+        );
+      }
+
+      // No loaders - wrap in OutletProvider so layout can use <Outlet />
+      return (
+        <OutletProvider content={content} segment={segment}>
+          {segment.layout}
+        </OutletProvider>
+      );
     }
 
     return content;
@@ -153,10 +178,37 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
     content = segment.component ?? null;
   }
 
-  // If segment has a layout, wrap content with it
+  // If segment has a layout, wrap appropriately
   if (segment.layout) {
-    const layoutElement = segment.layout as ReactElement<{ children?: ReactNode }>;
-    return cloneElement(layoutElement, { children: content });
+    // Check if this segment has loaders that need streaming
+    // The layout renders immediately, LoaderBoundary becomes the outlet content
+    if (segment.loaderDataPromise && segment.loaderNames) {
+      const loaderAwareContent = (
+        <LoaderBoundary
+          loaderDataPromise={segment.loaderDataPromise}
+          loaderNames={segment.loaderNames}
+          fallback={segment.loading}
+          outletKey={segment.id + "-loader"}
+          outletContent={null}
+          segment={segment}
+        >
+          {content}
+        </LoaderBoundary>
+      );
+
+      return (
+        <OutletProvider content={loaderAwareContent} segment={segment}>
+          {segment.layout}
+        </OutletProvider>
+      );
+    }
+
+    // No loaders - wrap in OutletProvider so layout can use <Outlet />
+    return (
+      <OutletProvider content={content} segment={segment}>
+        {segment.layout}
+      </OutletProvider>
+    );
   }
 
   return content;

@@ -181,6 +181,10 @@ export function createNavigationStore(
   // Internal flag to track if a server action is in progress
   let actionInProgress = false;
 
+  // Intercept source URL - tracks where the intercept was triggered from
+  // Used to maintain intercept context during action revalidation
+  let interceptSourceUrl: string | null = null;
+
   /**
    * Notify all state listeners of a change
    */
@@ -417,6 +421,28 @@ export function createNavigationStore(
      */
     clearHistoryCache(): void {
       clearCacheAndBroadcast();
+    },
+
+    // ========================================================================
+    // Intercept Context Tracking
+    // ========================================================================
+
+    /**
+     * Get the intercept source URL
+     * This is the URL where the intercept was triggered from (e.g., /shop)
+     * Used to maintain intercept context during action revalidation
+     */
+    getInterceptSourceUrl(): string | null {
+      return interceptSourceUrl;
+    },
+
+    /**
+     * Set the intercept source URL
+     * Called when an intercept navigation is detected
+     * Set to null when leaving intercept context (e.g., closing modal)
+     */
+    setInterceptSourceUrl(url: string | null): void {
+      interceptSourceUrl = url;
     },
 
     // ========================================================================

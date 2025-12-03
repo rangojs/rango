@@ -1,9 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { Outlet, useLoader } from "rsc-router/client";
 import { Link } from "rsc-router/browser";
 import { ProductLoader } from "../loaders/product.js";
-import type { ReactNode } from "react";
+import { ModalRecommendationsLoader } from "../loaders/modal-recommendations.js";
+import { addToCartWithResult } from "../actions/shop.actions.js";
 
 const styles = {
   overlay: {
@@ -110,28 +112,64 @@ export function ModalWrapper({}: {}) {
 // Product modal content - uses loader data
 export function ProductModalContent() {
   const product = useLoader(ProductLoader);
+  const recommendations = useLoader(ModalRecommendationsLoader);
+  const [actionResult, setActionResult] = useState<{
+    success: boolean;
+    message: string;
+    cart: { totalItems: number };
+  } | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   function handleClose() {
     window.history.back();
   }
 
   async function handleAddToCart() {
-    // This would be a server action in a real app
-    console.log("Adding to cart:", product.slug);
-    alert(`Added ${product.name} to cart!`);
+    setIsLoading(true);
+    try {
+      const result = await addToCartWithResult(product.slug, 1);
+      setActionResult(result);
+    } catch (error) {
+      console.error("Failed to add to cart:", error);
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   return (
     <>
       <div style={styles.header}>
+        Intercepted
         <h2 style={styles.title}>{product.name}</h2>
       </div>
       <div style={styles.body}>
         <div style={styles.price}>${product.price}</div>
         <p style={styles.description}>{product.description}</p>
+
+        {actionResult && (
+          <div
+            style={{
+              padding: "0.75rem",
+              marginBottom: "1rem",
+              background: actionResult.success ? "#d1fae5" : "#fee2e2",
+              borderRadius: "6px",
+              color: actionResult.success ? "#065f46" : "#991b1b",
+            }}
+          >
+            {actionResult.message} (Total: {actionResult.cart.totalItems} items)
+          </div>
+        )}
+
         <div style={styles.actions}>
-          <button style={styles.secondaryButton} onClick={handleAddToCart}>
-            Add to Cart
+          <button
+            style={{
+              ...styles.secondaryButton,
+              opacity: isLoading ? 0.7 : 1,
+            }}
+            onClick={handleAddToCart}
+            disabled={isLoading}
+          >
+            {isLoading ? "Adding..." : "Add to Cart"}
           </button>
           <Link
             to={`/shop/product/${product.slug}`}
@@ -142,6 +180,37 @@ export function ProductModalContent() {
           <button style={styles.closeButton} onClick={handleClose}>
             Close
           </button>
+        </div>
+
+        {/* Recommendations section - streams after action revalidation */}
+        <div
+          style={{
+            marginTop: "1.5rem",
+            paddingTop: "1rem",
+            borderTop: "1px solid #e2e8f0",
+          }}
+        >
+          <h3 style={{ fontSize: "0.875rem", color: "#64748b", marginBottom: "0.75rem" }}>
+            You might also like (loaded at {recommendations.loadedAt})
+          </h3>
+          <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+            {recommendations.recommendations.map((rec) => (
+              <Link
+                key={rec.id}
+                to={`/shop/product/${rec.slug}`}
+                style={{
+                  padding: "0.5rem 0.75rem",
+                  background: "#f1f5f9",
+                  borderRadius: "6px",
+                  fontSize: "0.75rem",
+                  color: "#475569",
+                  textDecoration: "none",
+                }}
+              >
+                {rec.name} - ${rec.price}
+              </Link>
+            ))}
+          </div>
         </div>
       </div>
     </>
@@ -212,11 +281,3 @@ export function ProductModalContentSkeleton() {
   );
 }
 
-// Combined modal with wrapper - for backward compatibility
-export function ProductModal() {
-  return (
-    <ModalWrapper>
-      <ProductModalContent />
-    </ModalWrapper>
-  );
-}

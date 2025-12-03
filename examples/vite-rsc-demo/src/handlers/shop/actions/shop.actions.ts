@@ -102,6 +102,11 @@ export async function getCartItems(): Promise<Array<{ productId: string; quantit
   return cart?.items || [];
 }
 
+// Helper function for delay
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 /**
  * Add to cart with validation and return value
  * Demonstrates action that returns data to the client
@@ -112,6 +117,11 @@ export async function getCartItems(): Promise<Array<{ productId: string; quantit
  */
 export async function addToCartWithResult(productId: string, quantity: number = 1) {
   console.log(`[Action] addToCartWithResult: ${productId} x${quantity}`);
+
+  // Artificial 3 second delay to demonstrate streaming/loading states
+  console.log(`[Action] Simulating 3 second delay...`);
+  await delay(3000);
+  console.log(`[Action] Delay complete, processing...`);
 
   // Validate quantity
   if (quantity < 1) {

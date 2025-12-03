@@ -1215,30 +1215,24 @@ export function createRSCRouter<TEnv = any>(
       if (middlewareResponse) throw middlewareResponse;
     }
 
-    // Step 2: Collect intercept loaders (executed via ctx.use() in handler)
-    // Emit loader segments - loaderData flows through segment-system.tsx renderSegments
-    // which resolves the Promise and unwraps LoaderDataResult before providing to context
+    // Step 2: Collect intercept loaders as promises
+    // These will be attached directly to the intercept segment for streaming
+    const loaderPromises: Promise<any>[] = [];
+    const loaderNames: string[] = [];
+
     for (let i = 0; i < interceptEntry.loader.length; i++) {
       const { loader } = interceptEntry.loader[i];
       const segmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}D${i}.${loader.name}`;
 
-      // Emit loader segment for processing by segment-system
-      segments.push({
-        id: segmentId,
-        namespace: `intercept:${interceptEntry.routeName}`,
-        type: "loader" as const,
-        index: i,
-        component: null,
-        params,
-        loaderName: loader.name,
-        loaderData: wrapLoaderWithErrorHandling(
+      loaderNames.push(loader.name);
+      loaderPromises.push(
+        wrapLoaderWithErrorHandling(
           context.use(loader),
           parentEntry,
           segmentId,
           context.pathname
-        ),
-        belongsToRoute,
-      });
+        )
+      );
     }
 
     // Step 3: Execute intercept handler and prepare component
@@ -1258,16 +1252,32 @@ export function createRSCRouter<TEnv = any>(
           : interceptEntry.layout;
     }
 
-    // Determine if we should await the handler result
+    // Determine if we should await the handler result and loaders
     // If we have loading, DON'T await - let Suspense handle streaming
     let component: ReactNode | Promise<ReactNode>;
-    if (interceptEntry.loading) {
-      // Keep as Promise for streaming with Suspense
-      component = handlerResult;
-    } else {
-      // No loading skeleton - await the result
+    let loaderDataPromise: Promise<any[]> | any[] | undefined;
+
+    if (interceptEntry.loading && loaderPromises.length > 0) {
+      // Has loading skeleton - keep everything as Promises for streaming
+      // Wrap component in Promise if not already to ensure consistent streaming
+      component =
+        handlerResult instanceof Promise
+          ? handlerResult
+          : Promise.resolve(handlerResult);
+      loaderDataPromise = Promise.all(loaderPromises);
+    } else if (loaderPromises.length > 0) {
+      // No loading skeleton - await loaders and component
+      loaderDataPromise = await Promise.all(loaderPromises);
       component =
         handlerResult instanceof Promise ? await handlerResult : handlerResult;
+    } else {
+      // No loaders
+      component =
+        interceptEntry.loading && handlerResult instanceof Promise
+          ? handlerResult
+          : handlerResult instanceof Promise
+            ? await handlerResult
+            : handlerResult;
     }
 
     const interceptSegment = {
@@ -1282,6 +1292,9 @@ export function createRSCRouter<TEnv = any>(
       slot: interceptEntry.slotName,
       belongsToRoute,
       parallelName: `intercept:${interceptEntry.routeName}.${interceptEntry.slotName}`,
+      // Attach loader info directly to segment for streaming
+      loaderDataPromise,
+      loaderNames: loaderNames.length > 0 ? loaderNames : undefined,
     };
     segments.push(interceptSegment);
 
@@ -2618,6 +2631,11 @@ export function createRSCRouter<TEnv = any>(
     const clientSegmentIds =
       url.searchParams.get("_rsc_segments")?.split(",") || [];
     const previousUrl = request.headers.get("X-RSC-Router-Client-Path");
+    // Intercept source URL - tracks where an intercept was triggered from
+    // Used during action revalidation to maintain intercept context
+    const interceptSourceUrl = request.headers.get(
+      "X-RSC-Router-Intercept-Source"
+    );
 
     if (!previousUrl) {
       // No previous URL - fall back to full render
@@ -2625,11 +2643,21 @@ export function createRSCRouter<TEnv = any>(
     }
 
     const prevUrl = new URL(previousUrl, url.origin);
+    // For intercept determination, use intercept source URL if available
+    // This allows actions in intercepted modals to maintain intercept context
+    const interceptContextUrl = interceptSourceUrl
+      ? new URL(interceptSourceUrl, url.origin)
+      : prevUrl;
 
     // Track route matching (direct recording since ALS context not yet available)
     const routeMatchStart = metricsStore ? performance.now() : 0;
     const prevMatch = findMatch(prevUrl.pathname);
     const prevParams = prevMatch?.params || {};
+    // Match intercept context URL for determining intercept activation
+    // This is different from prevMatch when action fires from intercepted modal
+    const interceptContextMatch = interceptSourceUrl
+      ? findMatch(interceptContextUrl.pathname)
+      : prevMatch;
 
     // Match current route
     const matched = findMatch(pathname);
@@ -2718,8 +2746,23 @@ export function createRSCRouter<TEnv = any>(
       // IMPORTANT: Don't intercept when navigating within the same route type
       // (e.g., product/a -> product/b). Intercepts only activate when navigating
       // TO the route FROM a different route.
+      //
+      // For action revalidation from intercepted modals, use interceptContextMatch
+      // which reflects the source URL (e.g., /shop) rather than the current URL
+      // (e.g., /shop/product/headphones). This maintains intercept context.
       const isSameRouteNavigation =
-        prevMatch && prevMatch.routeKey === matched.routeKey;
+        interceptContextMatch &&
+        interceptContextMatch.routeKey === matched.routeKey;
+
+      // Debug logging for intercept context
+      if (interceptSourceUrl) {
+        console.log(`[Router.matchPartial] Intercept context detected:`);
+        console.log(`  - Current URL: ${pathname}`);
+        console.log(`  - Intercept source: ${interceptSourceUrl}`);
+        console.log(`  - Context match: ${interceptContextMatch?.routeKey}`);
+        console.log(`  - Current route: ${matched.routeKey}`);
+        console.log(`  - Same route navigation: ${isSameRouteNavigation}`);
+      }
 
       const localRouteName = matched.routeKey.includes(".")
         ? matched.routeKey.split(".").pop()!

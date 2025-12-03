@@ -15,3 +15,7 @@ export {
   FeaturedProductsLoader,
   type FeaturedProductsData,
 } from "./featured-products.js";
+export {
+  ModalRecommendationsLoader,
+  type Recommendation,
+} from "./modal-recommendations.js";

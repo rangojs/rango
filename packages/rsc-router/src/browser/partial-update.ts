@@ -34,7 +34,11 @@ export interface CommitOverrides {
  * Transaction encapsulates all store mutations for atomic commit
  */
 export interface PartialUpdateCommit {
-  commit(segmentIds: string[], segments: ResolvedSegment[], overrides?: CommitOverrides): void;
+  commit(
+    segmentIds: string[],
+    segments: ResolvedSegment[],
+    overrides?: CommitOverrides
+  ): void;
 }
 
 /**
@@ -159,8 +163,13 @@ export function createPartialUpdater(
       // - Unchanged segments from current page's cache
       const matchedIds = matched || [];
       console.log(`[Browser] matchedIds: ${matchedIds.join(", ")}`);
-      console.log(`[Browser] currentSegmentMap keys: ${[...currentSegmentMap.keys()].join(", ")}`);
-      console.log(`[Browser] newSegmentMap keys: ${[...newSegmentMap.keys()].join(", ")}`);
+      console.log(
+        `[Browser] currentSegmentMap keys: ${[...currentSegmentMap.keys()].join(", ")}`
+      );
+      console.log(
+        `[Browser] newSegmentMap keys: ${[...newSegmentMap.keys()].join(", ")}`,
+        newSegmentMap
+      );
       const allSegments = matchedIds
         .map((id: string) => {
           // First check server response (new/updated segments)
@@ -200,7 +209,8 @@ export function createPartialUpdater(
       // Intercept segments have namespace starting with "intercept:" or ID containing .@
       // This makes the flow clearer and easier to debug
       const isInterceptSegment = (s: ResolvedSegment) =>
-        s.namespace?.startsWith("intercept:") || (s.type === "parallel" && s.id.includes(".@"));
+        s.namespace?.startsWith("intercept:") ||
+        (s.type === "parallel" && s.id.includes(".@"));
 
       const interceptSegments = allSegments.filter(isInterceptSegment);
       const mainSegments = allSegments.filter((s) => !isInterceptSegment(s));
@@ -217,7 +227,8 @@ export function createPartialUpdater(
       // Pass intercept segments separately for explicit handling
       const renderOptions = {
         isAction,
-        interceptSegments: interceptSegments.length > 0 ? interceptSegments : undefined,
+        interceptSegments:
+          interceptSegments.length > 0 ? interceptSegments : undefined,
       };
       const newTree = await (signal
         ? Promise.race([
@@ -244,12 +255,27 @@ export function createPartialUpdater(
       // Check if this is an intercept response (any slot is active)
       // If so, disable scroll to keep the current scroll position
       const hasActiveIntercept = payload.metadata?.slots
-        ? Object.values(payload.metadata.slots).some(slot => slot.active)
+        ? Object.values(payload.metadata.slots).some((slot) => slot.active)
         : false;
+
+      // Track intercept context for action revalidation (only on navigation, not actions)
+      if (!isAction) {
+        if (hasActiveIntercept) {
+          // Save the source URL for action revalidation to maintain intercept context
+          store.setInterceptSourceUrl(segmentState.currentUrl);
+        } else {
+          // Clear intercept context when navigating to a non-intercept route
+          store.setInterceptSourceUrl(null);
+        }
+      }
 
       // Commit navigation - transaction handles all store mutations atomically
       // Disable scroll for intercept responses to keep scroll position
-      tx.commit(matchedIds, allSegments, hasActiveIntercept ? { scroll: false } : undefined);
+      tx.commit(
+        matchedIds,
+        allSegments,
+        hasActiveIntercept ? { scroll: false } : undefined
+      );
 
       // Emit update to trigger React render
       // For actions, wrap in startTransition to avoid UI flickering

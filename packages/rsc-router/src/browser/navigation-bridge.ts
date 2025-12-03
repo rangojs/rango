@@ -9,6 +9,28 @@ import { setupLinkInterception } from "./link-interceptor.js";
 import { createPartialUpdater } from "./partial-update.js";
 import { generateHistoryKey } from "./navigation-store.js";
 
+/**
+ * Check if a segment is an intercept segment
+ * Intercept segments have namespace starting with "intercept:" or ID containing .@
+ */
+function isInterceptSegment(s: ResolvedSegment): boolean {
+  return (
+    s.namespace?.startsWith("intercept:") ||
+    (s.type === "parallel" && s.id.includes(".@"))
+  );
+}
+
+/**
+ * Check if cached segments are intercept-only (no main route segments)
+ * Intercept responses shouldn't be used for optimistic rendering since
+ * whether interception happens depends on the current page context
+ */
+function isInterceptOnlyCache(segments: ResolvedSegment[]): boolean {
+  // If any segment is an intercept segment, treat the whole cache as intercept-only
+  // because we can't reuse it - interception depends on source page context
+  return segments.some(isInterceptSegment);
+}
+
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
   (Symbol as any).dispose = Symbol("Symbol.dispose");
@@ -279,17 +301,22 @@ export function createNavigationBridge(
       // Check if we have cached segments for target URL
       const historyKey = generateHistoryKey(url);
       const cachedSegments = store.getCachedSegments(historyKey);
-      const hasCache = cachedSegments && cachedSegments.length > 0;
+      // Skip optimistic rendering for intercept caches - interception depends on
+      // source page context, so we can't reliably reuse intercept responses
+      const hasUsableCache =
+        cachedSegments &&
+        cachedSegments.length > 0 &&
+        !isInterceptOnlyCache(cachedSegments);
 
       using disposable = requestController.createDisposable();
       using tx = createNavigationTransaction(
         store,
         disposable.controller.signal,
-        { skipLoadingState: hasCache } // Skip loading state if we have cache
+        { skipLoadingState: hasUsableCache } // Skip loading state if we have usable cache
       );
 
-      // OPTIMISTIC: If we have cache, render immediately
-      if (hasCache) {
+      // OPTIMISTIC: If we have usable cache, render immediately
+      if (hasUsableCache) {
         console.log("[Browser] Optimistic render from cache for:", historyKey);
 
         // Render cached segments
@@ -320,7 +347,7 @@ export function createNavigationBridge(
       try {
         await fetchPartialUpdate(
           url,
-          hasCache ? cachedSegments.map((s) => s.id) : undefined,
+          hasUsableCache ? cachedSegments!.map((s) => s.id) : undefined,
           false,
           disposable.controller.signal,
           tx.with({ url, replace: options?.replace, scroll: options?.scroll })

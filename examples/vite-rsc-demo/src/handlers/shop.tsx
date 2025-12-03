@@ -48,6 +48,7 @@ import {
   RelatedProductsLoader,
   OrdersLoader,
   FeaturedProductsLoader,
+  ModalRecommendationsLoader,
 } from "./shop/loaders/index.js";
 // Loading skeletons for instant feedback during navigation
 import {
@@ -153,16 +154,20 @@ export default map<typeof shopRoutes>(
             // Intercept product detail - shows modal during soft navigation
             // Hard navigation (direct URL) shows the full ProductsDetailRoute
             // layout() wraps both content and loading skeleton with ModalWrapper
-            // intercept(
-            //   "@modal",
-            //   "products.detail.view",
-            //   <ProductModalContent />,
-            //   () => [
-            //     layout(<ModalWrapper />),
-            //     loading(<ProductModalContentSkeleton />),
-            //     loader(ProductLoader),
-            //   ]
-            // ),
+            intercept(
+              "@modal",
+              "products.detail.view",
+              <ProductModalContent />,
+              () => [
+                layout(<ModalWrapper />),
+                loading(<ProductModalContentSkeleton />),
+                loader(ProductLoader),
+                // Recommendations loader - revalidates on cart actions to demonstrate streaming
+                loader(ModalRecommendationsLoader, () => [
+                  revalidate(({ actionId }) => actionId?.includes("addToCart") ?? false),
+                ]),
+              ]
+            ),
 
             // Homepage
             route("index", IndexRoute, () => [

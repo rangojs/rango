@@ -237,12 +237,19 @@ export function createServerActionBridge(
       resolveStreamComplete = resolve;
     });
 
+    // Get intercept source URL if in intercept context
+    const interceptSourceUrl = store.getInterceptSourceUrl();
+
     // Send action request with stream tracking
     const responsePromise = fetch(url, {
       method: "POST",
       headers: {
         "rsc-action": id,
         "X-RSC-Router-Client-Path": segmentState.currentUrl,
+        // Send intercept source URL so server can maintain intercept context
+        ...(interceptSourceUrl && {
+          "X-RSC-Router-Intercept-Source": interceptSourceUrl,
+        }),
       },
       body: encodedBody,
     }).then(async (response) => {
