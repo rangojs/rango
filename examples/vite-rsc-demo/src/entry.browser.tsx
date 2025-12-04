@@ -17,6 +17,7 @@ import {
   createNavigationBridge,
   NavigationProvider,
   generateHistoryKey,
+  setupCrossTabSync,
   type RscPayload,
   type ResolvedSegment,
 } from "rsc-router/browser";
@@ -50,6 +51,9 @@ async function initializeApp() {
     initialHistoryKey,
     initialSegments,
   });
+
+  // Set up cross-tab cache sync (listens to action:idle events)
+  setupCrossTabSync(store);
 
   console.log(
     "[Browser] Initial segments:",
@@ -98,6 +102,8 @@ async function initializeApp() {
     </React.StrictMode>
   );
 
+  // Mark store as hydrated (emits "hydrated" event with timing)
+  store.markHydrated();
   console.log("[Browser] Hydrated\n");
 
   // Note: Initial stream tracking is handled inside NavigationProvider's useEffect

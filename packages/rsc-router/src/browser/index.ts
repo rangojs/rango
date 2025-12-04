@@ -49,6 +49,51 @@ export {
   generateHistoryKey,
   type NavigationStoreConfig,
 } from "./navigation-store.js";
+
+// Store events (lifecycle events for navigation and actions)
+export type {
+  // All events
+  StoreEvent,
+  StoreEventType,
+  StoreEventListener,
+  StoreSnapshot,
+  StorePhase,
+  InflightNavigation,
+  IdleCallback,
+  // Global events
+  GlobalEvent,
+  GlobalEventType,
+  HydratedEvent,
+  IdleEvent,
+  ErrorEvent,
+  // Navigation events
+  NavigationEvent,
+  NavigationEventType,
+  NavigationStartEvent,
+  NavigationLoadedEvent,
+  NavigationStreamingEvent,
+  NavigationIdleEvent,
+  NavigationCancelledEvent,
+  NavigationErrorEvent,
+  // Action events
+  ActionEvent,
+  ActionEventType,
+  ActionStartEvent,
+  ActionLoadedEvent,
+  ActionStreamingEvent,
+  ActionIdleEvent,
+  ActionCancelledEvent,
+  ActionErrorEvent,
+} from "./store-events.js";
+
+// Cross-tab sync utility
+export {
+  setupCrossTabSync,
+  createCrossTabChannel,
+  defaultShouldInvalidate,
+  type CrossTabSyncOptions,
+} from "./cross-tab-sync.js";
+
 export { createRequestController } from "./request-controller.js";
 export { createNavigationClient } from "./navigation-client.js";
 export {

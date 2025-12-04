@@ -60,16 +60,27 @@ export function createServerActionBridge(
 
   /**
    * Creates an async disposable scope for tracking stream state.
-   * Releases the reader lock, resets streaming state, and signals completion when disposed.
+   * Emits action:streaming event on start, releases the reader lock,
+   * and signals completion when disposed.
    */
-  function createStreamScope(stream: ReadableStream, onComplete?: () => void) {
+  function createStreamScope(
+    stream: ReadableStream,
+    actionInfo: { id: string; actionId: string },
+    onComplete?: () => void
+  ) {
     const reader = stream.getReader();
-    store.setState({ isStreaming: true });
+    // Emit action:streaming event (this sets isStreaming: true via emit())
+    store.emit({
+      type: "action:streaming",
+      id: actionInfo.id,
+      actionId: actionInfo.actionId,
+      url: window.location.href,
+    });
     return {
       reader,
       async [Symbol.asyncDispose]() {
         reader.releaseLock();
-        store.setState({ isStreaming: false });
+        // Note: isStreaming will be set to false when action:idle is emitted
         onComplete?.();
       },
     };
@@ -77,8 +88,11 @@ export function createServerActionBridge(
 
   /**
    * Creates a disposable transaction for action state and inflight tracking.
-   * Tracks the action as inflight, sets loading state, and cleans up on disposal.
-   * Only sets idle state when ALL actions are complete (supports concurrent actions).
+   * Emits action events for lifecycle tracking:
+   * - action:start on creation
+   * - action:idle on disposal (if last action)
+   * - action:error on error
+   * - action:cancelled on abort
    *
    * For concurrent actions: tracks revalidated segments and triggers consolidation
    * fetch after all actions complete to ensure data consistency.
@@ -103,7 +117,15 @@ export function createServerActionBridge(
     });
 
     store.setActionInProgress(true);
-    store.setState({ state: "loading" });
+
+    // Emit action:start event (this sets state: "loading" via emit())
+    store.emit({
+      type: "action:start",
+      id,
+      actionId,
+      payload: args,
+      url: window.location.href,
+    });
 
     return {
       id,
@@ -159,8 +181,16 @@ export function createServerActionBridge(
           store.cacheSegmentsForHistory(currentKey, segments);
         }
       },
-      error() {
+      error(errorData?: unknown) {
         status = "error";
+        // Emit action:error event
+        store.emit({
+          type: "action:error",
+          id,
+          actionId,
+          url: window.location.href,
+          error: errorData instanceof Error ? errorData : new Error(String(errorData ?? "Unknown error")),
+        });
       },
       [Symbol.dispose]() {
         // Decrement pending count
@@ -169,9 +199,29 @@ export function createServerActionBridge(
         // Remove from inflight actions
         store.removeInflightAction(id);
 
-        // Only set idle if no other actions in flight
+        // Emit action:idle if completed, or action:cancelled if not
+        // The emit() will handle state transitions based on remaining actions
+        if (status === "completed") {
+          store.emit({
+            type: "action:idle",
+            id,
+            actionId,
+            url: window.location.href,
+          });
+        } else if (status === "pending") {
+          // Action was disposed without completing (likely aborted)
+          store.emit({
+            type: "action:cancelled",
+            id,
+            actionId,
+            url: window.location.href,
+            reason: "aborted",
+          });
+        }
+        // For status === "error", we already emitted action:error
+
+        // Only clear action progress if no other actions in flight
         if (store.getState().inflightActions.length === 0) {
-          store.setState({ state: "idle" });
           store.setActionInProgress(false);
         }
       },
@@ -264,10 +314,14 @@ export function createServerActionBridge(
 
       // Consume the tracking stream to detect when it closes
       (async () => {
-        await using streamScope = createStreamScope(trackingStream, () => {
-          console.log("[STREAMING] RSC stream complete");
-          resolveStreamComplete();
-        });
+        await using streamScope = createStreamScope(
+          trackingStream,
+          { id: tx.id, actionId: id },
+          () => {
+            console.log("[STREAMING] RSC stream complete");
+            resolveStreamComplete();
+          }
+        );
         const { reader } = streamScope;
 
         while (true) {
@@ -275,7 +329,7 @@ export function createServerActionBridge(
           if (done) break;
         }
         await reader.closed;
-        // All cleanup (releaseLock, isStreaming: false, resolveStreamComplete) happens on scope exit
+        // Cleanup (releaseLock, resolveStreamComplete) happens on scope exit
       })().catch((error) => {
         console.error("[STREAMING] Error reading tracking stream:", error);
       });
@@ -361,7 +415,7 @@ export function createServerActionBridge(
       // Throw the error so the action promise rejects
       // This allows the calling component to catch it if needed
       if (returnValue && !returnValue.ok) {
-        tx.error();
+        tx.error(returnValue.data);
         throw returnValue.data;
       }
 
@@ -489,8 +543,6 @@ export function createServerActionBridge(
         );
         console.log(`[Browser] Refetch complete (HMR), now returning action result`);
 
-        // Broadcast to other tabs (local cache has fresh data from navTx.commit)
-        store.broadcastCacheInvalidation();
         // Skip cache clear since we just refetched fresh data
         tx.commit(undefined, undefined, true);
         return returnData;
@@ -538,8 +590,6 @@ export function createServerActionBridge(
         );
 
         console.log(`[Browser] Consolidation fetch complete`);
-        // Broadcast to other tabs (local cache has fresh data from navTx.commit)
-        store.broadcastCacheInvalidation();
         console.log(`[Browser] Returning to React:`, returnData);
         // Skip the normal tx cache clear since we just cleared it
         tx.commit(undefined, undefined, true);
