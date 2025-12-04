@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { ResolvedSegment, SlotState } from "../types.js";
 import type { RenderSegmentsOptions } from "../segment-system.js";
+import type { CrossTabSyncStrategy, CustomCrossTabEvent, InvalidationMode } from "./cross-tab-sync.js";
 
 // ============================================================================
 // RSC Payload Types
@@ -201,8 +202,8 @@ export interface NavigationStore {
   ): void;
   getCachedSegments(historyKey: string): ResolvedSegment[] | undefined;
   hasHistoryCache(historyKey: string): boolean;
-  clearHistoryCache(): void;
-  broadcastCacheInvalidation(): void;
+  clearHistoryCache(actionId?: string, mode?: InvalidationMode): void;
+  broadcastCacheInvalidation(actionId?: string, mode?: InvalidationMode): void;
 
   // Intercept context tracking (for action revalidation)
   getInterceptSourceUrl(): string | null;
@@ -211,6 +212,11 @@ export interface NavigationStore {
   // UI update notifications
   onUpdate(callback: UpdateSubscriber): () => void;
   emitUpdate(update: NavigationUpdate): void;
+
+  // Cross-tab sync (userland API)
+  onCrossTabEvent(callback: (event: CustomCrossTabEvent) => void): () => void;
+  broadcastCrossTabEvent(name: string, payload: unknown): void;
+  getCrossTabStrategy(): CrossTabSyncStrategy | null;
 }
 
 // ============================================================================

@@ -9,31 +9,19 @@ import type {
   ResolvedSegment,
   InflightAction,
 } from "./types.js";
+import type {
+  CrossTabSyncStrategy,
+  CrossTabSyncContext,
+  CustomCrossTabEvent,
+  InvalidationMode,
+} from "./cross-tab-sync.js";
+import { createBroadcastChannelStrategy } from "./cross-tab-sync.js";
 
 // Maximum number of history entries to cache (URLs visited)
 const HISTORY_CACHE_SIZE = 20;
 
 // Cache entry: [url-key, segments]
 type HistoryCacheEntry = [string, ResolvedSegment[]];
-
-// BroadcastChannel for cross-tab cache invalidation
-const CACHE_INVALIDATION_CHANNEL = "rsc-router-cache-invalidation";
-
-// BroadcastChannel instance (lazily initialized)
-let cacheInvalidationChannel: BroadcastChannel | null = null;
-
-/**
- * Get or create the BroadcastChannel for cache invalidation
- */
-function getCacheInvalidationChannel(): BroadcastChannel | null {
-  if (typeof window === "undefined" || typeof BroadcastChannel === "undefined") {
-    return null;
-  }
-  if (!cacheInvalidationChannel) {
-    cacheInvalidationChannel = new BroadcastChannel(CACHE_INVALIDATION_CHANNEL);
-  }
-  return cacheInvalidationChannel;
-}
 
 /**
  * Generate a cache key from a URL.
@@ -66,18 +54,30 @@ export interface NavigationStoreConfig {
   cacheSize?: number;
 
   /**
-   * Enable cross-tab cache invalidation via BroadcastChannel (default: true)
-   * When cache is cleared (via server actions or useClientCache().clear()),
-   * other tabs will also clear their cache
+   * Cross-tab sync strategy for cache invalidation.
+   *
+   * - `undefined` or `true`: Use default BroadcastChannel strategy
+   * - `false`: Disable cross-tab sync
+   * - `CrossTabSyncStrategy`: Custom strategy implementation
+   *
+   * @example
+   * ```typescript
+   * // Default (BroadcastChannel with auto-refresh)
+   * createNavigationStore({ crossTabSync: true });
+   *
+   * // Disabled
+   * createNavigationStore({ crossTabSync: false });
+   *
+   * // Custom strategy
+   * createNavigationStore({
+   *   crossTabSync: createBroadcastChannelStrategy({
+   *     autoRefresh: false,
+   *     shouldInvalidate: (mutated, current) => mutated === current,
+   *   }),
+   * });
+   * ```
    */
-  crossTabSync?: boolean;
-
-  /**
-   * Auto-refresh when another tab mutates data on the same path (default: true)
-   * Triggered when cache is cleared via server actions or useClientCache().clear()
-   * Requires crossTabSync to be enabled
-   */
-  crossTabAutoRefresh?: boolean;
+  crossTabSync?: CrossTabSyncStrategy | boolean;
 }
 
 /**
@@ -156,8 +156,22 @@ export function createNavigationStore(
 
   // Configuration with defaults
   const cacheSize = config?.cacheSize ?? HISTORY_CACHE_SIZE;
-  const crossTabSync = config?.crossTabSync !== false; // Default: true
-  const crossTabAutoRefresh = config?.crossTabAutoRefresh !== false; // Default: true
+
+  // Resolve cross-tab sync strategy
+  // - undefined/true: default BroadcastChannel strategy
+  // - false: disabled
+  // - CrossTabSyncStrategy: custom strategy
+  let crossTabStrategy: CrossTabSyncStrategy | null = null;
+  if (config?.crossTabSync === false) {
+    crossTabStrategy = null;
+  } else if (config?.crossTabSync === true || config?.crossTabSync === undefined) {
+    crossTabStrategy = createBroadcastChannelStrategy();
+  } else {
+    crossTabStrategy = config.crossTabSync;
+  }
+
+  // Custom event listeners for userland
+  const customEventListeners = new Set<(event: CustomCrossTabEvent) => void>();
 
   // History-based segment cache: array of [url-key, segments] tuples
   // Each URL gets its own complete snapshot of segments for back/forward and partial merging
@@ -202,69 +216,66 @@ export function createNavigationStore(
   /**
    * Clear the history cache and broadcast to other tabs
    */
-  function clearCacheAndBroadcast(): void {
+  function clearCacheAndBroadcast(actionId?: string, mode?: InvalidationMode): void {
     console.log("[Browser] Clearing cache and broadcasting to other tabs");
     clearCacheInternal();
-    broadcastInvalidation();
+    broadcastInvalidation(actionId, mode);
   }
 
   /**
    * Broadcast cache invalidation to other tabs without clearing local cache
    * Used after consolidation fetch where local cache has fresh data
    */
-  function broadcastInvalidation(): void {
-    // Only broadcast if cross-tab sync is enabled
-    if (!crossTabSync) return;
+  function broadcastInvalidation(actionId?: string, mode?: InvalidationMode): void {
+    if (!crossTabStrategy) return;
 
-    const channel = getCacheInvalidationChannel();
-    if (channel) {
-      // Broadcast only current path - receiver checks for related paths
-      // (exact match or prefix relationship for intercepts)
-      const currentPath = window.location.pathname;
-      channel.postMessage({ type: "invalidate", path: currentPath });
-      console.log("[Browser] Broadcast sent for path:", currentPath);
-    } else {
-      console.warn("[Browser] No BroadcastChannel available");
-    }
+    const currentPath = typeof window !== "undefined" ? window.location.pathname : "/";
+    crossTabStrategy.broadcast({ type: "invalidate", path: currentPath, actionId, mode });
   }
 
-  // Set up cross-tab cache invalidation listener (only if enabled)
-  if (crossTabSync) {
-    const channel = getCacheInvalidationChannel();
-    if (channel) {
-      channel.onmessage = (event) => {
-        if (event.data?.type === "invalidate") {
-          const mutatedPath = event.data.path;
-          const currentPath = window.location.pathname;
-
-          // Only invalidate cache for related paths
-          // Related means: exact match, or one is a prefix of the other
-          // This handles intercepts where /kanban and /kanban/card/1 share data
-          const isRelated = mutatedPath && (
-            mutatedPath === currentPath ||
-            currentPath.startsWith(mutatedPath + "/") ||
-            mutatedPath.startsWith(currentPath + "/")
+  // Initialize cross-tab sync strategy with context
+  if (crossTabStrategy) {
+    const context: CrossTabSyncContext = {
+      getCurrentPath: () => {
+        return typeof window !== "undefined" ? window.location.pathname : "/";
+      },
+      getState: () => {
+        const state = navState;
+        return {
+          state: state.state,
+          isStreaming: state.isStreaming,
+          pathname: state.location.pathname,
+          url: state.location.href,
+          inflightActions: state.inflightActions.map((a) => ({
+            id: a.id,
+            actionId: a.actionId,
+            payload: a.payload as readonly unknown[],
+            startedAt: a.startedAt,
+          })),
+          // Transaction/form state
+          isActionInProgress: actionInProgress,
+          formAction: state.formAction,
+          hasActiveFormSubmission: state.formData !== null,
+        };
+      },
+      clearCache: () => {
+        clearCacheInternal();
+      },
+      triggerRefresh: (path: string) => {
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("rsc-router:cross-tab-refresh", {
+              detail: { path },
+            })
           );
-
-          if (!isRelated) {
-            // Unrelated route - ignore invalidation
-            return;
-          }
-
-          console.log("[Browser] Cache invalidated by another tab");
-          clearCacheInternal();
-
-          // Auto-refresh if enabled
-          if (crossTabAutoRefresh) {
-            window.dispatchEvent(
-              new CustomEvent("rsc-router:cross-tab-refresh", {
-                detail: { path: mutatedPath },
-              })
-            );
-          }
         }
-      };
-    }
+      },
+      emitCustomEvent: (event: CustomCrossTabEvent) => {
+        customEventListeners.forEach((listener) => listener(event));
+      },
+    };
+
+    crossTabStrategy.init(context);
   }
 
   return {
@@ -430,17 +441,23 @@ export function createNavigationStore(
     /**
      * Clear the history cache and broadcast to other tabs
      * Called after server action commit to invalidate stale data
+     *
+     * @param actionId - Optional action ID that triggered the invalidation
+     * @param mode - Invalidation mode: "clear" (cache only) or "refresh" (cache + refetch)
      */
-    clearHistoryCache(): void {
-      clearCacheAndBroadcast();
+    clearHistoryCache(actionId?: string, mode?: InvalidationMode): void {
+      clearCacheAndBroadcast(actionId, mode);
     },
 
     /**
      * Broadcast cache invalidation to other tabs without clearing local cache
      * Used after consolidation fetch where local cache has fresh data
+     *
+     * @param actionId - Optional action ID that triggered the invalidation
+     * @param mode - Invalidation mode: "clear" (cache only) or "refresh" (cache + refetch)
      */
-    broadcastCacheInvalidation(): void {
-      broadcastInvalidation();
+    broadcastCacheInvalidation(actionId?: string, mode?: InvalidationMode): void {
+      broadcastInvalidation(actionId, mode);
     },
 
     // ========================================================================
@@ -486,6 +503,50 @@ export function createNavigationStore(
       updateSubscribers.forEach((callback) => {
         callback(update);
       });
+    },
+
+    // ========================================================================
+    // Cross-Tab Sync (userland API)
+    // ========================================================================
+
+    /**
+     * Subscribe to custom cross-tab events.
+     * Allows userland code to receive custom events from other tabs.
+     *
+     * @example
+     * ```typescript
+     * const unsubscribe = store.onCrossTabEvent((event) => {
+     *   if (event.name === "user-logout") {
+     *     // Handle logout from another tab
+     *   }
+     * });
+     * ```
+     */
+    onCrossTabEvent(callback: (event: CustomCrossTabEvent) => void): () => void {
+      customEventListeners.add(callback);
+      return () => {
+        customEventListeners.delete(callback);
+      };
+    },
+
+    /**
+     * Broadcast a custom event to other tabs.
+     * Allows userland code to send custom events across tabs.
+     *
+     * @example
+     * ```typescript
+     * store.broadcastCrossTabEvent("user-logout", { userId: "123" });
+     * ```
+     */
+    broadcastCrossTabEvent(name: string, payload: unknown): void {
+      crossTabStrategy?.broadcast({ type: "custom", name, payload });
+    },
+
+    /**
+     * Get the current cross-tab sync strategy (for advanced use)
+     */
+    getCrossTabStrategy(): CrossTabSyncStrategy | null {
+      return crossTabStrategy;
     },
   };
 }

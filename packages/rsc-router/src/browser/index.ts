@@ -49,6 +49,21 @@ export {
   generateHistoryKey,
   type NavigationStoreConfig,
 } from "./navigation-store.js";
+
+// Cross-tab sync strategy
+export {
+  createBroadcastChannelStrategy,
+  defaultCrossTabSyncStrategy,
+  defaultShouldInvalidate,
+  type CrossTabSyncStrategy,
+  type CrossTabSyncContext,
+  type CrossTabNavigationState,
+  type CrossTabInflightAction,
+  type CrossTabEvent,
+  type CustomCrossTabEvent,
+  type BroadcastChannelStrategyOptions,
+  type InvalidationMode,
+} from "./cross-tab-sync.js";
 export { createRequestController } from "./request-controller.js";
 export { createNavigationClient } from "./navigation-client.js";
 export {
