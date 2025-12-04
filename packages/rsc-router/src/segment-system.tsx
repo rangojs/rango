@@ -202,7 +202,9 @@ export async function renderSegments(
 
     // Use LoaderBoundary for streaming when loading skeleton is defined
     // If forceAwait was set, promises are pre-resolved so LoaderBoundary won't suspend
-    if (loading) {
+    // false means we have a loading skeleton but it it's explicitly disabled for ssr
+    // undefined means we dont have a loading skeleton
+    if (loading !== undefined) {
       content = createElement(LoaderBoundary, {
         key: `loader-boundary-${key}`,
         loaderDataPromise: forceAwait
