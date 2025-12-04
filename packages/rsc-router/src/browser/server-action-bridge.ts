@@ -165,7 +165,11 @@ export function createServerActionBridge(
         concurrentRevalidatedSegments.clear();
         hadAnyConcurrentActions = false;
       },
-      commit(segmentIds?: string[], segments?: ResolvedSegment[], skipCacheClear?: boolean) {
+      commit(
+        segmentIds?: string[],
+        segments?: ResolvedSegment[],
+        skipCacheClear?: boolean
+      ) {
         status = "completed";
         // Update segment state if provided
         if (segmentIds) {
@@ -189,7 +193,10 @@ export function createServerActionBridge(
           id,
           actionId,
           url: window.location.href,
-          error: errorData instanceof Error ? errorData : new Error(String(errorData ?? "Unknown error")),
+          error:
+            errorData instanceof Error
+              ? errorData
+              : new Error(String(errorData ?? "Unknown error")),
         });
       },
       [Symbol.dispose]() {
@@ -526,7 +533,9 @@ export function createServerActionBridge(
       // At this point we know user is still on the same route, but segments are missing
       // This indicates actual HMR (module hot reload cleared the segment modules)
       if (fullSegments.length < matched.length) {
-        console.warn(`[Browser] Missing segments after action (HMR detected), refetching...`);
+        console.warn(
+          `[Browser] Missing segments after action (HMR detected), refetching...`
+        );
 
         // Refetch and update UI FIRST (storeOnly - don't change URL)
         const navTx = createNavigationTransaction(
@@ -541,7 +550,9 @@ export function createServerActionBridge(
           navTx.with({ url: window.location.href, storeOnly: true }),
           { isAction: true }
         );
-        console.log(`[Browser] Refetch complete (HMR), now returning action result`);
+        console.log(
+          `[Browser] Refetch complete (HMR), now returning action result`
+        );
 
         // Skip cache clear since we just refetched fresh data
         tx.commit(undefined, undefined, true);
@@ -610,7 +621,7 @@ export function createServerActionBridge(
       // No concurrent actions - normal flow with single action
       // Prepare new tree (await loader data resolution)
       // Pass isAction: true to await component promises on client
-      const newTree = await renderSegments(fullSegments, { isAction: true });
+      const newTree = renderSegments(fullSegments, { isAction: true });
 
       // Schedule UI update after React processes the action return value.
       // queueMicrotask: waits for React's synchronous work + promise callbacks

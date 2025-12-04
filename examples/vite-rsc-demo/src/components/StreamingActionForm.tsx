@@ -72,7 +72,7 @@ export function StreamingActionForm({
               <div>
                 <h4 style={{ margin: "0 0 0.5rem 0" }}>⏳ Streaming...</h4>
                 <p style={{ margin: 0, fontSize: "0.9rem" }}>
-                  Waiting for server to complete slow operation (3 seconds)...
+                  Waiting for server to complete slow operation (10 seconds)...
                 </p>
                 <div
                   style={{

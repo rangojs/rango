@@ -29,8 +29,8 @@ function KanbanLayout() {
   return (
     <div>
       <KanbanBoard />
-      <Outlet name="@modal" />  {/* Intercept content renders here */}
-      <Outlet />                 {/* Normal route content */}
+      <Outlet name="@modal" /> {/* Intercept content renders here */}
+      <Outlet /> {/* Normal route content */}
     </div>
   );
 }
@@ -54,12 +54,13 @@ intercept: <K extends keyof ResolvedRouteMap<T> & string>(
 The browser-side implementation is unstable because:
 
 ### 1. Browser-Side Segment Merging
+
 ```typescript
 // partial-update.ts - Complex merge logic
 if (isIntercept) {
   const existingSegments = Array.from(currentSegmentMap.values());
   const mergedMap = new Map<string, ResolvedSegment>();
-  existingSegments.forEach(s => mergedMap.set(s.id, s));
+  existingSegments.forEach((s) => mergedMap.set(s.id, s));
   newSegments?.forEach((s) => mergedMap.set(s.id, s));
   fullSegments = Array.from(mergedMap.values());
 }
@@ -68,7 +69,9 @@ if (isIntercept) {
 **Problem**: Browser needs to know about intercepts and merge segments manually.
 
 ### 2. isIntercept Flag Threading
+
 The `isIntercept` flag flows through:
+
 - `router.ts` (server)
 - `entry.rsc.tsx` (response metadata)
 - `partial-update.ts` (browser)
@@ -77,16 +80,18 @@ The `isIntercept` flag flows through:
 **Problem**: Special-casing intercepts at every layer.
 
 ### 3. Modal Removal Detection
+
 ```typescript
 // Detecting when to remove @modal
-const currentHasModal = currentIds.some(id => id.includes("@modal"));
-const matchedHasModal = matchedIds.some(id => id.includes("@modal"));
+const currentHasModal = currentIds.some((id) => id.includes("@modal"));
+const matchedHasModal = matchedIds.some((id) => id.includes("@modal"));
 const needsModalRemoval = currentHasModal && !matchedHasModal;
 ```
 
 **Problem**: String matching on segment IDs to detect modal state.
 
 ### 4. Cache/HMR Edge Cases
+
 - Cross-tab refresh with empty cache
 - HMR invalidating cached segments
 - Actions during intercept needing segment merge
@@ -105,6 +110,7 @@ Next.js intercepting routes work by:
 ### Key Insight
 
 In Next.js, the `@modal` folder contains the intercepted route:
+
 ```
 app/
   @modal/
@@ -160,6 +166,7 @@ intercept("@modal", "products.detail.view", handler, use)
 #### 3. Server Always Sends Complete Slot State
 
 For **soft navigation** to `/shop/product/123`:
+
 ```typescript
 {
   matched: ["$root", "$layout.shop", "$route.index"],  // Background stays
@@ -173,6 +180,7 @@ For **soft navigation** to `/shop/product/123`:
 ```
 
 For **hard navigation** to `/shop/product/123`:
+
 ```typescript
 {
   matched: ["$root", "$layout.shop", "$route.product"],
@@ -183,6 +191,7 @@ For **hard navigation** to `/shop/product/123`:
 ```
 
 For **navigation away** from intercept:
+
 ```typescript
 {
   matched: ["$root", "$layout.shop", "$route.index"],
@@ -268,13 +277,13 @@ function isSoftNavigation(request: Request, segmentIds: string[]): boolean {
 
 ## Benefits of Redesign
 
-| Current | Proposed |
-|---------|----------|
-| Browser merges segments | Server sends complete state |
-| `isIntercept` flag everywhere | No special flags |
-| String matching for modal detection | Explicit slot state |
-| Complex HMR/cache edge cases | Server is source of truth |
-| Hard to debug | Clear data flow |
+| Current                             | Proposed                    |
+| ----------------------------------- | --------------------------- |
+| Browser merges segments             | Server sends complete state |
+| `isIntercept` flag everywhere       | No special flags            |
+| String matching for modal detection | Explicit slot state         |
+| Complex HMR/cache edge cases        | Server is source of truth   |
+| Hard to debug                       | Clear data flow             |
 
 ---
 
