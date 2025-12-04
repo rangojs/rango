@@ -78,6 +78,12 @@ export interface NavigationStoreConfig {
    * Requires crossTabSync to be enabled
    */
   crossTabAutoRefresh?: boolean;
+
+  /**
+   * Callback to invoke when cross-tab refresh is triggered
+   * Called when another tab invalidates the cache for a related route
+   */
+  onCrossTabRefresh?: () => void;
 }
 
 /**
@@ -159,6 +165,13 @@ export function createNavigationStore(
   const crossTabSync = config?.crossTabSync !== false; // Default: true
   const crossTabAutoRefresh = config?.crossTabAutoRefresh !== false; // Default: true
 
+  // Cross-tab refresh callback (set by navigation bridge)
+  let crossTabRefreshCallback: (() => void) | null =
+    config?.onCrossTabRefresh ?? null;
+
+  // Track pending cross-tab refresh to prevent duplicate refreshes
+  let pendingCrossTabRefresh = false;
+
   // History-based segment cache: array of [url-key, segments] tuples
   // Each URL gets its own complete snapshot of segments for back/forward and partial merging
   // Oldest entries (at front) are removed when over cacheSize limit
@@ -218,11 +231,20 @@ export function createNavigationStore(
 
     const channel = getCacheInvalidationChannel();
     if (channel) {
-      // Broadcast only current path - receiver checks for related paths
-      // (exact match or prefix relationship for intercepts)
+      // Broadcast path and segment IDs - receiver checks for shared segments
       const currentPath = window.location.pathname;
-      channel.postMessage({ type: "invalidate", path: currentPath });
-      console.log("[Browser] Broadcast sent for path:", currentPath);
+      const currentSegmentIds = segmentState.currentSegmentIds;
+      channel.postMessage({
+        type: "invalidate",
+        path: currentPath,
+        segmentIds: currentSegmentIds,
+      });
+      console.log(
+        "[Browser] Broadcast sent for path:",
+        currentPath,
+        "segments:",
+        currentSegmentIds.join(", ")
+      );
     } else {
       console.warn("[Browser] No BroadcastChannel available");
     }
@@ -235,32 +257,49 @@ export function createNavigationStore(
       channel.onmessage = (event) => {
         if (event.data?.type === "invalidate") {
           const mutatedPath = event.data.path;
-          const currentPath = window.location.pathname;
+          const mutatedSegmentIds: string[] = event.data.segmentIds ?? [];
+          const currentSegmentIds = segmentState.currentSegmentIds;
 
-          // Only invalidate cache for related paths
-          // Related means: exact match, or one is a prefix of the other
-          // This handles intercepts where /kanban and /kanban/card/1 share data
-          const isRelated = mutatedPath && (
-            mutatedPath === currentPath ||
-            currentPath.startsWith(mutatedPath + "/") ||
-            mutatedPath.startsWith(currentPath + "/")
+          // Check for shared segments between tabs
+          // Routes sharing any segment (layout, loader, etc.) should invalidate together
+          const hasSharedSegment = mutatedSegmentIds.some((id) =>
+            currentSegmentIds.includes(id)
           );
 
-          if (!isRelated) {
-            // Unrelated route - ignore invalidation
+          if (!hasSharedSegment) {
+            // No shared segments - routes are unrelated, ignore invalidation
             return;
           }
 
-          console.log("[Browser] Cache invalidated by another tab");
+          console.log(
+            "[Browser] Cache invalidated by another tab, shared segments:",
+            mutatedSegmentIds.filter((id) => currentSegmentIds.includes(id)).join(", ")
+          );
           clearCacheInternal();
 
-          // Auto-refresh if enabled
-          if (crossTabAutoRefresh) {
-            window.dispatchEvent(
-              new CustomEvent("rsc-router:cross-tab-refresh", {
-                detail: { path: mutatedPath },
-              })
-            );
+          // Auto-refresh if enabled and callback is registered
+          if (crossTabAutoRefresh && crossTabRefreshCallback) {
+            // If idle, refresh immediately. If loading, wait for idle then refresh.
+            if (navState.state === "idle") {
+              console.log("[Browser] Cross-tab refresh triggered (idle)");
+              crossTabRefreshCallback();
+            } else if (!pendingCrossTabRefresh) {
+              // Only queue one refresh, ignore subsequent events while loading
+              pendingCrossTabRefresh = true;
+              console.log(
+                "[Browser] Navigation in progress, deferring cross-tab refresh"
+              );
+              // Subscribe to state changes, refresh when idle
+              const listener: StateListener = () => {
+                if (navState.state === "idle") {
+                  stateListeners.delete(listener);
+                  pendingCrossTabRefresh = false;
+                  console.log("[Browser] Cross-tab refresh triggered (deferred)");
+                  crossTabRefreshCallback?.();
+                }
+              };
+              stateListeners.add(listener);
+            }
           }
         }
       };
@@ -441,6 +480,14 @@ export function createNavigationStore(
      */
     broadcastCacheInvalidation(): void {
       broadcastInvalidation();
+    },
+
+    /**
+     * Set the callback to invoke when cross-tab refresh is triggered
+     * Called by navigation bridge during initialization
+     */
+    setCrossTabRefreshCallback(callback: () => void): void {
+      crossTabRefreshCallback = callback;
     },
 
     // ========================================================================

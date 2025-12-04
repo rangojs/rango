@@ -204,6 +204,9 @@ export interface NavigationStore {
   clearHistoryCache(): void;
   broadcastCacheInvalidation(): void;
 
+  // Cross-tab refresh callback (set by navigation bridge)
+  setCrossTabRefreshCallback(callback: () => void): void;
+
   // Intercept context tracking (for action revalidation)
   getInterceptSourceUrl(): string | null;
   setInterceptSourceUrl(url: string | null): void;
