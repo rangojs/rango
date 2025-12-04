@@ -3,7 +3,7 @@
 import { ReactNode } from "react";
 
 export const StreamingAction = async (data: FormData) => {
-  await new Promise((resolve) => setTimeout(resolve, 10000)); // Simulate processing delay
+  await new Promise((resolve) => setTimeout(resolve, 2000)); // Simulate processing delay
   return {
     promise: new Promise<ReactNode>((resolve) => {
       setTimeout(() => {
@@ -20,7 +20,7 @@ export const StreamingAction = async (data: FormData) => {
             </div>
           </>
         );
-      }, 3000); // Simulate delay
+      }, 10000); // Simulate delay
     }),
   }; // Simulate delay
 };

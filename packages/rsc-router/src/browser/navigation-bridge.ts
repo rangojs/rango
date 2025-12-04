@@ -61,7 +61,11 @@ interface BoundCommitOverrides {
  * Bound transaction with pre-configured commit options (without segmentIds/segments)
  */
 interface BoundTransaction {
-  commit(segmentIds: string[], segments: ResolvedSegment[], overrides?: BoundCommitOverrides): void;
+  commit(
+    segmentIds: string[],
+    segments: ResolvedSegment[],
+    overrides?: BoundCommitOverrides
+  ): void;
 }
 
 /**
@@ -224,9 +228,14 @@ function createNavigationTransaction(
       opts: Omit<CommitOptions, "segmentIds" | "segments">
     ): BoundTransaction {
       return {
-        commit: (segmentIds: string[], segments: ResolvedSegment[], overrides?: BoundCommitOverrides) => {
+        commit: (
+          segmentIds: string[],
+          segments: ResolvedSegment[],
+          overrides?: BoundCommitOverrides
+        ) => {
           // Allow overrides to disable scroll (e.g., for intercepts)
-          const finalScroll = overrides?.scroll !== undefined ? overrides.scroll : opts.scroll;
+          const finalScroll =
+            overrides?.scroll !== undefined ? overrides.scroll : opts.scroll;
           commit({ ...opts, segmentIds, segments, scroll: finalScroll });
         },
       };
@@ -320,7 +329,7 @@ export function createNavigationBridge(
         console.log("[Browser] Optimistic render from cache for:", historyKey);
 
         // Render cached segments
-        const root = await renderSegments(cachedSegments);
+        const root = renderSegments(cachedSegments);
         onUpdate({
           root,
           metadata: {
@@ -415,7 +424,9 @@ export function createNavigationBridge(
 
         // Render from cache - force await to skip loading fallbacks
         try {
-          const root = await renderSegments(cachedSegments, { forceAwait: true });
+          const root = renderSegments(cachedSegments, {
+            forceAwait: true,
+          });
           onUpdate({
             root,
             metadata: {

@@ -361,7 +361,7 @@ export function createPartialUpdater(
         });
       } else {
         onUpdate({
-          root: await payload.root,
+          root: payload.root,
           metadata: payload.metadata!,
         });
       }
