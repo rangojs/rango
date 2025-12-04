@@ -487,26 +487,17 @@ export function createNavigationBridge(
         this.handlePopstate();
       };
 
-      // Auto-refresh when another tab mutates data on the same path
-      const handleCrossTabRefresh = () => {
-        console.log("[Browser] Cross-tab refresh triggered");
+      // Register cross-tab refresh callback with the store
+      store.setCrossTabRefreshCallback(() => {
         this.refresh();
-      };
+      });
 
       window.addEventListener("popstate", handlePopstate);
-      window.addEventListener(
-        "rsc-router:cross-tab-refresh",
-        handleCrossTabRefresh
-      );
       console.log("[Browser] Navigation bridge ready");
 
       return () => {
         cleanupLinks();
         window.removeEventListener("popstate", handlePopstate);
-        window.removeEventListener(
-          "rsc-router:cross-tab-refresh",
-          handleCrossTabRefresh
-        );
       };
     },
   };
