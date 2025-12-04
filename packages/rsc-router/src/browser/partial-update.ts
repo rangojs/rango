@@ -115,15 +115,30 @@ export function createPartialUpdater(
     console.log(`[Browser] To: ${url}`);
     console.log(`[Browser] Segments to send: ${segments.join(", ")}`);
 
+    // Set streaming state for navigations (actions handle their own streaming state)
+    if (!isAction) {
+      store.setState({ isStreaming: true });
+    }
+
     // Get current page's segments for merging with server diff
     const currentSegmentMap = getCurrentSegmentMap();
 
     // Fetch partial payload (no abort signal - RSC doesn't support it well)
-    const { payload, streamComplete } = await client.fetchPartial({
+    const { payload, streamComplete: rawStreamComplete } = await client.fetchPartial({
       targetUrl: url,
       segmentIds: segments,
       previousUrl: segmentState.currentUrl,
     });
+
+    // Wrap stream completion to clear streaming state when done
+    // Only clear if this navigation wasn't aborted (newer navigation handles its own state)
+    const streamComplete = isAction
+      ? rawStreamComplete
+      : rawStreamComplete.then(() => {
+          if (!signal?.aborted) {
+            store.setState({ isStreaming: false });
+          }
+        });
 
     if (payload.metadata?.isPartial) {
       const { segments: newSegments, matched, diff } = payload.metadata;
