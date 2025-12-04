@@ -1,13 +1,6 @@
 import type { ReactNode } from "react";
 import type { ResolvedSegment, SlotState } from "../types.js";
 import type { RenderSegmentsOptions } from "../segment-system.js";
-import type {
-  StoreEvent,
-  StoreEventType,
-  StoreEventListener,
-  StoreSnapshot,
-  IdleCallback,
-} from "./store-events.js";
 
 // ============================================================================
 // RSC Payload Types
@@ -209,6 +202,7 @@ export interface NavigationStore {
   getCachedSegments(historyKey: string): ResolvedSegment[] | undefined;
   hasHistoryCache(historyKey: string): boolean;
   clearHistoryCache(): void;
+  broadcastCacheInvalidation(): void;
 
   // Intercept context tracking (for action revalidation)
   getInterceptSourceUrl(): string | null;
@@ -217,81 +211,6 @@ export interface NavigationStore {
   // UI update notifications
   onUpdate(callback: UpdateSubscriber): () => void;
   emitUpdate(update: NavigationUpdate): void;
-
-  // ========================================================================
-  // Event Emitter (lifecycle events for navigation and actions)
-  // ========================================================================
-
-  /**
-   * Subscribe to store events.
-   * Use "*" to listen to all events.
-   *
-   * @example
-   * ```typescript
-   * // Listen to specific event
-   * store.on("action:idle", (event) => {
-   *   console.log("Action completed:", event.actionId);
-   * });
-   *
-   * // Listen to all events
-   * store.on("*", (event) => {
-   *   console.log("Event:", event.type);
-   * });
-   * ```
-   */
-  on<T extends StoreEventType | "*">(
-    event: T,
-    listener: T extends "*"
-      ? StoreEventListener<StoreEvent>
-      : T extends StoreEventType
-        ? StoreEventListener<Extract<StoreEvent, { type: T }>>
-        : never
-  ): () => void;
-
-  /**
-   * Remove an event listener
-   */
-  off<T extends StoreEventType | "*">(
-    event: T,
-    listener: StoreEventListener<any>
-  ): void;
-
-  /**
-   * Emit a store event (internal use by bridges)
-   */
-  emit(event: StoreEvent): void;
-
-  /**
-   * Get a readonly snapshot of the current store state.
-   * Includes phase, inflight navigation/actions, and busy status.
-   */
-  getSnapshot(): StoreSnapshot;
-
-  /**
-   * Enqueue a callback to run when the store becomes idle.
-   * If already idle, runs immediately.
-   *
-   * @example
-   * ```typescript
-   * store.enqueue(() => {
-   *   store.clearHistoryCache();
-   * });
-   * ```
-   */
-  enqueue(callback: IdleCallback): void;
-
-  /**
-   * Cancel all pending operations and run queued callbacks immediately.
-   * Used for forced state transitions.
-   */
-  flush(): void;
-
-  /**
-   * Mark the store as hydrated.
-   * Should be called once after initial client-side hydration completes.
-   * Emits a "hydrated" event with timing information.
-   */
-  markHydrated(): void;
 }
 
 // ============================================================================

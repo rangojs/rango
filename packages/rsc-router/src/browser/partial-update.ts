@@ -125,33 +125,6 @@ export function createPartialUpdater(
       previousUrl: segmentState.currentUrl,
     });
 
-    // For navigations (not actions), emit streaming event
-    // Actions have their own streaming/idle events in server-action-bridge
-    const fromUrlForEvents = segmentState.currentUrl;
-    if (!isAction) {
-      // Emit navigation:streaming - RSC stream is being consumed, React may suspend
-      store.emit({
-        type: "navigation:streaming",
-        fromUrl: fromUrlForEvents,
-        toUrl: url,
-      });
-    }
-
-    // Helper to set up idle emission after successful commit
-    // Only called on successful commit paths, not on early returns or HMR retry
-    function setupIdleEmission(): void {
-      if (isAction) return; // Actions handle their own events
-      streamComplete.then(() => {
-        // Don't emit idle if navigation was aborted (cancelled event will be emitted instead)
-        if (signal?.aborted) return;
-        store.emit({
-          type: "navigation:idle",
-          fromUrl: fromUrlForEvents,
-          toUrl: url,
-        });
-      });
-    }
-
     if (payload.metadata?.isPartial) {
       const { segments: newSegments, matched, diff } = payload.metadata;
 
@@ -181,7 +154,6 @@ export function createPartialUpdater(
           .map((id: string) => currentSegmentMap.get(id))
           .filter(Boolean) as ResolvedSegment[];
         tx.commit(matchedIds, existingSegments);
-        setupIdleEmission();
         console.log(`[Browser] Navigation complete (no re-render)\n`);
         return streamComplete;
       }
@@ -315,7 +287,6 @@ export function createPartialUpdater(
         allSegments,
         hasActiveIntercept ? { scroll: false } : undefined
       );
-      setupIdleEmission();
       console.log("[partial-update] updating document");
 
       // Emit update to trigger React render
@@ -378,7 +349,6 @@ export function createPartialUpdater(
 
       // Commit navigation - transaction handles all store mutations atomically
       tx.commit(segmentIds, segments);
-      setupIdleEmission();
 
       // Emit update to trigger React render
       // For actions, wrap in startTransition to avoid UI flickering

@@ -74,12 +74,6 @@ interface BoundTransaction {
 interface TransactionOptions {
   /** If true, skip setting loading state (for optimistic renders with cache) */
   skipLoadingState?: boolean;
-  /** Source URL (where navigation started from) */
-  fromUrl?: string;
-  /** Target URL (where navigating to) */
-  toUrl?: string;
-  /** Whether this is a replace navigation */
-  replace?: boolean;
 }
 
 /**
@@ -99,11 +93,6 @@ interface NavigationTransaction extends Disposable {
  * Creates a disposable transaction for navigation state management.
  * Handles loading state transitions and cleanup on completion/abort.
  *
- * Emits navigation events for lifecycle tracking:
- * - navigation:start on creation (unless skipLoadingState)
- * - navigation:idle on commit
- * - navigation:cancelled on dispose if aborted
- *
  * Supports optimistic navigation: render from cache immediately,
  * then revalidate in background and reconcile if data changed.
  */
@@ -115,18 +104,9 @@ function createNavigationTransaction(
   let committed = false;
   let optimisticallyCommitted = false;
 
-  // Track URLs for events
-  const fromUrl = options?.fromUrl ?? window.location.href;
-  const toUrl = options?.toUrl ?? window.location.href;
-
-  // Only emit navigation:start if not doing optimistic render from cache
+  // Only set loading state if not doing optimistic render from cache
   if (!options?.skipLoadingState) {
-    store.emit({
-      type: "navigation:start",
-      fromUrl,
-      toUrl,
-      replace: options?.replace ?? false,
-    });
+    store.setState({ state: "loading" });
   }
 
   /**
@@ -158,11 +138,10 @@ function createNavigationTransaction(
       window.history.pushState(null, "", url);
     }
 
-    // Emit navigation:idle (content is visible from cache)
-    store.emit({
-      type: "navigation:idle",
-      fromUrl,
-      toUrl: url,
+    // Set idle state (content is visible from cache)
+    store.setState({
+      state: "idle",
+      location: parsedUrl,
     });
 
     // Scroll to top
@@ -179,7 +158,6 @@ function createNavigationTransaction(
   /**
    * Commit the navigation - updates store and URL atomically
    * If optimisticCommit was called, this becomes a reconciliation
-   * NOTE: Does NOT emit navigation:idle - caller must emit after streamComplete
    */
   function commit(opts: CommitOptions): void {
     committed = true;
@@ -220,8 +198,11 @@ function createNavigationTransaction(
       }
     }
 
-    // NOTE: navigation:idle is emitted by the caller after streamComplete resolves
-    // This ensures isStreaming stays true until the RSC stream is fully consumed
+    // Update store with new location and idle state
+    store.setState({
+      state: "idle",
+      location: parsedUrl,
+    });
 
     // Scroll to top if requested (skip if reconciliation)
     if (!isReconciliation && scroll !== false) {
@@ -261,25 +242,12 @@ function createNavigationTransaction(
     },
 
     [Symbol.dispose]() {
-      // If aborted, emit navigation:cancelled
-      if (signal.aborted) {
-        store.emit({
-          type: "navigation:cancelled",
-          fromUrl,
-          toUrl,
-          reason: "aborted",
-        });
-        return;
-      }
+      // If aborted, another navigation took over - don't touch state
+      if (signal.aborted) return;
 
-      // If not committed (and not optimistically committed), emit navigation:idle
-      // This handles cleanup when navigation ends without explicit commit
+      // If not committed (and not optimistically committed), reset to idle
       if (!committed && !optimisticallyCommitted) {
-        store.emit({
-          type: "navigation:idle",
-          fromUrl,
-          toUrl,
-        });
+        store.setState({ state: "idle" });
       }
     },
   };
@@ -333,8 +301,7 @@ export function createNavigationBridge(
     async navigate(url: string, options?: NavigateOptions): Promise<void> {
       // Only abort pending requests when navigating to a different route
       // Same-route navigation (e.g., /todos -> /todos) should not cancel in-flight actions
-      const currentUrl = window.location.href;
-      const currentPath = new URL(currentUrl).pathname;
+      const currentPath = new URL(window.location.href).pathname;
       const targetPath = new URL(url, window.location.origin).pathname;
       if (currentPath !== targetPath) {
         requestController.abortAll();
@@ -354,12 +321,7 @@ export function createNavigationBridge(
       using tx = createNavigationTransaction(
         store,
         disposable.controller.signal,
-        {
-          skipLoadingState: hasUsableCache, // Skip loading state if we have usable cache
-          fromUrl: currentUrl,
-          toUrl: url,
-          replace: options?.replace,
-        }
+        { skipLoadingState: hasUsableCache } // Skip loading state if we have usable cache
       );
 
       // OPTIMISTIC: If we have usable cache, render immediately
@@ -413,17 +375,11 @@ export function createNavigationBridge(
      * Refresh current route
      */
     async refresh(): Promise<void> {
-      const currentUrl = window.location.href;
       requestController.abortAll();
       using disposable = requestController.createDisposable();
       using tx = createNavigationTransaction(
         store,
-        disposable.controller.signal,
-        {
-          fromUrl: currentUrl,
-          toUrl: currentUrl,
-          replace: true,
-        }
+        disposable.controller.signal
       );
 
       // Refetch with empty segments to get everything fresh
@@ -444,19 +400,14 @@ export function createNavigationBridge(
       // Abort any pending navigation to prevent race conditions
       requestController.abortAll();
 
-      // Track navigation URLs - for popstate, fromUrl is the previous location
-      // which we get from store before updating
-      const fromUrl = store.getState().location.href;
       const url = window.location.href;
       // Compute history key from URL (deterministic hash)
       const historyKey = generateHistoryKey(url);
 
-      // Emit navigation:start
-      store.emit({
-        type: "navigation:start",
-        fromUrl,
-        toUrl: url,
-        replace: true, // popstate is effectively a replace
+      // Update location from browser URL
+      store.setState({
+        state: "loading",
+        location: new URL(url),
       });
 
       // Check if we can restore from history cache
@@ -486,12 +437,7 @@ export function createNavigationBridge(
               diff: [],
             },
           });
-          // Emit navigation:idle
-          store.emit({
-            type: "navigation:idle",
-            fromUrl,
-            toUrl: url,
-          });
+          store.setState({ state: "idle" });
           return;
         } catch (error) {
           console.warn(
@@ -508,13 +454,7 @@ export function createNavigationBridge(
       using disposable = requestController.createDisposable();
       using tx = createNavigationTransaction(
         store,
-        disposable.controller.signal,
-        {
-          skipLoadingState: true, // Already emitted navigation:start above
-          fromUrl,
-          toUrl: url,
-          replace: true,
-        }
+        disposable.controller.signal
       );
 
       try {

@@ -9,21 +9,31 @@ import type {
   ResolvedSegment,
   InflightAction,
 } from "./types.js";
-import type {
-  StoreEvent,
-  StoreEventType,
-  StoreEventListener,
-  StoreSnapshot,
-  StorePhase,
-  InflightNavigation,
-  IdleCallback,
-} from "./store-events.js";
 
 // Maximum number of history entries to cache (URLs visited)
 const HISTORY_CACHE_SIZE = 20;
 
 // Cache entry: [url-key, segments]
 type HistoryCacheEntry = [string, ResolvedSegment[]];
+
+// BroadcastChannel for cross-tab cache invalidation
+const CACHE_INVALIDATION_CHANNEL = "rsc-router-cache-invalidation";
+
+// BroadcastChannel instance (lazily initialized)
+let cacheInvalidationChannel: BroadcastChannel | null = null;
+
+/**
+ * Get or create the BroadcastChannel for cache invalidation
+ */
+function getCacheInvalidationChannel(): BroadcastChannel | null {
+  if (typeof window === "undefined" || typeof BroadcastChannel === "undefined") {
+    return null;
+  }
+  if (!cacheInvalidationChannel) {
+    cacheInvalidationChannel = new BroadcastChannel(CACHE_INVALIDATION_CHANNEL);
+  }
+  return cacheInvalidationChannel;
+}
 
 /**
  * Generate a cache key from a URL.
@@ -54,6 +64,20 @@ export interface NavigationStoreConfig {
    * Older entries are evicted when limit is reached
    */
   cacheSize?: number;
+
+  /**
+   * Enable cross-tab cache invalidation via BroadcastChannel (default: true)
+   * When cache is cleared (via server actions or useClientCache().clear()),
+   * other tabs will also clear their cache
+   */
+  crossTabSync?: boolean;
+
+  /**
+   * Auto-refresh when another tab mutates data on the same path (default: true)
+   * Triggered when cache is cleared via server actions or useClientCache().clear()
+   * Requires crossTabSync to be enabled
+   */
+  crossTabAutoRefresh?: boolean;
 }
 
 /**
@@ -132,6 +156,8 @@ export function createNavigationStore(
 
   // Configuration with defaults
   const cacheSize = config?.cacheSize ?? HISTORY_CACHE_SIZE;
+  const crossTabSync = config?.crossTabSync !== false; // Default: true
+  const crossTabAutoRefresh = config?.crossTabAutoRefresh !== false; // Default: true
 
   // History-based segment cache: array of [url-key, segments] tuples
   // Each URL gets its own complete snapshot of segments for back/forward and partial merging
@@ -159,29 +185,6 @@ export function createNavigationStore(
   // Used to maintain intercept context during action revalidation
   let interceptSourceUrl: string | null = null;
 
-  // ========================================================================
-  // Event Emitter State
-  // ========================================================================
-
-  // Event listeners by event type
-  const eventListeners = new Map<string, Set<StoreEventListener<any>>>();
-
-  // Hydration tracking
-  let isHydrated = false;
-  const hydrationStartTime = Date.now();
-
-  // Inflight navigation tracking (separate from actions)
-  let inflightNavigation: InflightNavigation | null = null;
-
-  // Action phases (track streaming state per action)
-  const actionPhases = new Map<string, "loading" | "streaming">();
-
-  // Queued callbacks to run when idle
-  const idleQueue: IdleCallback[] = [];
-
-  // Track if we were busy before (for emitting global idle)
-  let wasBusy = false;
-
   /**
    * Notify all state listeners of a change
    */
@@ -190,103 +193,78 @@ export function createNavigationStore(
   }
 
   /**
-   * Get current URL for events
+   * Clear the history cache (internal - does not broadcast)
    */
-  function getCurrentUrl(): string {
-    return typeof window !== "undefined" ? window.location.href : "/";
-  }
-
-  /**
-   * Emit an event to all listeners
-   */
-  function emitEvent(event: StoreEvent): void {
-    // Track busy state before emitting
-    const currentPhase = computePhase();
-    const isBusy = currentPhase !== "idle";
-
-    // Emit to specific listeners
-    const listeners = eventListeners.get(event.type);
-    if (listeners) {
-      listeners.forEach((listener) => listener(event));
-    }
-
-    // Emit to wildcard listeners
-    const wildcardListeners = eventListeners.get("*");
-    if (wildcardListeners) {
-      wildcardListeners.forEach((listener) => listener(event));
-    }
-
-    // Check if we transitioned to idle - emit global "idle" event
-    if (wasBusy && !isBusy) {
-      const idleEvent: StoreEvent = {
-        type: "idle",
-        url: getCurrentUrl(),
-      };
-      const idleListeners = eventListeners.get("idle");
-      if (idleListeners) {
-        idleListeners.forEach((listener) => listener(idleEvent));
-      }
-      if (wildcardListeners) {
-        wildcardListeners.forEach((listener) => listener(idleEvent));
-      }
-    }
-
-    wasBusy = isBusy;
-
-    // Check if we should run idle queue
-    if (!isBusy) {
-      maybeRunIdleQueue();
-    }
-  }
-
-  /**
-   * Compute current store phase based on inflight state
-   */
-  function computePhase(): StorePhase {
-    // Check if any action is streaming
-    for (const phase of actionPhases.values()) {
-      if (phase === "streaming") return "streaming";
-    }
-    // Check navigation streaming
-    if (inflightNavigation?.phase === "streaming") return "streaming";
-
-    // Check if anything is loading
-    for (const phase of actionPhases.values()) {
-      if (phase === "loading") return "loading";
-    }
-    if (inflightNavigation?.phase === "loading") return "loading";
-
-    return "idle";
-  }
-
-  /**
-   * Check if store is idle and run queued callbacks
-   */
-  function maybeRunIdleQueue(): void {
-    if (computePhase() !== "idle") return;
-    if (idleQueue.length === 0) return;
-
-    // Run all queued callbacks
-    const callbacks = [...idleQueue];
-    idleQueue.length = 0;
-
-    for (const callback of callbacks) {
-      try {
-        const result = callback();
-        if (result instanceof Promise) {
-          result.catch((err) => console.error("[Store] Idle callback error:", err));
-        }
-      } catch (err) {
-        console.error("[Store] Idle callback error:", err);
-      }
-    }
-  }
-
-  /**
-   * Clear the history cache
-   */
-  function clearCache(): void {
+  function clearCacheInternal(): void {
     historyCache.length = 0;
+  }
+
+  /**
+   * Clear the history cache and broadcast to other tabs
+   */
+  function clearCacheAndBroadcast(): void {
+    console.log("[Browser] Clearing cache and broadcasting to other tabs");
+    clearCacheInternal();
+    broadcastInvalidation();
+  }
+
+  /**
+   * Broadcast cache invalidation to other tabs without clearing local cache
+   * Used after consolidation fetch where local cache has fresh data
+   */
+  function broadcastInvalidation(): void {
+    // Only broadcast if cross-tab sync is enabled
+    if (!crossTabSync) return;
+
+    const channel = getCacheInvalidationChannel();
+    if (channel) {
+      // Broadcast only current path - receiver checks for related paths
+      // (exact match or prefix relationship for intercepts)
+      const currentPath = window.location.pathname;
+      channel.postMessage({ type: "invalidate", path: currentPath });
+      console.log("[Browser] Broadcast sent for path:", currentPath);
+    } else {
+      console.warn("[Browser] No BroadcastChannel available");
+    }
+  }
+
+  // Set up cross-tab cache invalidation listener (only if enabled)
+  if (crossTabSync) {
+    const channel = getCacheInvalidationChannel();
+    if (channel) {
+      channel.onmessage = (event) => {
+        if (event.data?.type === "invalidate") {
+          const mutatedPath = event.data.path;
+          const currentPath = window.location.pathname;
+
+          // Only invalidate cache for related paths
+          // Related means: exact match, or one is a prefix of the other
+          // This handles intercepts where /kanban and /kanban/card/1 share data
+          const isRelated = mutatedPath && (
+            mutatedPath === currentPath ||
+            currentPath.startsWith(mutatedPath + "/") ||
+            mutatedPath.startsWith(currentPath + "/")
+          );
+
+          if (!isRelated) {
+            // Unrelated route - ignore invalidation
+            return;
+          }
+
+          console.log("[Browser] Cache invalidated by another tab");
+          clearCacheInternal();
+
+          // Auto-refresh if enabled
+          if (crossTabAutoRefresh) {
+            window.dispatchEvent(
+              new CustomEvent("rsc-router:cross-tab-refresh", {
+                detail: { path: mutatedPath },
+              })
+            );
+          }
+        }
+      };
+    }
   }
 
   return {
@@ -450,11 +428,19 @@ export function createNavigationStore(
     },
 
     /**
-     * Clear the history cache
+     * Clear the history cache and broadcast to other tabs
      * Called after server action commit to invalidate stale data
      */
     clearHistoryCache(): void {
-      clearCache();
+      clearCacheAndBroadcast();
+    },
+
+    /**
+     * Broadcast cache invalidation to other tabs without clearing local cache
+     * Used after consolidation fetch where local cache has fresh data
+     */
+    broadcastCacheInvalidation(): void {
+      broadcastInvalidation();
     },
 
     // ========================================================================
@@ -499,264 +485,6 @@ export function createNavigationStore(
     emitUpdate(update: NavigationUpdate): void {
       updateSubscribers.forEach((callback) => {
         callback(update);
-      });
-    },
-
-    // ========================================================================
-    // Event Emitter
-    // ========================================================================
-
-    /**
-     * Subscribe to store events
-     */
-    on<T extends StoreEventType | "*">(
-      event: T,
-      listener: StoreEventListener<any>
-    ): () => void {
-      let listeners = eventListeners.get(event);
-      if (!listeners) {
-        listeners = new Set();
-        eventListeners.set(event, listeners);
-      }
-      listeners.add(listener);
-      return () => {
-        listeners!.delete(listener);
-        if (listeners!.size === 0) {
-          eventListeners.delete(event);
-        }
-      };
-    },
-
-    /**
-     * Remove an event listener
-     */
-    off<T extends StoreEventType | "*">(
-      event: T,
-      listener: StoreEventListener<any>
-    ): void {
-      const listeners = eventListeners.get(event);
-      if (listeners) {
-        listeners.delete(listener);
-        if (listeners.size === 0) {
-          eventListeners.delete(event);
-        }
-      }
-    },
-
-    /**
-     * Emit a store event
-     *
-     * Automatically updates NavigationState based on event type:
-     * - navigation:start → { state: "loading", location: toUrl }
-     * - navigation:streaming → { isStreaming: true }
-     * - navigation:idle/cancelled/error → { state: "idle", isStreaming: false }
-     * - action:start → { state: "loading" } (if no navigation in progress)
-     * - action:streaming → { isStreaming: true }
-     * - action:idle/cancelled/error → { state: "idle", isStreaming: false } (if last action)
-     */
-    emit(event: StoreEvent): void {
-      // Update internal tracking based on event type
-      switch (event.type) {
-        // Global events
-        case "hydrated":
-          isHydrated = true;
-          break;
-        case "idle":
-        case "error":
-          // No internal state changes for these
-          break;
-
-        // Navigation events
-        case "navigation:start":
-          inflightNavigation = {
-            fromUrl: event.fromUrl,
-            toUrl: event.toUrl,
-            startedAt: Date.now(),
-            phase: "loading",
-          };
-          // Derive NavigationState: set loading and update location optimistically
-          navState = {
-            ...navState,
-            state: "loading",
-            location: new URL(event.toUrl, navState.location.origin),
-            isStreaming: false,
-          };
-          notifyStateListeners();
-          break;
-
-        case "navigation:loaded":
-          if (inflightNavigation) {
-            inflightNavigation.phase = "loading";
-          }
-          // No NavigationState change - still loading
-          break;
-
-        case "navigation:streaming":
-          if (inflightNavigation) {
-            inflightNavigation.phase = "streaming";
-          }
-          // Derive NavigationState: streaming started
-          // state becomes "idle" because we're no longer waiting for initial response
-          // isStreaming stays true until stream completes
-          navState = { ...navState, state: "idle", isStreaming: true };
-          notifyStateListeners();
-          break;
-
-        case "navigation:idle":
-        case "navigation:cancelled":
-        case "navigation:error":
-          inflightNavigation = null;
-          // Derive NavigationState: navigation complete
-          // Only go idle if no actions are in flight
-          if (actionPhases.size === 0) {
-            navState = { ...navState, state: "idle", isStreaming: false };
-            notifyStateListeners();
-          }
-          break;
-
-        // Action events
-        case "action:start":
-          actionPhases.set(event.id, "loading");
-          // Derive NavigationState: set loading (even if navigation is in progress)
-          // Actions always trigger loading state
-          navState = { ...navState, state: "loading" };
-          notifyStateListeners();
-          break;
-
-        case "action:loaded":
-          actionPhases.set(event.id, "loading");
-          // No NavigationState change - still loading
-          break;
-
-        case "action:streaming":
-          actionPhases.set(event.id, "streaming");
-          // Derive NavigationState: streaming started
-          // state becomes "idle" because we're no longer waiting for initial response
-          // isStreaming stays true until stream completes
-          navState = { ...navState, state: "idle", isStreaming: true };
-          notifyStateListeners();
-          break;
-
-        case "action:idle":
-        case "action:cancelled":
-        case "action:error":
-          actionPhases.delete(event.id);
-          // Derive NavigationState: only go idle if this was the last action
-          // AND no navigation is in progress
-          if (actionPhases.size === 0 && !inflightNavigation) {
-            navState = { ...navState, state: "idle", isStreaming: false };
-            notifyStateListeners();
-          }
-          break;
-      }
-
-      emitEvent(event);
-    },
-
-    /**
-     * Get a readonly snapshot of current store state
-     */
-    getSnapshot(): StoreSnapshot {
-      const phase = computePhase();
-      const actions = navState.inflightActions.map((a) => ({
-        id: a.id,
-        actionId: a.actionId,
-        payload: a.payload as readonly unknown[],
-        startedAt: a.startedAt,
-        phase: actionPhases.get(a.id) ?? ("loading" as const),
-      }));
-
-      return {
-        phase,
-        isHydrated,
-        inflightNavigation: inflightNavigation
-          ? { ...inflightNavigation }
-          : null,
-        inflightActions: actions,
-        location: navState.location,
-        isBusy: phase !== "idle",
-        isNavigating: inflightNavigation !== null,
-        hasInflightActions: actions.length > 0,
-      };
-    },
-
-    /**
-     * Enqueue a callback to run when store becomes idle
-     */
-    enqueue(callback: IdleCallback): void {
-      if (computePhase() === "idle") {
-        // Already idle, run immediately
-        try {
-          const result = callback();
-          if (result instanceof Promise) {
-            result.catch((err) => console.error("[Store] Enqueue callback error:", err));
-          }
-        } catch (err) {
-          console.error("[Store] Enqueue callback error:", err);
-        }
-      } else {
-        idleQueue.push(callback);
-      }
-    },
-
-    /**
-     * Cancel pending operations and run queued callbacks
-     */
-    flush(): void {
-      // Clear inflight state
-      if (inflightNavigation) {
-        emitEvent({
-          type: "navigation:cancelled",
-          fromUrl: inflightNavigation.fromUrl,
-          toUrl: inflightNavigation.toUrl,
-          reason: "aborted",
-        });
-        inflightNavigation = null;
-      }
-
-      // Clear action phases (actions themselves are tracked externally)
-      for (const [id] of actionPhases) {
-        const action = navState.inflightActions.find((a) => a.id === id);
-        if (action) {
-          emitEvent({
-            type: "action:cancelled",
-            id,
-            actionId: action.actionId,
-            url: getCurrentUrl(),
-            reason: "aborted",
-          });
-        }
-      }
-      actionPhases.clear();
-
-      // Run queued callbacks
-      const callbacks = [...idleQueue];
-      idleQueue.length = 0;
-
-      for (const callback of callbacks) {
-        try {
-          const result = callback();
-          if (result instanceof Promise) {
-            result.catch((err) => console.error("[Store] Flush callback error:", err));
-          }
-        } catch (err) {
-          console.error("[Store] Flush callback error:", err);
-        }
-      }
-    },
-
-    /**
-     * Mark the store as hydrated.
-     * Should be called once after initial client-side hydration completes.
-     */
-    markHydrated(): void {
-      if (isHydrated) return;
-
-      const duration = Date.now() - hydrationStartTime;
-      emitEvent({
-        type: "hydrated",
-        url: getCurrentUrl(),
-        duration,
       });
     },
   };
