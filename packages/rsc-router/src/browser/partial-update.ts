@@ -269,7 +269,7 @@ export function createPartialUpdater(
         interceptSegments:
           interceptSegments.length > 0 ? interceptSegments : undefined,
       };
-      const newTree = signal
+      const newTree = await (signal
         ? Promise.race([
             renderSegments(mainSegments, renderOptions),
             new Promise<never>((_, reject) => {
@@ -281,7 +281,7 @@ export function createPartialUpdater(
               });
             }),
           ])
-        : renderSegments(mainSegments, renderOptions);
+        : renderSegments(mainSegments, renderOptions));
 
       // Final abort check before committing - another navigation may have started
       if (signal?.aborted) {
