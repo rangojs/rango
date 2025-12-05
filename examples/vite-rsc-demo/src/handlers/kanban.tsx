@@ -4,11 +4,17 @@ import type { kanbanRoutes } from "../routes.js";
 import type { ErrorBoundaryFallbackProps } from "rsc-router";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
-import { KanbanLoader, CardDetailLoader } from "./kanban/loader.js";
+import {
+  KanbanLoader,
+  CardDetailLoader,
+  ActionCounterLoader,
+  incrementActionCount,
+} from "./kanban/loader.js";
 import { KanbanBoardContent } from "./kanban/KanbanBoard.js";
 import { CardDetailContent, CardDetailSkeleton } from "./kanban/CardDetail.js";
 import { FullWidthLayout } from "./kanban/FullWidthLayout.js";
 import { KanbanErrorBoundary } from "./kanban/KanbanErrorBoundary.js";
+import { ActionCounterLayout } from "./kanban/ActionCounter.js";
 
 // Layout component for Kanban section
 function KanbanLayout() {
@@ -164,6 +170,20 @@ export default map<typeof kanbanRoutes>(
     errorBoundary,
   }) => [
     layout(<RootLayout />),
+
+    // Action counter layout with loader - tests loader-only revalidation
+    layout(<ActionCounterLayout />, () => [
+      loader(ActionCounterLoader, () => [
+        revalidate(({ actionId, method }) => {
+          if (method === "POST" && actionId) {
+            // Increment counter when revalidating
+            incrementActionCount(actionId);
+            return true;
+          }
+          return false;
+        }),
+      ]),
+    ]),
 
     // Kanban section layout with loader and intercept
     layout(<KanbanLayout />, () => [

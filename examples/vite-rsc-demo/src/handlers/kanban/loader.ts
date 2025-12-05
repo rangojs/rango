@@ -3,6 +3,26 @@ import { boardStore, type Board, type Card } from "./data.js";
 
 export type BoardData = Board;
 
+// In-memory action counter (persists across requests in dev, resets on server restart)
+const actionCounts: Record<string, number> = {};
+
+// Increment action count (called during revalidation)
+export function incrementActionCount(actionId: string) {
+  const shortName = actionId.split("/").pop() || actionId;
+  actionCounts[shortName] = (actionCounts[shortName] || 0) + 1;
+}
+
+/**
+ * ActionCounterLoader - tracks action counts for revalidation testing
+ */
+export const ActionCounterLoader = createLoader("actionCounter", async (_ctx) => {
+  "use server";
+  return {
+    counts: { ...actionCounts },
+    total: Object.keys(actionCounts).length,
+  };
+});
+
 /**
  * KanbanLoader - fetches the board with columns and cards
  */
