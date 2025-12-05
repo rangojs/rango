@@ -8,14 +8,13 @@ import {
 import React from "react";
 import { hydrateRoot } from "react-dom/client";
 import { rscStream } from "rsc-html-stream/client";
-import { renderSegments } from "rsc-router";
 import {
   createNavigationStore,
   createRequestController,
   createNavigationClient,
   createServerActionBridge,
   createNavigationBridge,
-  NavigationProvider,
+  NavigationProviderV2,
   generateHistoryKey,
   type RscPayload,
   type ResolvedSegment,
@@ -61,39 +60,37 @@ async function initializeApp() {
   const requestController = createRequestController();
   const client = createNavigationClient(deps);
 
-  // Setup server action bridge
+  // Setup server action bridge (V2: no renderSegments)
   const actionBridge = createServerActionBridge({
     store,
     client,
     requestController,
     deps,
     onUpdate: (update) => store.emitUpdate(update),
-    renderSegments,
   });
   actionBridge.register();
 
-  // Setup navigation bridge
+  // Setup navigation bridge (V2: no renderSegments)
   const navigationBridge = createNavigationBridge({
     store,
     client,
     requestController,
     onUpdate: (update) => store.emitUpdate(update),
-    renderSegments,
   });
   navigationBridge.registerLinkInterception();
 
-  // Build initial tree
-  const initialTree = renderSegments(initialPayload.metadata!.segments);
-
-  // Hydrate
-  const root = document.getElementById("root") || document;
+  // Hydrate with V2 provider
+  // During hydration, render initialContent (server RSC tree) to match server HTML
+  // After hydration, switch to segment-based rendering for V2 navigation
+  const rootElement = document.getElementById("root") || document;
   hydrateRoot(
-    root,
+    rootElement,
     <React.StrictMode>
-      <NavigationProvider
+      <NavigationProviderV2
         store={store}
-        initialPayload={{ ...initialPayload, root: initialTree }}
+        initialSegments={initialSegments}
         bridge={navigationBridge}
+        initialContent={initialPayload.root}
       />
     </React.StrictMode>
   );
@@ -129,8 +126,9 @@ async function initializeApp() {
         store.setHistoryKey(historyKey);
         store.cacheSegmentsForHistory(historyKey, segments);
 
+        // V2: Emit segments directly, no tree rendering
         store.emitUpdate({
-          root: await renderSegments(segments),
+          root: null,
           metadata: payload.metadata,
         });
       }

@@ -31,3 +31,16 @@ export {
   type LinkProps,
   type PrefetchStrategy,
 } from "./Link.js";
+
+// V2: Segment-based rendering (subscription model)
+export {
+  useSegment,
+  useSegmentStore,
+} from "./use-segment.js";
+
+export { SegmentStoreContext } from "./segment-context.js";
+
+export {
+  NavigationProviderV2,
+  type NavigationProviderV2Props,
+} from "./NavigationProviderV2.js";

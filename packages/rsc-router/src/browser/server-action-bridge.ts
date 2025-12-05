@@ -19,35 +19,17 @@ if (typeof Symbol.asyncDispose === "undefined") {
 /**
  * Create a server action bridge for handling RSC server actions
  *
- * The bridge registers a callback with the RSC runtime that handles:
- * - Encoding action arguments
- * - Sending action requests to the server
- * - Processing responses and updating UI
- * - Managing concurrent action requests
- * - HMR resilience (refetching if segments are missing)
+ * V2: Instead of rendering segments to React tree, we pass segments directly
+ * to onUpdate. NavigationProviderV2 updates the segment store and only
+ * affected components re-render.
  *
  * @param config - Bridge configuration
  * @returns ServerActionBridge instance
- *
- * @example
- * ```typescript
- * const bridge = createServerActionBridge({
- *   store,
- *   client,
- *   requestController,
- *   deps: { setServerCallback, encodeReply, createTemporaryReferenceSet, createFromFetch },
- *   onUpdate: (update) => store.emit(update),
- *   renderSegments,
- * });
- *
- * bridge.register();
- * ```
  */
 export function createServerActionBridge(
   config: ServerActionBridgeConfig
 ): ServerActionBridge {
-  const { store, client, requestController, deps, onUpdate, renderSegments } =
-    config;
+  const { store, client, requestController, deps, onUpdate } = config;
 
   let isRegistered = false;
 
@@ -186,7 +168,6 @@ export function createServerActionBridge(
     store,
     client,
     onUpdate,
-    renderSegments,
   });
 
   /**
@@ -339,12 +320,16 @@ export function createServerActionBridge(
         return cached;
       });
 
-      // Render the full tree with error segment merged with parent layouts
-      const errorTree = await renderSegments(fullSegments, { isAction: true });
-
-      // Update UI with error boundary
+      // Emit segments for error UI (V2: no tree rendering)
       startTransition(() => {
-        onUpdate({ root: errorTree, metadata: metadata! });
+        onUpdate({
+          root: null,
+          metadata: {
+            ...metadata!,
+            segments: fullSegments,
+            diff,
+          },
+        });
       });
 
       console.log(`[Browser] Error boundary UI rendered`);
@@ -566,10 +551,6 @@ export function createServerActionBridge(
       }
 
       // No concurrent actions - normal flow with single action
-      // Prepare new tree (await loader data resolution)
-      // Pass isAction: true to await component promises on client
-      const newTree = renderSegments(fullSegments, { isAction: true });
-
       // Schedule UI update after React processes the action return value.
       // queueMicrotask: waits for React's synchronous work + promise callbacks
       // double queueMicrotask + requestAnimationFrame ensures we yield to React
@@ -586,7 +567,15 @@ export function createServerActionBridge(
             }
             console.log("Update", id);
             startTransition(() => {
-              onUpdate({ root: newTree, metadata: metadata! });
+              // V2: Emit segments instead of rendered tree
+              onUpdate({
+                root: null,
+                metadata: {
+                  ...metadata!,
+                  segments: fullSegments,
+                  diff,
+                },
+              });
             });
           });
         });

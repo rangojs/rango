@@ -111,9 +111,11 @@ export interface SegmentState {
 
 /**
  * Navigation update emitted when UI should re-render
+ *
+ * V2: root can be null when segments are passed directly
  */
 export interface NavigationUpdate {
-  root: ReactNode | Promise<ReactNode>;
+  root: ReactNode | Promise<ReactNode> | null;
   metadata: RscMetadata;
 }
 
@@ -300,6 +302,9 @@ export interface ServerActionBridge {
 
 /**
  * Configuration for server action bridge
+ *
+ * V2: renderSegments removed - segments are passed directly to onUpdate
+ * and NavigationProviderV2 updates the segment store
  */
 export interface ServerActionBridgeConfig {
   store: NavigationStore;
@@ -307,10 +312,6 @@ export interface ServerActionBridgeConfig {
   requestController: RequestController;
   deps: RscBrowserDependencies;
   onUpdate: UpdateSubscriber;
-  renderSegments: (
-    segments: ResolvedSegment[],
-    options?: RenderSegmentsOptions
-  ) => Promise<ReactNode> | ReactNode;
 }
 
 // ============================================================================
@@ -329,16 +330,15 @@ export interface NavigationBridge {
 
 /**
  * Configuration for navigation bridge
+ *
+ * V2: renderSegments removed - segments are passed directly to onUpdate
+ * and NavigationProviderV2 updates the segment store
  */
 export interface NavigationBridgeConfig {
   store: NavigationStore;
   client: NavigationClient;
   requestController: RequestController;
   onUpdate: UpdateSubscriber;
-  renderSegments: (
-    segments: ResolvedSegment[],
-    options?: RenderSegmentsOptions
-  ) => Promise<ReactNode> | ReactNode;
 }
 
 // Re-export ResolvedSegment for convenience

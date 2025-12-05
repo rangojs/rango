@@ -4,9 +4,7 @@ import type {
   UpdateSubscriber,
   ResolvedSegment,
 } from "./types.js";
-import type { ReactNode } from "react";
 import { startTransition } from "react";
-import type { RenderSegmentsOptions } from "../segment-system.js";
 
 /**
  * Configuration for creating a partial updater
@@ -15,10 +13,6 @@ export interface PartialUpdateConfig {
   store: NavigationStore;
   client: NavigationClient;
   onUpdate: UpdateSubscriber;
-  renderSegments: (
-    segments: ResolvedSegment[],
-    options?: RenderSegmentsOptions
-  ) => Promise<ReactNode> | ReactNode;
 }
 
 /**
@@ -59,25 +53,17 @@ export type PartialUpdater = (
  * This function is shared between navigation-bridge and server-action-bridge
  * to handle partial RSC updates with HMR resilience.
  *
+ * V2: Instead of rendering segments into a React tree, we pass segments
+ * directly to onUpdate. The NavigationProviderV2 updates the segment store
+ * and only affected components re-render.
+ *
  * @param config - Partial update configuration
  * @returns fetchPartialUpdate function
- *
- * @example
- * ```typescript
- * const fetchPartialUpdate = createPartialUpdater({
- *   store,
- *   client,
- *   onUpdate: (update) => store.emit(update),
- *   renderSegments,
- * });
- *
- * await fetchPartialUpdate('/new-page');
- * ```
  */
 export function createPartialUpdater(
   config: PartialUpdateConfig
 ): PartialUpdater {
-  const { store, client, onUpdate, renderSegments } = config;
+  const { store, client, onUpdate } = config;
 
   /**
    * Build a lookup map from current page's cached segments
@@ -231,46 +217,7 @@ export function createPartialUpdater(
         return fetchPartialUpdate(url, [], true, signal, tx, { isAction });
       }
 
-      // INTERCEPT HANDLING: Separate intercept segments for explicit injection
-      // Intercept segments have namespace starting with "intercept:" or ID containing .@
-      // This makes the flow clearer and easier to debug
-      const isInterceptSegment = (s: ResolvedSegment) =>
-        s.namespace?.startsWith("intercept:") ||
-        (s.type === "parallel" && s.id.includes(".@"));
-
-      const interceptSegments = allSegments.filter(isInterceptSegment);
-      const mainSegments = allSegments.filter((s) => !isInterceptSegment(s));
-
-      if (signal?.aborted) {
-        console.log(
-          `[Browser] Ignoring stale navigation (aborted before render)`
-        );
-        return streamComplete;
-      }
-
-      // Rebuild tree on client (await for loader data resolution)
-      // Race against abort signal to allow cancellation during loader awaiting
-      // Pass intercept segments separately for explicit handling
-      const renderOptions = {
-        isAction,
-        interceptSegments:
-          interceptSegments.length > 0 ? interceptSegments : undefined,
-      };
-      const newTree = await (signal
-        ? Promise.race([
-            renderSegments(mainSegments, renderOptions),
-            new Promise<never>((_, reject) => {
-              if (signal.aborted) {
-                reject(new DOMException("Navigation aborted", "AbortError"));
-              }
-              signal.addEventListener("abort", () => {
-                reject(new DOMException("Navigation aborted", "AbortError"));
-              });
-            }),
-          ])
-        : renderSegments(mainSegments, renderOptions));
-
-      // Final abort check before committing - another navigation may have started
+      // Final abort check before committing
       if (signal?.aborted) {
         console.log(
           `[Browser] Ignoring stale navigation (aborted before commit)`
@@ -304,20 +251,23 @@ export function createPartialUpdater(
       );
       console.log("[partial-update] updating document");
 
-      // Emit update to trigger React render
-      // For actions, wrap in startTransition to avoid UI flickering
+      // Emit update with segments (V2: no tree rendering, just pass segments)
+      // NavigationProviderV2 will update the segment store directly
+      const updatePayload = {
+        root: null, // V2: root not used, segments go to store
+        metadata: {
+          ...payload.metadata,
+          segments: allSegments,
+          diff,
+        },
+      };
+
       if (isAction) {
         startTransition(() => {
-          onUpdate({
-            root: newTree,
-            metadata: payload.metadata!,
-          });
+          onUpdate(updatePayload);
         });
       } else {
-        onUpdate({
-          root: newTree,
-          metadata: payload.metadata!,
-        });
+        onUpdate(updatePayload);
       }
 
       console.log(`[Browser] Navigation complete\n`);
@@ -325,8 +275,10 @@ export function createPartialUpdater(
     } else {
       // Full update (fallback)
       console.warn(`[Browser] Full update (fallback)`);
+      console.log("[partial-update] payload.metadata:", payload.metadata);
 
       const segments = payload.metadata?.segments || [];
+      console.log("[partial-update] Full update segments:", segments.length, segments.map((s: ResolvedSegment) => s.id));
 
       // Check if this navigation is stale (a newer one started)
       if (signal?.aborted) {
@@ -365,20 +317,28 @@ export function createPartialUpdater(
       // Commit navigation - transaction handles all store mutations atomically
       tx.commit(segmentIds, segments);
 
-      // Emit update to trigger React render
-      // For actions, wrap in startTransition to avoid UI flickering
+      // Emit update with segments (V2: full update, no diff)
+      const updatePayload = {
+        root: null, // V2: root not used
+        metadata: {
+          pathname: payload.metadata?.pathname ?? new URL(url).pathname,
+          segments,
+          isPartial: false,
+        },
+      };
+
+      console.log("[partial-update] Emitting full update:", {
+        segmentCount: segments.length,
+        segmentIds: segments.map((s: ResolvedSegment) => s.id),
+        pathname: updatePayload.metadata.pathname,
+      });
+
       if (isAction) {
-        startTransition(async () => {
-          onUpdate({
-            root: payload.root,
-            metadata: payload.metadata!,
-          });
+        startTransition(() => {
+          onUpdate(updatePayload);
         });
       } else {
-        onUpdate({
-          root: payload.root,
-          metadata: payload.metadata!,
-        });
+        onUpdate(updatePayload);
       }
 
       return streamComplete;

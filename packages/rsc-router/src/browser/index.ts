@@ -75,4 +75,21 @@ export {
   Link,
   type LinkProps,
   type PrefetchStrategy,
+  // V2: Segment-based rendering
+  useSegment,
+  useSegmentStore,
+  SegmentStoreContext,
+  NavigationProviderV2,
+  type NavigationProviderV2Props,
 } from "./react/index.js";
+
+// V2: Segment store
+export {
+  createSegmentStore,
+  initSegmentStore,
+  getSegmentStore,
+  resetSegmentStore,
+  type SegmentStore,
+  type SegmentListener,
+  type SegmentSelector,
+} from "./segment-store.js";

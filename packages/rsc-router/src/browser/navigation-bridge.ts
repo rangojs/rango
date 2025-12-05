@@ -259,38 +259,23 @@ export { createNavigationTransaction };
 /**
  * Create a navigation bridge for handling client-side navigation
  *
- * The bridge coordinates all navigation operations:
- * - Link click interception
- * - Browser back/forward (popstate)
- * - Programmatic navigation
+ * V2: Instead of rendering segments to React tree, we pass segments directly
+ * to onUpdate. NavigationProviderV2 updates the segment store and only
+ * affected components re-render.
  *
  * @param config - Bridge configuration
  * @returns NavigationBridge instance
- *
- * @example
- * ```typescript
- * const bridge = createNavigationBridge({
- *   store,
- *   client,
- *   requestController,
- *   onUpdate: (update) => store.emit(update),
- *   renderSegments,
- * });
- *
- * bridge.registerLinkInterception();
- * ```
  */
 export function createNavigationBridge(
   config: NavigationBridgeConfig
 ): NavigationBridge {
-  const { store, client, requestController, onUpdate, renderSegments } = config;
+  const { store, client, requestController, onUpdate } = config;
 
-  // Create shared partial updater
+  // Create shared partial updater (V2: no renderSegments needed)
   const fetchPartialUpdate = createPartialUpdater({
     store,
     client,
     onUpdate,
-    renderSegments,
   });
 
   return {
@@ -324,20 +309,19 @@ export function createNavigationBridge(
         { skipLoadingState: hasUsableCache } // Skip loading state if we have usable cache
       );
 
-      // OPTIMISTIC: If we have usable cache, render immediately
+      // OPTIMISTIC: If we have usable cache, emit segments immediately
       if (hasUsableCache) {
         console.log("[Browser] Optimistic render from cache for:", historyKey);
 
-        // Render cached segments
-        const root = renderSegments(cachedSegments);
+        // Emit cached segments (V2: no tree rendering)
         onUpdate({
-          root,
+          root: null,
           metadata: {
             pathname: new URL(url, window.location.origin).pathname,
             segments: cachedSegments,
             isPartial: true,
             matched: cachedSegments.map((s) => s.id),
-            diff: [],
+            diff: [], // No diff for optimistic - segment store handles it
           },
         });
 
@@ -422,30 +406,19 @@ export function createNavigationBridge(
         store.setCurrentUrl(url);
         store.setPath(new URL(url).pathname);
 
-        // Render from cache - force await to skip loading fallbacks
-        try {
-          const root = renderSegments(cachedSegments, {
-            forceAwait: true,
-          });
-          onUpdate({
-            root,
-            metadata: {
-              pathname: new URL(url).pathname,
-              segments: cachedSegments,
-              isPartial: true,
-              matched: cachedSegments.map((s) => s.id),
-              diff: [],
-            },
-          });
-          store.setState({ state: "idle" });
-          return;
-        } catch (error) {
-          console.warn(
-            "[Browser] Failed to render from cache, fetching:",
-            error
-          );
-          // Fall through to fetch
-        }
+        // Emit cached segments (V2: no tree rendering)
+        onUpdate({
+          root: null,
+          metadata: {
+            pathname: new URL(url).pathname,
+            segments: cachedSegments,
+            isPartial: true,
+            matched: cachedSegments.map((s) => s.id),
+            diff: [], // No diff - full replacement from cache
+          },
+        });
+        store.setState({ state: "idle" });
+        return;
       } else {
         console.log("[Browser] History cache miss for key:", historyKey);
       }
