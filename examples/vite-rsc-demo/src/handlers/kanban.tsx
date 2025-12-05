@@ -58,8 +58,9 @@ function KanbanLayout() {
                 color: "#92400e",
               }}
             >
-              <strong>Error Testing:</strong> Add/move cards to "Error Test" column or name a card "error" for server errors.
-              Add "error" in a card's description for client errors.
+              <strong>Error Testing:</strong> Add/move cards to "Error Test"
+              column or name a card "error" for server errors. Add "error" in a
+              card's description for client errors.
             </div>
             {/* Board is always visible */}
             <KanbanBoardContent />
@@ -96,7 +97,14 @@ function KanbanErrorFallback({ error }: ErrorBoundaryFallbackProps) {
         margin: "1rem",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1rem" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "0.75rem",
+          marginBottom: "1rem",
+        }}
+      >
         <span style={{ fontSize: "1.5rem" }}>⚠️</span>
         <h2 style={{ margin: 0, color: "#991b1b", fontSize: "1.25rem" }}>
           Board Error
@@ -113,7 +121,14 @@ function KanbanErrorFallback({ error }: ErrorBoundaryFallbackProps) {
           marginBottom: "1rem",
         }}
       >
-        <p style={{ margin: 0, fontFamily: "monospace", fontSize: "0.875rem", color: "#dc2626" }}>
+        <p
+          style={{
+            margin: 0,
+            fontFamily: "monospace",
+            fontSize: "0.875rem",
+            color: "#dc2626",
+          }}
+        >
           {error.name}: {error.message}
         </p>
       </div>
@@ -139,7 +154,15 @@ function KanbanErrorFallback({ error }: ErrorBoundaryFallbackProps) {
  * Uses intercepting routes to show card detail as modal during soft navigation
  */
 export default map<typeof kanbanRoutes>(
-  ({ route, layout, loader, revalidate, intercept, loading, errorBoundary }) => [
+  ({
+    route,
+    layout,
+    loader,
+    revalidate,
+    intercept,
+    loading,
+    errorBoundary,
+  }) => [
     layout(<RootLayout />),
 
     // Kanban section layout with loader and intercept
@@ -177,7 +200,19 @@ export default map<typeof kanbanRoutes>(
     route(
       "card",
       () => <CardDetailContent />,
-      () => [loader(CardDetailLoader), revalidate(() => false)]
+      () => [
+        loader(CardDetailLoader, () => [
+          // Revalidate on any kanban action
+          revalidate(({ actionId, method, defaultShouldRevalidate }) => {
+            if (method === "POST" && actionId) {
+              const isKanbanAction = actionId.toLowerCase().includes("kanban");
+              return isKanbanAction;
+            }
+            return { defaultShouldRevalidate };
+          }),
+        ]),
+        revalidate(() => false),
+      ]
     ),
   ]
 );

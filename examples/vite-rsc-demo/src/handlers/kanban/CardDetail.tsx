@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, useEffect } from "react";
+import { useState, useTransition, useEffect, useOptimistic } from "react";
 import { useLoader } from "rsc-router/client";
 import { Link, useNavigation } from "rsc-router/browser";
 import { CardDetailLoader } from "./loader.js";
@@ -213,42 +213,52 @@ export function CardDetailContent() {
   const [editTitle, setEditTitle] = useState(card.title);
   const [editDescription, setEditDescription] = useState(card.description);
   const [selectedLabels, setSelectedLabels] = useState<string[]>(card.labels);
+  const [optimisticTitle, setOptimisticTitle] = useOptimistic(card.title);
+  const [optimisticDescription, setOptimisticDescription] = useOptimistic(card.description);
 
   // Client-side error trigger: if description contains "error", throw during render
   if (card.description.toLowerCase().includes("error")) {
     throw new Error("Card description contains 'error' - this is a simulated client-side error");
   }
 
-  // Sync labels when card data changes (e.g., from cross-tab sync)
+  // Sync state when card data changes (e.g., from cross-tab sync)
   useEffect(() => {
     setSelectedLabels(card.labels);
-  }, [card.labels]);
+    setEditTitle(card.title);
+    setEditDescription(card.description);
+  }, [card.labels, card.title, card.description]);
 
   function handleClose() {
     navigate("/kanban");
   }
 
   function handleSaveTitle() {
-    if (editTitle.trim() === card.title) {
+    const newTitle = editTitle.trim();
+    if (newTitle === card.title) {
       setIsEditingTitle(false);
       return;
     }
 
+    setIsEditingTitle(false);
+
     startTransition(async () => {
-      await updateCard(card.id, { title: editTitle.trim() });
-      setIsEditingTitle(false);
+      setOptimisticTitle(newTitle);
+      await updateCard(card.id, { title: newTitle });
     });
   }
 
   function handleSaveDescription() {
-    if (editDescription.trim() === card.description) {
+    const newDescription = editDescription.trim();
+    if (newDescription === card.description) {
       setIsEditingDescription(false);
       return;
     }
 
+    setIsEditingDescription(false);
+
     startTransition(async () => {
-      await updateCard(card.id, { description: editDescription.trim() });
-      setIsEditingDescription(false);
+      setOptimisticDescription(newDescription);
+      await updateCard(card.id, { description: newDescription });
     });
   }
 
@@ -301,7 +311,7 @@ export function CardDetailContent() {
               style={{ ...styles.title, cursor: "pointer" }}
               onClick={() => setIsEditingTitle(true)}
             >
-              {card.title}
+              {optimisticTitle}
             </h2>
           )}
           <button style={styles.closeButton} onClick={handleClose}>
@@ -345,7 +355,7 @@ export function CardDetailContent() {
               <div
                 style={{
                   ...styles.description,
-                  ...(card.description ? {} : styles.emptyDescription),
+                  ...(optimisticDescription ? {} : styles.emptyDescription),
                   cursor: "pointer",
                   padding: "0.5rem",
                   borderRadius: "4px",
@@ -353,7 +363,7 @@ export function CardDetailContent() {
                 }}
                 onClick={() => setIsEditingDescription(true)}
               >
-                {card.description || "Click to add a description..."}
+                {optimisticDescription || "Click to add a description..."}
               </div>
             )}
           </div>
