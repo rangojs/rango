@@ -538,7 +538,8 @@ export function createRSCRouter<TEnv = any>(
           orphan,
           params,
           context,
-          loaderPromises
+          loaderPromises,
+          false // Parent chain layouts don't belong to specific route
         );
         segments.push(...orphanSegments);
       }
@@ -570,7 +571,8 @@ export function createRSCRouter<TEnv = any>(
           orphan,
           params,
           context,
-          loaderPromises
+          loaderPromises,
+          true // Route's orphan layouts belong to the route
         );
         segments.push(...orphanSegments);
       }
@@ -618,7 +620,8 @@ export function createRSCRouter<TEnv = any>(
     orphan: EntryData,
     params: Record<string, string>,
     context: HandlerContext<any, TEnv>,
-    loaderPromises: Map<string, Promise<any>>
+    loaderPromises: Map<string, Promise<any>>,
+    belongsToRoute: boolean
   ): Promise<ResolvedSegment[]> {
     // Orphans must always be layouts
     invariant(
@@ -642,7 +645,7 @@ export function createRSCRouter<TEnv = any>(
     const loaderSegments = await resolveLoaders(
       orphan,
       context,
-      true // Orphan loaders belong to the route
+      belongsToRoute
     );
 
     // Step 3: Process and emit orphan parallel segments
@@ -652,7 +655,7 @@ export function createRSCRouter<TEnv = any>(
         parallelEntry,
         params,
         context,
-        true, // Orphan's parallel belongs to the route
+        belongsToRoute,
         orphan.shortCode // Pass parent orphan layout's shortCode for segment ID association
       );
       segments.push(...parallelSegments);
@@ -671,7 +674,7 @@ export function createRSCRouter<TEnv = any>(
       index: 0,
       component,
       params,
-      belongsToRoute: true, // Orphan layout belongs to the route
+      belongsToRoute,
       layoutName: orphan.id,
       loading: orphan.loading === false ? null : orphan.loading,
     });
@@ -1255,7 +1258,11 @@ export function createRSCRouter<TEnv = any>(
 
     const component = await revalidate(
       async () => {
-        if (!clientSegmentIds.has(entry.shortCode)) return true;
+        const hasSegment = clientSegmentIds.has(entry.shortCode);
+        console.log(
+          `[Router.resolveEntryHandler] ${entry.shortCode} (${entry.type}): client has=${hasSegment}, belongsToRoute=${belongsToRoute}`
+        );
+        if (!hasSegment) return true;
 
         const dummySegment: ResolvedSegment = {
           id: entry.shortCode,
@@ -1268,7 +1275,7 @@ export function createRSCRouter<TEnv = any>(
           ...(entry.type === "layout" ? { layoutName: entry.id } : {}),
         };
 
-        return await evaluateRevalidation(
+        const shouldRevalidate = await evaluateRevalidation(
           dummySegment,
           prevParams,
           null,
@@ -1280,6 +1287,10 @@ export function createRSCRouter<TEnv = any>(
           context,
           actionContext
         );
+        console.log(
+          `[Router.resolveEntryHandler] ${entry.shortCode}: evaluateRevalidation returned ${shouldRevalidate}`
+        );
+        return shouldRevalidate;
       },
       async () => {
         if (entry.type === "layout") {
@@ -1391,6 +1402,7 @@ export function createRSCRouter<TEnv = any>(
           nextUrl,
           routeKey,
           loaderPromises,
+          true, // Route's orphan layouts belong to the route
           actionContext
         );
         segments.push(...orphanResult.segments);
@@ -1429,6 +1441,7 @@ export function createRSCRouter<TEnv = any>(
           nextUrl,
           routeKey,
           loaderPromises,
+          false, // Parent chain layouts don't belong to specific route
           actionContext
         );
         segments.push(...orphanResult.segments);
@@ -1471,6 +1484,7 @@ export function createRSCRouter<TEnv = any>(
     nextUrl: URL,
     routeKey: string,
     loaderPromises: Map<string, Promise<any>>,
+    belongsToRoute: boolean,
     actionContext?: {
       actionId?: string;
       actionUrl?: URL;
@@ -1500,7 +1514,7 @@ export function createRSCRouter<TEnv = any>(
     const loaderResult = await resolveLoadersWithRevalidation(
       orphan,
       context,
-      true, // Orphan loaders belong to the route
+      belongsToRoute,
       clientSegmentIds,
       prevParams,
       request,
@@ -1524,7 +1538,7 @@ export function createRSCRouter<TEnv = any>(
       const loaderResult = await resolveLoadersWithRevalidation(
         parallelEntry,
         context,
-        true, // Orphan's parallel belongs to the route
+        belongsToRoute,
         clientSegmentIds,
         prevParams,
         request,
@@ -1561,7 +1575,7 @@ export function createRSCRouter<TEnv = any>(
               component: null as any,
               params,
               slot,
-              belongsToRoute: true, // Orphan's parallel belongs to the route
+              belongsToRoute,
               parallelName: `${parallelEntry.id}.${slot}`,
             };
 
@@ -1604,7 +1618,7 @@ export function createRSCRouter<TEnv = any>(
             parallelEntry.loading === false ? null : parallelEntry.loading,
           params,
           slot,
-          belongsToRoute: true, // Orphan's parallel belongs to the route
+          belongsToRoute,
           parallelName: `${parallelEntry.id}.${slot}`,
         });
       }
@@ -1625,7 +1639,7 @@ export function createRSCRouter<TEnv = any>(
           index: 0,
           component: null as any,
           params,
-          belongsToRoute: true, // Orphan layout belongs to the route
+          belongsToRoute,
           layoutName: orphan.id,
         };
 
@@ -1656,7 +1670,7 @@ export function createRSCRouter<TEnv = any>(
       index: 0,
       component,
       params,
-      belongsToRoute: true, // Orphan layout belongs to the route
+      belongsToRoute,
       layoutName: orphan.id,
       loading: orphan.loading === false ? null : orphan.loading,
     });
@@ -2100,6 +2114,10 @@ export function createRSCRouter<TEnv = any>(
     );
 
     const clientSegmentSet = new Set(clientSegmentIds);
+    console.log(
+      `[Router.matchPartial] Client segments:`,
+      Array.from(clientSegmentSet)
+    );
 
     try {
       // Create request-scoped loader promises map for parallel execution
@@ -2168,6 +2186,9 @@ export function createRSCRouter<TEnv = any>(
           const segs: ResolvedSegment[] = [];
           const matchedIds: string[] = [];
           for (const entry of traverseBack(manifestEntry)) {
+            console.log(
+              `[Router.matchPartial] Processing entry: ${entry.shortCode} (${entry.type})`
+            );
             // When intercepting, skip the route handler - intercept replaces it
             const isRouteEntry = entry.type === "route";
             if (isRouteEntry && interceptResult) {
@@ -2250,6 +2271,14 @@ export function createRSCRouter<TEnv = any>(
       // BUT always include loader segments - they carry data even with null component
       const segmentsToRender = allSegments.filter(
         (s) => s.component !== null || s.type === "loader"
+      );
+      console.log(
+        `[Router.matchPartial] All segments:`,
+        allSegments.map((s) => `${s.id}(${s.type}, component=${s.component !== null})`).join(", ")
+      );
+      console.log(
+        `[Router.matchPartial] Segments to render:`,
+        segmentsToRender.map((s) => s.id).join(", ")
       );
 
       // Output metrics if enabled

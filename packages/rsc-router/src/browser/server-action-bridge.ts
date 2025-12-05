@@ -339,8 +339,22 @@ export function createServerActionBridge(
         return cached;
       });
 
+      // INTERCEPT HANDLING: Separate intercept segments for explicit injection
+      // Same logic as partial-update.ts to ensure intercepts render in correct slots
+      const isInterceptSegment = (s: ResolvedSegment) =>
+        s.namespace?.startsWith("intercept:") ||
+        (s.type === "parallel" && s.id.includes(".@"));
+
+      const interceptSegments = fullSegments.filter(isInterceptSegment);
+      const mainSegments = fullSegments.filter((s) => !isInterceptSegment(s));
+
       // Render the full tree with error segment merged with parent layouts
-      const errorTree = await renderSegments(fullSegments, { isAction: true });
+      const errorRenderOptions = {
+        isAction: true,
+        interceptSegments:
+          interceptSegments.length > 0 ? interceptSegments : undefined,
+      };
+      const errorTree = await renderSegments(mainSegments, errorRenderOptions);
 
       // Update UI with error boundary
       startTransition(() => {
@@ -566,30 +580,36 @@ export function createServerActionBridge(
       }
 
       // No concurrent actions - normal flow with single action
+      // INTERCEPT HANDLING: Separate intercept segments for explicit injection
+      // Same logic as partial-update.ts to ensure intercepts render in correct slots
+      const isInterceptSegment = (s: ResolvedSegment) =>
+        s.namespace?.startsWith("intercept:") ||
+        (s.type === "parallel" && s.id.includes(".@"));
+
+      const interceptSegments = fullSegments.filter(isInterceptSegment);
+      const mainSegments = fullSegments.filter((s) => !isInterceptSegment(s));
+
       // Prepare new tree (await loader data resolution)
       // Pass isAction: true to await component promises on client
-      const newTree = renderSegments(fullSegments, { isAction: true });
+      // Pass intercept segments separately for explicit slot injection
+      const renderOptions = {
+        isAction: true,
+        interceptSegments:
+          interceptSegments.length > 0 ? interceptSegments : undefined,
+      };
+      const newTree = renderSegments(mainSegments, renderOptions);
 
-      // Schedule UI update after React processes the action return value.
-      // queueMicrotask: waits for React's synchronous work + promise callbacks
-      // double queueMicrotask + requestAnimationFrame ensures we yield to React
-      queueMicrotask(() => {
-        queueMicrotask(() => {
-          requestAnimationFrame(() => {
-            // Re-check if user navigated away (could happen during async wait)
-            const currentPathnameNow = window.location.pathname;
-            if (currentPathnameNow !== actionStartPathname) {
-              console.log(
-                `[Browser] User navigated during UI update scheduling, skipping`
-              );
-              return;
-            }
-            console.log("Update", id);
-            startTransition(() => {
-              onUpdate({ root: newTree, metadata: metadata! });
-            });
-          });
-        });
+      // Re-check if user navigated away (could happen during async wait)
+      const currentPathnameNow = window.location.pathname;
+      if (currentPathnameNow !== actionStartPathname) {
+        console.log(
+          `[Browser] User navigated during UI update scheduling, skipping`
+        );
+        return;
+      }
+      console.log("Update", id);
+      startTransition(() => {
+        onUpdate({ root: newTree, metadata: metadata! });
       });
       console.log(
         `[Browser] Action complete - UI updated (after action state committed)`
