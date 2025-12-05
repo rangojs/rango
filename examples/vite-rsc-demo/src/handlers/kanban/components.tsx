@@ -4,7 +4,7 @@ import { useState, useTransition, useOptimistic, useRef } from "react";
 import { Link } from "rsc-router/browser";
 import type { Card, Column, Board } from "./data.js";
 import { labelColors } from "./data.js";
-import { addCard, moveCard, updateCard, deleteCard } from "./actions.js";
+import { kanbanAddCard, kanbanMoveCard, kanbanDeleteCard } from "./actions.js";
 
 const styles = {
   board: {
@@ -257,7 +257,7 @@ export function KanbanBoard({ board }: { board: Board }) {
         columnId,
         order: dropIndex,
       });
-      await moveCard(draggedCard, columnId, dropIndex);
+      await kanbanMoveCard(draggedCard, columnId, dropIndex);
     });
 
     handleDragEnd();
@@ -278,14 +278,14 @@ export function KanbanBoard({ board }: { board: Board }) {
 
     startTransition(async () => {
       setOptimisticCards({ type: "add", card: newCard });
-      await addCard(columnId, title);
+      await kanbanAddCard(columnId, title);
     });
   }
 
   function handleDeleteCard(cardId: string) {
     startTransition(async () => {
       setOptimisticCards({ type: "delete", cardId });
-      await deleteCard(cardId);
+      await kanbanDeleteCard(cardId);
     });
   }
 

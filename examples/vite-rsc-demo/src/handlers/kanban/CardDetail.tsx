@@ -4,7 +4,7 @@ import { useState, useTransition, useEffect, useOptimistic } from "react";
 import { useLoader } from "rsc-router/client";
 import { Link, useNavigation } from "rsc-router/browser";
 import { CardDetailLoader } from "./loader.js";
-import { updateCard, deleteCard } from "./actions.js";
+import { kanbanUpdateCard, kanbanDeleteCard } from "./actions.js";
 import { labelColors } from "./data.js";
 
 const styles = {
@@ -243,7 +243,7 @@ export function CardDetailContent() {
 
     startTransition(async () => {
       setOptimisticTitle(newTitle);
-      await updateCard(card.id, { title: newTitle });
+      await kanbanUpdateCard(card.id, { title: newTitle });
     });
   }
 
@@ -258,7 +258,7 @@ export function CardDetailContent() {
 
     startTransition(async () => {
       setOptimisticDescription(newDescription);
-      await updateCard(card.id, { description: newDescription });
+      await kanbanUpdateCard(card.id, { description: newDescription });
     });
   }
 
@@ -270,7 +270,7 @@ export function CardDetailContent() {
     setSelectedLabels(newLabels);
 
     startTransition(async () => {
-      await updateCard(card.id, { labels: newLabels });
+      await kanbanUpdateCard(card.id, { labels: newLabels });
     });
   }
 
@@ -278,7 +278,7 @@ export function CardDetailContent() {
     if (!confirm("Are you sure you want to delete this card?")) return;
 
     startTransition(async () => {
-      await deleteCard(card.id);
+      await kanbanDeleteCard(card.id);
       navigate("/kanban");
     });
   }

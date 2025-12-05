@@ -5,7 +5,7 @@ import { boardStore, generateCardId, type Card } from "./data.js";
 /**
  * Add a new card to a column
  */
-export async function addCard(
+export async function kanbanAddCard(
   columnId: string,
   title: string,
   description: string = ""
@@ -47,7 +47,7 @@ export async function addCard(
 /**
  * Move a card to a different column and/or position
  */
-export async function moveCard(
+export async function kanbanMoveCard(
   cardId: string,
   targetColumnId: string,
   targetIndex: number
@@ -103,7 +103,7 @@ export async function moveCard(
 /**
  * Update card details
  */
-export async function updateCard(
+export async function kanbanUpdateCard(
   cardId: string,
   updates: { title?: string; description?: string; labels?: string[] }
 ): Promise<Card | null> {
@@ -139,7 +139,7 @@ export async function updateCard(
 /**
  * Delete a card
  */
-export async function deleteCard(cardId: string): Promise<boolean> {
+export async function kanbanDeleteCard(cardId: string): Promise<boolean> {
   await new Promise((resolve) => setTimeout(resolve, 2000));
 
   const index = boardStore.cards.findIndex((c) => c.id === cardId);

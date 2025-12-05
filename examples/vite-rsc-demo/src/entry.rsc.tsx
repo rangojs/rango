@@ -164,8 +164,15 @@ export default async function handler(request: Request): Promise<Response> {
       console.log(`[RSC] Running revalidation after action...`);
 
       // Build action context for revalidation functions
+      // Extract just the function name (after #) for consistent behavior between dev and production
+      // In dev: actionId = "file:///path/to/actions.ts#functionName"
+      // In prod: actionId = "abc123#functionName" (hashed filename)
+      const actionName = actionId.includes("#")
+        ? actionId.split("#").pop()!
+        : actionId;
+
       const actionContext = {
-        actionId,
+        actionId: actionName,
         actionUrl: new URL(request.url),
         actionResult: returnValue.data, // Pass the unwrapped result
         formData: actionFormData,

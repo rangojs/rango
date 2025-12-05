@@ -195,8 +195,7 @@ export default map<typeof kanbanRoutes>(
         // Revalidate on any kanban action
         revalidate(({ actionId, method, defaultShouldRevalidate }) => {
           if (method === "POST" && actionId) {
-            const isKanbanAction = actionId.toLowerCase().includes("kanban");
-            return isKanbanAction;
+            return actionId.toLowerCase().includes("kanban");
           }
           return { defaultShouldRevalidate };
         }),
@@ -225,8 +224,7 @@ export default map<typeof kanbanRoutes>(
           // Revalidate on any kanban action
           revalidate(({ actionId, method, defaultShouldRevalidate }) => {
             if (method === "POST" && actionId) {
-              const isKanbanAction = actionId.toLowerCase().includes("kanban");
-              return isKanbanAction;
+              return actionId.toLowerCase().includes("kanban");
             }
             return { defaultShouldRevalidate };
           }),

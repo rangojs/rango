@@ -7,9 +7,9 @@ export type BoardData = Board;
 const actionCounts: Record<string, number> = {};
 
 // Increment action count (called during revalidation)
+// actionId is now already the clean function name (e.g., "moveCard")
 export function incrementActionCount(actionId: string) {
-  const shortName = actionId.split("/").pop() || actionId;
-  actionCounts[shortName] = (actionCounts[shortName] || 0) + 1;
+  actionCounts[actionId] = (actionCounts[actionId] || 0) + 1;
 }
 
 /**
