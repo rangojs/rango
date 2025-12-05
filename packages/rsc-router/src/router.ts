@@ -2019,7 +2019,10 @@ export function createRSCRouter<TEnv = any>(
     // Filter out empty strings - "".split(",") returns [""] not []
     const clientSegmentIds =
       url.searchParams.get("_rsc_segments")?.split(",").filter(Boolean) || [];
-    const previousUrl = request.headers.get("X-RSC-Router-Client-Path");
+    // Use custom header first, fallback to standard Referer for prefetch scenarios
+    const previousUrl =
+      request.headers.get("X-RSC-Router-Client-Path") ||
+      request.headers.get("Referer");
     // Intercept source URL - tracks where an intercept was triggered from
     // Used during action revalidation to maintain intercept context
     const interceptSourceUrl = request.headers.get(
