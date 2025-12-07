@@ -79,10 +79,6 @@ export interface NavigationState {
   /** Current location (updated optimistically) */
   location: NavigationLocation;
 
-  /** Form submission state (filled during navigation-based form submit) */
-  formData: FormData | null;
-  formAction: string | null;
-
   /** List of inflight server actions (internal use only) */
   inflightActions: InflightAction[];
 }
