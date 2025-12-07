@@ -552,13 +552,20 @@ export function createServerActionBridge(
           store,
           abortController.signal
         );
+        // Preserve intercept context for proper cache key generation
+        const currentInterceptSource = store.getInterceptSourceUrl();
         await fetchPartialUpdate(
           window.location.href,
           [], // Empty array = refetch all segments for current route
           false,
           abortController.signal,
-          navTx.with({ url: window.location.href, storeOnly: true }),
-          { isAction: true }
+          navTx.with({
+            url: window.location.href,
+            storeOnly: true,
+            intercept: !!currentInterceptSource,
+            interceptSourceUrl: currentInterceptSource ?? undefined,
+          }),
+          { isAction: true, interceptSourceUrl: currentInterceptSource ?? undefined }
         );
         console.log(`[Browser] Refetch after navigation complete`);
         return returnData;
@@ -582,8 +589,13 @@ export function createServerActionBridge(
           [],
           false,
           abortController.signal,
-          navTx.with({ url: window.location.href, storeOnly: true }),
-          { isAction: true }
+          navTx.with({
+            url: window.location.href,
+            storeOnly: true,
+            intercept: !!interceptSourceUrl,
+            interceptSourceUrl: interceptSourceUrl ?? undefined,
+          }),
+          { isAction: true, interceptSourceUrl: interceptSourceUrl ?? undefined }
         );
         console.log(
           `[Browser] Refetch complete (HMR), now returning action result`
@@ -633,8 +645,13 @@ export function createServerActionBridge(
           segmentsToSend,
           false,
           abortController.signal,
-          navTx.with({ url: window.location.href, storeOnly: true }),
-          { isAction: true }
+          navTx.with({
+            url: window.location.href,
+            storeOnly: true,
+            intercept: !!interceptSourceUrl,
+            interceptSourceUrl: interceptSourceUrl ?? undefined,
+          }),
+          { isAction: true, interceptSourceUrl: interceptSourceUrl ?? undefined }
         );
 
         console.log(`[Browser] Consolidation fetch complete`);
