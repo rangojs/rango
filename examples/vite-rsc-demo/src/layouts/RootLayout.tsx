@@ -1,5 +1,5 @@
 import { Outlet } from "rsc-router/client";
-import { Link } from "rsc-router/browser";
+import { Link, ScrollRestoration } from "rsc-router/browser";
 import { href } from "../router.js";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 
@@ -48,6 +48,7 @@ export function RootLayout() {
         `}</style>
       </head>
       <body className="full-width">
+        <ScrollRestoration />
         <nav>
           <Link to={href("index")} prefetch="hover">
             Home

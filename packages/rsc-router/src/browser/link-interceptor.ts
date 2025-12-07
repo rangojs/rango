@@ -1,4 +1,4 @@
-import type { LinkInterceptorOptions } from "./types.js";
+import type { LinkInterceptorOptions, NavigateOptions } from "./types.js";
 
 /**
  * Default link interception predicate
@@ -59,12 +59,17 @@ export function defaultShouldIntercept(link: HTMLAnchorElement): boolean {
  * ```
  */
 export function setupLinkInterception(
-  onNavigate: (url: string) => void,
+  onNavigate: (url: string, options?: NavigateOptions) => void,
   options?: LinkInterceptorOptions
 ): () => void {
   const shouldIntercept = options?.shouldIntercept ?? defaultShouldIntercept;
 
   const handleClick = (event: MouseEvent) => {
+    // If event was already handled by Link component (or other handler), skip
+    if (event.defaultPrevented) {
+      return;
+    }
+
     const target = event.target as HTMLElement;
     const link = target.closest("a");
 
@@ -80,7 +85,19 @@ export function setupLinkInterception(
     event.preventDefault();
     const href = link.href;
 
-    onNavigate(href);
+    // Read navigation options from data attributes (set by Link component)
+    const scrollAttr = link.getAttribute("data-scroll");
+    const replaceAttr = link.getAttribute("data-replace");
+
+    const navigateOptions: NavigateOptions = {};
+    if (scrollAttr === "false") {
+      navigateOptions.scroll = false;
+    }
+    if (replaceAttr === "true") {
+      navigateOptions.replace = true;
+    }
+
+    onNavigate(href, navigateOptions);
   };
 
   document.addEventListener("click", handleClick);

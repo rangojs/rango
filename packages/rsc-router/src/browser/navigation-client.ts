@@ -44,17 +44,23 @@ export function createNavigationClient(
     async fetchPartial(
       options: FetchPartialOptions
     ): Promise<FetchPartialResult> {
-      const { targetUrl, segmentIds, previousUrl, signal } = options;
+      const { targetUrl, segmentIds, previousUrl, signal, staleRevalidation } = options;
 
       console.log(`\n[Browser] >>> NAVIGATION`);
       console.log(`[Browser] From: ${previousUrl}`);
       console.log(`[Browser] To: ${targetUrl}`);
       console.log(`[Browser] Segments to send: ${segmentIds.join(", ")}`);
+      if (staleRevalidation) {
+        console.log(`[Browser] Stale revalidation request`);
+      }
 
       // Build fetch URL with partial rendering params
       const fetchUrl = new URL(targetUrl, window.location.origin);
       fetchUrl.searchParams.set("_rsc_partial", "true");
       fetchUrl.searchParams.set("_rsc_segments", segmentIds.join(","));
+      if (staleRevalidation) {
+        fetchUrl.searchParams.set("_rsc_stale", "true");
+      }
 
       console.log(`[Browser] Fetching: ${fetchUrl.pathname}${fetchUrl.search}`);
 

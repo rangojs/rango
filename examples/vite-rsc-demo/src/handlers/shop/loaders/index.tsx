@@ -19,3 +19,7 @@ export {
   ModalRecommendationsLoader,
   type Recommendation,
 } from "./modal-recommendations.js";
+export {
+  ProductCartLoader,
+  type ProductCartData,
+} from "./product-cart.js";

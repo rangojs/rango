@@ -167,7 +167,15 @@ export const Link: ForwardRefExoticComponent<LinkProps & RefAttributes<HTMLAncho
   }, [prefetch, to, isExternal, ctx]);
 
   return (
-    <a ref={ref} href={to} onClick={handleClick} onMouseEnter={handleMouseEnter} {...props}>
+    <a
+      ref={ref}
+      href={to}
+      onClick={handleClick}
+      onMouseEnter={handleMouseEnter}
+      data-scroll={scroll === false ? "false" : undefined}
+      data-replace={replace ? "true" : undefined}
+      {...props}
+    >
       {children}
     </a>
   );

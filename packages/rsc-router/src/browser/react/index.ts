@@ -31,3 +31,10 @@ export {
   type LinkProps,
   type PrefetchStrategy,
 } from "./Link.js";
+
+// Scroll restoration
+export {
+  ScrollRestoration,
+  useScrollRestoration,
+  type ScrollRestorationProps,
+} from "./ScrollRestoration.js";

@@ -376,7 +376,8 @@ export function createRSCRouter<TEnv = any>(
       actionResult?: any;
       formData?: FormData;
     },
-    shortCodeOverride?: string
+    shortCodeOverride?: string,
+    stale?: boolean
   ): Promise<LoaderRevalidationResult> {
     const loaderEntries = entry.loader ?? [];
     if (loaderEntries.length === 0) return { segments: [], matchedIds: [] };
@@ -417,21 +418,22 @@ export function createRSCRouter<TEnv = any>(
               };
 
               // Evaluate loader's revalidation functions
-              return await evaluateRevalidation(
-                dummySegment,
+              return await evaluateRevalidation({
+                segment: dummySegment,
                 prevParams,
-                null,
+                getPrevSegment: null,
                 request,
                 prevUrl,
                 nextUrl,
-                loaderRevalidateFns.map((fn, j) => ({
+                revalidations: loaderRevalidateFns.map((fn, j) => ({
                   name: `loader-revalidate${j}`,
                   fn,
                 })),
                 routeKey,
-                ctx,
-                actionContext
-              );
+                context: ctx,
+                actionContext,
+                stale,
+              });
             },
             async () => true,
             () => false
@@ -744,13 +746,29 @@ export function createRSCRouter<TEnv = any>(
    * @param params - URL parameters
    * @param context - Handler context
    * @param belongsToRoute - Whether this intercept belongs to the matched route
+   * @param revalidationContext - Optional revalidation context for partial updates
    */
   async function resolveInterceptEntry(
     interceptEntry: InterceptEntry,
     parentEntry: EntryData,
     params: Record<string, string>,
     context: HandlerContext<any, TEnv>,
-    belongsToRoute: boolean = true
+    belongsToRoute: boolean = true,
+    revalidationContext?: {
+      clientSegmentIds: Set<string>;
+      prevParams: Record<string, string>;
+      request: Request;
+      prevUrl: URL;
+      nextUrl: URL;
+      routeKey: string;
+      actionContext?: {
+        actionId?: string;
+        actionUrl?: URL;
+        actionResult?: any;
+        formData?: FormData;
+      };
+      stale?: boolean;
+    }
   ): Promise<ResolvedSegment[]> {
     const segments: ResolvedSegment[] = [];
 
@@ -764,14 +782,58 @@ export function createRSCRouter<TEnv = any>(
       if (middlewareResponse) throw middlewareResponse;
     }
 
-    // Step 2: Collect intercept loaders as promises
+    // Step 2: Collect intercept loaders as promises (with revalidation check)
     // These will be attached directly to the intercept segment for streaming
     const loaderPromises: Promise<any>[] = [];
     const loaderNames: string[] = [];
 
     for (let i = 0; i < interceptEntry.loader.length; i++) {
-      const { loader } = interceptEntry.loader[i];
+      const { loader, revalidate: loaderRevalidateFns } = interceptEntry.loader[i];
       const segmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}D${i}.${loader.name}`;
+
+      // Check revalidation if context provided (partial updates)
+      if (revalidationContext) {
+        const { clientSegmentIds, prevParams, request, prevUrl, nextUrl, routeKey, actionContext, stale } = revalidationContext;
+
+        // Check if client has the parent intercept segment (loaders are embedded, not separate segments)
+        const interceptSegmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}`;
+        if (clientSegmentIds.has(interceptSegmentId)) {
+          // Create dummy segment for evaluation
+          const dummySegment: ResolvedSegment = {
+            id: segmentId,
+            namespace: `intercept:${interceptEntry.routeName}`,
+            type: "loader",
+            index: i,
+            component: null,
+            params,
+            loaderName: loader.name,
+            belongsToRoute,
+          };
+
+          const shouldRevalidate = await evaluateRevalidation({
+            segment: dummySegment,
+            prevParams,
+            getPrevSegment: null,
+            request,
+            prevUrl,
+            nextUrl,
+            revalidations: loaderRevalidateFns.map((fn, j) => ({
+              name: `intercept-loader-revalidate${j}`,
+              fn,
+            })),
+            routeKey,
+            context,
+            actionContext,
+            stale,
+          });
+
+          if (!shouldRevalidate) {
+            console.log(`[Router] Intercept loader ${loader.name} skipped (revalidation=false)`);
+            continue;
+          }
+          console.log(`[Router] Intercept loader ${loader.name} revalidating (stale=${stale})`);
+        }
+      }
 
       loaderNames.push(loader.name);
       loaderPromises.push(
@@ -1128,7 +1190,8 @@ export function createRSCRouter<TEnv = any>(
     prevUrl: URL,
     nextUrl: URL,
     routeKey: string,
-    actionContext?: ActionContext
+    actionContext?: ActionContext,
+    stale?: boolean
   ): Promise<SegmentRevalidationResult> {
     const segments: ResolvedSegment[] = [];
     const matchedIds: string[] = [];
@@ -1169,21 +1232,22 @@ export function createRSCRouter<TEnv = any>(
             };
 
             // Use parallel's own revalidate functions
-            return await evaluateRevalidation(
-              dummySegment,
+            return await evaluateRevalidation({
+              segment: dummySegment,
               prevParams,
-              null,
+              getPrevSegment: null,
               request,
               prevUrl,
               nextUrl,
-              parallelEntry.revalidate.map((fn, i) => ({
+              revalidations: parallelEntry.revalidate.map((fn, i) => ({
                 name: `revalidate${i}`,
                 fn,
               })),
               routeKey,
               context,
-              actionContext
-            );
+              actionContext,
+              stale,
+            });
           },
           async () => {
             // If loading is defined, don't await (stream with Suspense)
@@ -1227,7 +1291,8 @@ export function createRSCRouter<TEnv = any>(
           nextUrl,
           routeKey,
           actionContext,
-          entry.shortCode // Pass parent's shortCode for segment ID association
+          entry.shortCode, // Pass parent's shortCode for segment ID association
+          stale
         );
         segments.push(...loaderResult.segments);
         matchedIds.push(...loaderResult.matchedIds);
@@ -1252,7 +1317,8 @@ export function createRSCRouter<TEnv = any>(
     prevUrl: URL,
     nextUrl: URL,
     routeKey: string,
-    actionContext?: ActionContext
+    actionContext?: ActionContext,
+    stale?: boolean
   ): Promise<{ segment: ResolvedSegment; matchedId: string }> {
     const matchedId = entry.shortCode;
 
@@ -1275,18 +1341,19 @@ export function createRSCRouter<TEnv = any>(
           ...(entry.type === "layout" ? { layoutName: entry.id } : {}),
         };
 
-        const shouldRevalidate = await evaluateRevalidation(
-          dummySegment,
+        const shouldRevalidate = await evaluateRevalidation({
+          segment: dummySegment,
           prevParams,
-          null,
+          getPrevSegment: null,
           request,
           prevUrl,
           nextUrl,
-          entry.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
+          revalidations: entry.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
           routeKey,
           context,
-          actionContext
-        );
+          actionContext,
+          stale,
+        });
         console.log(
           `[Router.resolveEntryHandler] ${entry.shortCode}: evaluateRevalidation returned ${shouldRevalidate}`
         );
@@ -1355,7 +1422,8 @@ export function createRSCRouter<TEnv = any>(
     prevUrl: URL,
     nextUrl: URL,
     loaderPromises: Map<string, Promise<any>>,
-    actionContext?: ActionContext
+    actionContext?: ActionContext,
+    stale?: boolean
   ): Promise<SegmentRevalidationResult> {
     const segments: ResolvedSegment[] = [];
     const matchedIds: string[] = [];
@@ -1383,7 +1451,9 @@ export function createRSCRouter<TEnv = any>(
       prevUrl,
       nextUrl,
       routeKey,
-      actionContext
+      actionContext,
+      undefined, // shortCodeOverride
+      stale
     );
     segments.push(...loaderResult.segments);
     matchedIds.push(...loaderResult.matchedIds);
@@ -1403,7 +1473,8 @@ export function createRSCRouter<TEnv = any>(
           routeKey,
           loaderPromises,
           true, // Route's orphan layouts belong to the route
-          actionContext
+          actionContext,
+          stale
         );
         segments.push(...orphanResult.segments);
         matchedIds.push(...orphanResult.matchedIds);
@@ -1422,7 +1493,8 @@ export function createRSCRouter<TEnv = any>(
       prevUrl,
       nextUrl,
       routeKey,
-      actionContext
+      actionContext,
+      stale
     );
     segments.push(...parallelResult.segments);
     matchedIds.push(...parallelResult.matchedIds);
@@ -1442,7 +1514,8 @@ export function createRSCRouter<TEnv = any>(
           routeKey,
           loaderPromises,
           false, // Parent chain layouts don't belong to specific route
-          actionContext
+          actionContext,
+          stale
         );
         segments.push(...orphanResult.segments);
         matchedIds.push(...orphanResult.matchedIds);
@@ -1461,7 +1534,8 @@ export function createRSCRouter<TEnv = any>(
       prevUrl,
       nextUrl,
       routeKey,
-      actionContext
+      actionContext,
+      stale
     );
     segments.push(handlerResult.segment);
     matchedIds.push(handlerResult.matchedId);
@@ -1490,7 +1564,8 @@ export function createRSCRouter<TEnv = any>(
       actionUrl?: URL;
       actionResult?: any;
       formData?: FormData;
-    }
+    },
+    stale?: boolean
   ): Promise<SegmentRevalidationResult> {
     invariant(
       orphan.type === "layout",
@@ -1521,7 +1596,9 @@ export function createRSCRouter<TEnv = any>(
       prevUrl,
       nextUrl,
       routeKey,
-      actionContext
+      actionContext,
+      undefined, // shortCodeOverride
+      stale
     );
     segments.push(...loaderResult.segments);
     matchedIds.push(...loaderResult.matchedIds);
@@ -1545,7 +1622,9 @@ export function createRSCRouter<TEnv = any>(
         prevUrl,
         nextUrl,
         routeKey,
-        actionContext
+        actionContext,
+        undefined, // shortCodeOverride
+        stale
       );
       segments.push(...loaderResult.segments);
       matchedIds.push(...loaderResult.matchedIds);
@@ -1580,21 +1659,22 @@ export function createRSCRouter<TEnv = any>(
             };
 
             // Use parallel's own revalidate functions
-            return await evaluateRevalidation(
-              dummySegment,
+            return await evaluateRevalidation({
+              segment: dummySegment,
               prevParams,
-              null,
+              getPrevSegment: null,
               request,
               prevUrl,
               nextUrl,
-              parallelEntry.revalidate.map((fn, i) => ({
+              revalidations: parallelEntry.revalidate.map((fn, i) => ({
                 name: `revalidate${i}`,
                 fn,
               })),
               routeKey,
               context,
-              actionContext
-            );
+              actionContext,
+              stale,
+            });
           },
           async () => {
             // If loading is defined, don't await (stream with Suspense)
@@ -1643,18 +1723,19 @@ export function createRSCRouter<TEnv = any>(
           layoutName: orphan.id,
         };
 
-        return await evaluateRevalidation(
-          dummySegment,
+        return await evaluateRevalidation({
+          segment: dummySegment,
           prevParams,
-          null,
+          getPrevSegment: null,
           request,
           prevUrl,
           nextUrl,
-          orphan.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
+          revalidations: orphan.revalidate.map((fn, i) => ({ name: `revalidate${i}`, fn })),
           routeKey,
           context,
-          actionContext
-        );
+          actionContext,
+          stale,
+        });
       },
       async () =>
         typeof orphan.handler === "function"
@@ -2019,6 +2100,8 @@ export function createRSCRouter<TEnv = any>(
     // Filter out empty strings - "".split(",") returns [""] not []
     const clientSegmentIds =
       url.searchParams.get("_rsc_segments")?.split(",").filter(Boolean) || [];
+    // Check if this is a stale cache revalidation request
+    const stale = url.searchParams.get("_rsc_stale") === "true";
     // Use custom header first, fallback to standard Referer for prefetch scenarios
     const previousUrl =
       request.headers.get("X-RSC-Router-Client-Path") ||
@@ -2219,7 +2302,8 @@ export function createRSCRouter<TEnv = any>(
                   prevUrl,
                   url,
                   loaderPromises,
-                  actionContext
+                  actionContext,
+                  stale
                 ),
               pathname
             );
@@ -2240,6 +2324,7 @@ export function createRSCRouter<TEnv = any>(
         );
 
         // Resolve intercept entry (middleware, loaders, handler)
+        // Pass revalidation context for stale cache revalidation
         interceptSegments = await getContext().runWithStore(
           Store,
           Store.namespace || "#router",
@@ -2250,7 +2335,17 @@ export function createRSCRouter<TEnv = any>(
               interceptResult.entry,
               matched.params,
               handlerContext,
-              true // belongsToRoute
+              true, // belongsToRoute
+              {
+                clientSegmentIds: clientSegmentSet,
+                prevParams,
+                request,
+                prevUrl,
+                nextUrl: url,
+                routeKey: matched.routeKey,
+                actionContext,
+                stale,
+              }
             )
         );
 
@@ -2266,8 +2361,12 @@ export function createRSCRouter<TEnv = any>(
 
       // When intercepting, tell browser to keep its current segments + add modal
       // This prevents the browser from discarding the current page content
+      // If client sent empty segments (HMR recovery), use segment IDs from allSegments
+      // (not allMatchedIds which may include unrendered route segments)
       const allIds = interceptResult
-        ? [...clientSegmentIds, ...interceptSegments.map((s) => s.id)]
+        ? clientSegmentIds.length > 0
+          ? [...clientSegmentIds, ...interceptSegments.map((s) => s.id)]
+          : allSegments.map((s) => s.id) // Use actual segments, not matchedIds
         : [...allMatchedIds, ...interceptSegments.map((s) => s.id)];
 
       // Filter out segments with null components (client already has them)

@@ -13,8 +13,9 @@ import type {
 // Maximum number of history entries to cache (URLs visited)
 const HISTORY_CACHE_SIZE = 20;
 
-// Cache entry: [url-key, segments]
-type HistoryCacheEntry = [string, ResolvedSegment[]];
+// Cache entry: [url-key, segments, stale]
+// stale=true means the data may be outdated and should be revalidated on access
+type HistoryCacheEntry = [string, ResolvedSegment[], boolean];
 
 // BroadcastChannel for cross-tab cache invalidation
 const CACHE_INVALIDATION_CHANNEL = "rsc-router-cache-invalidation";
@@ -36,18 +37,36 @@ function getCacheInvalidationChannel(): BroadcastChannel | null {
 }
 
 /**
+ * Options for generating a history key
+ */
+export interface HistoryKeyOptions {
+  /** If true, append :intercept suffix to differentiate intercept entries */
+  intercept?: boolean;
+}
+
+/**
  * Generate a cache key from a URL.
  * Uses pathname + search (query params) directly as the key.
  * Hash fragments (#) are excluded since they don't affect server data.
+ *
+ * For intercept routes, append `:intercept` suffix to cache them separately
+ * from non-intercept versions of the same URL.
  */
-export function generateHistoryKey(url?: string): string {
+export function generateHistoryKey(url?: string, options?: HistoryKeyOptions): string {
   if (!url) {
     url = typeof window !== "undefined" ? window.location.href : "/";
   }
 
   // Parse URL and use only pathname + search (exclude hash fragment)
   const parsed = new URL(url, "http://localhost");
-  return parsed.pathname + parsed.search;
+  let key = parsed.pathname + parsed.search;
+
+  // Append intercept suffix for separate caching
+  if (options?.intercept) {
+    key += ":intercept";
+  }
+
+  return key;
 }
 
 /**
@@ -180,9 +199,9 @@ export function createNavigationStore(
   // Current history key (set on navigation, stored in history.state)
   let currentHistoryKey = config?.initialHistoryKey || generateHistoryKey();
 
-  // Store initial segments if provided
+  // Store initial segments if provided (not stale)
   if (config?.initialHistoryKey && config?.initialSegments) {
-    historyCache.push([config.initialHistoryKey, config.initialSegments]);
+    historyCache.push([config.initialHistoryKey, config.initialSegments, false]);
   }
 
   // State change listeners (for useNavigation subscriptions)
@@ -213,11 +232,29 @@ export function createNavigationStore(
   }
 
   /**
+   * Mark all cache entries as stale (internal - does not broadcast)
+   */
+  function markCacheAsStaleInternal(): void {
+    for (let i = 0; i < historyCache.length; i++) {
+      historyCache[i][2] = true;
+    }
+  }
+
+  /**
    * Clear the history cache and broadcast to other tabs
    */
   function clearCacheAndBroadcast(): void {
     console.log("[Browser] Clearing cache and broadcasting to other tabs");
     clearCacheInternal();
+    broadcastInvalidation();
+  }
+
+  /**
+   * Mark cache as stale and broadcast to other tabs
+   */
+  function markStaleAndBroadcast(): void {
+    console.log("[Browser] Marking cache as stale and broadcasting to other tabs");
+    markCacheAsStaleInternal();
     broadcastInvalidation();
   }
 
@@ -272,10 +309,10 @@ export function createNavigationStore(
           }
 
           console.log(
-            "[Browser] Cache invalidated by another tab, shared segments:",
+            "[Browser] Cache marked stale by another tab, shared segments:",
             mutatedSegmentIds.filter((id) => currentSegmentIds.includes(id)).join(", ")
           );
-          clearCacheInternal();
+          markCacheAsStaleInternal();
 
           // Auto-refresh if enabled and callback is registered
           if (crossTabAutoRefresh && crossTabRefreshCallback) {
@@ -435,15 +472,16 @@ export function createNavigationStore(
      * Store segments for a history entry
      * Updates existing entry if key exists, otherwise adds new entry
      * Removes oldest entries (from front) when over configured cacheSize
+     * Fresh data is always stored as not stale (stale=false)
      */
     cacheSegmentsForHistory(historyKey: string, segments: ResolvedSegment[]): void {
       // Check if entry already exists and update it
       const existingIndex = historyCache.findIndex(([key]) => key === historyKey);
       if (existingIndex !== -1) {
-        historyCache[existingIndex] = [historyKey, segments];
+        historyCache[existingIndex] = [historyKey, segments, false];
       } else {
-        // Add new entry at the end
-        historyCache.push([historyKey, segments]);
+        // Add new entry at the end (not stale)
+        historyCache.push([historyKey, segments, false]);
         // Remove oldest entries if over limit
         while (historyCache.length > cacheSize) {
           historyCache.shift();
@@ -453,10 +491,12 @@ export function createNavigationStore(
 
     /**
      * Get cached segments for a history entry
+     * Returns { segments, stale } or undefined if not cached
      */
-    getCachedSegments(historyKey: string): ResolvedSegment[] | undefined {
+    getCachedSegments(historyKey: string): { segments: ResolvedSegment[]; stale: boolean } | undefined {
       const entry = historyCache.find(([key]) => key === historyKey);
-      return entry?.[1];
+      if (!entry) return undefined;
+      return { segments: entry[1], stale: entry[2] };
     },
 
     /**
@@ -467,11 +507,30 @@ export function createNavigationStore(
     },
 
     /**
+     * Mark all cache entries as stale
+     * Called after server actions to indicate data may be outdated
+     */
+    markCacheAsStale(): void {
+      for (let i = 0; i < historyCache.length; i++) {
+        historyCache[i][2] = true;
+      }
+      console.log("[Browser] Marked", historyCache.length, "cache entries as stale");
+    },
+
+    /**
      * Clear the history cache and broadcast to other tabs
-     * Called after server action commit to invalidate stale data
+     * Use this for hard invalidation when data is definitely stale
      */
     clearHistoryCache(): void {
       clearCacheAndBroadcast();
+    },
+
+    /**
+     * Mark cache as stale and broadcast to other tabs
+     * Called after server actions - allows SWR pattern for popstate
+     */
+    markCacheAsStaleAndBroadcast(): void {
+      markStaleAndBroadcast();
     },
 
     /**

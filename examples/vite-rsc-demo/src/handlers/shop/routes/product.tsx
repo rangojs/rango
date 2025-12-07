@@ -139,7 +139,7 @@ export const ProductsDetailRoute: RouteHandler<
                     No return value tracking
                   </p>
                   <AddToCartForm
-                    productId={product.id}
+                    productId={product.slug}
                     action={addToCart}
                     buttonText="Add to Cart (Fire & Forget)"
                   />
@@ -151,8 +151,9 @@ export const ProductsDetailRoute: RouteHandler<
                   <p style={{ fontSize: "0.9rem", color: "#666" }}>
                     Shows action result
                   </p>
+                  <p>Id: {product.slug}</p>
                   <AddToCartForm
-                    productId={product.id}
+                    productId={product.slug}
                     action={addToCartWithResult}
                     buttonText="Add to Cart (With Result)"
                     showResult

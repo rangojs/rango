@@ -199,8 +199,10 @@ export interface NavigationStore {
     historyKey: string,
     segments: ResolvedSegment[]
   ): void;
-  getCachedSegments(historyKey: string): ResolvedSegment[] | undefined;
+  getCachedSegments(historyKey: string): { segments: ResolvedSegment[]; stale: boolean } | undefined;
   hasHistoryCache(historyKey: string): boolean;
+  markCacheAsStale(): void;
+  markCacheAsStaleAndBroadcast(): void;
   clearHistoryCache(): void;
   broadcastCacheInvalidation(): void;
 
@@ -257,6 +259,8 @@ export interface FetchPartialOptions {
   segmentIds: string[];
   previousUrl: string;
   signal?: AbortSignal;
+  /** If true, this is a stale cache revalidation request - server should force revalidators */
+  staleRevalidation?: boolean;
 }
 
 /**

@@ -6,6 +6,7 @@ import { Link, useNavigation } from "rsc-router/browser";
 import { CardDetailLoader } from "./loader.js";
 import { kanbanUpdateCard, kanbanDeleteCard } from "./actions.js";
 import { labelColors } from "./data.js";
+import { LoadingSpinner } from "../shop/components/loading.js";
 
 const styles = {
   overlay: {
@@ -177,7 +178,9 @@ export function CardDetailSkeleton() {
     <div style={styles.overlay}>
       <div style={styles.modal}>
         <div style={styles.header}>
-          <div style={{ ...skeletonStyle, height: "24px", width: "60%", flex: 1 }} />
+          <div
+            style={{ ...skeletonStyle, height: "24px", width: "60%", flex: 1 }}
+          />
           <button style={styles.closeButton}>x</button>
         </div>
         <div style={styles.body}>
@@ -192,9 +195,15 @@ export function CardDetailSkeleton() {
           <div style={styles.section}>
             <div style={styles.sectionTitle}>Labels</div>
             <div style={{ display: "flex", gap: "0.5rem" }}>
-              <div style={{ ...skeletonStyle, height: "24px", width: "60px" }} />
-              <div style={{ ...skeletonStyle, height: "24px", width: "50px" }} />
-              <div style={{ ...skeletonStyle, height: "24px", width: "70px" }} />
+              <div
+                style={{ ...skeletonStyle, height: "24px", width: "60px" }}
+              />
+              <div
+                style={{ ...skeletonStyle, height: "24px", width: "50px" }}
+              />
+              <div
+                style={{ ...skeletonStyle, height: "24px", width: "70px" }}
+              />
             </div>
           </div>
         </div>
@@ -214,11 +223,15 @@ export function CardDetailContent() {
   const [editDescription, setEditDescription] = useState(card.description);
   const [selectedLabels, setSelectedLabels] = useState<string[]>(card.labels);
   const [optimisticTitle, setOptimisticTitle] = useOptimistic(card.title);
-  const [optimisticDescription, setOptimisticDescription] = useOptimistic(card.description);
+  const [optimisticDescription, setOptimisticDescription] = useOptimistic(
+    card.description
+  );
 
   // Client-side error trigger: if description contains "error", throw during render
   if (card.description.toLowerCase().includes("error")) {
-    throw new Error("Card description contains 'error' - this is a simulated client-side error");
+    throw new Error(
+      "Card description contains 'error' - this is a simulated client-side error"
+    );
   }
 
   // Sync state when card data changes (e.g., from cross-tab sync)
@@ -337,7 +350,10 @@ export function CardDetailContent() {
                   autoFocus
                 />
                 <div style={styles.buttonGroup}>
-                  <button style={styles.saveButton} onClick={handleSaveDescription}>
+                  <button
+                    style={styles.saveButton}
+                    onClick={handleSaveDescription}
+                  >
                     Save
                   </button>
                   <button
@@ -394,10 +410,19 @@ export function CardDetailContent() {
             <div style={styles.meta}>
               <div>Created: {card.createdAt.toLocaleDateString("en-US")}</div>
               <div>Updated: {card.updatedAt.toLocaleDateString("en-US")}</div>
+              <div>
+                <LoadingSpinner />
+              </div>
             </div>
           </div>
 
-          <div style={{ ...styles.buttonGroup, borderTop: "1px solid #e2e8f0", paddingTop: "1rem" }}>
+          <div
+            style={{
+              ...styles.buttonGroup,
+              borderTop: "1px solid #e2e8f0",
+              paddingTop: "1rem",
+            }}
+          >
             <Link to="/kanban" style={{ textDecoration: "none" }}>
               <button style={styles.cancelButton}>Back to Board</button>
             </Link>

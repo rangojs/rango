@@ -8,32 +8,53 @@ import type { ResolvedSegment, HandlerContext } from "../types";
 import type { ActionContext } from "./types";
 
 /**
+ * Options for revalidation evaluation
+ */
+interface EvaluateRevalidationOptions<TEnv> {
+  /** Current segment to evaluate */
+  segment: ResolvedSegment;
+  /** Previous route params (from route match, not segment) */
+  prevParams: Record<string, string>;
+  /** Lazy function to get previous segment if needed */
+  getPrevSegment: (() => Promise<ResolvedSegment | undefined>) | null;
+  /** Current request */
+  request: Request;
+  /** Previous URL */
+  prevUrl: URL;
+  /** Next URL */
+  nextUrl: URL;
+  /** Custom revalidation functions */
+  revalidations: Array<{ name: string; fn: any }>;
+  /** Current route key */
+  routeKey: string;
+  /** Handler context */
+  context: HandlerContext<any, TEnv>;
+  /** Action context if triggered by action */
+  actionContext?: ActionContext;
+  /** If true, this is a stale cache revalidation request */
+  stale?: boolean;
+}
+
+/**
  * Evaluate if a segment should revalidate using soft/hard decision pattern
  * Optimized to use prevParams directly and avoid building previous segments
- *
- * @param segment - Current segment to evaluate
- * @param prevParams - Previous route params (from route match, not segment)
- * @param getPrevSegment - Lazy function to get previous segment if needed
- * @param request - Current request
- * @param prevUrl - Previous URL
- * @param nextUrl - Next URL
- * @param revalidations - Custom revalidation functions
- * @param routeKey - Current route key
- * @param context - Handler context
- * @param actionContext - Action context if triggered by action
  */
 export async function evaluateRevalidation<TEnv>(
-  segment: ResolvedSegment,
-  prevParams: Record<string, string>,
-  getPrevSegment: (() => Promise<ResolvedSegment | undefined>) | null,
-  request: Request,
-  prevUrl: URL,
-  nextUrl: URL,
-  revalidations: Array<{ name: string; fn: any }>,
-  routeKey: string,
-  context: HandlerContext<any, TEnv>,
-  actionContext?: ActionContext
+  options: EvaluateRevalidationOptions<TEnv>
 ): Promise<boolean> {
+  const {
+    segment,
+    prevParams,
+    getPrevSegment,
+    request,
+    prevUrl,
+    nextUrl,
+    revalidations,
+    routeKey,
+    context,
+    actionContext,
+    stale,
+  } = options;
   const nextParams = segment.params || {};
   const paramsChanged =
     Object.keys(nextParams).length !== Object.keys(prevParams).length ||
@@ -123,6 +144,8 @@ export async function evaluateRevalidation<TEnv>(
       formData: actionContext?.formData,
       method: request.method, // GET for navigation, POST for actions
       routeName: routeKey, // User-friendly route name (e.g., "products.detail")
+      // Stale cache context (only true for background revalidation after stale cache render)
+      stale,
     });
 
     // Check return type:
