@@ -18,6 +18,18 @@ if (typeof Symbol.asyncDispose === "undefined") {
 }
 
 /**
+ * Extract function name from full action ID
+ * Server actions have IDs like "/src/handlers/shop/actions/shop.actions.ts#updateCartQuantity"
+ * We normalize to just "updateCartQuantity" for store tracking
+ */
+function normalizeActionId(actionId: string): string {
+  if (actionId.includes("#")) {
+    return actionId.split("#").pop()!;
+  }
+  return actionId;
+}
+
+/**
  * Create a server action bridge for handling RSC server actions
  *
  * The bridge registers a callback with the RSC runtime that handles:
@@ -66,11 +78,16 @@ export function createServerActionBridge(
   function createStreamScope(
     stream: ReadableStream,
     signal: AbortSignal,
+    actionId?: string,
     onComplete?: () => void
   ) {
     const reader = stream.getReader();
     if (!signal.aborted) {
       store.setState({ isStreaming: true });
+      // Emit action state: streaming (if tracking an action)
+      if (actionId) {
+        store.setActionState(actionId, { state: "streaming" });
+      }
     }
     return {
       reader,
@@ -107,16 +124,26 @@ export function createServerActionBridge(
     }
     pendingActionCount++;
 
+    const startedAt = Date.now();
+
     // Add to inflight actions
     store.addInflightAction({
       id,
       actionId,
       payload: args,
-      startedAt: Date.now(),
+      startedAt,
     });
 
     store.setActionInProgress(true);
     store.setState({ state: "loading" });
+
+    // Emit action state: loading
+    store.setActionState(actionId, {
+      state: "loading",
+      payload: args,
+      error: null,
+      result: null,
+    });
 
     // Mark cache as stale immediately when action starts
     // This ensures SWR pattern kicks in if user navigates away during action
@@ -163,7 +190,8 @@ export function createServerActionBridge(
       commit(
         segmentIds?: string[],
         segments?: ResolvedSegment[],
-        skipCacheClear?: boolean
+        skipCacheClear?: boolean,
+        result?: unknown
       ) {
         status = "completed";
         // Update segment state if provided
@@ -179,9 +207,21 @@ export function createServerActionBridge(
           const currentKey = store.getHistoryKey();
           store.cacheSegmentsForHistory(currentKey, segments);
         }
+        // Emit action state: idle with result (preserves payload)
+        store.setActionState(actionId, {
+          state: "idle",
+          result,
+          error: null,
+        });
       },
-      error() {
+      error(err?: unknown) {
         status = "error";
+        // Emit action state: idle with error (preserves payload)
+        store.setActionState(actionId, {
+          state: "idle",
+          error: err,
+          result: null,
+        });
       },
       get signal() {
         return signal;
@@ -213,7 +253,9 @@ export function createServerActionBridge(
    * Server action callback handler
    */
   async function handleServerAction(id: string, args: any[]): Promise<unknown> {
-    console.log("ID", { id, args });
+    // Normalize action ID to just the function name for store tracking
+    const actionId = normalizeActionId(id);
+    console.log("ID", { id, actionId, args });
 
     // Create action-specific disposable controller
     // Actions use separate tracking - NOT aborted by navigation
@@ -224,7 +266,7 @@ export function createServerActionBridge(
     console.log(`[Browser] Args:`, args);
 
     // Transaction for action state and inflight tracking (cleanup on scope exit)
-    using tx = createActionTransaction(id, args, abortController.signal);
+    using tx = createActionTransaction(actionId, args, abortController.signal);
 
     // Create temporary references for serialization
     const temporaryReferences = deps.createTemporaryReferenceSet();
@@ -291,6 +333,7 @@ export function createServerActionBridge(
         await using streamScope = createStreamScope(
           trackingStream,
           tx.signal,
+          actionId, // Pass normalized action ID for state tracking
           () => {
             console.log("[STREAMING] RSC stream complete");
             resolveStreamComplete();
@@ -404,7 +447,7 @@ export function createServerActionBridge(
       // Throw the error so the action promise rejects
       // This allows the calling component to catch it if needed
       if (returnValue && !returnValue.ok) {
-        tx.error();
+        tx.error(returnValue.data);
         throw returnValue.data;
       }
 
@@ -477,6 +520,7 @@ export function createServerActionBridge(
       const returnData = returnValue?.data;
 
       if (returnValue && !returnValue.ok) {
+        tx.error(returnValue.data);
         throw returnValue.data;
       }
 
@@ -548,7 +592,7 @@ export function createServerActionBridge(
         // Broadcast to other tabs (local cache has fresh data from navTx.commit)
         store.broadcastCacheInvalidation();
         // Skip cache clear since we just refetched fresh data
-        tx.commit(undefined, undefined, true);
+        tx.commit(undefined, undefined, true, returnData);
         return returnData;
       }
 
@@ -598,7 +642,7 @@ export function createServerActionBridge(
         store.broadcastCacheInvalidation();
         console.log(`[Browser] Returning to React:`, returnData);
         // Skip the normal tx cache clear since we just cleared it
-        tx.commit(undefined, undefined, true);
+        tx.commit(undefined, undefined, true, returnData);
         return returnData;
       }
 
@@ -609,7 +653,7 @@ export function createServerActionBridge(
           `[Browser] Skipping UI update - ${pendingActionCount - 1} other action(s) still pending`
         );
         console.log(`[Browser] Returning to React:`, returnData);
-        tx.commit(matched, fullSegments, true); // Skip cache clear - last action will broadcast
+        tx.commit(matched, fullSegments, true, returnData); // Skip cache clear - last action will broadcast
         return returnData;
       }
 
@@ -650,7 +694,7 @@ export function createServerActionBridge(
       );
 
       console.log(`[Browser] Returning to React:`, returnData);
-      tx.commit(matched, fullSegments);
+      tx.commit(matched, fullSegments, false, returnData);
       return returnData;
     } else {
       // Full update not supported for actions

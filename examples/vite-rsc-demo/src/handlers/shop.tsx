@@ -84,6 +84,7 @@ import {
   ProductModalContent,
   ProductModalContentSkeleton,
 } from "./shop/components/ProductModal.js";
+import { CartNotification } from "./shop/components/CartNotification.js";
 
 export default map<typeof shopRoutes>(
   ({
@@ -150,6 +151,8 @@ export default map<typeof shopRoutes>(
                   <p>🔥 Summer Sale! Up to 50% off on selected items! 🔥</p>
                 </div>
               ),
+              // Cart notification - client component that tracks cart action state
+              "@notification": () => <CartNotification />,
             }),
 
             // Intercept product detail - shows modal during soft navigation

@@ -8,7 +8,20 @@ import type {
   StateListener,
   ResolvedSegment,
   InflightAction,
+  TrackedActionState,
+  ActionStateListener,
 } from "./types.js";
+
+/**
+ * Default action state (idle with no payload)
+ */
+const DEFAULT_ACTION_STATE: TrackedActionState = {
+  state: "idle",
+  actionId: null,
+  payload: null,
+  error: null,
+  result: null,
+};
 
 // Maximum number of history entries to cache (URLs visited)
 const HISTORY_CACHE_SIZE = 20;
@@ -214,6 +227,24 @@ export function createNavigationStore(
   // Intercept source URL - tracks where the intercept was triggered from
   // Used to maintain intercept context during action revalidation
   let interceptSourceUrl: string | null = null;
+
+  // Action state tracking (for useAction hook)
+  // Maps action function ID to its tracked state
+  const actionStates = new Map<string, TrackedActionState>();
+
+  // Action state listeners (per action ID)
+  // Maps action function ID to set of listeners
+  const actionListeners = new Map<string, Set<ActionStateListener>>();
+
+  /**
+   * Notify all listeners for a specific action
+   */
+  function notifyActionListeners(actionId: string, state: TrackedActionState): void {
+    const listeners = actionListeners.get(actionId);
+    if (listeners) {
+      listeners.forEach((listener) => listener(state));
+    }
+  }
 
   /**
    * Notify all state listeners of a change
@@ -590,6 +621,54 @@ export function createNavigationStore(
       updateSubscribers.forEach((callback) => {
         callback(update);
       });
+    },
+
+    // ========================================================================
+    // Action State Tracking (for useAction hook)
+    // ========================================================================
+
+    /**
+     * Get the current state for a tracked action
+     * Returns default idle state if action hasn't been tracked
+     */
+    getActionState(actionId: string): TrackedActionState {
+      return actionStates.get(actionId) ?? { ...DEFAULT_ACTION_STATE };
+    },
+
+    /**
+     * Update the state for a tracked action
+     * Merges partial state with existing state and notifies listeners
+     */
+    setActionState(actionId: string, partial: Partial<TrackedActionState>): void {
+      const current = actionStates.get(actionId) ?? { ...DEFAULT_ACTION_STATE };
+      const updated: TrackedActionState = {
+        ...current,
+        ...partial,
+        actionId, // Always set the actionId
+      };
+      actionStates.set(actionId, updated);
+      notifyActionListeners(actionId, updated);
+    },
+
+    /**
+     * Subscribe to state changes for a specific action
+     * Returns unsubscribe function
+     */
+    subscribeToAction(actionId: string, listener: ActionStateListener): () => void {
+      let listeners = actionListeners.get(actionId);
+      if (!listeners) {
+        listeners = new Set();
+        actionListeners.set(actionId, listeners);
+      }
+      listeners.add(listener);
+
+      return () => {
+        listeners!.delete(listener);
+        // Clean up empty listener sets
+        if (listeners!.size === 0) {
+          actionListeners.delete(actionId);
+        }
+      };
     },
   };
 }

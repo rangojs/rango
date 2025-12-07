@@ -1,13 +1,15 @@
 import { Outlet } from "rsc-router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { CartBadge, UserGreeting } from "../components/CartBadge.js";
-import { useNavigation } from "rsc-router/browser";
 import { LoadingSpinner } from "@/handlers/shop/components/loading.js";
 
 export function ShopLayout() {
   return (
     <DebugSegmentWrapper type="layout" name="Shop">
       <div>
+        {/* Notification parallel - client component for action notifications */}
+        <Outlet name="@notification" />
+
         <header
           style={{
             background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
