@@ -128,6 +128,11 @@ function createNavigationTransaction(
   if (!options?.skipLoadingState) {
     store.setState({ state: "loading" });
   }
+  // handle abort
+  // we need to cleanup just before new navigation starts
+  signal.onabort = () => {
+    store.setState({ state: "idle", isStreaming: false });
+  };
 
   /**
    * Optimistically commit from cache - renders immediately before revalidation
