@@ -32,13 +32,11 @@ function shallowEqual<T>(a: T, b: T): boolean {
   return true;
 }
 
-// SSR-safe default state (public version without inflightActions)
+// SSR-safe default state (public version without internal properties)
 const SSR_DEFAULT_STATE: PublicNavigationState = {
   state: "idle",
   isStreaming: false,
   location: new URL("/", "http://localhost"),
-  formData: null,
-  formAction: null,
 };
 
 /**
