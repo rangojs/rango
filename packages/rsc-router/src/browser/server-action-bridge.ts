@@ -6,6 +6,7 @@ import type {
 } from "./types.js";
 import { createPartialUpdater } from "./partial-update.js";
 import { createNavigationTransaction } from "./navigation-bridge.js";
+import { mergeSegmentLoaders, needsLoaderMerge } from "./merge-segment-loaders.js";
 import { startTransition } from "react";
 
 // Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
@@ -447,14 +448,21 @@ export function createServerActionBridge(
         throw new Error("No matched segments in response");
       }
 
-      // Rebuild from matched: server segments first, then cached segments
+      // Rebuild from matched: merge server segments with cached, or use cached as fallback
       const fullSegments = matched
         .map((segId: string) => {
-          // First check server response (new/updated segments)
           const fromServer = newSegmentMap.get(segId);
-          if (fromServer) return fromServer;
-          // Fall back to current page's cached segments
           const fromCache = currentSegmentMap.get(segId);
+
+          if (fromServer) {
+            // Server returned this segment - check if we need to merge partial loaders
+            if (needsLoaderMerge(fromServer, fromCache)) {
+              return mergeSegmentLoaders(fromServer, fromCache);
+            }
+            return fromServer;
+          }
+
+          // Fall back to current page's cached segments
           if (!fromCache) {
             console.error(`[Browser] MISSING SEGMENT: ${segId} not in cache!`);
           }

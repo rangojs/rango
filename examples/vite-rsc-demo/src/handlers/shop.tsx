@@ -167,7 +167,7 @@ export default map<typeof shopRoutes>(
                 loader(ProductCartLoader, () => [
                   revalidate(
                     ({ actionId, stale }) =>
-                      stale || actionId?.includes("addToCart") === true
+                      stale || actionId?.includes("Cart") === true
                   ),
                 ]),
                 // Recommendations loader - revalidates on cart actions to demonstrate streaming

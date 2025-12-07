@@ -71,6 +71,52 @@ export async function removeFromCart(productId: string) {
 }
 
 /**
+ * Update cart item quantity (increment/decrement)
+ * Removes item if quantity becomes 0 or less
+ *
+ * @param productId - Product identifier
+ * @param delta - Amount to change quantity by (+1 or -1 typically)
+ * @returns New quantity (0 if removed)
+ */
+export async function updateCartQuantity(
+  productId: string,
+  delta: number
+): Promise<number> {
+  console.log(`[Action] updateCartQuantity: ${productId} delta=${delta}`);
+
+  const cartId = "demo-cart";
+  let cart = carts.get(cartId);
+
+  if (!cart) {
+    cart = { items: [] };
+    carts.set(cartId, cart);
+  }
+
+  const existing = cart.items.find((item) => item.productId === productId);
+
+  if (existing) {
+    existing.quantity += delta;
+
+    if (existing.quantity <= 0) {
+      // Remove item from cart
+      cart.items = cart.items.filter((item) => item.productId !== productId);
+      console.log(`[Action] Removed ${productId} from cart (quantity <= 0)`);
+      return 0;
+    }
+
+    console.log(`[Action] Updated ${productId} quantity to ${existing.quantity}`);
+    return existing.quantity;
+  } else if (delta > 0) {
+    // Item not in cart, add it
+    cart.items.push({ productId, quantity: delta });
+    console.log(`[Action] Added new item ${productId} with quantity ${delta}`);
+    return delta;
+  }
+
+  return 0;
+}
+
+/**
  * Clear all items from cart
  */
 export async function clearCart() {

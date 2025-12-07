@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useOptimistic, startTransition } from "react";
 import { Outlet, useLoader } from "rsc-router/client";
 import { Link } from "rsc-router/browser";
 import { ProductLoader } from "../loaders/product.js";
 import { ModalRecommendationsLoader } from "../loaders/modal-recommendations.js";
 import { ProductCartLoader } from "../loaders/product-cart.js";
-import { addToCartWithResult } from "../actions/shop.actions.js";
+import { addToCartWithResult, updateCartQuantity } from "../actions/shop.actions.js";
 import { LoadingSpinner } from "./loading.js";
 
 const styles = {
@@ -111,12 +111,58 @@ export function ModalWrapper({}: {}) {
   );
 }
 
+// Quantity control styles
+const quantityStyles = {
+  container: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.5rem",
+    background: "#f1f5f9",
+    borderRadius: "8px",
+    padding: "0.25rem",
+  },
+  button: {
+    width: "32px",
+    height: "32px",
+    border: "none",
+    borderRadius: "6px",
+    cursor: "pointer",
+    fontSize: "1.25rem",
+    fontWeight: 600,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    transition: "all 0.15s ease",
+  },
+  decrementButton: {
+    background: "#ef4444",
+    color: "white",
+  },
+  incrementButton: {
+    background: "#10b981",
+    color: "white",
+  },
+  quantity: {
+    minWidth: "2.5rem",
+    textAlign: "center" as const,
+    fontWeight: 600,
+    fontSize: "1rem",
+    color: "#1e293b",
+  },
+};
+
 // Product modal content - uses loader data
 export function ProductModalContent() {
   const product = useLoader(ProductLoader);
   const recommendations = useLoader(ModalRecommendationsLoader);
   const productCart = useLoader(ProductCartLoader);
   console.log("ProductModalContent loader", { productCart });
+
+  // Optimistic quantity state - updates immediately before server confirms
+  const [optimisticQuantity, setOptimisticQuantity] = useOptimistic(
+    productCart.quantity,
+    (_current, newQuantity: number) => newQuantity
+  );
 
   const [actionResult, setActionResult] = useState<{
     success: boolean;
@@ -141,6 +187,18 @@ export function ProductModalContent() {
     }
   }
 
+  function handleQuantityChange(delta: number) {
+    const newQuantity = Math.max(0, optimisticQuantity + delta);
+
+    startTransition(async () => {
+      // Optimistically update UI immediately
+      setOptimisticQuantity(newQuantity);
+
+      // Then perform the actual server action
+      await updateCartQuantity(product.slug, delta);
+    });
+  }
+
   return (
     <>
       <div style={styles.header}>
@@ -150,22 +208,58 @@ export function ProductModalContent() {
       <div style={styles.body}>
         <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
           <div style={styles.price}>${product.price}</div>
-          {productCart.quantity > 0 && (
-            <div
-              style={{
-                background: "#dbeafe",
-                color: "#1e40af",
-                padding: "0.25rem 0.75rem",
-                borderRadius: "9999px",
-                fontSize: "0.875rem",
-                fontWeight: 500,
-              }}
-            >
-              {productCart.quantity} in cart
-            </div>
-          )}
         </div>
         <p style={styles.description}>{product.description}</p>
+
+        {/* Quantity Control */}
+        <div style={{ marginBottom: "1rem" }}>
+          <div
+            style={{
+              fontSize: "0.875rem",
+              color: "#64748b",
+              marginBottom: "0.5rem",
+            }}
+          >
+            Quantity in cart:
+          </div>
+          {optimisticQuantity > 0 ? (
+            <div style={quantityStyles.container}>
+              <button
+                style={{
+                  ...quantityStyles.button,
+                  ...quantityStyles.decrementButton,
+                }}
+                onClick={() => handleQuantityChange(-1)}
+                title={optimisticQuantity === 1 ? "Remove from cart" : "Decrease quantity"}
+              >
+                {optimisticQuantity === 1 ? "x" : "-"}
+              </button>
+              <span style={quantityStyles.quantity}>{optimisticQuantity}</span>
+              <button
+                style={{
+                  ...quantityStyles.button,
+                  ...quantityStyles.incrementButton,
+                }}
+                onClick={() => handleQuantityChange(1)}
+                title="Increase quantity"
+              >
+                +
+              </button>
+            </div>
+          ) : (
+            <button
+              style={{
+                ...styles.secondaryButton,
+                opacity: isLoading ? 0.7 : 1,
+              }}
+              onClick={() => handleQuantityChange(1)}
+              disabled={isLoading}
+            >
+              Add to Cart
+            </button>
+          )}
+        </div>
+
         <LoadingSpinner />
         {actionResult && (
           <div
@@ -182,16 +276,6 @@ export function ProductModalContent() {
         )}
 
         <div style={styles.actions}>
-          <button
-            style={{
-              ...styles.secondaryButton,
-              opacity: isLoading ? 0.7 : 1,
-            }}
-            onClick={handleAddToCart}
-            disabled={isLoading}
-          >
-            {isLoading ? "Adding..." : "Add to Cart"}
-          </button>
           <Link
             to={`/shop/product/${product.slug}`}
             style={styles.primaryButton}
