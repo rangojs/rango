@@ -7,6 +7,11 @@ import type {
 import type { ReactNode } from "react";
 import { startTransition } from "react";
 import type { RenderSegmentsOptions } from "../segment-system.js";
+import {
+  mergeSegmentLoaders,
+  needsLoaderMerge,
+} from "./merge-segment-loaders.js";
+import type { BoundTransaction } from "./navigation-bridge.js";
 
 /**
  * Configuration for creating a partial updater
@@ -27,19 +32,18 @@ export interface PartialUpdateConfig {
 export interface CommitOverrides {
   /** Override scroll behavior (e.g., disable for intercepts) */
   scroll?: boolean;
+  /** Override replace behavior (e.g., force replace for intercepts) */
+  replace?: boolean;
+  /** Mark this as an intercept route */
+  intercept?: boolean;
+  /** Source URL where intercept was triggered from */
+  interceptSourceUrl?: string;
 }
 
 /**
  * Commit context passed to partial updater for URL updates
  * Transaction encapsulates all store mutations for atomic commit
  */
-export interface PartialUpdateCommit {
-  commit(
-    segmentIds: string[],
-    segments: ResolvedSegment[],
-    overrides?: CommitOverrides
-  ): void;
-}
 
 /**
  * Type for the fetchPartialUpdate function
@@ -49,8 +53,12 @@ export type PartialUpdater = (
   segmentIds: string[] | undefined,
   isRetry: boolean,
   signal: AbortSignal | undefined,
-  tx: PartialUpdateCommit,
-  options?: { isAction?: boolean }
+  type: BoundTransaction,
+  options?: {
+    isAction?: boolean;
+    staleRevalidation?: boolean;
+    interceptSourceUrl?: string;
+  }
 ) => Promise<Promise<void>>;
 
 /**
@@ -84,7 +92,8 @@ export function createPartialUpdater(
    */
   function getCurrentSegmentMap(): Map<string, ResolvedSegment> {
     const currentKey = store.getHistoryKey();
-    const cachedSegments = store.getCachedSegments(currentKey) || [];
+    const cached = store.getCachedSegments(currentKey);
+    const cachedSegments = cached?.segments || [];
     const map = new Map<string, ResolvedSegment>();
     cachedSegments.forEach((s) => map.set(s.id, s));
     return map;
@@ -102,21 +111,38 @@ export function createPartialUpdater(
     segmentIds: string[] | undefined,
     isRetry: boolean,
     signal: AbortSignal | undefined,
-    tx: PartialUpdateCommit,
-    options?: { isAction?: boolean }
+    tx: BoundTransaction,
+    options?: {
+      isAction?: boolean;
+      staleRevalidation?: boolean;
+      interceptSourceUrl?: string;
+    }
   ): Promise<Promise<void>> {
-    const { isAction = false } = options || {};
+    const {
+      isAction = false,
+      staleRevalidation = false,
+      interceptSourceUrl,
+    } = options || {};
     const segmentState = store.getSegmentState();
     const url = targetUrl || window.location.href;
     const segments = segmentIds ?? segmentState.currentSegmentIds;
 
+    // For intercept revalidation, use the intercept source URL as previousUrl
+    // This tells the server the route should be treated as an intercept
+    const previousUrl =
+      interceptSourceUrl || tx.currentUrl || segmentState.currentUrl;
+
     console.log(`\n[Browser] >>> NAVIGATION`);
-    console.log(`[Browser] From: ${segmentState.currentUrl}`);
+    console.log(`[Browser] From: ${previousUrl}`);
     console.log(`[Browser] To: ${url}`);
     console.log(`[Browser] Segments to send: ${segments.join(", ")}`);
+    if (interceptSourceUrl) {
+      console.log(`[Browser] Intercept context from: ${interceptSourceUrl}`);
+    }
 
     // Set streaming state for navigations (actions handle their own streaming state)
-    if (!isAction) {
+    // Skip for stale revalidation - it's a background cache refresh, not a navigation
+    if (!isAction && !staleRevalidation) {
       store.setState({ isStreaming: true });
     }
 
@@ -124,21 +150,25 @@ export function createPartialUpdater(
     const currentSegmentMap = getCurrentSegmentMap();
 
     // Fetch partial payload (no abort signal - RSC doesn't support it well)
-    const { payload, streamComplete: rawStreamComplete } = await client.fetchPartial({
-      targetUrl: url,
-      segmentIds: segments,
-      previousUrl: segmentState.currentUrl,
-    });
+    const { payload, streamComplete: rawStreamComplete } =
+      await client.fetchPartial({
+        targetUrl: url,
+        segmentIds: segments,
+        previousUrl,
+        staleRevalidation,
+      });
 
     // Wrap stream completion to clear streaming state when done
     // Only clear if this navigation wasn't aborted (newer navigation handles its own state)
-    const streamComplete = isAction
-      ? rawStreamComplete
-      : rawStreamComplete.then(() => {
-          if (!signal?.aborted) {
-            store.setState({ isStreaming: false });
-          }
-        });
+    // Skip for stale revalidation - we never set streaming state
+    const streamComplete =
+      isAction || staleRevalidation
+        ? rawStreamComplete
+        : rawStreamComplete.then(() => {
+            if (!signal?.aborted) {
+              store.setState({ isStreaming: false });
+            }
+          });
 
     if (payload.metadata?.isPartial) {
       const { segments: newSegments, matched, diff } = payload.metadata;
@@ -189,7 +219,18 @@ export function createPartialUpdater(
         .map((id: string) => {
           // First check server response (new/updated segments)
           const fromServer = newSegmentMap.get(id);
-          if (fromServer) return fromServer;
+          if (fromServer) {
+            // For partial revalidation (stale or action), merge server's new loader data
+            // with cached loader data when server returns fewer loaders than cached
+            const fromCache = currentSegmentMap.get(id);
+            if (
+              (staleRevalidation || isAction) &&
+              needsLoaderMerge(fromServer, fromCache)
+            ) {
+              return mergeSegmentLoaders(fromServer, fromCache);
+            }
+            return fromServer;
+          }
           // Fall back to current page's cached segments
           const fromCache = currentSegmentMap.get(id);
           if (!fromCache) {
@@ -251,8 +292,10 @@ export function createPartialUpdater(
       // Rebuild tree on client (await for loader data resolution)
       // Race against abort signal to allow cancellation during loader awaiting
       // Pass intercept segments separately for explicit handling
+      // For stale revalidation, use forceAwait to ensure no loading fallbacks
       const renderOptions = {
         isAction,
+        forceAwait: staleRevalidation,
         interceptSegments:
           interceptSegments.length > 0 ? interceptSegments : undefined,
       };
@@ -284,8 +327,8 @@ export function createPartialUpdater(
         ? Object.values(payload.metadata.slots).some((slot) => slot.active)
         : false;
 
-      // Track intercept context for action revalidation (only on navigation, not actions)
-      if (!isAction) {
+      // Track intercept context for action revalidation (only on navigation, not actions or stale revalidation)
+      if (!isAction && !staleRevalidation) {
         if (hasActiveIntercept) {
           // Save the source URL for action revalidation to maintain intercept context
           store.setInterceptSourceUrl(segmentState.currentUrl);
@@ -296,17 +339,24 @@ export function createPartialUpdater(
       }
 
       // Commit navigation - transaction handles all store mutations atomically
-      // Disable scroll for intercept responses to keep scroll position
+      // For intercept responses: disable scroll, mark as intercept, include source URL
       tx.commit(
         matchedIds,
         allSegments,
-        hasActiveIntercept ? { scroll: false } : undefined
+        hasActiveIntercept
+          ? {
+              scroll: false,
+              intercept: true,
+              interceptSourceUrl: segmentState.currentUrl,
+            }
+          : undefined
       );
       console.log("[partial-update] updating document");
 
       // Emit update to trigger React render
-      // For actions, wrap in startTransition to avoid UI flickering
-      if (isAction) {
+      // For stale revalidation: wait for stream to complete (loaders resolved), then update
+      // For actions: wrap in startTransition to avoid UI flickering
+      if (isAction || staleRevalidation) {
         startTransition(() => {
           onUpdate({
             root: newTree,
@@ -366,8 +416,17 @@ export function createPartialUpdater(
       tx.commit(segmentIds, segments);
 
       // Emit update to trigger React render
-      // For actions, wrap in startTransition to avoid UI flickering
-      if (isAction) {
+      // For stale revalidation: wait for stream to complete, then update
+      // For actions: wrap in startTransition to avoid UI flickering
+      if (staleRevalidation) {
+        await rawStreamComplete;
+        startTransition(() => {
+          onUpdate({
+            root: payload.root,
+            metadata: payload.metadata!,
+          });
+        });
+      } else if (isAction) {
         startTransition(async () => {
           onUpdate({
             root: payload.root,

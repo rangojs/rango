@@ -305,6 +305,8 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
   formData?: FormData;      // FormData from action request
   method?: string;          // Request method: 'GET' for navigation, 'POST' for actions
   routeName?: string;       // Route name where action was executed (e.g., "products.detail")
+  // Stale cache revalidation (SWR pattern):
+  stale?: boolean;          // True if this is a stale cache revalidation request
 }) => boolean | { defaultShouldRevalidate: boolean };
 
 /**

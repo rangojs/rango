@@ -1,4 +1,4 @@
-'use server'
+"use server";
 
 /**
  * Shop Actions - Server-side mutations
@@ -11,8 +11,11 @@
  */
 
 // Simple in-memory cart for demo (replace with database in real app)
-const carts = new Map<string, { items: Array<{ productId: string; quantity: number }> }>();
-
+const carts = new Map<
+  string,
+  { items: Array<{ productId: string; quantity: number }> }
+>();
+export const getCart = async () => carts.get("demo-cart");
 /**
  * Add item to shopping cart
  *
@@ -23,7 +26,7 @@ export async function addToCart(productId: string, quantity: number = 1) {
   console.log(`[Action] addToCart: ${productId} x${quantity}`);
 
   // Get or create cart (in real app: get from session/user context)
-  const cartId = 'demo-cart';
+  const cartId = "demo-cart";
   let cart = carts.get(cartId);
 
   if (!cart) {
@@ -32,10 +35,12 @@ export async function addToCart(productId: string, quantity: number = 1) {
   }
 
   // Add or update item
-  const existing = cart.items.find(item => item.productId === productId);
+  const existing = cart.items.find((item) => item.productId === productId);
   if (existing) {
     existing.quantity += quantity;
-    console.log(`[Action] Updated existing item: ${productId} (now ${existing.quantity})`);
+    console.log(
+      `[Action] Updated existing item: ${productId} (now ${existing.quantity})`
+    );
   } else {
     cart.items.push({ productId, quantity });
     console.log(`[Action] Added new item: ${productId} x${quantity}`);
@@ -54,12 +59,14 @@ export async function addToCart(productId: string, quantity: number = 1) {
 export async function removeFromCart(productId: string) {
   console.log(`[Action] removeFromCart: ${productId}`);
 
-  const cartId = 'demo-cart';
+  const cartId = "demo-cart";
   const cart = carts.get(cartId);
 
   if (cart) {
-    cart.items = cart.items.filter(item => item.productId !== productId);
-    console.log(`[Action] Removed ${productId}, cart now has ${cart.items.length} items`);
+    cart.items = cart.items.filter((item) => item.productId !== productId);
+    console.log(
+      `[Action] Removed ${productId}, cart now has ${cart.items.length} items`
+    );
   }
 }
 
@@ -69,7 +76,7 @@ export async function removeFromCart(productId: string) {
 export async function clearCart() {
   console.log(`[Action] clearCart`);
 
-  const cartId = 'demo-cart';
+  const cartId = "demo-cart";
   const cart = carts.get(cartId);
 
   if (cart) {
@@ -85,7 +92,7 @@ export async function clearCart() {
  * @returns Total number of items in cart
  */
 export async function getCartCount(): Promise<number> {
-  const cart = carts.get('demo-cart');
+  const cart = carts.get("demo-cart");
   const count = cart?.items.reduce((sum, item) => sum + item.quantity, 0) || 0;
   console.log(`[Action] getCartCount: ${count}`);
   return count;
@@ -97,14 +104,16 @@ export async function getCartCount(): Promise<number> {
  *
  * @returns Array of cart items
  */
-export async function getCartItems(): Promise<Array<{ productId: string; quantity: number }>> {
-  const cart = carts.get('demo-cart');
+export async function getCartItems(): Promise<
+  Array<{ productId: string; quantity: number }>
+> {
+  const cart = carts.get("demo-cart");
   return cart?.items || [];
 }
 
 // Helper function for delay
 function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -115,27 +124,29 @@ function delay(ms: number): Promise<void> {
  * @param quantity - Number to add
  * @returns Success status and cart summary
  */
-export async function addToCartWithResult(productId: string, quantity: number = 1) {
+export async function addToCartWithResult(
+  productId: string,
+  quantity: number = 1
+) {
   console.log(`[Action] addToCartWithResult: ${productId} x${quantity}`);
 
   // Artificial 3 second delay to demonstrate streaming/loading states
   console.log(`[Action] Simulating 3 second delay...`);
-  await delay(3000);
   console.log(`[Action] Delay complete, processing...`);
 
   // Validate quantity
   if (quantity < 1) {
     console.log(`[Action] Validation failed: quantity must be positive`);
-    throw new Error('Quantity must be at least 1');
+    throw new Error("Quantity must be at least 1");
   }
 
   if (quantity > 10) {
     console.log(`[Action] Validation failed: quantity too large`);
-    throw new Error('Cannot add more than 10 items at once');
+    throw new Error("Cannot add more than 10 items at once");
   }
 
   // Get or create cart
-  const cartId = 'demo-cart';
+  const cartId = "demo-cart";
   let cart = carts.get(cartId);
 
   if (!cart) {
@@ -144,7 +155,7 @@ export async function addToCartWithResult(productId: string, quantity: number = 
   }
 
   // Add or update item
-  const existing = cart.items.find(item => item.productId === productId);
+  const existing = cart.items.find((item) => item.productId === productId);
   const previousQuantity = existing?.quantity || 0;
 
   if (existing) {
@@ -157,11 +168,12 @@ export async function addToCartWithResult(productId: string, quantity: number = 
   const totalItems = cart.items.reduce((sum, item) => sum + item.quantity, 0);
 
   console.log(`[Action] Cart updated. Total items: ${totalItems}`);
+  await delay(3000);
 
   // Return success with cart summary
   return {
     success: true,
-    message: `Added ${quantity} item(s) to cart`,
+    message: `Added[${productId}] ${quantity} item(s) to cart`,
     cart: {
       productId,
       previousQuantity,

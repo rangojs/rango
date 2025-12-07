@@ -170,7 +170,12 @@ function applyOptimisticUpdate(
 
       const newCards = cards.map((c) =>
         c.id === action.cardId
-          ? { ...c, columnId: action.columnId, order: action.order, pending: true }
+          ? {
+              ...c,
+              columnId: action.columnId,
+              order: action.order,
+              pending: true,
+            }
           : c
       );
 
@@ -359,7 +364,10 @@ function KanbanColumn({
     // Keep form open, focus for next card, and scroll to bottom to show new card
     setTimeout(() => {
       inputRef.current?.focus();
-      cardListRef.current?.scrollTo({ top: cardListRef.current.scrollHeight, behavior: "smooth" });
+      cardListRef.current?.scrollTo({
+        top: cardListRef.current.scrollHeight,
+        behavior: "smooth",
+      });
     }, 0);
   }
 
@@ -412,26 +420,28 @@ function KanbanColumn({
       >
         {cards.map((card, index) => (
           <div key={card.id}>
-            {dragOverIndex === index && isDragOver && draggedCardId !== card.id && (
-              <div
-                style={{
-                  height: "4px",
-                  background: "#3b82f6",
-                  borderRadius: "2px",
-                  marginBottom: "0.5rem",
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onDragOver(e, column.id, index);
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onDrop(column.id, index);
-                }}
-              />
-            )}
+            {dragOverIndex === index &&
+              isDragOver &&
+              draggedCardId !== card.id && (
+                <div
+                  style={{
+                    height: "4px",
+                    background: "#3b82f6",
+                    borderRadius: "2px",
+                    marginBottom: "0.5rem",
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onDragOver(e, column.id, index);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onDrop(column.id, index);
+                  }}
+                />
+              )}
             <KanbanCard
               card={card}
               onDragStart={onDragStart}
@@ -481,7 +491,11 @@ function KanbanColumn({
             <button type="submit" style={styles.submitButton}>
               Add Card
             </button>
-            <button type="button" onClick={handleCancel} style={styles.cancelButton}>
+            <button
+              type="button"
+              onClick={handleCancel}
+              style={styles.cancelButton}
+            >
               Cancel
             </button>
           </div>
@@ -553,7 +567,6 @@ function KanbanCard({
       <Link
         to={`/kanban/card/${card.id}`}
         style={{ textDecoration: "none", color: "inherit" }}
-        prefetch="hover"
       >
         <div style={styles.cardTitle}>{card.title}</div>
       </Link>

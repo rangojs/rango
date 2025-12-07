@@ -5,7 +5,9 @@ import { Outlet, useLoader } from "rsc-router/client";
 import { Link } from "rsc-router/browser";
 import { ProductLoader } from "../loaders/product.js";
 import { ModalRecommendationsLoader } from "../loaders/modal-recommendations.js";
+import { ProductCartLoader } from "../loaders/product-cart.js";
 import { addToCartWithResult } from "../actions/shop.actions.js";
+import { LoadingSpinner } from "./loading.js";
 
 const styles = {
   overlay: {
@@ -113,6 +115,9 @@ export function ModalWrapper({}: {}) {
 export function ProductModalContent() {
   const product = useLoader(ProductLoader);
   const recommendations = useLoader(ModalRecommendationsLoader);
+  const productCart = useLoader(ProductCartLoader);
+  console.log("ProductModalContent loader", { productCart });
+
   const [actionResult, setActionResult] = useState<{
     success: boolean;
     message: string;
@@ -143,9 +148,25 @@ export function ProductModalContent() {
         <h2 style={styles.title}>{product.name}</h2>
       </div>
       <div style={styles.body}>
-        <div style={styles.price}>${product.price}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+          <div style={styles.price}>${product.price}</div>
+          {productCart.quantity > 0 && (
+            <div
+              style={{
+                background: "#dbeafe",
+                color: "#1e40af",
+                padding: "0.25rem 0.75rem",
+                borderRadius: "9999px",
+                fontSize: "0.875rem",
+                fontWeight: 500,
+              }}
+            >
+              {productCart.quantity} in cart
+            </div>
+          )}
+        </div>
         <p style={styles.description}>{product.description}</p>
-
+        <LoadingSpinner />
         {actionResult && (
           <div
             style={{
@@ -190,7 +211,13 @@ export function ProductModalContent() {
             borderTop: "1px solid #e2e8f0",
           }}
         >
-          <h3 style={{ fontSize: "0.875rem", color: "#64748b", marginBottom: "0.75rem" }}>
+          <h3
+            style={{
+              fontSize: "0.875rem",
+              color: "#64748b",
+              marginBottom: "0.75rem",
+            }}
+          >
             You might also like (loaded at {recommendations.loadedAt})
           </h3>
           <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
@@ -280,4 +307,3 @@ export function ProductModalContentSkeleton() {
     </>
   );
 }
-

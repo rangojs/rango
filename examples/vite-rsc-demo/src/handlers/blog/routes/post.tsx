@@ -3,6 +3,7 @@ import type { blogRoutes } from "@/routes.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 import { CurrentURL } from "@/components/CurrentURL.js";
+import { Link } from "rsc-router/browser";
 
 export const PostRoute: RouteHandler<typeof blogRoutes, "post"> = (ctx) => {
   const renderTime = new Date().toISOString();
@@ -11,9 +12,7 @@ export const PostRoute: RouteHandler<typeof blogRoutes, "post"> = (ctx) => {
   );
 
   // Get previous URL from request header (sent by client during partial navigation)
-  const previousClientUrl = ctx.request.headers.get(
-    "X-RSC-Router-Client-Path"
-  );
+  const previousClientUrl = ctx.request.headers.get("X-RSC-Router-Client-Path");
 
   return (
     <DebugSegmentWrapper type="route" name="Blog Post">
@@ -106,11 +105,15 @@ export const PostRoute: RouteHandler<typeof blogRoutes, "post"> = (ctx) => {
               changes → timer resets)
             </li>
             <li>
-              <a href={`/blog/${ctx.params.slug}?tab=1`}>Add ?tab=1</a> (query
-              only → timer keeps running)
+              <Link scroll={false} to={`/blog/${ctx.params.slug}?tab=1`}>
+                Add ?tab=1 (no scroll)
+              </Link>{" "}
+              (query only → timer keeps running)
             </li>
             <li>
-              <a href={`/blog/${ctx.params.slug}?tab=2`}>Change to ?tab=2</a>{" "}
+              <Link scroll={false} to={`/blog/${ctx.params.slug}?tab=2`}>
+                Change to ?tab=2 (no scroll)
+              </Link>{" "}
               (query change → timer keeps running)
             </li>
           </ul>

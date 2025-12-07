@@ -62,14 +62,22 @@ export function createServerActionBridge(
    * Creates an async disposable scope for tracking stream state.
    * Releases the reader lock, resets streaming state, and signals completion when disposed.
    */
-  function createStreamScope(stream: ReadableStream, onComplete?: () => void) {
+  function createStreamScope(
+    stream: ReadableStream,
+    signal: AbortSignal,
+    onComplete?: () => void
+  ) {
     const reader = stream.getReader();
-    store.setState({ isStreaming: true });
+    if (!signal.aborted) {
+      store.setState({ isStreaming: true });
+    }
     return {
       reader,
       async [Symbol.asyncDispose]() {
         reader.releaseLock();
-        store.setState({ isStreaming: false });
+        if (!signal.aborted) {
+          store.setState({ isStreaming: false });
+        }
         onComplete?.();
       },
     };
@@ -83,7 +91,11 @@ export function createServerActionBridge(
    * For concurrent actions: tracks revalidated segments and triggers consolidation
    * fetch after all actions complete to ensure data consistency.
    */
-  function createActionTransaction(actionId: string, args: any[]) {
+  function createActionTransaction(
+    actionId: string,
+    args: any[],
+    signal: AbortSignal
+  ) {
     const id = `${actionId}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     let status: "pending" | "completed" | "error" = "pending";
 
@@ -104,6 +116,10 @@ export function createServerActionBridge(
 
     store.setActionInProgress(true);
     store.setState({ state: "loading" });
+
+    // Mark cache as stale immediately when action starts
+    // This ensures SWR pattern kicks in if user navigates away during action
+    store.markCacheAsStaleAndBroadcast();
 
     return {
       id,
@@ -153,10 +169,10 @@ export function createServerActionBridge(
         if (segmentIds) {
           store.setSegmentIds(segmentIds);
         }
-        // Clear old cache and store new segments for next navigation's merging
+        // Mark cache as stale (SWR pattern) - allows instant back/forward with background revalidation
         // Skip if consolidation fetch already handled the cache
         if (!skipCacheClear) {
-          store.clearHistoryCache();
+          store.markCacheAsStaleAndBroadcast();
         }
         if (segments) {
           const currentKey = store.getHistoryKey();
@@ -165,6 +181,9 @@ export function createServerActionBridge(
       },
       error() {
         status = "error";
+      },
+      get signal() {
+        return signal;
       },
       [Symbol.dispose]() {
         // Decrement pending count
@@ -204,7 +223,7 @@ export function createServerActionBridge(
     console.log(`[Browser] Args:`, args);
 
     // Transaction for action state and inflight tracking (cleanup on scope exit)
-    using tx = createActionTransaction(id, args);
+    using tx = createActionTransaction(id, args, abortController.signal);
 
     // Create temporary references for serialization
     const temporaryReferences = deps.createTemporaryReferenceSet();
@@ -268,10 +287,14 @@ export function createServerActionBridge(
 
       // Consume the tracking stream to detect when it closes
       (async () => {
-        await using streamScope = createStreamScope(trackingStream, () => {
-          console.log("[STREAMING] RSC stream complete");
-          resolveStreamComplete();
-        });
+        await using streamScope = createStreamScope(
+          trackingStream,
+          tx.signal,
+          () => {
+            console.log("[STREAMING] RSC stream complete");
+            resolveStreamComplete();
+          }
+        );
         const { reader } = streamScope;
 
         while (true) {
@@ -324,7 +347,8 @@ export function createServerActionBridge(
 
       // Get current page's cached segments
       const currentKey = store.getHistoryKey();
-      const cachedSegments = store.getCachedSegments(currentKey) || [];
+      const cached = store.getCachedSegments(currentKey);
+      const cachedSegments = cached?.segments || [];
 
       // Create lookup for error segment from server
       const errorSegmentMap = new Map<string, ResolvedSegment>();
@@ -402,7 +426,8 @@ export function createServerActionBridge(
 
       // Get current page's cached segments for merging
       const currentKey = store.getHistoryKey();
-      const cachedSegments = store.getCachedSegments(currentKey) || [];
+      const cached = store.getCachedSegments(currentKey);
+      const cachedSegments = cached?.segments || [];
       const currentSegmentMap = new Map<string, ResolvedSegment>();
       cachedSegments.forEach((s) => currentSegmentMap.set(s.id, s));
 
@@ -468,8 +493,9 @@ export function createServerActionBridge(
         // Refetch current route to show fresh data. This is correct for all cases:
         // - Intercepts: action on /kanban/card/1 may update data visible on /kanban
         // - Regular routes: action on /page-a may update shared data visible on /page-b
-        // Without refetch, user would see stale data until manual navigation
-        store.clearHistoryCache();
+        // Mark cache as stale (SWR pattern) - current page gets fresh data from refetch,
+        // other pages will revalidate on next access
+        store.markCacheAsStaleAndBroadcast();
         const navTx = createNavigationTransaction(
           store,
           abortController.signal

@@ -49,6 +49,7 @@ import {
   OrdersLoader,
   FeaturedProductsLoader,
   ModalRecommendationsLoader,
+  ProductCartLoader,
 } from "./shop/loaders/index.js";
 // Loading skeletons for instant feedback during navigation
 import {
@@ -162,9 +163,18 @@ export default map<typeof shopRoutes>(
                 layout(<ModalWrapper />),
                 loading(<ProductModalContentSkeleton />),
                 loader(ProductLoader),
+                // Cart quantity loader - revalidates on cart actions
+                loader(ProductCartLoader, () => [
+                  revalidate(
+                    ({ actionId, stale }) =>
+                      stale || actionId?.includes("addToCart") === true
+                  ),
+                ]),
                 // Recommendations loader - revalidates on cart actions to demonstrate streaming
                 loader(ModalRecommendationsLoader, () => [
-                  revalidate(({ actionId }) => actionId?.includes("addToCart") ?? false),
+                  revalidate(
+                    ({ actionId }) => actionId?.includes("addToCart") ?? false
+                  ),
                 ]),
               ]
             ),

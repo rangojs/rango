@@ -86,6 +86,7 @@ function KanbanLayout() {
 function CardModalWrapper() {
   return (
     <DebugSegmentWrapper type="parallel" name="CardModal (@modal)">
+      Intercepted
       <Outlet />
     </DebugSegmentWrapper>
   );
@@ -174,7 +175,8 @@ export default map<typeof kanbanRoutes>(
     // Action counter layout with loader - tests loader-only revalidation
     layout(<ActionCounterLayout />, () => [
       loader(ActionCounterLoader, () => [
-        revalidate(({ actionId, method }) => {
+        revalidate(({ actionId, method, stale }) => {
+          if (stale) return true;
           if (method === "POST" && actionId) {
             // Increment counter when revalidating
             incrementActionCount(actionId);
@@ -193,11 +195,12 @@ export default map<typeof kanbanRoutes>(
       // Board loader
       loader(KanbanLoader, () => [
         // Revalidate on any kanban action
-        revalidate(({ actionId, method, defaultShouldRevalidate }) => {
+        revalidate(({ actionId, method, defaultShouldRevalidate, stale }) => {
+          if (stale) return true;
           if (method === "POST" && actionId) {
             return actionId.toLowerCase().includes("kanban");
           }
-          return { defaultShouldRevalidate };
+          return true;
         }),
       ]),
 
@@ -222,7 +225,8 @@ export default map<typeof kanbanRoutes>(
       () => [
         loader(CardDetailLoader, () => [
           // Revalidate on any kanban action
-          revalidate(({ actionId, method, defaultShouldRevalidate }) => {
+          revalidate(({ actionId, method, defaultShouldRevalidate, stale }) => {
+            if (stale) return true;
             if (method === "POST" && actionId) {
               return actionId.toLowerCase().includes("kanban");
             }

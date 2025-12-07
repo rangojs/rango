@@ -75,4 +75,20 @@ export {
   Link,
   type LinkProps,
   type PrefetchStrategy,
+  ScrollRestoration,
+  useScrollRestoration,
+  type ScrollRestorationProps,
 } from "./react/index.js";
+
+// Scroll restoration utilities (for advanced usage)
+export {
+  initScrollRestoration,
+  handleNavigationStart,
+  handleNavigationEnd,
+  saveCurrentScrollPosition,
+  restoreScrollPosition,
+  cancelScrollRestorationPolling,
+  scrollToHash,
+  scrollToTop,
+  getHistoryStateKey,
+} from "./scroll-restoration.js";
