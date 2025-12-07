@@ -3,7 +3,7 @@
 import { useContext, useState, useEffect, useRef, useEffectEvent } from "react";
 import { flushSync } from "react-dom";
 import { NavigationStoreContext } from "./context.js";
-import type { NavigationState, NavigateOptions } from "../types.js";
+import type { NavigationState, PublicNavigationState, NavigateOptions } from "../types.js";
 
 /**
  * Shallow equality check for selector results
@@ -32,15 +32,22 @@ function shallowEqual<T>(a: T, b: T): boolean {
   return true;
 }
 
-// SSR-safe default state
-const SSR_DEFAULT_STATE: NavigationState = {
+// SSR-safe default state (public version without inflightActions)
+const SSR_DEFAULT_STATE: PublicNavigationState = {
   state: "idle",
   isStreaming: false,
   location: new URL("/", "http://localhost"),
   formData: null,
   formAction: null,
-  inflightActions: [],
 };
+
+/**
+ * Convert internal NavigationState to public version (strips inflightActions)
+ */
+function toPublicState(state: NavigationState): PublicNavigationState {
+  const { inflightActions: _, ...publicState } = state;
+  return publicState;
+}
 
 // No-op functions for SSR
 const noopNavigate = async () => {};
@@ -57,7 +64,7 @@ export interface NavigationMethods {
 /**
  * Full value returned when no selector is provided
  */
-export type NavigationValue = NavigationState & NavigationMethods;
+export type NavigationValue = PublicNavigationState & NavigationMethods;
 
 /**
  * Hook to access navigation state with optional selector for performance
@@ -65,23 +72,23 @@ export type NavigationValue = NavigationState & NavigationMethods;
  * @example
  * ```tsx
  * const state = useNavigation(nav => nav.state);
- * const hasInflightActions = useNavigation(nav => nav.inflightActions.length > 0);
+ * const isLoading = useNavigation(nav => nav.state === 'loading');
  * ```
  */
 export function useNavigation(): NavigationValue;
-export function useNavigation<T>(selector: (state: NavigationState) => T): T;
+export function useNavigation<T>(selector: (state: PublicNavigationState) => T): T;
 export function useNavigation<T>(
-  selector?: (state: NavigationState) => T
+  selector?: (state: PublicNavigationState) => T
 ): T | NavigationValue {
   const ctx = useContext(NavigationStoreContext);
 
   // Initialize with SSR-safe default (useState initializer runs on server too)
-  const [value, setValue] = useState<T | NavigationState>(() => {
+  const [value, setValue] = useState<T | PublicNavigationState>(() => {
     if (typeof document === "undefined" || !ctx) {
       return selector ? selector(SSR_DEFAULT_STATE) : SSR_DEFAULT_STATE;
     }
-    const state = ctx.store.getState();
-    return selector ? selector(state) : state;
+    const publicState = toPublicState(ctx.store.getState());
+    return selector ? selector(publicState) : publicState;
   });
   const isSameValue = useEffectEvent((newValue: unknown) => {
     return shallowEqual(value, newValue);
@@ -92,16 +99,16 @@ export function useNavigation<T>(
     if (!ctx) return;
 
     // Sync immediately in case state changed between render and effect
-    const current = ctx.store.getState();
-    const selected = selector ? selector(current) : current;
+    const publicState = toPublicState(ctx.store.getState());
+    const selected = selector ? selector(publicState) : publicState;
     if (!isSameValue(selected)) {
       setValue(selected);
     }
 
     // Subscribe to updates
     return ctx.store.subscribe(() => {
-      const next = ctx.store.getState();
-      const nextSelected = selector ? selector(next) : next;
+      const publicState = toPublicState(ctx.store.getState());
+      const nextSelected = selector ? selector(publicState) : publicState;
 
       // Skip update if value hasn't changed
       if (isSameValue(nextSelected)) {
@@ -121,7 +128,7 @@ export function useNavigation<T>(
   // If no selector, include navigation methods
   if (!selector) {
     return {
-      ...(value as NavigationState),
+      ...(value as PublicNavigationState),
       navigate: ctx?.navigate ?? noopNavigate,
       refresh: ctx?.refresh ?? noopRefresh,
     };

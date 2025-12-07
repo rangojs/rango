@@ -22,6 +22,7 @@ export type {
   ActionResult,
   NavigationLocation,
   NavigationState,
+  PublicNavigationState,
   SegmentState,
   NavigationUpdate,
   NavigateOptions,

@@ -67,7 +67,7 @@ export interface InflightAction {
 }
 
 /**
- * Navigation state exposed via useNavigation hook
+ * Internal navigation state (includes inflight actions for store use)
  */
 export interface NavigationState {
   /** Navigation lifecycle state (idle or loading during navigation) */
@@ -83,9 +83,15 @@ export interface NavigationState {
   formData: FormData | null;
   formAction: string | null;
 
-  /** List of inflight server actions */
+  /** List of inflight server actions (internal use only) */
   inflightActions: InflightAction[];
 }
+
+/**
+ * Public navigation state exposed via useNavigation hook
+ * Excludes internal properties like inflightActions
+ */
+export type PublicNavigationState = Omit<NavigationState, "inflightActions">;
 
 /**
  * Cache interface for storing segments
