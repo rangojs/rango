@@ -130,9 +130,13 @@ function createNavigationTransaction(
   }
   // handle abort
   // we need to cleanup just before new navigation starts
-  signal.onabort = () => {
-    store.setState({ state: "idle", isStreaming: false });
-  };
+  signal.addEventListener(
+    "abort",
+    () => {
+      store.setState({ state: "idle", isStreaming: false });
+    },
+    { once: true }
+  );
 
   /**
    * Optimistically commit from cache - renders immediately before revalidation
