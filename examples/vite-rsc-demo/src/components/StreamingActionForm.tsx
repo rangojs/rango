@@ -2,7 +2,26 @@
 
 import { use, useActionState, Suspense, startTransition } from "react";
 import { StreamingAction } from "../actions/test.actions";
-
+import { useAction } from "rsc-router/browser";
+export const StreamingActionStatus = () => {
+  const status = useAction(StreamingAction);
+  console.log("StreamingActionStatus", status.state);
+  return <div>StreamingAction status: {status.state}</div>;
+};
+export const ActionStatus = ({
+  fn,
+}: {
+  fn: ((...args: any[]) => any) | string;
+}) => {
+  const status = useAction(fn);
+  const name = typeof fn === "string" ? fn : fn.name;
+  console.log(`${name} Status`, status.state);
+  return (
+    <div>
+      {name} status: {status.state}
+    </div>
+  );
+};
 /**
  * Streaming Action Form - demonstrates Promise streaming with Suspense
  *
@@ -34,7 +53,6 @@ export function StreamingActionForm({
       promise: null,
     }
   );
-  console.log("StreamingActionForm isPending", { isPending, state });
 
   return (
     <div>
@@ -56,7 +74,6 @@ export function StreamingActionForm({
           {isPending ? "Processing..." : <>{children}</>}
         </button>
       </form>
-
       {state.promise && (
         <div
           style={{

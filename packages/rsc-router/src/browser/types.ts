@@ -89,6 +89,41 @@ export interface NavigationState {
  */
 export type PublicNavigationState = Omit<NavigationState, "inflightActions">;
 
+// ============================================================================
+// Action State Types (for useAction hook)
+// ============================================================================
+
+/**
+ * Action lifecycle state
+ */
+export type ActionLifecycleState = "idle" | "loading" | "streaming";
+
+/**
+ * State for a tracked server action
+ * Used by useAction hook to observe action lifecycle
+ */
+export interface TrackedActionState {
+  /** Current lifecycle state of the action */
+  state: ActionLifecycleState;
+
+  /** Server action function ID (e.g., "addToCart") */
+  actionId: string | null;
+
+  /** Action arguments (array for JSON, FormData for form submissions) */
+  payload: unknown[] | FormData | null;
+
+  /** Error if action failed */
+  error: unknown | null;
+
+  /** Result data from the action (preserved after completion) */
+  result: unknown | null;
+}
+
+/**
+ * Listener for action state changes
+ */
+export type ActionStateListener = (state: TrackedActionState) => void;
+
 /**
  * Cache interface for storing segments
  * Compatible with both Map and LRUCache
@@ -201,7 +236,9 @@ export interface NavigationStore {
     historyKey: string,
     segments: ResolvedSegment[]
   ): void;
-  getCachedSegments(historyKey: string): { segments: ResolvedSegment[]; stale: boolean } | undefined;
+  getCachedSegments(
+    historyKey: string
+  ): { segments: ResolvedSegment[]; stale: boolean } | undefined;
   hasHistoryCache(historyKey: string): boolean;
   markCacheAsStale(): void;
   markCacheAsStaleAndBroadcast(): void;
@@ -218,6 +255,14 @@ export interface NavigationStore {
   // UI update notifications
   onUpdate(callback: UpdateSubscriber): () => void;
   emitUpdate(update: NavigationUpdate): void;
+
+  // Action state tracking (for useAction hook)
+  getActionState(actionId: string): TrackedActionState;
+  setActionState(actionId: string, state: Partial<TrackedActionState>): void;
+  subscribeToAction(
+    actionId: string,
+    listener: ActionStateListener
+  ): () => void;
 }
 
 // ============================================================================
@@ -263,6 +308,7 @@ export interface FetchPartialOptions {
   signal?: AbortSignal;
   /** If true, this is a stale cache revalidation request - server should force revalidators */
   staleRevalidation?: boolean;
+  interceptSourceUrl?: string;
 }
 
 /**

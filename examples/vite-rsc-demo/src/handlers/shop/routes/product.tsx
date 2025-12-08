@@ -4,7 +4,11 @@ import { products } from "@/handlers/shop/data.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 import { CurrentURL } from "@/components/CurrentURL.js";
 import { AddToCartForm } from "@/components/AddToCartForm.js";
-import { StreamingActionForm } from "@/components/StreamingActionForm.js";
+import {
+  ActionStatus,
+  StreamingActionForm,
+  StreamingActionStatus,
+} from "@/components/StreamingActionForm.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 import { OutletProvider, ParallelOutlet } from "rsc-router/client";
 import {
@@ -152,6 +156,7 @@ export const ProductsDetailRoute: RouteHandler<
                     Shows action result
                   </p>
                   <p>Id: {product.slug}</p>
+                  <ActionStatus fn={addToCartWithResult} />
                   <AddToCartForm
                     productId={product.slug}
                     action={addToCartWithResult}
@@ -177,6 +182,7 @@ export const ProductsDetailRoute: RouteHandler<
                 {/* Streaming Action */}
                 <div style={{ padding: "1rem", border: "1px solid #ddd" }}>
                   <h4>4. Streaming Updates</h4>
+                  <StreamingActionStatus />
                   <p style={{ fontSize: "0.9rem", color: "#666" }}>
                     Real-time progress (3s delay)
                   </p>

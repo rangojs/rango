@@ -7,6 +7,9 @@ export {
   type NavigationValue,
 } from "./use-navigation.js";
 
+// Action state tracking hook
+export { useAction, type TrackedActionState } from "./use-action.js";
+
 // Client cache controls hook
 export {
   useClientCache,

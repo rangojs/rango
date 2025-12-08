@@ -44,7 +44,14 @@ export function createNavigationClient(
     async fetchPartial(
       options: FetchPartialOptions
     ): Promise<FetchPartialResult> {
-      const { targetUrl, segmentIds, previousUrl, signal, staleRevalidation } = options;
+      const {
+        targetUrl,
+        segmentIds,
+        previousUrl,
+        signal,
+        staleRevalidation,
+        interceptSourceUrl,
+      } = options;
 
       console.log(`\n[Browser] >>> NAVIGATION`);
       console.log(`[Browser] From: ${previousUrl}`);
@@ -75,6 +82,9 @@ export function createNavigationClient(
       const responsePromise = fetch(fetchUrl, {
         headers: {
           "X-RSC-Router-Client-Path": previousUrl,
+          ...(interceptSourceUrl && {
+            "X-RSC-Router-Intercept-Source": interceptSourceUrl,
+          }),
         },
         signal,
       }).then((response) => {

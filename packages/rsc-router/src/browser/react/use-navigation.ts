@@ -1,9 +1,18 @@
 "use client";
 
-import { useContext, useState, useEffect, useRef, useEffectEvent } from "react";
-import { flushSync } from "react-dom";
+import {
+  useContext,
+  useState,
+  useEffect,
+  useOptimistic,
+  startTransition,
+} from "react";
 import { NavigationStoreContext } from "./context.js";
-import type { NavigationState, PublicNavigationState, NavigateOptions } from "../types.js";
+import type {
+  NavigationState,
+  PublicNavigationState,
+  NavigateOptions,
+} from "../types.js";
 
 /**
  * Shallow equality check for selector results
@@ -74,51 +83,43 @@ export type NavigationValue = PublicNavigationState & NavigationMethods;
  * ```
  */
 export function useNavigation(): NavigationValue;
-export function useNavigation<T>(selector: (state: PublicNavigationState) => T): T;
+export function useNavigation<T>(
+  selector: (state: PublicNavigationState) => T
+): T;
 export function useNavigation<T>(
   selector?: (state: PublicNavigationState) => T
 ): T | NavigationValue {
   const ctx = useContext(NavigationStoreContext);
 
-  // Initialize with SSR-safe default (useState initializer runs on server too)
-  const [value, setValue] = useState<T | PublicNavigationState>(() => {
+  // Base state for useOptimistic
+  const [baseValue, setBaseValue] = useState<T | PublicNavigationState>(() => {
     if (typeof document === "undefined" || !ctx) {
       return selector ? selector(SSR_DEFAULT_STATE) : SSR_DEFAULT_STATE;
     }
     const publicState = toPublicState(ctx.store.getState());
     return selector ? selector(publicState) : publicState;
   });
-  const isSameValue = useEffectEvent((newValue: unknown) => {
-    return shallowEqual(value, newValue);
-  });
+
+  // useOptimistic allows immediate updates during transitions/actions
+  const [value, setOptimisticValue] = useOptimistic(baseValue);
 
   // Subscribe to store changes (only runs on client)
   useEffect(() => {
     if (!ctx) return;
 
-    // Sync immediately in case state changed between render and effect
-    const publicState = toPublicState(ctx.store.getState());
-    const selected = selector ? selector(publicState) : publicState;
-    if (!isSameValue(selected)) {
-      setValue(selected);
-    }
-
     // Subscribe to updates
     return ctx.store.subscribe(() => {
       const publicState = toPublicState(ctx.store.getState());
       const nextSelected = selector ? selector(publicState) : publicState;
-
-      // Skip update if value hasn't changed
-      if (isSameValue(nextSelected)) {
-        return;
-      }
-
       if (ctx.store.isActionInProgress()) {
-        flushSync(() => {
-          setValue(nextSelected);
+        // Use optimistic update for immediate feedback during transitions
+        startTransition(() => {
+          setOptimisticValue(nextSelected);
         });
-      } else {
-        setValue(nextSelected);
+      }
+      // Update base state when idle
+      if (publicState.state === "idle") {
+        setBaseValue(nextSelected);
       }
     });
   }, [selector]);

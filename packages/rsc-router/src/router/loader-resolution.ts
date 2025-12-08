@@ -38,7 +38,7 @@ export function wrapLoaderWithErrorHandling<T>(
     segmentType: ErrorInfo["segmentType"]
   ) => ErrorInfo
 ): Promise<LoaderDataResult<T>> {
-  return promise
+  return Promise.resolve(promise)
     .then(
       (data): LoaderDataResult<T> => ({
         __loaderResult: true,
@@ -114,10 +114,7 @@ export function setupLoaderAccess<TEnv>(
     }
 
     // Create loader context with recursive use() support
-    const loaderCtx: LoaderContext<
-      Record<string, string | undefined>,
-      TEnv
-    > = {
+    const loaderCtx: LoaderContext<Record<string, string | undefined>, TEnv> = {
       params: ctx.params,
       request: ctx.request,
       searchParams: ctx.searchParams,

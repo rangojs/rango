@@ -8,7 +8,20 @@ import type {
   StateListener,
   ResolvedSegment,
   InflightAction,
+  TrackedActionState,
+  ActionStateListener,
 } from "./types.js";
+
+/**
+ * Default action state (idle with no payload)
+ */
+const DEFAULT_ACTION_STATE: TrackedActionState = {
+  state: "idle",
+  actionId: null,
+  payload: null,
+  error: null,
+  result: null,
+};
 
 // Maximum number of history entries to cache (URLs visited)
 const HISTORY_CACHE_SIZE = 20;
@@ -27,7 +40,10 @@ let cacheInvalidationChannel: BroadcastChannel | null = null;
  * Get or create the BroadcastChannel for cache invalidation
  */
 function getCacheInvalidationChannel(): BroadcastChannel | null {
-  if (typeof window === "undefined" || typeof BroadcastChannel === "undefined") {
+  if (
+    typeof window === "undefined" ||
+    typeof BroadcastChannel === "undefined"
+  ) {
     return null;
   }
   if (!cacheInvalidationChannel) {
@@ -52,7 +68,10 @@ export interface HistoryKeyOptions {
  * For intercept routes, append `:intercept` suffix to cache them separately
  * from non-intercept versions of the same URL.
  */
-export function generateHistoryKey(url?: string, options?: HistoryKeyOptions): string {
+export function generateHistoryKey(
+  url?: string,
+  options?: HistoryKeyOptions
+): string {
   if (!url) {
     url = typeof window !== "undefined" ? window.location.href : "/";
   }
@@ -199,7 +218,11 @@ export function createNavigationStore(
 
   // Store initial segments if provided (not stale)
   if (config?.initialHistoryKey && config?.initialSegments) {
-    historyCache.push([config.initialHistoryKey, config.initialSegments, false]);
+    historyCache.push([
+      config.initialHistoryKey,
+      config.initialSegments,
+      false,
+    ]);
   }
 
   // State change listeners (for useNavigation subscriptions)
@@ -215,12 +238,63 @@ export function createNavigationStore(
   // Used to maintain intercept context during action revalidation
   let interceptSourceUrl: string | null = null;
 
+  // Action state tracking (for useAction hook)
+  // Maps action function ID to its tracked state
+  const actionStates = new Map<string, TrackedActionState>();
+
+  // Action state listeners (per action ID)
+  // Maps action function ID to set of listeners
+  const actionListeners = new Map<string, Set<ActionStateListener>>();
+
   /**
-   * Notify all state listeners of a change
+   * Create a debounced function that batches rapid calls
    */
-  function notifyStateListeners(): void {
-    stateListeners.forEach((listener) => listener());
+  function createDebouncedNotifier<T extends (...args: any[]) => void>(
+    fn: T,
+    ms: number = 20
+  ): T {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    return ((...args: Parameters<T>) => {
+      if (timeout !== null) clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        timeout = null;
+        fn(...args);
+      }, ms);
+    }) as T;
   }
+
+  /**
+   * Create a keyed debounced function (separate timers per key)
+   */
+  function createKeyedDebouncedNotifier<
+    T extends (key: string, ...args: any[]) => void,
+  >(fn: T, ms: number = 20): T {
+    const timeouts = new Map<string, ReturnType<typeof setTimeout>>();
+    return ((key: string, ...args: any[]) => {
+      const existing = timeouts.get(key);
+      if (existing !== undefined) clearTimeout(existing);
+      timeouts.set(
+        key,
+        setTimeout(() => {
+          timeouts.delete(key);
+          fn(key, ...args);
+        }, ms)
+      );
+    }) as T;
+  }
+
+  const notifyStateListeners = createDebouncedNotifier(() => {
+    stateListeners.forEach((listener) => listener());
+  });
+
+  const notifyActionListeners = createKeyedDebouncedNotifier(
+    (actionId: string, state: TrackedActionState) => {
+      const listeners = actionListeners.get(actionId);
+      if (listeners) {
+        listeners.forEach((listener) => listener(state));
+      }
+    }
+  );
 
   /**
    * Clear the history cache (internal - does not broadcast)
@@ -251,7 +325,9 @@ export function createNavigationStore(
    * Mark cache as stale and broadcast to other tabs
    */
   function markStaleAndBroadcast(): void {
-    console.log("[Browser] Marking cache as stale and broadcasting to other tabs");
+    console.log(
+      "[Browser] Marking cache as stale and broadcasting to other tabs"
+    );
     markCacheAsStaleInternal();
     broadcastInvalidation();
   }
@@ -308,7 +384,9 @@ export function createNavigationStore(
 
           console.log(
             "[Browser] Cache marked stale by another tab, shared segments:",
-            mutatedSegmentIds.filter((id) => currentSegmentIds.includes(id)).join(", ")
+            mutatedSegmentIds
+              .filter((id) => currentSegmentIds.includes(id))
+              .join(", ")
           );
           markCacheAsStaleInternal();
 
@@ -329,7 +407,9 @@ export function createNavigationStore(
                 if (navState.state === "idle") {
                   stateListeners.delete(listener);
                   pendingCrossTabRefresh = false;
-                  console.log("[Browser] Cross-tab refresh triggered (deferred)");
+                  console.log(
+                    "[Browser] Cross-tab refresh triggered (deferred)"
+                  );
                   crossTabRefreshCallback?.();
                 }
               };
@@ -472,9 +552,14 @@ export function createNavigationStore(
      * Removes oldest entries (from front) when over configured cacheSize
      * Fresh data is always stored as not stale (stale=false)
      */
-    cacheSegmentsForHistory(historyKey: string, segments: ResolvedSegment[]): void {
+    cacheSegmentsForHistory(
+      historyKey: string,
+      segments: ResolvedSegment[]
+    ): void {
       // Check if entry already exists and update it
-      const existingIndex = historyCache.findIndex(([key]) => key === historyKey);
+      const existingIndex = historyCache.findIndex(
+        ([key]) => key === historyKey
+      );
       if (existingIndex !== -1) {
         historyCache[existingIndex] = [historyKey, segments, false];
       } else {
@@ -491,7 +576,9 @@ export function createNavigationStore(
      * Get cached segments for a history entry
      * Returns { segments, stale } or undefined if not cached
      */
-    getCachedSegments(historyKey: string): { segments: ResolvedSegment[]; stale: boolean } | undefined {
+    getCachedSegments(
+      historyKey: string
+    ): { segments: ResolvedSegment[]; stale: boolean } | undefined {
       const entry = historyCache.find(([key]) => key === historyKey);
       if (!entry) return undefined;
       return { segments: entry[1], stale: entry[2] };
@@ -512,7 +599,11 @@ export function createNavigationStore(
       for (let i = 0; i < historyCache.length; i++) {
         historyCache[i][2] = true;
       }
-      console.log("[Browser] Marked", historyCache.length, "cache entries as stale");
+      console.log(
+        "[Browser] Marked",
+        historyCache.length,
+        "cache entries as stale"
+      );
     },
 
     /**
@@ -590,6 +681,60 @@ export function createNavigationStore(
       updateSubscribers.forEach((callback) => {
         callback(update);
       });
+    },
+
+    // ========================================================================
+    // Action State Tracking (for useAction hook)
+    // ========================================================================
+
+    /**
+     * Get the current state for a tracked action
+     * Returns default idle state if action hasn't been tracked
+     */
+    getActionState(actionId: string): TrackedActionState {
+      return actionStates.get(actionId) ?? { ...DEFAULT_ACTION_STATE };
+    },
+
+    /**
+     * Update the state for a tracked action
+     * Merges partial state with existing state and notifies listeners
+     */
+    setActionState(
+      actionId: string,
+      partial: Partial<TrackedActionState>
+    ): void {
+      const current = actionStates.get(actionId) ?? { ...DEFAULT_ACTION_STATE };
+      const updated: TrackedActionState = {
+        ...current,
+        ...partial,
+        actionId, // Always set the actionId
+      };
+      actionStates.set(actionId, updated);
+      notifyActionListeners(actionId, updated);
+    },
+
+    /**
+     * Subscribe to state changes for a specific action
+     * Returns unsubscribe function
+     */
+    subscribeToAction(
+      actionId: string,
+      listener: ActionStateListener
+    ): () => void {
+      let listeners = actionListeners.get(actionId);
+      if (!listeners) {
+        listeners = new Set();
+        actionListeners.set(actionId, listeners);
+      }
+      listeners.add(listener);
+
+      return () => {
+        listeners!.delete(listener);
+        // Clean up empty listener sets
+        if (listeners!.size === 0) {
+          actionListeners.delete(actionId);
+        }
+      };
     },
   };
 }

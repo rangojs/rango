@@ -9,7 +9,6 @@ import {
   updateTodo,
   clearCompletedTodos,
 } from "./actions.js";
-import { flushSync } from "react-dom";
 const actionAddTodo = addTodo;
 const styles = {
   form: {

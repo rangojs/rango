@@ -82,6 +82,7 @@ export async function updateCartQuantity(
   productId: string,
   delta: number
 ): Promise<number> {
+  await delay(1000); // Simulate network delay
   console.log(`[Action] updateCartQuantity: ${productId} delta=${delta}`);
 
   const cartId = "demo-cart";
@@ -104,7 +105,9 @@ export async function updateCartQuantity(
       return 0;
     }
 
-    console.log(`[Action] Updated ${productId} quantity to ${existing.quantity}`);
+    console.log(
+      `[Action] Updated ${productId} quantity to ${existing.quantity}`
+    );
     return existing.quantity;
   } else if (delta > 0) {
     // Item not in cart, add it

@@ -2,12 +2,21 @@
 import { useNavigation } from "rsc-router/browser";
 
 export const LoadingSpinner = () => {
-  const state = useNavigation((nav) => nav.state);
-  const isStreaming = useNavigation((nav) => nav.isStreaming);
-  const isLoading = state === "loading";
-  const isLoadingOrStreaming = useNavigation(
-    (nav) => nav.state === "loading" || nav.isStreaming
+  const { isStreaming, state, isLoading, isLoadingOrStreaming } = useNavigation(
+    (nav) => ({
+      isStreaming: nav.isStreaming,
+      state: nav.state,
+      isLoading: nav.state === "loading",
+      isLoadingOrStreaming: nav.state === "loading" || nav.isStreaming,
+    })
   );
+
+  console.log("LoadingSpinner", {
+    state,
+    isStreaming,
+    isLoading,
+    isLoadingOrStreaming,
+  });
 
   return (
     <div
