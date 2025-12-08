@@ -1,6 +1,12 @@
 "use client";
 
-import { useContext, useState, useEffect, useOptimistic } from "react";
+import {
+  useContext,
+  useState,
+  useEffect,
+  useOptimistic,
+  startTransition,
+} from "react";
 import { NavigationStoreContext } from "./context.js";
 import type {
   NavigationState,
@@ -101,20 +107,15 @@ export function useNavigation<T>(
   useEffect(() => {
     if (!ctx) return;
 
-    // Sync immediately in case state changed between render and effect
-    const publicState = toPublicState(ctx.store.getState());
-    const selected = selector ? selector(publicState) : publicState;
-    if (!shallowEqual(baseValue, selected)) {
-      setBaseValue(selected);
-    }
-
     // Subscribe to updates
     return ctx.store.subscribe(() => {
       const publicState = toPublicState(ctx.store.getState());
       const nextSelected = selector ? selector(publicState) : publicState;
       if (ctx.store.isActionInProgress()) {
         // Use optimistic update for immediate feedback during transitions
-        setOptimisticValue(nextSelected);
+        startTransition(() => {
+          setOptimisticValue(nextSelected);
+        });
       }
       // Update base state when idle
       if (publicState.state === "idle") {

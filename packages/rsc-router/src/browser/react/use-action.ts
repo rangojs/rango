@@ -1,6 +1,13 @@
 "use client";
 
-import { useContext, useState, useEffect, useRef, useOptimistic } from "react";
+import {
+  useContext,
+  useState,
+  useEffect,
+  useRef,
+  useOptimistic,
+  startTransition,
+} from "react";
 import { NavigationStoreContext } from "./context.js";
 import type { TrackedActionState, ActionLifecycleState } from "../types.js";
 
@@ -115,17 +122,23 @@ export function useAction<T>(
       ? getActionId(action)
       : "";
 
-  // Track the action ID in a ref to detect changes
-  const actionIdRef = useRef(actionId);
-
   // Base state for useOptimistic
-  const [baseState, setBaseState] =
-    useState<LocalActionState>(DEFAULT_ACTION_STATE);
+  const [baseState, setBaseState] = useState<T | TrackedActionState>(() =>
+    selector
+      ? selector?.(ctx?.store.getActionState(actionId) ?? DEFAULT_ACTION_STATE)
+      : (ctx?.store.getActionState(actionId) ?? DEFAULT_ACTION_STATE)
+  );
 
   // useOptimistic allows immediate updates during transitions/actions
-  const [optimisticState, setOptimisticState] = useOptimistic(baseState);
+  const [optimisticState, setOptimisticState] = useOptimistic<
+    T | TrackedActionState
+  >(null!);
 
   // Memoize the selector to avoid unnecessary re-subscriptions
+  const dataRef = useRef<{
+    result: TrackedActionState["result"];
+    error: TrackedActionState["error"];
+  }>(null);
   const selectorRef = useRef(selector);
   selectorRef.current = selector;
 
@@ -133,29 +146,45 @@ export function useAction<T>(
   useEffect(() => {
     if (!ctx) return;
 
-    // If action ID changed, reset local state
-    if (actionIdRef.current !== actionId) {
-      actionIdRef.current = actionId;
-      setBaseState(DEFAULT_ACTION_STATE);
-    }
-
     // Subscribe to action-specific updates
     const unsubscribe = ctx.store.subscribeToAction(actionId, (storeState) => {
+      if (
+        storeState.result !== null &&
+        storeState.result !== dataRef.current?.result
+      ) {
+        dataRef.current = {
+          result: storeState.result,
+          error: storeState.error,
+        };
+      }
+      if (
+        storeState.error !== null &&
+        storeState.error !== dataRef.current?.error
+      ) {
+        dataRef.current = {
+          result: storeState.result,
+          error: storeState.error,
+        };
+      }
       const newState: LocalActionState = {
         state: storeState.state,
         actionId: storeState.actionId,
         payload: storeState.payload,
         // Capture result/error when idle, clear when loading
-        error: storeState.state === "idle" ? storeState.error : null,
-        result: storeState.state === "idle" ? storeState.result : null,
+        error: dataRef.current?.error,
+        result: dataRef.current?.result,
       };
+
       // Use optimistic update for immediate feedback during transitions
       // assumes transition is in progress
-      setOptimisticState(newState);
-
-      // Also update base state for when transition completes
-      if (storeState.state === "idle") {
-        setBaseState(newState);
+      const selectedState = selectorRef.current
+        ? selectorRef.current(newState)
+        : newState;
+      if (!isShallowEqual(selectedState, baseState)) {
+        setBaseState(selectedState);
+        startTransition(() => {
+          setOptimisticState(selectedState);
+        });
       }
     });
 
@@ -164,12 +193,49 @@ export function useAction<T>(
     };
   }, [actionId, ctx]);
 
-  // Apply selector if provided
-  const value = selectorRef.current
-    ? selectorRef.current(optimisticState as TrackedActionState)
-    : optimisticState;
+  return (optimisticState ?? baseState) as T | TrackedActionState;
+}
 
-  return value as T | TrackedActionState;
+function isShallowEqual<T, U>(selectedState: T, baseState: U): boolean {
+  // If references are equal, they're shallow equal
+  //@ts-expect-error -- TS doesn't like comparing generics
+  if (selectedState === baseState) {
+    return true;
+  }
+
+  // If either is null/undefined and they're not equal, they're not shallow equal
+  if (selectedState == null || baseState == null) {
+    return false;
+  }
+
+  // If types are different, they're not shallow equal
+  if (typeof selectedState !== typeof baseState) {
+    return false;
+  }
+
+  // For primitives, === comparison is sufficient (already checked above)
+  if (typeof selectedState !== "object") {
+    return false;
+  }
+
+  // For objects, compare keys and values shallowly
+  const keysA = Object.keys(selectedState as object);
+  const keysB = Object.keys(baseState as object);
+
+  if (keysA.length !== keysB.length) {
+    return false;
+  }
+
+  for (const key of keysA) {
+    if (
+      !Object.prototype.hasOwnProperty.call(baseState, key) ||
+      (selectedState as any)[key] !== (baseState as any)[key]
+    ) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 export type { TrackedActionState };

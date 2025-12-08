@@ -10,6 +10,7 @@ import type { RenderSegmentsOptions } from "../segment-system.js";
 import {
   mergeSegmentLoaders,
   needsLoaderMerge,
+  insertMissingDiffSegments,
 } from "./merge-segment-loaders.js";
 import type { BoundTransaction } from "./navigation-bridge.js";
 
@@ -215,6 +216,9 @@ export function createPartialUpdater(
         `[Browser] newSegmentMap keys: ${[...newSegmentMap.keys()].join(", ")}`,
         newSegmentMap
       );
+
+      // First pass: build segments from matched IDs
+      const matchedIdSet = new Set(matchedIds);
       const allSegments = matchedIds
         .map((id: string) => {
           // First check server response (new/updated segments)
@@ -240,14 +244,18 @@ export function createPartialUpdater(
         })
         .filter(Boolean) as ResolvedSegment[];
 
-      // HMR RESILIENCE: Check if we're missing segments
-      if (allSegments.length < matchedIds.length) {
-        const missingCount = matchedIds.length - allSegments.length;
-        const missingIds = matchedIds
-          .filter(
-            (id: string) => !newSegmentMap.has(id) && !currentSegmentMap.has(id)
-          )
-          .filter((s) => !!s);
+      // Insert diff segments not in matchedIds (e.g., loader segments from consolidation fetch)
+      insertMissingDiffSegments(allSegments, diff, matchedIdSet, newSegmentMap);
+
+      // HMR RESILIENCE: Check if we're missing any matched segments
+      // Note: allSegments may include additional diff segments, so we check matchedIds specifically
+      const allSegmentIdSet = new Set(allSegments.map((s) => s.id));
+      const missingIds = matchedIds.filter(
+        (id: string) => !allSegmentIdSet.has(id)
+      );
+
+      if (missingIds.length > 0) {
+        const missingCount = missingIds.length;
 
         if (isRetry) {
           console.warn("Missing ids", { missingIds });
@@ -340,8 +348,11 @@ export function createPartialUpdater(
 
       // Commit navigation - transaction handles all store mutations atomically
       // For intercept responses: disable scroll, mark as intercept, include source URL
+      // Use allSegmentIds (derived from allSegments) instead of matchedIds because
+      // we may have added diff segments (like loader segments) not in the matched array
+      const allSegmentIds = allSegments.map((s) => s.id);
       tx.commit(
-        matchedIds,
+        allSegmentIds,
         allSegments,
         hasActiveIntercept
           ? {

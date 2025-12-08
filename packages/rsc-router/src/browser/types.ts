@@ -236,7 +236,9 @@ export interface NavigationStore {
     historyKey: string,
     segments: ResolvedSegment[]
   ): void;
-  getCachedSegments(historyKey: string): { segments: ResolvedSegment[]; stale: boolean } | undefined;
+  getCachedSegments(
+    historyKey: string
+  ): { segments: ResolvedSegment[]; stale: boolean } | undefined;
   hasHistoryCache(historyKey: string): boolean;
   markCacheAsStale(): void;
   markCacheAsStaleAndBroadcast(): void;
@@ -257,7 +259,10 @@ export interface NavigationStore {
   // Action state tracking (for useAction hook)
   getActionState(actionId: string): TrackedActionState;
   setActionState(actionId: string, state: Partial<TrackedActionState>): void;
-  subscribeToAction(actionId: string, listener: ActionStateListener): () => void;
+  subscribeToAction(
+    actionId: string,
+    listener: ActionStateListener
+  ): () => void;
 }
 
 // ============================================================================
@@ -303,6 +308,7 @@ export interface FetchPartialOptions {
   signal?: AbortSignal;
   /** If true, this is a stale cache revalidation request - server should force revalidators */
   staleRevalidation?: boolean;
+  interceptSourceUrl?: string;
 }
 
 /**

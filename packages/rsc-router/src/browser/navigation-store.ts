@@ -40,7 +40,10 @@ let cacheInvalidationChannel: BroadcastChannel | null = null;
  * Get or create the BroadcastChannel for cache invalidation
  */
 function getCacheInvalidationChannel(): BroadcastChannel | null {
-  if (typeof window === "undefined" || typeof BroadcastChannel === "undefined") {
+  if (
+    typeof window === "undefined" ||
+    typeof BroadcastChannel === "undefined"
+  ) {
     return null;
   }
   if (!cacheInvalidationChannel) {
@@ -65,7 +68,10 @@ export interface HistoryKeyOptions {
  * For intercept routes, append `:intercept` suffix to cache them separately
  * from non-intercept versions of the same URL.
  */
-export function generateHistoryKey(url?: string, options?: HistoryKeyOptions): string {
+export function generateHistoryKey(
+  url?: string,
+  options?: HistoryKeyOptions
+): string {
   if (!url) {
     url = typeof window !== "undefined" ? window.location.href : "/";
   }
@@ -212,7 +218,11 @@ export function createNavigationStore(
 
   // Store initial segments if provided (not stale)
   if (config?.initialHistoryKey && config?.initialSegments) {
-    historyCache.push([config.initialHistoryKey, config.initialSegments, false]);
+    historyCache.push([
+      config.initialHistoryKey,
+      config.initialSegments,
+      false,
+    ]);
   }
 
   // State change listeners (for useNavigation subscriptions)
@@ -237,21 +247,54 @@ export function createNavigationStore(
   const actionListeners = new Map<string, Set<ActionStateListener>>();
 
   /**
-   * Notify all listeners for a specific action
+   * Create a debounced function that batches rapid calls
    */
-  function notifyActionListeners(actionId: string, state: TrackedActionState): void {
-    const listeners = actionListeners.get(actionId);
-    if (listeners) {
-      listeners.forEach((listener) => listener(state));
-    }
+  function createDebouncedNotifier<T extends (...args: any[]) => void>(
+    fn: T,
+    ms: number = 20
+  ): T {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    return ((...args: Parameters<T>) => {
+      if (timeout !== null) clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        timeout = null;
+        fn(...args);
+      }, ms);
+    }) as T;
   }
 
   /**
-   * Notify all state listeners of a change
+   * Create a keyed debounced function (separate timers per key)
    */
-  function notifyStateListeners(): void {
-    stateListeners.forEach((listener) => listener());
+  function createKeyedDebouncedNotifier<
+    T extends (key: string, ...args: any[]) => void,
+  >(fn: T, ms: number = 20): T {
+    const timeouts = new Map<string, ReturnType<typeof setTimeout>>();
+    return ((key: string, ...args: any[]) => {
+      const existing = timeouts.get(key);
+      if (existing !== undefined) clearTimeout(existing);
+      timeouts.set(
+        key,
+        setTimeout(() => {
+          timeouts.delete(key);
+          fn(key, ...args);
+        }, ms)
+      );
+    }) as T;
   }
+
+  const notifyStateListeners = createDebouncedNotifier(() => {
+    stateListeners.forEach((listener) => listener());
+  });
+
+  const notifyActionListeners = createKeyedDebouncedNotifier(
+    (actionId: string, state: TrackedActionState) => {
+      const listeners = actionListeners.get(actionId);
+      if (listeners) {
+        listeners.forEach((listener) => listener(state));
+      }
+    }
+  );
 
   /**
    * Clear the history cache (internal - does not broadcast)
@@ -282,7 +325,9 @@ export function createNavigationStore(
    * Mark cache as stale and broadcast to other tabs
    */
   function markStaleAndBroadcast(): void {
-    console.log("[Browser] Marking cache as stale and broadcasting to other tabs");
+    console.log(
+      "[Browser] Marking cache as stale and broadcasting to other tabs"
+    );
     markCacheAsStaleInternal();
     broadcastInvalidation();
   }
@@ -339,7 +384,9 @@ export function createNavigationStore(
 
           console.log(
             "[Browser] Cache marked stale by another tab, shared segments:",
-            mutatedSegmentIds.filter((id) => currentSegmentIds.includes(id)).join(", ")
+            mutatedSegmentIds
+              .filter((id) => currentSegmentIds.includes(id))
+              .join(", ")
           );
           markCacheAsStaleInternal();
 
@@ -360,7 +407,9 @@ export function createNavigationStore(
                 if (navState.state === "idle") {
                   stateListeners.delete(listener);
                   pendingCrossTabRefresh = false;
-                  console.log("[Browser] Cross-tab refresh triggered (deferred)");
+                  console.log(
+                    "[Browser] Cross-tab refresh triggered (deferred)"
+                  );
                   crossTabRefreshCallback?.();
                 }
               };
@@ -503,9 +552,14 @@ export function createNavigationStore(
      * Removes oldest entries (from front) when over configured cacheSize
      * Fresh data is always stored as not stale (stale=false)
      */
-    cacheSegmentsForHistory(historyKey: string, segments: ResolvedSegment[]): void {
+    cacheSegmentsForHistory(
+      historyKey: string,
+      segments: ResolvedSegment[]
+    ): void {
       // Check if entry already exists and update it
-      const existingIndex = historyCache.findIndex(([key]) => key === historyKey);
+      const existingIndex = historyCache.findIndex(
+        ([key]) => key === historyKey
+      );
       if (existingIndex !== -1) {
         historyCache[existingIndex] = [historyKey, segments, false];
       } else {
@@ -522,7 +576,9 @@ export function createNavigationStore(
      * Get cached segments for a history entry
      * Returns { segments, stale } or undefined if not cached
      */
-    getCachedSegments(historyKey: string): { segments: ResolvedSegment[]; stale: boolean } | undefined {
+    getCachedSegments(
+      historyKey: string
+    ): { segments: ResolvedSegment[]; stale: boolean } | undefined {
       const entry = historyCache.find(([key]) => key === historyKey);
       if (!entry) return undefined;
       return { segments: entry[1], stale: entry[2] };
@@ -543,7 +599,11 @@ export function createNavigationStore(
       for (let i = 0; i < historyCache.length; i++) {
         historyCache[i][2] = true;
       }
-      console.log("[Browser] Marked", historyCache.length, "cache entries as stale");
+      console.log(
+        "[Browser] Marked",
+        historyCache.length,
+        "cache entries as stale"
+      );
     },
 
     /**
@@ -639,7 +699,10 @@ export function createNavigationStore(
      * Update the state for a tracked action
      * Merges partial state with existing state and notifies listeners
      */
-    setActionState(actionId: string, partial: Partial<TrackedActionState>): void {
+    setActionState(
+      actionId: string,
+      partial: Partial<TrackedActionState>
+    ): void {
       const current = actionStates.get(actionId) ?? { ...DEFAULT_ACTION_STATE };
       const updated: TrackedActionState = {
         ...current,
@@ -654,7 +717,10 @@ export function createNavigationStore(
      * Subscribe to state changes for a specific action
      * Returns unsubscribe function
      */
-    subscribeToAction(actionId: string, listener: ActionStateListener): () => void {
+    subscribeToAction(
+      actionId: string,
+      listener: ActionStateListener
+    ): () => void {
       let listeners = actionListeners.get(actionId);
       if (!listeners) {
         listeners = new Set();

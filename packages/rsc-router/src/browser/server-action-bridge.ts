@@ -6,7 +6,10 @@ import type {
 } from "./types.js";
 import { createPartialUpdater } from "./partial-update.js";
 import { createNavigationTransaction } from "./navigation-bridge.js";
-import { mergeSegmentLoaders, needsLoaderMerge } from "./merge-segment-loaders.js";
+import {
+  mergeSegmentLoaders,
+  needsLoaderMerge,
+} from "./merge-segment-loaders.js";
 import { startTransition } from "react";
 
 // Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
@@ -82,6 +85,7 @@ export function createServerActionBridge(
     onComplete?: () => void
   ) {
     const reader = stream.getReader();
+
     if (!signal.aborted) {
       store.setState({ isStreaming: true });
       // Emit action state: streaming (if tracking an action)
@@ -93,7 +97,12 @@ export function createServerActionBridge(
       reader,
       async [Symbol.asyncDispose]() {
         reader.releaseLock();
-        if (!signal.aborted) {
+        console.log(
+          "store.getState().inflightActions.length",
+          store.getState().inflightActions.length
+        );
+
+        if (!signal.aborted && store.getState().inflightActions.length === 0) {
           store.setState({ isStreaming: false });
         }
         onComplete?.();
@@ -190,8 +199,7 @@ export function createServerActionBridge(
       commit(
         segmentIds?: string[],
         segments?: ResolvedSegment[],
-        skipCacheClear?: boolean,
-        result?: unknown
+        skipCacheClear?: boolean
       ) {
         status = "completed";
         // Update segment state if provided
@@ -207,12 +215,10 @@ export function createServerActionBridge(
           const currentKey = store.getHistoryKey();
           store.cacheSegmentsForHistory(currentKey, segments);
         }
-        // Emit action state: idle with result (preserves payload)
-        store.setActionState(actionId, {
-          state: "idle",
-          result,
-          error: null,
-        });
+
+        pendingActionCount--;
+        // Remove from inflight actions
+        store.removeInflightAction(id);
       },
       error(err?: unknown) {
         status = "error";
@@ -227,12 +233,13 @@ export function createServerActionBridge(
         return signal;
       },
       [Symbol.dispose]() {
-        // Decrement pending count
-        pendingActionCount--;
-
-        // Remove from inflight actions
-        store.removeInflightAction(id);
-
+        if (status !== "completed") {
+          // Decrement pending count
+          pendingActionCount--;
+          // Remove from inflight actions
+          store.removeInflightAction(id);
+          status = "completed";
+        }
         // Only set idle if no other actions in flight
         if (store.getState().inflightActions.length === 0) {
           store.setState({ state: "idle" });
@@ -254,6 +261,7 @@ export function createServerActionBridge(
    */
   async function handleServerAction(id: string, args: any[]): Promise<unknown> {
     // Normalize action ID to just the function name for store tracking
+    const locationKey = window.history.state.key;
     const actionId = normalizeActionId(id);
     console.log("ID", { id, actionId, args });
 
@@ -519,6 +527,25 @@ export function createServerActionBridge(
 
       const returnData = returnValue?.data;
 
+      store.setActionState(actionId, {
+        state: "streaming",
+        result: returnData,
+        error: null,
+      });
+      console.log(
+        `[Browser] Action complete - UI updated (after action state committed)`
+      );
+
+      streamComplete.then(() => {
+        console.log("settingstate", actionId, "idle");
+        // Emit action state: idle with result (preserves payload)
+        store.setActionState(actionId, {
+          state: "idle",
+          result: returnData,
+          error: null,
+        });
+      });
+
       if (returnValue && !returnValue.ok) {
         tx.error(returnValue.data);
         throw returnValue.data;
@@ -534,7 +561,9 @@ export function createServerActionBridge(
       // - For intercepts, store.path stays as base route while URL changes
       // - For regular routes, both change but pathname is the source of truth
       const currentPathname = window.location.pathname;
-      const userNavigatedAway = currentPathname !== actionStartPathname;
+      const userNavigatedAway =
+        currentPathname !== actionStartPathname ||
+        window.history.state.key !== locationKey;
 
       if (userNavigatedAway) {
         console.log(
@@ -565,7 +594,10 @@ export function createServerActionBridge(
             intercept: !!currentInterceptSource,
             interceptSourceUrl: currentInterceptSource ?? undefined,
           }),
-          { isAction: true, interceptSourceUrl: currentInterceptSource ?? undefined }
+          {
+            isAction: true,
+            interceptSourceUrl: currentInterceptSource ?? undefined,
+          }
         );
         console.log(`[Browser] Refetch after navigation complete`);
         return returnData;
@@ -595,7 +627,10 @@ export function createServerActionBridge(
             intercept: !!interceptSourceUrl,
             interceptSourceUrl: interceptSourceUrl ?? undefined,
           }),
-          { isAction: true, interceptSourceUrl: interceptSourceUrl ?? undefined }
+          {
+            isAction: true,
+            interceptSourceUrl: interceptSourceUrl ?? undefined,
+          }
         );
         console.log(
           `[Browser] Refetch complete (HMR), now returning action result`
@@ -604,7 +639,7 @@ export function createServerActionBridge(
         // Broadcast to other tabs (local cache has fresh data from navTx.commit)
         store.broadcastCacheInvalidation();
         // Skip cache clear since we just refetched fresh data
-        tx.commit(undefined, undefined, true, returnData);
+        tx.commit(undefined, undefined, true);
         return returnData;
       }
 
@@ -617,7 +652,6 @@ export function createServerActionBridge(
           `[Browser] Concurrent actions detected - consolidation fetch needed for:`,
           consolidationSegments
         );
-
         // Calculate segments to send (exclude the ones we want fresh)
         const currentSegmentIds = store.getSegmentState().currentSegmentIds;
         const segmentsToSend = currentSegmentIds.filter(
@@ -631,6 +665,7 @@ export function createServerActionBridge(
 
         // Clear consolidation tracking before fetch
         tx.clearConsolidation();
+        tx.commit(undefined, undefined, true);
 
         // Do consolidation fetch to get fresh data for all revalidated segments
         // This will handle the UI update via onUpdate in partial-update
@@ -651,15 +686,20 @@ export function createServerActionBridge(
             intercept: !!interceptSourceUrl,
             interceptSourceUrl: interceptSourceUrl ?? undefined,
           }),
-          { isAction: true, interceptSourceUrl: interceptSourceUrl ?? undefined }
+          {
+            isAction: true,
+            interceptSourceUrl: interceptSourceUrl ?? undefined,
+          }
         );
 
         console.log(`[Browser] Consolidation fetch complete`);
         // Broadcast to other tabs (local cache has fresh data from navTx.commit)
         store.broadcastCacheInvalidation();
-        console.log(`[Browser] Returning to React:`, returnData);
-        // Skip the normal tx cache clear since we just cleared it
-        tx.commit(undefined, undefined, true, returnData);
+        console.log(
+          `[Browser] Consolidate/Reconcile - Returning to React:`,
+          returnData
+        );
+
         return returnData;
       }
 
@@ -669,8 +709,11 @@ export function createServerActionBridge(
         console.log(
           `[Browser] Skipping UI update - ${pendingActionCount - 1} other action(s) still pending`
         );
-        console.log(`[Browser] Returning to React:`, returnData);
-        tx.commit(matched, fullSegments, true, returnData); // Skip cache clear - last action will broadcast
+        console.log(
+          `[Browser]  Multi actions - Returning to React(no cache clear):`,
+          returnData
+        );
+        tx.commit(matched, fullSegments, true); // Skip cache clear - last action will broadcast
         return returnData;
       }
 
@@ -703,15 +746,14 @@ export function createServerActionBridge(
         return;
       }
       console.log("Update", id);
+
       startTransition(() => {
         onUpdate({ root: newTree, metadata: metadata! });
       });
-      console.log(
-        `[Browser] Action complete - UI updated (after action state committed)`
-      );
+      console.log("settingstate", actionId, "streaming");
 
-      console.log(`[Browser] Returning to React:`, returnData);
-      tx.commit(matched, fullSegments, false, returnData);
+      console.log(`[Browser] Normal - Returning to React:`, returnData);
+      tx.commit(matched, fullSegments, false);
       return returnData;
     } else {
       // Full update not supported for actions

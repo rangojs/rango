@@ -43,7 +43,9 @@ export function createRequestController(): RequestController {
     create(): AbortController {
       const controller = new AbortController();
       controllers.push(controller);
-      console.log(`[Browser] Created abort controller, total: ${controllers.length}`);
+      console.log(
+        `[Browser] Created abort controller, total: ${controllers.length}`
+      );
       return controller;
     },
 
@@ -86,14 +88,18 @@ export function createRequestController(): RequestController {
     createActionDisposable(): DisposableAbortController {
       const controller = new AbortController();
       actionControllers.push(controller);
-      console.log(`[Browser] Created action controller, total: ${actionControllers.length}`);
+      console.log(
+        `[Browser] Created action controller, total: ${actionControllers.length}`
+      );
       return {
         controller,
         [Symbol.dispose]: () => {
           const index = actionControllers.indexOf(controller);
           if (index !== -1) {
             actionControllers.splice(index, 1);
-            console.log(`[Browser] Removed action controller, remaining: ${actionControllers.length}`);
+            console.log(
+              `[Browser] Removed action controller, remaining: ${actionControllers.length}`
+            );
           }
         },
       };
@@ -134,7 +140,9 @@ export function createRequestController(): RequestController {
       const index = controllers.indexOf(controller);
       if (index !== -1) {
         controllers.splice(index, 1);
-        console.log(`[Browser] Removed abort controller, remaining: ${controllers.length}`);
+        console.log(
+          `[Browser] Removed abort controller, remaining: ${controllers.length}`
+        );
       }
     },
   };
