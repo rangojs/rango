@@ -2,9 +2,10 @@ import rsc from "@vitejs/plugin-rsc";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import path from "path";
+import { rscRouter } from "rsc-router/vite";
 
 export default defineConfig({
-  plugins: [rsc(), react()],
+  plugins: [rsc(), react(), rscRouter()],
   esbuild: {
     target: "es2022",
   },
