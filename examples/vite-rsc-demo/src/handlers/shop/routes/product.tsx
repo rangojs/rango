@@ -25,6 +25,7 @@ import {
 import { ProductLoader, CartLoader } from "@/handlers/shop/loaders/index.js";
 import { FeaturedProducts } from "@/components/FeaturedProducts.js";
 import { LoadingSpinner } from "../components/loading";
+import { AddToCartStatus } from "./components/add-to-cart-w-res.client";
 
 // ==================== PRODUCT ROUTES ====================
 
@@ -156,7 +157,7 @@ export const ProductsDetailRoute: RouteHandler<
                     Shows action result
                   </p>
                   <p>Id: {product.slug}</p>
-                  <ActionStatus fn={addToCartWithResult} />
+                  <AddToCartStatus />
                   <AddToCartForm
                     productId={product.slug}
                     action={addToCartWithResult}

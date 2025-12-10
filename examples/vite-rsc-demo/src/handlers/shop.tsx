@@ -1,3 +1,4 @@
+"use server";
 //#region Imports
 import { map } from "rsc-router/server";
 import type { shopRoutes } from "../routes.js";

@@ -10,6 +10,7 @@ import {
 } from "react";
 import { NavigationStoreContext } from "./context.js";
 import type { TrackedActionState, ActionLifecycleState } from "../types.js";
+import { invariant } from "../../errors.js";
 
 /**
  * Store state - only lifecycle, no result/error
@@ -52,22 +53,39 @@ function normalizeActionId(actionId: string): string {
 }
 
 /**
- * Extract action ID from a server action function or string
- * Server actions have a $$id property that contains the action ID
+ * Extract action ID from a server action function or string.
+ *
+ * Actions passed as props from server components lose their metadata
+ * during RSC serialization - use a string action name instead.
  */
 function getActionId(action: ServerActionFunction | string): string {
-  if (typeof action === "string") {
-    return normalizeActionId(action);
+  invariant(
+    typeof action === "function" || typeof action === "string",
+    `useAction: action must be a function or string, got ${typeof action}`
+  );
+  const actionId = (action as any)?.$$id;
+  if (actionId) {
+    return normalizeActionId(actionId);
   }
 
-  // Server actions created by the RSC compiler have $$id property
-  const actionId = (action as any).name || (action as any).$$id;
-  if (!actionId) {
-    throw new Error(
-      "useAction: Invalid action. Must be a server action function or action ID string."
-    );
-  }
-  return normalizeActionId(actionId);
+  // If we get here, this is likely an action passed as prop from a server component
+  // These lose their metadata during RSC serialization
+  throw new Error(
+    `useAction: Cannot extract action ID from function reference.
+
+This typically happens when an action is passed as a prop from a server component.
+Actions passed through RSC lose their metadata during serialization.
+
+Solutions:
+1. Import the action directly in your client component:
+   import { myAction } from './actions';
+   const state = useAction(myAction);
+
+2. Use the action name as a string:
+   const state = useAction("myAction");
+
+The string must match the exported function name from your "use server" file.`
+  );
 }
 
 /**
@@ -90,20 +108,28 @@ type ServerActionFunction = ((...args: any[]) => Promise<any>) & {
  * - If multiple actions fire, tracks only the last one
  * - Supports selector pattern like useNavigation
  *
+ * @param action - Either a server action function or a string action name.
+ *   - **Function**: Must be directly imported in the client component.
+ *     Actions passed as props from server components will throw an error.
+ *   - **String**: The exported function name from your "use server" file.
+ *     This is the recommended approach when the action is passed as a prop.
+ *
  * @example
  * ```tsx
+ * // Option 1: Direct import (recommended for client components)
  * import { addToCart } from './actions';
- *
- * // Track full action state
  * const actionState = useAction(addToCart);
+ *
+ * // Option 2: String-based (required when action is passed as prop)
+ * const actionState = useAction('addToCart');
  *
  * // With selector for specific values
  * const isLoading = useAction(addToCart, state => state.state === 'loading');
  * const error = useAction(addToCart, state => state.error);
- *
- * // Using action ID string directly
- * const state = useAction('addToCart');
  * ```
+ *
+ * @note Actions passed as props from server components lose their metadata
+ * during RSC serialization. Use a string action name or import directly.
  */
 export function useAction(
   action: ServerActionFunction | string

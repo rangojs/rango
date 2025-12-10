@@ -9,6 +9,12 @@
     "apps/*",
     "packages/*"
   ],
+  "pnpm": {
+    "overrides": {
+      "react": "^19.2.1",
+      "react-dom": "^19.2.1"
+    }
+  },
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",

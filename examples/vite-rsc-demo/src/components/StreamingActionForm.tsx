@@ -8,14 +8,28 @@ export const StreamingActionStatus = () => {
   console.log("StreamingActionStatus", status.state);
   return <div>StreamingAction status: {status.state}</div>;
 };
+const getOwnProps = (item: any) => {
+  const reflect = Reflect.ownKeys(item);
+  const ownProps: Record<string, any> = {};
+  reflect.forEach((key) => {
+    ownProps[key as string] = (item as any)[key as string];
+  });
+  return ownProps;
+};
 export const ActionStatus = ({
   fn,
 }: {
   fn: ((...args: any[]) => any) | string;
 }) => {
   const status = useAction(fn);
-  const name = typeof fn === "string" ? fn : fn.name;
-  console.log(`${name} Status`, status.state);
+  const name = fn.$$id;
+  console.log({
+    name: fn.$$id,
+    $$typeof: (fn as any).$$typeof,
+    $$id: (fn as any).$$id,
+    $$bound: (fn as any).$$bound,
+  });
+  console.log(`${name} Status`, status.state, fn, getOwnProps(fn));
   return (
     <div>
       {name} status: {status.state}

@@ -3,8 +3,21 @@
 import { useState, useEffect } from "react";
 import { useAction } from "rsc-router/browser";
 import { updateCartQuantity } from "../actions/shop.actions.js";
-
+const getOwnProps = (item: any) => {
+  const reflect = Reflect.ownKeys(item);
+  const ownProps: Record<string, any> = {};
+  reflect.forEach((key) => {
+    ownProps[key as string] = (item as any)[key as string];
+  });
+  return ownProps;
+};
 export function CartNotification() {
+  console.log(
+    "updateCartQuantity",
+    updateCartQuantity,
+    getOwnProps(updateCartQuantity)
+  );
+
   const cartAction = useAction(updateCartQuantity);
   console.log("CartNotification", cartAction.state, { cartAction });
 
