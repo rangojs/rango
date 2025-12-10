@@ -105,6 +105,10 @@ importers:
         version: 2.1.9(@types/node@24.10.1)(@vitest/ui@2.1.9)(happy-dom@15.11.7)
 
   packages/rsc-router:
+    dependencies:
+      magic-string:
+        specifier: ^0.30.17
+        version: 0.30.21
     devDependencies:
       '@types/node':
         specifier: ^24.10.1

@@ -1,39 +1,8 @@
 import type { Plugin } from "vite";
+import { exposeActionId } from "./expose-action-id.ts";
 
-/**
- * Vite plugin that exposes action IDs on server reference functions.
- *
- * When React Server Components creates server references via createServerReference(),
- * the action ID (format: "hash#actionName") is passed as the first argument but not
- * exposed on the returned function. This plugin transforms the output to attach
- * the $$id property to each server reference function, enabling the router to
- * identify which action was called during revalidation.
- */
-export function exposeActionId(): Plugin {
-  return {
-    name: "rsc-router:expose-action-id",
-
-    renderChunk(code) {
-      if (!code.includes("createServerReference(")) {
-        return null;
-      }
-
-      // Match: createServerReference("hash#actionName", ...)
-      const pattern = /createServerReference\(("[a-f0-9]+#[^"]+")([^)]*)\)/g;
-
-      let hasChanges = false;
-      const transformed = code.replace(pattern, (_match, idArg, rest) => {
-        hasChanges = true;
-        return `(function(fn) { fn.$$id = ${idArg}; return fn; })(createServerReference(${idArg}${rest}))`;
-      });
-
-      if (hasChanges) {
-        return { code: transformed, map: null };
-      }
-      return null;
-    },
-  };
-}
+// Re-export plugins
+export { exposeActionId } from "./expose-action-id.ts";
 
 export interface RscRouterOptions {
   /**

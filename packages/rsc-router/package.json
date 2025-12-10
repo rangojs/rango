@@ -48,6 +48,9 @@
       "optional": true
     }
   },
+  "dependencies": {
+    "magic-string": "^0.30.17"
+  },
   "devDependencies": {
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.7",
