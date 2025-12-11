@@ -357,17 +357,34 @@ export function createServerActionBridge(
 
       // Check if user navigated away during the action
       const currentPathname = window.location.pathname;
+      const currentLocationKey = window.history.state?.key;
       const userNavigatedAway =
         currentPathname !== actionStartPathname ||
-        window.history.state?.key !== locationKey;
+        currentLocationKey !== locationKey;
 
       if (userNavigatedAway) {
         console.log(
-          `[Browser] User navigated away during action (${actionStartPathname} -> ${currentPathname}), refetching current route`
+          `[Browser] User navigated away during action (${actionStartPathname} -> ${currentPathname})`
         );
         // Clear concurrent action tracking - don't consolidate for old route's segments
         handle.clearConsolidation();
-        // Refetch current route
+
+        // Check if the history key changed (different cache entry)
+        // This happens when navigating between intercept and non-intercept routes
+        // In this case, we should NOT refetch - let the stale-while-revalidate handle it
+        // Refetching here would corrupt the current route's cache with wrong segments
+        if (currentLocationKey !== locationKey) {
+          console.log(
+            `[Browser] History key changed (${locationKey} -> ${currentLocationKey}), skipping refetch to avoid cache corruption`
+          );
+          // Just complete the action - cache is already marked stale
+          handle.complete(returnData);
+          return returnData;
+        }
+
+        // Same history key but different pathname (e.g., same-page navigation)
+        // Safe to refetch current route
+        console.log(`[Browser] Same history key, refetching current route`);
         store.markCacheAsStaleAndBroadcast();
         using navTx = createNavigationTransaction(
           store,
@@ -496,22 +513,30 @@ export function createServerActionBridge(
         return returnData;
       }
 
-      // Check if there are OTHER actions still pending (not yet completed)
-      // Exclude the current action since we're about to complete it
-      const otherIncompleteActions = [...eventController.getInflightActions().values()].filter(
-        (a) => !a.completed && a.id !== handle.id
+      // Check if there are OTHER actions still fetching (waiting for server response)
+      // Exclude the current action since we already have our response
+      // We don't need to wait for streaming to complete - just for the response to arrive
+      const otherFetchingActions = [...eventController.getInflightActions().values()].filter(
+        (a) => a.phase === "fetching" && a.id !== handle.id
       );
-      if (otherIncompleteActions.length > 0) {
+      if (otherFetchingActions.length > 0) {
         console.log(
-          `[Browser] Skipping UI update - ${otherIncompleteActions.length} other action(s) still pending`
+          `[Browser] Skipping UI update - ${otherFetchingActions.length} other action(s) still fetching`
         );
         console.log(
           `[Browser] Multi actions - Returning to React (no cache clear):`,
           returnData
         );
-        // Update store but skip broadcast - last action will handle it
-        store.setSegmentIds(matched);
-        store.cacheSegmentsForHistory(currentKey, fullSegments);
+        // Only update store if history key hasn't changed (user didn't navigate away)
+        const currentKeyNow = store.getHistoryKey();
+        if (currentKeyNow === currentKey) {
+          store.setSegmentIds(matched);
+          store.cacheSegmentsForHistory(currentKey, fullSegments);
+        } else {
+          console.log(
+            `[Browser] History key changed during multi-action (${currentKey} -> ${currentKeyNow}), skipping cache update`
+          );
+        }
         handle.complete(returnData);
         return returnData;
       }
@@ -542,6 +567,18 @@ export function createServerActionBridge(
         handle.complete(returnData);
         return returnData;
       }
+
+      // Verify the store's current key still matches what we captured at action start
+      // If they differ, user navigated away and we should NOT cache under the old key
+      const currentKeyNow = store.getHistoryKey();
+      if (currentKeyNow !== currentKey) {
+        console.log(
+          `[Browser] History key changed during action (${currentKey} -> ${currentKeyNow}), skipping cache update`
+        );
+        handle.complete(returnData);
+        return returnData;
+      }
+
       console.log("Update", id);
 
       startTransition(() => {

@@ -126,6 +126,9 @@ export function createPartialUpdater(
     } = options || {};
     const segmentState = store.getSegmentState();
     const url = targetUrl || window.location.href;
+
+    // Capture history key at start for stale revalidation consistency check
+    const historyKeyAtStart = store.getHistoryKey();
     const segments = segmentIds ?? segmentState.currentSegmentIds;
 
     // For intercept revalidation, use the intercept source URL as previousUrl
@@ -350,6 +353,19 @@ export function createPartialUpdater(
             }
           : undefined
       );
+
+      // For stale revalidation: verify history key hasn't changed before updating UI
+      // If user navigated away, skip UI update to avoid corrupting current view
+      if (staleRevalidation) {
+        const historyKeyNow = store.getHistoryKey();
+        if (historyKeyNow !== historyKeyAtStart) {
+          console.log(
+            `[Browser] Stale revalidation: history key changed (${historyKeyAtStart} -> ${historyKeyNow}), skipping UI update`
+          );
+          return streamComplete;
+        }
+      }
+
       console.log("[partial-update] updating document");
 
       // Emit update to trigger React render

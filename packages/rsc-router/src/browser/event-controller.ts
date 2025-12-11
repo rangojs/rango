@@ -586,15 +586,15 @@ export function createEventController(
       },
 
       getConsolidationSegments(): string[] | null {
-        // Only consolidate if this is the last action to complete
-        // and there were concurrent actions
-        // Count actions that haven't completed yet (not just phase !== settling)
-        const incompleteCount = [...inflightActions.values()].filter(
-          (a) => !a.completed
+        // Only consolidate if all actions have at least received their response
+        // We don't need to wait for streaming to complete since we're refetching anyway
+        // Count actions that are still fetching (waiting for server response)
+        const stillFetchingCount = [...inflightActions.values()].filter(
+          (a) => a.phase === "fetching"
         ).length;
 
-        if (incompleteCount > 0) {
-          return null; // More actions still processing
+        if (stillFetchingCount > 0) {
+          return null; // Some actions still waiting for server response
         }
         if (!hadAnyConcurrentActions) {
           return null; // No concurrent actions occurred
