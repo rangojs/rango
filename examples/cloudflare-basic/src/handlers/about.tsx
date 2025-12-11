@@ -1,9 +1,11 @@
 import { map } from "rsc-router/server";
 import type { aboutRoutes } from "../routes.js";
+import { HtmlShell } from "../components/HtmlShell.js";
 import { RootLayout } from "../components/RootLayout.js";
 
-export default map<typeof aboutRoutes>(({ route, layout }) => [
-  layout(<RootLayout />),
+export default map<typeof aboutRoutes>(
+  ({ route, layout }) => [
+    layout(<RootLayout />),
 
   route("index", () => (
     <main>
@@ -24,4 +26,6 @@ export default map<typeof aboutRoutes>(({ route, layout }) => [
       </ul>
     </main>
   )),
-]);
+  ],
+  { rootLayout: HtmlShell }
+);

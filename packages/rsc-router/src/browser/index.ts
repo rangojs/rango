@@ -35,6 +35,9 @@ export { route } from "../route-utils.js";
 // Type-safe href function
 export { href } from "./href.js";
 
+// Main entry point - simple API for consumers
+export { createApp, type CreateAppConfig } from "./hydrate.js";
+
 // Types
 export type {
   RscPayload,
@@ -105,6 +108,9 @@ export {
 
 // Shallow comparison utility
 export { shallow } from "./shallow.js";
+
+// Action utilities
+export { getActionId, getActionName, isServerAction } from "./action-utils.js";
 
 // Scroll restoration utilities (for advanced usage)
 export {

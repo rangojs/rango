@@ -31,8 +31,8 @@ function ensureResolvedUrls(): Plugin {
 export default defineConfig(() => {
   return {
     server: {
-      port: 5173,
-      strictPort: true,
+      port: 5001,
+      // strictPort: true,
     },
     plugins: [
       ensureResolvedUrls(),
@@ -51,7 +51,7 @@ export default defineConfig(() => {
       rsc: {
         build: {
           rollupOptions: {
-            input: { index: "./src/entry.rsc.tsx" },
+            input: { index: "./src/worker.rsc.tsx" },
           },
         },
       },

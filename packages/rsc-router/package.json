@@ -30,8 +30,8 @@
       "default": "./src/handler.ts"
     },
     "./ssr": {
-      "types": "./src/ssr/index.tsx",
-      "default": "./src/ssr/index.tsx"
+      "types": "./src/ssr/index.ts",
+      "default": "./src/ssr/index.ts"
     },
     "./rsc": {
       "react-server": "./src/rsc/index.ts",

@@ -6,8 +6,12 @@
  */
 
 import { renderSegments } from "./segment-system.js";
-import type { RSCRouter } from "./router.js";
+import type { RSCRouter, DocumentProps, DocumentModule } from "./router.js";
 import type { ResolvedSegment } from "./types.js";
+import type { ComponentType } from "react";
+
+// Re-export DocumentProps for convenience
+export type { DocumentProps } from "./router.js";
 
 /**
  * RSC Payload type - sent to client
@@ -43,10 +47,30 @@ export interface RSCDependencies {
 }
 
 /**
+ * SSR rendering options passed to renderHTML
+ */
+export interface SSRRenderOptions {
+  /**
+   * Custom Document component for HTML shell
+   * If provided, SSR should use this to wrap the content
+   */
+  Document?: ComponentType<DocumentProps>;
+
+  /**
+   * Document loader function for SSR to resolve in its own environment
+   * Use this when the Document needs to be imported in SSR context
+   */
+  loadDocument?: () => Promise<DocumentModule>;
+}
+
+/**
  * SSR module interface - must export renderHTML function
  */
 export interface SSRModule {
-  renderHTML: (rscStream: ReadableStream) => Promise<ReadableStream>;
+  renderHTML: (
+    rscStream: ReadableStream,
+    options?: SSRRenderOptions
+  ) => Promise<ReadableStream>;
 }
 
 /**
@@ -68,6 +92,12 @@ export interface HandlerConfig<TEnv = unknown> {
    * This is called when HTML response is needed (not RSC stream)
    */
   loadSSR: () => Promise<SSRModule>;
+
+  /**
+   * Custom Document component for SSR HTML shell
+   * Can be a dynamic import function or a component directly
+   */
+  document?: (() => Promise<DocumentModule>) | ComponentType<DocumentProps>;
 }
 
 /**
@@ -89,7 +119,7 @@ export interface HandlerConfig<TEnv = unknown> {
 export function createHandler<TEnv = unknown>(
   config: HandlerConfig<TEnv>
 ): (request: Request, env?: TEnv) => Promise<Response> {
-  const { router, rsc, loadSSR } = config;
+  const { router, rsc, loadSSR, document: documentConfig } = config;
   const {
     renderToReadableStream,
     decodeReply,
@@ -125,10 +155,11 @@ export function createHandler<TEnv = unknown>(
           actionFormData = body;
         }
 
-        if (
-          (body instanceof FormData && body.entries().next().done === false) ||
-          (typeof body === "string" && body.length > 0)
-        ) {
+        const hasBody =
+          body instanceof FormData ||
+          (typeof body === "string" && body.length > 0);
+
+        if (hasBody) {
           args = await decodeReply(body, { temporaryReferences });
         }
 
@@ -274,7 +305,11 @@ export function createHandler<TEnv = unknown>(
 
       // Delegate to SSR for HTML response
       const ssrModule = await loadSSR();
-      const htmlStream = await ssrModule.renderHTML(rscStream);
+      // Pass loader function to SSR so it can resolve Document in its own environment
+      const loadDocument = typeof documentConfig === "function"
+        ? documentConfig as () => Promise<DocumentModule>
+        : undefined;
+      const htmlStream = await ssrModule.renderHTML(rscStream, { loadDocument });
 
       return new Response(htmlStream, {
         headers: { "content-type": "text/html;charset=utf-8" },
