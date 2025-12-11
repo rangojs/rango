@@ -141,15 +141,11 @@ export function createPartialUpdater(
       console.log(`[Browser] Intercept context from: ${interceptSourceUrl}`);
     }
 
-    // Set streaming state for navigations (actions handle their own streaming state)
-    // Skip for stale revalidation - it's a background cache refresh, not a navigation
-    if (!isAction && !staleRevalidation) {
-      store.setState({ isStreaming: true });
-    }
-
     // Get current page's segments for merging with server diff
     const currentSegmentMap = getCurrentSegmentMap();
-
+    // Mark navigation as streaming (response received, now parsing RSC)
+    // The token is ended when the stream completes
+    const streamingToken = tx.startStreaming();
     // Fetch partial payload (no abort signal - RSC doesn't support it well)
     const { payload, streamComplete: rawStreamComplete } =
       await client.fetchPartial({
@@ -159,17 +155,9 @@ export function createPartialUpdater(
         staleRevalidation,
       });
 
-    // Wrap stream completion to clear streaming state when done
-    // Only clear if this navigation wasn't aborted (newer navigation handles its own state)
-    // Skip for stale revalidation - we never set streaming state
-    const streamComplete =
-      isAction || staleRevalidation
-        ? rawStreamComplete
-        : rawStreamComplete.then(() => {
-            if (!signal?.aborted) {
-              store.setState({ isStreaming: false });
-            }
-          });
+    const streamComplete = rawStreamComplete.then(() => {
+      streamingToken.end();
+    });
 
     if (payload.metadata?.isPartial) {
       const { segments: newSegments, matched, diff } = payload.metadata;

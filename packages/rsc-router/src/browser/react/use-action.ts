@@ -13,26 +13,9 @@ import type { TrackedActionState, ActionLifecycleState } from "../types.js";
 import { invariant } from "../../errors.js";
 
 /**
- * Store state - only lifecycle, no result/error
- */
-interface StoreActionState {
-  state: ActionLifecycleState;
-  actionId: string | null;
-  payload: unknown[] | FormData | null;
-}
-
-/**
- * Local state - includes result/error captured from store emission
- */
-interface LocalActionState extends StoreActionState {
-  error: unknown | null;
-  result: unknown | null;
-}
-
-/**
  * Default action state (idle with no payload)
  */
-const DEFAULT_ACTION_STATE: LocalActionState = {
+const DEFAULT_ACTION_STATE: TrackedActionState = {
   state: "idle",
   actionId: null,
   payload: null,
@@ -68,6 +51,11 @@ function getActionId(action: ServerActionFunction | string): string {
     return normalizeActionId(actionId);
   }
 
+  // If action is a string, use it directly
+  if (typeof action === "string") {
+    return action;
+  }
+
   // If we get here, this is likely an action passed as prop from a server component
   // These lose their metadata during RSC serialization
   throw new Error(
@@ -101,6 +89,9 @@ type ServerActionFunction = ((...args: any[]) => Promise<any>) & {
  *
  * Unlike useNavigation which tracks global navigation state, useAction
  * tracks the state of individual server action invocations.
+ *
+ * Uses the event controller for reactive state management.
+ * State is derived from the inflight actions tracked by the controller.
  *
  * Features:
  * - Tracks action lifecycle: idle → loading → streaming → idle
@@ -149,75 +140,50 @@ export function useAction<T>(
       : "";
 
   // Base state for useOptimistic
-  const [baseState, setBaseState] = useState<T | TrackedActionState>(() =>
-    selector
-      ? selector?.(ctx?.store.getActionState(actionId) ?? DEFAULT_ACTION_STATE)
-      : (ctx?.store.getActionState(actionId) ?? DEFAULT_ACTION_STATE)
-  );
-
+  const [baseState, setBaseState] = useState<T | TrackedActionState>(() => {
+    if (!ctx) {
+      return selector ? selector(DEFAULT_ACTION_STATE) : DEFAULT_ACTION_STATE;
+    }
+    const state = ctx.eventController.getActionState(actionId);
+    return selector ? selector(state) : state;
+  });
+  const prevSelected = useRef(baseState);
+  prevSelected.current = baseState;
   // useOptimistic allows immediate updates during transitions/actions
   const [optimisticState, setOptimisticState] = useOptimistic<
     T | TrackedActionState
   >(null!);
 
   // Memoize the selector to avoid unnecessary re-subscriptions
-  const dataRef = useRef<{
-    result: TrackedActionState["result"];
-    error: TrackedActionState["error"];
-  }>(null);
   const selectorRef = useRef(selector);
   selectorRef.current = selector;
 
-  // Subscribe to action state changes from store
+  // Subscribe to action state changes from event controller
   useEffect(() => {
     if (!ctx) return;
 
     // Subscribe to action-specific updates
-    const unsubscribe = ctx.store.subscribeToAction(actionId, (storeState) => {
-      if (
-        storeState.result !== null &&
-        storeState.result !== dataRef.current?.result
-      ) {
-        dataRef.current = {
-          result: storeState.result,
-          error: storeState.error,
-        };
-      }
-      if (
-        storeState.error !== null &&
-        storeState.error !== dataRef.current?.error
-      ) {
-        dataRef.current = {
-          result: storeState.result,
-          error: storeState.error,
-        };
-      }
-      const newState: LocalActionState = {
-        state: storeState.state,
-        actionId: storeState.actionId,
-        payload: storeState.payload,
-        // Capture result/error when idle, clear when loading
-        error: dataRef.current?.error,
-        result: dataRef.current?.result,
-      };
+    const unsubscribe = ctx.eventController.subscribeToAction(
+      actionId,
+      (state) => {
+        const selectedState = selectorRef.current
+          ? selectorRef.current(state)
+          : state;
 
-      // Use optimistic update for immediate feedback during transitions
-      // assumes transition is in progress
-      const selectedState = selectorRef.current
-        ? selectorRef.current(newState)
-        : newState;
-      if (!isShallowEqual(selectedState, baseState)) {
-        setBaseState(selectedState);
-        startTransition(() => {
-          setOptimisticState(selectedState);
-        });
+        if (!isShallowEqual(selectedState, prevSelected.current)) {
+          prevSelected.current = selectedState;
+          setBaseState(selectedState);
+          startTransition(() => {
+            setOptimisticState(selectedState);
+          });
+        }
       }
-    });
+    );
 
     return () => {
       unsubscribe();
     };
-  }, [actionId, ctx]);
+  }, [actionId]);
 
   return (optimisticState ?? baseState) as T | TrackedActionState;
 }

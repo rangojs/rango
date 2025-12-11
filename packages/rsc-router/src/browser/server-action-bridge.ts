@@ -3,6 +3,7 @@ import type {
   ServerActionBridgeConfig,
   RscPayload,
   ResolvedSegment,
+  NavigationStore,
 } from "./types.js";
 import { createPartialUpdater } from "./partial-update.js";
 import { createNavigationTransaction } from "./navigation-bridge.js";
@@ -11,6 +12,7 @@ import {
   needsLoaderMerge,
 } from "./merge-segment-loaders.js";
 import { startTransition } from "react";
+import type { EventController, ActionHandle } from "./event-controller.js";
 
 // Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -33,221 +35,33 @@ function normalizeActionId(actionId: string): string {
 }
 
 /**
+ * Extended configuration for server action bridge with event controller
+ */
+export interface ServerActionBridgeConfigWithController
+  extends ServerActionBridgeConfig {
+  eventController: EventController;
+}
+
+/**
  * Create a server action bridge for handling RSC server actions
  *
  * The bridge registers a callback with the RSC runtime that handles:
  * - Encoding action arguments
  * - Sending action requests to the server
  * - Processing responses and updating UI
- * - Managing concurrent action requests
+ * - Managing concurrent action requests via event controller
  * - HMR resilience (refetching if segments are missing)
  *
  * @param config - Bridge configuration
  * @returns ServerActionBridge instance
- *
- * @example
- * ```typescript
- * const bridge = createServerActionBridge({
- *   store,
- *   client,
- *   requestController,
- *   deps: { setServerCallback, encodeReply, createTemporaryReferenceSet, createFromFetch },
- *   onUpdate: (update) => store.emit(update),
- *   renderSegments,
- * });
- *
- * bridge.register();
- * ```
  */
 export function createServerActionBridge(
-  config: ServerActionBridgeConfig
+  config: ServerActionBridgeConfigWithController
 ): ServerActionBridge {
-  const { store, client, requestController, deps, onUpdate, renderSegments } =
+  const { store, client, eventController, deps, onUpdate, renderSegments } =
     config;
 
   let isRegistered = false;
-
-  // Track segments revalidated by concurrent actions
-  // When multiple actions run concurrently, we collect all revalidated segments
-  // and do a consolidation fetch after the last one completes
-  const concurrentRevalidatedSegments = new Set<string>();
-  let pendingActionCount = 0;
-  let hadAnyConcurrentActions = false; // True if any concurrent actions occurred
-
-  /**
-   * Creates an async disposable scope for tracking stream state.
-   * Releases the reader lock, resets streaming state, and signals completion when disposed.
-   */
-  function createStreamScope(
-    stream: ReadableStream,
-    signal: AbortSignal,
-    actionId?: string,
-    onComplete?: () => void
-  ) {
-    const reader = stream.getReader();
-
-    if (!signal.aborted) {
-      store.setState({ isStreaming: true });
-      // Emit action state: streaming (if tracking an action)
-      if (actionId) {
-        store.setActionState(actionId, { state: "streaming" });
-      }
-    }
-    return {
-      reader,
-      async [Symbol.asyncDispose]() {
-        reader.releaseLock();
-        console.log(
-          "store.getState().inflightActions.length",
-          store.getState().inflightActions.length
-        );
-
-        if (!signal.aborted && store.getState().inflightActions.length === 0) {
-          store.setState({ isStreaming: false });
-        }
-        onComplete?.();
-      },
-    };
-  }
-
-  /**
-   * Creates a disposable transaction for action state and inflight tracking.
-   * Tracks the action as inflight, sets loading state, and cleans up on disposal.
-   * Only sets idle state when ALL actions are complete (supports concurrent actions).
-   *
-   * For concurrent actions: tracks revalidated segments and triggers consolidation
-   * fetch after all actions complete to ensure data consistency.
-   */
-  function createActionTransaction(
-    actionId: string,
-    args: any[],
-    signal: AbortSignal
-  ) {
-    const id = `${actionId}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    let status: "pending" | "completed" | "error" = "pending";
-
-    // Track if this action started while others were pending (concurrent)
-    const hadConcurrentActions = pendingActionCount > 0;
-    if (hadConcurrentActions) {
-      hadAnyConcurrentActions = true;
-    }
-    pendingActionCount++;
-
-    const startedAt = Date.now();
-
-    // Add to inflight actions
-    store.addInflightAction({
-      id,
-      actionId,
-      payload: args,
-      startedAt,
-    });
-
-    store.setActionInProgress(true);
-    store.setState({ state: "loading" });
-
-    // Emit action state: loading
-    store.setActionState(actionId, {
-      state: "loading",
-      payload: args,
-      error: null,
-      result: null,
-    });
-
-    // Mark cache as stale immediately when action starts
-    // This ensures SWR pattern kicks in if user navigates away during action
-    store.markCacheAsStaleAndBroadcast();
-
-    return {
-      id,
-      hadConcurrentActions,
-      /**
-       * Record segments that were revalidated by this action
-       * Used for consolidation fetch when actions are concurrent
-       */
-      recordRevalidatedSegments(diff: string[]) {
-        if (diff && diff.length > 0) {
-          diff.forEach((segId) => concurrentRevalidatedSegments.add(segId));
-        }
-      },
-      /**
-       * Check if consolidation fetch is needed and return segments to refresh
-       * Returns null if no consolidation needed, or array of segment IDs to exclude
-       */
-      getConsolidationSegments(): string[] | null {
-        // Only consolidate if this was the last action AND there were concurrent actions
-        if (pendingActionCount > 1) {
-          return null; // More actions still pending
-        }
-        if (!hadAnyConcurrentActions) {
-          return null; // No concurrent actions occurred
-        }
-        if (concurrentRevalidatedSegments.size === 0) {
-          return null; // No segments to consolidate
-        }
-        // Return segments that need fresh data
-        const segments = Array.from(concurrentRevalidatedSegments);
-        return segments;
-      },
-      /**
-       * Clear consolidation tracking (call after consolidation fetch)
-       */
-      clearConsolidation() {
-        concurrentRevalidatedSegments.clear();
-        hadAnyConcurrentActions = false;
-      },
-      commit(
-        segmentIds?: string[],
-        segments?: ResolvedSegment[],
-        skipCacheClear?: boolean
-      ) {
-        status = "completed";
-        // Update segment state if provided
-        if (segmentIds) {
-          store.setSegmentIds(segmentIds);
-        }
-        // Mark cache as stale (SWR pattern) - allows instant back/forward with background revalidation
-        // Skip if consolidation fetch already handled the cache
-        if (!skipCacheClear) {
-          store.markCacheAsStaleAndBroadcast();
-        }
-        if (segments) {
-          const currentKey = store.getHistoryKey();
-          store.cacheSegmentsForHistory(currentKey, segments);
-        }
-
-        pendingActionCount--;
-        // Remove from inflight actions
-        store.removeInflightAction(id);
-      },
-      error(err?: unknown) {
-        status = "error";
-        // Emit action state: idle with error (preserves payload)
-        store.setActionState(actionId, {
-          state: "idle",
-          error: err,
-          result: null,
-        });
-      },
-      get signal() {
-        return signal;
-      },
-      [Symbol.dispose]() {
-        if (status !== "completed") {
-          // Decrement pending count
-          pendingActionCount--;
-          // Remove from inflight actions
-          store.removeInflightAction(id);
-          status = "completed";
-        }
-        // Only set idle if no other actions in flight
-        if (store.getState().inflightActions.length === 0) {
-          store.setState({ state: "idle" });
-          store.setActionInProgress(false);
-        }
-      },
-    };
-  }
 
   const fetchPartialUpdate = createPartialUpdater({
     store,
@@ -261,20 +75,19 @@ export function createServerActionBridge(
    */
   async function handleServerAction(id: string, args: any[]): Promise<unknown> {
     // Normalize action ID to just the function name for store tracking
-    const locationKey = window.history.state.key;
+    const locationKey = window.history.state?.key;
     const actionId = normalizeActionId(id);
     console.log("ID", { id, actionId, args });
 
-    // Create action-specific disposable controller
-    // Actions use separate tracking - NOT aborted by navigation
-    using disposable = requestController.createActionDisposable();
-    const abortController = disposable.controller;
+    // Start action in event controller - handles lifecycle tracking
+    using handle = eventController.startAction(actionId, args);
 
     const segmentState = store.getSegmentState();
     console.log(`[Browser] Args:`, args);
 
-    // Transaction for action state and inflight tracking (cleanup on scope exit)
-    using tx = createActionTransaction(actionId, args, abortController.signal);
+    // Mark cache as stale immediately when action starts
+    // This ensures SWR pattern kicks in if user navigates away during action
+    store.markCacheAsStaleAndBroadcast();
 
     // Create temporary references for serialization
     const temporaryReferences = deps.createTemporaryReferenceSet();
@@ -314,6 +127,9 @@ export function createServerActionBridge(
     // Get intercept source URL if in intercept context
     const interceptSourceUrl = store.getInterceptSourceUrl();
 
+    // Track streaming token - will be set when response arrives
+    let streamingToken: { end(): void } | null = null;
+
     // Send action request with stream tracking
     const responsePromise = fetch(url, {
       method: "POST",
@@ -327,8 +143,14 @@ export function createServerActionBridge(
       },
       body: encodedBody,
     }).then(async (response) => {
+      // Start streaming immediately when response arrives
+      if (!handle.signal.aborted) {
+        streamingToken = handle.startStreaming();
+      }
+
       if (!response.body) {
         // No body means stream is already complete
+        streamingToken?.end();
         resolveStreamComplete();
         return response;
       }
@@ -338,25 +160,21 @@ export function createServerActionBridge(
 
       // Consume the tracking stream to detect when it closes
       (async () => {
-        await using streamScope = createStreamScope(
-          trackingStream,
-          tx.signal,
-          actionId, // Pass normalized action ID for state tracking
-          () => {
-            console.log("[STREAMING] RSC stream complete");
-            resolveStreamComplete();
+        const reader = trackingStream.getReader();
+        try {
+          while (true) {
+            const { done } = await reader.read();
+            if (done) break;
           }
-        );
-        const { reader } = streamScope;
-
-        while (true) {
-          const { done } = await reader.read();
-          if (done) break;
+        } finally {
+          reader.releaseLock();
+          console.log("[STREAMING] RSC stream complete");
+          streamingToken?.end();
+          resolveStreamComplete();
         }
-        await reader.closed;
-        // All cleanup (releaseLock, isStreaming: false, resolveStreamComplete) happens on scope exit
       })().catch((error) => {
         console.error("[STREAMING] Error reading tracking stream:", error);
+        streamingToken?.end();
       });
 
       // Return response with the RSC stream
@@ -392,10 +210,10 @@ export function createServerActionBridge(
 
       // Abort all other pending action requests - error takes precedence
       // This prevents other actions from completing and overwriting the error UI
-      requestController.abortAllActions();
+      eventController.abortAllActions();
 
       // Clear concurrent action tracking - no consolidation needed when showing error
-      tx.clearConsolidation();
+      handle.clearConsolidation();
 
       // Get current page's cached segments
       const currentKey = store.getHistoryKey();
@@ -416,7 +234,6 @@ export function createServerActionBridge(
       });
 
       // INTERCEPT HANDLING: Separate intercept segments for explicit injection
-      // Same logic as partial-update.ts to ensure intercepts render in correct slots
       const isInterceptSegment = (s: ResolvedSegment) =>
         s.namespace?.startsWith("intercept:") ||
         (s.type === "parallel" && s.id.includes(".@"));
@@ -440,26 +257,28 @@ export function createServerActionBridge(
       console.log(`[Browser] Error boundary UI rendered`);
 
       // Update segment tracking to exclude error segment IDs
-      // This ensures the next navigation will re-fetch these segments
-      // instead of assuming they're still cached
       const errorSegmentIds = new Set(diff);
       const segmentIdsAfterError = segmentState.currentSegmentIds.filter(
         (id) => !errorSegmentIds.has(id)
       );
-      tx.commit(segmentIdsAfterError, fullSegments);
+
+      // Update store state
+      store.setSegmentIds(segmentIdsAfterError);
+      store.cacheSegmentsForHistory(currentKey, fullSegments);
+
       console.log(
         `[Browser] Segment IDs updated (excluding error segments):`,
         segmentIdsAfterError
       );
 
       // Throw the error so the action promise rejects
-      // This allows the calling component to catch it if needed
       if (returnValue && !returnValue.ok) {
-        tx.error(returnValue.data);
+        handle.fail(returnValue.data);
         throw returnValue.data;
       }
 
-      // No error in returnValue (shouldn't happen with isError: true, but handle gracefully)
+      // No error in returnValue (shouldn't happen with isError: true)
+      handle.complete(undefined);
       return undefined;
     }
 
@@ -473,7 +292,7 @@ export function createServerActionBridge(
 
       // Record revalidated segments for concurrent action tracking
       if (diff) {
-        tx.recordRevalidatedSegments(diff);
+        handle.recordRevalidatedSegments(diff);
       }
 
       // Get current page's cached segments for merging
@@ -527,67 +346,42 @@ export function createServerActionBridge(
 
       const returnData = returnValue?.data;
 
-      store.setActionState(actionId, {
-        state: "streaming",
-        result: returnData,
-        error: null,
-      });
       console.log(
         `[Browser] Action complete - UI updated (after action state committed)`
       );
 
-      streamComplete.then(() => {
-        console.log("settingstate", actionId, "idle");
-        // Emit action state: idle with result (preserves payload)
-        store.setActionState(actionId, {
-          state: "idle",
-          result: returnData,
-          error: null,
-        });
-      });
-
       if (returnValue && !returnValue.ok) {
-        tx.error(returnValue.data);
+        handle.fail(returnValue.data);
         throw returnValue.data;
       }
 
       // Check if user navigated away during the action
-      // IMPORTANT: This check MUST come before HMR resilience check because:
-      // - If user navigated away, the current cache has segments for the NEW route
-      // - The action response expects segments from the OLD route
-      // - Missing segments are NOT due to HMR, but due to navigation
-      // - HMR refetch would use window.location.href (new route), causing mismatch
-      // We compare window.location.pathname (not store.path) because:
-      // - For intercepts, store.path stays as base route while URL changes
-      // - For regular routes, both change but pathname is the source of truth
       const currentPathname = window.location.pathname;
       const userNavigatedAway =
         currentPathname !== actionStartPathname ||
-        window.history.state.key !== locationKey;
+        window.history.state?.key !== locationKey;
 
       if (userNavigatedAway) {
         console.log(
           `[Browser] User navigated away during action (${actionStartPathname} -> ${currentPathname}), refetching current route`
         );
         // Clear concurrent action tracking - don't consolidate for old route's segments
-        tx.clearConsolidation();
-        // Refetch current route to show fresh data. This is correct for all cases:
-        // - Intercepts: action on /kanban/card/1 may update data visible on /kanban
-        // - Regular routes: action on /page-a may update shared data visible on /page-b
-        // Mark cache as stale (SWR pattern) - current page gets fresh data from refetch,
-        // other pages will revalidate on next access
+        handle.clearConsolidation();
+        // Refetch current route
         store.markCacheAsStaleAndBroadcast();
-        const navTx = createNavigationTransaction(
+        using navTx = createNavigationTransaction(
           store,
-          abortController.signal
+          eventController,
+          window.location.href,
+          { replace: true, skipLoadingState: true }
         );
-        // Preserve intercept context for proper cache key generation
+        // Preserve intercept context
         const currentInterceptSource = store.getInterceptSourceUrl();
         await fetchPartialUpdate(
           window.location.href,
           [], // Empty array = refetch all segments for current route
           false,
-          abortController.signal,
+          navTx.handle.signal,
           navTx.with({
             url: window.location.href,
             storeOnly: true,
@@ -600,27 +394,27 @@ export function createServerActionBridge(
           }
         );
         console.log(`[Browser] Refetch after navigation complete`);
+        handle.complete(returnData);
         return returnData;
       }
 
       // HMR resilience check - only runs if user DIDN'T navigate away
-      // At this point we know user is still on the same route, but segments are missing
-      // This indicates actual HMR (module hot reload cleared the segment modules)
       if (fullSegments.length < matched.length) {
         console.warn(
           `[Browser] Missing segments after action (HMR detected), refetching...`
         );
 
-        // Refetch and update UI FIRST (storeOnly - don't change URL)
-        const navTx = createNavigationTransaction(
+        using navTx = createNavigationTransaction(
           store,
-          abortController.signal
+          eventController,
+          window.location.href,
+          { replace: true, skipLoadingState: true }
         );
         await fetchPartialUpdate(
           window.location.href,
           [],
           false,
-          abortController.signal,
+          navTx.handle.signal,
           navTx.with({
             url: window.location.href,
             storeOnly: true,
@@ -636,15 +430,14 @@ export function createServerActionBridge(
           `[Browser] Refetch complete (HMR), now returning action result`
         );
 
-        // Broadcast to other tabs (local cache has fresh data from navTx.commit)
+        // Broadcast to other tabs
         store.broadcastCacheInvalidation();
-        // Skip cache clear since we just refetched fresh data
-        tx.commit(undefined, undefined, true);
+        handle.complete(returnData);
         return returnData;
       }
 
       // Check if we need a consolidation fetch due to concurrent actions
-      const consolidationSegments = tx.getConsolidationSegments();
+      const consolidationSegments = handle.getConsolidationSegments();
 
       if (consolidationSegments && consolidationSegments.length > 0) {
         // This is the last concurrent action - do consolidation fetch
@@ -664,22 +457,21 @@ export function createServerActionBridge(
         );
 
         // Clear consolidation tracking before fetch
-        tx.clearConsolidation();
-        tx.commit(undefined, undefined, true);
+        handle.clearConsolidation();
 
-        // Do consolidation fetch to get fresh data for all revalidated segments
-        // This will handle the UI update via onUpdate in partial-update
-        // NOTE: Don't clear cache before fetch - it's needed for segment merging
-        const navTx = createNavigationTransaction(
+        using navTx = createNavigationTransaction(
           store,
-          abortController.signal
+          eventController,
+          window.location.href,
+          { replace: true, skipLoadingState: true }
         );
+
         console.warn("Fetch partial", id);
         await fetchPartialUpdate(
           window.location.href,
           segmentsToSend,
           false,
-          abortController.signal,
+          navTx.handle.signal,
           navTx.with({
             url: window.location.href,
             storeOnly: true,
@@ -693,33 +485,39 @@ export function createServerActionBridge(
         );
 
         console.log(`[Browser] Consolidation fetch complete`);
-        // Broadcast to other tabs (local cache has fresh data from navTx.commit)
+        // Broadcast to other tabs
         store.broadcastCacheInvalidation();
         console.log(
           `[Browser] Consolidate/Reconcile - Returning to React:`,
           returnData
         );
 
+        handle.complete(returnData);
         return returnData;
       }
 
-      // Check if there are still other actions pending
-      // If so, skip UI update and cache broadcast - the last action will handle consolidation
-      if (pendingActionCount > 1) {
+      // Check if there are OTHER actions still pending (not yet completed)
+      // Exclude the current action since we're about to complete it
+      const otherIncompleteActions = [...eventController.getInflightActions().values()].filter(
+        (a) => !a.completed && a.id !== handle.id
+      );
+      if (otherIncompleteActions.length > 0) {
         console.log(
-          `[Browser] Skipping UI update - ${pendingActionCount - 1} other action(s) still pending`
+          `[Browser] Skipping UI update - ${otherIncompleteActions.length} other action(s) still pending`
         );
         console.log(
-          `[Browser]  Multi actions - Returning to React(no cache clear):`,
+          `[Browser] Multi actions - Returning to React (no cache clear):`,
           returnData
         );
-        tx.commit(matched, fullSegments, true); // Skip cache clear - last action will broadcast
+        // Update store but skip broadcast - last action will handle it
+        store.setSegmentIds(matched);
+        store.cacheSegmentsForHistory(currentKey, fullSegments);
+        handle.complete(returnData);
         return returnData;
       }
 
       // No concurrent actions - normal flow with single action
       // INTERCEPT HANDLING: Separate intercept segments for explicit injection
-      // Same logic as partial-update.ts to ensure intercepts render in correct slots
       const isInterceptSegment = (s: ResolvedSegment) =>
         s.namespace?.startsWith("intercept:") ||
         (s.type === "parallel" && s.id.includes(".@"));
@@ -728,8 +526,6 @@ export function createServerActionBridge(
       const mainSegments = fullSegments.filter((s) => !isInterceptSegment(s));
 
       // Prepare new tree (await loader data resolution)
-      // Pass isAction: true to await component promises on client
-      // Pass intercept segments separately for explicit slot injection
       const renderOptions = {
         isAction: true,
         interceptSegments:
@@ -743,17 +539,22 @@ export function createServerActionBridge(
         console.log(
           `[Browser] User navigated during UI update scheduling, skipping`
         );
-        return;
+        handle.complete(returnData);
+        return returnData;
       }
       console.log("Update", id);
 
       startTransition(() => {
         onUpdate({ root: newTree, metadata: metadata! });
       });
-      console.log("settingstate", actionId, "streaming");
+
+      // Update store state
+      store.setSegmentIds(matched);
+      store.cacheSegmentsForHistory(currentKey, fullSegments);
+      store.markCacheAsStaleAndBroadcast();
 
       console.log(`[Browser] Normal - Returning to React:`, returnData);
-      tx.commit(matched, fullSegments, false);
+      handle.complete(returnData);
       return returnData;
     } else {
       // Full update not supported for actions
@@ -784,8 +585,6 @@ export function createServerActionBridge(
       if (!isRegistered) {
         return;
       }
-      // Note: setServerCallback doesn't have an unregister API
-      // We just mark as unregistered to prevent duplicate registration
       isRegistered = false;
       console.log("[Browser] Server action bridge unregistered");
     },

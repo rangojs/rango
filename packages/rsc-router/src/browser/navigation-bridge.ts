@@ -13,6 +13,12 @@ import {
   handleNavigationEnd,
   ensureHistoryKey,
 } from "./scroll-restoration.js";
+import type { EventController, NavigationHandle } from "./event-controller.js";
+
+// Polyfill Symbol.dispose for Safari and older browsers
+if (typeof Symbol.dispose === "undefined") {
+  (Symbol as any).dispose = Symbol("Symbol.dispose");
+}
 
 /**
  * Check if a segment is an intercept segment
@@ -31,14 +37,7 @@ function isInterceptSegment(s: ResolvedSegment): boolean {
  * whether interception happens depends on the current page context
  */
 function isInterceptOnlyCache(segments: ResolvedSegment[]): boolean {
-  // If any segment is an intercept segment, treat the whole cache as intercept-only
-  // because we can't reuse it - interception depends on source page context
   return segments.some(isInterceptSegment);
-}
-
-// Polyfill Symbol.dispose for Safari and older browsers
-if (typeof Symbol.dispose === "undefined") {
-  (Symbol as any).dispose = Symbol("Symbol.dispose");
 }
 
 /**
@@ -77,10 +76,19 @@ interface BoundCommitOverrides {
 }
 
 /**
+ * Token for tracking an active stream - call end() when stream completes
+ */
+export interface StreamingToken {
+  end(): void;
+}
+
+/**
  * Bound transaction with pre-configured commit options (without segmentIds/segments)
  */
 export interface BoundTransaction {
   readonly currentUrl: string;
+  /** Start streaming and get a token to end it when the stream completes */
+  startStreaming(): StreamingToken;
   commit(
     segmentIds: string[],
     segments: ResolvedSegment[],
@@ -89,15 +97,8 @@ export interface BoundTransaction {
 }
 
 /**
- * Options for creating a navigation transaction
- */
-interface TransactionOptions {
-  /** If true, skip setting loading state (for optimistic renders with cache) */
-  skipLoadingState?: boolean;
-}
-
-/**
  * Navigation transaction for managing state during navigation
+ * Uses the event controller handle for lifecycle management
  */
 interface NavigationTransaction extends Disposable {
   /** Optimistically commit from cache - instant render before revalidation */
@@ -107,10 +108,12 @@ interface NavigationTransaction extends Disposable {
   with(
     options: Omit<CommitOptions, "segmentIds" | "segments">
   ): BoundTransaction;
+  /** The navigation handle from the event controller */
+  handle: NavigationHandle;
 }
 
 /**
- * Creates a disposable transaction for navigation state management.
+ * Creates a navigation transaction that coordinates with the event controller.
  * Handles loading state transitions and cleanup on completion/abort.
  *
  * Supports optimistic navigation: render from cache immediately,
@@ -118,25 +121,16 @@ interface NavigationTransaction extends Disposable {
  */
 function createNavigationTransaction(
   store: NavigationStore,
-  signal: AbortSignal,
-  options?: TransactionOptions
+  eventController: EventController,
+  url: string,
+  options?: NavigateOptions & { skipLoadingState?: boolean }
 ): NavigationTransaction {
   let committed = false;
   let optimisticallyCommitted = false;
   const currentUrl = window.location.href;
-  // Only set loading state if not doing optimistic render from cache
-  if (!options?.skipLoadingState) {
-    store.setState({ state: "loading" });
-  }
-  // handle abort
-  // we need to cleanup just before new navigation starts
-  signal.addEventListener(
-    "abort",
-    () => {
-      store.setState({ state: "idle", isStreaming: false });
-    },
-    { once: true }
-  );
+
+  // Start navigation in event controller (this sets loading state)
+  const handle = eventController.startNavigation(url, options);
 
   /**
    * Optimistically commit from cache - renders immediately before revalidation
@@ -147,6 +141,7 @@ function createNavigationTransaction(
 
     const { url, segmentIds, segments, replace, scroll } = opts;
     const parsedUrl = new URL(url, window.location.origin);
+
     // Save current scroll position before navigating
     handleNavigationStart();
 
@@ -172,11 +167,8 @@ function createNavigationTransaction(
     // Ensure new history entry has a scroll restoration key
     ensureHistoryKey();
 
-    // Set idle state (content is visible from cache)
-    store.setState({
-      state: "idle",
-      location: parsedUrl,
-    });
+    // Complete the navigation in event controller (sets idle state)
+    handle.complete(parsedUrl);
 
     // Handle scroll after navigation
     handleNavigationEnd({ scroll });
@@ -237,9 +229,11 @@ function createNavigationTransaction(
     // Cache segments for this history entry (fresh data overwrites optimistic)
     store.cacheSegmentsForHistory(historyKey, segments);
 
-    // For server actions, skip URL/history updates
+    // For server actions, skip URL/history updates but still complete navigation
     if (storeOnly) {
       console.log("[Browser] Store updated (action)");
+      // Complete navigation to clear loading state
+      handle.complete(parsedUrl);
       return;
     }
 
@@ -259,11 +253,8 @@ function createNavigationTransaction(
       ensureHistoryKey();
     }
 
-    // Update store with new location and idle state
-    store.setState({
-      state: "idle",
-      location: parsedUrl,
-    });
+    // Complete the navigation in event controller (sets idle state, updates location)
+    handle.complete(parsedUrl);
 
     // Handle scroll after navigation (skip if reconciliation)
     if (!isReconciliation) {
@@ -282,6 +273,7 @@ function createNavigationTransaction(
   }
 
   return {
+    handle,
     optimisticCommit,
     commit,
 
@@ -296,6 +288,9 @@ function createNavigationTransaction(
         get currentUrl() {
           return currentUrl;
         },
+        startStreaming() {
+          return handle.startStreaming();
+        },
         commit: (
           segmentIds: string[],
           segments: ResolvedSegment[],
@@ -308,7 +303,6 @@ function createNavigationTransaction(
           const finalReplace =
             overrides?.replace !== undefined ? overrides.replace : opts.replace;
           // Intercept info: overrides take precedence, fallback to opts
-          // This ensures stale revalidation preserves intercept state from opts
           const intercept =
             overrides?.intercept !== undefined
               ? overrides.intercept
@@ -338,11 +332,13 @@ function createNavigationTransaction(
 
     [Symbol.dispose]() {
       // If aborted, another navigation took over - don't touch state
-      if (signal.aborted) return;
+      if (handle.signal.aborted) return;
 
-      // If not committed (and not optimistically committed), reset to idle
+      // If not committed (and not optimistically committed), the handle's dispose
+      // will reset state to idle via the event controller
       if (!committed && !optimisticallyCommitted) {
-        store.setState({ state: "idle" });
+        handle[Symbol.dispose]();
+        // The NavigationHandle's [Symbol.dispose] handles this
       }
     },
   };
@@ -352,6 +348,13 @@ function createNavigationTransaction(
 export { createNavigationTransaction };
 
 /**
+ * Extended configuration for navigation bridge with event controller
+ */
+export interface NavigationBridgeConfigWithController extends NavigationBridgeConfig {
+  eventController: EventController;
+}
+
+/**
  * Create a navigation bridge for handling client-side navigation
  *
  * The bridge coordinates all navigation operations:
@@ -359,26 +362,15 @@ export { createNavigationTransaction };
  * - Browser back/forward (popstate)
  * - Programmatic navigation
  *
+ * Uses the event controller for reactive state management.
+ *
  * @param config - Bridge configuration
  * @returns NavigationBridge instance
- *
- * @example
- * ```typescript
- * const bridge = createNavigationBridge({
- *   store,
- *   client,
- *   requestController,
- *   onUpdate: (update) => store.emit(update),
- *   renderSegments,
- * });
- *
- * bridge.registerLinkInterception();
- * ```
  */
 export function createNavigationBridge(
-  config: NavigationBridgeConfig
+  config: NavigationBridgeConfigWithController
 ): NavigationBridge {
-  const { store, client, requestController, onUpdate, renderSegments } = config;
+  const { store, client, eventController, onUpdate, renderSegments } = config;
 
   // Create shared partial updater
   const fetchPartialUpdate = createPartialUpdater({
@@ -399,7 +391,7 @@ export function createNavigationBridge(
       const currentPath = new URL(window.location.href).pathname;
       const targetPath = new URL(url, window.location.origin).pathname;
       if (currentPath !== targetPath) {
-        requestController.abortAll();
+        eventController.abortNavigation();
       }
 
       // Check if we have cached segments for target URL
@@ -413,50 +405,21 @@ export function createNavigationBridge(
         cachedSegments.length > 0 &&
         !isInterceptOnlyCache(cachedSegments);
 
-      using disposable = requestController.createDisposable();
-      using tx = createNavigationTransaction(
-        store,
-        disposable.controller.signal,
-        { skipLoadingState: hasUsableCache } // Skip loading state if we have usable cache
-      );
-
-      // // OPTIMISTIC: If we have usable cache, render immediately
-      // if (false && hasUsableCache && cachedSegments) {
-      //   console.log("[Browser] Optimistic render from cache for:", historyKey);
-
-      //   // Render cached segments
-      //   const root = renderSegments(cachedSegments);
-      //   onUpdate({
-      //     root,
-      //     metadata: {
-      //       pathname: new URL(url, window.location.origin).pathname,
-      //       segments: cachedSegments,
-      //       isPartial: true,
-      //       matched: cachedSegments.map((s) => s.id),
-      //       diff: [],
-      //     },
-      //   });
-
-      //   // Commit optimistically (updates URL, store, scrolls)
-      //   tx.optimisticCommit({
-      //     url,
-      //     segmentIds: cachedSegments.map((s) => s.id),
-      //     segments: cachedSegments,
-      //     replace: options?.replace,
-      //     scroll: options?.scroll,
-      //   });
-      // }
+      using tx = createNavigationTransaction(store, eventController, url, {
+        ...options,
+        skipLoadingState: hasUsableCache,
+      });
 
       // REVALIDATE: Fetch fresh data from server
-      // If optimistic, this reconciles; if not, this is the first fetch
       try {
         await fetchPartialUpdate(
           url,
           hasUsableCache ? cachedSegments!.map((s) => s.id) : undefined,
           false,
-          disposable.controller.signal,
+          tx.handle.signal,
           tx.with({ url, replace: options?.replace, scroll: options?.scroll })
         );
+        tx;
       } catch (error) {
         // Ignore AbortError - navigation was cancelled by a newer navigation
         if (error instanceof DOMException && error.name === "AbortError") {
@@ -471,11 +434,13 @@ export function createNavigationBridge(
      * Refresh current route
      */
     async refresh(): Promise<void> {
-      requestController.abortAll();
-      using disposable = requestController.createDisposable();
+      eventController.abortNavigation();
+
       using tx = createNavigationTransaction(
         store,
-        disposable.controller.signal
+        eventController,
+        window.location.href,
+        { replace: true }
       );
 
       // Refetch with empty segments to get everything fresh
@@ -483,7 +448,7 @@ export function createNavigationBridge(
         window.location.href,
         [],
         false,
-        disposable.controller.signal,
+        tx.handle.signal,
         tx.with({ url: window.location.href, replace: true, scroll: false })
       );
     },
@@ -494,7 +459,7 @@ export function createNavigationBridge(
      */
     async handlePopstate(): Promise<void> {
       // Abort any pending navigation to prevent race conditions
-      requestController.abortAll();
+      eventController.abortNavigation();
 
       const url = window.location.href;
 
@@ -505,15 +470,13 @@ export function createNavigationBridge(
 
       // Check if intercept context is changing (same URL, different intercept state)
       // If so, abort in-flight actions - their results would be for wrong context
-      // Example: action on /shop/product/1 (non-intercepted) completes after user
-      // navigated back to /shop/product/1 (intercepted) - action result is wrong
       const currentInterceptSource = store.getInterceptSourceUrl();
       const newInterceptSource = interceptSourceUrl ?? null;
       if (currentInterceptSource !== newInterceptSource) {
         console.log(
           `[Browser] Intercept context changing (${currentInterceptSource} -> ${newInterceptSource}), aborting in-flight actions`
         );
-        requestController.abortAllActions();
+        eventController.abortAllActions();
       }
 
       // Compute history key from URL (with intercept suffix if applicable)
@@ -526,11 +489,8 @@ export function createNavigationBridge(
         historyKey
       );
 
-      // Update location from browser URL
-      store.setState({
-        state: "loading",
-        location: new URL(url),
-      });
+      // Update location in event controller
+      eventController.setLocation(new URL(url));
 
       // If this is an intercept, restore the intercept context
       if (isIntercept && interceptSourceUrl) {
@@ -540,7 +500,7 @@ export function createNavigationBridge(
       }
 
       // Helper to check if streaming is in progress
-      const isStreaming = () => store.getState().isStreaming;
+      const isStreaming = () => eventController.getState().isStreaming;
 
       // Check if we can restore from history cache
       const cached = store.getCachedSegments(historyKey);
@@ -575,7 +535,6 @@ export function createNavigationBridge(
               diff: [],
             },
           });
-          store.setState({ state: "idle" });
 
           // Restore scroll position for back/forward navigation
           handleNavigationEnd({ restore: true, isStreaming });
@@ -584,35 +543,30 @@ export function createNavigationBridge(
           if (isStale) {
             console.log("[Browser] Cache is stale, background revalidating...");
             // Background revalidation - don't await, just fire and forget
-            // Send all segment IDs to let revalidators decide what to refetch
-            // Pass staleRevalidation=true so server knows to force revalidators
-            // For intercept routes, pass the source URL so server activates intercept
-            // Also preserve intercept state in history when committing
             const segmentIds = cachedSegments.map((s) => s.id);
-            using disposable = requestController.createDisposable();
+
             using tx = createNavigationTransaction(
               store,
-              disposable.controller.signal,
-              { skipLoadingState: true } // Don't show loading state
+              eventController,
+              url,
+              { skipLoadingState: true, replace: true }
             );
+
             fetchPartialUpdate(
               url,
               segmentIds,
               false,
-              disposable.controller.signal,
+              tx.handle.signal,
               tx.with({
                 url,
                 replace: true,
                 scroll: false,
-                // Preserve intercept state for cache key generation
                 intercept: isIntercept,
                 interceptSourceUrl,
-                // Cache-only: don't touch store or history, user may have navigated away
                 cacheOnly: true,
               }),
               { staleRevalidation: true, interceptSourceUrl }
             ).catch((error) => {
-              // Ignore AbortError - navigation was cancelled
               if (
                 error instanceof DOMException &&
                 error.name === "AbortError"
@@ -636,18 +590,16 @@ export function createNavigationBridge(
       }
 
       // Fetch if not cached
-      using disposable = requestController.createDisposable();
-      using tx = createNavigationTransaction(
-        store,
-        disposable.controller.signal
-      );
+      using tx = createNavigationTransaction(store, eventController, url, {
+        replace: true,
+      });
 
       try {
         await fetchPartialUpdate(
           url,
           undefined,
           false,
-          disposable.controller.signal,
+          tx.handle.signal,
           tx.with({ url, replace: true, scroll: false })
         );
         // Restore scroll position after fetch completes

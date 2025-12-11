@@ -5,9 +5,12 @@ import path from "path";
 import { rscRouter } from "rsc-router/vite";
 
 export default defineConfig({
-  plugins: [rsc(), react(), rscRouter()],
+  plugins: [react(), rsc(), rscRouter()],
   esbuild: {
     target: "es2022",
+  },
+  build: {
+    sourcemap: true,
   },
   resolve: {
     alias: {

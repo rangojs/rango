@@ -59,8 +59,29 @@ export {
   setupLinkInterception,
   defaultShouldIntercept,
 } from "./link-interceptor.js";
-export { createServerActionBridge } from "./server-action-bridge.js";
-export { createNavigationBridge } from "./navigation-bridge.js";
+export {
+  createServerActionBridge,
+  type ServerActionBridgeConfigWithController,
+} from "./server-action-bridge.js";
+export {
+  createNavigationBridge,
+  type NavigationBridgeConfigWithController,
+} from "./navigation-bridge.js";
+
+// Event controller for reactive state management
+export {
+  createEventController,
+  initEventController,
+  getEventController,
+  resetEventController,
+  type EventController,
+  type EventControllerConfig,
+  type NavigationHandle,
+  type ActionHandle,
+  type NavigationEntry,
+  type ActionEntry,
+  type DerivedNavigationState,
+} from "./event-controller.js";
 
 // Shallow comparison utility
 export { shallow } from "./shallow.js";
