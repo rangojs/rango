@@ -78,7 +78,7 @@ function parseRscMetadata(body: string): RscResponse["metadata"] {
 
 test.describe("revalidation-precision", () => {
   const f = useFixture({
-    root: "../../examples/vite-rsc-demo",
+    root: "./e2e/test-app",
     mode: "dev",
   });
 
@@ -106,17 +106,17 @@ test.describe("revalidation-precision", () => {
       }
     });
 
-    // Navigate to shop
-    await page.goto(f.url("/shop"));
+    // Navigate to index
+    await page.goto(f.url("/"));
     await waitForHydration(page);
 
     // Clear requests from initial load
     requests.length = 0;
 
     // Navigate to product (intercept)
-    const productLink = page.locator('a[href*="/shop/product/"]').first();
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
     await productLink.click();
-    await expect(page.locator('div[style*="position: fixed"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
 
     // Verify an RSC request was made
     expect(requests.length).toBeGreaterThan(0);
@@ -146,17 +146,17 @@ test.describe("revalidation-precision", () => {
       }
     });
 
-    // Navigate to shop
-    await page.goto(f.url("/shop"));
+    // Navigate to index
+    await page.goto(f.url("/"));
     await waitForHydration(page);
 
     // Clear requests
     rscRequests.length = 0;
 
     // Navigate to product (intercept)
-    const productLink = page.locator('a[href*="/shop/product/"]').first();
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
     await productLink.click();
-    await expect(page.locator('div[style*="position: fixed"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
 
     // Intercept navigation should make RSC request
     expect(rscRequests.length).toBeGreaterThan(0);
@@ -167,14 +167,14 @@ test.describe("revalidation-precision", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    // Navigate to shop
-    await page.goto(f.url("/shop"));
+    // Navigate to index
+    await page.goto(f.url("/"));
     await waitForHydration(page);
 
     // Open product modal
-    const productLink = page.locator('a[href*="/shop/product/"]').first();
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
     await productLink.click();
-    await expect(page.locator('div[style*="position: fixed"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
 
     const actionRequests: string[] = [];
 
@@ -185,11 +185,9 @@ test.describe("revalidation-precision", () => {
       }
     });
 
-    // Perform action - use increment button (+ or "Add to Cart" depending on cart state)
-    const incrementButton = page.locator('button:has-text("+")').first();
-    const addButton = page.locator('button:has-text("Add to Cart")').first();
-    const button = await incrementButton.isVisible() ? incrementButton : addButton;
-    await button.click();
+    // Perform action - click quantity increment
+    const incrementButton = page.locator('[data-testid="modal-quantity-control"] button:has-text("+")');
+    await incrementButton.click();
 
     // Wait for action to complete
     await page.waitForTimeout(600);
@@ -201,12 +199,12 @@ test.describe("revalidation-precision", () => {
   test("back navigation should use cached segments", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    // Navigate to shop
-    await page.goto(f.url("/shop"));
+    // Navigate to index
+    await page.goto(f.url("/"));
     await waitForHydration(page);
 
     // Navigate to product detail (non-intercept, direct)
-    await page.goto(f.url("/shop/product/wireless-headphones"));
+    await page.goto(f.url("/product/product-a"));
     await waitForHydration(page);
 
     const requests: string[] = [];
@@ -222,7 +220,7 @@ test.describe("revalidation-precision", () => {
 
     // Navigate back
     await goBack(page);
-    await expect(page.locator('text=All Products')).toBeVisible();
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
 
     // Back navigation should restore from cache
     // UI should appear immediately (cache hit)
@@ -233,23 +231,23 @@ test.describe("revalidation-precision", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    // Navigate to shop
-    await page.goto(f.url("/shop"));
+    // Navigate to index
+    await page.goto(f.url("/"));
     await waitForHydration(page);
 
     // Navigate to product (intercept)
-    const productLink = page.locator('a[href*="/shop/product/"]').first();
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
     await productLink.click();
-    await expect(page.locator('div[style*="position: fixed"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
 
     // Navigate to full details
-    await page.locator('text=View Full Details').click();
-    await expect(page.locator('text=Segment Metadata')).toBeVisible();
+    await page.locator('[data-testid="view-full-details"]').click();
+    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
 
     // Go back - intercept should appear from cache instantly
     const startTime = Date.now();
     await goBack(page);
-    await expect(page.locator('div[style*="position: fixed"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
     const elapsed = Date.now() - startTime;
 
     // Cache restore should be fast (< 500ms typically)
@@ -261,14 +259,14 @@ test.describe("revalidation-precision", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    // Navigate to shop
-    await page.goto(f.url("/shop"));
+    // Navigate to index
+    await page.goto(f.url("/"));
     await waitForHydration(page);
 
     // Open product modal
-    const productLink = page.locator('a[href*="/shop/product/"]').first();
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
     await productLink.click();
-    await expect(page.locator('div[style*="position: fixed"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
 
     const actionRequests: string[] = [];
     page.on("request", (request) => {
@@ -277,19 +275,16 @@ test.describe("revalidation-precision", () => {
       }
     });
 
-    // Fire multiple rapid actions using Add to Cart button
-    const addToCartButton = page.locator('button:has-text("Add to Cart")').first();
-    if (await addToCartButton.isVisible()) {
-      await addToCartButton.click();
-      await addToCartButton.click();
-      await addToCartButton.click();
-    }
+    // Fire multiple rapid actions using quantity buttons
+    const incrementButton = page.locator('[data-testid="modal-quantity-control"] button:has-text("+")');
+    await incrementButton.click();
+    await incrementButton.click();
+    await incrementButton.click();
 
     // Wait for consolidation
     await page.waitForTimeout(2000);
 
-    // Multiple action requests should have been made (if button was visible)
-    // Note: Demo app may not support multiple rapid clicks
+    // Multiple action requests should have been made
   });
 
   test("intercept navigation should preserve background content", async ({
@@ -297,29 +292,29 @@ test.describe("revalidation-precision", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    // Navigate to shop
-    await page.goto(f.url("/shop"));
+    // Navigate to index
+    await page.goto(f.url("/"));
     await waitForHydration(page);
 
-    // Verify we can see shop content
-    await expect(page.locator('text=All Products')).toBeVisible();
+    // Verify we can see index content
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
 
     // Open intercept modal
-    const productLink = page.locator('a[href*="/shop/product/"]').first();
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
     await productLink.click();
-    await expect(page.locator('div[style*="position: fixed"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
 
     // Background segments should still be visible
-    await expect(page.locator('text=All Products')).toBeVisible();
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
 
     // Modal content should also be visible
-    await expect(page.locator('text=View Full Details')).toBeVisible();
+    await expect(page.locator('[data-testid="view-full-details"]')).toBeVisible();
   });
 });
 
 test.describe("revalidation-headers", () => {
   const f = useFixture({
-    root: "../../examples/vite-rsc-demo",
+    root: "./e2e/test-app",
     mode: "dev",
   });
 
@@ -340,15 +335,15 @@ test.describe("revalidation-headers", () => {
       }
     });
 
-    // Navigate to shop
-    await page.goto(f.url("/shop"));
+    // Navigate to index
+    await page.goto(f.url("/"));
     await waitForHydration(page);
     headers.length = 0;
 
     // Navigate to product (intercept)
-    const productLink = page.locator('a[href*="/shop/product/"]').first();
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
     await productLink.click();
-    await expect(page.locator('div[style*="position: fixed"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
 
     // Request should have client path header
     const navRequest = headers.find((h) => h["x-rsc-router-client-path"]);
@@ -367,24 +362,22 @@ test.describe("revalidation-headers", () => {
       }
     });
 
-    // Navigate to shop
-    await page.goto(f.url("/shop"));
+    // Navigate to index
+    await page.goto(f.url("/"));
     await waitForHydration(page);
 
     // Open product modal
-    const productLink = page.locator('a[href*="/shop/product/"]').first();
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
     await productLink.click();
-    await expect(page.locator('div[style*="position: fixed"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
 
-    // Perform action (Add to Cart)
-    const addToCartButton = page.locator('button:has-text("Add to Cart")').first();
-    if (await addToCartButton.isVisible()) {
-      await addToCartButton.click();
-      await page.waitForTimeout(600);
+    // Perform action (quantity increment)
+    const incrementButton = page.locator('[data-testid="modal-quantity-control"] button:has-text("+")');
+    await incrementButton.click();
+    await page.waitForTimeout(600);
 
-      // Action request should have the action ID header
-      expect(headers.length).toBeGreaterThan(0);
-      expect(headers[0]["rsc-action"]).toBeDefined();
-    }
+    // Action request should have the action ID header
+    expect(headers.length).toBeGreaterThan(0);
+    expect(headers[0]["rsc-action"]).toBeDefined();
   });
 });
