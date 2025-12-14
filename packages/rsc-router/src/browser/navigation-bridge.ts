@@ -14,6 +14,9 @@ import {
   ensureHistoryKey,
 } from "./scroll-restoration.js";
 import type { EventController, NavigationHandle } from "./event-controller.js";
+import { NetworkError, isNetworkError } from "../errors.js";
+import { NetworkErrorThrower } from "../network-error-thrower.js";
+import { createElement, startTransition } from "react";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -426,6 +429,33 @@ export function createNavigationBridge(
           console.log("[Browser] Navigation aborted by newer navigation");
           return;
         }
+
+        // Handle network errors by triggering root error boundary
+        if (error instanceof NetworkError || isNetworkError(error)) {
+          const networkError =
+            error instanceof NetworkError
+              ? error
+              : new NetworkError(
+                  "Unable to connect to server. Please check your connection.",
+                  { cause: error, url, operation: "navigation" }
+                );
+
+          console.error("[Browser] Network error during navigation:", networkError);
+
+          // Emit update with NetworkErrorThrower to trigger root error boundary
+          startTransition(() => {
+            onUpdate({
+              root: createElement(NetworkErrorThrower, { error: networkError }),
+              metadata: {
+                pathname: url,
+                segments: [],
+                isError: true,
+              },
+            });
+          });
+          return;
+        }
+
         throw error;
       }
     },
@@ -443,14 +473,42 @@ export function createNavigationBridge(
         { replace: true }
       );
 
-      // Refetch with empty segments to get everything fresh
-      await fetchPartialUpdate(
-        window.location.href,
-        [],
-        false,
-        tx.handle.signal,
-        tx.with({ url: window.location.href, replace: true, scroll: false })
-      );
+      try {
+        // Refetch with empty segments to get everything fresh
+        await fetchPartialUpdate(
+          window.location.href,
+          [],
+          false,
+          tx.handle.signal,
+          tx.with({ url: window.location.href, replace: true, scroll: false })
+        );
+      } catch (error) {
+        // Handle network errors by triggering root error boundary
+        if (error instanceof NetworkError || isNetworkError(error)) {
+          const networkError =
+            error instanceof NetworkError
+              ? error
+              : new NetworkError(
+                  "Unable to connect to server. Please check your connection.",
+                  { cause: error, url: window.location.href, operation: "revalidation" }
+                );
+
+          console.error("[Browser] Network error during refresh:", networkError);
+
+          startTransition(() => {
+            onUpdate({
+              root: createElement(NetworkErrorThrower, { error: networkError }),
+              metadata: {
+                pathname: window.location.href,
+                segments: [],
+                isError: true,
+              },
+            });
+          });
+          return;
+        }
+        throw error;
+      }
     },
 
     /**
@@ -574,6 +632,12 @@ export function createNavigationBridge(
                 console.log("[Browser] Background revalidation aborted");
                 return;
               }
+              // For background revalidation, network errors are logged but don't trigger error boundary
+              // since the user is already seeing cached content
+              if (error instanceof NetworkError || isNetworkError(error)) {
+                console.warn("[Browser] Background revalidation network error (cached content preserved):", error.message);
+                return;
+              }
               console.error("[Browser] Background revalidation failed:", error);
             });
           }
@@ -609,6 +673,32 @@ export function createNavigationBridge(
           console.log("[Browser] Popstate navigation aborted");
           return;
         }
+
+        // Handle network errors by triggering root error boundary
+        if (error instanceof NetworkError || isNetworkError(error)) {
+          const networkError =
+            error instanceof NetworkError
+              ? error
+              : new NetworkError(
+                  "Unable to connect to server. Please check your connection.",
+                  { cause: error, url, operation: "navigation" }
+                );
+
+          console.error("[Browser] Network error during popstate navigation:", networkError);
+
+          startTransition(() => {
+            onUpdate({
+              root: createElement(NetworkErrorThrower, { error: networkError }),
+              metadata: {
+                pathname: url,
+                segments: [],
+                isError: true,
+              },
+            });
+          });
+          return;
+        }
+
         throw error;
       }
     },

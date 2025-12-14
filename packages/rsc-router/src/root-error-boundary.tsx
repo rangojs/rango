@@ -1,7 +1,104 @@
 "use client";
 
-import { Component, useEffect, useState, type ReactNode } from "react";
+import { Component, useState, type ReactNode } from "react";
 import type { ClientErrorBoundaryFallbackProps } from "./types.js";
+
+/**
+ * Check if an error is a network-related error
+ */
+function isNetworkError(error: Error): boolean {
+  return error.name === "NetworkError";
+}
+
+/**
+ * Network error fallback UI with retry functionality
+ * Shows a connection-specific message and allows retrying via page refresh
+ */
+function NetworkErrorFallback({
+  error,
+  reset,
+}: ClientErrorBoundaryFallbackProps): ReactNode {
+  const [isRetrying, setIsRetrying] = useState(false);
+
+  const handleRetry = (): void => {
+    setIsRetrying(true);
+    // Refresh the page to retry the request
+    window.location.reload();
+  };
+
+  return (
+    <div
+      style={{
+        fontFamily: "system-ui, -apple-system, sans-serif",
+        padding: "2rem",
+        maxWidth: "600px",
+        margin: "2rem auto",
+        textAlign: "center",
+      }}
+    >
+      <div
+        style={{
+          fontSize: "3rem",
+          marginBottom: "1rem",
+        }}
+      >
+        {/* Simple cloud with x icon using CSS */}
+        <span style={{ color: "#9ca3af" }}>&#9729;</span>
+      </div>
+      <h1
+        style={{
+          color: "#374151",
+          fontSize: "1.5rem",
+          marginBottom: "0.5rem",
+        }}
+      >
+        Connection Error
+      </h1>
+      <p
+        style={{
+          color: "#6b7280",
+          marginBottom: "1.5rem",
+        }}
+      >
+        {error.message || "Unable to connect to the server. Please check your internet connection."}
+      </p>
+      <div style={{ display: "flex", gap: "1rem", justifyContent: "center" }}>
+        <button
+          type="button"
+          onClick={handleRetry}
+          disabled={isRetrying}
+          style={{
+            padding: "0.75rem 1.5rem",
+            backgroundColor: isRetrying ? "#9ca3af" : "#2563eb",
+            color: "white",
+            border: "none",
+            borderRadius: "0.375rem",
+            cursor: isRetrying ? "not-allowed" : "pointer",
+            fontSize: "1rem",
+            fontWeight: 500,
+          }}
+        >
+          {isRetrying ? "Retrying..." : "Retry"}
+        </button>
+        <button
+          type="button"
+          onClick={() => window.history.back()}
+          style={{
+            padding: "0.75rem 1.5rem",
+            backgroundColor: "transparent",
+            color: "#6b7280",
+            border: "1px solid #d1d5db",
+            borderRadius: "0.375rem",
+            cursor: "pointer",
+            fontSize: "1rem",
+          }}
+        >
+          Go Back
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Default fallback UI for root error boundary
@@ -158,19 +255,21 @@ export class RootErrorBoundary extends Component<
 
   render(): ReactNode {
     if (this.state.hasError && this.state.error) {
-      return (
-        <RootErrorFallback
-          error={{
-            message: this.state.error.message,
-            name: this.state.error.name,
-            stack: this.state.error.stack,
-            cause: this.state.error.cause,
-            segmentId: "root",
-            segmentType: "route",
-          }}
-          reset={this.reset}
-        />
-      );
+      const errorInfo = {
+        message: this.state.error.message,
+        name: this.state.error.name,
+        stack: this.state.error.stack,
+        cause: this.state.error.cause,
+        segmentId: "root",
+        segmentType: "route" as const,
+      };
+
+      // Use specialized fallback for network errors
+      if (isNetworkError(this.state.error)) {
+        return <NetworkErrorFallback error={errorInfo} reset={this.reset} />;
+      }
+
+      return <RootErrorFallback error={errorInfo} reset={this.reset} />;
     }
 
     return this.props.children;

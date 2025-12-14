@@ -22,6 +22,8 @@ export {
   HandlerError,
   BuildError,
   InvalidHandlerError,
+  NetworkError,
+  isNetworkError,
   sanitizeError,
 } from "./errors.js";
 

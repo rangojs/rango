@@ -11,8 +11,10 @@ import {
   mergeSegmentLoaders,
   needsLoaderMerge,
 } from "./merge-segment-loaders.js";
-import { startTransition } from "react";
+import { startTransition, createElement } from "react";
 import type { EventController, ActionHandle } from "./event-controller.js";
+import { NetworkError, isNetworkError } from "../errors.js";
+import { NetworkErrorThrower } from "../network-error-thrower.js";
 
 // Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -186,9 +188,50 @@ export function createServerActionBridge(
     });
 
     // Deserialize response (MUST use same temporaryReferences)
-    const payload = await deps.createFromFetch<RscPayload>(responsePromise, {
-      temporaryReferences,
-    });
+    let payload: RscPayload;
+    try {
+      payload = await deps.createFromFetch<RscPayload>(responsePromise, {
+        temporaryReferences,
+      });
+    } catch (error) {
+      // Clean up streaming token on error (may be null if fetch failed before .then() ran)
+      // The token is assigned in .then() callback which runs before this catch block,
+      // but TypeScript doesn't track cross-async assignments, so use type assertion
+      (streamingToken as { end(): void } | null)?.end();
+      // resolveStreamComplete is assigned in the Promise constructor so it's safe to call
+      resolveStreamComplete!();
+
+      // Convert network-level errors to NetworkError for proper handling
+      if (isNetworkError(error)) {
+        const networkError = new NetworkError(
+          "Unable to connect to server. Please check your connection.",
+          {
+            cause: error,
+            url: url.toString(),
+            operation: "action",
+          }
+        );
+
+        // Mark action as failed
+        handle.fail(networkError);
+
+        // Emit the network error so the root error boundary can catch it
+        // NetworkErrorThrower throws during render to trigger the error boundary
+        startTransition(() => {
+          onUpdate({
+            root: createElement(NetworkErrorThrower, { error: networkError }),
+            metadata: {
+              pathname: segmentState.currentUrl,
+              segments: [],
+              isError: true,
+            },
+          });
+        });
+
+        throw networkError;
+      }
+      throw error;
+    }
 
     console.log(`[Browser] Action response received:`, payload.metadata);
 
