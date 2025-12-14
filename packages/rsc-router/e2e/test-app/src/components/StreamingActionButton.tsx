@@ -2,6 +2,8 @@
 
 import { useActionState, use, Suspense, ReactNode } from "react";
 import { StreamingAction } from "../actions.jsx";
+import { useAction } from "../../../../src/browser/index.js";
+import { ServerActionFunction } from "../../../../src/browser/react/use-action.js";
 
 interface StreamingActionButtonProps {
   productId: string;
@@ -12,6 +14,15 @@ function StreamingResult({ promise }: { promise: Promise<ReactNode> }) {
   const result = use(promise);
   return <>{result}</>;
 }
+
+export const StreamingActionStatus = () => {
+  return (
+    <ActionStatus
+      testId="StreamingActionStatus-action-status"
+      action={StreamingAction}
+    />
+  );
+};
 
 /**
  * Button for streaming action - takes 3 seconds
@@ -46,7 +57,9 @@ export function StreamingActionButton({
         </button>
       </form>
       {state && (
-        <Suspense fallback={<div data-testid={`${testId}-loading`}>Streaming...</div>}>
+        <Suspense
+          fallback={<div data-testid={`${testId}-loading`}>Streaming...</div>}
+        >
           <div data-testid={`${testId}-result`}>
             <StreamingResult promise={state.promise} />
           </div>
@@ -59,6 +72,13 @@ export function StreamingActionButton({
 /**
  * Shows action status using useAction hook
  */
-export function ActionStatus({ testId }: { testId: string }) {
-  return <div data-testid={testId}>Action status: idle</div>;
+export function ActionStatus({
+  testId,
+  action,
+}: {
+  testId: string;
+  action: ServerActionFunction | string;
+}) {
+  const state = useAction(action);
+  return <div data-testid={testId}>Action status: {state.state}</div>;
 }

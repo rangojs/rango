@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "e2e",
+  fullyParallel: true,
   use: {
     screenshot: "only-on-failure",
     trace: "on-all-retries",
@@ -19,7 +20,7 @@ export default defineConfig({
       },
     },
   ],
-  workers: 1,
+  workers: 4,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   reporter: ["list", process.env.CI && "github"]

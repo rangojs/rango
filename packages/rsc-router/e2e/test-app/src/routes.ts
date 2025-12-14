@@ -8,4 +8,8 @@ export const testRoutes = route({
   product: {
     detail: "/product/:productId",
   },
+  // Routes for testing loader behavior with/without loading component
+  slow: "/slow",
+  slowStreaming: "/slow-streaming",
+  slowStreamingSkipSsr: "/slow-streaming-skip-ssr",
 });
