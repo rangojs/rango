@@ -40,9 +40,14 @@ test.describe("streaming-actions", () => {
       // Verify we're on detail page (not intercept)
       await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
 
-      // Find streaming action button
+      // Find streaming action button and status indicator
       const button = page.locator('[data-testid="streaming-btn"]');
+      const actionStatus = page.locator('[data-testid="StreamingActionStatus-action-status"]');
       await expect(button).toBeVisible();
+      await expect(actionStatus).toBeVisible();
+
+      // Verify initial state is idle
+      await expect(actionStatus).toContainText('idle');
 
       // Click to start streaming action
       await button.click();
@@ -50,8 +55,20 @@ test.describe("streaming-actions", () => {
       // Record start time
       const startTime = Date.now();
 
+      // Verify state transitions to loading
+      await expect(actionStatus).toContainText('loading', { timeout: 2000 });
+
+      // Verify "Streaming..." loading state appears in the result area
+      await expect(page.locator('[data-testid="streaming-btn-loading"]')).toContainText('Streaming...', { timeout: 5000 });
+
+      // Verify state transitions to streaming
+      await expect(actionStatus).toContainText('streaming', { timeout: 5000 });
+
       // Wait for the streaming result to show "Completed!"
       await expect(page.locator('[data-testid="streaming-btn-result"]')).toContainText('Completed', { timeout: 10000 });
+
+      // Verify state returns to idle after completion
+      await expect(actionStatus).toContainText('idle', { timeout: 5000 });
 
       // Verify timing - streaming completes after ~3000ms
       const elapsed = Date.now() - startTime;
@@ -204,13 +221,9 @@ test.describe("action-form-patterns", () => {
     await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
 
     // Find quantity control
-    const quantityDisplay = page.locator('[data-testid="quantity-control"] [data-testid="quantity-display"]');
     const incrementButton = page.locator('[data-testid="quantity-control"] button:has-text("+")');
 
     await expect(incrementButton).toBeVisible();
-
-    // Get initial quantity
-    const initialQuantity = await quantityDisplay.textContent();
 
     // Click increment
     await incrementButton.click();

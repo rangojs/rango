@@ -41,7 +41,7 @@ function normalizeActionId(actionId: string): string {
  * Actions passed as props from server components lose their metadata
  * during RSC serialization - use a string action name instead.
  */
-function getActionId(action: ServerActionFunction | string): string {
+export function getActionId(action: ServerActionFunction | string): string {
   invariant(
     typeof action === "function" || typeof action === "string",
     `useAction: action must be a function or string, got ${typeof action}`
@@ -80,7 +80,7 @@ The string must match the exported function name from your "use server" file.`
  * Server action function type
  * Server actions have a $$id property added by the RSC compiler
  */
-type ServerActionFunction = ((...args: any[]) => Promise<any>) & {
+export type ServerActionFunction = ((...args: any[]) => Promise<any>) & {
   $$id?: string;
 };
 
