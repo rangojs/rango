@@ -1,4 +1,4 @@
-import test, { type Page, expect } from "@playwright/test";
+import test, { type Page, type Locator, expect } from "@playwright/test";
 
 export const testNoJs = test.extend({
   javaScriptEnabled: ({}, use) => use(false),
@@ -108,4 +108,179 @@ export async function goForward(page: Page) {
     page.waitForURL(/.*/, { waitUntil: "networkidle" }),
     page.goForward(),
   ]);
+}
+
+/**
+ * Get a locator by data-testid attribute
+ *
+ * @example
+ * const button = testId(page, "submit-btn");
+ * await button.click();
+ *
+ * @example
+ * await expect(testId(page, "error-message")).toBeVisible();
+ */
+export function testId(page: Page, id: string): Locator {
+  return page.locator(`[data-testid="${id}"]`);
+}
+
+/**
+ * Click an element and wait for another element to become visible
+ *
+ * @example
+ * await clickAndWaitFor(
+ *   testId(page, "product-link"),
+ *   testId(page, "product-modal")
+ * );
+ *
+ * @example
+ * await clickAndWaitFor(submitBtn, successMessage, 10000);
+ */
+export async function clickAndWaitFor(
+  clickTarget: Locator,
+  waitFor: Locator,
+  timeout = 5000
+) {
+  await clickTarget.click();
+  await expect(waitFor).toBeVisible({ timeout });
+}
+
+/**
+ * Measure elapsed time for an async operation
+ * Returns { elapsed, result } where elapsed is in milliseconds
+ *
+ * @example
+ * const { elapsed } = await measureTime(async () => {
+ *   await page.goto("/slow-route");
+ *   await waitForHydration(page);
+ * });
+ * expect(elapsed).toBeGreaterThan(1000);
+ */
+export async function measureTime<T>(
+  fn: () => Promise<T>
+): Promise<{ elapsed: number; result: T }> {
+  const startTime = Date.now();
+  const result = await fn();
+  const elapsed = Date.now() - startTime;
+  return { elapsed, result };
+}
+
+/**
+ * Create a stopwatch for timing multiple checkpoints
+ *
+ * @example
+ * const stopwatch = createStopwatch();
+ * await button.click();
+ * const loadingTime = stopwatch.checkpoint();
+ * await expect(content).toBeVisible();
+ * const totalTime = stopwatch.elapsed();
+ * expect(loadingTime).toBeLessThan(500);
+ * expect(totalTime).toBeGreaterThan(1000);
+ */
+export function createStopwatch() {
+  const startTime = Date.now();
+  return {
+    elapsed: () => Date.now() - startTime,
+    checkpoint: () => {
+      const elapsed = Date.now() - startTime;
+      return elapsed;
+    },
+  };
+}
+
+/**
+ * Parse a number from text content (finds first number in string)
+ *
+ * @example
+ * parseNumber("Load count: 42") // returns 42
+ * parseNumber("$99.99") // returns 99
+ * parseNumber(null) // returns 0
+ */
+export function parseNumber(text: string | null | undefined): number {
+  return parseInt(text?.match(/\d+/)?.[0] || "0", 10);
+}
+
+/**
+ * Get the numeric value from an element's text content
+ *
+ * @example
+ * const count = await getNumericContent(testId(page, "item-count"));
+ * expect(count).toBe(5);
+ */
+export async function getNumericContent(locator: Locator): Promise<number> {
+  const text = await locator.textContent();
+  return parseNumber(text);
+}
+
+/**
+ * Wait for an element's text to change from its initial value
+ *
+ * @example
+ * const initialText = await statusEl.textContent();
+ * await triggerUpdate();
+ * await waitForTextChange(statusEl, initialText);
+ */
+export async function waitForTextChange(
+  locator: Locator,
+  initialText: string,
+  timeout = 5000
+) {
+  await expect
+    .poll(async () => await locator.textContent(), { timeout })
+    .not.toBe(initialText);
+}
+
+/**
+ * Wait for a numeric value in an element to change
+ *
+ * @example
+ * const initialCount = await getNumericContent(countEl);
+ * await incrementButton.click();
+ * await waitForNumericChange(countEl, initialCount);
+ */
+export async function waitForNumericChange(
+  locator: Locator,
+  initialValue: number,
+  timeout = 5000
+) {
+  await expect
+    .poll(async () => parseNumber(await locator.textContent()), { timeout })
+    .not.toBe(initialValue);
+}
+
+/**
+ * Assert timing is within expected range (expected +/- tolerance)
+ *
+ * @example
+ * const stopwatch = createStopwatch();
+ * await slowOperation();
+ * expectTiming(stopwatch.elapsed(), 1000, 200); // 800-1200ms
+ */
+export function expectTiming(
+  elapsed: number,
+  expected: number,
+  tolerance: number
+) {
+  expect(elapsed).toBeGreaterThan(expected - tolerance);
+  expect(elapsed).toBeLessThan(expected + tolerance);
+}
+
+/**
+ * Assert timing is at least a minimum value
+ *
+ * @example
+ * expectMinTiming(elapsed, 1000); // must take at least 1s
+ */
+export function expectMinTiming(elapsed: number, minimum: number) {
+  expect(elapsed).toBeGreaterThan(minimum);
+}
+
+/**
+ * Assert timing is less than a maximum value
+ *
+ * @example
+ * expectMaxTiming(loadingVisibleTime, 500); // loading must appear within 500ms
+ */
+export function expectMaxTiming(elapsed: number, maximum: number) {
+  expect(elapsed).toBeLessThan(maximum);
 }

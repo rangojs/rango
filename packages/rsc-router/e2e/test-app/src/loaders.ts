@@ -60,3 +60,21 @@ export const CartQuantityLoader = createLoader(
     return { productId, quantity };
   }
 );
+
+// Counter to track loader invocations for revalidation testing
+let slowLoaderCount = 0;
+
+/**
+ * Slow loader with 1s delay - used to test loading behavior
+ * Tracks invocation count to verify revalidation
+ */
+export const SlowLoader = createLoader("slow-loader", async () => {
+  slowLoaderCount++;
+  const count = slowLoaderCount;
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  return {
+    message: "Slow data loaded",
+    count,
+    loadedAt: new Date().toISOString(),
+  };
+});

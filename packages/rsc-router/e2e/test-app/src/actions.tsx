@@ -80,10 +80,22 @@ export async function resetCart(): Promise<void> {
 }
 
 /**
+ * Simple action that triggers revalidation
+ * Used to test that loaders registered with loader() are revalidated
+ */
+export async function triggerRevalidation(): Promise<{ triggered: boolean; timestamp: string }> {
+  await delay(100);
+  return {
+    triggered: true,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+/**
  * Streaming action with React node result
  * Total time: 1s initial + 2s streaming = 3s (matches test expectations)
  */
-export const StreamingAction = async (data: FormData) => {
+export const StreamingAction = async (_data: FormData) => {
   await new Promise((resolve) => setTimeout(resolve, 1000)); // 1s initial delay
   return {
     promise: new Promise<ReactNode>((resolve) => {

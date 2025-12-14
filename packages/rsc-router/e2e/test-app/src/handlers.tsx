@@ -6,6 +6,7 @@ import {
   ProductsLoader,
   ProductDetailLoader,
   CartQuantityLoader,
+  SlowLoader,
 } from "./loaders.js";
 import { AddToCartButton } from "./components/AddToCartButton.js";
 import { QuantityControl } from "./components/QuantityControl.js";
@@ -15,9 +16,10 @@ import {
   StreamingActionStatus,
 } from "./components/StreamingActionButton.js";
 import { Modal } from "./components/Modal.js";
+import { RevalidateButton } from "./components/RevalidateButton.js";
 
 export default map<typeof testRoutes>(
-  ({ route, layout, intercept, loader }) => [
+  ({ route, layout, intercept, loader, loading }) => [
     // Root layout with HTML structure
     layout(
       <html lang="en">
@@ -68,6 +70,29 @@ export default map<typeof testRoutes>(
                       </Link>
                     </div>
                   ))}
+                </div>
+                <div data-testid="loader-test-links" style={{ marginTop: "2rem" }}>
+                  <h2>Loader Behavior Tests</h2>
+                  <ul>
+                    <li>
+                      <Link to="/slow" data-testid="slow-link">
+                        /slow - No loading (awaited)
+                      </Link>
+                    </li>
+                    <li>
+                      <Link to="/slow-streaming" data-testid="slow-streaming-link">
+                        /slow-streaming - With loading (streaming)
+                      </Link>
+                    </li>
+                    <li>
+                      <Link
+                        to="/slow-streaming-skip-ssr"
+                        data-testid="slow-skip-ssr-link"
+                      >
+                        /slow-streaming-skip-ssr - Skip SSR loading
+                      </Link>
+                    </li>
+                  </ul>
                 </div>
               </div>
             );
@@ -172,6 +197,94 @@ export default map<typeof testRoutes>(
             );
           },
           () => [loader(ProductDetailLoader), loader(CartQuantityLoader)]
+        ),
+
+        // Slow route WITHOUT loading - loader should be awaited (blocking)
+        route(
+          "slow",
+          async (ctx) => {
+            const { message, count, loadedAt } = await ctx.use(SlowLoader);
+            return (
+              <div data-testid="slow-page">
+                <Link to="/" data-testid="back-link">
+                  ← Back to Home
+                </Link>
+                <h1 data-testid="slow-title">Slow Route (No Loading)</h1>
+                <p data-testid="slow-message">{message}</p>
+                <p data-testid="slow-count">Load count: {count}</p>
+                <p data-testid="slow-loaded-at">Loaded: {loadedAt}</p>
+                <div data-testid="slow-actions">
+                  <RevalidateButton testId="slow-revalidate-btn" />
+                </div>
+              </div>
+            );
+          },
+          () => [loader(SlowLoader)]
+        ),
+
+        // Slow route WITH loading - loader should stream (non-blocking)
+        route(
+          "slowStreaming",
+          async (ctx) => {
+            const { message, count, loadedAt } = await ctx.use(SlowLoader);
+            return (
+              <div data-testid="slow-streaming-page">
+                <Link to="/" data-testid="back-link">
+                  ← Back to Home
+                </Link>
+                <h1 data-testid="slow-streaming-title">
+                  Slow Route (With Loading)
+                </h1>
+                <p data-testid="slow-streaming-message">{message}</p>
+                <p data-testid="slow-streaming-count">Load count: {count}</p>
+                <p data-testid="slow-streaming-loaded-at">Loaded: {loadedAt}</p>
+                <div data-testid="slow-streaming-actions">
+                  <RevalidateButton testId="slow-streaming-revalidate-btn" />
+                </div>
+              </div>
+            );
+          },
+          () => [
+            loader(SlowLoader),
+            loading(
+              <div data-testid="slow-streaming-loading">
+                <p>Loading slow data...</p>
+              </div>
+            ),
+          ]
+        ),
+
+        // Slow route WITH loading skipSSR - awaited on SSR, streams on navigation
+        route(
+          "slowStreamingSkipSsr",
+          async (ctx) => {
+            const { message, count, loadedAt } = await ctx.use(SlowLoader);
+            return (
+              <div data-testid="slow-skip-ssr-page">
+                <Link to="/" data-testid="back-link">
+                  ← Back to Home
+                </Link>
+                <h1 data-testid="slow-skip-ssr-title">
+                  Slow Route (Skip SSR Loading)
+                </h1>
+                <p data-testid="slow-skip-ssr-message">{message}</p>
+                <p data-testid="slow-skip-ssr-count">Load count: {count}</p>
+                <p data-testid="slow-skip-ssr-loaded-at">Loaded: {loadedAt}</p>
+                <div data-testid="slow-skip-ssr-actions">
+                  <RevalidateButton testId="slow-skip-ssr-revalidate-btn" />
+                </div>
+              </div>
+            );
+          },
+          () => [
+            loader(SlowLoader),
+            loading(
+              <div data-testid="slow-skip-ssr-loading">
+                <p>Loading slow data...</p>
+              </div>,
+              true // skipSSR = true
+            ),
+          ]
         ),
       ]
     ),
