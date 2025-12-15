@@ -8,6 +8,9 @@ export default defineConfig({
   esbuild: {
     target: "es2022",
   },
+  build: {
+    sourcemap: true,
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
