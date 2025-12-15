@@ -105,6 +105,73 @@ export class BuildError extends Error {
 }
 
 /**
+ * Thrown when a network request fails (server unreachable, no internet, etc.)
+ * This error triggers the root error boundary with retry capability.
+ *
+ * @example
+ * ```typescript
+ * try {
+ *   await fetch(url);
+ * } catch (error) {
+ *   if (error instanceof TypeError) {
+ *     throw new NetworkError("Unable to connect to server", { cause: error });
+ *   }
+ *   throw error;
+ * }
+ * ```
+ */
+export class NetworkError extends Error {
+  name = "NetworkError" as const;
+  cause?: unknown;
+  /** The URL that failed to fetch */
+  url?: string;
+  /** Whether this was during an action, navigation, or revalidation */
+  operation?: "action" | "navigation" | "revalidation";
+
+  constructor(
+    message: string = "Network request failed",
+    options?: ErrorOptions & {
+      url?: string;
+      operation?: "action" | "navigation" | "revalidation";
+    }
+  ) {
+    super(message);
+    this.cause = options?.cause;
+    this.url = options?.url;
+    this.operation = options?.operation;
+  }
+}
+
+/**
+ * Check if an error is a network-level failure (server unreachable, no internet)
+ * These are typically TypeError from fetch when the network request itself fails.
+ */
+export function isNetworkError(error: unknown): boolean {
+  // NetworkError we throw ourselves
+  if (error instanceof NetworkError) {
+    return true;
+  }
+
+  // TypeError from fetch() when network fails (e.g., "Failed to fetch")
+  if (error instanceof TypeError) {
+    const message = error.message.toLowerCase();
+    return (
+      message.includes("failed to fetch") ||
+      message.includes("network request failed") ||
+      message.includes("networkerror") ||
+      message.includes("load failed")
+    );
+  }
+
+  // DOMException with network-related names
+  if (error instanceof DOMException) {
+    return error.name === "NetworkError";
+  }
+
+  return false;
+}
+
+/**
  * Thrown when route handler returns invalid type
  */
 export class InvalidHandlerError extends Error {
