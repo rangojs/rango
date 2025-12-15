@@ -286,6 +286,41 @@ export default map<typeof testRoutes>(
             ),
           ]
         ),
+
+        // Blog routes for testing route resolution and trailing slashes
+        route("blog.index", () => (
+          <div data-testid="blog-index-page">
+            <Link to="/" data-testid="back-link">
+              ← Back to Home
+            </Link>
+            <h1 data-testid="blog-title">Blog</h1>
+            <p data-testid="blog-description">Welcome to the blog</p>
+            <ul data-testid="blog-posts">
+              <li>
+                <Link to="/blog/post-1" data-testid="blog-post-link-1">
+                  Post 1
+                </Link>
+              </li>
+              <li>
+                <Link to="/blog/post-2" data-testid="blog-post-link-2">
+                  Post 2
+                </Link>
+              </li>
+            </ul>
+          </div>
+        )),
+
+        route("blog.post", (ctx) => (
+          <div data-testid="blog-post-page">
+            <Link to="/blog" data-testid="back-to-blog">
+              ← Back to Blog
+            </Link>
+            <h1 data-testid="blog-post-title">Post: {ctx.params.postId}</h1>
+            <p data-testid="blog-post-content">
+              Content for post {ctx.params.postId}
+            </p>
+          </div>
+        )),
       ]
     ),
   ]

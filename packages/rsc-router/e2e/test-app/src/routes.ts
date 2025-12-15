@@ -12,4 +12,9 @@ export const testRoutes = route({
   slow: "/slow",
   slowStreaming: "/slow-streaming",
   slowStreamingSkipSsr: "/slow-streaming-skip-ssr",
+  // Routes for testing route resolution and trailing slashes
+  blog: {
+    index: "/blog",
+    post: "/blog/:postId",
+  },
 });
