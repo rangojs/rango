@@ -24,14 +24,14 @@ const DEFAULT_ACTION_STATE: TrackedActionState = {
 };
 
 /**
- * Normalize action ID to just the function name
- * Server actions have IDs like "/src/handlers/shop/actions/shop.actions.ts#updateCartQuantity"
- * We normalize to just "updateCartQuantity" for consistency
+ * Normalize action ID - returns the ID as-is
+ *
+ * Server actions have IDs like "hash#actionName" or "src/actions.ts#actionName".
+ * When using function references, we use the full ID for exact matching.
+ * When using strings, the event controller supports suffix matching
+ * (e.g., "addToCart" matches "hash#addToCart").
  */
 function normalizeActionId(actionId: string): string {
-  if (actionId.includes("#")) {
-    return actionId.split("#").pop()!;
-  }
   return actionId;
 }
 
@@ -99,19 +99,26 @@ export type ServerActionFunction = ((...args: any[]) => Promise<any>) & {
  * - If multiple actions fire, tracks only the last one
  * - Supports selector pattern like useNavigation
  *
+ * Matching behavior:
+ * - **Function reference**: Uses full $$id for exact matching. This is precise
+ *   and distinguishes between actions with the same name in different files.
+ * - **String**: Matches by suffix (action name after #). This is convenient
+ *   but may be ambiguous if multiple files export the same action name.
+ *
  * @param action - Either a server action function or a string action name.
  *   - **Function**: Must be directly imported in the client component.
  *     Actions passed as props from server components will throw an error.
  *   - **String**: The exported function name from your "use server" file.
- *     This is the recommended approach when the action is passed as a prop.
+ *     Matches any action ending with "#actionName" (suffix match).
  *
  * @example
  * ```tsx
- * // Option 1: Direct import (recommended for client components)
+ * // Option 1: Direct import (precise matching)
  * import { addToCart } from './actions';
  * const actionState = useAction(addToCart);
  *
- * // Option 2: String-based (required when action is passed as prop)
+ * // Option 2: String-based (suffix matching)
+ * // Matches "hash#addToCart" or "src/actions.ts#addToCart"
  * const actionState = useAction('addToCart');
  *
  * // With selector for specific values

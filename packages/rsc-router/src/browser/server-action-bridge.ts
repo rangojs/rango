@@ -25,14 +25,14 @@ if (typeof Symbol.asyncDispose === "undefined") {
 }
 
 /**
- * Extract function name from full action ID
- * Server actions have IDs like "/src/handlers/shop/actions/shop.actions.ts#updateCartQuantity"
- * We normalize to just "updateCartQuantity" for store tracking
+ * Normalize action ID - returns the ID as-is
+ *
+ * Server actions have IDs like "hash#actionName" or "src/actions.ts#actionName".
+ * The full ID is used for tracking in the event controller. When subscribing
+ * via useAction, both exact matching (full ID) and suffix matching (action name
+ * only) are supported by the event controller.
  */
 function normalizeActionId(actionId: string): string {
-  if (actionId.includes("#")) {
-    return actionId.split("#").pop()!;
-  }
   return actionId;
 }
 

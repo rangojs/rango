@@ -198,6 +198,22 @@ const DEFAULT_ACTION_STATE: TrackedActionState = {
   result: null,
 };
 
+/**
+ * Check if a subscription ID matches an action's full ID.
+ *
+ * When subscriptionId contains '#', it's a full ID and requires exact match.
+ * When subscriptionId has no '#', it's just an action name and matches by suffix.
+ * This allows useAction("addToCart") to match "hash#addToCart" or "src/file.ts#addToCart".
+ */
+function matchesActionId(subscriptionId: string, entryActionId: string): boolean {
+  if (subscriptionId.includes("#")) {
+    // Full ID: exact match
+    return subscriptionId === entryActionId;
+  }
+  // Action name only: suffix match (matches "anything#actionName")
+  return entryActionId.endsWith(`#${subscriptionId}`);
+}
+
 // ============================================================================
 // Implementation
 // ============================================================================
@@ -280,10 +296,13 @@ export function createEventController(
       actionId,
       setTimeout(() => {
         actionNotifyTimeouts.delete(actionId);
-        const listeners = actionListeners.get(actionId);
-        if (listeners) {
-          const state = getActionState(actionId);
-          listeners.forEach((listener) => listener(state));
+        // Notify all listeners whose subscription ID matches this action
+        // This includes exact matches and suffix matches (e.g., "addToCart" matches "hash#addToCart")
+        for (const [subscriptionId, listeners] of actionListeners) {
+          if (matchesActionId(subscriptionId, actionId)) {
+            const state = getActionState(subscriptionId);
+            listeners.forEach((listener) => listener(state));
+          }
         }
       }, 0)
     );
@@ -322,13 +341,14 @@ export function createEventController(
 
   function getActionState(actionId: string): TrackedActionState {
     // Find the most recent action with this ID that's not settling
+    // Uses suffix matching when actionId is just a name (no #)
     const activeEntry = [...inflightActions.values()]
-      .filter((a) => a.actionId === actionId && a.phase !== "settling")
+      .filter((a) => matchesActionId(actionId, a.actionId) && a.phase !== "settling")
       .sort((a, b) => b.startedAt - a.startedAt)[0];
 
     // Also check for settling entries to get result/error
     const settlingEntry = [...inflightActions.values()]
-      .filter((a) => a.actionId === actionId && a.phase === "settling")
+      .filter((a) => matchesActionId(actionId, a.actionId) && a.phase === "settling")
       .sort((a, b) => b.startedAt - a.startedAt)[0];
 
     const entry = activeEntry || settlingEntry;

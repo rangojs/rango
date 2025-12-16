@@ -1,7 +1,7 @@
 import type { Plugin } from "vite";
 import { exposeActionId } from "./expose-action-id.ts";
 
-// Re-export plugins
+// Re-export plugin
 export { exposeActionId } from "./expose-action-id.ts";
 
 export interface RscRouterOptions {
