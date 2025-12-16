@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError } from "./helper";
+import { waitForHydration, expectNoPageError, testId } from "./helper";
 
 /**
  * Tests for loader behavior:
@@ -128,6 +128,42 @@ test.describe("loader-behavior", () => {
       await expect(
         page.locator('[data-testid="slow-streaming-page"]')
       ).toBeVisible();
+    });
+
+    test("should navigate back to index after streaming route finishes loading", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      // Start from index
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      // Verify we're on the index page
+      await expect(testId(page, "index-page")).toBeVisible();
+
+      // Click link to slow-streaming route
+      await testId(page, "slow-streaming-link").click();
+
+      // Wait for loading to appear
+      await expect(testId(page, "slow-streaming-loading")).toBeVisible({
+        timeout: 500,
+      });
+
+      // Wait for actual content to finish loading
+      await expect(testId(page, "slow-streaming-page")).toBeVisible({
+        timeout: 5000,
+      });
+
+      // Now click the back link to go home
+      await testId(page, "back-link").click();
+
+      // URL should change to /
+      await expect(page).toHaveURL(/\/$/);
+
+      // Index page should be visible and slow-streaming page should be gone
+      await expect(testId(page, "index-page")).toBeVisible({ timeout: 2000 });
+      await expect(testId(page, "slow-streaming-page")).not.toBeVisible();
     });
   });
 

@@ -249,4 +249,60 @@ test.describe("stale-revalidation", () => {
     // Index content should be restored
     await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
   });
+
+  test("should update quantity on intercept after action on detail page and back navigation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // 1. Click product to open modal (intercept)
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
+    await productLink.click();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+
+    // Get initial quantity in modal
+    const modalQuantityDisplay = page.locator(
+      '[data-testid="modal-quantity-control"] [data-testid="quantity-display"]'
+    );
+    const initialQuantity = parseInt(
+      (await modalQuantityDisplay.textContent()) || "0"
+    );
+
+    // 2. Increment quantity in modal (action)
+    const modalIncrementButton = page.locator(
+      '[data-testid="modal-quantity-control"] button:has-text("+")'
+    );
+    await modalIncrementButton.click();
+
+    // Wait for optimistic update
+    await expect(modalQuantityDisplay).toContainText(
+      String(initialQuantity + 1)
+    );
+
+    // 3. Go to details page
+    await page.locator('[data-testid="view-full-details"]').click();
+    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).not.toBeVisible();
+
+    // 4. Click add to cart on detail page and wait for it to complete
+    const addToCartButton = page.locator('[data-testid="add-to-cart-btn"]');
+    await addToCartButton.click();
+    await expect(
+      page.locator('[data-testid="add-to-cart-btn-result"]')
+    ).toBeVisible({ timeout: 5000 });
+
+    // 5. Go back - should return to intercept modal
+    await goBack(page);
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+
+    // 6. Verify quantity was updated after revalidation
+    // The quantity should reflect the add to cart action (initialQuantity + 1 from modal + 1 from add to cart = initialQuantity + 2)
+    await expect(modalQuantityDisplay).toContainText(
+      String(initialQuantity + 2),
+      { timeout: 3000 }
+    );
+  });
 });
