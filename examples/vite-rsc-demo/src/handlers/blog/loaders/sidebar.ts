@@ -1,4 +1,4 @@
-import { createLoader } from "rsc-router/loader";
+import { createLoader } from "rsc-router/server";
 
 export type BlogSidebarData = {
   recentPosts: { slug: string; title: string; date: string }[];

@@ -2,7 +2,7 @@
 
 import { use, useActionState, Suspense, startTransition } from "react";
 import { StreamingAction } from "../actions/test.actions";
-import { useAction } from "rsc-router/browser";
+import { useAction } from "rsc-router/client";
 export const StreamingActionStatus = () => {
   const status = useAction(StreamingAction);
   console.log("StreamingActionStatus", status.state);

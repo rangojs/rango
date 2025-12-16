@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useOptimistic, startTransition } from "react";
-import { Outlet, useLoader } from "rsc-router/client";
-import { Link } from "rsc-router/browser";
+import { Outlet, useLoader, Link } from "rsc-router/client";
 import { ProductLoader } from "../loaders/product.js";
 import { ModalRecommendationsLoader } from "../loaders/modal-recommendations.js";
 import { ProductCartLoader } from "../loaders/product-cart.js";

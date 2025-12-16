@@ -1,5 +1,4 @@
-import { Outlet } from "rsc-router/client";
-import { Link, ScrollRestoration } from "rsc-router/browser";
+import { Outlet, Link, ScrollRestoration } from "rsc-router/client";
 import { href } from "../router.js";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 

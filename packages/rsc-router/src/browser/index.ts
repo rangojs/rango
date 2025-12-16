@@ -1,5 +1,12 @@
 // ============================================================================
-// Browser Module - Client-side navigation utilities for RSC Router
+// Browser Module - Low-level client-side navigation utilities for RSC Router
+// ============================================================================
+//
+// For most use cases, import from "rsc-router/client" instead:
+//   import { Link, useNavigation, useAction, NavigationProvider } from "rsc-router/client";
+//
+// This module exports low-level APIs for advanced customization and
+// building custom navigation implementations.
 // ============================================================================
 
 // Route map builder (client-safe)
@@ -86,7 +93,23 @@ export {
 // Shallow comparison utility
 export { shallow } from "./shallow.js";
 
-// React integration
+// Scroll restoration utilities (for advanced usage)
+export {
+  initScrollRestoration,
+  handleNavigationStart,
+  handleNavigationEnd,
+  saveCurrentScrollPosition,
+  restoreScrollPosition,
+  cancelScrollRestorationPolling,
+  scrollToHash,
+  scrollToTop,
+  getHistoryStateKey,
+} from "./scroll-restoration.js";
+
+// ============================================================================
+// Re-exports from React integration (for backwards compatibility)
+// Prefer importing these from "rsc-router/client" instead
+// ============================================================================
 export {
   NavigationStoreContext,
   type NavigationStoreContextValue,
@@ -105,16 +128,3 @@ export {
   useScrollRestoration,
   type ScrollRestorationProps,
 } from "./react/index.js";
-
-// Scroll restoration utilities (for advanced usage)
-export {
-  initScrollRestoration,
-  handleNavigationStart,
-  handleNavigationEnd,
-  saveCurrentScrollPosition,
-  restoreScrollPosition,
-  cancelScrollRestorationPolling,
-  scrollToHash,
-  scrollToTop,
-  getHistoryStateKey,
-} from "./scroll-restoration.js";

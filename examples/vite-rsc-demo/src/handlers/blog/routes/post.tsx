@@ -3,7 +3,7 @@ import type { blogRoutes } from "@/routes.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 import { CurrentURL } from "@/components/CurrentURL.js";
-import { Link } from "rsc-router/browser";
+import { Link } from "rsc-router/client";
 
 export const PostRoute: RouteHandler<typeof blogRoutes, "post"> = (ctx) => {
   const renderTime = new Date().toISOString();

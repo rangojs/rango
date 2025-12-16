@@ -1,4 +1,4 @@
-import { createLoader } from "rsc-router/loader";
+import { createLoader } from "rsc-router/server";
 
 export type Cart = {
   items: { productId: number; quantity: number; price: number }[];

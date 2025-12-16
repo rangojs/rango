@@ -1,4 +1,4 @@
-import { createLoader } from "rsc-router/loader";
+import { createLoader } from "rsc-router/server";
 import { boardStore, type Board, type Card } from "./data.js";
 
 export type BoardData = Board;

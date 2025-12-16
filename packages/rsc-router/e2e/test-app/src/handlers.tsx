@@ -1,6 +1,5 @@
 import { map } from "rsc-router/server";
-import { Outlet } from "rsc-router/client";
-import { Link } from "rsc-router/browser";
+import { Outlet, Link } from "rsc-router/client";
 import type { testRoutes } from "./routes.js";
 import {
   ProductsLoader,
