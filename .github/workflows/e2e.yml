@@ -31,6 +31,9 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm --filter rsc-router exec playwright install --with-deps chromium
 
+      - name: Build test app for bundle analysis
+        run: pnpm --filter rsc-router-e2e-test-app build
+
       - name: Run e2e tests
         run: pnpm --filter rsc-router test
 
