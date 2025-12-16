@@ -17,6 +17,11 @@ import {
 } from "./components/StreamingActionButton.js";
 import { Modal } from "./components/Modal.js";
 import { RevalidateButton } from "./components/RevalidateButton.js";
+import {
+  NavigationStatus,
+  NavigationStateOnly,
+  NavigationStreamingOnly,
+} from "./components/NavigationStatus.js";
 
 export default map<typeof testRoutes>(
   ({ route, layout, intercept, loader, loading }) => [
@@ -37,6 +42,7 @@ export default map<typeof testRoutes>(
               <Link to="/" data-testid="nav-home">
                 Home
               </Link>
+              <NavigationStatus testId="nav-status" />
             </nav>
             <main data-testid="main-content">
               <Outlet />
