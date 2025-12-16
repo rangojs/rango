@@ -22,6 +22,7 @@ import {
   NavigationStateOnly,
   NavigationStreamingOnly,
 } from "./components/NavigationStatus.js";
+import { HydrationMismatch } from "./components/HydrationMismatch.js";
 
 export default map<typeof testRoutes>(
   ({ route, layout, intercept, loader, loading }) => [
@@ -421,6 +422,17 @@ export default map<typeof testRoutes>(
             <p data-testid="blog-post-content">
               Content for post {ctx.params.postId}
             </p>
+          </div>
+        )),
+
+        // Route for testing hydration error detection
+        route("hydrationTest", () => (
+          <div data-testid="hydration-test-page">
+            <Link to="/" data-testid="back-link">
+              ← Back to Home
+            </Link>
+            <h1 data-testid="hydration-test-title">Hydration Test</h1>
+            <HydrationMismatch testId="hydration-mismatch" />
           </div>
         )),
       ]

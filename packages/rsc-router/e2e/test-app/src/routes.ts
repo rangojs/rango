@@ -21,4 +21,6 @@ export const testRoutes = route({
     index: "/blog",
     post: "/blog/:postId",
   },
+  // Route for testing hydration error detection
+  hydrationTest: "/hydration-test",
 });

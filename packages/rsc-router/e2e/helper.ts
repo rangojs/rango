@@ -5,22 +5,75 @@ export const testNoJs = test.extend({
 });
 
 /**
- * Wait for React hydration to complete
+ * Wait for React hydration to complete and verify no hydration errors
  */
 export async function waitForHydration(page: Page, locator: string = "body") {
-  await expect
-    .poll(
-      () =>
-        page
-          .locator(locator)
-          .evaluate(
-            (el) =>
-              el &&
-              Object.keys(el).some((key) => key.startsWith("__reactFiber"))
-          ),
-      { timeout: 20000 }
-    )
-    .toBeTruthy();
+  const hydrationErrors: string[] = [];
+
+  // Listen for console messages during hydration
+  const consoleHandler = (msg: import("@playwright/test").ConsoleMessage) => {
+    const text = msg.text();
+    // Catch React hydration mismatch errors from console
+    if (
+      text.includes("Hydration failed") ||
+      text.includes("hydration mismatch") ||
+      text.includes("Text content does not match") ||
+      text.includes("did not match") ||
+      text.includes("server rendered HTML") ||
+      text.includes("Hydration error")
+    ) {
+      hydrationErrors.push(text);
+    }
+  };
+
+  // Listen for page errors (React throws hydration errors here)
+  const pageErrorHandler = (error: Error) => {
+    const text = error.message;
+    // Catch React hydration mismatch errors from pageerror
+    if (
+      text.includes("Hydration failed") ||
+      text.includes("hydration mismatch") ||
+      text.includes("Text content does not match") ||
+      text.includes("did not match") ||
+      text.includes("server rendered HTML") ||
+      text.includes("Hydration error")
+    ) {
+      hydrationErrors.push(text);
+    }
+  };
+
+  page.on("console", consoleHandler);
+  page.on("pageerror", pageErrorHandler);
+
+  try {
+    // Wait for React fiber to be attached (hydration complete)
+    await expect
+      .poll(
+        () =>
+          page
+            .locator(locator)
+            .evaluate(
+              (el) =>
+                el &&
+                Object.keys(el).some((key) => key.startsWith("__reactFiber"))
+            ),
+        { timeout: 20000 }
+      )
+      .toBeTruthy();
+
+    // Small delay to catch any async hydration errors
+    await page.waitForTimeout(100);
+
+    // Assert no hydration errors occurred
+    if (hydrationErrors.length > 0) {
+      throw new Error(
+        `Hydration errors detected:\n${hydrationErrors.join("\n")}`
+      );
+    }
+  } finally {
+    page.off("console", consoleHandler);
+    page.off("pageerror", pageErrorHandler);
+  }
 }
 
 /**
