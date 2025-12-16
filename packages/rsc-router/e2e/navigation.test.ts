@@ -305,4 +305,55 @@ test.describe("stale-revalidation", () => {
       { timeout: 3000 }
     );
   });
+
+  test("should not show modal on detail page after back to intercept and forward to detail", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // 1. Click product to open modal (intercept)
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
+    await productLink.click();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+
+    // 2. Go to details page
+    await page.locator('[data-testid="view-full-details"]').click();
+    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).not.toBeVisible();
+
+    // 3. Do an action on detail page (increment quantity)
+    const incrementButton = page.locator(
+      '[data-testid="quantity-control"] button:has-text("+")'
+    );
+    await incrementButton.click();
+    // Wait for action to complete
+    await page.waitForTimeout(500);
+
+    // 4. Go back to intercept modal
+    await goBack(page);
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]')
+    ).not.toBeVisible();
+
+    // 5. Go to details page again via View Full Details
+    await page.locator('[data-testid="view-full-details"]').click();
+    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).not.toBeVisible();
+
+    // 6. Click add to cart on detail page and wait for it to complete
+    const addToCartButton = page.locator('[data-testid="add-to-cart-btn"]');
+    await addToCartButton.click();
+    await expect(
+      page.locator('[data-testid="add-to-cart-btn-result"]')
+    ).toBeVisible({ timeout: 5000 });
+
+    // 7. Modal should NOT appear - we're on detail page, not intercept
+    await expect(page.locator('[data-testid="product-modal"]')).not.toBeVisible();
+    // Detail page should still be visible
+    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+  });
 });

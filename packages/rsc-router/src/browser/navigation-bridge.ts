@@ -420,7 +420,10 @@ export function createNavigationBridge(
           hasUsableCache ? cachedSegments!.map((s) => s.id) : undefined,
           false,
           tx.handle.signal,
-          tx.with({ url, replace: options?.replace, scroll: options?.scroll })
+          tx.with({ url, replace: options?.replace, scroll: options?.scroll }),
+          // Pass cached segments so the segment map is consistent with what we
+          // tell the server we have. If server returns empty diff, we use these.
+          hasUsableCache ? { targetCacheSegments: cachedSegments } : undefined
         );
         tx;
       } catch (error) {
