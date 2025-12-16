@@ -78,3 +78,31 @@ export const SlowLoader = createLoader("slow-loader", async () => {
     loadedAt: new Date().toISOString(),
   };
 });
+
+// Product data for slow product loader
+const slowProducts = [
+  {
+    id: "slow-product-a",
+    name: "Slow Product A",
+    price: 199.99,
+    description: "Slow loading product for testing",
+  },
+];
+
+/**
+ * Slow product detail loader - 2s delay for testing intercept loading states
+ */
+export const SlowProductDetailLoader = createLoader(
+  "slow-product-detail",
+  async (ctx) => {
+    const productId = ctx.params.productId;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const product = slowProducts.find((p) => p.id === productId) || {
+      id: productId,
+      name: `Product ${productId}`,
+      price: 99.99,
+      description: "Dynamic slow loading product",
+    };
+    return { product, loadedAt: new Date().toISOString() };
+  }
+);

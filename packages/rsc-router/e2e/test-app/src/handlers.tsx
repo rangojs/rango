@@ -6,6 +6,7 @@ import {
   ProductDetailLoader,
   CartQuantityLoader,
   SlowLoader,
+  SlowProductDetailLoader,
 } from "./loaders.js";
 import { AddToCartButton } from "./components/AddToCartButton.js";
 import { QuantityControl } from "./components/QuantityControl.js";
@@ -89,6 +90,14 @@ export default map<typeof testRoutes>(
                         data-testid="slow-skip-ssr-link"
                       >
                         /slow-streaming-skip-ssr - Skip SSR loading
+                      </Link>
+                    </li>
+                    <li>
+                      <Link
+                        to="/slow-product/slow-product-a"
+                        data-testid="slow-product-link"
+                      >
+                        /slow-product - Intercept with streaming loader
                       </Link>
                     </li>
                   </ul>
@@ -196,6 +205,94 @@ export default map<typeof testRoutes>(
             );
           },
           () => [loader(ProductDetailLoader), loader(CartQuantityLoader)]
+        ),
+
+        // Slow product detail route (direct navigation)
+        route(
+          "slowProduct.detail",
+          async (ctx) => {
+            const { product, loadedAt } = await ctx.use(SlowProductDetailLoader);
+            return (
+              <div data-testid="slow-product-detail-page">
+                <Link to="/" data-testid="back-link">
+                  ← Back to Products
+                </Link>
+                <h1 data-testid="slow-product-name">{product.name}</h1>
+                <p data-testid="slow-product-price">${product.price}</p>
+                <p data-testid="slow-product-description">
+                  {product.description}
+                </p>
+                <p data-testid="slow-product-loaded-at">Loaded: {loadedAt}</p>
+                <div data-testid="slow-product-segment-metadata">
+                  <h3>Segment Metadata</h3>
+                  <ul>
+                    <li>Product ID: {product.id}</li>
+                    <li>Rendered: {new Date().toISOString()}</li>
+                  </ul>
+                </div>
+              </div>
+            );
+          },
+          () => [loader(SlowProductDetailLoader)]
+        ),
+
+        // Intercept for slow product modal (soft navigation) with loading state
+        intercept(
+          "@modal",
+          "slowProduct.detail",
+          async (ctx) => {
+            const { product } = await ctx.use(SlowProductDetailLoader);
+            return (
+              <Modal testId="slow-product-modal">
+                <div data-testid="slow-modal-header">
+                  <span data-testid="slow-intercept-indicator">Intercepted</span>
+                  <h2 data-testid="slow-modal-product-name">{product.name}</h2>
+                </div>
+                <p data-testid="slow-modal-product-price">${product.price}</p>
+                <p data-testid="slow-modal-product-description">
+                  {product.description}
+                </p>
+                <div data-testid="slow-modal-streaming-section">
+                  <h3>Streaming Action (3s delay)</h3>
+                  <StreamingActionStatus />
+                  <StreamingActionButton
+                    productId={product.id}
+                    testId="slow-modal-streaming-btn"
+                  />
+                </div>
+                <Link
+                  to={`/slow-product/${product.id}`}
+                  data-testid="slow-view-full-details"
+                  style={{
+                    display: "inline-block",
+                    marginTop: "16px",
+                    padding: "8px 16px",
+                    background: "#2196F3",
+                    color: "white",
+                    textDecoration: "none",
+                    borderRadius: "4px",
+                  }}
+                >
+                  View Full Details
+                </Link>
+              </Modal>
+            );
+          },
+          () => [
+            loader(SlowProductDetailLoader),
+            loading(
+              <Modal testId="slow-product-modal">
+                <div data-testid="slow-modal-loading">
+                  <p>Loading product details...</p>
+                  <div data-testid="slow-modal-skeleton">
+                    <div style={{ width: "200px", height: "24px", background: "#e0e0e0", marginBottom: "8px" }} />
+                    <div style={{ width: "100px", height: "20px", background: "#e0e0e0", marginBottom: "8px" }} />
+                    <div style={{ width: "250px", height: "16px", background: "#e0e0e0" }} />
+                  </div>
+                </div>
+              </Modal>
+            ),
+          ]
         ),
 
         // Slow route WITHOUT loading - loader should be awaited (blocking)

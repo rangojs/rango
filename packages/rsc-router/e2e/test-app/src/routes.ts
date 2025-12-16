@@ -12,6 +12,10 @@ export const testRoutes = route({
   slow: "/slow",
   slowStreaming: "/slow-streaming",
   slowStreamingSkipSsr: "/slow-streaming-skip-ssr",
+  // Route for testing intercept with streaming loader
+  slowProduct: {
+    detail: "/slow-product/:productId",
+  },
   // Routes for testing route resolution and trailing slashes
   blog: {
     index: "/blog",
