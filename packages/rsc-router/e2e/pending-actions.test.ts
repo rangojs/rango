@@ -193,4 +193,75 @@ test.describe("pending-actions-navigation", () => {
     await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
     await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
   });
+
+  test("streaming action revalidation should be ignored after navigating away", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // 1. Navigate to product detail page directly (not via intercept)
+    await page.goto(f.url("/product/product-a"));
+    await waitForHydration(page);
+
+    // Verify we're on detail page
+    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+
+    // 2. Start streaming action (3s delay)
+    const streamingButton = page.locator('[data-testid="streaming-btn"]');
+    await streamingButton.click();
+
+    // Verify action started
+    await expect(streamingButton).toBeDisabled();
+
+    // 3. Navigate away to index BEFORE action completes
+    const homeLink = page.locator('[data-testid="nav-home"]');
+    await homeLink.click();
+
+    // Verify we're on index
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+    await expect(page.locator('[data-testid="segment-metadata"]')).not.toBeVisible();
+
+    // 4. Wait for streaming action to complete in background (3s + buffer)
+    await page.waitForTimeout(4000);
+
+    // 5. CRITICAL: Verify the action's revalidation did NOT render
+    // - Index should still be showing, not product detail
+    // - No streaming result should appear on index page
+    await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+    await expect(page.locator('[data-testid="segment-metadata"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="streaming-btn-result"]')).not.toBeVisible();
+
+    // 6. Navigate back to product - should work normally
+    await page.goBack();
+    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+  });
+
+  test("action revalidation should be ignored when navigating to completely different route", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // 1. Navigate to product detail
+    await page.goto(f.url("/product/product-a"));
+    await waitForHydration(page);
+
+    // 2. Start add to cart action
+    const addToCartButton = page.locator('[data-testid="add-to-cart-btn"]');
+    await addToCartButton.click();
+
+    // 3. Immediately navigate to blog (completely different route)
+    await page.goto(f.url("/blog"));
+    await waitForHydration(page);
+
+    // Verify we're on blog
+    await expect(page.locator('[data-testid="blog-title"]')).toBeVisible();
+
+    // 4. Wait for action to complete
+    await page.waitForTimeout(1000);
+
+    // 5. Blog should still be showing - action revalidation was ignored
+    await expect(page.locator('[data-testid="blog-title"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-detail-page"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="add-to-cart-btn-result"]')).not.toBeVisible();
+  });
 });
