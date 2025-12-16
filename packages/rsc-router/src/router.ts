@@ -1229,11 +1229,18 @@ export function createRSCRouter<TEnv = any>(
         // Use parent entry's shortCode so segment tree correctly associates parallel with parent
         const parallelId = `${entry.shortCode}.${slot}`;
 
-        matchedIds.push(parallelId);
+        // Only include in matchedIds if client already has this parallel segment.
+        // New parallels (like @modal for intercepts) are added via resolveInterceptEntry,
+        // not here. This prevents incorrectly including @modal when client is on detail page.
+        if (clientSegmentIds.has(parallelId)) {
+          matchedIds.push(parallelId);
+        }
 
         const component = await revalidate(
           async () => {
-            if (!clientSegmentIds.has(parallelId)) return true;
+            // If client doesn't have this parallel, don't render it.
+            // Intercepts are handled separately via resolveInterceptEntry.
+            if (!clientSegmentIds.has(parallelId)) return false;
 
             const dummySegment: ResolvedSegment = {
               id: parallelId,
@@ -2272,12 +2279,23 @@ export function createRSCRouter<TEnv = any>(
       // Walk up from route's parent to find intercept (parent layouts can intercept child routes)
       // Try both full route key and local name for flexible matching
       // Skip intercept lookup entirely if navigating within the same route
-      const interceptResult = isSameRouteNavigation
-        ? null
-        : findInterceptForRoute(matched.routeKey, manifestEntry.parent) ||
-          (localRouteName !== matched.routeKey
-            ? findInterceptForRoute(localRouteName, manifestEntry.parent)
-            : null);
+      //
+      // For ACTIONS: also skip if client doesn't have any intercept segments (like @modal).
+      // This means they're on the detail page, not the intercepted view.
+      // Without this check, actions on detail page would incorrectly render intercepts.
+      // For NAVIGATION: always look for intercepts (client might be navigating to open one).
+      const clientHasInterceptSegments = [...clientSegmentSet].some((id) =>
+        id.includes(".@")
+      );
+      const skipInterceptForAction =
+        actionContext && !clientHasInterceptSegments;
+      const interceptResult =
+        isSameRouteNavigation || skipInterceptForAction
+          ? null
+          : findInterceptForRoute(matched.routeKey, manifestEntry.parent) ||
+            (localRouteName !== matched.routeKey
+              ? findInterceptForRoute(localRouteName, manifestEntry.parent)
+              : null);
 
       // Build slots state - intercepts render in named slots
       const slots: Record<string, import("./types.js").SlotState> = {};
