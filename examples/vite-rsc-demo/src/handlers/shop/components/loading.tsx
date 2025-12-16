@@ -1,5 +1,5 @@
 "use client";
-import { useNavigation } from "rsc-router/browser";
+import { useNavigation } from "rsc-router/client";
 
 export const LoadingSpinner = () => {
   const { isStreaming, state, isLoading, isLoadingOrStreaming } = useNavigation(

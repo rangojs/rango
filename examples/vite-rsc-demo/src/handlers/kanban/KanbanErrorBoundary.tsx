@@ -1,7 +1,6 @@
 "use client";
 
-import { ErrorBoundary } from "rsc-router/client";
-import { useClientCache, useNavigation } from "rsc-router/browser";
+import { ErrorBoundary, useClientCache, useNavigation } from "rsc-router/client";
 import type { ClientErrorBoundaryFallbackProps } from "rsc-router";
 import type { ReactNode } from "react";
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition, useOptimistic, useRef } from "react";
-import { Link } from "rsc-router/browser";
+import { Link } from "rsc-router/client";
 import type { Card, Column, Board } from "./data.js";
 import { labelColors } from "./data.js";
 import { kanbanAddCard, kanbanMoveCard, kanbanDeleteCard } from "./actions.js";
@@ -239,7 +239,13 @@ export function KanbanBoard({ board }: { board: Board }) {
   function handleDrop(columnId: string, dropIndex: number) {
     if (!draggedCard) return;
 
-    const card = optimisticCards.find((c) => c.id === draggedCard);
+    // Capture and clear immediately to prevent double-calls
+    const cardToMove = draggedCard;
+    setDraggedCard(null);
+    setDragOverColumn(null);
+    setDragOverIndex(null);
+
+    const card = optimisticCards.find((c) => c.id === cardToMove);
     if (!card) return;
 
     // Skip if dropping in same position
@@ -250,7 +256,6 @@ export function KanbanBoard({ board }: { board: Board }) {
     if (card.columnId === columnId) {
       const currentIndex = cardsInColumn.findIndex((c) => c.id === card.id);
       if (currentIndex === dropIndex || currentIndex === dropIndex - 1) {
-        handleDragEnd();
         return;
       }
     }
@@ -258,14 +263,12 @@ export function KanbanBoard({ board }: { board: Board }) {
     startTransition(async () => {
       setOptimisticCards({
         type: "move",
-        cardId: draggedCard,
+        cardId: cardToMove,
         columnId,
         order: dropIndex,
       });
-      await kanbanMoveCard(draggedCard, columnId, dropIndex);
+      await kanbanMoveCard(cardToMove, columnId, dropIndex);
     });
-
-    handleDragEnd();
   }
 
   function handleAddCard(columnId: string, title: string) {
@@ -553,6 +556,7 @@ function KanbanCard({
       }}
       onDrop={(e) => {
         e.preventDefault();
+        e.stopPropagation();
         onDrop();
       }}
       onMouseEnter={() => setShowActions(true)}

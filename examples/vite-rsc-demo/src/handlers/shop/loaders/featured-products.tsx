@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { createLoader } from "rsc-router/loader";
+import { createLoader } from "rsc-router/server";
 import { products } from "../data.js";
 import type { Product } from "./product.js";
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useNavigation, Link } from "rsc-router/browser";
+import { useNavigation, Link } from "rsc-router/client";
 import { categories, products, orders } from "./data.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 

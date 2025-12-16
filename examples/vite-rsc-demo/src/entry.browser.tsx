@@ -11,10 +11,10 @@ import { rscStream } from "rsc-html-stream/client";
 import { renderSegments } from "rsc-router";
 import {
   createNavigationStore,
-  createRequestController,
   createNavigationClient,
   createServerActionBridge,
   createNavigationBridge,
+  createEventController,
   NavigationProvider,
   generateHistoryKey,
   type RscPayload,
@@ -51,6 +51,11 @@ async function initializeApp() {
     initialSegments,
   });
 
+  // Create event controller for reactive state management
+  const eventController = createEventController({
+    initialLocation: new URL(window.location.href),
+  });
+
   console.log(
     "[Browser] Initial segments:",
     store.getSegmentState().currentSegmentIds.join(", ")
@@ -58,14 +63,13 @@ async function initializeApp() {
   console.log(`[Browser] Cached segments for: ${initialHistoryKey}`);
 
   // Create composable utilities
-  const requestController = createRequestController();
   const client = createNavigationClient(deps);
 
   // Setup server action bridge
   const actionBridge = createServerActionBridge({
     store,
+    eventController,
     client,
-    requestController,
     deps,
     onUpdate: (update) => store.emitUpdate(update),
     renderSegments,
@@ -75,8 +79,8 @@ async function initializeApp() {
   // Setup navigation bridge
   const navigationBridge = createNavigationBridge({
     store,
+    eventController,
     client,
-    requestController,
     onUpdate: (update) => store.emitUpdate(update),
     renderSegments,
   });
@@ -92,6 +96,7 @@ async function initializeApp() {
     <React.StrictMode>
       <NavigationProvider
         store={store}
+        eventController={eventController}
         initialPayload={{ ...initialPayload, root: initialTree }}
         bridge={navigationBridge}
       />
@@ -107,7 +112,10 @@ async function initializeApp() {
   if (import.meta.hot) {
     import.meta.hot.on("rsc:update", async () => {
       console.log("[Browser] HMR: Server update, refetching RSC");
-      store.setState({ isStreaming: true });
+
+      // Use event controller to track HMR navigation
+      const handle = eventController.startNavigation(window.location.href, { replace: true });
+      handle.setStreaming();
 
       // Refetch with empty segments to get everything fresh
       const { payload, streamComplete } = await client.fetchPartial({
@@ -136,8 +144,8 @@ async function initializeApp() {
       }
 
       // Wait for RSC stream to fully close
-      streamComplete;
-      store.setState({ isStreaming: false });
+      await streamComplete;
+      handle.complete(new URL(window.location.href));
       console.log("[Browser] HMR: RSC stream complete");
     });
   }

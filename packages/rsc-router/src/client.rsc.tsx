@@ -18,8 +18,32 @@ export {
   useOutlet,
   useLoader,
   useLoaderData,
+  ErrorBoundary,
+  type ErrorBoundaryProps,
 } from "./client.js";
 
 // Re-export the server's createLoader for RSC context
 // This version includes the actual loader function
 export { createLoader } from "./route-definition.js";
+
+// Re-export Link component (can be used in server components)
+export {
+  Link,
+  type LinkProps,
+  type PrefetchStrategy,
+} from "./browser/react/Link.js";
+
+// Re-export ScrollRestoration (can be used in server components)
+export {
+  ScrollRestoration,
+  type ScrollRestorationProps,
+} from "./browser/react/ScrollRestoration.js";
+
+// Re-export NavigationProvider (needed for setup)
+export {
+  NavigationProvider,
+  type NavigationProviderProps,
+} from "./browser/react/NavigationProvider.js";
+
+// Note: useNavigation, useAction, useClientCache are NOT re-exported here
+// because they use client-side state and should only be used in client components

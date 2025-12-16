@@ -526,3 +526,44 @@ export class ErrorBoundary extends Component<
     return this.props.children;
   }
 }
+
+// ============================================================================
+// Re-exports from browser/react for convenience
+// These are the most commonly used client-side navigation utilities
+// ============================================================================
+
+// Navigation hooks
+export {
+  useNavigation,
+  type NavigationMethods,
+  type NavigationValue,
+} from "./browser/react/use-navigation.js";
+
+// Action state tracking hook
+export { useAction } from "./browser/react/use-action.js";
+
+// Client cache controls hook
+export {
+  useClientCache,
+  type ClientCacheControls,
+} from "./browser/react/use-client-cache.js";
+
+// Provider
+export {
+  NavigationProvider,
+  type NavigationProviderProps,
+} from "./browser/react/NavigationProvider.js";
+
+// Link component
+export {
+  Link,
+  type LinkProps,
+  type PrefetchStrategy,
+} from "./browser/react/Link.js";
+
+// Scroll restoration
+export {
+  ScrollRestoration,
+  useScrollRestoration,
+  type ScrollRestorationProps,
+} from "./browser/react/ScrollRestoration.js";

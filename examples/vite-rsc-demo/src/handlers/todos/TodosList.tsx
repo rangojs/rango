@@ -1,11 +1,10 @@
 "use client";
 
-import { useLoader } from "rsc-router/client";
+import { useLoader, useNavigation } from "rsc-router/client";
 import { TodosLoader } from "./loader.js";
 import { DebugSegmentWrapper } from "../../components/DebugSegmentWrapper.js";
 import { SegmentTimer } from "../../components/SegmentTimer.js";
 import { AddTodoForm, TodoItem, TodoStats } from "./components.js";
-import { useNavigation } from "rsc-router/browser";
 import { LoadingSpinner } from "../shop/components/loading.js";
 
 export function TodosCount() {

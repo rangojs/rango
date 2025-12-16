@@ -18,15 +18,21 @@ import type {
   NavigateOptions,
   NavigationBridge,
 } from "../types.js";
+import type { EventController } from "../event-controller.js";
 
 /**
  * Props for NavigationProvider
  */
 export interface NavigationProviderProps {
   /**
-   * Navigation store instance
+   * Navigation store instance (for cache/segment management)
    */
   store: NavigationStore;
+
+  /**
+   * Event controller instance (for navigation/action state)
+   */
+  eventController: EventController;
 
   /**
    * Initial RSC payload from server
@@ -43,17 +49,18 @@ export interface NavigationProviderProps {
  * Navigation provider component
  *
  * Provides navigation context to the component tree and handles:
- * - Providing stable store reference (never re-renders consumers)
+ * - Providing stable store and event controller references (never re-renders consumers)
  * - Subscribing to UI updates to re-render the tree
  * - Providing navigate/refresh methods (delegated to bridge)
  *
- * State subscriptions happen via useNavigation hook, not via context.
+ * State subscriptions happen via useNavigation hook (via event controller), not via context.
  * This means context consumers don't re-render on state changes.
  *
  * @example
  * ```tsx
  * <NavigationProvider
  *   store={store}
+ *   eventController={eventController}
  *   initialPayload={payload}
  *   bridge={navigationBridge}
  * />
@@ -61,6 +68,7 @@ export interface NavigationProviderProps {
  */
 export function NavigationProvider({
   store,
+  eventController,
   initialPayload,
   bridge,
 }: NavigationProviderProps): ReactNode {
@@ -74,7 +82,7 @@ export function NavigationProvider({
     async (url: string, options?: NavigateOptions): Promise<void> => {
       await bridge.navigate(url, options);
     },
-    [bridge]
+    []
   );
 
   /**
@@ -82,16 +90,17 @@ export function NavigationProvider({
    */
   const refresh = useCallback(async (): Promise<void> => {
     await bridge.refresh();
-  }, [bridge]);
+  }, []);
 
-  // Context value is stable (store, navigate, refresh never change)
+  // Context value is stable (store, eventController, navigate, refresh never change)
   const contextValue = useMemo<NavigationStoreContextValue>(
     () => ({
       store,
+      eventController,
       navigate,
       refresh,
     }),
-    [store, navigate, refresh]
+    []
   );
 
   // Subscribe to UI updates (for re-rendering the tree)
@@ -106,7 +115,7 @@ export function NavigationProvider({
     console.log("[Browser] NavigationProvider ready");
 
     return unsubscribe;
-  }, [store]);
+  }, []);
 
   // Note: We intentionally do NOT set isStreaming: true for the initial page load.
   // The initial RSC stream is already rendered via SSR, so the content is visible.
@@ -120,7 +129,8 @@ export function NavigationProvider({
   }, []);
 
   // Handle promise case - use() will suspend until resolved
-  const root = payload.root instanceof Promise ? use(payload.root) : payload.root;
+  const root =
+    payload.root instanceof Promise ? use(payload.root) : payload.root;
 
   return (
     <NavigationStoreContext.Provider value={contextValue}>

@@ -13,26 +13,9 @@ import type { TrackedActionState, ActionLifecycleState } from "../types.js";
 import { invariant } from "../../errors.js";
 
 /**
- * Store state - only lifecycle, no result/error
- */
-interface StoreActionState {
-  state: ActionLifecycleState;
-  actionId: string | null;
-  payload: unknown[] | FormData | null;
-}
-
-/**
- * Local state - includes result/error captured from store emission
- */
-interface LocalActionState extends StoreActionState {
-  error: unknown | null;
-  result: unknown | null;
-}
-
-/**
  * Default action state (idle with no payload)
  */
-const DEFAULT_ACTION_STATE: LocalActionState = {
+const DEFAULT_ACTION_STATE: TrackedActionState = {
   state: "idle",
   actionId: null,
   payload: null,
@@ -41,14 +24,14 @@ const DEFAULT_ACTION_STATE: LocalActionState = {
 };
 
 /**
- * Normalize action ID to just the function name
- * Server actions have IDs like "/src/handlers/shop/actions/shop.actions.ts#updateCartQuantity"
- * We normalize to just "updateCartQuantity" for consistency
+ * Normalize action ID - returns the ID as-is
+ *
+ * Server actions have IDs like "hash#actionName" or "src/actions.ts#actionName".
+ * When using function references, we use the full ID for exact matching.
+ * When using strings, the event controller supports suffix matching
+ * (e.g., "addToCart" matches "hash#addToCart").
  */
 function normalizeActionId(actionId: string): string {
-  if (actionId.includes("#")) {
-    return actionId.split("#").pop()!;
-  }
   return actionId;
 }
 
@@ -58,7 +41,7 @@ function normalizeActionId(actionId: string): string {
  * Actions passed as props from server components lose their metadata
  * during RSC serialization - use a string action name instead.
  */
-function getActionId(action: ServerActionFunction | string): string {
+export function getActionId(action: ServerActionFunction | string): string {
   invariant(
     typeof action === "function" || typeof action === "string",
     `useAction: action must be a function or string, got ${typeof action}`
@@ -66,6 +49,11 @@ function getActionId(action: ServerActionFunction | string): string {
   const actionId = (action as any)?.$$id;
   if (actionId) {
     return normalizeActionId(actionId);
+  }
+
+  // If action is a string, use it directly
+  if (typeof action === "string") {
+    return action;
   }
 
   // If we get here, this is likely an action passed as prop from a server component
@@ -92,7 +80,7 @@ The string must match the exported function name from your "use server" file.`
  * Server action function type
  * Server actions have a $$id property added by the RSC compiler
  */
-type ServerActionFunction = ((...args: any[]) => Promise<any>) & {
+export type ServerActionFunction = ((...args: any[]) => Promise<any>) & {
   $$id?: string;
 };
 
@@ -102,25 +90,35 @@ type ServerActionFunction = ((...args: any[]) => Promise<any>) & {
  * Unlike useNavigation which tracks global navigation state, useAction
  * tracks the state of individual server action invocations.
  *
+ * Uses the event controller for reactive state management.
+ * State is derived from the inflight actions tracked by the controller.
+ *
  * Features:
  * - Tracks action lifecycle: idle → loading → streaming → idle
  * - Captures result/error locally (React handles cleanup)
  * - If multiple actions fire, tracks only the last one
  * - Supports selector pattern like useNavigation
  *
+ * Matching behavior:
+ * - **Function reference**: Uses full $$id for exact matching. This is precise
+ *   and distinguishes between actions with the same name in different files.
+ * - **String**: Matches by suffix (action name after #). This is convenient
+ *   but may be ambiguous if multiple files export the same action name.
+ *
  * @param action - Either a server action function or a string action name.
  *   - **Function**: Must be directly imported in the client component.
  *     Actions passed as props from server components will throw an error.
  *   - **String**: The exported function name from your "use server" file.
- *     This is the recommended approach when the action is passed as a prop.
+ *     Matches any action ending with "#actionName" (suffix match).
  *
  * @example
  * ```tsx
- * // Option 1: Direct import (recommended for client components)
+ * // Option 1: Direct import (precise matching)
  * import { addToCart } from './actions';
  * const actionState = useAction(addToCart);
  *
- * // Option 2: String-based (required when action is passed as prop)
+ * // Option 2: String-based (suffix matching)
+ * // Matches "hash#addToCart" or "src/actions.ts#addToCart"
  * const actionState = useAction('addToCart');
  *
  * // With selector for specific values
@@ -149,75 +147,50 @@ export function useAction<T>(
       : "";
 
   // Base state for useOptimistic
-  const [baseState, setBaseState] = useState<T | TrackedActionState>(() =>
-    selector
-      ? selector?.(ctx?.store.getActionState(actionId) ?? DEFAULT_ACTION_STATE)
-      : (ctx?.store.getActionState(actionId) ?? DEFAULT_ACTION_STATE)
-  );
-
+  const [baseState, setBaseState] = useState<T | TrackedActionState>(() => {
+    if (!ctx) {
+      return selector ? selector(DEFAULT_ACTION_STATE) : DEFAULT_ACTION_STATE;
+    }
+    const state = ctx.eventController.getActionState(actionId);
+    return selector ? selector(state) : state;
+  });
+  const prevSelected = useRef(baseState);
+  prevSelected.current = baseState;
   // useOptimistic allows immediate updates during transitions/actions
   const [optimisticState, setOptimisticState] = useOptimistic<
     T | TrackedActionState
   >(null!);
 
   // Memoize the selector to avoid unnecessary re-subscriptions
-  const dataRef = useRef<{
-    result: TrackedActionState["result"];
-    error: TrackedActionState["error"];
-  }>(null);
   const selectorRef = useRef(selector);
   selectorRef.current = selector;
 
-  // Subscribe to action state changes from store
+  // Subscribe to action state changes from event controller
   useEffect(() => {
     if (!ctx) return;
 
     // Subscribe to action-specific updates
-    const unsubscribe = ctx.store.subscribeToAction(actionId, (storeState) => {
-      if (
-        storeState.result !== null &&
-        storeState.result !== dataRef.current?.result
-      ) {
-        dataRef.current = {
-          result: storeState.result,
-          error: storeState.error,
-        };
-      }
-      if (
-        storeState.error !== null &&
-        storeState.error !== dataRef.current?.error
-      ) {
-        dataRef.current = {
-          result: storeState.result,
-          error: storeState.error,
-        };
-      }
-      const newState: LocalActionState = {
-        state: storeState.state,
-        actionId: storeState.actionId,
-        payload: storeState.payload,
-        // Capture result/error when idle, clear when loading
-        error: dataRef.current?.error,
-        result: dataRef.current?.result,
-      };
+    const unsubscribe = ctx.eventController.subscribeToAction(
+      actionId,
+      (state) => {
+        const selectedState = selectorRef.current
+          ? selectorRef.current(state)
+          : state;
 
-      // Use optimistic update for immediate feedback during transitions
-      // assumes transition is in progress
-      const selectedState = selectorRef.current
-        ? selectorRef.current(newState)
-        : newState;
-      if (!isShallowEqual(selectedState, baseState)) {
-        setBaseState(selectedState);
-        startTransition(() => {
-          setOptimisticState(selectedState);
-        });
+        if (!isShallowEqual(selectedState, prevSelected.current)) {
+          prevSelected.current = selectedState;
+          setBaseState(selectedState);
+          startTransition(() => {
+            setOptimisticState(selectedState);
+          });
+        }
       }
-    });
+    );
 
     return () => {
       unsubscribe();
     };
-  }, [actionId, ctx]);
+  }, [actionId]);
 
   return (optimisticState ?? baseState) as T | TrackedActionState;
 }

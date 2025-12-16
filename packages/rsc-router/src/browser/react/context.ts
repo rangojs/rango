@@ -2,21 +2,29 @@
 
 import { createContext, type Context } from "react";
 import type { NavigationStore, NavigateOptions } from "../types.js";
+import type { EventController } from "../event-controller.js";
 
 /**
  * Navigation context value provided by NavigationProvider
  *
- * This context provides a STABLE reference to the store and methods.
+ * This context provides a STABLE reference to the store, event controller, and methods.
  * The store itself never changes, so context consumers don't re-render
  * when navigation state changes.
  *
- * Components subscribe to state changes via store.subscribe() in useNavigation.
+ * Components subscribe to state changes via eventController.subscribe() in useNavigation.
  */
 export interface NavigationStoreContextValue {
   /**
    * The navigation store instance (stable reference)
+   * Used for cache/segment management
    */
   store: NavigationStore;
+
+  /**
+   * The event controller instance (stable reference)
+   * Used for navigation/action state
+   */
+  eventController: EventController;
 
   /**
    * Navigate to a new URL

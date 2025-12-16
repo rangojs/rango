@@ -59,6 +59,11 @@ export type PartialUpdater = (
     isAction?: boolean;
     staleRevalidation?: boolean;
     interceptSourceUrl?: string;
+    /** Cached segments for the target URL. When provided, these are used to build
+     * the segment map instead of the current page's segments. This ensures consistency
+     * when we send cached segment IDs to the server - if the server returns empty diff,
+     * we use the same segments we told the server we have. */
+    targetCacheSegments?: ResolvedSegment[];
   }
 ) => Promise<Promise<void>>;
 
@@ -117,15 +122,20 @@ export function createPartialUpdater(
       isAction?: boolean;
       staleRevalidation?: boolean;
       interceptSourceUrl?: string;
+      targetCacheSegments?: ResolvedSegment[];
     }
   ): Promise<Promise<void>> {
     const {
       isAction = false,
       staleRevalidation = false,
       interceptSourceUrl,
+      targetCacheSegments,
     } = options || {};
     const segmentState = store.getSegmentState();
     const url = targetUrl || window.location.href;
+
+    // Capture history key at start for stale revalidation consistency check
+    const historyKeyAtStart = store.getHistoryKey();
     const segments = segmentIds ?? segmentState.currentSegmentIds;
 
     // For intercept revalidation, use the intercept source URL as previousUrl
@@ -141,15 +151,20 @@ export function createPartialUpdater(
       console.log(`[Browser] Intercept context from: ${interceptSourceUrl}`);
     }
 
-    // Set streaming state for navigations (actions handle their own streaming state)
-    // Skip for stale revalidation - it's a background cache refresh, not a navigation
-    if (!isAction && !staleRevalidation) {
-      store.setState({ isStreaming: true });
+    // Build segment map for merging with server diff.
+    // When targetCacheSegments is provided (navigating to a cached route), use those
+    // to ensure consistency - we use the same segments we told the server we have.
+    // Otherwise fall back to current page's segments (for same-route revalidation).
+    let currentSegmentMap: Map<string, ResolvedSegment>;
+    if (targetCacheSegments && targetCacheSegments.length > 0) {
+      currentSegmentMap = new Map();
+      targetCacheSegments.forEach((s) => currentSegmentMap.set(s.id, s));
+    } else {
+      currentSegmentMap = getCurrentSegmentMap();
     }
-
-    // Get current page's segments for merging with server diff
-    const currentSegmentMap = getCurrentSegmentMap();
-
+    // Mark navigation as streaming (response received, now parsing RSC)
+    // The token is ended when the stream completes
+    const streamingToken = tx.startStreaming();
     // Fetch partial payload (no abort signal - RSC doesn't support it well)
     const { payload, streamComplete: rawStreamComplete } =
       await client.fetchPartial({
@@ -159,17 +174,9 @@ export function createPartialUpdater(
         staleRevalidation,
       });
 
-    // Wrap stream completion to clear streaming state when done
-    // Only clear if this navigation wasn't aborted (newer navigation handles its own state)
-    // Skip for stale revalidation - we never set streaming state
-    const streamComplete =
-      isAction || staleRevalidation
-        ? rawStreamComplete
-        : rawStreamComplete.then(() => {
-            if (!signal?.aborted) {
-              store.setState({ isStreaming: false });
-            }
-          });
+    const streamComplete = rawStreamComplete.then(() => {
+      streamingToken.end();
+    });
 
     if (payload.metadata?.isPartial) {
       const { segments: newSegments, matched, diff } = payload.metadata;
@@ -189,16 +196,41 @@ export function createPartialUpdater(
         newSegmentMap.set(s.id, s)
       );
 
-      // If diff is empty, nothing changed - skip UI update but commit URL
-      // Still need to collect full segments for history cache
+      // If diff is empty, nothing changed on server side.
+      // However, if we're navigating with targetCacheSegments (to a different route),
+      // we still need to render those segments since the UI is showing the old route.
       if (!diff || diff.length === 0) {
-        console.log(
-          `[Browser] No changes - all revalidations returned false, keeping existing UI`
-        );
         const matchedIds = matched || [];
         const existingSegments = matchedIds
           .map((id: string) => currentSegmentMap.get(id))
           .filter(Boolean) as ResolvedSegment[];
+
+        // When navigating with cached segments to a different route, render them.
+        // targetCacheSegments being provided means we're navigating to a cached route.
+        if (targetCacheSegments && targetCacheSegments.length > 0) {
+          console.log(
+            `[Browser] No diff but navigating with cached segments - rendering target route`
+          );
+
+          const newTree = await renderSegments(existingSegments, {
+            forceAwait: true,
+          });
+
+          tx.commit(matchedIds, existingSegments);
+
+          onUpdate({
+            root: newTree,
+            metadata: payload.metadata!,
+          });
+
+          console.log(`[Browser] Navigation complete (rendered from cache)\n`);
+          return streamComplete;
+        }
+
+        // Same route revalidation with no changes - skip UI update
+        console.log(
+          `[Browser] No changes - all revalidations returned false, keeping existing UI`
+        );
         tx.commit(matchedIds, existingSegments);
         console.log(`[Browser] Navigation complete (no re-render)\n`);
         return streamComplete;
@@ -362,6 +394,19 @@ export function createPartialUpdater(
             }
           : undefined
       );
+
+      // For stale revalidation: verify history key hasn't changed before updating UI
+      // If user navigated away, skip UI update to avoid corrupting current view
+      if (staleRevalidation) {
+        const historyKeyNow = store.getHistoryKey();
+        if (historyKeyNow !== historyKeyAtStart) {
+          console.log(
+            `[Browser] Stale revalidation: history key changed (${historyKeyAtStart} -> ${historyKeyNow}), skipping UI update`
+          );
+          return streamComplete;
+        }
+      }
+
       console.log("[partial-update] updating document");
 
       // Emit update to trigger React render

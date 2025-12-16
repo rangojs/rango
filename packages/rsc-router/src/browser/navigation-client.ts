@@ -5,6 +5,7 @@ import type {
   RscPayload,
   RscBrowserDependencies,
 } from "./types.js";
+import { NetworkError, isNetworkError } from "../errors.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -119,10 +120,24 @@ export function createNavigationClient(
         });
       });
 
-      // Deserialize RSC payload
-      const payload = await deps.createFromFetch<RscPayload>(responsePromise);
-
-      return { payload, streamComplete };
+      try {
+        // Deserialize RSC payload
+        const payload = await deps.createFromFetch<RscPayload>(responsePromise);
+        return { payload, streamComplete };
+      } catch (error) {
+        // Convert network-level errors to NetworkError for proper handling
+        if (isNetworkError(error)) {
+          throw new NetworkError(
+            "Unable to connect to server. Please check your connection.",
+            {
+              cause: error,
+              url: fetchUrl.toString(),
+              operation: staleRevalidation ? "revalidation" : "navigation",
+            }
+          );
+        }
+        throw error;
+      }
     },
   };
 }

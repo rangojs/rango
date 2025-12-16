@@ -1,3 +1,4 @@
 packages:
   - 'packages/*'
+  - 'packages/rsc-router/e2e/test-app'
   - 'examples/*'

@@ -356,7 +356,6 @@ export interface ServerActionBridge {
 export interface ServerActionBridgeConfig {
   store: NavigationStore;
   client: NavigationClient;
-  requestController: RequestController;
   deps: RscBrowserDependencies;
   onUpdate: UpdateSubscriber;
   renderSegments: (
@@ -385,7 +384,6 @@ export interface NavigationBridge {
 export interface NavigationBridgeConfig {
   store: NavigationStore;
   client: NavigationClient;
-  requestController: RequestController;
   onUpdate: UpdateSubscriber;
   renderSegments: (
     segments: ResolvedSegment[],
