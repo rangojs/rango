@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  e2e:
+  rsc-router-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -27,9 +27,7 @@ jobs:
         run: pnpm install
 
       - name: Install Playwright browsers
-        run: |
-          pnpm --filter rsc-router exec playwright install --with-deps chromium
-          pnpm --filter vite-rsc-demo exec playwright install --with-deps chromium
+        run: pnpm --filter rsc-router exec playwright install --with-deps chromium
 
       - name: Build test app for bundle analysis
         run: pnpm --filter rsc-router-e2e-test-app build
@@ -37,10 +35,7 @@ jobs:
       - name: Run rsc-router e2e tests
         run: pnpm --filter rsc-router test
 
-      - name: Run demo app e2e tests
-        run: pnpm --filter vite-rsc-demo test
-
-      - name: Upload rsc-router test results
+      - name: Upload test results
         uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -48,7 +43,32 @@ jobs:
           path: packages/rsc-router/playwright-report/
           retention-days: 7
 
-      - name: Upload demo app test results
+  demo-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Install Playwright browsers
+        run: pnpm --filter vite-rsc-demo exec playwright install --with-deps chromium
+
+      - name: Run demo app e2e tests
+        run: pnpm --filter vite-rsc-demo test
+
+      - name: Upload test results
         uses: actions/upload-artifact@v4
         if: failure()
         with:
