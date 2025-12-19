@@ -1,4 +1,4 @@
-import { createLoader } from "rsc-router/server";
+import { createLoader } from "rsc-router";
 import { todosStore, type Todo } from "./data.js";
 
 export type TodosData = {

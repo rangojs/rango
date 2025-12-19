@@ -1,4 +1,4 @@
-import { createLoader } from "rsc-router/server";
+import { createLoader } from "rsc-router";
 import { getCart } from "../actions/shop.actions.js";
 
 export type ProductCartData = {

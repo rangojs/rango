@@ -1,4 +1,4 @@
-import { createLoader } from "rsc-router/server";
+import { createLoader } from "rsc-router";
 import { orders } from "../data.js";
 
 export type Order = {
