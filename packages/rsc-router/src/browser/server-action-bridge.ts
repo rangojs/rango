@@ -414,13 +414,53 @@ export function createServerActionBridge(
 
         // Check if the history key changed (different cache entry)
         // This happens when navigating between intercept and non-intercept routes
-        // In this case, we should NOT refetch - let the stale-while-revalidate handle it
-        // Refetching here would corrupt the current route's cache with wrong segments
         if (currentLocationKey !== locationKey) {
           console.log(
-            `[Browser] History key changed (${locationKey} -> ${currentLocationKey}), skipping refetch to avoid cache corruption`
+            `[Browser] History key changed (${locationKey} -> ${currentLocationKey}), triggering background revalidation`
           );
-          // Just complete the action - cache is already marked stale
+
+          // The action completed on the server, but the user navigated to a different route.
+          // The navigation fetch may have gotten stale data (before action committed).
+          // Trigger a background revalidation of the CURRENT route to get fresh data.
+          // User navigated to a different history entry.
+          // Check if we should do background revalidation:
+          // - YES if user is on a non-intercept route (safe to revalidate)
+          // - NO if user is on an intercept route (would lose background segments)
+          const currentInterceptSource = store.getInterceptSourceUrl();
+          if (currentInterceptSource) {
+            // User is on an intercept route - skip revalidation to preserve background
+            console.log(
+              `[Browser] Skipping background revalidation - user on intercept route`
+            );
+          } else {
+            // User is on a non-intercept route - safe to revalidate
+            console.log(
+              `[Browser] History key changed, triggering background revalidation`
+            );
+            store.markCacheAsStaleAndBroadcast();
+            using navTx = createNavigationTransaction(
+              store,
+              eventController,
+              window.location.href,
+              { replace: true, skipLoadingState: true }
+            );
+            fetchPartialUpdate(
+              window.location.href,
+              [],
+              false,
+              navTx.handle.signal,
+              navTx.with({
+                url: window.location.href,
+                storeOnly: true,
+              }),
+              {
+                isAction: true,
+              }
+            ).then(() => {
+              console.log(`[Browser] Background revalidation complete`);
+            });
+          }
+
           handle.complete(returnData);
           return returnData;
         }

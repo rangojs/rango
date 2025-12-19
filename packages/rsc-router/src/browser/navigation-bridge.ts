@@ -443,7 +443,10 @@ export function createNavigationBridge(
                   { cause: error, url, operation: "navigation" }
                 );
 
-          console.error("[Browser] Network error during navigation:", networkError);
+          console.error(
+            "[Browser] Network error during navigation:",
+            networkError
+          );
 
           // Emit update with NetworkErrorThrower to trigger root error boundary
           startTransition(() => {
@@ -493,10 +496,17 @@ export function createNavigationBridge(
               ? error
               : new NetworkError(
                   "Unable to connect to server. Please check your connection.",
-                  { cause: error, url: window.location.href, operation: "revalidation" }
+                  {
+                    cause: error,
+                    url: window.location.href,
+                    operation: "revalidation",
+                  }
                 );
 
-          console.error("[Browser] Network error during refresh:", networkError);
+          console.error(
+            "[Browser] Network error during refresh:",
+            networkError
+          );
 
           startTransition(() => {
             onUpdate({
@@ -638,7 +648,10 @@ export function createNavigationBridge(
               // For background revalidation, network errors are logged but don't trigger error boundary
               // since the user is already seeing cached content
               if (error instanceof NetworkError || isNetworkError(error)) {
-                console.warn("[Browser] Background revalidation network error (cached content preserved):", error.message);
+                console.warn(
+                  "[Browser] Background revalidation network error (cached content preserved):",
+                  error.message
+                );
                 return;
               }
               console.error("[Browser] Background revalidation failed:", error);
@@ -687,7 +700,10 @@ export function createNavigationBridge(
                   { cause: error, url, operation: "navigation" }
                 );
 
-          console.error("[Browser] Network error during popstate navigation:", networkError);
+          console.error(
+            "[Browser] Network error during popstate navigation:",
+            networkError
+          );
 
           startTransition(() => {
             onUpdate({

@@ -11,6 +11,7 @@ export function KanbanBoardContent() {
   return (
     <DebugSegmentWrapper type="route" name="Kanban Index">
       <div
+        data-testid="kanban-board"
         style={{
           background: "#e2e8f0",
           borderRadius: "0 0 8px 8px",

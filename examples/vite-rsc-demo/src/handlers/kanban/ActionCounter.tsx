@@ -8,6 +8,7 @@ export function ActionCounterDisplay() {
 
   return (
     <div
+      data-testid="action-counter"
       style={{
         padding: "0.5rem 1rem",
         background: "#f0fdf4",
@@ -39,7 +40,7 @@ export function ActionCounterDisplay() {
           </span>
         ))
       )}
-      <span style={{ marginLeft: "auto", fontWeight: 600 }}>
+      <span style={{ marginLeft: "auto", fontWeight: 600 }} data-testid="action-counter-total">
         Total unique actions: {total}
       </span>
     </div>

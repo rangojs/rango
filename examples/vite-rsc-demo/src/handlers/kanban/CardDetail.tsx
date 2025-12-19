@@ -296,8 +296,9 @@ export function CardDetailContent() {
   }
 
   return (
-    <div style={styles.overlay} onClick={handleClose}>
+    <div style={styles.overlay} onClick={handleClose} data-testid="card-modal-overlay">
       <div
+        data-testid="card-modal"
         style={{ ...styles.modal, ...(isPending ? styles.pending : {}) }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -322,11 +323,12 @@ export function CardDetailContent() {
             <h2
               style={{ ...styles.title, cursor: "pointer" }}
               onClick={() => setIsEditingTitle(true)}
+              data-testid="card-title"
             >
               {optimisticTitle}
             </h2>
           )}
-          <button style={styles.closeButton} onClick={handleClose}>
+          <button style={styles.closeButton} onClick={handleClose} data-testid="card-modal-close">
             x
           </button>
         </div>
@@ -423,9 +425,9 @@ export function CardDetailContent() {
             }}
           >
             <Link to="/kanban" style={{ textDecoration: "none" }}>
-              <button style={styles.cancelButton}>Back to Board</button>
+              <button style={styles.cancelButton} data-testid="back-to-board">Back to Board</button>
             </Link>
-            <button style={styles.deleteButton} onClick={handleDelete}>
+            <button style={styles.deleteButton} onClick={handleDelete} data-testid="delete-card">
               Delete Card
             </button>
           </div>
