@@ -42,6 +42,13 @@ async function initializeApp() {
   const initialSegments = (initialPayload.metadata?.segments ??
     []) as ResolvedSegment[];
   const initialHistoryKey = generateHistoryKey(window.location.href);
+  const initialMatched = initialPayload.metadata?.matched ?? initialSegments.map((s) => s.id);
+
+  // Await initial handle entries (may be a Promise from deferred resolution)
+  let initialHandleEntries: Record<string, Record<string, unknown[]>> | undefined;
+  if (initialPayload.metadata?.handles) {
+    initialHandleEntries = await initialPayload.metadata.handles;
+  }
 
   // Create navigation store with history-based caching
   const store = createNavigationStore({
@@ -49,6 +56,8 @@ async function initializeApp() {
     initialSegmentIds: initialSegments.map((s) => s.id),
     initialHistoryKey,
     initialSegments,
+    initialHandleEntries,
+    initialMatchedSegmentIds: initialMatched,
   });
 
   // Create event controller for reactive state management
@@ -115,7 +124,7 @@ async function initializeApp() {
 
       // Use event controller to track HMR navigation
       const handle = eventController.startNavigation(window.location.href, { replace: true });
-      handle.setStreaming();
+      handle.startStreaming();
 
       // Refetch with empty segments to get everything fresh
       const { payload, streamComplete } = await client.fetchPartial({

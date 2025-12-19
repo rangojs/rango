@@ -2,6 +2,10 @@ import { createFromReadableStream } from "@vitejs/plugin-rsc/ssr";
 import React from "react";
 import { renderToReadableStream } from "react-dom/server.edge";
 import { injectRSCPayload } from "rsc-html-stream/server";
+import {
+  SSRHandleContext,
+  type SSRHandleContextValue,
+} from "rsc-router/browser";
 import type { RscPayload } from "./entry.rsc.js";
 
 /**
@@ -19,10 +23,35 @@ export async function renderHTML(
 
   // Deserialize RSC stream to React tree
   let payload: Promise<RscPayload> | undefined;
+  let ssrHandleContext: SSRHandleContextValue | null = null;
+
   function SsrRoot() {
     // Kick off deserialization inside ReactDOMServer context
     payload ??= createFromReadableStream<RscPayload>(rscStream1);
-    return React.use(payload).root;
+    const p = React.use(payload);
+
+    // Get handle data for SSR context
+    // Handles are always a Promise - use React.use() to suspend and wait
+    if (p.metadata?.handles && !ssrHandleContext) {
+      const handles = React.use(p.metadata.handles);
+      const matchedSegmentIds =
+        p.metadata.matched ?? p.metadata.segments.map((s) => s.id);
+      ssrHandleContext = {
+        handleEntries: handles,
+        matchedSegmentIds,
+      };
+    }
+
+    // Wrap root in SSRHandleContext so useHandle can access handle data during SSR
+    if (ssrHandleContext) {
+      return (
+        <SSRHandleContext.Provider value={ssrHandleContext}>
+          {p.root}
+        </SSRHandleContext.Provider>
+      );
+    }
+
+    return p.root;
   }
 
   // Get bootstrap script content (loads entry.browser.tsx)

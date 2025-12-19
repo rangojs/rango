@@ -542,6 +542,18 @@ export {
 // Action state tracking hook
 export { useAction } from "./browser/react/use-action.js";
 
+// Handle data hook (server-to-client data passing)
+export { useHandle } from "./browser/react/use-handle.js";
+
+// Handle API (createHandle is client-safe - no-op on client)
+export {
+  createHandle,
+  type Handle,
+  type HandleProperties,
+  type HandleData,
+  type HandleAccumulated,
+} from "./handle.js";
+
 // Client cache controls hook
 export {
   useClientCache,

@@ -113,6 +113,8 @@ export {
 export {
   NavigationStoreContext,
   type NavigationStoreContextValue,
+  SSRHandleContext,
+  type SSRHandleContextValue,
   useNavigation,
   type NavigationMethods,
   type NavigationValue,

@@ -1,8 +1,12 @@
 import { Outlet, Link, ScrollRestoration } from "rsc-router/client";
 import { href } from "../router.js";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
+// import { BreadcrumbNav } from "../components/BreadcrumbNav.js";
+// import { breadcrumbs } from "../handles/breadcrumbs.js";
 
 export function RootLayout() {
+  // Push breadcrumb for home
+  // breadcrumbs({ label: "Home", href: "/" });
   return (
     <html lang="en">
       <head>
@@ -74,6 +78,7 @@ export function RootLayout() {
             Errors
           </Link>
         </nav>
+        {/* <BreadcrumbNav /> */}
         <DebugSegmentWrapper type="layout" name="Root">
           <DebugSegmentWrapper type="outlet" name="Root Outlet">
             <Outlet />

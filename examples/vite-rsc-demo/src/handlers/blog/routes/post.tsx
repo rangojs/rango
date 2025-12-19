@@ -4,6 +4,7 @@ import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 import { CurrentURL } from "@/components/CurrentURL.js";
 import { Link } from "rsc-router/client";
+import { breadcrumbs } from "@/handles/breadcrumbs.js";
 
 export const PostRoute: RouteHandler<typeof blogRoutes, "post"> = (ctx) => {
   const renderTime = new Date().toISOString();
@@ -13,6 +14,13 @@ export const PostRoute: RouteHandler<typeof blogRoutes, "post"> = (ctx) => {
 
   // Get previous URL from request header (sent by client during partial navigation)
   const previousClientUrl = ctx.request.headers.get("X-RSC-Router-Client-Path");
+
+  // Add breadcrumb for this post
+  const postTitle = ctx.params.slug
+    .split("-")
+    .map((w: string) => w[0].toUpperCase() + w.slice(1))
+    .join(" ");
+  breadcrumbs({ label: postTitle, href: `/blog/${ctx.params.slug}` });
 
   return (
     <DebugSegmentWrapper type="route" name="Blog Post">

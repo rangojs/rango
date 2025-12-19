@@ -13,6 +13,27 @@ import type {
 } from "./types.js";
 
 /**
+ * Resolve any promises in handle entries
+ * Awaits all promise values before returning resolved entries
+ */
+async function resolveHandleEntries(
+  entries: Record<string, Record<string, unknown[]>>
+): Promise<Record<string, Record<string, unknown[]>>> {
+  const resolved: Record<string, Record<string, unknown[]>> = {};
+
+  for (const [handleName, segmentEntries] of Object.entries(entries)) {
+    resolved[handleName] = {};
+
+    for (const [segmentId, values] of Object.entries(segmentEntries)) {
+      // Await any promises in the values array
+      resolved[handleName][segmentId] = await Promise.all(values);
+    }
+  }
+
+  return resolved;
+}
+
+/**
  * Default action state (idle with no payload)
  */
 const DEFAULT_ACTION_STATE: TrackedActionState = {
@@ -96,6 +117,17 @@ export interface NavigationStoreConfig {
   initialSegmentIds?: string[];
   initialHistoryKey?: string;
   initialSegments?: ResolvedSegment[];
+
+  /**
+   * Initial handle entries from SSR (for useHandle hook)
+   * Structure: { handleName: { segmentId: [entries] } }
+   */
+  initialHandleEntries?: Record<string, Record<string, unknown[]>>;
+
+  /**
+   * Initial matched segment IDs from SSR (for useHandle to know segment order)
+   */
+  initialMatchedSegmentIds?: string[];
 
   /**
    * Maximum number of history entries to cache (default: 20)
@@ -237,6 +269,16 @@ export function createNavigationStore(
   // Intercept source URL - tracks where the intercept was triggered from
   // Used to maintain intercept context during action revalidation
   let interceptSourceUrl: string | null = null;
+
+  // Handle data from server (for useHandle hook)
+  // Per-segment entries: { handleName: { segmentId: [entries] } }
+  // Client runs reducers to accumulate from matched segments
+  let handleEntries: Record<string, Record<string, unknown[]>> =
+    config?.initialHandleEntries ?? {};
+
+  // Matched segment IDs (ordered: layouts first, then routes)
+  // Used by useHandle to know which segments to collect entries from
+  let matchedSegmentIds: string[] = config?.initialMatchedSegmentIds ?? [];
 
   // Action state tracking (for useAction hook)
   // Maps action function ID to its tracked state
@@ -658,6 +700,100 @@ export function createNavigationStore(
      */
     setInterceptSourceUrl(url: string | null): void {
       interceptSourceUrl = url;
+    },
+
+    // ========================================================================
+    // Handle Data (for useHandle hook)
+    // ========================================================================
+
+    /**
+     * Get all handle entries (per-segment)
+     * Used by useHandle hook to collect entries and run reducer
+     */
+    getHandleEntries(): Record<string, Record<string, unknown[]>> {
+      return handleEntries;
+    },
+
+    /**
+     * Set handle entries from RSC payload (full replacement)
+     * Called on full page load or when replacing all handle data
+     * Awaits any promises in entries before notifying subscribers
+     */
+    async setHandleEntries(handles: Record<string, Record<string, unknown[]>>): Promise<void> {
+      // Resolve any promises in handle entries
+      handleEntries = await resolveHandleEntries(handles);
+      // Notify subscribers so useHandle hooks re-render
+      notifyStateListeners();
+    },
+
+    /**
+     * Merge new segment entries with existing (for partial navigation)
+     * Keeps entries from unchanged segments, updates entries from new segments
+     * Removes entries from segments no longer in matched list
+     * Awaits any promises in new entries before merging and notifying
+     */
+    async mergeHandleEntries(
+      newEntries: Record<string, Record<string, unknown[]>>,
+      newMatchedSegmentIds: string[]
+    ): Promise<void> {
+      // Resolve any promises in new entries first
+      const resolvedNewEntries = await resolveHandleEntries(newEntries);
+      const matchedSet = new Set(newMatchedSegmentIds);
+
+      // Build merged entries
+      const merged: Record<string, Record<string, unknown[]>> = {};
+
+      // Collect all handle names from both existing and new
+      const allHandleNames = new Set([
+        ...Object.keys(handleEntries),
+        ...Object.keys(resolvedNewEntries),
+      ]);
+
+      for (const handleName of allHandleNames) {
+        const existingSegments = handleEntries[handleName] || {};
+        const newSegments = resolvedNewEntries[handleName] || {};
+        const mergedSegments: Record<string, unknown[]> = {};
+
+        // Keep entries from existing segments that are still matched
+        // (and not being replaced by new entries)
+        for (const segmentId of Object.keys(existingSegments)) {
+          const inMatched = matchedSet.has(segmentId);
+          const hasNewEntry = !!newSegments[segmentId];
+          if (inMatched && !hasNewEntry) {
+            mergedSegments[segmentId] = existingSegments[segmentId];
+          }
+        }
+
+        // Add/replace with new segment entries
+        for (const segmentId of Object.keys(newSegments)) {
+          mergedSegments[segmentId] = newSegments[segmentId];
+        }
+
+        // Only include if there are entries
+        if (Object.keys(mergedSegments).length > 0) {
+          merged[handleName] = mergedSegments;
+        }
+      }
+
+      handleEntries = merged;
+      matchedSegmentIds = newMatchedSegmentIds;
+      // Notify subscribers so useHandle hooks re-render
+      notifyStateListeners();
+    },
+
+    /**
+     * Get matched segment IDs (ordered: layouts first, then routes)
+     * Used by useHandle to know which segments to collect entries from
+     */
+    getMatchedSegmentIds(): string[] {
+      return matchedSegmentIds;
+    },
+
+    /**
+     * Set matched segment IDs
+     */
+    setMatchedSegmentIds(ids: string[]): void {
+      matchedSegmentIds = ids;
     },
 
     // ========================================================================

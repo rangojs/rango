@@ -1,6 +1,7 @@
 import type { RouteHandler } from "rsc-router/server";
 import type { shopRoutes } from "@/routes.js";
 import { products } from "@/handlers/shop/data.js";
+import { breadcrumbs } from "@/handles/breadcrumbs.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 import { CurrentURL } from "@/components/CurrentURL.js";
 import { AddToCartForm } from "@/components/AddToCartForm.js";
@@ -104,6 +105,9 @@ export const ProductsDetailRoute: RouteHandler<
   // Use the ProductLoader to get product data
   // ctx.use() returns a Promise since loaders run in parallel
   const product = await ctx.use(ProductLoader);
+
+  // Push breadcrumb for this product
+  breadcrumbs({ label: product.name, href: `/shop/product/${product.slug}` });
   console.log("ProductsDetailRoute product", product);
 
   // Also get cart data from the global CartLoader

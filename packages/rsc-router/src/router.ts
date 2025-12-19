@@ -1,6 +1,5 @@
 import {
   Suspense,
-  createElement,
   isValidElement,
   cloneElement,
   type ReactNode,
@@ -41,6 +40,14 @@ import {
   MetricsStore,
   PerformanceMetric,
 } from "./server/context";
+import {
+  initHandleContext,
+  runWithHandleContext,
+  resolveHandles,
+  runWithSegment,
+  trackHandler,
+  markHandlersDone,
+} from "./server/handle-context.js";
 import { error } from "console";
 import {
   createHref,
@@ -519,10 +526,11 @@ export function createRSCRouter<TEnv = any>(
       }
 
       // Step 4: Execute layout handler and emit layout segment
-      const component =
+      const component = runWithSegment(entry.shortCode, async () =>
         typeof entry.handler === "function"
           ? await entry.handler(context)
-          : entry.handler;
+          : entry.handler
+      );
 
       segments.push({
         id: entry.shortCode,
@@ -594,11 +602,9 @@ export function createRSCRouter<TEnv = any>(
       }
 
       // Step 5: Execute route handler and emit route segment
-      // If loading is defined, wrap in Suspense for RSC streaming
-      // This allows the fallback to be sent immediately while content streams in
-      let component = entry.loading
-        ? entry.handler(context)
-        : await entry.handler(context);
+      const component = runWithSegment(entry.shortCode, async () =>
+        entry.loading ? entry.handler(context) : await entry.handler(context)
+      );
 
       segments.push({
         id: entry.shortCode,
@@ -666,10 +672,11 @@ export function createRSCRouter<TEnv = any>(
     }
 
     // Step 4: Execute orphan handler and emit layout segment
-    const component =
+    const component = runWithSegment(orphan.shortCode, async () =>
       typeof orphan.handler === "function"
         ? await orphan.handler(context)
-        : orphan.handler;
+        : orphan.handler
+    );
 
     segments.push({
       id: orphan.shortCode,
@@ -864,10 +871,11 @@ export function createRSCRouter<TEnv = any>(
 
     // Step 3: Execute intercept handler and prepare component
     // Get handler result - don't await if we have loading (enables streaming)
-    const handlerResult =
+    const handlerResult = runWithSegment(parentEntry.shortCode, () =>
       typeof interceptEntry.handler === "function"
         ? interceptEntry.handler(context)
-        : interceptEntry.handler;
+        : interceptEntry.handler
+    );
 
     // Step 4: Prepare layout element (if defined)
     // Layout will be applied in segment-system, not here
@@ -958,14 +966,18 @@ export function createRSCRouter<TEnv = any>(
     >;
 
     for (const [slot, handler] of Object.entries(slots)) {
-      // If loading is defined, don't await the handler (stream with Suspense)
-      let component: ReactNode | Promise<ReactNode>;
-      if (parallelEntry.loading) {
-        component = typeof handler === "function" ? handler(context) : handler;
-      } else {
-        component =
-          typeof handler === "function" ? await handler(context) : handler;
-      }
+      const component = runWithSegment(parentShortCode, async () => {
+        // If loading is defined, don't await the handler (stream with Suspense)
+        let component: ReactNode | Promise<ReactNode>;
+        if (parallelEntry.loading) {
+          component =
+            typeof handler === "function" ? handler(context) : handler;
+        } else {
+          component =
+            typeof handler === "function" ? await handler(context) : handler;
+        }
+        return component;
+      });
 
       // Use parent's shortCode so segment tree correctly associates this parallel with its parent
       segments.push({
@@ -1273,13 +1285,17 @@ export function createRSCRouter<TEnv = any>(
             });
           },
           async () => {
-            // If loading is defined, don't await (stream with Suspense)
-            if (parallelEntry.loading) {
-              return typeof handler === "function" ? handler(context) : handler;
-            }
-            return typeof handler === "function"
-              ? await handler(context)
-              : handler;
+            return runWithSegment(entry.shortCode, async () => {
+              // If loading is defined, don't await (stream with Suspense)
+              if (parallelEntry.loading) {
+                return typeof handler === "function"
+                  ? handler(context)
+                  : handler;
+              }
+              return typeof handler === "function"
+                ? await handler(context)
+                : handler;
+            });
           },
           () => null
         );
@@ -1386,26 +1402,41 @@ export function createRSCRouter<TEnv = any>(
         return shouldRevalidate;
       },
       async () => {
+        // Run handler within segment context for handle attribution
+        // Call handler directly with runWithSegment (not deferred to React render)
+        // This ensures handles are called within the AsyncLocalStorage context
         if (entry.type === "layout") {
-          return typeof entry.handler === "function"
-            ? await entry.handler(context)
-            : entry.handler;
+          return runWithSegment(entry.shortCode, async () =>
+            typeof entry.handler === "function"
+              ? await entry.handler(context)
+              : entry.handler
+          );
         }
         // entry.type === "route" - handler is always callable
         const routeEntry = entry as Extract<EntryData, { type: "route" }>;
         // For routes with loading: keep promise pending for navigation (not actions)
         // This allows client's use() to suspend and show loading skeleton
         if (!routeEntry.loading) {
-          return await routeEntry.handler(context);
+          return await runWithSegment(entry.shortCode, () =>
+            routeEntry.handler(context)
+          );
         }
         if (!actionContext) {
-          return { content: routeEntry.handler(context) }; // NOT awaited - keeps promise pending
+          return {
+            content: runWithSegment(entry.shortCode, () =>
+              routeEntry.handler(context)
+            ),
+          }; // NOT awaited - keeps promise pending
         }
         console.log(
           `[Router] Resolving action route with resolved promise: ${entry.id}`
         );
         return {
-          content: Promise.resolve(await routeEntry.handler(context)),
+          content: Promise.resolve(
+            await runWithSegment(entry.shortCode, async () =>
+              routeEntry.handler(context)
+            )
+          ),
         };
       },
       () => null
@@ -1455,6 +1486,7 @@ export function createRSCRouter<TEnv = any>(
     const matchedIds: string[] = [];
 
     const belongsToRoute = entry.type === "route";
+    // to ensure proper attribution when components call handles
 
     // Step 1: Run middleware (same for both layout and route)
     if (entry.middleware.length > 0) {
@@ -1704,12 +1736,16 @@ export function createRSCRouter<TEnv = any>(
           },
           async () => {
             // If loading is defined, don't await (stream with Suspense)
-            if (parallelEntry.loading) {
-              return typeof handler === "function" ? handler(context) : handler;
-            }
-            return typeof handler === "function"
-              ? await handler(context)
-              : handler;
+            return runWithSegment(orphan.shortCode, async () => {
+              if (parallelEntry.loading) {
+                return typeof handler === "function"
+                  ? handler(context)
+                  : handler;
+              }
+              return typeof handler === "function"
+                ? await handler(context)
+                : handler;
+            });
           },
           () => null
         );
@@ -1767,9 +1803,11 @@ export function createRSCRouter<TEnv = any>(
         });
       },
       async () =>
-        typeof orphan.handler === "function"
-          ? await orphan.handler(context)
-          : orphan.handler,
+        runWithSegment(orphan.shortCode, async () =>
+          typeof orphan.handler === "function"
+            ? await orphan.handler(context)
+            : orphan.handler
+        ),
       () => null
     );
 
@@ -1854,50 +1892,61 @@ export function createRSCRouter<TEnv = any>(
     );
 
     try {
-      // Create request-scoped loader promises map for parallel execution
-      const loaderPromises = new Map<string, Promise<any>>();
+      // Initialize handle context for this request
+      const handleStore = initHandleContext();
 
-      // Set up ctx.use() to access loader data
-      setupLoaderAccess(handlerContext, loaderPromises);
+      // Run segment resolution within handle context
+      const result = await runWithHandleContext(handleStore, async () => {
+        // Create request-scoped loader promises map for parallel execution
+        const loaderPromises = new Map<string, Promise<any>>();
 
-      // Get the store for running segment resolution within metrics context
-      const Store = getContext().getOrCreateStore(matched.routeKey);
-      if (metricsStore) {
-        Store.metrics = metricsStore;
-      }
+        // Set up ctx.use() to access loader data
+        setupLoaderAccess(handlerContext, loaderPromises);
 
-      // Collect all segments from stream (run within store context for metrics tracking)
-      const segments: ResolvedSegment[] = await getContext().runWithStore(
-        Store,
-        Store.namespace || "#router",
-        Store.parent,
-        async () => {
-          const segs: ResolvedSegment[] = [];
-          for (const entry of traverseBack(manifestEntry)) {
-            // Resolve entry into segments with error boundary handling
-            const resolvedSegments = await resolveWithErrorHandling(
-              entry,
-              matched.routeKey,
-              matched.params,
-              handlerContext,
-              loaderPromises,
-              () =>
-                resolveSegment(
-                  entry,
-                  matched.routeKey,
-                  matched.params,
-                  handlerContext,
-                  loaderPromises
-                )
-            );
-
-            segs.push(...resolvedSegments);
-          }
-          return segs;
+        // Get the store for running segment resolution within metrics context
+        const Store = getContext().getOrCreateStore(matched.routeKey);
+        if (metricsStore) {
+          Store.metrics = metricsStore;
         }
-      );
 
-      const segmentIds = segments.map((s) => s.id);
+        // Collect all segments from stream (run within store context for metrics tracking)
+        const segments: ResolvedSegment[] = await getContext().runWithStore(
+          Store,
+          Store.namespace || "#router",
+          Store.parent,
+          async () => {
+            const segs: ResolvedSegment[] = [];
+            for (const entry of traverseBack(manifestEntry)) {
+              // Resolve entry into segments with error boundary handling
+              const resolvedSegments = await resolveWithErrorHandling(
+                entry,
+                matched.routeKey,
+                matched.params,
+                handlerContext,
+                loaderPromises,
+                () =>
+                  resolveSegment(
+                    entry,
+                    matched.routeKey,
+                    matched.params,
+                    handlerContext,
+                    loaderPromises
+                  )
+              );
+
+              segs.push(...resolvedSegments);
+            }
+            return segs;
+          }
+        );
+
+        // Signal that all handlers have been dispatched
+        markHandlersDone();
+
+        return segments;
+      });
+
+      const segmentIds = result.map((s) => s.id);
 
       // Output metrics if enabled
       let serverTiming: string | undefined;
@@ -1906,11 +1955,22 @@ export function createRSCRouter<TEnv = any>(
         serverTiming = generateServerTiming(metricsStore);
       }
 
+      // Create handle context for RSC rendering
+      // The `handles` promise auto-resolves when all tracked handlers complete
+      const handleContext = {
+        wrap: <T>(callback: () => T): T => {
+          return runWithHandleContext(handleStore, callback);
+        },
+        // Promise that auto-resolves with handle data when all handlers complete
+        handles: runWithHandleContext(handleStore, () => resolveHandles()),
+      };
+
       return {
-        segments,
+        segments: result,
         matched: segmentIds,
         diff: segmentIds,
         serverTiming,
+        handleContext,
       };
     } catch (error) {
       // Check if middleware/handler short-circuited with Response
@@ -2098,10 +2158,23 @@ export function createRSCRouter<TEnv = any>(
     // Error segment replaces the outlet content, not the boundary layout itself
     // matched contains all IDs from root to boundary (for caching parent layouts)
     // diff contains the outlet entry ID that is being replaced with error content
+
+    // Initialize handle context for error rendering
+    // No handlers to dispatch, so mark done immediately
+    const handleStore = initHandleContext();
+    runWithHandleContext(handleStore, () => markHandlersDone());
+    const handleContext = {
+      wrap: <T>(callback: () => T): T => {
+        return runWithHandleContext(handleStore, callback);
+      },
+      handles: runWithHandleContext(handleStore, () => resolveHandles()),
+    };
+
     return {
       segments: [errorSegment],
       matched: matchedIds,
       diff: [errorSegment.id],
+      handleContext,
     };
   }
 
@@ -2143,6 +2216,9 @@ export function createRSCRouter<TEnv = any>(
 
     if (!previousUrl) {
       // No previous URL - fall back to full render
+      console.log(
+        `[Router.matchPartial] No previous URL - X-RSC-Router-Client-Path: ${request.headers.get("X-RSC-Router-Client-Path")}, Referer: ${request.headers.get("Referer")}`
+      );
       return null;
     }
 
@@ -2235,6 +2311,9 @@ export function createRSCRouter<TEnv = any>(
     );
 
     try {
+      // Initialize handle context for this request
+      const handleStore = initHandleContext();
+
       // Create request-scoped loader promises map for parallel execution
       const loaderPromises = new Map<string, Promise<any>>();
 
@@ -2304,55 +2383,58 @@ export function createRSCRouter<TEnv = any>(
       // Collect segments with revalidation-aware rendering
       // When intercepting: skip route handler, only render layouts + intercept
       // When not intercepting: render everything normally
-      const result = await getContext().runWithStore(
-        Store,
-        Store.namespace || "#router",
-        Store.parent,
-        async () => {
-          const segs: ResolvedSegment[] = [];
-          const matchedIds: string[] = [];
-          for (const entry of traverseBack(manifestEntry)) {
-            console.log(
-              `[Router.matchPartial] Processing entry: ${entry.shortCode} (${entry.type})`
-            );
-            // When intercepting, skip the route handler - intercept replaces it
-            const isRouteEntry = entry.type === "route";
-            if (isRouteEntry && interceptResult) {
+      // Wrap in handle context to collect handle data during render
+      const result = await runWithHandleContext(handleStore, () =>
+        getContext().runWithStore(
+          Store,
+          Store.namespace || "#router",
+          Store.parent,
+          async () => {
+            const segs: ResolvedSegment[] = [];
+            const matchedIds: string[] = [];
+            for (const entry of traverseBack(manifestEntry)) {
               console.log(
-                `[Router.matchPartial] Intercepting "${localRouteName}" - skipping route handler`
+                `[Router.matchPartial] Processing entry: ${entry.shortCode} (${entry.type})`
               );
-              // Still include route ID in matched for client-side cache tracking
-              matchedIds.push(entry.shortCode);
-              continue;
+              // When intercepting, skip the route handler - intercept replaces it
+              const isRouteEntry = entry.type === "route";
+              if (isRouteEntry && interceptResult) {
+                console.log(
+                  `[Router.matchPartial] Intercepting "${localRouteName}" - skipping route handler`
+                );
+                // Still include route ID in matched for client-side cache tracking
+                matchedIds.push(entry.shortCode);
+                continue;
+              }
+
+              // Normal resolution for layouts and non-intercepted routes
+              const resolved = await resolveWithRevalidationErrorHandling(
+                entry,
+                matched.params,
+                () =>
+                  resolveSegmentWithRevalidation(
+                    entry,
+                    matched.routeKey,
+                    matched.params,
+                    handlerContext,
+                    clientSegmentSet,
+                    prevParams,
+                    request,
+                    prevUrl,
+                    url,
+                    loaderPromises,
+                    actionContext,
+                    stale
+                  ),
+                pathname
+              );
+
+              segs.push(...resolved.segments);
+              matchedIds.push(...resolved.matchedIds);
             }
-
-            // Normal resolution for layouts and non-intercepted routes
-            const resolved = await resolveWithRevalidationErrorHandling(
-              entry,
-              matched.params,
-              () =>
-                resolveSegmentWithRevalidation(
-                  entry,
-                  matched.routeKey,
-                  matched.params,
-                  handlerContext,
-                  clientSegmentSet,
-                  prevParams,
-                  request,
-                  prevUrl,
-                  url,
-                  loaderPromises,
-                  actionContext,
-                  stale
-                ),
-              pathname
-            );
-
-            segs.push(...resolved.segments);
-            matchedIds.push(...resolved.matchedIds);
+            return { segments: segs, matchedIds };
           }
-          return { segments: segs, matchedIds };
-        }
+        )
       );
 
       const { segments, matchedIds: allMatchedIds } = result;
@@ -2365,28 +2447,31 @@ export function createRSCRouter<TEnv = any>(
 
         // Resolve intercept entry (middleware, loaders, handler)
         // Pass revalidation context for stale cache revalidation
-        interceptSegments = await getContext().runWithStore(
-          Store,
-          Store.namespace || "#router",
-          Store.parent,
-          () =>
-            resolveInterceptEntry(
-              interceptResult.intercept,
-              interceptResult.entry,
-              matched.params,
-              handlerContext,
-              true, // belongsToRoute
-              {
-                clientSegmentIds: clientSegmentSet,
-                prevParams,
-                request,
-                prevUrl,
-                nextUrl: url,
-                routeKey: matched.routeKey,
-                actionContext,
-                stale,
-              }
-            )
+        // Wrap in handle context to collect handle data
+        interceptSegments = await runWithHandleContext(handleStore, () =>
+          getContext().runWithStore(
+            Store,
+            Store.namespace || "#router",
+            Store.parent,
+            () =>
+              resolveInterceptEntry(
+                interceptResult.intercept,
+                interceptResult.entry,
+                matched.params,
+                handlerContext,
+                true, // belongsToRoute
+                {
+                  clientSegmentIds: clientSegmentSet,
+                  prevParams,
+                  request,
+                  prevUrl,
+                  nextUrl: url,
+                  routeKey: matched.routeKey,
+                  actionContext,
+                  stale,
+                }
+              )
+          )
         );
 
         // Add to slots metadata - browser uses this to know which slots are active
@@ -2395,6 +2480,9 @@ export function createRSCRouter<TEnv = any>(
           segments: interceptSegments,
         };
       }
+
+      // Signal that all handlers have been dispatched
+      runWithHandleContext(handleStore, () => markHandlersDone());
 
       // Combine main segments with intercept segments
       const allSegments = [...segments, ...interceptSegments];
@@ -2432,6 +2520,14 @@ export function createRSCRouter<TEnv = any>(
         serverTiming = generateServerTiming(metricsStore);
       }
 
+      // Create handle context for RSC rendering
+      const handleContext = {
+        wrap: <T>(callback: () => T): T => {
+          return runWithHandleContext(handleStore, callback);
+        },
+        handles: runWithHandleContext(handleStore, () => resolveHandles()),
+      };
+
       return {
         segments: segmentsToRender,
         matched: allIds, // All segment IDs including intercepts
@@ -2439,6 +2535,7 @@ export function createRSCRouter<TEnv = any>(
         serverTiming,
         // Include slots state - browser uses this to know which slots are active
         slots: Object.keys(slots).length > 0 ? slots : undefined,
+        handleContext,
       };
     } catch (error) {
       // Check if middleware/handler short-circuited with Response

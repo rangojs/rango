@@ -7,6 +7,7 @@ import { postRevalidation } from "./blog/revalidation.js";
 import { loggerMiddleware } from "./blog/middleware.js";
 import { BlogSidebarLoader } from "./blog/loaders/sidebar.js";
 import { BlogSidebar, BlogSidebarSkeleton } from "./blog/components/sidebar.js";
+import { breadcrumbs } from "../handles/breadcrumbs.js";
 
 /**
  * Blog handlers - demonstrates revalidation and parallel routes
@@ -16,7 +17,12 @@ export default map<typeof blogRoutes>(
   ({ route, layout, middleware, revalidate, parallel, loader, loading }) => [
     layout(<RootLayout />, () => []),
 
-    layout(<BlogLayout />, () => [
+    layout(
+      () => {
+        breadcrumbs({ label: "Blog", href: "/blog" });
+        return <BlogLayout />;
+      },
+      () => [
       middleware(...loggerMiddleware),
 
       parallel(

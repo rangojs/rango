@@ -86,6 +86,7 @@ import {
   ProductModalContentSkeleton,
 } from "./shop/components/ProductModal.js";
 import { CartNotification } from "./shop/components/CartNotification.js";
+import { breadcrumbs } from "../handles/breadcrumbs.js";
 
 export default map<typeof shopRoutes>(
   ({
@@ -135,10 +136,15 @@ export default map<typeof shopRoutes>(
         // Shop layout wraps shop routes
         // #2 $layout.0.$layout.2
         layout(
-          <>
-            <ParallelOutlet name="@promoBanner" />
-            <ShopLayout />
-          </>,
+          () => {
+            breadcrumbs({ label: "Shop", href: "/shop" });
+            return (
+              <>
+                <ParallelOutlet name="@promoBanner" />
+                <ShopLayout />
+              </>
+            );
+          },
           () => [
             parallel({
               "@promoBanner": () => (

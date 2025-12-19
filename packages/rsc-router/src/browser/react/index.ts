@@ -10,6 +10,9 @@ export {
 // Action state tracking hook
 export { useAction, type TrackedActionState } from "./use-action.js";
 
+// Handle data hook (server-to-client data passing)
+export { useHandle } from "./use-handle.js";
+
 // Client cache controls hook
 export {
   useClientCache,
@@ -26,6 +29,8 @@ export {
 export {
   NavigationStoreContext,
   type NavigationStoreContextValue,
+  SSRHandleContext,
+  type SSRHandleContextValue,
 } from "./context.js";
 
 // Link component

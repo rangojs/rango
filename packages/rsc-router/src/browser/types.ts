@@ -32,6 +32,13 @@ export interface RscMetadata {
    * Slots are used for intercepting routes during soft navigation
    */
   slots?: Record<string, SlotState>;
+  /**
+   * Handle data collected during server render
+   * Structure: { handleName: { segmentId: [entries] } }
+   * Client runs the reducer to accumulate data from matched segments
+   * May be a Promise when streamed from handleContext.resolve()
+   */
+  handles?: Promise<Record<string, Record<string, unknown[]>>>;
 }
 
 /**
@@ -251,6 +258,22 @@ export interface NavigationStore {
   // Intercept context tracking (for action revalidation)
   getInterceptSourceUrl(): string | null;
   setInterceptSourceUrl(url: string | null): void;
+
+  // Handle data (server-to-client data passing via createHandle/useHandle)
+  // Stores per-segment entries: { handleName: { segmentId: [entries] } }
+  getHandleEntries(): Record<string, Record<string, unknown[]>>;
+  // Set handle entries (awaits any promises before notifying)
+  setHandleEntries(
+    handles: Record<string, Record<string, unknown[]>>
+  ): Promise<void>;
+  // Merge new segment entries (for partial navigation, awaits any promises)
+  mergeHandleEntries(
+    newEntries: Record<string, Record<string, unknown[]>>,
+    matchedSegmentIds: string[]
+  ): Promise<void>;
+  // Get matched segment IDs (ordered: layouts first, then routes)
+  getMatchedSegmentIds(): string[];
+  setMatchedSegmentIds(ids: string[]): void;
 
   // UI update notifications
   onUpdate(callback: UpdateSubscriber): () => void;

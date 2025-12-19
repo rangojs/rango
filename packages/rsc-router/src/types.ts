@@ -609,6 +609,23 @@ export interface SlotState {
 /**
  * Router match result
  */
+/**
+ * Handle context for collecting handle data during RSC rendering
+ */
+export interface HandleContext {
+  /**
+   * Wrap a callback to run within the handle context
+   * Use this to wrap renderToReadableStream so handles called from
+   * components are collected properly
+   */
+  wrap<T>(callback: () => T): T;
+  /**
+   * Promise that auto-resolves with handle data when all tracked handlers complete
+   * Include this directly in the RSC payload - no manual resolution needed
+   */
+  handles: Promise<Record<string, Record<string, unknown[]>>>;
+}
+
 export interface MatchResult {
   segments: ResolvedSegment[];
   matched: string[];
@@ -624,6 +641,11 @@ export interface MatchResult {
    * Slots are used for intercepting routes during soft navigation
    */
   slots?: Record<string, SlotState>;
+  /**
+   * Handle context for collecting handle data during RSC rendering
+   * Call wrap() around renderToReadableStream, then resolve() to get handles
+   */
+  handleContext: HandleContext;
 }
 
 /**

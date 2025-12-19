@@ -26,6 +26,8 @@ export type RscPayload = {
     diff?: string[];
     /** State of named slots for this route match (used for intercepting routes) */
     slots?: Record<string, SlotState>;
+    /** Handle data per segment: { handleName: { segmentId: [entries] } } - always a Promise, resolved by SSR/browser */
+    handles?: Promise<Record<string, Record<string, unknown[]>>>;
   };
   returnValue?: { ok: boolean; data: any }; // Action return value
   formState?: any; // Form state (future)
@@ -119,7 +121,12 @@ export default async function handler(request: Request): Promise<Response> {
         actionStatus = 500;
 
         // Use matchError to render the error boundary
-        const errorResult = await router.matchError(request, {}, error, "route");
+        const errorResult = await router.matchError(
+          request,
+          {},
+          error,
+          "route"
+        );
 
         if (errorResult) {
           console.log(`[RSC] Rendering error boundary for action error`);
@@ -137,6 +144,7 @@ export default async function handler(request: Request): Promise<Response> {
               matched: errorResult.matched,
               diff: errorResult.diff,
               isError: true, // Flag to indicate this is an error response
+              handles: errorResult.handleContext.defer().promise,
             },
             returnValue, // Include the error for client-side awareness
           };
@@ -157,7 +165,9 @@ export default async function handler(request: Request): Promise<Response> {
         }
 
         // If matchError returns null (shouldn't happen with default fallback), continue to normal flow
-        console.warn(`[RSC] matchError returned null, continuing with normal flow`);
+        console.warn(
+          `[RSC] matchError returned null, continuing with normal flow`
+        );
       }
 
       // 5. Revalidate to determine which segments need updating
@@ -207,6 +217,7 @@ export default async function handler(request: Request): Promise<Response> {
             segments: fullMatch.segments,
             matched: fullMatch.matched,
             diff: fullMatch.diff,
+            handles: fullMatch.handleContext.defer().promise,
           },
           returnValue, // Include action result
         };
@@ -234,7 +245,8 @@ export default async function handler(request: Request): Promise<Response> {
 
       // 6. Return updated segments (same format as partial navigation)
       const renderStart2 = performance.now();
-      const root = renderSegments(matchResult.segments);
+      renderSegments(matchResult.segments);
+
       const renderDuration2 = performance.now() - renderStart2;
       const partialServerTiming = matchResult.serverTiming
         ? `${matchResult.serverTiming}, rendering;dur=${renderDuration2.toFixed(2)}`
@@ -249,6 +261,7 @@ export default async function handler(request: Request): Promise<Response> {
           matched: matchResult.matched,
           diff: matchResult.diff,
           slots: matchResult.slots,
+          handles: matchResult.handleContext.defer().promise,
         },
         returnValue, // Include action result
       };
@@ -282,6 +295,12 @@ export default async function handler(request: Request): Promise<Response> {
     // ============================================================================
     let serverTiming: string | undefined;
 
+    // Determine if this is an RSC request or HTML request
+    const isRscRequest =
+      (!request.headers.get("accept")?.includes("text/html") &&
+        !url.searchParams.has("__html")) ||
+      url.searchParams.has("__rsc");
+
     if (isPartial) {
       // Partial render (navigation)
       console.log(`[RSC] >>> PARTIAL RENDER`);
@@ -293,6 +312,7 @@ export default async function handler(request: Request): Promise<Response> {
         const match = await router.match(request, {});
         const renderStart = performance.now();
         const root = renderSegments(match.segments);
+
         const renderDuration = performance.now() - renderStart;
         serverTiming = match.serverTiming
           ? `${match.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
@@ -306,10 +326,12 @@ export default async function handler(request: Request): Promise<Response> {
             matched: match.matched,
             diff: match.diff,
             isPartial: false,
+            handles: match.handleContext.defer().promise,
           },
         };
       } else {
         serverTiming = result.serverTiming;
+
         payload = {
           root: null,
           metadata: {
@@ -319,6 +341,7 @@ export default async function handler(request: Request): Promise<Response> {
             diff: result.diff,
             isPartial: true,
             slots: result.slots,
+            handles: result.handleContext.defer().promise,
           },
         };
       }
@@ -340,10 +363,11 @@ export default async function handler(request: Request): Promise<Response> {
         root,
         metadata: {
           pathname: url.pathname,
-          segments: match.segments, // Send full segments WITH components for initial hydration
+          segments: match.segments,
           matched: match.matched,
           diff: match.diff,
           isPartial: false,
+          handles: match.handleContext.defer().promise,
         },
       };
     }
@@ -356,12 +380,6 @@ export default async function handler(request: Request): Promise<Response> {
 
     // Serialize to RSC stream
     const rscStream = renderToReadableStream<RscPayload>(payload);
-
-    // Determine if this is an RSC request or HTML request
-    const isRscRequest =
-      (!request.headers.get("accept")?.includes("text/html") &&
-        !url.searchParams.has("__html")) ||
-      url.searchParams.has("__rsc");
 
     if (isRscRequest) {
       // Return RSC stream for client navigation

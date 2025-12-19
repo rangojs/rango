@@ -2,11 +2,13 @@ import { Outlet } from "rsc-router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { CartBadge, UserGreeting } from "../components/CartBadge.js";
 import { LoadingSpinner } from "@/handlers/shop/components/loading.js";
+import { BreadcrumbNav } from "@/components/BreadcrumbNav.js";
 
 export function ShopLayout() {
   return (
     <DebugSegmentWrapper type="layout" name="Shop">
       <div>
+        <BreadcrumbNav />
         {/* Notification parallel - client component for action notifications */}
         <Outlet name="@notification" />
 

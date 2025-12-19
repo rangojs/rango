@@ -179,7 +179,23 @@ export function createPartialUpdater(
     });
 
     if (payload.metadata?.isPartial) {
-      const { segments: newSegments, matched, diff } = payload.metadata;
+      const {
+        segments: newSegments,
+        matched,
+        diff,
+        handles,
+      } = payload.metadata;
+
+      // Merge handle entries with existing (preserves unchanged segment data)
+      // Awaits any promises in handle entries before notifying useHandle hooks
+      // handles may be a Promise if streamed from handleContext.resolve()
+      if (handles && matched) {
+        handles.then(async (resolvedHandles) => {
+          if (resolvedHandles) {
+            await store.mergeHandleEntries(resolvedHandles, matched);
+          }
+        });
+      }
 
       // Check if this navigation is stale (a newer one started)
       if (signal?.aborted) {
@@ -433,6 +449,20 @@ export function createPartialUpdater(
       console.warn(`[Browser] Full update (fallback)`);
 
       const segments = payload.metadata?.segments || [];
+      const matchedIds =
+        payload.metadata?.matched || segments.map((s: ResolvedSegment) => s.id);
+
+      // Set handle entries (full replacement for full update)
+      // Awaits any promises in handle entries before notifying useHandle hooks
+      // handles may be a Promise if streamed from handleContext.resolve()
+      if (payload.metadata?.handles) {
+        payload.metadata.handles.then(async (resolvedHandles) => {
+          if (resolvedHandles) {
+            await store.setHandleEntries(resolvedHandles);
+            store.setMatchedSegmentIds(matchedIds);
+          }
+        });
+      }
 
       // Check if this navigation is stale (a newer one started)
       if (signal?.aborted) {

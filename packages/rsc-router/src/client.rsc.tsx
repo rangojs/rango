@@ -26,6 +26,18 @@ export {
 // This version includes the actual loader function
 export { createLoader } from "./route-definition.js";
 
+// Re-export the server's createHandle for RSC context
+// This version actually pushes data to the handle store
+export { createHandle } from "./server/handle-context.js";
+
+// Re-export handle types
+export type {
+  Handle,
+  HandleProperties,
+  HandleData,
+  HandleAccumulated,
+} from "./handle.js";
+
 // Re-export Link component (can be used in server components)
 export {
   Link,

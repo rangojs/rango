@@ -51,3 +51,21 @@ export interface NavigationStoreContextValue {
  */
 export const NavigationStoreContext: Context<NavigationStoreContextValue | null> =
   createContext<NavigationStoreContextValue | null>(null);
+
+/**
+ * SSR handle context value
+ * Used during SSR to provide handle data before the full navigation store is available
+ */
+export interface SSRHandleContextValue {
+  /** Handle entries from RSC metadata: { handleName: { segmentId: [entries] } } */
+  handleEntries: Record<string, Record<string, unknown[]>>;
+  /** Matched segment IDs in order (layouts first, then routes) */
+  matchedSegmentIds: string[];
+}
+
+/**
+ * React context for SSR handle data
+ * Used by useHandle as a fallback during SSR when NavigationStoreContext isn't available
+ */
+export const SSRHandleContext: Context<SSRHandleContextValue | null> =
+  createContext<SSRHandleContextValue | null>(null);

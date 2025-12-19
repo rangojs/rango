@@ -27,6 +27,15 @@ export {
   sanitizeError,
 } from "./errors.js";
 
+// Handle API types only - createHandle must be imported from "rsc-router/client"
+// This ensures proper server/client conditional exports
+export type {
+  Handle,
+  HandleProperties,
+  HandleData,
+  HandleAccumulated,
+} from "./handle.js";
+
 // Types (safe to import anywhere - no runtime code)
 export type {
   RouterEnv,
@@ -61,9 +70,3 @@ export type {
   NotFoundBoundaryFallbackProps,
   NotFoundBoundaryHandler,
 } from "./types.js";
-
-// Router options type
-export type { RSCRouterOptions } from "./router.js";
-
-// Metrics types
-export type { PerformanceMetric, MetricsStore } from "./server/context.js";
