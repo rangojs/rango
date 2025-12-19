@@ -295,6 +295,107 @@ test.describe("kanban-action-navigation-race", () => {
   });
 });
 
+/**
+ * Concurrent actions tests - multiple actions triggered rapidly
+ */
+test.describe("kanban-concurrent-actions", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "dev",
+  });
+
+  test("should handle multiple label toggles concurrently", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/kanban"));
+    await waitForHydration(page);
+
+    // Open card modal
+    await testId(page, "card-link-card-1").click();
+    await expect(testId(page, "card-modal")).toBeVisible();
+
+    // Toggle multiple labels rapidly (concurrent actions)
+    // Available labels: setup, infrastructure, database, design, auth, security, api, backend, ui, frontend, testing, devops, docs
+    const testingLabel = page.locator("button").filter({ hasText: "testing" }).first();
+    const apiLabel = page.locator("button").filter({ hasText: "api" }).first();
+    const authLabel = page.locator("button").filter({ hasText: "auth" }).first();
+
+    // Click all three labels in quick succession without waiting
+    await testingLabel.click();
+    await apiLabel.click();
+    await authLabel.click();
+
+    // Wait for all actions to complete
+    await page.waitForTimeout(5000);
+
+    // Modal should still be functional
+    await expect(testId(page, "card-modal")).toBeVisible();
+    await expect(testId(page, "card-title")).toBeVisible();
+
+    // Board should still be visible behind modal
+    await expect(testId(page, "kanban-board")).toBeVisible();
+  });
+
+  test("should handle rapid card additions", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/kanban"));
+    await waitForHydration(page);
+
+    // Find the TODO column and click "+ Add a card"
+    const todoColumn = testId(page, "kanban-column-col-todo");
+    const addCardButton = todoColumn.locator("button", { hasText: "+ Add a card" });
+    await addCardButton.click();
+
+    // Add first card
+    const input = todoColumn.locator('input[placeholder="Enter card title..."]');
+    await input.fill("Concurrent Card 1");
+    await todoColumn.locator("button", { hasText: "Add Card" }).click();
+
+    // Immediately add second card
+    await input.fill("Concurrent Card 2");
+    await todoColumn.locator("button", { hasText: "Add Card" }).click();
+
+    // Immediately add third card
+    await input.fill("Concurrent Card 3");
+    await todoColumn.locator("button", { hasText: "Add Card" }).click();
+
+    // Wait for all actions to complete and revalidation
+    await page.waitForTimeout(5000);
+
+    // All three cards should appear (with optimistic updates first, then confirmed)
+    await expect(page.locator("text=Concurrent Card 1")).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("text=Concurrent Card 2")).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("text=Concurrent Card 3")).toBeVisible({ timeout: 5000 });
+  });
+
+  test("should update action counter correctly with concurrent actions", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/kanban"));
+    await waitForHydration(page);
+
+    // Open card modal
+    await testId(page, "card-link-card-2").click();
+    await expect(testId(page, "card-modal")).toBeVisible();
+
+    // Toggle two labels concurrently
+    const docsLabel = page.locator("button").filter({ hasText: "docs" }).first();
+    const uiLabel = page.locator("button").filter({ hasText: "UI" }).first();
+
+    await docsLabel.click();
+    await uiLabel.click();
+
+    // Close modal and wait for actions to complete
+    await testId(page, "card-modal-close").click();
+    await page.waitForTimeout(6000);
+
+    // Action counter should show kanbanUpdateCard was called
+    // Multiple concurrent actions should be counted
+    await expect(page.locator("text=kanbanUpdateCard:")).toBeVisible({ timeout: 2000 });
+  });
+});
+
 test.describe("kanban-navigation-history", () => {
   const f = useFixture({
     root: ".",
