@@ -1229,18 +1229,21 @@ export function createRSCRouter<TEnv = any>(
         // Use parent entry's shortCode so segment tree correctly associates parallel with parent
         const parallelId = `${entry.shortCode}.${slot}`;
 
-        // Only include in matchedIds if client already has this parallel segment.
-        // New parallels (like @modal for intercepts) are added via resolveInterceptEntry,
-        // not here. This prevents incorrectly including @modal when client is on detail page.
-        if (clientSegmentIds.has(parallelId)) {
+        // Include in matchedIds if:
+        // - Client already has this parallel segment, OR
+        // - This is a route-scoped parallel (belongsToRoute=true) that should appear
+        // Intercepts (like @modal) are handled separately via resolveInterceptEntry.
+        if (clientSegmentIds.has(parallelId) || belongsToRoute) {
           matchedIds.push(parallelId);
         }
 
         const component = await revalidate(
           async () => {
-            // If client doesn't have this parallel, don't render it.
+            // If client doesn't have this parallel:
+            // - Route-scoped parallels (belongsToRoute=true): render them when navigating to the route
+            // - Parent chain parallels (belongsToRoute=false): don't suddenly appear
             // Intercepts are handled separately via resolveInterceptEntry.
-            if (!clientSegmentIds.has(parallelId)) return false;
+            if (!clientSegmentIds.has(parallelId)) return belongsToRoute;
 
             const dummySegment: ResolvedSegment = {
               id: parallelId,
