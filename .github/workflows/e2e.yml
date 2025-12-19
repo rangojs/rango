@@ -29,18 +29,31 @@ jobs:
         run: pnpm install
 
       - name: Install Playwright browsers
-        run: pnpm --filter rsc-router exec playwright install --with-deps chromium
+        run: |
+          pnpm --filter rsc-router exec playwright install --with-deps chromium
+          pnpm --filter vite-rsc-demo exec playwright install --with-deps chromium
 
       - name: Build test app for bundle analysis
         run: pnpm --filter rsc-router-e2e-test-app build
 
-      - name: Run e2e tests
+      - name: Run rsc-router e2e tests
         run: pnpm --filter rsc-router test
 
-      - name: Upload test results
+      - name: Run demo app e2e tests
+        run: pnpm --filter vite-rsc-demo test
+
+      - name: Upload rsc-router test results
         uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report
+          name: playwright-report-rsc-router
           path: packages/rsc-router/playwright-report/
+          retention-days: 7
+
+      - name: Upload demo app test results
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-demo
+          path: examples/vite-rsc-demo/playwright-report/
           retention-days: 7

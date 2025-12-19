@@ -381,6 +381,7 @@ function KanbanColumn({
 
   return (
     <div
+      data-testid={`kanban-column-${column.id}`}
       style={{
         ...styles.column,
         ...(isDragOver ? { background: "#e2e8f0" } : {}),
@@ -547,6 +548,7 @@ function KanbanCard({
 
   return (
     <div
+      data-testid={`kanban-card-${card.id}`}
       draggable={!isUnsaved}
       onDragStart={() => !isUnsaved && onDragStart(card.id)}
       onDragEnd={onDragEnd}
@@ -571,8 +573,9 @@ function KanbanCard({
       <Link
         to={`/kanban/card/${card.id}`}
         style={{ textDecoration: "none", color: "inherit" }}
+        data-testid={`card-link-${card.id}`}
       >
-        <div style={styles.cardTitle}>{card.title}</div>
+        <div style={styles.cardTitle} data-testid={`card-title-${card.id}`}>{card.title}</div>
       </Link>
 
       {card.labels.length > 0 && (
