@@ -21,11 +21,11 @@
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "latest",
-    "@vitejs/plugin-rsc": "latest",
+    "@vitejs/plugin-rsc": "catalog:",
     "rsc-html-stream": "^0.0.7",
     "tinyexec": "^0.3.2",
     "typescript": "^5.9.3",
-    "vite": "latest",
+    "vite": "catalog:",
     "vite-plugin-devtools-json": "^1.0.0"
   }
 }

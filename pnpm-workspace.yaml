@@ -4,7 +4,9 @@ packages:
   - 'examples/*'
 
 catalog:
+  "@vitejs/plugin-rsc": ^0.5.9
   react: ^19.2.1
   react-dom: ^19.2.1
   "@types/react": ^19.2.7
   "@types/react-dom": ^19.2.3
+  vite: ^7.3.0
