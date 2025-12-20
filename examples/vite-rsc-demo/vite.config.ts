@@ -6,7 +6,18 @@ import { rscRouter } from "rsc-router/vite";
 import devtoolsJson from "vite-plugin-devtools-json";
 
 export default defineConfig({
-  plugins: [react(), rsc(), rscRouter(), devtoolsJson()],
+  plugins: [
+    react(),
+    rsc({
+      entries: {
+        client: "./src/entry.browser.tsx",
+        ssr: "./src/entry.ssr.tsx",
+        rsc: "./src/entry.rsc.tsx",
+      },
+    }),
+    rscRouter(),
+    devtoolsJson(),
+  ],
   esbuild: {
     target: "es2022",
   },
@@ -16,41 +27,6 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
-    },
-  },
-
-  environments: {
-    // RSC environment - server-side React rendering
-    rsc: {
-      build: {
-        rollupOptions: {
-          input: {
-            index: "./src/entry.rsc.tsx",
-          },
-        },
-      },
-    },
-
-    // SSR environment - HTML generation
-    ssr: {
-      build: {
-        rollupOptions: {
-          input: {
-            index: "./src/entry.ssr.tsx",
-          },
-        },
-      },
-    },
-
-    // Client environment - browser hydration and navigation
-    client: {
-      build: {
-        rollupOptions: {
-          input: {
-            index: "./src/entry.browser.tsx",
-          },
-        },
-      },
     },
   },
 });
