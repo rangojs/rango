@@ -11,7 +11,7 @@ import {
   encodeReply,
   createTemporaryReferenceSet,
 } from "@vitejs/plugin-rsc/browser";
-import React from "react";
+import { createElement, StrictMode } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { rscStream } from "rsc-html-stream/client";
 import { initBrowserApp, RSCRouter } from "rsc-router/browser";
@@ -29,9 +29,7 @@ async function initializeApp() {
 
   hydrateRoot(
     document,
-    <React.StrictMode>
-      <RSCRouter />
-    </React.StrictMode>
+    createElement(StrictMode, null, createElement(RSCRouter))
   );
 }
 
@@ -60,7 +58,7 @@ import {
   createTemporaryReferenceSet,
   loadServerAction,
 } from "@vitejs/plugin-rsc/rsc";
-import { router } from "./router.js";
+import { router } from "/src/router";
 import { createRSCHandler } from "rsc-router/rsc";
 
 export default createRSCHandler({
@@ -80,7 +78,7 @@ export default createRSCHandler({
  * Virtual module IDs
  */
 export const VIRTUAL_IDS = {
-  browser: "virtual:rsc-router/entry.browser.tsx",
-  ssr: "virtual:rsc-router/entry.ssr.tsx",
-  rsc: "virtual:rsc-router/entry.rsc.tsx",
+  browser: "virtual:rsc-router/entry.browser.js",
+  ssr: "virtual:rsc-router/entry.ssr.js",
+  rsc: "virtual:rsc-router/entry.rsc.js",
 } as const;
