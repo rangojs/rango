@@ -1,13 +1,26 @@
 // ============================================================================
-// Browser Module - Low-level client-side navigation utilities for RSC Router
+// Browser Module - Client-side RSC Router
 // ============================================================================
 //
-// For most use cases, import from "rsc-router/client" instead:
-//   import { Link, useNavigation, useAction, NavigationProvider } from "rsc-router/client";
+// Quick start:
+//   import { initBrowserApp, RSCRouter } from "rsc-router/browser";
 //
-// This module exports low-level APIs for advanced customization and
-// building custom navigation implementations.
+// For React components (Link, useNavigation, etc.):
+//   import { Link, useNavigation, useAction } from "rsc-router/client";
+//
+// This module also exports low-level APIs for advanced customization.
 // ============================================================================
+
+// RSCRouter - high-level component for browser entry
+export {
+  initBrowserApp,
+  getBrowserAppContext,
+  resetBrowserAppContext,
+  RSCRouter,
+  type InitBrowserAppOptions,
+  type BrowserAppContext,
+  type RSCRouterProps,
+} from "./rsc-router.js";
 
 // Route map builder (client-safe)
 export {

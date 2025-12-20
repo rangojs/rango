@@ -24,6 +24,15 @@
       "types": "./src/browser/index.ts",
       "default": "./src/browser/index.ts"
     },
+    "./ssr": {
+      "types": "./src/ssr/index.tsx",
+      "default": "./src/ssr/index.tsx"
+    },
+    "./rsc": {
+      "react-server": "./src/rsc/index.ts",
+      "types": "./src/rsc/index.ts",
+      "default": "./src/rsc/index.ts"
+    },
     "./vite": {
       "types": "./src/vite/index.ts",
       "import": "./src/vite/index.ts"
