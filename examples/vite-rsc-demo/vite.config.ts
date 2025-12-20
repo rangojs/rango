@@ -1,4 +1,3 @@
-import rsc from "@vitejs/plugin-rsc";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import path from "path";
@@ -8,14 +7,15 @@ import devtoolsJson from "vite-plugin-devtools-json";
 export default defineConfig({
   plugins: [
     react(),
-    rsc({
-      entries: {
-        client: "./src/entry.browser.tsx",
-        ssr: "./src/entry.ssr.tsx",
-        rsc: "./src/entry.rsc.tsx",
+    rscRouter({
+      rsc: {
+        entries: {
+          client: "./src/entry.browser.tsx",
+          ssr: "./src/entry.ssr.tsx",
+          rsc: "./src/entry.rsc.tsx",
+        },
       },
     }),
-    rscRouter(),
     devtoolsJson(),
   ],
   esbuild: {
