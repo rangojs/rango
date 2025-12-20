@@ -5,26 +5,35 @@ import { exposeActionId } from "./expose-action-id.ts";
 export { exposeActionId } from "./expose-action-id.ts";
 
 /**
+ * Default entry points for RSC environments
+ */
+const DEFAULT_ENTRIES = {
+  client: "./src/entry.browser.tsx",
+  ssr: "./src/entry.ssr.tsx",
+  rsc: "./src/entry.rsc.tsx",
+} as const;
+
+/**
  * RSC plugin entry points configuration
  */
 export interface RscEntries {
   /**
    * Path to the browser/client entry file
-   * @example "./src/entry.browser.tsx"
+   * @default "./src/entry.browser.tsx"
    */
-  client: string;
+  client?: string;
 
   /**
    * Path to the SSR entry file
-   * @example "./src/entry.ssr.tsx"
+   * @default "./src/entry.ssr.tsx"
    */
-  ssr: string;
+  ssr?: string;
 
   /**
    * Path to the RSC entry file
-   * @example "./src/entry.rsc.tsx"
+   * @default "./src/entry.rsc.tsx"
    */
-  rsc: string;
+  rsc?: string;
 }
 
 /**
@@ -32,9 +41,10 @@ export interface RscEntries {
  */
 export interface RscPluginOptions {
   /**
-   * Entry points for client, ssr, and rsc environments
+   * Entry points for client, ssr, and rsc environments.
+   * All entries have sensible defaults and can be omitted.
    */
-  entries: RscEntries;
+  entries?: RscEntries;
 }
 
 export interface RscRouterOptions {
@@ -46,37 +56,47 @@ export interface RscRouterOptions {
   exposeActionId?: boolean;
 
   /**
-   * RSC plugin configuration. When provided, rsc-router will automatically
-   * include @vitejs/plugin-rsc with these options.
+   * RSC plugin configuration. By default, rsc-router includes @vitejs/plugin-rsc
+   * with sensible entry point defaults.
    *
-   * If @vitejs/plugin-rsc is already in your config, a warning will be shown
-   * and the duplicate will be skipped.
+   * - Omit or pass `true`/`{}` to use default entry points (recommended)
+   * - Pass `{ entries: {...} }` to customize entry points
+   * - Pass `false` to disable (if you want to configure @vitejs/plugin-rsc manually)
+   *
+   * @default true
    *
    * @example
    * ```ts
+   * // Disable auto-inclusion (for manual RSC plugin configuration)
+   * rscRouter({ rsc: false })
+   *
+   * // Customize entries
    * rscRouter({
    *   rsc: {
    *     entries: {
-   *       client: "./src/entry.browser.tsx",
-   *       ssr: "./src/entry.ssr.tsx",
-   *       rsc: "./src/entry.rsc.tsx",
+   *       client: "./src/custom-entry.browser.tsx",
    *     },
    *   },
    * })
    * ```
    */
-  rsc?: RscPluginOptions;
+  rsc?: boolean | RscPluginOptions;
 }
 
 /**
  * Vite plugin for rsc-router.
  *
- * Includes all necessary transforms for the router to function correctly
- * with React Server Components.
+ * Includes @vitejs/plugin-rsc and all necessary transforms for the router
+ * to function correctly with React Server Components.
  *
  * @example
  * ```ts
- * // With automatic RSC plugin inclusion
+ * // Minimal setup - uses default entry points
+ * export default defineConfig({
+ *   plugins: [react(), rscRouter()],
+ * });
+ *
+ * // With custom entries
  * export default defineConfig({
  *   plugins: [
  *     react(),
@@ -92,12 +112,12 @@ export interface RscRouterOptions {
  *   ],
  * });
  *
- * // Or with manual RSC plugin (for advanced configuration)
+ * // With manual RSC plugin (for advanced configuration)
  * export default defineConfig({
  *   plugins: [
  *     react(),
  *     rsc({ entries: {...} }),
- *     rscRouter(), // Will detect rsc() and skip duplicate
+ *     rscRouter({ rsc: false }),
  *   ],
  * });
  * ```
@@ -105,30 +125,32 @@ export interface RscRouterOptions {
 export async function rscRouter(
   options: RscRouterOptions = {}
 ): Promise<PluginOption[]> {
-  const { exposeActionId: enableExposeActionId = true, rsc: rscOptions } =
+  const { exposeActionId: enableExposeActionId = true, rsc: rscOption = true } =
     options;
 
   const plugins: PluginOption[] = [];
 
-  // Add RSC plugin if configured
-  if (rscOptions) {
+  // Add RSC plugin by default (can be disabled with rsc: false)
+  if (rscOption !== false) {
     // Dynamically import @vitejs/plugin-rsc
     const { default: rsc } = await import("@vitejs/plugin-rsc");
 
-    // Create wrapper plugin that checks for duplicates and adds RSC plugins
+    // Resolve entries with defaults
+    const userEntries =
+      typeof rscOption === "boolean" ? {} : rscOption.entries || {};
+    const resolvedEntries = {
+      client: userEntries.client ?? DEFAULT_ENTRIES.client,
+      ssr: userEntries.ssr ?? DEFAULT_ENTRIES.ssr,
+      rsc: userEntries.rsc ?? DEFAULT_ENTRIES.rsc,
+    };
+
+    // Create wrapper plugin that checks for duplicates
     let hasWarnedDuplicate = false;
 
     plugins.push({
       name: "rsc-router:rsc-integration",
       enforce: "pre",
       configResolved(config) {
-        // Check if there's another RSC plugin (not from our integration)
-        const otherRscPlugins = config.plugins.filter(
-          (p) =>
-            p.name.startsWith("rsc:") &&
-            !p.name.startsWith("rsc-router:")
-        );
-
         // Count how many RSC base plugins there are (rsc:minimal is the main one)
         const rscMinimalCount = config.plugins.filter(
           (p) => p.name === "rsc:minimal"
@@ -138,14 +160,14 @@ export async function rscRouter(
           hasWarnedDuplicate = true;
           console.warn(
             "[rsc-router] Duplicate @vitejs/plugin-rsc detected. " +
-              "Remove rsc() from your config since rsc-router includes it when the rsc option is provided."
+              "Remove rsc() from your config or use rscRouter({ rsc: false }) for manual configuration."
           );
         }
       },
     });
 
-    // Add the actual RSC plugin
-    plugins.push(rsc(rscOptions));
+    // Add the actual RSC plugin with resolved entries
+    plugins.push(rsc({ entries: resolvedEntries }));
   }
 
   if (enableExposeActionId) {
