@@ -1,5 +1,19 @@
 import type { ReactNode } from "react";
 import type { AllUseItems } from "./route-types.js";
+import type { HandleStore } from "./server/handle-store.js";
+
+/**
+ * Internal router context properties.
+ * These are used internally by the RSC handler and router,
+ * not exposed to user handlers.
+ */
+export interface RouterInternalContext {
+  /**
+   * Handle store for tracking pending handler promises.
+   * Created by createRSCHandler and passed to router.match().
+   */
+  __handleStore?: HandleStore;
+}
 
 /**
  * Global namespace for module augmentation

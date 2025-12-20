@@ -1,6 +1,7 @@
 import { renderSegments } from "../segment-system.js";
 import type { RSCRouter } from "../router.js";
-import type { ResolvedSegment, SlotState } from "../types.js";
+import type { ResolvedSegment, SlotState, RouterInternalContext } from "../types.js";
+import { createHandleStore, type HandleStore } from "../server/handle-store.js";
 
 /**
  * RSC payload sent to the client
@@ -133,6 +134,15 @@ export function createRSCHandler<TEnv = unknown>(
     const actionId =
       request.headers.get("rsc-action") || url.searchParams.get("_rsc_action");
 
+    // Create handle store for tracking pending handlers
+    const handleStore = createHandleStore();
+
+    // Attach handle store to env for router access
+    const envWithHandleStore = {
+      ...env,
+      __handleStore: handleStore,
+    } as TEnv & RouterInternalContext;
+
     let payload: RscPayload;
 
     try {
@@ -187,7 +197,7 @@ export function createRSCHandler<TEnv = unknown>(
           actionStatus = 500;
 
           // Try to render error boundary
-          const errorResult = await router.matchError(request, env, error, "route");
+          const errorResult = await router.matchError(request, envWithHandleStore, error, "route");
 
           if (errorResult) {
             const renderStart = performance.now();
@@ -233,11 +243,11 @@ export function createRSCHandler<TEnv = unknown>(
           formData: actionFormData,
         };
 
-        const matchResult = await router.matchPartial(request, env, actionContext);
+        const matchResult = await router.matchPartial(request, envWithHandleStore, actionContext);
 
         if (!matchResult) {
           // Fall back to full render
-          const fullMatch = await router.match(request, env);
+          const fullMatch = await router.match(request, envWithHandleStore);
           const renderStart = performance.now();
           const root = renderSegments(fullMatch.segments);
           const renderDuration = performance.now() - renderStart;
@@ -318,11 +328,11 @@ export function createRSCHandler<TEnv = unknown>(
 
       if (isPartial) {
         // Partial render (navigation)
-        const result = await router.matchPartial(request, env);
+        const result = await router.matchPartial(request, envWithHandleStore);
 
         if (!result) {
           // Fall back to full render
-          const match = await router.match(request, env);
+          const match = await router.match(request, envWithHandleStore);
           const renderStart = performance.now();
           const root = renderSegments(match.segments);
           const renderDuration = performance.now() - renderStart;
@@ -356,7 +366,7 @@ export function createRSCHandler<TEnv = unknown>(
         }
       } else {
         // Full render (initial page load)
-        const match = await router.match(request, env);
+        const match = await router.match(request, envWithHandleStore);
         const renderStart = performance.now();
         const root = renderSegments(match.segments);
         const renderDuration = performance.now() - renderStart;
@@ -424,3 +434,6 @@ export function createRSCHandler<TEnv = unknown>(
     }
   };
 }
+
+// Re-export HandleStore types for consumers who need custom handling
+export { createHandleStore, type HandleStore } from "../server/handle-store.js";
