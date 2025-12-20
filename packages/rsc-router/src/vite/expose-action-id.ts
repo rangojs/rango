@@ -161,9 +161,9 @@ export function exposeActionId(): Plugin {
       if (!rscPluginApi) {
         throw new Error(
           "[rsc-router] Could not find @vitejs/plugin-rsc. " +
-            "rsc-router requires the Vite RSC plugin. Either:\n" +
-            "  1. Use rscRouter({ rsc: { entries: {...} } }) to auto-include the RSC plugin\n" +
-            "  2. Add rsc() before rscRouter() in your Vite config plugins array"
+            "rsc-router requires the Vite RSC plugin.\n" +
+            "The RSC plugin should be included automatically. If you disabled it with\n" +
+            "rscRouter({ rsc: false }), add rsc() before rscRouter() in your config."
         );
       }
 
