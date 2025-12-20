@@ -140,32 +140,36 @@ export async function initBrowserApp(
       const handle = eventController.startNavigation(window.location.href, {
         replace: true,
       });
-      handle.startStreaming();
+      const streamingToken = handle.startStreaming();
 
-      const { payload, streamComplete } = await client.fetchPartial({
-        targetUrl: window.location.href,
-        segmentIds: [],
-        previousUrl: store.getSegmentState().currentUrl,
-      });
-
-      if (payload.metadata?.isPartial) {
-        const segments = payload.metadata.segments || [];
-        const matched = payload.metadata.matched || [];
-
-        store.setSegmentIds(matched);
-        store.setCurrentUrl(window.location.href);
-
-        const historyKey = generateHistoryKey(window.location.href);
-        store.setHistoryKey(historyKey);
-        store.cacheSegmentsForHistory(historyKey, segments);
-
-        store.emitUpdate({
-          root: renderSegments(segments),
-          metadata: payload.metadata,
+      try {
+        const { payload, streamComplete } = await client.fetchPartial({
+          targetUrl: window.location.href,
+          segmentIds: [],
+          previousUrl: store.getSegmentState().currentUrl,
         });
-      }
 
-      await streamComplete;
+        if (payload.metadata?.isPartial) {
+          const segments = payload.metadata.segments || [];
+          const matched = payload.metadata.matched || [];
+
+          store.setSegmentIds(matched);
+          store.setCurrentUrl(window.location.href);
+
+          const historyKey = generateHistoryKey(window.location.href);
+          store.setHistoryKey(historyKey);
+          store.cacheSegmentsForHistory(historyKey, segments);
+
+          store.emitUpdate({
+            root: renderSegments(segments),
+            metadata: payload.metadata,
+          });
+        }
+
+        await streamComplete;
+      } finally {
+        streamingToken.end();
+      }
       handle.complete(new URL(window.location.href));
       console.log("[RSCRouter] HMR: RSC stream complete");
     });

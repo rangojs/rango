@@ -46,20 +46,20 @@ export async function waitForHydration(page: Page, locator: string = "body") {
   page.on("pageerror", pageErrorHandler);
 
   try {
-    // Wait for React fiber to be attached (hydration complete)
-    await expect
-      .poll(
-        () =>
-          page
-            .locator(locator)
-            .evaluate(
-              (el) =>
-                el &&
-                Object.keys(el).some((key) => key.startsWith("__reactFiber"))
-            ),
-        { timeout: 20000 }
-      )
-      .toBeTruthy();
+    // Wait for DOM to be ready before checking for React fiber
+    await page.waitForLoadState("domcontentloaded");
+
+    // Use waitForFunction instead of expect.poll - more reliable for DOM checks
+    await page.waitForFunction(
+      (selector) => {
+        const el = document.querySelector(selector);
+        return (
+          el && Object.keys(el).some((key) => key.startsWith("__reactFiber"))
+        );
+      },
+      locator,
+      { timeout: 20000 }
+    );
 
     // Small delay to catch any async hydration errors
     await page.waitForTimeout(100);

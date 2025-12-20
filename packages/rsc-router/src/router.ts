@@ -1230,15 +1230,20 @@ export function createRSCRouter<TEnv = any>(
         const parallelId = `${entry.shortCode}.${slot}`;
 
         // Include in matchedIds if:
+        // - Client sent empty segments (HMR/full refetch), OR
         // - Client already has this parallel segment, OR
         // - This is a route-scoped parallel (belongsToRoute=true) that should appear
         // Intercepts (like @modal) are handled separately via resolveInterceptEntry.
-        if (clientSegmentIds.has(parallelId) || belongsToRoute) {
+        const isFullRefetch = clientSegmentIds.size === 0;
+        if (isFullRefetch || clientSegmentIds.has(parallelId) || belongsToRoute) {
           matchedIds.push(parallelId);
         }
 
         const component = await revalidate(
           async () => {
+            // If client sent empty segments (HMR/full refetch), always render
+            if (isFullRefetch) return true;
+
             // If client doesn't have this parallel:
             // - Route-scoped parallels (belongsToRoute=true): render them when navigating to the route
             // - Parent chain parallels (belongsToRoute=false): don't suddenly appear
