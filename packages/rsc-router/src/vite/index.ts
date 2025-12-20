@@ -5,7 +5,7 @@ import { exposeActionId } from "./expose-action-id.ts";
 import {
   VIRTUAL_ENTRY_BROWSER,
   VIRTUAL_ENTRY_SSR,
-  VIRTUAL_ENTRY_RSC,
+  getVirtualEntryRSC,
   VIRTUAL_IDS,
 } from "./virtual-entries.ts";
 
@@ -62,6 +62,17 @@ export interface RscPluginOptions {
 
 export interface RscRouterOptions {
   /**
+   * Path to the router entry file that exports your route configuration.
+   * This file must export a `router` object.
+   *
+   * @example
+   * ```ts
+   * rscRouter({ entry: './src/router.tsx' })
+   * ```
+   */
+  entry: string;
+
+  /**
    * Expose $$id property on server action functions.
    * Required for action-based revalidation to work.
    * @default true
@@ -72,8 +83,8 @@ export interface RscRouterOptions {
    * RSC plugin configuration. By default, rsc-router includes @vitejs/plugin-rsc
    * with sensible defaults.
    *
-   * Entry files are optional - if they don't exist, virtual defaults are used.
-   * The only required file is `./src/router.tsx` which defines your routes.
+   * Entry files (browser, ssr, rsc) are optional - if they don't exist,
+   * virtual defaults are used.
    *
    * - Omit or pass `true`/`{}` to use defaults (recommended)
    * - Pass `{ entries: {...} }` to customize entry paths
@@ -97,7 +108,8 @@ function fileExists(root: string, relativePath: string): boolean {
  */
 function createVirtualEntriesPlugin(
   entries: { client: string; ssr: string; rsc: string },
-  root: string
+  root: string,
+  routerEntry: string
 ): Plugin {
   // Track which entries need virtual modules
   const useVirtual = {
@@ -115,7 +127,11 @@ function createVirtualEntriesPlugin(
     virtualModules[VIRTUAL_IDS.ssr] = VIRTUAL_ENTRY_SSR;
   }
   if (useVirtual.rsc) {
-    virtualModules[VIRTUAL_IDS.rsc] = VIRTUAL_ENTRY_RSC;
+    // Convert relative path to absolute for virtual module imports
+    const absoluteRouterPath = routerEntry.startsWith(".")
+      ? "/" + routerEntry.slice(2) // ./src/router.tsx -> /src/router.tsx
+      : routerEntry;
+    virtualModules[VIRTUAL_IDS.rsc] = getVirtualEntryRSC(absoluteRouterPath);
   }
 
   return {
@@ -145,22 +161,21 @@ function createVirtualEntriesPlugin(
  * Includes @vitejs/plugin-rsc and all necessary transforms for the router
  * to function correctly with React Server Components.
  *
- * Entry files are optional - if they don't exist, sensible defaults are used.
- * The only required file is `./src/router.tsx` which exports your router.
- *
  * @example
  * ```ts
- * // Minimal setup - just create src/router.tsx and you're done!
  * export default defineConfig({
- *   plugins: [react(), rscRouter()],
+ *   plugins: [react(), rscRouter({ entry: './src/router.tsx' })],
  * });
  * ```
  */
 export async function rscRouter(
-  options: RscRouterOptions = {}
+  options: RscRouterOptions
 ): Promise<PluginOption[]> {
-  const { exposeActionId: enableExposeActionId = true, rsc: rscOption = true } =
-    options;
+  const {
+    entry,
+    exposeActionId: enableExposeActionId = true,
+    rsc: rscOption = true,
+  } = options;
 
   const plugins: PluginOption[] = [];
 
@@ -225,7 +240,7 @@ export async function rscRouter(
     });
 
     // Add virtual entries plugin
-    plugins.push(createVirtualEntriesPlugin(entryPaths, projectRoot));
+    plugins.push(createVirtualEntriesPlugin(entryPaths, projectRoot, entry));
 
     // Add the RSC plugin directly with a getter for entries
     // This ensures the plugin is in the array before configResolved runs

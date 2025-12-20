@@ -51,14 +51,18 @@ export const renderHTML = createSSRHandler({
 });
 `.trim();
 
-export const VIRTUAL_ENTRY_RSC: string = `
+/**
+ * Generate the RSC entry content with the specified router path
+ */
+export function getVirtualEntryRSC(routerPath: string): string {
+  return `
 import {
   renderToReadableStream,
   decodeReply,
   createTemporaryReferenceSet,
   loadServerAction,
 } from "@vitejs/plugin-rsc/rsc";
-import { router } from "/src/router";
+import { router } from "${routerPath}";
 import { createRSCHandler } from "rsc-router/rsc";
 
 export default createRSCHandler({
@@ -73,6 +77,7 @@ export default createRSCHandler({
     import.meta.viteRsc.loadModule("ssr", "index"),
 });
 `.trim();
+}
 
 /**
  * Virtual module IDs
