@@ -172,39 +172,66 @@ function ensureResolvedUrls(): Plugin {
  */
 function createVirtualEntriesPlugin(
   entries: { client: string; ssr: string; rsc?: string },
-  root: string,
-  routerEntry: string
+  initialRoot: string,
+  routerEntry: string,
+  options?: { forCloudflare?: boolean }
 ): Plugin {
-  // Track which entries need virtual modules
-  const useVirtual = {
-    client: !fileExists(root, entries.client),
-    ssr: !fileExists(root, entries.ssr),
-    rsc: entries.rsc ? !fileExists(root, entries.rsc) : false,
-  };
+  const forCloudflare = options?.forCloudflare ?? false;
 
-  const virtualModules: Record<string, string> = {};
+  // These will be computed in configResolved when we have the final root (cloudflare only)
+  let virtualModules: Record<string, string> = {};
+  let initialized = false;
 
-  if (useVirtual.client) {
-    virtualModules[VIRTUAL_IDS.browser] = VIRTUAL_ENTRY_BROWSER;
+  function initializeVirtualModules(root: string) {
+    if (initialized && !forCloudflare) return;
+    initialized = true;
+
+    // Track which entries need virtual modules
+    const useVirtual = {
+      client: !fileExists(root, entries.client),
+      ssr: !fileExists(root, entries.ssr),
+      rsc: entries.rsc ? !fileExists(root, entries.rsc) : false,
+    };
+
+    virtualModules = {};
+
+    if (useVirtual.client) {
+      virtualModules[VIRTUAL_IDS.browser] = VIRTUAL_ENTRY_BROWSER;
+    }
+    if (useVirtual.ssr) {
+      virtualModules[VIRTUAL_IDS.ssr] = VIRTUAL_ENTRY_SSR;
+    }
+    if (useVirtual.rsc) {
+      // Convert relative path to absolute for virtual module imports
+      const absoluteRouterPath = routerEntry.startsWith(".")
+        ? "/" + routerEntry.slice(2) // ./src/router.tsx -> /src/router.tsx
+        : routerEntry;
+      virtualModules[VIRTUAL_IDS.rsc] = getVirtualEntryRSC(absoluteRouterPath);
+    }
   }
-  if (useVirtual.ssr) {
-    virtualModules[VIRTUAL_IDS.ssr] = VIRTUAL_ENTRY_SSR;
-  }
-  if (useVirtual.rsc) {
-    // Convert relative path to absolute for virtual module imports
-    const absoluteRouterPath = routerEntry.startsWith(".")
-      ? "/" + routerEntry.slice(2) // ./src/router.tsx -> /src/router.tsx
-      : routerEntry;
-    virtualModules[VIRTUAL_IDS.rsc] = getVirtualEntryRSC(absoluteRouterPath);
-  }
+
+  // Initialize with initial root (may be updated in configResolved for cloudflare)
+  initializeVirtualModules(initialRoot);
 
   return {
     name: "rsc-router:virtual-entries",
     enforce: "pre",
 
+    configResolved: forCloudflare
+      ? (config) => {
+          // Re-initialize with the resolved root for cloudflare
+          initialized = false;
+          initializeVirtualModules(config.root);
+        }
+      : undefined,
+
     resolveId(id) {
       if (id in virtualModules) {
         return "\0" + id;
+      }
+      // For cloudflare: handle if the id already has the null prefix
+      if (forCloudflare && id.startsWith("\0") && id.slice(1) in virtualModules) {
+        return id;
       }
       return null;
     },
@@ -212,7 +239,9 @@ function createVirtualEntriesPlugin(
     load(id) {
       if (id.startsWith("\0virtual:rsc-router/")) {
         const virtualId = id.slice(1);
-        return virtualModules[virtualId];
+        if (virtualId in virtualModules) {
+          return virtualModules[virtualId];
+        }
       }
       return null;
     },
@@ -289,7 +318,8 @@ export async function rscRouter(
       createVirtualEntriesPlugin(
         { client: DEFAULT_ENTRY_PATHS.client, ssr: DEFAULT_ENTRY_PATHS.ssr },
         projectRoot,
-        routerEntry
+        routerEntry,
+        { forCloudflare: true }
       )
     );
 

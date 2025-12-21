@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, ComponentType } from "react";
 import type { ResolvedSegment, SlotState } from "../types.js";
 import type { RenderSegmentsOptions } from "../segment-system.js";
 
@@ -32,6 +32,8 @@ export interface RscMetadata {
    * Slots are used for intercepting routes during soft navigation
    */
   slots?: Record<string, SlotState>;
+  /** Root layout component for browser-side re-renders */
+  rootLayout?: ComponentType<{ children: ReactNode }>;
 }
 
 /**
