@@ -1,30 +1,51 @@
 import type { Plugin, PluginOption } from "vite";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { exposeActionId } from "./expose-action-id.ts";
+import {
+  VIRTUAL_ENTRY_BROWSER,
+  VIRTUAL_ENTRY_SSR,
+  getVirtualEntryRSC,
+  VIRTUAL_IDS,
+} from "./virtual-entries.ts";
 
 // Re-export plugin
 export { exposeActionId } from "./expose-action-id.ts";
+
+/**
+ * Default entry file paths (relative to project root)
+ */
+const DEFAULT_ENTRY_PATHS = {
+  client: "./src/entry.browser.tsx",
+  ssr: "./src/entry.ssr.tsx",
+  rsc: "./src/entry.rsc.tsx",
+} as const;
 
 /**
  * RSC plugin entry points configuration
  */
 export interface RscEntries {
   /**
-   * Path to the browser/client entry file
-   * @example "./src/entry.browser.tsx"
+   * Path to the browser/client entry file.
+   * If the file doesn't exist, a default virtual entry is used.
+   * @default "./src/entry.browser.tsx"
    */
-  client: string;
+  client?: string;
 
   /**
-   * Path to the SSR entry file
-   * @example "./src/entry.ssr.tsx"
+   * Path to the SSR entry file.
+   * If the file doesn't exist, a default virtual entry is used.
+   * @default "./src/entry.ssr.tsx"
    */
-  ssr: string;
+  ssr?: string;
 
   /**
-   * Path to the RSC entry file
-   * @example "./src/entry.rsc.tsx"
+   * Path to the RSC entry file.
+   * If the file doesn't exist, a default virtual entry is used.
+   * The default expects a router export from "./src/router.tsx".
+   * @default "./src/entry.rsc.tsx"
    */
-  rsc: string;
+  rsc?: string;
 }
 
 /**
@@ -32,12 +53,25 @@ export interface RscEntries {
  */
 export interface RscPluginOptions {
   /**
-   * Entry points for client, ssr, and rsc environments
+   * Entry points for client, ssr, and rsc environments.
+   * All entries have sensible defaults and can be omitted.
+   * If entry files don't exist, virtual defaults are provided.
    */
-  entries: RscEntries;
+  entries?: RscEntries;
 }
 
 export interface RscRouterOptions {
+  /**
+   * Path to the router entry file that exports your route configuration.
+   * This file must export a `router` object.
+   *
+   * @example
+   * ```ts
+   * rscRouter({ entry: './src/router.tsx' })
+   * ```
+   */
+  entry: string;
+
   /**
    * Expose $$id property on server action functions.
    * Required for action-based revalidation to work.
@@ -46,89 +80,150 @@ export interface RscRouterOptions {
   exposeActionId?: boolean;
 
   /**
-   * RSC plugin configuration. When provided, rsc-router will automatically
-   * include @vitejs/plugin-rsc with these options.
+   * RSC plugin configuration. By default, rsc-router includes @vitejs/plugin-rsc
+   * with sensible defaults.
    *
-   * If @vitejs/plugin-rsc is already in your config, a warning will be shown
-   * and the duplicate will be skipped.
+   * Entry files (browser, ssr, rsc) are optional - if they don't exist,
+   * virtual defaults are used.
    *
-   * @example
-   * ```ts
-   * rscRouter({
-   *   rsc: {
-   *     entries: {
-   *       client: "./src/entry.browser.tsx",
-   *       ssr: "./src/entry.ssr.tsx",
-   *       rsc: "./src/entry.rsc.tsx",
-   *     },
-   *   },
-   * })
-   * ```
+   * - Omit or pass `true`/`{}` to use defaults (recommended)
+   * - Pass `{ entries: {...} }` to customize entry paths
+   * - Pass `false` to disable (for manual @vitejs/plugin-rsc configuration)
+   *
+   * @default true
    */
-  rsc?: RscPluginOptions;
+  rsc?: boolean | RscPluginOptions;
+}
+
+/**
+ * Check if a file exists relative to the project root
+ */
+function fileExists(root: string, relativePath: string): boolean {
+  const absolutePath = resolve(root, relativePath);
+  return existsSync(absolutePath);
+}
+
+/**
+ * Create a virtual modules plugin for default entry files
+ */
+function createVirtualEntriesPlugin(
+  entries: { client: string; ssr: string; rsc: string },
+  root: string,
+  routerEntry: string
+): Plugin {
+  // Track which entries need virtual modules
+  const useVirtual = {
+    client: !fileExists(root, entries.client),
+    ssr: !fileExists(root, entries.ssr),
+    rsc: !fileExists(root, entries.rsc),
+  };
+
+  const virtualModules: Record<string, string> = {};
+
+  if (useVirtual.client) {
+    virtualModules[VIRTUAL_IDS.browser] = VIRTUAL_ENTRY_BROWSER;
+  }
+  if (useVirtual.ssr) {
+    virtualModules[VIRTUAL_IDS.ssr] = VIRTUAL_ENTRY_SSR;
+  }
+  if (useVirtual.rsc) {
+    // Convert relative path to absolute for virtual module imports
+    const absoluteRouterPath = routerEntry.startsWith(".")
+      ? "/" + routerEntry.slice(2) // ./src/router.tsx -> /src/router.tsx
+      : routerEntry;
+    virtualModules[VIRTUAL_IDS.rsc] = getVirtualEntryRSC(absoluteRouterPath);
+  }
+
+  return {
+    name: "rsc-router:virtual-entries",
+    enforce: "pre",
+
+    resolveId(id) {
+      if (id in virtualModules) {
+        return "\0" + id;
+      }
+      return null;
+    },
+
+    load(id) {
+      if (id.startsWith("\0virtual:rsc-router/")) {
+        const virtualId = id.slice(1);
+        return virtualModules[virtualId];
+      }
+      return null;
+    },
+  };
 }
 
 /**
  * Vite plugin for rsc-router.
  *
- * Includes all necessary transforms for the router to function correctly
- * with React Server Components.
+ * Includes @vitejs/plugin-rsc and all necessary transforms for the router
+ * to function correctly with React Server Components.
  *
  * @example
  * ```ts
- * // With automatic RSC plugin inclusion
  * export default defineConfig({
- *   plugins: [
- *     react(),
- *     rscRouter({
- *       rsc: {
- *         entries: {
- *           client: "./src/entry.browser.tsx",
- *           ssr: "./src/entry.ssr.tsx",
- *           rsc: "./src/entry.rsc.tsx",
- *         },
- *       },
- *     }),
- *   ],
- * });
- *
- * // Or with manual RSC plugin (for advanced configuration)
- * export default defineConfig({
- *   plugins: [
- *     react(),
- *     rsc({ entries: {...} }),
- *     rscRouter(), // Will detect rsc() and skip duplicate
- *   ],
+ *   plugins: [react(), rscRouter({ entry: './src/router.tsx' })],
  * });
  * ```
  */
 export async function rscRouter(
-  options: RscRouterOptions = {}
+  options: RscRouterOptions
 ): Promise<PluginOption[]> {
-  const { exposeActionId: enableExposeActionId = true, rsc: rscOptions } =
-    options;
+  const {
+    entry,
+    exposeActionId: enableExposeActionId = true,
+    rsc: rscOption = true,
+  } = options;
 
   const plugins: PluginOption[] = [];
 
-  // Add RSC plugin if configured
-  if (rscOptions) {
+  // Add RSC plugin by default (can be disabled with rsc: false)
+  if (rscOption !== false) {
     // Dynamically import @vitejs/plugin-rsc
     const { default: rsc } = await import("@vitejs/plugin-rsc");
 
-    // Create wrapper plugin that checks for duplicates and adds RSC plugins
+    // Resolve entry paths
+    const userEntries =
+      typeof rscOption === "boolean" ? {} : rscOption.entries || {};
+    const entryPaths = {
+      client: userEntries.client ?? DEFAULT_ENTRY_PATHS.client,
+      ssr: userEntries.ssr ?? DEFAULT_ENTRY_PATHS.ssr,
+      rsc: userEntries.rsc ?? DEFAULT_ENTRY_PATHS.rsc,
+    };
+
+    // Use process.cwd() as initial root - will be updated in config hook
+    let projectRoot = process.cwd();
+
+    // Create wrapper plugin that checks for duplicates and sets up virtual entries
     let hasWarnedDuplicate = false;
+
+    // Determine initial entries (will be finalized in config hook)
+    let finalEntries = { ...entryPaths };
 
     plugins.push({
       name: "rsc-router:rsc-integration",
       enforce: "pre",
-      configResolved(config) {
-        // Check if there's another RSC plugin (not from our integration)
-        const otherRscPlugins = config.plugins.filter(
-          (p) =>
-            p.name.startsWith("rsc:") &&
-            !p.name.startsWith("rsc-router:")
-        );
 
+      config(config) {
+        projectRoot = config.root || process.cwd();
+
+        // Check which entry files exist and use virtual modules for missing ones
+        finalEntries = {
+          client: fileExists(projectRoot, entryPaths.client)
+            ? entryPaths.client
+            : VIRTUAL_IDS.browser,
+          ssr: fileExists(projectRoot, entryPaths.ssr)
+            ? entryPaths.ssr
+            : VIRTUAL_IDS.ssr,
+          rsc: fileExists(projectRoot, entryPaths.rsc)
+            ? entryPaths.rsc
+            : VIRTUAL_IDS.rsc,
+        };
+      },
+
+      configResolved(config) {
         // Count how many RSC base plugins there are (rsc:minimal is the main one)
         const rscMinimalCount = config.plugins.filter(
           (p) => p.name === "rsc:minimal"
@@ -138,14 +233,25 @@ export async function rscRouter(
           hasWarnedDuplicate = true;
           console.warn(
             "[rsc-router] Duplicate @vitejs/plugin-rsc detected. " +
-              "Remove rsc() from your config since rsc-router includes it when the rsc option is provided."
+              "Remove rsc() from your config or use rscRouter({ rsc: false }) for manual configuration."
           );
         }
       },
     });
 
-    // Add the actual RSC plugin
-    plugins.push(rsc(rscOptions));
+    // Add virtual entries plugin
+    plugins.push(createVirtualEntriesPlugin(entryPaths, projectRoot, entry));
+
+    // Add the RSC plugin directly with a getter for entries
+    // This ensures the plugin is in the array before configResolved runs
+    // Cast to PluginOption to handle type differences between bundled vite types
+    plugins.push(
+      rsc({
+        get entries() {
+          return finalEntries;
+        },
+      }) as PluginOption
+    );
   }
 
   if (enableExposeActionId) {
