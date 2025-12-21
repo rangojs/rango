@@ -1,5 +1,6 @@
 import { createRSCRouter, type RouterEnv } from "rsc-router/server";
 import { homeRoutes, aboutRoutes, counterRoutes } from "./routes.js";
+import { AppShell } from "./components/AppShell.js";
 
 // Cloudflare Workers bindings (D1, KV, etc.)
 export interface AppBindings {
@@ -23,8 +24,12 @@ declare global {
   }
 }
 
-// Create the router
-export const router = createRSCRouter<AppEnv>();
+// Create the router with root layout
+// AppShell wraps both route content and error boundaries,
+// preventing the app shell from unmounting during errors (avoids FOUC)
+export const router = createRSCRouter<AppEnv>({
+  rootLayout: AppShell,
+});
 
 // Register routes with lazy-loaded handlers
 router
@@ -36,3 +41,11 @@ router
 
   .routes(counterRoutes)
   .map(() => import("./handlers/counter.js"));
+
+type AppRoutes = typeof router.routeMap;
+
+declare global {
+  namespace RSCRouter {
+    interface RegisteredRoutes extends AppRoutes {}
+  }
+}

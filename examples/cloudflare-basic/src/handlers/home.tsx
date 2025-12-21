@@ -1,12 +1,7 @@
 import { map } from "rsc-router/server";
 import type { homeRoutes } from "../routes.js";
-import { HtmlShell } from "../components/HtmlShell.js";
-import { RootLayout } from "../components/RootLayout.js";
 
-export default map<typeof homeRoutes>(
-  ({ route, layout }) => [
-    layout(<RootLayout />),
-
+export default map<typeof homeRoutes>(({ route }) => [
   route("index", () => (
     <main>
       <h1>Welcome to RSC Router</h1>
@@ -20,6 +15,4 @@ export default map<typeof homeRoutes>(
       </ul>
     </main>
   )),
-  ],
-  { rootLayout: HtmlShell }
-);
+]);

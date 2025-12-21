@@ -1,14 +1,9 @@
 import { map } from "rsc-router/server";
 import type { counterRoutes } from "../routes.js";
-import { HtmlShell } from "../components/HtmlShell.js";
-import { RootLayout } from "../components/RootLayout.js";
 import { Counter } from "../components/Counter.js";
 import { getCounter } from "../actions/counter.js";
 
-export default map<typeof counterRoutes>(
-  ({ route, layout }) => [
-    layout(<RootLayout />),
-
+export default map<typeof counterRoutes>(({ route }) => [
   route("index", async () => {
     const initialCount = await getCounter();
 
@@ -31,6 +26,4 @@ export default map<typeof counterRoutes>(
       </main>
     );
   }),
-  ],
-  { rootLayout: HtmlShell }
-);
+]);
