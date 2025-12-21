@@ -65,7 +65,8 @@
     }
   },
   "dependencies": {
-    "magic-string": "^0.30.17"
+    "magic-string": "^0.30.17",
+    "rsc-html-stream": "^0.0.7"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",
