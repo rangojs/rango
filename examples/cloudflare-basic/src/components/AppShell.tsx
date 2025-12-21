@@ -26,10 +26,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         />
       </head>
       <body>
-        <nav>
-          <a href="/">Home</a>
-          <a href="/about">About</a>
-          <a href="/counter">Counter</a>
+        <nav data-testid="nav">
+          <a href="/" data-testid="nav-home">Home</a>
+          <a href="/about" data-testid="nav-about">About</a>
+          <a href="/counter" data-testid="nav-counter">Counter</a>
         </nav>
         {children}
       </body>
