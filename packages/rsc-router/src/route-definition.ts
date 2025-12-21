@@ -1,4 +1,4 @@
-import React, { type ReactNode } from "react";
+import type { ReactNode } from "react";
 import type {
   DefaultEnv,
   ErrorBoundaryHandler,
@@ -856,47 +856,11 @@ const createLayoutHelper = <TEnv>(): RouteHelpers<any, TEnv>["layout"] => {
 };
 
 /**
- * Options for the map() function
- */
-export interface MapOptions {
-  /**
-   * Custom root layout element
-   * When provided, replaces the default root layout that just renders <Outlet />
-   * Useful for rendering the full HTML shell (<html>, <head>, <body>) from RSC
-   *
-   * The element should use <Outlet /> to render child route content.
-   *
-   * @example
-   * ```tsx
-   * // HtmlShell.tsx
-   * import { Outlet } from "rsc-router/client";
-   *
-   * export const HtmlShell = (
-   *   <html lang="en">
-   *     <head>...</head>
-   *     <body>
-   *       <div id="root"><Outlet /></div>
-   *     </body>
-   *   </html>
-   * );
-   *
-   * // handlers/home.tsx
-   * export default map(
-   *   ({ route, layout }) => [...],
-   *   { rootLayout: HtmlShell }
-   * );
-   * ```
-   */
-  rootLayout?: ReactNode;
-}
-
-/**
  * Type-safe handler definition helper
  *
  */
 export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
-  builder: (helpers: RouteHelpers<T, TEnv>) => Array<AllUseItems>,
-  options?: MapOptions
+  builder: (helpers: RouteHelpers<T, TEnv>) => Array<AllUseItems>
 ): () => Array<AllUseItems> {
   return () => {
     // Check if it's a builder function (array-based API)
@@ -918,10 +882,7 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
       notFoundBoundary: createNotFoundBoundaryHelper<TEnv>(),
     };
 
-    // Use custom rootLayout if provided, otherwise use default
-    const rootLayoutComponent = options?.rootLayout ?? RootLayout;
-
-    return [layout(rootLayoutComponent, () => builder(helpers))].flat(3);
+    return [layout(RootLayout, () => builder(helpers))].flat(3);
   };
 }
 
