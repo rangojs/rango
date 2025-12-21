@@ -172,39 +172,60 @@ function ensureResolvedUrls(): Plugin {
  */
 function createVirtualEntriesPlugin(
   entries: { client: string; ssr: string; rsc?: string },
-  root: string,
+  initialRoot: string,
   routerEntry: string
 ): Plugin {
-  // Track which entries need virtual modules
-  const useVirtual = {
-    client: !fileExists(root, entries.client),
-    ssr: !fileExists(root, entries.ssr),
-    rsc: entries.rsc ? !fileExists(root, entries.rsc) : false,
-  };
+  // These will be computed in configResolved when we have the final root
+  let virtualModules: Record<string, string> = {};
+  let initialized = false;
 
-  const virtualModules: Record<string, string> = {};
+  function initializeVirtualModules(root: string) {
+    if (initialized) return;
+    initialized = true;
 
-  if (useVirtual.client) {
-    virtualModules[VIRTUAL_IDS.browser] = VIRTUAL_ENTRY_BROWSER;
+    // Track which entries need virtual modules
+    const useVirtual = {
+      client: !fileExists(root, entries.client),
+      ssr: !fileExists(root, entries.ssr),
+      rsc: entries.rsc ? !fileExists(root, entries.rsc) : false,
+    };
+
+    if (useVirtual.client) {
+      virtualModules[VIRTUAL_IDS.browser] = VIRTUAL_ENTRY_BROWSER;
+    }
+    if (useVirtual.ssr) {
+      virtualModules[VIRTUAL_IDS.ssr] = VIRTUAL_ENTRY_SSR;
+    }
+    if (useVirtual.rsc) {
+      // Convert relative path to absolute for virtual module imports
+      const absoluteRouterPath = routerEntry.startsWith(".")
+        ? "/" + routerEntry.slice(2) // ./src/router.tsx -> /src/router.tsx
+        : routerEntry;
+      virtualModules[VIRTUAL_IDS.rsc] = getVirtualEntryRSC(absoluteRouterPath);
+    }
   }
-  if (useVirtual.ssr) {
-    virtualModules[VIRTUAL_IDS.ssr] = VIRTUAL_ENTRY_SSR;
-  }
-  if (useVirtual.rsc) {
-    // Convert relative path to absolute for virtual module imports
-    const absoluteRouterPath = routerEntry.startsWith(".")
-      ? "/" + routerEntry.slice(2) // ./src/router.tsx -> /src/router.tsx
-      : routerEntry;
-    virtualModules[VIRTUAL_IDS.rsc] = getVirtualEntryRSC(absoluteRouterPath);
-  }
+
+  // Initialize with initial root (may be updated in configResolved)
+  initializeVirtualModules(initialRoot);
 
   return {
     name: "rsc-router:virtual-entries",
     enforce: "pre",
 
+    configResolved(config) {
+      // Re-initialize with the resolved root
+      initialized = false;
+      initializeVirtualModules(config.root);
+    },
+
     resolveId(id) {
+      // Handle virtual module resolution
       if (id in virtualModules) {
         return "\0" + id;
+      }
+      // Also handle if the id already has the null prefix (from some resolvers)
+      if (id.startsWith("\0") && id.slice(1) in virtualModules) {
+        return id;
       }
       return null;
     },
@@ -212,7 +233,9 @@ function createVirtualEntriesPlugin(
     load(id) {
       if (id.startsWith("\0virtual:rsc-router/")) {
         const virtualId = id.slice(1);
-        return virtualModules[virtualId];
+        if (virtualId in virtualModules) {
+          return virtualModules[virtualId];
+        }
       }
       return null;
     },
