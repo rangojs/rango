@@ -537,6 +537,8 @@ export function createRSCRouter<TEnv = any>(
       }
 
       // Step 4: Execute layout handler and emit layout segment
+      // Set current segment ID for handle data attribution
+      context._currentSegmentId = entry.shortCode;
       const component =
         typeof entry.handler === "function"
           ? await entry.handler(context)
@@ -614,6 +616,8 @@ export function createRSCRouter<TEnv = any>(
       // Step 5: Execute route handler and emit route segment
       // If loading is defined, wrap in Suspense for RSC streaming
       // This allows the fallback to be sent immediately while content streams in
+      // Set current segment ID for handle data attribution
+      context._currentSegmentId = entry.shortCode;
       let component: ReactNode | Promise<ReactNode>;
       if (entry.loading) {
         const result = entry.handler(context);
@@ -1425,6 +1429,8 @@ export function createRSCRouter<TEnv = any>(
         return shouldRevalidate;
       },
       async () => {
+        // Set current segment ID for handle data attribution
+        context._currentSegmentId = entry.shortCode;
         if (entry.type === "layout") {
           return typeof entry.handler === "function"
             ? await entry.handler(context)

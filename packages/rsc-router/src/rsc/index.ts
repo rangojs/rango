@@ -436,4 +436,8 @@ export function createRSCHandler<TEnv = unknown>(
 }
 
 // Re-export HandleStore types for consumers who need custom handling
-export { createHandleStore, type HandleStore } from "../server/handle-store.js";
+export {
+  createHandleStore,
+  type HandleStore,
+  type HandleData,
+} from "../server/handle-store.js";
