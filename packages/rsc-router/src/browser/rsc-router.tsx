@@ -61,7 +61,7 @@ export interface BrowserAppContext {
   eventController: EventController;
   bridge: NavigationBridge;
   initialPayload: RscPayload;
-  initialTree: React.ReactNode;
+  initialTree: React.ReactNode | Promise<React.ReactNode>;
 }
 
 // Module-level state for the initialized app
@@ -82,9 +82,8 @@ export async function initBrowserApp(
   const { rscStream, deps, storeOptions } = options;
 
   // Load initial payload from SSR-injected __FLIGHT_DATA__
-  const initialPayload = await deps.createFromReadableStream<RscPayload>(
-    rscStream
-  );
+  const initialPayload =
+    await deps.createFromReadableStream<RscPayload>(rscStream);
 
   // Get initial segments and compute history key from current URL
   const initialSegments = (initialPayload.metadata?.segments ??
@@ -129,8 +128,9 @@ export async function initBrowserApp(
   });
   navigationBridge.registerLinkInterception();
 
-  // Build initial tree (renderSegments returns Promise<ReactNode>)
-  const initialTree = await renderSegments(initialPayload.metadata!.segments);
+  // Use the server's root directly - it already includes rootLayout wrapper
+  // Don't rebuild with renderSegments as that would lose the rootLayout
+  const initialRoot = initialPayload.root;
 
   // Setup HMR
   if (import.meta.hot) {
@@ -181,7 +181,7 @@ export async function initBrowserApp(
     eventController,
     bridge: navigationBridge,
     initialPayload,
-    initialTree,
+    initialTree: initialRoot,
   };
   browserAppContext = context;
 
