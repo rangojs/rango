@@ -1,6 +1,7 @@
 import { renderSegments } from "../segment-system.js";
 import type { RSCRouter } from "../router.js";
 import type { ResolvedSegment, SlotState } from "../types.js";
+import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
 /**
  * RSC payload sent to the client
@@ -73,54 +74,60 @@ export interface CreateRSCHandlerOptions<TEnv = unknown> {
   router: RSCRouter<TEnv>;
 
   /**
-   * RSC dependencies from @vitejs/plugin-rsc/rsc
+   * RSC dependencies from @vitejs/plugin-rsc/rsc.
+   * Defaults to the exports from @vitejs/plugin-rsc/rsc.
    */
-  deps: RSCDependencies;
+  deps?: RSCDependencies;
 
   /**
-   * Function to load the SSR module for HTML rendering
-   * Typically: () => import.meta.viteRsc.loadModule("ssr", "index")
+   * Function to load the SSR module for HTML rendering.
+   * Defaults to: () => import.meta.viteRsc.loadModule("ssr", "index")
    */
-  loadSSRModule: LoadSSRModule;
+  loadSSRModule?: LoadSSRModule;
 }
 
 /**
  * Create an RSC request handler.
  *
- * @example
+ * @example Basic usage (deps and loadSSRModule have sensible defaults)
  * ```tsx
  * import { createRSCHandler } from "rsc-router/rsc";
- * import {
- *   renderToReadableStream,
- *   decodeReply,
- *   createTemporaryReferenceSet,
- *   loadServerAction,
- * } from "@vitejs/plugin-rsc/rsc";
+ * import { router } from "./router.js";
+ *
+ * export default createRSCHandler({ router });
+ * ```
+ *
+ * @example With custom deps (advanced)
+ * ```tsx
+ * import { createRSCHandler } from "rsc-router/rsc";
+ * import * as rsc from "@vitejs/plugin-rsc/rsc";
  * import { router } from "./router.js";
  *
  * export default createRSCHandler({
  *   router,
- *   deps: {
- *     renderToReadableStream,
- *     decodeReply,
- *     createTemporaryReferenceSet,
- *     loadServerAction,
- *   },
- *   loadSSRModule: () =>
- *     import.meta.viteRsc.loadModule<typeof import("./entry.ssr.js")>("ssr", "index"),
+ *   deps: rsc,
+ *   loadSSRModule: () => import.meta.viteRsc.loadModule("ssr", "index"),
  * });
  * ```
  */
 export function createRSCHandler<TEnv = unknown>(
   options: CreateRSCHandlerOptions<TEnv>
 ) {
-  const { router, deps, loadSSRModule } = options;
+  const { router } = options;
+
+  // Use provided deps or default to @vitejs/plugin-rsc/rsc exports
+  const deps = options.deps ?? rscDeps;
   const {
     renderToReadableStream,
     decodeReply,
     createTemporaryReferenceSet,
     loadServerAction,
   } = deps;
+
+  // Use provided loadSSRModule or default to vite RSC module loader
+  const loadSSRModule =
+    options.loadSSRModule ??
+    (() => import.meta.viteRsc.loadModule("ssr", "index"));
 
   return async function handler(
     request: Request,

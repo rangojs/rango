@@ -1,6 +1,5 @@
 /// <reference types="@cloudflare/workers-types" />
 import { createRSCHandler } from "rsc-router/rsc";
-import * as rsc from "@vitejs/plugin-rsc/rsc";
 import { router } from "./router.js";
 
 export interface Env {
@@ -8,11 +7,7 @@ export interface Env {
   KV: KVNamespace;
 }
 
-const handler = createRSCHandler({
-  router,
-  deps: rsc,
-  loadSSRModule: () => import.meta.viteRsc.loadModule("ssr", "index"),
-});
+const handler = createRSCHandler({ router });
 
 export default {
   async fetch(request, env, ctx) {
