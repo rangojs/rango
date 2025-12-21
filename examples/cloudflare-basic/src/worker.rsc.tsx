@@ -11,11 +11,7 @@ export interface Env {
 const handler = createRSCHandler({
   router,
   deps: rsc,
-  loadSSRModule: () =>
-    import.meta.viteRsc.loadModule<typeof import("./entry.ssr.js")>(
-      "ssr",
-      "index"
-    ),
+  loadSSRModule: () => import.meta.viteRsc.loadModule("ssr", "index"),
 });
 
 export default {

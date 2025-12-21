@@ -60,7 +60,27 @@ export interface RscPluginOptions {
   entries?: RscEntries;
 }
 
-export interface RscRouterOptions {
+/**
+ * Base options shared by all presets
+ */
+interface RscRouterBaseOptions {
+  /**
+   * Expose $$id property on server action functions.
+   * Required for action-based revalidation to work.
+   * @default true
+   */
+  exposeActionId?: boolean;
+}
+
+/**
+ * Options for Node.js deployment (default)
+ */
+export interface RscRouterNodeOptions extends RscRouterBaseOptions {
+  /**
+   * Deployment preset. Defaults to 'node' when not specified.
+   */
+  preset?: "node";
+
   /**
    * Path to the router entry file that exports your route configuration.
    * This file must export a `router` object.
@@ -71,13 +91,6 @@ export interface RscRouterOptions {
    * ```
    */
   entry: string;
-
-  /**
-   * Expose $$id property on server action functions.
-   * Required for action-based revalidation to work.
-   * @default true
-   */
-  exposeActionId?: boolean;
 
   /**
    * RSC plugin configuration. By default, rsc-router includes @vitejs/plugin-rsc
@@ -96,6 +109,32 @@ export interface RscRouterOptions {
 }
 
 /**
+ * Options for Cloudflare Workers deployment
+ */
+export interface RscRouterCloudflareOptions extends RscRouterBaseOptions {
+  /**
+   * Deployment preset for Cloudflare Workers.
+   * When using cloudflare preset:
+   * - @vitejs/plugin-rsc is NOT added (cloudflare plugin adds it)
+   * - Router is expected at ./src/router.tsx (or specify with `entry`)
+   * - Worker entry is expected at ./src/worker.rsc.tsx
+   * - Browser and SSR use virtual entries by default
+   */
+  preset: "cloudflare";
+
+  /**
+   * Path to the router entry file.
+   * @default "./src/router.tsx"
+   */
+  entry?: string;
+}
+
+/**
+ * Options for rscRouter plugin
+ */
+export type RscRouterOptions = RscRouterNodeOptions | RscRouterCloudflareOptions;
+
+/**
  * Check if a file exists relative to the project root
  */
 function fileExists(root: string, relativePath: string): boolean {
@@ -104,10 +143,35 @@ function fileExists(root: string, relativePath: string): boolean {
 }
 
 /**
+ * Plugin to ensure resolved URLs are available for cloudflare dev server.
+ * The cloudflare plugin needs server.resolvedUrls to be set.
+ */
+function ensureResolvedUrls(): Plugin {
+  return {
+    name: "rsc-router:ensure-resolved-urls",
+    enforce: "pre",
+    configureServer(server) {
+      const port = server.config.server.port ?? 5173;
+      const host = server.config.server.host || "localhost";
+      const https = server.config.server.https;
+      const protocol = https ? "https" : "http";
+      const hostStr = typeof host === "string" ? host : "localhost";
+
+      if (!server.resolvedUrls) {
+        (server as unknown as { resolvedUrls: object }).resolvedUrls = {
+          local: [`${protocol}://${hostStr}:${port}/`],
+          network: [],
+        };
+      }
+    },
+  };
+}
+
+/**
  * Create a virtual modules plugin for default entry files
  */
 function createVirtualEntriesPlugin(
-  entries: { client: string; ssr: string; rsc: string },
+  entries: { client: string; ssr: string; rsc?: string },
   root: string,
   routerEntry: string
 ): Plugin {
@@ -115,7 +179,7 @@ function createVirtualEntriesPlugin(
   const useVirtual = {
     client: !fileExists(root, entries.client),
     ssr: !fileExists(root, entries.ssr),
-    rsc: !fileExists(root, entries.rsc),
+    rsc: entries.rsc ? !fileExists(root, entries.rsc) : false,
   };
 
   const virtualModules: Record<string, string> = {};
@@ -161,97 +225,164 @@ function createVirtualEntriesPlugin(
  * Includes @vitejs/plugin-rsc and all necessary transforms for the router
  * to function correctly with React Server Components.
  *
- * @example
+ * @example Node.js (default)
  * ```ts
  * export default defineConfig({
  *   plugins: [react(), rscRouter({ entry: './src/router.tsx' })],
+ * });
+ * ```
+ *
+ * @example Cloudflare Workers
+ * ```ts
+ * export default defineConfig({
+ *   plugins: [
+ *     react(),
+ *     rscRouter({ preset: 'cloudflare' }),
+ *     cloudflare({ viteEnvironment: { name: 'rsc' } }),
+ *   ],
  * });
  * ```
  */
 export async function rscRouter(
   options: RscRouterOptions
 ): Promise<PluginOption[]> {
-  const {
-    entry,
-    exposeActionId: enableExposeActionId = true,
-    rsc: rscOption = true,
-  } = options;
+  const preset = options.preset ?? "node";
+  const enableExposeActionId = options.exposeActionId ?? true;
 
   const plugins: PluginOption[] = [];
 
-  // Add RSC plugin by default (can be disabled with rsc: false)
-  if (rscOption !== false) {
+  if (preset === "cloudflare") {
+    // Cloudflare preset: configure entries for cloudflare worker setup
+    const routerEntry = options.entry ?? "./src/router.tsx";
+
     // Dynamically import @vitejs/plugin-rsc
     const { default: rsc } = await import("@vitejs/plugin-rsc");
 
-    // Resolve entry paths
-    const userEntries =
-      typeof rscOption === "boolean" ? {} : rscOption.entries || {};
-    const entryPaths = {
-      client: userEntries.client ?? DEFAULT_ENTRY_PATHS.client,
-      ssr: userEntries.ssr ?? DEFAULT_ENTRY_PATHS.ssr,
-      rsc: userEntries.rsc ?? DEFAULT_ENTRY_PATHS.rsc,
+    let projectRoot = process.cwd();
+    // Only client and ssr entries - rsc entry is handled by cloudflare plugin
+    let finalEntries: { client: string; ssr: string } = {
+      client: VIRTUAL_IDS.browser,
+      ssr: VIRTUAL_IDS.ssr,
     };
 
-    // Use process.cwd() as initial root - will be updated in config hook
-    let projectRoot = process.cwd();
-
-    // Create wrapper plugin that checks for duplicates and sets up virtual entries
-    let hasWarnedDuplicate = false;
-
-    // Determine initial entries (will be finalized in config hook)
-    let finalEntries = { ...entryPaths };
+    // Ensure resolved URLs are available for cloudflare dev server
+    plugins.push(ensureResolvedUrls());
 
     plugins.push({
-      name: "rsc-router:rsc-integration",
+      name: "rsc-router:cloudflare-integration",
       enforce: "pre",
-
       config(config) {
         projectRoot = config.root || process.cwd();
-
-        // Check which entry files exist and use virtual modules for missing ones
+        // Use real files if they exist, otherwise virtual
         finalEntries = {
-          client: fileExists(projectRoot, entryPaths.client)
-            ? entryPaths.client
+          client: fileExists(projectRoot, DEFAULT_ENTRY_PATHS.client)
+            ? DEFAULT_ENTRY_PATHS.client
             : VIRTUAL_IDS.browser,
-          ssr: fileExists(projectRoot, entryPaths.ssr)
-            ? entryPaths.ssr
+          ssr: fileExists(projectRoot, DEFAULT_ENTRY_PATHS.ssr)
+            ? DEFAULT_ENTRY_PATHS.ssr
             : VIRTUAL_IDS.ssr,
-          rsc: fileExists(projectRoot, entryPaths.rsc)
-            ? entryPaths.rsc
-            : VIRTUAL_IDS.rsc,
         };
-      },
-
-      configResolved(config) {
-        // Count how many RSC base plugins there are (rsc:minimal is the main one)
-        const rscMinimalCount = config.plugins.filter(
-          (p) => p.name === "rsc:minimal"
-        ).length;
-
-        if (rscMinimalCount > 1 && !hasWarnedDuplicate) {
-          hasWarnedDuplicate = true;
-          console.warn(
-            "[rsc-router] Duplicate @vitejs/plugin-rsc detected. " +
-              "Remove rsc() from your config or use rscRouter({ rsc: false }) for manual configuration."
-          );
-        }
       },
     });
 
-    // Add virtual entries plugin
-    plugins.push(createVirtualEntriesPlugin(entryPaths, projectRoot, entry));
+    plugins.push(
+      createVirtualEntriesPlugin(
+        { client: DEFAULT_ENTRY_PATHS.client, ssr: DEFAULT_ENTRY_PATHS.ssr },
+        projectRoot,
+        routerEntry
+      )
+    );
 
-    // Add the RSC plugin directly with a getter for entries
-    // This ensures the plugin is in the array before configResolved runs
-    // Cast to PluginOption to handle type differences between bundled vite types
+    // Add RSC plugin with cloudflare-specific options
     plugins.push(
       rsc({
         get entries() {
           return finalEntries;
         },
+        serverHandler: false,
+        loadModuleDevProxy: true,
       }) as PluginOption
     );
+  } else {
+    // Node preset: full RSC plugin integration
+    const nodeOptions = options as RscRouterNodeOptions;
+    const entry = nodeOptions.entry;
+    const rscOption = nodeOptions.rsc ?? true;
+
+    // Add RSC plugin by default (can be disabled with rsc: false)
+    if (rscOption !== false) {
+      // Dynamically import @vitejs/plugin-rsc
+      const { default: rsc } = await import("@vitejs/plugin-rsc");
+
+      // Resolve entry paths
+      const userEntries =
+        typeof rscOption === "boolean" ? {} : rscOption.entries || {};
+      const entryPaths = {
+        client: userEntries.client ?? DEFAULT_ENTRY_PATHS.client,
+        ssr: userEntries.ssr ?? DEFAULT_ENTRY_PATHS.ssr,
+        rsc: userEntries.rsc ?? DEFAULT_ENTRY_PATHS.rsc,
+      };
+
+      // Use process.cwd() as initial root - will be updated in config hook
+      let projectRoot = process.cwd();
+
+      // Create wrapper plugin that checks for duplicates and sets up virtual entries
+      let hasWarnedDuplicate = false;
+
+      // Determine initial entries (will be finalized in config hook)
+      let finalEntries = { ...entryPaths };
+
+      plugins.push({
+        name: "rsc-router:rsc-integration",
+        enforce: "pre",
+
+        config(config) {
+          projectRoot = config.root || process.cwd();
+
+          // Check which entry files exist and use virtual modules for missing ones
+          finalEntries = {
+            client: fileExists(projectRoot, entryPaths.client)
+              ? entryPaths.client
+              : VIRTUAL_IDS.browser,
+            ssr: fileExists(projectRoot, entryPaths.ssr)
+              ? entryPaths.ssr
+              : VIRTUAL_IDS.ssr,
+            rsc: fileExists(projectRoot, entryPaths.rsc)
+              ? entryPaths.rsc
+              : VIRTUAL_IDS.rsc,
+          };
+        },
+
+        configResolved(config) {
+          // Count how many RSC base plugins there are (rsc:minimal is the main one)
+          const rscMinimalCount = config.plugins.filter(
+            (p) => p.name === "rsc:minimal"
+          ).length;
+
+          if (rscMinimalCount > 1 && !hasWarnedDuplicate) {
+            hasWarnedDuplicate = true;
+            console.warn(
+              "[rsc-router] Duplicate @vitejs/plugin-rsc detected. " +
+                "Remove rsc() from your config or use rscRouter({ rsc: false }) for manual configuration."
+            );
+          }
+        },
+      });
+
+      // Add virtual entries plugin
+      plugins.push(createVirtualEntriesPlugin(entryPaths, projectRoot, entry));
+
+      // Add the RSC plugin directly with a getter for entries
+      // This ensures the plugin is in the array before configResolved runs
+      // Cast to PluginOption to handle type differences between bundled vite types
+      plugins.push(
+        rsc({
+          get entries() {
+            return finalEntries;
+          },
+        }) as PluginOption
+      );
+    }
   }
 
   if (enableExposeActionId) {
@@ -260,3 +391,4 @@ export async function rscRouter(
 
   return plugins;
 }
+
