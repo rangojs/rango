@@ -198,7 +198,9 @@ export function createRSCHandler<TEnv = unknown>(
 
           if (errorResult) {
             const renderStart = performance.now();
-            const root = renderSegments(errorResult.segments);
+            const root = renderSegments(errorResult.segments, {
+              rootLayout: router.rootLayout,
+            });
             const renderDuration = performance.now() - renderStart;
 
             payload = {
@@ -246,7 +248,9 @@ export function createRSCHandler<TEnv = unknown>(
           // Fall back to full render
           const fullMatch = await router.match(request, env);
           const renderStart = performance.now();
-          const root = renderSegments(fullMatch.segments);
+          const root = renderSegments(fullMatch.segments, {
+            rootLayout: router.rootLayout,
+          });
           const renderDuration = performance.now() - renderStart;
           const serverTiming = fullMatch.serverTiming
             ? `${fullMatch.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
@@ -282,7 +286,9 @@ export function createRSCHandler<TEnv = unknown>(
 
         // Return updated segments
         const renderStart = performance.now();
-        renderSegments(matchResult.segments);
+        renderSegments(matchResult.segments, {
+          rootLayout: router.rootLayout,
+        });
         const renderDuration = performance.now() - renderStart;
         const serverTiming = matchResult.serverTiming
           ? `${matchResult.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
@@ -331,7 +337,9 @@ export function createRSCHandler<TEnv = unknown>(
           // Fall back to full render
           const match = await router.match(request, env);
           const renderStart = performance.now();
-          const root = renderSegments(match.segments);
+          const root = renderSegments(match.segments, {
+            rootLayout: router.rootLayout,
+          });
           const renderDuration = performance.now() - renderStart;
           serverTiming = match.serverTiming
             ? `${match.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
@@ -365,7 +373,9 @@ export function createRSCHandler<TEnv = unknown>(
         // Full render (initial page load)
         const match = await router.match(request, env);
         const renderStart = performance.now();
-        const root = renderSegments(match.segments);
+        const root = renderSegments(match.segments, {
+          rootLayout: router.rootLayout,
+        });
         const renderDuration = performance.now() - renderStart;
         serverTiming = match.serverTiming
           ? `${match.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`

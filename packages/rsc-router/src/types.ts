@@ -607,6 +607,13 @@ export interface SlotState {
 }
 
 /**
+ * Props passed to the root layout component
+ */
+export interface RootLayoutProps {
+  children: ReactNode;
+}
+
+/**
  * Router match result
  */
 export interface MatchResult {
