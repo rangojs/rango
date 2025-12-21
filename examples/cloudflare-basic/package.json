@@ -16,15 +16,15 @@
     "rsc-router": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "latest",
-    "@cloudflare/workers-types": "latest",
+    "@cloudflare/vite-plugin": "^1.19.0",
+    "@cloudflare/workers-types": "^4.20251217.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.2",
     "@vitejs/plugin-react": "latest",
     "@vitejs/plugin-rsc": "latest",
     "rsc-html-stream": "^0.0.7",
     "typescript": "^5.7.0",
-    "vite": "latest",
-    "wrangler": "latest"
+    "vite": "catalog:",
+    "wrangler": "^4.56.0"
   }
 }

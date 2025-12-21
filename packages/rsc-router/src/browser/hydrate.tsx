@@ -5,13 +5,20 @@
 
 import { rscStream } from "rsc-html-stream/client";
 import { renderSegments } from "../segment-system.js";
-import { createNavigationStore } from "./navigation-store.js";
-import { createRequestController } from "./request-controller.js";
+import {
+  createNavigationStore,
+  generateHistoryKey,
+} from "./navigation-store.js";
+import { createEventController } from "./event-controller.js";
 import { createNavigationClient } from "./navigation-client.js";
 import { createServerActionBridge } from "./server-action-bridge.js";
 import { createNavigationBridge } from "./navigation-bridge.js";
 import { NavigationProvider } from "./react/index.js";
-import type { RscPayload, RscBrowserDependencies } from "./types.js";
+import type {
+  RscPayload,
+  RscBrowserDependencies,
+  ResolvedSegment,
+} from "./types.js";
 
 // Vite HMR types
 declare global {
@@ -65,27 +72,32 @@ export async function createApp(
   const initialPayload =
     await deps.createFromReadableStream<RscPayload>(rscStream);
 
-  // Create navigation store
+  // Get initial segments and compute history key from current URL
+  const initialSegments = (initialPayload.metadata?.segments ??
+    []) as ResolvedSegment[];
+  const initialHistoryKey = generateHistoryKey(window.location.href);
+
+  // Create navigation store with history-based caching
   const store = createNavigationStore({
     initialLocation: window.location,
-    initialSegmentIds:
-      initialPayload.metadata?.segments?.map((s) => s.id) ?? [],
+    initialSegmentIds: initialSegments.map((s) => s.id),
+    initialHistoryKey,
+    initialSegments,
   });
 
-  // Store initial segments
-  initialPayload.metadata?.segments?.forEach((segment) => {
-    store.storeSegment(segment);
+  // Create event controller for reactive state management
+  const eventController = createEventController({
+    initialLocation: new URL(window.location.href),
   });
 
   // Create utilities
-  const requestController = createRequestController();
   const client = createNavigationClient(deps);
 
   // Setup server action bridge
   const actionBridge = createServerActionBridge({
     store,
+    eventController,
     client,
-    requestController,
     deps,
     onUpdate: (update) => store.emitUpdate(update),
     renderSegments,
@@ -95,44 +107,56 @@ export async function createApp(
   // Setup navigation bridge
   const navigationBridge = createNavigationBridge({
     store,
+    eventController,
     client,
-    requestController,
     onUpdate: (update) => store.emitUpdate(update),
     renderSegments,
   });
   navigationBridge.registerLinkInterception();
 
   // Build initial tree
-  const initialTree = renderSegments(initialPayload.metadata!.segments);
+  const initialTree = await renderSegments(initialPayload.metadata!.segments);
 
   // HMR support
   if (import.meta.hot) {
     import.meta.hot.on("rsc:update", async () => {
-      store.setState({ isStreaming: true });
+      console.log("[RSCRouter] HMR: Server update, refetching RSC");
 
-      const { payload, streamComplete } = await client.fetchPartial({
-        targetUrl: window.location.href,
-        segmentIds: [],
-        previousUrl: store.getSegmentState().currentUrl,
+      const handle = eventController.startNavigation(window.location.href, {
+        replace: true,
       });
+      const streamingToken = handle.startStreaming();
 
-      if (payload.metadata?.isPartial) {
-        store.storeSegments(payload.metadata.segments || []);
-        store.setSegmentIds(payload.metadata.matched || []);
-        store.setCurrentUrl(window.location.href);
-
-        const fullSegments = (payload.metadata.matched || [])
-          .map((id: string) => store.getSegmentState().storedSegments.get(id))
-          .filter(Boolean);
-
-        store.emitUpdate({
-          root: renderSegments(fullSegments as any),
-          metadata: payload.metadata,
+      try {
+        const { payload, streamComplete } = await client.fetchPartial({
+          targetUrl: window.location.href,
+          segmentIds: [],
+          previousUrl: store.getSegmentState().currentUrl,
         });
-      }
 
-      await streamComplete;
-      store.setState({ isStreaming: false });
+        if (payload.metadata?.isPartial) {
+          const segments = payload.metadata.segments || [];
+          const matched = payload.metadata.matched || [];
+
+          store.setSegmentIds(matched);
+          store.setCurrentUrl(window.location.href);
+
+          const historyKey = generateHistoryKey(window.location.href);
+          store.setHistoryKey(historyKey);
+          store.cacheSegmentsForHistory(historyKey, segments);
+
+          store.emitUpdate({
+            root: renderSegments(segments),
+            metadata: payload.metadata,
+          });
+        }
+
+        await streamComplete;
+      } finally {
+        streamingToken.end();
+      }
+      handle.complete(new URL(window.location.href));
+      console.log("[RSCRouter] HMR: RSC stream complete");
     });
   }
 
@@ -141,6 +165,7 @@ export async function createApp(
     return (
       <NavigationProvider
         store={store}
+        eventController={eventController}
         initialPayload={{ ...initialPayload, root: initialTree }}
         bridge={navigationBridge}
       />

@@ -1,17 +1,17 @@
 /// <reference types="@cloudflare/workers-types" />
+import { createRSCHandler } from "rsc-router/rsc";
 import * as rsc from "@vitejs/plugin-rsc/rsc";
 import { router } from "./router.js";
-
-export type { RscPayload } from "rsc-router/handler";
 
 export interface Env {
   // Add your bindings here
   KV: KVNamespace;
 }
 
-const { fetch } = router.toFetchHandler<Env>({
-  rsc,
-  loadSSR: () =>
+const handler = createRSCHandler({
+  router,
+  deps: rsc,
+  loadSSRModule: () =>
     import.meta.viteRsc.loadModule<typeof import("./entry.ssr.js")>(
       "ssr",
       "index"
@@ -20,8 +20,6 @@ const { fetch } = router.toFetchHandler<Env>({
 
 export default {
   async fetch(request, env, ctx) {
-    console.log("ctx", { ctx, env });
-
     const url = new URL(request.url);
 
     // Skip browser metadata requests
@@ -32,6 +30,6 @@ export default {
       return new Response(null, { status: 404 });
     }
 
-    return fetch(request, env, ctx);
+    return handler(request, env);
   },
 } satisfies ExportedHandler<Env>;
