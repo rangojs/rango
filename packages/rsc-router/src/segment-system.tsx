@@ -1,6 +1,10 @@
 import { createElement, type ReactNode, type ComponentType } from "react";
 import { OutletProvider } from "./client.js";
-import type { ResolvedSegment, LoaderDataResult, RootLayoutProps } from "./types.js";
+import type {
+  ResolvedSegment,
+  LoaderDataResult,
+  RootLayoutProps,
+} from "./types.js";
 import { isLoaderDataResult } from "./types.js";
 import { invariant } from "./errors.js";
 import {
@@ -124,7 +128,11 @@ export async function renderSegments(
   segments: ResolvedSegment[],
   options?: RenderSegmentsOptions
 ): Promise<ReactNode> {
-  const { interceptSegments, forceAwait, rootLayout: RootLayout } = options || {};
+  const {
+    interceptSegments,
+    forceAwait,
+    rootLayout: RootLayout,
+  } = options || {};
 
   // Separate segments by type, passing intercept segments for explicit injection
   const tree = segmentTreeWalk(segments, interceptSegments);
