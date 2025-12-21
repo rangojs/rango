@@ -101,6 +101,12 @@ importers:
       '@vitejs/plugin-react':
         specifier: latest
         version: 5.1.1(vite@7.3.0(@types/node@24.10.1)(tsx@4.20.6))
+      '@vitejs/plugin-rsc':
+        specifier: 'catalog:'
+        version: 0.5.9(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(vite@7.3.0(@types/node@24.10.1)(tsx@4.20.6))
+      rsc-html-stream:
+        specifier: ^0.0.7
+        version: 0.0.7
       tinyexec:
         specifier: ^0.3.2
         version: 0.3.2
@@ -164,15 +170,9 @@ importers:
 
   packages/rsc-router:
     dependencies:
-      '@vitejs/plugin-rsc':
-        specifier: 'catalog:'
-        version: 0.5.9(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(vite@7.3.0(@types/node@24.10.1)(tsx@4.20.6))
       magic-string:
         specifier: ^0.30.17
         version: 0.30.21
-      rsc-html-stream:
-        specifier: ^0.0.7
-        version: 0.0.7
     devDependencies:
       '@playwright/test':
         specifier: ^1.49.1
@@ -186,6 +186,9 @@ importers:
       '@types/react-dom':
         specifier: 'catalog:'
         version: 19.2.3(@types/react@19.2.7)
+      '@vitejs/plugin-rsc':
+        specifier: latest
+        version: 0.5.9(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(vite@7.3.0(@types/node@24.10.1)(tsx@4.20.6))
       react:
         specifier: ^19.2.1
         version: 19.2.3
@@ -220,6 +223,12 @@ importers:
       '@types/react-dom':
         specifier: 'catalog:'
         version: 19.2.3(@types/react@19.2.7)
+      '@vitejs/plugin-rsc':
+        specifier: 'catalog:'
+        version: 0.5.9(react-dom@19.2.3(react@19.2.3))(react@19.2.3)(vite@7.3.0(@types/node@24.10.1)(tsx@4.20.6))
+      rsc-html-stream:
+        specifier: ^0.0.7
+        version: 0.0.7
       typescript:
         specifier: ^5.3.0
         version: 5.9.3
