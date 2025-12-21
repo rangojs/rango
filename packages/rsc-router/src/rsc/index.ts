@@ -1,6 +1,7 @@
 import { renderSegments } from "../segment-system.js";
 import type { RSCRouter } from "../router.js";
 import type { ResolvedSegment, SlotState } from "../types.js";
+import { RouteNotFoundError } from "../errors.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
 /**
@@ -17,6 +18,8 @@ export interface RscPayload {
     diff?: string[];
     slots?: Record<string, SlotState>;
   };
+  /** Root layout component for browser-side re-renders (client component reference) */
+  rootLayout?: React.ComponentType<{ children: React.ReactNode }>;
   returnValue?: { ok: boolean; data: unknown };
   formState?: unknown;
 }
@@ -390,6 +393,8 @@ export function createRSCHandler<TEnv = unknown>(
             diff: match.diff,
             isPartial: false,
           },
+          // Send rootLayout for browser-side re-renders
+          rootLayout: router.rootLayout,
         };
       }
 
@@ -434,6 +439,11 @@ export function createRSCHandler<TEnv = unknown>(
       // Check if middleware/handler returned Response
       if (error instanceof Response) {
         return error;
+      }
+
+      // Return 404 for unmatched routes instead of 500
+      if (error instanceof RouteNotFoundError) {
+        return new Response("Not Found", { status: 404 });
       }
 
       console.error(`[RSC] Error:`, error);
