@@ -82,26 +82,89 @@ export interface RouterEnv<TBindings = {}, TVariables = {}> {
 }
 
 /**
- * Extract param names from a route pattern
- * Example: "/blog/:slug/:id" => { slug: string, id: string }
+ * Parse constraint values into a union type
+ * "a|b|c" → "a" | "b" | "c"
  */
+type ParseConstraint<T extends string> =
+  T extends `${infer First}|${infer Rest}`
+    ? First | ParseConstraint<Rest>
+    : T;
+
+/**
+ * Extract param info from a param segment
+ *
+ * Handles:
+ * - :param → { name: "param", optional: false, type: string }
+ * - :param? → { name: "param", optional: true, type: string }
+ * - :param(a|b) → { name: "param", optional: false, type: "a" | "b" }
+ * - :param(a|b)? → { name: "param", optional: true, type: "a" | "b" }
+ */
+type ExtractParamInfo<T extends string> =
+  // Optional + constrained: :param(a|b)?
+  T extends `${infer Name}(${infer Constraint})?`
+    ? { name: Name; optional: true; type: ParseConstraint<Constraint> }
+  // Constrained only: :param(a|b)
+  : T extends `${infer Name}(${infer Constraint})`
+    ? { name: Name; optional: false; type: ParseConstraint<Constraint> }
+  // Optional only: :param?
+  : T extends `${infer Name}?`
+    ? { name: Name; optional: true; type: string }
+  // Required: :param
+  : { name: T; optional: false; type: string };
+
+/**
+ * Build param object from info
+ */
+type ParamFromInfo<Info> =
+  Info extends { name: infer N extends string; optional: true; type: infer V }
+    ? { [K in N]?: V }
+    : Info extends { name: infer N extends string; optional: false; type: infer V }
+      ? { [K in N]: V }
+      : never;
+
+/**
+ * Merge two param objects
+ */
+type MergeParams<A, B> = {
+  [K in keyof A | keyof B]: K extends keyof A
+    ? K extends keyof B
+      ? A[K] | B[K]
+      : A[K]
+    : K extends keyof B
+      ? B[K]
+      : never;
+};
+
 /**
  * Extract route params from a pattern with depth limit to prevent infinite recursion
- * Examples:
- * - "/products/:id" → { id: string }
- * - "/products/:category/:id" → { category: string; id: string }
- * - "/:slug/reviews/:reviewId" → { slug: string; reviewId: string }
+ *
+ * Supports:
+ * - Required params: /:slug → { slug: string }
+ * - Optional params: /:locale? → { locale?: string }
+ * - Constrained params: /:locale(en|gb) → { locale: "en" | "gb" }
+ * - Optional + constrained: /:locale(en|gb)? → { locale?: "en" | "gb" }
+ *
+ * @example
+ * ExtractParams<"/products/:id"> // { id: string }
+ * ExtractParams<"/:locale?/blog/:slug"> // { locale?: string; slug: string }
+ * ExtractParams<"/:locale(en|gb)/blog"> // { locale: "en" | "gb" }
+ * ExtractParams<"/:locale(en|gb)?/blog/:slug"> // { locale?: "en" | "gb"; slug: string }
  */
 export type ExtractParams<
   T extends string,
   Depth extends readonly unknown[] = []
 > = Depth['length'] extends 10
-  ? { [key: string]: string } // Fallback to generic params if too deep
+  ? { [key: string]: string | undefined } // Fallback to generic params if too deep
+  // Match param with remaining path: :param.../rest
   : T extends `${infer _Start}:${infer Param}/${infer Rest}`
-    ? { [K in Param | keyof ExtractParams<`/${Rest}`, readonly [...Depth, unknown]>]: string }
-    : T extends `${infer _Start}:${infer Param}`
-      ? { [K in Param]: string }
-      : {};
+    ? MergeParams<
+        ParamFromInfo<ExtractParamInfo<Param>>,
+        ExtractParams<`/${Rest}`, readonly [...Depth, unknown]>
+      >
+  // Match param at end: :param...
+  : T extends `${infer _Start}:${infer Param}`
+    ? ParamFromInfo<ExtractParamInfo<Param>>
+  : {};
 
 /**
  * Route definition - maps route names to patterns

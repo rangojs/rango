@@ -17,21 +17,57 @@
 import type { GetRegisteredRoutes } from "./types.js";
 
 /**
+ * Parse constraint values into a union type for paths
+ * "a|b|c" → "a" | "b" | "c"
+ */
+type ParseConstraintPath<T extends string> =
+  T extends `${infer First}|${infer Rest}`
+    ? First | ParseConstraintPath<Rest>
+    : T;
+
+/**
  * Convert a route pattern to a template literal type
  *
- * Replaces :param segments with ${string} for TypeScript validation
+ * Supports:
+ * - Static: /about → "/about"
+ * - Dynamic: /blog/:slug → `/blog/${string}`
+ * - Optional: /:locale?/blog → "/blog" | `/${string}/blog`
+ * - Constrained: /:locale(en|gb)/blog → "/en/blog" | "/gb/blog"
+ * - Optional + Constrained: /:locale(en|gb)?/blog → "/blog" | "/en/blog" | "/gb/blog"
  *
  * @example
  * PatternToPath<"/blog/:slug"> = `/blog/${string}`
- * PatternToPath<"/product/:id/reviews/:reviewId"> = `/product/${string}/reviews/${string}`
- * PatternToPath<"/about"> = "/about"
+ * PatternToPath<"/:locale?/blog"> = "/blog" | `/${string}/blog`
+ * PatternToPath<"/:locale(en|gb)/blog"> = "/en/blog" | "/gb/blog"
+ * PatternToPath<"/:locale(en|gb)?/blog"> = "/blog" | "/en/blog" | "/gb/blog"
  */
 export type PatternToPath<T extends string> =
-  T extends `${infer Before}:${infer _Param}/${infer After}`
+  // Optional + constrained param in middle: /:param(a|b)?/rest
+  T extends `${infer Before}:${infer _Name}(${infer Constraint})?/${infer After}`
+    ? PatternToPath<`${Before}${After}`> | `${Before}${ParseConstraintPath<Constraint>}/${PatternToPath<After>}`
+  // Optional + constrained param at end: /path/:param(a|b)?
+  : T extends `${infer Before}:${infer _Name}(${infer Constraint})?`
+    ? Before | `${Before}${ParseConstraintPath<Constraint>}`
+  // Constrained param in middle: /:param(a|b)/rest
+  : T extends `${infer Before}:${infer _Name}(${infer Constraint})/${infer After}`
+    ? `${Before}${ParseConstraintPath<Constraint>}/${PatternToPath<After>}`
+  // Constrained param at end: /path/:param(a|b)
+  : T extends `${infer Before}:${infer _Name}(${infer Constraint})`
+    ? `${Before}${ParseConstraintPath<Constraint>}`
+  // Optional param in middle: /:param?/rest
+  : T extends `${infer Before}:${infer _Param}?/${infer After}`
+    ? PatternToPath<`${Before}${After}`> | `${Before}${string}/${PatternToPath<After>}`
+  // Optional param at end: /path/:param?
+  : T extends `${infer Before}:${infer _Param}?`
+    ? Before | `${Before}${string}`
+  // Required param in middle: /:param/rest
+  : T extends `${infer Before}:${infer _Param}/${infer After}`
     ? `${Before}${string}/${PatternToPath<After>}`
-    : T extends `${infer Before}:${infer _Param}`
-      ? `${Before}${string}`
-      : T;
+  // Required param at end: /path/:param
+  : T extends `${infer Before}:${infer _Param}`
+    ? `${Before}${string}`
+  // Static path
+  : T;
 
 /**
  * Allow optional query string (?...) and/or hash fragment (#...) suffix

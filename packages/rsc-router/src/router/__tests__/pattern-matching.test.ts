@@ -2,6 +2,17 @@ import { describe, it, expect } from "vitest";
 import { compilePattern, findMatch } from "../pattern-matching";
 import type { RouteEntry } from "../../types";
 
+// Helper to create route entries for testing
+const createRouteEntry = (
+  prefix: string,
+  routes: Record<string, string>
+): RouteEntry => ({
+  prefix,
+  routes: routes as any,
+  handler: () => [],
+  mountIndex: 0,
+});
+
 describe("compilePattern", () => {
   describe("static patterns", () => {
     it("should match exact static path", () => {
@@ -109,16 +120,6 @@ describe("compilePattern", () => {
 });
 
 describe("findMatch", () => {
-  const createRouteEntry = (
-    prefix: string,
-    routes: Record<string, string>
-  ): RouteEntry => ({
-    prefix,
-    routes: routes as any,
-    handler: () => [],
-    mountIndex: 0,
-  });
-
   describe("basic matching", () => {
     it("should match root route", () => {
       const entries = [createRouteEntry("", { index: "/" })];
@@ -250,12 +251,156 @@ describe("findMatch", () => {
   });
 });
 
-describe("optional parameters (future)", () => {
-  it.todo("should match pattern with optional param present: /:locale?/blog -> /en/blog");
-  it.todo("should match pattern with optional param absent: /:locale?/blog -> /blog");
-  it.todo("should extract optional param when present");
-  it.todo("should return undefined for optional param when absent");
-  it.todo("should handle multiple optional params");
-  it.todo("should handle optional param at end: /blog/:page?");
-  it.todo("should handle mix of required and optional params");
+describe("optional parameters", () => {
+  describe("compilePattern", () => {
+    it("should match pattern with optional param present: /:locale?/blog -> /en/blog", () => {
+      const { regex, paramNames, optionalParams } = compilePattern("/:locale?/blog");
+      expect(regex.test("/en/blog")).toBe(true);
+      expect(paramNames).toEqual(["locale"]);
+      expect(optionalParams.has("locale")).toBe(true);
+    });
+
+    it("should match pattern with optional param absent: /:locale?/blog -> /blog", () => {
+      const { regex } = compilePattern("/:locale?/blog");
+      expect(regex.test("/blog")).toBe(true);
+    });
+
+    it("should not match invalid paths for optional patterns", () => {
+      const { regex } = compilePattern("/:locale?/blog");
+      expect(regex.test("/en/gb/blog")).toBe(false);
+      expect(regex.test("/en/other")).toBe(false);
+    });
+
+    it("should handle optional param at end: /blog/:page?", () => {
+      const { regex, paramNames, optionalParams } = compilePattern("/blog/:page?");
+      expect(regex.test("/blog")).toBe(true);
+      expect(regex.test("/blog/2")).toBe(true);
+      expect(regex.test("/blog/")).toBe(false);
+      expect(paramNames).toEqual(["page"]);
+      expect(optionalParams.has("page")).toBe(true);
+    });
+
+    it("should handle multiple optional params", () => {
+      const { regex } = compilePattern("/:locale?/:region?/shop");
+      expect(regex.test("/shop")).toBe(true);
+      expect(regex.test("/en/shop")).toBe(true);
+      expect(regex.test("/en/us/shop")).toBe(true);
+    });
+
+    it("should handle mix of required and optional params", () => {
+      const { regex, paramNames, optionalParams } = compilePattern("/:locale?/blog/:slug");
+      expect(regex.test("/blog/hello")).toBe(true);
+      expect(regex.test("/en/blog/hello")).toBe(true);
+      expect(regex.test("/blog")).toBe(false);
+      expect(paramNames).toEqual(["locale", "slug"]);
+      expect(optionalParams.has("locale")).toBe(true);
+      expect(optionalParams.has("slug")).toBe(false);
+    });
+  });
+
+  describe("findMatch param extraction", () => {
+    it("should extract optional param when present", () => {
+      const entries = [
+        createRouteEntry("", { "blog": "/:locale?/blog" }),
+      ];
+      const result = findMatch("/en/blog", entries);
+      expect(result).not.toBeNull();
+      expect(result!.params).toEqual({ locale: "en" });
+      expect(result!.optionalParams.has("locale")).toBe(true);
+    });
+
+    it("should return empty string for optional param when absent", () => {
+      const entries = [
+        createRouteEntry("", { "blog": "/:locale?/blog" }),
+      ];
+      const result = findMatch("/blog", entries);
+      expect(result).not.toBeNull();
+      expect(result!.params).toEqual({ locale: "" });
+      expect(result!.optionalParams.has("locale")).toBe(true);
+    });
+
+    it("should handle multiple optional params correctly", () => {
+      const entries = [
+        createRouteEntry("", { "shop": "/:locale?/:region?/shop" }),
+      ];
+
+      expect(findMatch("/shop", entries)!.params).toEqual({
+        locale: "",
+        region: "",
+      });
+      expect(findMatch("/en/shop", entries)!.params).toEqual({
+        locale: "en",
+        region: "",
+      });
+      expect(findMatch("/en/us/shop", entries)!.params).toEqual({
+        locale: "en",
+        region: "us",
+      });
+    });
+  });
+});
+
+describe("constrained parameters", () => {
+  describe("compilePattern", () => {
+    it("should match constrained param with valid value", () => {
+      const { regex, paramNames } = compilePattern("/:locale(en|gb)/blog");
+      expect(regex.test("/en/blog")).toBe(true);
+      expect(regex.test("/gb/blog")).toBe(true);
+      expect(paramNames).toEqual(["locale"]);
+    });
+
+    it("should not match constrained param with invalid value", () => {
+      const { regex } = compilePattern("/:locale(en|gb)/blog");
+      expect(regex.test("/de/blog")).toBe(false);
+      expect(regex.test("/us/blog")).toBe(false);
+    });
+
+    it("should handle optional + constrained params", () => {
+      const { regex, optionalParams } = compilePattern("/:locale(en|gb)?/blog");
+      expect(regex.test("/blog")).toBe(true);
+      expect(regex.test("/en/blog")).toBe(true);
+      expect(regex.test("/gb/blog")).toBe(true);
+      expect(regex.test("/de/blog")).toBe(false);
+      expect(optionalParams.has("locale")).toBe(true);
+    });
+
+    it("should handle multiple constrained values", () => {
+      const { regex } = compilePattern("/:type(post|page|comment)/edit");
+      expect(regex.test("/post/edit")).toBe(true);
+      expect(regex.test("/page/edit")).toBe(true);
+      expect(regex.test("/comment/edit")).toBe(true);
+      expect(regex.test("/user/edit")).toBe(false);
+    });
+  });
+
+  describe("findMatch param extraction", () => {
+    it("should extract constrained param value", () => {
+      const entries = [
+        createRouteEntry("", { "localized": "/:locale(en|gb)/blog" }),
+      ];
+      const result = findMatch("/en/blog", entries);
+      expect(result).not.toBeNull();
+      expect(result!.params).toEqual({ locale: "en" });
+    });
+
+    it("should extract optional + constrained param when present", () => {
+      const entries = [
+        createRouteEntry("", { "blog": "/:locale(en|gb)?/blog" }),
+      ];
+      const result = findMatch("/gb/blog", entries);
+      expect(result).not.toBeNull();
+      expect(result!.params).toEqual({ locale: "gb" });
+      expect(result!.optionalParams.has("locale")).toBe(true);
+    });
+
+    it("should return empty string for optional + constrained param when absent", () => {
+      const entries = [
+        createRouteEntry("", { "blog": "/:locale(en|gb)?/blog" }),
+      ];
+      const result = findMatch("/blog", entries);
+      expect(result).not.toBeNull();
+      expect(result!.params).toEqual({ locale: "" });
+      expect(result!.optionalParams.has("locale")).toBe(true);
+    });
+  });
 });
