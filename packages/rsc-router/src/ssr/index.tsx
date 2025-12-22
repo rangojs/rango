@@ -1,4 +1,6 @@
 import React from "react";
+import { initHandleDataSync } from "../browser/react/use-handle.js";
+import type { HandleData } from "../browser/types.js";
 
 /**
  * SSR dependencies from external packages
@@ -36,6 +38,10 @@ export interface SSRDependencies {
  */
 interface RscPayload {
   root: React.ReactNode;
+  metadata?: {
+    handles?: Promise<HandleData>;
+    matched?: string[];
+  };
 }
 
 /**
@@ -80,7 +86,15 @@ export function createSSRHandler(deps: SSRDependencies) {
     let payload: Promise<RscPayload> | undefined;
     function SsrRoot() {
       payload ??= createFromReadableStream<RscPayload>(rscStream1);
-      return React.use(payload).root;
+      const resolved = React.use(payload);
+
+      // Await handles and initialize state before children render
+      if (resolved.metadata?.handles) {
+        const handleData = React.use(resolved.metadata.handles);
+        initHandleDataSync(handleData, resolved.metadata.matched);
+      }
+
+      return resolved.root;
     }
 
     // Get bootstrap script content

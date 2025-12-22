@@ -18,7 +18,6 @@ import type {
   NavigateOptions,
   NavigationBridge,
 } from "../types.js";
-import { updateHandleData } from "./use-handle.js";
 import type { EventController } from "../event-controller.js";
 
 /**
@@ -115,7 +114,7 @@ export function NavigationProvider({
       // Update handle data if present (async, doesn't block UI update)
       if (update.metadata.handles) {
         update.metadata.handles.then((handleData) => {
-          updateHandleData(
+          eventController.setHandleData(
             handleData,
             update.metadata.matched,
             update.metadata.isPartial
@@ -142,7 +141,7 @@ export function NavigationProvider({
     // Initialize handle data from initial payload
     if (initialPayload.metadata?.handles) {
       initialPayload.metadata.handles.then((handleData) => {
-        updateHandleData(handleData, initialPayload.metadata?.matched);
+        eventController.setHandleData(handleData, initialPayload.metadata?.matched);
       });
     }
   }, []);

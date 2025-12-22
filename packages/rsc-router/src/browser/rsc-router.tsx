@@ -107,6 +107,13 @@ export async function initBrowserApp(
     initialLocation: new URL(window.location.href),
   });
 
+  // Initialize handle data from initial payload BEFORE hydration
+  // This ensures useHandle returns correct data during hydration to avoid mismatch
+  if (initialPayload.metadata?.handles) {
+    const handleData = await initialPayload.metadata.handles;
+    eventController.setHandleData(handleData, initialPayload.metadata?.matched);
+  }
+
   // Create composable utilities
   const client = createNavigationClient(deps);
 
