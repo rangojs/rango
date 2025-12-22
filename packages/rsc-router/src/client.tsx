@@ -540,7 +540,7 @@ export {
 } from "./browser/react/use-navigation.js";
 
 // Action state tracking hook
-export { useAction } from "./browser/react/use-action.js";
+export { useAction, type ServerActionFunction } from "./browser/react/use-action.js";
 
 // Client cache controls hook
 export {
@@ -573,3 +573,6 @@ export { createHandle, isHandle, type Handle } from "./handle.js";
 
 // Handle data hook
 export { useHandle } from "./browser/react/use-handle.js";
+
+// Type-safe href for client-side path validation
+export { href, type ValidPaths, type PatternToPath } from "./href-client.js";

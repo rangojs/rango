@@ -27,3 +27,5 @@ export default map<typeof counterRoutes>(({ route }) => [
     );
   }),
 ]);
+
+// HMR trigger: 1766400518959

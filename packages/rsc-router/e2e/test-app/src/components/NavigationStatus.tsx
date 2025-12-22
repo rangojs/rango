@@ -1,6 +1,6 @@
 "use client";
 
-import { useNavigation } from "../../../../src/browser/index.js";
+import { useNavigation } from "rsc-router/client";
 import { useState, useEffect } from "react";
 
 /**

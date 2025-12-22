@@ -45,6 +45,9 @@ export {
   type NavigationProviderProps,
 } from "./browser/react/NavigationProvider.js";
 
+// Re-export href function (can be used in server components)
+export { href } from "./href-client.js";
+
 // Note: useNavigation, useAction, useClientCache are NOT re-exported here
 // because they use client-side state and should only be used in client components
 

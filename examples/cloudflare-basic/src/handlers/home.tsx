@@ -16,3 +16,5 @@ export default map<typeof homeRoutes>(({ route }) => [
     </main>
   )),
 ]);
+
+// HMR trigger: 1766400516878
