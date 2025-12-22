@@ -26,6 +26,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      - name: Run rsc-router unit tests
+        run: pnpm --filter rsc-router test:unit
+
       - name: Install Playwright browsers
         run: pnpm --filter rsc-router exec playwright install --with-deps chromium
 

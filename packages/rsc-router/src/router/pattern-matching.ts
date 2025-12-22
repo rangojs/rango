@@ -14,8 +14,6 @@ export function compilePattern(pattern: string): {
   regex: RegExp;
   paramNames: string[];
 } {
-  console.log("pattern", pattern);
-
   const paramNames: string[] = [];
   const regexPattern = pattern
     .split("/")
@@ -63,7 +61,6 @@ export function findMatch<TEnv>(
       } else {
         fullPattern = entry.prefix + pattern;
       }
-      console.log(fullPattern);
 
       const { regex, paramNames } = compilePattern(fullPattern);
       const match = regex.exec(pathname);
