@@ -26,6 +26,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      - name: Run rsc-router unit tests
+        run: pnpm --filter rsc-router test:unit
+
       - name: Install Playwright browsers
         run: pnpm --filter rsc-router exec playwright install --with-deps chromium
 
@@ -74,4 +77,39 @@ jobs:
         with:
           name: playwright-report-demo
           path: examples/vite-rsc-demo/playwright-report/
+          retention-days: 7
+
+  cloudflare-basic-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # TODO: Fix wrangler/workerd hydration issues on Linux CI
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Install Playwright browsers
+        run: pnpm --filter cloudflare-basic exec playwright install --with-deps chromium
+
+      - name: Run cloudflare-basic e2e tests
+        run: pnpm --filter cloudflare-basic test:e2e
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-cloudflare-basic
+          path: examples/cloudflare-basic/playwright-report/
           retention-days: 7

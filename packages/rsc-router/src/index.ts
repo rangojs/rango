@@ -71,3 +71,7 @@ export type { PerformanceMetric, MetricsStore } from "./server/context.js";
 // Client-safe createLoader - only stores the name, function is ignored
 // Use this when defining loaders that will be imported by client components
 export { createLoader } from "./loader.js";
+
+// Route pattern definition helper
+// Used to define route patterns in a shared routes.ts file
+export { route } from "./route-utils.js";

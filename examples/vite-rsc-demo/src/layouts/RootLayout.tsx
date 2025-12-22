@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Link, ScrollRestoration } from "rsc-router/client";
+import { Link, ScrollRestoration, href } from "rsc-router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 
 export function RootLayout({ children }: { children: ReactNode }) {
@@ -51,28 +51,28 @@ export function RootLayout({ children }: { children: ReactNode }) {
       <body className="full-width">
         <ScrollRestoration />
         <nav>
-          <Link to="/" prefetch="hover">
+          <Link to={href("/")} prefetch="hover">
             Home
           </Link>
-          <Link to="/about" prefetch="hover">
+          <Link to={href("/about")} prefetch="hover">
             About
           </Link>
-          <Link to="/blog" prefetch="hover">
+          <Link to={href("/blog")} prefetch="hover">
             Blog
           </Link>
-          <Link to="/dashboard" prefetch="hover">
+          <Link to={href("/dashboard")} prefetch="hover">
             Dashboard
           </Link>
-          <Link to="/shop" prefetch="hover">
+          <Link to={href("/shop")} prefetch="hover">
             Shop
           </Link>
-          <Link to="/todos" prefetch="hover">
+          <Link to={href("/todos")} prefetch="hover">
             Todos
           </Link>
-          <Link to="/kanban" prefetch="hover">
+          <Link to={href("/kanban")} prefetch="hover">
             Kanban
           </Link>
-          <Link to="/errors" prefetch="hover">
+          <Link to={href("/errors")} prefetch="hover">
             Errors
           </Link>
         </nav>
