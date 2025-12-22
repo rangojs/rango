@@ -1,21 +1,65 @@
 import test, { type Page, type Locator, expect } from "@playwright/test";
 
 /**
- * Wait for React hydration to complete
+ * Wait for React hydration to complete and verify no hydration errors
  */
 export async function waitForHydration(page: Page, locator: string = "body") {
-  await page.waitForLoadState("domcontentloaded");
-  await page.waitForFunction(
-    (selector) => {
-      const el = document.querySelector(selector);
-      return (
-        el && Object.keys(el).some((key) => key.startsWith("__reactFiber"))
+  const hydrationErrors: string[] = [];
+
+  const consoleHandler = (msg: import("@playwright/test").ConsoleMessage) => {
+    const text = msg.text();
+    if (
+      text.includes("Hydration failed") ||
+      text.includes("hydration mismatch") ||
+      text.includes("Text content does not match") ||
+      text.includes("did not match") ||
+      text.includes("server rendered HTML") ||
+      text.includes("Hydration error")
+    ) {
+      hydrationErrors.push(text);
+    }
+  };
+
+  const pageErrorHandler = (error: Error) => {
+    const text = error.message;
+    if (
+      text.includes("Hydration failed") ||
+      text.includes("hydration mismatch") ||
+      text.includes("Text content does not match") ||
+      text.includes("did not match") ||
+      text.includes("server rendered HTML") ||
+      text.includes("Hydration error")
+    ) {
+      hydrationErrors.push(text);
+    }
+  };
+
+  page.on("console", consoleHandler);
+  page.on("pageerror", pageErrorHandler);
+
+  try {
+    await page.waitForLoadState("domcontentloaded");
+    await page.waitForFunction(
+      (selector) => {
+        const el = document.querySelector(selector);
+        return (
+          el && Object.keys(el).some((key) => key.startsWith("__reactFiber"))
+        );
+      },
+      locator,
+      { timeout: 20000 }
+    );
+    await page.waitForTimeout(100);
+
+    if (hydrationErrors.length > 0) {
+      throw new Error(
+        `Hydration errors detected:\n${hydrationErrors.join("\n")}`
       );
-    },
-    locator,
-    { timeout: 20000 }
-  );
-  await page.waitForTimeout(100);
+    }
+  } finally {
+    page.off("console", consoleHandler);
+    page.off("pageerror", pageErrorHandler);
+  }
 }
 
 /**
