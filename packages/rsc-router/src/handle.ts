@@ -30,64 +30,69 @@ export interface Handle<TData, TAccumulated = TData[]> {
   readonly name: string;
 
   /**
-   * Reducer function to accumulate data.
-   * Default: collect into array
+   * Collect function to transform segment data into final value.
+   * Receives array of arrays - each inner array contains values pushed
+   * by one segment, ordered parent-to-child.
+   *
+   * @param segments - Array of segment data arrays, e.g. [[a, b], [c], [d, e]]
+   * @returns The accumulated value
    */
-  readonly reducer: (acc: TAccumulated, next: TData) => TAccumulated;
-
-  /**
-   * Default value when no data has been pushed.
-   */
-  readonly defaultValue: TAccumulated;
+  readonly collect: (segments: TData[][]) => TAccumulated;
 }
 
 /**
- * Default reducer that collects items into an array.
+ * Default collect function that flattens segment arrays into a single array.
  */
-function arrayReducer<T>(acc: T[], next: T): T[] {
-  return [...acc, next];
+function defaultCollect<T>(segments: T[][]): T[] {
+  return segments.flat();
 }
 
 /**
  * Create a handle definition for accumulating data across route segments.
  *
  * @param name - Unique name for this handle (used as storage key)
- * @param reducer - Optional reducer function (default: collect into array)
- * @param defaultValue - Optional default value (default: empty array)
+ * @param collect - Optional collect function (default: flatten into array)
  *
  * @example
  * ```ts
- * // Default: collect into array
+ * // Default: flatten into array
  * const Breadcrumbs = createHandle<BreadcrumbItem>("breadcrumbs");
  * // Result type: BreadcrumbItem[]
  *
  * // Custom: last value wins
  * const PageTitle = createHandle<string, string>(
  *   "pageTitle",
- *   (acc, next) => next,
- *   "Default Title"
+ *   (segments) => segments.flat().at(-1) ?? "Default Title"
  * );
  * // Result type: string
  *
  * // Custom: object merge
  * const Meta = createHandle<Partial<MetaTags>, MetaTags>(
  *   "meta",
- *   (acc, next) => ({ ...acc, ...next }),
- *   { robots: "index,follow" }
+ *   (segments) => Object.assign({ robots: "index,follow" }, ...segments.flat())
  * );
  * // Result type: MetaTags
+ *
+ * // Custom: dedupe by href
+ * const Breadcrumbs = createHandle<BreadcrumbItem>(
+ *   "breadcrumbs",
+ *   (segments) => {
+ *     const all = segments.flat();
+ *     return all.filter((item, i) => all.findIndex(x => x.href === item.href) === i);
+ *   }
+ * );
  * ```
  */
 export function createHandle<TData, TAccumulated = TData[]>(
   name: string,
-  reducer?: (acc: TAccumulated, next: TData) => TAccumulated,
-  defaultValue?: TAccumulated
+  collect?: (segments: TData[][]) => TAccumulated
 ): Handle<TData, TAccumulated> {
   return {
     __brand: "handle" as const,
     name,
-    reducer: reducer ?? (arrayReducer as unknown as (acc: TAccumulated, next: TData) => TAccumulated),
-    defaultValue: defaultValue ?? ([] as unknown as TAccumulated),
+    collect:
+      collect ??
+      (defaultCollect as unknown as (segments: TData[][]) => TAccumulated),
   };
 }
 

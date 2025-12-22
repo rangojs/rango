@@ -26,9 +26,9 @@ function filterSegmentOrder(matched: string[]): string[] {
 }
 
 /**
- * Reduce handle data to accumulated value.
+ * Collect handle data from segments and transform to final value.
  */
-function reduceHandle<T, A>(
+function collectHandle<T, A>(
   handle: Handle<T, A>,
   data: HandleData,
   segmentOrder: string[]
@@ -36,25 +36,20 @@ function reduceHandle<T, A>(
   const segmentData = data[handle.name];
 
   if (!segmentData) {
-    return handle.defaultValue;
+    return handle.collect([]);
   }
 
-  // Collect entries in segment order (parent → child)
-  const orderedEntries: unknown[] = [];
+  // Build array of segment arrays in parent → child order
+  const segmentArrays: T[][] = [];
   for (const segmentId of segmentOrder) {
     const entries = segmentData[segmentId];
-    if (entries) {
-      orderedEntries.push(...entries);
+    if (entries && entries.length > 0) {
+      segmentArrays.push(entries as T[]);
     }
   }
 
-  // Run reducer across all entries
-  let accumulated = handle.defaultValue;
-  for (const entry of orderedEntries) {
-    accumulated = handle.reducer(accumulated, entry as T);
-  }
-
-  return accumulated;
+  // Call collect once with all segment data
+  return handle.collect(segmentArrays);
 }
 
 /**
@@ -97,9 +92,9 @@ export function initHandleDataSync(data: HandleData, matched?: string[]): void {
 }
 
 /**
- * Hook to access accumulated handle data.
+ * Hook to access collected handle data.
  *
- * Returns the reduced value from all route segments that pushed to this handle.
+ * Returns the collected value from all route segments that pushed to this handle.
  * Re-renders when handle data changes (navigation, actions).
  *
  * @param handle - The handle to read
@@ -129,14 +124,14 @@ export function useHandle<T, A, S>(
   const [value, setValue] = useState<A | S>(() => {
     // During SSR, use module-level state
     if (typeof document === "undefined" || !ctx) {
-      const reduced = reduceHandle(handle, ssrHandleData, ssrSegmentOrder);
-      return selector ? selector(reduced) : reduced;
+      const collected = collectHandle(handle, ssrHandleData, ssrSegmentOrder);
+      return selector ? selector(collected) : collected;
     }
 
     // On client, use event controller state
     const state = ctx.eventController.getHandleState();
-    const reduced = reduceHandle(handle, state.data, state.segmentOrder);
-    return selector ? selector(reduced) : reduced;
+    const collected = collectHandle(handle, state.data, state.segmentOrder);
+    return selector ? selector(collected) : collected;
   });
 
   // Track previous value for shallow comparison
@@ -153,10 +148,10 @@ export function useHandle<T, A, S>(
 
     return ctx.eventController.subscribeToHandles(() => {
       const state = ctx.eventController.getHandleState();
-      const reduced = reduceHandle(handle, state.data, state.segmentOrder);
+      const collected = collectHandle(handle, state.data, state.segmentOrder);
       const nextValue = selectorRef.current
-        ? selectorRef.current(reduced)
-        : reduced;
+        ? selectorRef.current(collected)
+        : collected;
 
       if (!shallowEqual(nextValue, prevValueRef.current)) {
         prevValueRef.current = nextValue;
