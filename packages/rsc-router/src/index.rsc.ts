@@ -24,6 +24,8 @@ export {
   NetworkError,
   isNetworkError,
   sanitizeError,
+  // Route pattern definition
+  route,
 } from "./index.js";
 
 // Re-export all types from index.ts

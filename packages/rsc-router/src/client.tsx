@@ -540,7 +540,7 @@ export {
 } from "./browser/react/use-navigation.js";
 
 // Action state tracking hook
-export { useAction } from "./browser/react/use-action.js";
+export { useAction, type ServerActionFunction } from "./browser/react/use-action.js";
 
 // Client cache controls hook
 export {
@@ -567,3 +567,6 @@ export {
   useScrollRestoration,
   type ScrollRestorationProps,
 } from "./browser/react/ScrollRestoration.js";
+
+// Type-safe href for client-side path validation
+export { href, type ValidPaths, type PatternToPath } from "./href-client.js";

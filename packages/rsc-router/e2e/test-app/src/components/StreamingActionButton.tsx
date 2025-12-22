@@ -2,8 +2,7 @@
 
 import { useActionState, use, Suspense, ReactNode } from "react";
 import { StreamingAction } from "../actions.jsx";
-import { useAction } from "../../../../src/browser/index.js";
-import { ServerActionFunction } from "../../../../src/browser/react/use-action.js";
+import { useAction, type ServerActionFunction } from "rsc-router/client";
 
 interface StreamingActionButtonProps {
   productId: string;

@@ -1,4 +1,4 @@
-import { route } from "rsc-router/browser";
+import { route } from "rsc-router";
 
 /**
  * Test app routes definition

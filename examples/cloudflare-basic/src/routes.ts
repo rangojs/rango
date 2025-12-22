@@ -1,4 +1,4 @@
-import { route } from "rsc-router/server";
+import { route } from "rsc-router";
 
 // Home route: /
 export const homeRoutes = route({
