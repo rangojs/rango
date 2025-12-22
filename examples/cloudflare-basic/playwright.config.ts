@@ -9,6 +9,8 @@ export default defineConfig({
   // Use single worker to avoid multiple dev server instances
   workers: 1,
   reporter: "html",
+  // Global timeout to prevent hanging
+  globalTimeout: process.env.CI ? 10 * 60 * 1000 : undefined, // 10 min on CI
   use: {
     trace: "on-first-retry",
   },

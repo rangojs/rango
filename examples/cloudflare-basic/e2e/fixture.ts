@@ -6,7 +6,9 @@ import { x } from "tinyexec";
 
 function runCli(options: { command: string; label?: string } & SpawnOptions) {
   const [name, ...args] = options.command.split(" ");
-  const child = x(name!, args, { nodeOptions: options }).process!;
+  const child = x(name!, args, {
+    nodeOptions: { ...options, detached: true },
+  }).process!;
   const label = `[${options.label ?? "cli"}]`;
   let stdout = "";
   let stderr = "";
@@ -49,7 +51,25 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
     if (process.platform === "win32") {
       spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"]);
     } else {
-      child.kill();
+      // Kill entire process group on Unix (wrangler spawns child processes)
+      try {
+        process.kill(-child.pid!, "SIGTERM");
+      } catch {
+        // Process group kill failed, try direct kill
+        child.kill("SIGTERM");
+      }
+      // Force kill after timeout if still running
+      setTimeout(() => {
+        try {
+          process.kill(-child.pid!, "SIGKILL");
+        } catch {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            // Already dead
+          }
+        }
+      }, 2000);
     }
   }
 
