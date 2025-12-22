@@ -3,8 +3,8 @@ import type { homeRoutes } from "../routes.js";
 
 export default map<typeof homeRoutes>(({ route }) => [
   route("index", () => (
-    <main>
-      <h1>Welcome to RSC Router</h1>
+    <main data-testid="home-page">
+      <h1 data-testid="home-title">Welcome to RSC Router</h1>
       <p>This is a minimal example running on Cloudflare Workers.</p>
       <p>It demonstrates:</p>
       <ul style={{ marginTop: "1rem", marginLeft: "1.5rem" }}>

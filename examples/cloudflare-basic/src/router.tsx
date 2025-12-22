@@ -24,11 +24,11 @@ declare global {
   }
 }
 
-// Create the router with root layout
+// Create the router with document component
 // AppShell wraps both route content and error boundaries,
 // preventing the app shell from unmounting during errors (avoids FOUC)
 export const router = createRSCRouter<AppEnv>({
-  rootLayout: AppShell,
+  document: AppShell,
 });
 
 // Register routes with lazy-loaded handlers

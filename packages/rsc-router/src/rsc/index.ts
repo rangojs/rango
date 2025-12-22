@@ -1,3 +1,4 @@
+/// <reference types="@vitejs/plugin-rsc/types" />
 import { renderSegments } from "../segment-system.js";
 import type { RSCRouter } from "../router.js";
 import type { ResolvedSegment, SlotState } from "../types.js";

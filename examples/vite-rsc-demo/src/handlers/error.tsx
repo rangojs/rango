@@ -1,7 +1,6 @@
 import { map, createLoader, notFound } from "rsc-router/server";
 import type { errorRoutes } from "../routes.js";
 import type { ErrorBoundaryFallbackProps, NotFoundBoundaryFallbackProps } from "rsc-router";
-import { RootLayout } from "../layouts/RootLayout.js";
 import { Outlet } from "rsc-router/client";
 import { ClientErrorThrower } from "../components/ClientErrorThrower.js";
 
@@ -116,8 +115,7 @@ function ErrorTestLayout({ children }: { children: React.ReactNode }) {
  */
 export default map<typeof errorRoutes>(
   ({ route, layout, errorBoundary, notFoundBoundary, loader }) => [
-    // Root layout (no error boundary - errors bubble to root ErrorBoundary)
-    layout(<RootLayout />),
+    // Note: RootLayout is now used as the document component in router.tsx
 
     // Unhandled error route - NO error boundary in parent chain
     // This tests the root ErrorBoundary added by renderSegments

@@ -3,8 +3,8 @@ import type { aboutRoutes } from "../routes.js";
 
 export default map<typeof aboutRoutes>(({ route }) => [
   route("index", () => (
-    <main>
-      <h1>About</h1>
+    <main data-testid="about-page">
+      <h1 data-testid="about-title">About</h1>
       <p>
         RSC Router is a code-first, type-safe router for React Server
         Components.

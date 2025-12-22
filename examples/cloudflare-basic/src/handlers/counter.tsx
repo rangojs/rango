@@ -8,8 +8,8 @@ export default map<typeof counterRoutes>(({ route }) => [
     const initialCount = await getCounter();
 
     return (
-      <main>
-        <h1>Counter Demo</h1>
+      <main data-testid="counter-page">
+        <h1 data-testid="counter-title">Counter Demo</h1>
         <p style={{ marginBottom: "1rem" }}>
           This demonstrates Server Actions with client-side state management.
         </p>

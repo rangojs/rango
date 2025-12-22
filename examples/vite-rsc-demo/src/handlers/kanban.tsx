@@ -2,7 +2,6 @@ import { map } from "rsc-router/server";
 import { Outlet } from "rsc-router/client";
 import type { kanbanRoutes } from "../routes.js";
 import type { ErrorBoundaryFallbackProps } from "rsc-router";
-import { RootLayout } from "../layouts/RootLayout.js";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import {
   KanbanLoader,
@@ -170,7 +169,7 @@ export default map<typeof kanbanRoutes>(
     loading,
     errorBoundary,
   }) => [
-    layout(<RootLayout />),
+    // Note: RootLayout is now used as the document component in router.tsx
 
     // Action counter layout with loader - tests loader-only revalidation
     layout(<ActionCounterLayout />, () => [

@@ -1,33 +1,14 @@
 import { map } from "rsc-router/server";
 import type { homeRoutes } from "../routes.js";
-import { RootLayout } from "../layouts/RootLayout.js";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { Outlet, ParallelOutlet } from "rsc-router/client";
 
 /**
  * Home handlers - array-based API with use() pattern
+ * Note: RootLayout is now used as the document component in router.tsx
  */
 export default map<typeof homeRoutes>(
   ({ route, layout, revalidate, middleware, parallel }) => [
-    layout(<RootLayout />, () => [
-      // route("blabla", () => <div>Should not work</div>),
-    ]),
-    // layout(<RootLayout />, () => [
-    //   //cause error
-    //   layout(<RootLayout />, () => [
-    //     //cause error
-    //     layout(<RootLayout />, () => [
-    //       //cause error
-    //       layout(<RootLayout />, () => [
-    //         //cause error
-    //         layout(<RootLayout />, () => [
-    //           route("blabla2", () => <div>Should not work</div>),
-    //         ]),
-    //       ]),
-    //     ]),
-    //   ]),
-    // ]),
-
     route(
       "index",
       () => (
