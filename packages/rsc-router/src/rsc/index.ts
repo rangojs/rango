@@ -21,6 +21,8 @@ export interface RscPayload {
     slots?: Record<string, SlotState>;
     /** Root layout component for browser-side re-renders (client component reference) */
     rootLayout?: React.ComponentType<{ children: React.ReactNode }>;
+    /** Handle data accumulated across route segments (promise that resolves after handlers settle) */
+    handles?: Promise<import("../server/handle-store.js").HandleData>;
   };
   returnValue?: { ok: boolean; data: unknown };
   formState?: unknown;
@@ -226,6 +228,7 @@ export function createRSCHandler<TEnv = unknown>(
                 matched: errorResult.matched,
                 diff: errorResult.diff,
                 isError: true,
+                handles: handleStore.getData(),
               },
               returnValue,
             };
@@ -277,6 +280,7 @@ export function createRSCHandler<TEnv = unknown>(
               segments: fullMatch.segments,
               matched: fullMatch.matched,
               diff: fullMatch.diff,
+              handles: handleStore.getData(),
             },
             returnValue,
           };
@@ -317,6 +321,7 @@ export function createRSCHandler<TEnv = unknown>(
             matched: matchResult.matched,
             diff: matchResult.diff,
             slots: matchResult.slots,
+            handles: handleStore.getData(),
           },
           returnValue,
         };
@@ -367,6 +372,7 @@ export function createRSCHandler<TEnv = unknown>(
               matched: match.matched,
               diff: match.diff,
               isPartial: false,
+              handles: handleStore.getData(),
             },
           };
         } else {
@@ -380,6 +386,7 @@ export function createRSCHandler<TEnv = unknown>(
               diff: result.diff,
               isPartial: true,
               slots: result.slots,
+              handles: handleStore.getData(),
             },
           };
         }
@@ -405,6 +412,7 @@ export function createRSCHandler<TEnv = unknown>(
             isPartial: false,
             // Send rootLayout for browser-side re-renders
             rootLayout: router.rootLayout,
+            handles: handleStore.getData(),
           },
         };
       }

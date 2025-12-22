@@ -40,10 +40,11 @@ export interface HandleStore {
   push(handleName: string, segmentId: string, data: unknown): void;
 
   /**
-   * Get all collected handle data.
-   * Should only be called after `settled` resolves to ensure all data is collected.
+   * Get all collected handle data after all handlers have settled.
+   * Returns a promise that waits for `settled`, then returns the data.
+   * The data may contain unresolved promises which RSC will stream.
    */
-  getData(): HandleData;
+  getData(): Promise<HandleData>;
 }
 
 /**
@@ -56,14 +57,13 @@ export interface HandleStore {
  * // In router - track without awaiting
  * const component = handleStore.track(entry.handler(context));
  *
- * // In handler - push handle data
+ * // In handler - push handle data (value, promise, or async callback result)
  * handleStore.push("breadcrumbs", segmentId, { label: "Home", href: "/" });
+ * handleStore.push("meta", segmentId, fetchMetaAsync()); // promise
  *
- * // After rendering - wait for all handlers
- * await handleStore.settled;
- *
- * // Get collected data for payload
- * const handles = handleStore.getData();
+ * // Get collected data for payload (waits for handlers to settle)
+ * const handles = handleStore.getData(); // Promise<HandleData>
+ * // The handles may contain unresolved promises that RSC will stream
  * ```
  */
 export function createHandleStore(): HandleStore {
@@ -93,8 +93,8 @@ export function createHandleStore(): HandleStore {
       data[handleName][segmentId].push(value);
     },
 
-    getData(): HandleData {
-      return data;
+    getData(): Promise<HandleData> {
+      return this.settled.then(() => data);
     },
   };
 }

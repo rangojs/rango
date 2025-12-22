@@ -124,10 +124,18 @@ export function setupLoaderAccess<TEnv>(
       }
 
       // Return a push function bound to this handle and segment
-      return (data: unknown) => {
-        if (store) {
-          store.push(handle.name, segmentId, data);
-        }
+      // Accepts: value, Promise, or async callback (executed immediately)
+      // Promises are pushed directly - RSC will serialize and stream them
+      return (dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>)) => {
+        if (!store) return;
+
+        // If it's a function, call it immediately to get the promise
+        const valueOrPromise = typeof dataOrFn === "function"
+          ? (dataOrFn as () => Promise<unknown>)()
+          : dataOrFn;
+
+        // Push directly - promises will be serialized by RSC and streamed
+        store.push(handle.name, segmentId, valueOrPromise);
       };
     }
 

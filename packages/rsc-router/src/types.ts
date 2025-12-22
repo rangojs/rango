@@ -218,6 +218,7 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
    *
    * For handles: Returns a push function to add data for this segment.
    * Handle data accumulates across all matched route segments.
+   * Push accepts: direct value, Promise, or async callback (executed immediately).
    *
    * @example
    * ```typescript
@@ -227,17 +228,36 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
    *   return <CartPage cart={cart} />;
    * });
    *
-   * // Handle usage
+   * // Handle usage - direct value
+   * route("shop", (ctx) => {
+   *   const push = ctx.use(Breadcrumbs);
+   *   push({ label: "Shop", href: "/shop" });
+   *   return <ShopPage />;
+   * });
+   *
+   * // Handle usage - Promise
    * route("product", (ctx) => {
    *   const push = ctx.use(Breadcrumbs);
-   *   push({ label: "Product", href: "/product" });
+   *   push(fetchProductBreadcrumb(ctx.params.id));
+   *   return <ProductPage />;
+   * });
+   *
+   * // Handle usage - async callback (executed immediately)
+   * route("product", (ctx) => {
+   *   const push = ctx.use(Breadcrumbs);
+   *   push(async () => {
+   *     const product = await db.getProduct(ctx.params.id);
+   *     return { label: product.name, href: `/product/${product.id}` };
+   *   });
    *   return <ProductPage />;
    * });
    * ```
    */
   use: {
     <T, TLoaderParams = any>(loader: LoaderDefinition<T, TLoaderParams>): Promise<T>;
-    <TData, TAccumulated = TData[]>(handle: Handle<TData, TAccumulated>): (data: TData) => void;
+    <TData, TAccumulated = TData[]>(handle: Handle<TData, TAccumulated>): (
+      data: TData | Promise<TData> | (() => Promise<TData>)
+    ) => void;
   };
   /**
    * Internal: Current segment ID for handle data attribution.
