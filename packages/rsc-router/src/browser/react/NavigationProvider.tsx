@@ -18,6 +18,7 @@ import type {
   NavigateOptions,
   NavigationBridge,
 } from "../types.js";
+import { updateHandleData } from "./use-handle.js";
 import type { EventController } from "../event-controller.js";
 
 /**
@@ -110,6 +111,17 @@ export function NavigationProvider({
         root: update.root,
         metadata: update.metadata,
       });
+
+      // Update handle data if present (async, doesn't block UI update)
+      if (update.metadata.handles) {
+        update.metadata.handles.then((handleData) => {
+          updateHandleData(
+            handleData,
+            update.metadata.matched,
+            update.metadata.isPartial
+          );
+        });
+      }
     });
 
     console.log("[Browser] NavigationProvider ready");
@@ -126,6 +138,13 @@ export function NavigationProvider({
     console.log(
       "[Browser] Initial page load - isStreaming stays false (SSR content already visible)"
     );
+
+    // Initialize handle data from initial payload
+    if (initialPayload.metadata?.handles) {
+      initialPayload.metadata.handles.then((handleData) => {
+        updateHandleData(handleData, initialPayload.metadata?.matched);
+      });
+    }
   }, []);
 
   // Handle promise case - use() will suspend until resolved

@@ -570,3 +570,6 @@ export {
 
 // Handle API - for accumulating data across route segments
 export { createHandle, isHandle, type Handle } from "./handle.js";
+
+// Handle data hook
+export { useHandle } from "./browser/react/use-handle.js";

@@ -982,12 +982,11 @@ export function createRSCRouter<TEnv = any>(
 
     if (interceptEntry.loading && loaderPromises.length > 0) {
       // Has loading skeleton - keep everything as Promises for streaming
-      // Wrap component in Promise if not already to ensure consistent streaming
-      const handlerPromise =
+      // Don't track intercept handlers - they're parallels and shouldn't block handle data
+      component =
         handlerResult instanceof Promise
           ? handlerResult
           : Promise.resolve(handlerResult);
-      component = trackHandler(context, handlerPromise);
       loaderDataPromise = Promise.all(loaderPromises);
     } else if (loaderPromises.length > 0) {
       // No loading skeleton - await loaders and component
@@ -995,10 +994,10 @@ export function createRSCRouter<TEnv = any>(
       component =
         handlerResult instanceof Promise ? await handlerResult : handlerResult;
     } else {
-      // No loaders
+      // No loaders - don't track intercept handlers (they're parallels)
       component =
         interceptEntry.loading && handlerResult instanceof Promise
-          ? trackHandler(context, handlerResult)
+          ? handlerResult
           : handlerResult instanceof Promise
             ? await handlerResult
             : handlerResult;
@@ -1056,12 +1055,12 @@ export function createRSCRouter<TEnv = any>(
 
     for (const [slot, handler] of Object.entries(slots)) {
       // If loading is defined, don't await the handler (stream with Suspense)
+      // Don't track parallel handlers - they shouldn't block handle data
       let component: ReactNode | Promise<ReactNode>;
       if (parallelEntry.loading) {
         const result =
           typeof handler === "function" ? handler(context) : handler;
-        component =
-          result instanceof Promise ? trackHandler(context, result) : result;
+        component = result;
       } else {
         component =
           typeof handler === "function" ? await handler(context) : handler;
@@ -1382,12 +1381,11 @@ export function createRSCRouter<TEnv = any>(
           },
           async () => {
             // If loading is defined, don't await (stream with Suspense)
+            // Don't track parallel handlers - they shouldn't block handle data
             if (parallelEntry.loading) {
               const result =
                 typeof handler === "function" ? handler(context) : handler;
-              return result instanceof Promise
-                ? trackHandler(context, result)
-                : result;
+              return result;
             }
             return typeof handler === "function"
               ? await handler(context)
@@ -1823,12 +1821,11 @@ export function createRSCRouter<TEnv = any>(
           },
           async () => {
             // If loading is defined, don't await (stream with Suspense)
+            // Don't track parallel handlers - they shouldn't block handle data
             if (parallelEntry.loading) {
               const result =
                 typeof handler === "function" ? handler(context) : handler;
-              return result instanceof Promise
-                ? trackHandler(context, result)
-                : result;
+              return result;
             }
             return typeof handler === "function"
               ? await handler(context)
@@ -1965,7 +1962,8 @@ export function createRSCRouter<TEnv = any>(
     }
 
     // Extract bindings from context (if using RouterEnv pattern)
-    const bindings = (context as any)?.Bindings || {};
+    // Use Bindings if present (Cloudflare Workers pattern), otherwise use context directly
+    const bindings = (context as any)?.Bindings ?? context;
 
     const handlerContext = createHandlerContext(
       matched.params,
@@ -2339,8 +2337,9 @@ export function createRSCRouter<TEnv = any>(
       });
     }
 
-    // Extract bindings from context
-    const bindings = (context as any)?.Bindings || {};
+    // Extract bindings from context (if using RouterEnv pattern)
+    // Use Bindings if present (Cloudflare Workers pattern), otherwise use context directly
+    const bindings = (context as any)?.Bindings ?? context;
 
     const handlerContext = createHandlerContext(
       matched.params,
