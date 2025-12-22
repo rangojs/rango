@@ -36,11 +36,17 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
 
   async function findPort(): Promise<number> {
     let stdout = "";
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error("Timeout waiting for dev server to start"));
+      }, 60000);
+
       child.stdout!.on("data", (data) => {
         stdout += stripVTControlCharacters(String(data));
-        const match = stdout.match(/http:\/\/localhost:(\d+)/);
+        // Match URL with any host (localhost, 127.0.0.1, 0.0.0.0, etc.)
+        const match = stdout.match(/http:\/\/(?:localhost|[\d.]+):(\d+)/);
         if (match) {
+          clearTimeout(timeout);
           resolve(Number(match[1]));
         }
       });

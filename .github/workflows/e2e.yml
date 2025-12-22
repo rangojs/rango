@@ -82,8 +82,8 @@ jobs:
   cloudflare-basic-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # TODO: Fix wrangler/workerd hydration issues on Linux CI
-    continue-on-error: true
+    # Tests are skipped on CI due to wrangler/workerd issues on Linux
+    # See: https://github.com/cloudflare/workers-sdk/issues/6280
 
     steps:
       - uses: actions/checkout@v4
@@ -105,6 +105,8 @@ jobs:
 
       - name: Run cloudflare-basic e2e tests
         run: pnpm --filter cloudflare-basic test:e2e
+        env:
+          TEST_DEBUG: "1"
 
       - name: Upload test results
         uses: actions/upload-artifact@v4

@@ -311,6 +311,29 @@ export async function rscRouter(
             ? DEFAULT_ENTRY_PATHS.ssr
             : VIRTUAL_IDS.ssr,
         };
+
+        // Configure environments for cloudflare deployment
+        return {
+          environments: {
+            rsc: {
+              build: {
+                rollupOptions: {
+                  // Ensure `default` export only in cloudflare entry output
+                  preserveEntrySignatures: "exports-only",
+                },
+              },
+            },
+            ssr: {
+              // Build SSR inside RSC directory so wrangler can deploy self-contained dist/rsc
+              build: {
+                outDir: "./dist/rsc/ssr",
+              },
+              resolve: {
+                noExternal: true,
+              },
+            },
+          },
+        };
       },
     });
 
