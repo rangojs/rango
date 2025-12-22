@@ -1,8 +1,10 @@
 {
 	"name": "cloudflare-basic",
-	"compatibility_date": "2025-01-01",
+	"workers_dev": true,
+	"compatibility_date": "2025-10-01",
 	"compatibility_flags": [
-		"nodejs_compat"
+		"nodejs_compat",
+		"nodejs_als"
 	],
 	"main": "./src/worker.rsc.tsx",
 	"assets": {
