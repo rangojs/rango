@@ -12,6 +12,7 @@ import {
   DataNotFoundError,
   sanitizeError,
 } from "./errors";
+import type { ComponentType } from "react";
 import type {
   RouteDefinition,
   ResolvedRouteMap,
@@ -52,6 +53,7 @@ import {
 } from "./href.js";
 import { registerRouteMap } from "./route-map-builder.js";
 import { DefaultErrorFallback } from "./default-error-boundary.js";
+import { DefaultDocument } from "./components/DefaultDocument.js";
 
 // Extracted router utilities
 import {
@@ -88,6 +90,13 @@ import type {
 } from "./router/types.js";
 
 /**
+ * Props passed to the root layout component
+ */
+export interface RootLayoutProps {
+  children: ReactNode;
+}
+
+/**
  * Router configuration options
  */
 export interface RSCRouterOptions {
@@ -96,6 +105,44 @@ export interface RSCRouterOptions {
    * When enabled, metrics are output to console and available via Server-Timing header
    */
   debugPerformance?: boolean;
+
+  /**
+   * Document component that wraps the entire application.
+   *
+   * This component provides the HTML structure for your app and wraps
+   * both normal route content AND error states, preventing the app shell
+   * from unmounting during errors (avoids FOUC).
+   *
+   * Must be a client component ("use client") that accepts { children }.
+   *
+   * If not provided, a default document with basic HTML structure is used:
+   * `<html><head><meta charset/viewport></head><body>{children}</body></html>`
+   *
+   * @example
+   * ```typescript
+   * // components/Document.tsx
+   * "use client";
+   * export function Document({ children }: { children: ReactNode }) {
+   *   return (
+   *     <html lang="en">
+   *       <head>
+   *         <link rel="stylesheet" href="/styles.css" />
+   *       </head>
+   *       <body>
+   *         <nav>...</nav>
+   *         {children}
+   *       </body>
+   *     </html>
+   *   );
+   * }
+   *
+   * // router.tsx
+   * const router = createRSCRouter<AppEnv>({
+   *   document: Document,
+   * });
+   * ```
+   */
+  document?: ComponentType<RootLayoutProps>;
 
   /**
    * Default error boundary fallback used when no error boundary is defined in the route tree
@@ -195,6 +242,12 @@ export interface RSCRouter<
    */
   readonly routeMap: TRoutes;
 
+  /**
+   * Root layout component that wraps the entire application
+   * Access this to pass to renderSegments
+   */
+  readonly rootLayout?: ComponentType<RootLayoutProps>;
+
   match(request: Request, context: TEnv): Promise<MatchResult>;
 
   matchPartial(
@@ -260,9 +313,25 @@ export function createRSCRouter<TEnv = any>(
 ): RSCRouter<TEnv, {}> {
   const {
     debugPerformance = false,
+    document: documentOption,
     defaultErrorBoundary,
     defaultNotFoundBoundary,
   } = options;
+
+  // Validate document is a function (component)
+  // Note: We cannot validate "use client" at runtime since it's a bundler directive.
+  // If a server component is passed, React will throw during rendering with a
+  // "Functions cannot be passed to Client Components" error.
+  if (documentOption !== undefined && typeof documentOption !== "function") {
+    throw new Error(
+      `document must be a client component function with "use client" directive. ` +
+        `Make sure to pass the component itself, not a JSX element: ` +
+        `document: MyDocument (correct) vs document: <MyDocument /> (incorrect)`
+    );
+  }
+
+  // Use default document if none provided (keeps internal name as rootLayout)
+  const rootLayout = documentOption ?? DefaultDocument;
   const routesEntries: RouteEntry<TEnv>[] = [];
   let mountIndex = 0;
 
@@ -2590,6 +2659,9 @@ export function createRSCRouter<TEnv = any>(
     get routeMap() {
       return mergedRouteMap as {};
     },
+
+    // Expose rootLayout for renderSegments
+    rootLayout,
 
     match,
     matchPartial,

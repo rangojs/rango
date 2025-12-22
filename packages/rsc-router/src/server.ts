@@ -9,7 +9,12 @@
 export { route, map, createLoader, redirect, type RouteHelpers } from "./route-definition.js";
 
 // Core router (server-only)
-export { createRSCRouter, type RSCRouter } from "./router.js";
+export {
+  createRSCRouter,
+  type RSCRouter,
+  type RSCRouterOptions,
+  type RootLayoutProps,
+} from "./router.js";
 
 // Type-safe href utilities
 export {

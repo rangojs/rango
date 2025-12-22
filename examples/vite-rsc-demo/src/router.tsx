@@ -1,4 +1,5 @@
 import { createRSCRouter, type RouterEnv } from "rsc-router/server";
+import { RootLayout } from "./layouts/RootLayout.js";
 import {
   homeRoutes,
   blogRoutes,
@@ -58,7 +59,7 @@ declare global {
  * Create and configure the router with type-safe context.
  * Route types are accumulated through the builder chain.
  */
-const router = createRSCRouter<AppEnv>({ debugPerformance: true })
+const router = createRSCRouter<AppEnv>({ debugPerformance: true, document: RootLayout })
   .routes(homeRoutes)
   .map(() => import("./handlers/home.js"))
 

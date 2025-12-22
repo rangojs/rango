@@ -1,6 +1,10 @@
-import { createElement, type ReactNode } from "react";
+import { createElement, type ReactNode, type ComponentType } from "react";
 import { OutletProvider } from "./client.js";
-import type { ResolvedSegment, LoaderDataResult } from "./types.js";
+import type {
+  ResolvedSegment,
+  LoaderDataResult,
+  RootLayoutProps,
+} from "./types.js";
 import { isLoaderDataResult } from "./types.js";
 import { invariant } from "./errors.js";
 import {
@@ -72,6 +76,13 @@ export interface RenderSegmentsOptions {
    * and easier to debug than relying on ID pattern matching.
    */
   interceptSegments?: ResolvedSegment[];
+
+  /**
+   * Root layout component that wraps the entire application.
+   * When provided, wraps both route content and the error boundary,
+   * preventing the app shell from unmounting during errors (avoids FOUC).
+   */
+  rootLayout?: ComponentType<RootLayoutProps>;
 }
 
 /**
@@ -117,7 +128,11 @@ export async function renderSegments(
   segments: ResolvedSegment[],
   options?: RenderSegmentsOptions
 ): Promise<ReactNode> {
-  const { interceptSegments, forceAwait } = options || {};
+  const {
+    interceptSegments,
+    forceAwait,
+    rootLayout: RootLayout,
+  } = options || {};
 
   // Separate segments by type, passing intercept segments for explicit injection
   const tree = segmentTreeWalk(segments, interceptSegments);
@@ -240,9 +255,19 @@ export async function renderSegments(
 
   // Always wrap with root error boundary to prevent white screens
   // This catches any unhandled errors that bubble up from the segment tree
-  return createElement(RootErrorBoundary, {
+  const errorBoundaryWrapped = createElement(RootErrorBoundary, {
     children: content,
   });
+
+  // If rootLayout is provided, wrap the error boundary with it
+  // This ensures the app shell stays mounted even during errors (prevents FOUC)
+  if (RootLayout) {
+    return createElement(RootLayout, {
+      children: errorBoundaryWrapped,
+    });
+  }
+
+  return errorBoundaryWrapped;
 }
 
 /**

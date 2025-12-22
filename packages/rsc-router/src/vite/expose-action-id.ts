@@ -147,23 +147,30 @@ export function exposeActionId(): Plugin {
       config = resolvedConfig;
       isBuild = config.command === "build";
 
-      // Verify RSC plugin is present - rsc-router requires @vitejs/plugin-rsc
+      // Get RSC plugin API - rsc-router requires @vitejs/plugin-rsc
       rscPluginApi = getRscPluginApi(config);
+    },
+
+    buildStart() {
+      // Verify RSC plugin is present at build start (after all config hooks have run)
+      // This allows rsc-router:rsc-integration to dynamically add the RSC plugin
+      if (!rscPluginApi) {
+        rscPluginApi = getRscPluginApi(config);
+      }
+
       if (!rscPluginApi) {
         throw new Error(
           "[rsc-router] Could not find @vitejs/plugin-rsc. " +
-            "rsc-router requires the Vite RSC plugin to be installed and configured. " +
-            "Add rsc() before rscRouter() in your Vite config plugins array."
+            "rsc-router requires the Vite RSC plugin.\n" +
+            "The RSC plugin should be included automatically. If you disabled it with\n" +
+            "rscRouter({ rsc: false }), add rsc() before rscRouter() in your config."
         );
       }
-    },
 
-    // Build the hash-to-file mapping before chunks are rendered
-    buildStart() {
       if (!isBuild) return;
 
       hashToFileMap = new Map();
-      const { serverReferenceMetaMap } = rscPluginApi!.manager;
+      const { serverReferenceMetaMap } = rscPluginApi.manager;
 
       for (const [absolutePath, meta] of Object.entries(
         serverReferenceMetaMap
@@ -177,6 +184,7 @@ export function exposeActionId(): Plugin {
         hashToFileMap.set(meta.referenceKey, relativePath);
       }
     },
+
 
     // Dev mode only: transform hook runs after RSC plugin creates server references
     // In dev mode, IDs already contain file paths, not hashes

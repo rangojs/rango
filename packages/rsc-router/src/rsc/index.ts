@@ -1,7 +1,10 @@
+/// <reference types="@vitejs/plugin-rsc/types" />
 import { renderSegments } from "../segment-system.js";
 import type { RSCRouter } from "../router.js";
 import type { ResolvedSegment, SlotState, RouterInternalContext } from "../types.js";
 import { createHandleStore, type HandleStore } from "../server/handle-store.js";
+import { RouteNotFoundError } from "../errors.js";
+import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
 /**
  * RSC payload sent to the client
@@ -16,6 +19,8 @@ export interface RscPayload {
     matched?: string[];
     diff?: string[];
     slots?: Record<string, SlotState>;
+    /** Root layout component for browser-side re-renders (client component reference) */
+    rootLayout?: React.ComponentType<{ children: React.ReactNode }>;
   };
   returnValue?: { ok: boolean; data: unknown };
   formState?: unknown;
@@ -74,54 +79,60 @@ export interface CreateRSCHandlerOptions<TEnv = unknown> {
   router: RSCRouter<TEnv>;
 
   /**
-   * RSC dependencies from @vitejs/plugin-rsc/rsc
+   * RSC dependencies from @vitejs/plugin-rsc/rsc.
+   * Defaults to the exports from @vitejs/plugin-rsc/rsc.
    */
-  deps: RSCDependencies;
+  deps?: RSCDependencies;
 
   /**
-   * Function to load the SSR module for HTML rendering
-   * Typically: () => import.meta.viteRsc.loadModule("ssr", "index")
+   * Function to load the SSR module for HTML rendering.
+   * Defaults to: () => import.meta.viteRsc.loadModule("ssr", "index")
    */
-  loadSSRModule: LoadSSRModule;
+  loadSSRModule?: LoadSSRModule;
 }
 
 /**
  * Create an RSC request handler.
  *
- * @example
+ * @example Basic usage (deps and loadSSRModule have sensible defaults)
  * ```tsx
  * import { createRSCHandler } from "rsc-router/rsc";
- * import {
- *   renderToReadableStream,
- *   decodeReply,
- *   createTemporaryReferenceSet,
- *   loadServerAction,
- * } from "@vitejs/plugin-rsc/rsc";
+ * import { router } from "./router.js";
+ *
+ * export default createRSCHandler({ router });
+ * ```
+ *
+ * @example With custom deps (advanced)
+ * ```tsx
+ * import { createRSCHandler } from "rsc-router/rsc";
+ * import * as rsc from "@vitejs/plugin-rsc/rsc";
  * import { router } from "./router.js";
  *
  * export default createRSCHandler({
  *   router,
- *   deps: {
- *     renderToReadableStream,
- *     decodeReply,
- *     createTemporaryReferenceSet,
- *     loadServerAction,
- *   },
- *   loadSSRModule: () =>
- *     import.meta.viteRsc.loadModule<typeof import("./entry.ssr.js")>("ssr", "index"),
+ *   deps: rsc,
+ *   loadSSRModule: () => import.meta.viteRsc.loadModule("ssr", "index"),
  * });
  * ```
  */
 export function createRSCHandler<TEnv = unknown>(
   options: CreateRSCHandlerOptions<TEnv>
 ) {
-  const { router, deps, loadSSRModule } = options;
+  const { router } = options;
+
+  // Use provided deps or default to @vitejs/plugin-rsc/rsc exports
+  const deps = options.deps ?? rscDeps;
   const {
     renderToReadableStream,
     decodeReply,
     createTemporaryReferenceSet,
     loadServerAction,
   } = deps;
+
+  // Use provided loadSSRModule or default to vite RSC module loader
+  const loadSSRModule =
+    options.loadSSRModule ??
+    (() => import.meta.viteRsc.loadModule("ssr", "index"));
 
   return async function handler(
     request: Request,
@@ -201,7 +212,9 @@ export function createRSCHandler<TEnv = unknown>(
 
           if (errorResult) {
             const renderStart = performance.now();
-            const root = renderSegments(errorResult.segments);
+            const root = renderSegments(errorResult.segments, {
+              rootLayout: router.rootLayout,
+            });
             const renderDuration = performance.now() - renderStart;
 
             payload = {
@@ -249,7 +262,9 @@ export function createRSCHandler<TEnv = unknown>(
           // Fall back to full render
           const fullMatch = await router.match(request, envWithHandleStore);
           const renderStart = performance.now();
-          const root = renderSegments(fullMatch.segments);
+          const root = renderSegments(fullMatch.segments, {
+            rootLayout: router.rootLayout,
+          });
           const renderDuration = performance.now() - renderStart;
           const serverTiming = fullMatch.serverTiming
             ? `${fullMatch.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
@@ -285,7 +300,9 @@ export function createRSCHandler<TEnv = unknown>(
 
         // Return updated segments
         const renderStart = performance.now();
-        renderSegments(matchResult.segments);
+        renderSegments(matchResult.segments, {
+          rootLayout: router.rootLayout,
+        });
         const renderDuration = performance.now() - renderStart;
         const serverTiming = matchResult.serverTiming
           ? `${matchResult.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
@@ -334,7 +351,9 @@ export function createRSCHandler<TEnv = unknown>(
           // Fall back to full render
           const match = await router.match(request, envWithHandleStore);
           const renderStart = performance.now();
-          const root = renderSegments(match.segments);
+          const root = renderSegments(match.segments, {
+            rootLayout: router.rootLayout,
+          });
           const renderDuration = performance.now() - renderStart;
           serverTiming = match.serverTiming
             ? `${match.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
@@ -368,7 +387,9 @@ export function createRSCHandler<TEnv = unknown>(
         // Full render (initial page load)
         const match = await router.match(request, envWithHandleStore);
         const renderStart = performance.now();
-        const root = renderSegments(match.segments);
+        const root = renderSegments(match.segments, {
+          rootLayout: router.rootLayout,
+        });
         const renderDuration = performance.now() - renderStart;
         serverTiming = match.serverTiming
           ? `${match.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
@@ -382,6 +403,8 @@ export function createRSCHandler<TEnv = unknown>(
             matched: match.matched,
             diff: match.diff,
             isPartial: false,
+            // Send rootLayout for browser-side re-renders
+            rootLayout: router.rootLayout,
           },
         };
       }
@@ -427,6 +450,11 @@ export function createRSCHandler<TEnv = unknown>(
       // Check if middleware/handler returned Response
       if (error instanceof Response) {
         return error;
+      }
+
+      // Return 404 for unmatched routes instead of 500
+      if (error instanceof RouteNotFoundError) {
+        return new Response("Not Found", { status: 404 });
       }
 
       console.error(`[RSC] Error:`, error);

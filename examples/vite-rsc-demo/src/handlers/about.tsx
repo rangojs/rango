@@ -1,15 +1,13 @@
 import { map } from "rsc-router/server";
 import type { aboutRoutes } from "../routes.js";
-import { RootLayout } from "../layouts/RootLayout.js";
 import { Outlet } from "rsc-router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 
 /**
  * About handlers - array-based API with use() pattern
+ * Note: RootLayout is now used as the document component in router.tsx
  */
 export default map<typeof aboutRoutes>(({ route, layout }) => [
-  layout(<RootLayout />),
-
   layout(
     <DebugSegmentWrapper type="layout" name="Test">
       <div>

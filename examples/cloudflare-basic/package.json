@@ -1,14 +1,16 @@
 {
-  "name": "vite-rsc-demo",
+  "name": "cloudflare-basic",
   "version": "0.0.1",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite dev",
+    "dev:bindings": "pnpm build && wrangler dev",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "playwright test",
-    "test:ui": "playwright test --ui"
+    "deploy": "wrangler deploy",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "react": "catalog:",
@@ -16,16 +18,15 @@
     "rsc-router": "workspace:*"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.19.0",
+    "@cloudflare/workers-types": "^4.20251217.0",
     "@playwright/test": "^1.49.1",
-    "@types/node": "^24.10.1",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "latest",
-    "@vitejs/plugin-rsc": "catalog:",
-    "rsc-html-stream": "^0.0.7",
     "tinyexec": "^0.3.2",
-    "typescript": "^5.9.3",
+    "typescript": "^5.7.0",
     "vite": "catalog:",
-    "vite-plugin-devtools-json": "^1.0.0"
+    "wrangler": "^4.56.0"
   }
 }

@@ -1,5 +1,8 @@
 import React from "react";
-import { renderSegments } from "../segment-system.js";
+import {
+  renderSegments as baseRenderSegments,
+  type RenderSegmentsOptions,
+} from "../segment-system.js";
 import {
   createNavigationStore,
   generateHistoryKey,
@@ -61,7 +64,7 @@ export interface BrowserAppContext {
   eventController: EventController;
   bridge: NavigationBridge;
   initialPayload: RscPayload;
-  initialTree: React.ReactNode;
+  initialTree: React.ReactNode | Promise<React.ReactNode>;
 }
 
 // Module-level state for the initialized app
@@ -82,9 +85,8 @@ export async function initBrowserApp(
   const { rscStream, deps, storeOptions } = options;
 
   // Load initial payload from SSR-injected __FLIGHT_DATA__
-  const initialPayload = await deps.createFromReadableStream<RscPayload>(
-    rscStream
-  );
+  const initialPayload =
+    await deps.createFromReadableStream<RscPayload>(rscStream);
 
   // Get initial segments and compute history key from current URL
   const initialSegments = (initialPayload.metadata?.segments ??
@@ -108,6 +110,15 @@ export async function initBrowserApp(
   // Create composable utilities
   const client = createNavigationClient(deps);
 
+  // Extract rootLayout from metadata for browser-side re-renders
+  const rootLayout = initialPayload.metadata?.rootLayout;
+
+  // Create a bound renderSegments that includes rootLayout
+  const renderSegments = (
+    segments: ResolvedSegment[],
+    options?: RenderSegmentsOptions
+  ) => baseRenderSegments(segments, { ...options, rootLayout });
+
   // Setup server action bridge
   const actionBridge = createServerActionBridge({
     store,
@@ -129,8 +140,8 @@ export async function initBrowserApp(
   });
   navigationBridge.registerLinkInterception();
 
-  // Build initial tree (renderSegments returns Promise<ReactNode>)
-  const initialTree = await renderSegments(initialPayload.metadata!.segments);
+  // Build initial tree with rootLayout
+  const initialTree = renderSegments(initialPayload.metadata!.segments);
 
   // Setup HMR
   if (import.meta.hot) {
