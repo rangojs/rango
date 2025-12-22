@@ -1,7 +1,6 @@
 import { map } from "rsc-router/server";
 import { Outlet } from "rsc-router/client";
 import type { todosRoutes } from "../routes.js";
-import { RootLayout } from "../layouts/RootLayout.js";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { TodosLoader, TodoDetailLoader } from "./todos/loader.js";
 import { TodosCount, TodosIndexContent } from "./todos/TodosList.js";
@@ -50,43 +49,43 @@ function TodosLayout() {
 
 /**
  * Todos handler - demonstrates loaders, actions, and revalidation
+ * Note: RootLayout is now used as the document component in router.tsx
  */
 export default map<typeof todosRoutes>(
   ({ route, layout, loader, revalidate, errorBoundary }) => [
-    layout(<RootLayout />, () => [
-      errorBoundary(({ error }) => (
-        <div
+    // Global error boundary for todos section
+    errorBoundary(({ error }) => (
+      <div
+        style={{
+          color: "#dc2626",
+          padding: "1.5rem",
+          border: "2px solid #dc2626",
+          borderRadius: "8px",
+          margin: "1rem 0",
+          background: "#fef2f2",
+        }}
+      >
+        <h3 style={{ margin: "0 0 0.5rem 0", color: "#991b1b" }}>
+          Something went wrong in Todos section
+        </h3>
+        <p style={{ margin: "0 0 1rem 0" }}>{error.message}</p>
+        <a
+          href="/todos"
           style={{
-            color: "#dc2626",
-            padding: "1.5rem",
-            border: "2px solid #dc2626",
-            borderRadius: "8px",
-            margin: "1rem 0",
-            background: "#fef2f2",
+            display: "inline-block",
+            padding: "0.5rem 1rem",
+            background: "#dc2626",
+            color: "white",
+            borderRadius: "6px",
+            textDecoration: "none",
           }}
         >
-          <h3 style={{ margin: "0 0 0.5rem 0", color: "#991b1b" }}>
-            Something went wrong in RootLayout outlet
-          </h3>
-          <p style={{ margin: "0 0 1rem 0" }}>{error.message}</p>
-          <a
-            href="/todos"
-            style={{
-              display: "inline-block",
-              padding: "0.5rem 1rem",
-              background: "#dc2626",
-              color: "white",
-              borderRadius: "6px",
-              textDecoration: "none",
-            }}
-          >
-            Go back to Todos
-          </a>
-        </div>
-      )),
-    ]),
+          Go back to Todos
+        </a>
+      </div>
+    )),
 
-    // Todos section layout with loader (orphan layout - sibling to RootLayout)
+    // Todos section layout with loader
     layout(<TodosLayout />, () => [
       // Global todos loader
       loader(TodosLoader, () => [

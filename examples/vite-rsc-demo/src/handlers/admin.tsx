@@ -1,6 +1,5 @@
 import { map } from "rsc-router/server";
 import type { adminRoutes } from "../routes.js";
-import { RootLayout } from "../layouts/RootLayout.js";
 import { IndexRoute, UsersRoute, UserRoute, SettingsRoute } from "./admin/routes.js";
 import { globalRevalidation, settingsRevalidation, userRevalidation } from "./admin/revalidation.js";
 
@@ -12,21 +11,20 @@ import { globalRevalidation, settingsRevalidation, userRevalidation } from "./ad
  * - Hard decision: boolean - short-circuits immediately
  *
  * Array-based API with use() pattern
+ * Note: RootLayout is now used as the document component in router.tsx
  */
 export default map<typeof adminRoutes>(({ route, layout, revalidate }) => [
-  layout(<RootLayout />, () => [
-    // Global soft revalidation
-    revalidate(globalRevalidation),
+  // Global soft revalidation
+  revalidate(globalRevalidation),
 
-    route("index", IndexRoute),
-    route("users", UsersRoute),
+  route("index", IndexRoute),
+  route("users", UsersRoute),
 
-    route("user", UserRoute, () => [
-      revalidate(userRevalidation),
-    ]),
+  route("user", UserRoute, () => [
+    revalidate(userRevalidation),
+  ]),
 
-    route("settings", SettingsRoute, () => [
-      revalidate(settingsRevalidation),
-    ]),
+  route("settings", SettingsRoute, () => [
+    revalidate(settingsRevalidation),
   ]),
 ]);

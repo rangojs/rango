@@ -1,15 +1,13 @@
 import { map } from "rsc-router/server";
 import type { dashboardRoutes } from "../routes.js";
-import { RootLayout } from "../layouts/RootLayout.js";
 import { DashboardLayout } from "../layouts/DashboardLayout.js";
 
 /**
  * Dashboard handlers with parallel routes
  * Array-based API with use() pattern
+ * Note: RootLayout is now used as the document component in router.tsx
  */
 export default map<typeof dashboardRoutes>(({ route, layout, middleware, parallel, revalidate }) => [
-  layout(<RootLayout />),
-
   layout(<DashboardLayout />, () => [
     // Global middleware
     middleware(

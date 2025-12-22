@@ -1,8 +1,10 @@
-import { Outlet, Link, ScrollRestoration } from "rsc-router/client";
-import { href } from "../router.js";
+"use client";
+
+import type { ReactNode } from "react";
+import { Link, ScrollRestoration } from "rsc-router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 
-export function RootLayout() {
+export function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <head>
@@ -49,34 +51,34 @@ export function RootLayout() {
       <body className="full-width">
         <ScrollRestoration />
         <nav>
-          <Link to={href("index")} prefetch="hover">
+          <Link to="/" prefetch="hover">
             Home
           </Link>
-          <Link to={href("about")} prefetch="hover">
+          <Link to="/about" prefetch="hover">
             About
           </Link>
-          <Link to={href("blog.index")} prefetch="hover">
+          <Link to="/blog" prefetch="hover">
             Blog
           </Link>
-          <Link to={href("dashboard.index")} prefetch="hover">
+          <Link to="/dashboard" prefetch="hover">
             Dashboard
           </Link>
-          <Link to={href("shop.index")} prefetch="hover">
+          <Link to="/shop" prefetch="hover">
             Shop
           </Link>
-          <Link to={href("todos.index")} prefetch="hover">
+          <Link to="/todos" prefetch="hover">
             Todos
           </Link>
-          <Link to={href("kanban.index")} prefetch="hover">
+          <Link to="/kanban" prefetch="hover">
             Kanban
           </Link>
-          <Link to={href("errors.index")} prefetch="hover">
+          <Link to="/errors" prefetch="hover">
             Errors
           </Link>
         </nav>
         <DebugSegmentWrapper type="layout" name="Root">
           <DebugSegmentWrapper type="outlet" name="Root Outlet">
-            <Outlet />
+            {children}
           </DebugSegmentWrapper>
         </DebugSegmentWrapper>
       </body>
