@@ -4,6 +4,10 @@ import type { ReactNode } from "react";
 import { Link, ScrollRestoration } from "rsc-router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 
+// Note: Document components cannot use href() from rsc-router/client because
+// the route map isn't registered yet when the document renders.
+// Use plain string paths for navigation in the document component.
+
 export function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">

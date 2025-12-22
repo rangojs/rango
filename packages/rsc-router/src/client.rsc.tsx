@@ -45,5 +45,8 @@ export {
   type NavigationProviderProps,
 } from "./browser/react/NavigationProvider.js";
 
+// Type-safe href function for URL generation
+export { href } from "./browser/href.js";
+
 // Note: useNavigation, useAction, useClientCache are NOT re-exported here
 // because they use client-side state and should only be used in client components

@@ -567,3 +567,6 @@ export {
   useScrollRestoration,
   type ScrollRestorationProps,
 } from "./browser/react/ScrollRestoration.js";
+
+// Type-safe href function for URL generation
+export { href } from "./browser/href.js";
