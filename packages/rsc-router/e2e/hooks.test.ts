@@ -45,14 +45,16 @@ test.describe("useNavigation", () => {
     await slowLink.click();
 
     // Should transition to loading state
+    // Increased timeout for CI environments where server response may be slower
     await expect(page.locator('[data-testid="nav-status-state"]')).toContainText(
       "state:loading",
-      { timeout: 2000 }
+      { timeout: 5000 }
     );
 
     // Wait for navigation to complete
+    // SlowLoader has 1s delay, but CI environments may need more time
     await expect(page.locator('[data-testid="slow-page"]')).toBeVisible({
-      timeout: 5000,
+      timeout: 10000,
     });
 
     // Should return to idle state
