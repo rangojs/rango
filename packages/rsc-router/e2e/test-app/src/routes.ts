@@ -23,4 +23,11 @@ export const testRoutes = route({
   },
   // Route for testing hydration error detection
   hydrationTest: "/hydration-test",
+  // Routes for testing error boundary behavior
+  errors: {
+    index: "/errors",
+    clientError: "/errors/client-error",
+    serverError: "/errors/server-error",
+    streamingError: "/errors/streaming-error",
+  },
 });
