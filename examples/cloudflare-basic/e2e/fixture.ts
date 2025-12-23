@@ -36,10 +36,12 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
 
   async function findPort(): Promise<number> {
     let stdout = "";
+    // Use longer timeout on CI (wrangler/workerd startup can be slow on Linux)
+    const timeoutMs = process.env.CI ? 120000 : 60000;
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error("Timeout waiting for dev server to start"));
-      }, 60000);
+      }, timeoutMs);
 
       child.stdout!.on("data", (data) => {
         stdout += stripVTControlCharacters(String(data));

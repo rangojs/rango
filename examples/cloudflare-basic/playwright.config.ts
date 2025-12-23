@@ -10,9 +10,9 @@ export default defineConfig({
   workers: 1,
   reporter: "html",
   // Global timeout to prevent hanging
-  globalTimeout: process.env.CI ? 10 * 60 * 1000 : undefined, // 10 min on CI
+  globalTimeout: process.env.CI ? 15 * 60 * 1000 : undefined, // 15 min on CI
   // Extended timeout for CI where workerd startup can be slow
-  timeout: process.env.CI ? 60000 : 30000,
+  timeout: process.env.CI ? 150000 : 30000, // 2.5 min per test on CI
   use: {
     trace: "on-first-retry",
     // Extended action timeout for CI
