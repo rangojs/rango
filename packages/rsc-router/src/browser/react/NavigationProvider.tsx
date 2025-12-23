@@ -19,6 +19,7 @@ import type {
   NavigationBridge,
 } from "../types.js";
 import type { EventController } from "../event-controller.js";
+import { RootErrorBoundary } from "../../root-error-boundary.js";
 
 /**
  * Props for NavigationProvider
@@ -150,9 +151,15 @@ export function NavigationProvider({
   const root =
     payload.root instanceof Promise ? use(payload.root) : payload.root;
 
+  // Wrap content in RootErrorBoundary to catch:
+  // 1. Errors from NetworkErrorThrower (rendered during network failures)
+  // 2. Client component errors that occur before/outside the segment tree's error boundary
+  // 3. Errors during promise resolution or navigation state updates
+  // This acts as a safety net - the segment tree has its own RootErrorBoundary that
+  // catches most errors, but this outer boundary catches anything that slips through.
   return (
     <NavigationStoreContext.Provider value={contextValue}>
-      {root}
+      <RootErrorBoundary>{root}</RootErrorBoundary>
     </NavigationStoreContext.Provider>
   );
 }
