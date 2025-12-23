@@ -1,6 +1,13 @@
 "use client";
 
-import { useContext, useState, useEffect, useRef } from "react";
+import {
+  useContext,
+  useState,
+  useEffect,
+  useRef,
+  useOptimistic,
+  startTransition,
+} from "react";
 import type { Handle } from "../../handle.js";
 import type { HandleData } from "../types.js";
 import { NavigationStoreContext } from "./context.js";
@@ -133,6 +140,7 @@ export function useHandle<T, A, S>(
     const collected = collectHandle(handle, state.data, state.segmentOrder);
     return selector ? selector(collected) : collected;
   });
+  const [optimisticValue, setOptimisticValue] = useOptimistic(value);
 
   // Track previous value for shallow comparison
   const prevValueRef = useRef(value);
@@ -155,10 +163,13 @@ export function useHandle<T, A, S>(
 
       if (!shallowEqual(nextValue, prevValueRef.current)) {
         prevValueRef.current = nextValue;
+        startTransition(() => {
+          setOptimisticValue(nextValue);
+        });
         setValue(nextValue);
       }
     });
   }, [handle]);
 
-  return value;
+  return optimisticValue;
 }

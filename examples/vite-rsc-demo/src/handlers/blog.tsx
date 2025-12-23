@@ -34,7 +34,9 @@ export default map<typeof blogRoutes>(
           },
           () => [
             loader(BlogSidebarLoader),
-            revalidate(({ actionId }) => actionId?.includes("sidebar") ?? false),
+            revalidate(
+              ({ actionId }) => actionId?.includes("sidebar") ?? false
+            ),
             loading(<BlogSidebarSkeleton />),
           ]
         ),
@@ -50,7 +52,21 @@ export default map<typeof blogRoutes>(
               .split("-")
               .map((w: string) => w[0].toUpperCase() + w.slice(1))
               .join(" ");
-            push({ label: title, href: `/blog/${ctx.params.slug}` });
+            push({
+              label: title,
+              href: `/blog/${ctx.params.slug}`,
+              content: new Promise((res) =>
+                setTimeout(
+                  () =>
+                    res(
+                      <>
+                        Content for "{title}": {new Date().toLocaleDateString()}
+                      </>
+                    ),
+                  3000
+                )
+              ),
+            });
 
             // Render the original PostRoute
             return PostRoute(ctx);

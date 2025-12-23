@@ -3,6 +3,7 @@ import { createHandle } from "rsc-router/client";
 export interface BreadcrumbItem {
   label: string;
   href: string;
+  content?: React.ReactNode | Promise<React.ReactNode>;
 }
 
 /**
