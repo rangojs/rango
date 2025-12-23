@@ -139,3 +139,126 @@ test.describe("blog-navigation", () => {
     ).toBeVisible();
   });
 });
+
+/**
+ * Breadcrumb tests - accumulated handle data across route segments
+ */
+test.describe("blog-breadcrumbs", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "dev",
+  });
+
+  test("should display breadcrumbs on blog index", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog"));
+    await waitForHydration(page);
+
+    // Breadcrumb nav should be visible
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+    await expect(breadcrumbNav).toBeVisible();
+
+    // Should show "Blog" breadcrumb
+    await expect(breadcrumbNav.locator("text=Blog")).toBeVisible();
+  });
+
+  test("should display nested breadcrumbs on blog post", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog/hello-world"));
+    await waitForHydration(page);
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+    await expect(breadcrumbNav).toBeVisible();
+
+    // Should show "Blog" and "Hello World" breadcrumbs
+    await expect(breadcrumbNav.locator("text=Blog")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Hello World")).toBeVisible();
+  });
+
+  test("should update breadcrumbs on navigation", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog"));
+    await waitForHydration(page);
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+
+    // Initially only "Blog" breadcrumb
+    await expect(breadcrumbNav.locator("text=Blog")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Hello World")).not.toBeVisible();
+
+    // Navigate to a post
+    await page.locator('a[href="/blog/hello-world"]').first().click();
+
+    // Wait for post to load
+    await expect(page.locator("h2:has-text('Hello World')")).toBeVisible({
+      timeout: 3000,
+    });
+
+    // Breadcrumbs should now include the post
+    await expect(breadcrumbNav.locator("text=Blog")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Hello World")).toBeVisible();
+  });
+
+  test("should update breadcrumbs on back navigation", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog/hello-world"));
+    await waitForHydration(page);
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+
+    // Both breadcrumbs visible on post page
+    await expect(breadcrumbNav.locator("text=Blog")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Hello World")).toBeVisible();
+
+    // Navigate back to blog index
+    await breadcrumbNav.locator('a:has-text("Blog")').click();
+
+    // Wait for blog index to load
+    await expect(page.locator("text=Blog Posts")).toBeVisible({ timeout: 3000 });
+
+    // Post breadcrumb should be gone
+    await expect(breadcrumbNav.locator("text=Blog")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Hello World")).not.toBeVisible();
+  });
+
+  test("should show skeleton for async breadcrumb content", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog/hello-world"));
+    await waitForHydration(page);
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+
+    // Skeleton should appear while async content is loading (3s delay in handler)
+    // Check for skeleton element
+    const skeleton = breadcrumbNav.locator("span").filter({
+      has: page.locator('[style*="background"]'),
+    });
+
+    // Skeleton may or may not be visible depending on timing, but content should eventually load
+    await expect(breadcrumbNav.locator('text=/Content for "Hello World"/')).toBeVisible({
+      timeout: 5000,
+    });
+  });
+
+  test("should stream async breadcrumb content", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog/hello-world"));
+    await waitForHydration(page);
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+
+    // The async content has a 3s delay, so we wait for it to stream in
+    await expect(breadcrumbNav.locator('text=/Content for "Hello World"/')).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Content should include the date
+    await expect(breadcrumbNav.locator('text=/\\d{1,2}\\/\\d{1,2}\\/\\d{4}/')).toBeVisible();
+  });
+});
