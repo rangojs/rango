@@ -8,6 +8,7 @@ import {
   SlowLoader,
   SlowProductDetailLoader,
 } from "./loaders.js";
+import { Breadcrumbs } from "./handles.js";
 import { AddToCartButton } from "./components/AddToCartButton.js";
 import { QuantityControl } from "./components/QuantityControl.js";
 import {
@@ -23,35 +24,44 @@ import {
   NavigationStreamingOnly,
 } from "./components/NavigationStatus.js";
 import { HydrationMismatch } from "./components/HydrationMismatch.js";
+import { BreadcrumbNav } from "./components/BreadcrumbNav.js";
 
 export default map<typeof testRoutes>(
   ({ route, layout, intercept, loader, loading }) => [
     // Root layout with HTML structure
     layout(
-      <html lang="en">
-        <head>
-          <meta charSet="UTF-8" />
-          <meta
-            name="viewport"
-            content="width=device-width, initial-scale=1.0"
-          />
-          <title>RSC Router Test App</title>
-        </head>
-        <body>
-          <div data-testid="app-root">
-            <nav data-testid="nav">
-              <Link to="/" data-testid="nav-home">
-                Home
-              </Link>
-              <NavigationStatus testId="nav-status" />
-            </nav>
-            <main data-testid="main-content">
-              <Outlet />
-            </main>
-            <Outlet name="@modal" />
-          </div>
-        </body>
-      </html>,
+      (ctx) => {
+        // Push "Home" breadcrumb for all routes
+        const push = ctx.use(Breadcrumbs);
+        push({ label: "Home", href: "/" });
+        return (
+          <html lang="en">
+            <head>
+              <meta charSet="UTF-8" />
+              <meta
+                name="viewport"
+                content="width=device-width, initial-scale=1.0"
+              />
+              <title>RSC Router Test App</title>
+            </head>
+            <body>
+              <div data-testid="app-root">
+                <nav data-testid="nav">
+                  <Link to="/" data-testid="nav-home">
+                    Home
+                  </Link>
+                  <NavigationStatus testId="nav-status" />
+                </nav>
+                <BreadcrumbNav testId="breadcrumbs" />
+                <main data-testid="main-content">
+                  <Outlet />
+                </main>
+                <Outlet name="@modal" />
+              </div>
+            </body>
+          </html>
+        );
+      },
       () => [
         // Index route - product list
         route(
@@ -119,8 +129,20 @@ export default map<typeof testRoutes>(
         route(
           "product.detail",
           async (ctx) => {
+            // Push product breadcrumb with async content
+            const push = ctx.use(Breadcrumbs);
             const { product, loadedAt } = await ctx.use(ProductDetailLoader);
             const { quantity } = await ctx.use(CartQuantityLoader);
+            push({
+              label: product.name,
+              href: `/product/${product.id}`,
+              content: new Promise((resolve) =>
+                setTimeout(
+                  () => resolve(<span data-testid="breadcrumb-async">Loaded: {loadedAt}</span>),
+                  1000
+                )
+              ),
+            });
             return (
               <div data-testid="product-detail-page">
                 <Link to="/" data-testid="back-link">
@@ -391,39 +413,51 @@ export default map<typeof testRoutes>(
         ),
 
         // Blog routes for testing route resolution and trailing slashes
-        route("blog.index", () => (
-          <div data-testid="blog-index-page">
-            <Link to="/" data-testid="back-link">
-              ← Back to Home
-            </Link>
-            <h1 data-testid="blog-title">Blog</h1>
-            <p data-testid="blog-description">Welcome to the blog</p>
-            <ul data-testid="blog-posts">
-              <li>
-                <Link to="/blog/post-1" data-testid="blog-post-link-1">
-                  Post 1
+        route(
+          "blog.index",
+          (ctx) => {
+            const push = ctx.use(Breadcrumbs);
+            push({ label: "Blog", href: "/blog" });
+            return (
+              <div data-testid="blog-index-page">
+                <Link to="/" data-testid="back-link">
+                  ← Back to Home
                 </Link>
-              </li>
-              <li>
-                <Link to="/blog/post-2" data-testid="blog-post-link-2">
-                  Post 2
-                </Link>
-              </li>
-            </ul>
-          </div>
-        )),
+                <h1 data-testid="blog-title">Blog</h1>
+                <p data-testid="blog-description">Welcome to the blog</p>
+                <ul data-testid="blog-posts">
+                  <li>
+                    <Link to="/blog/post-1" data-testid="blog-post-link-1">
+                      Post 1
+                    </Link>
+                  </li>
+                  <li>
+                    <Link to="/blog/post-2" data-testid="blog-post-link-2">
+                      Post 2
+                    </Link>
+                  </li>
+                </ul>
+              </div>
+            );
+          }
+        ),
 
-        route("blog.post", (ctx) => (
-          <div data-testid="blog-post-page">
-            <Link to="/blog" data-testid="back-to-blog">
-              ← Back to Blog
-            </Link>
-            <h1 data-testid="blog-post-title">Post: {ctx.params.postId}</h1>
-            <p data-testid="blog-post-content">
-              Content for post {ctx.params.postId}
-            </p>
-          </div>
-        )),
+        route("blog.post", (ctx) => {
+          const push = ctx.use(Breadcrumbs);
+          push({ label: "Blog", href: "/blog" });
+          push({ label: `Post ${ctx.params.postId}`, href: `/blog/${ctx.params.postId}` });
+          return (
+            <div data-testid="blog-post-page">
+              <Link to="/blog" data-testid="back-to-blog">
+                ← Back to Blog
+              </Link>
+              <h1 data-testid="blog-post-title">Post: {ctx.params.postId}</h1>
+              <p data-testid="blog-post-content">
+                Content for post {ctx.params.postId}
+              </p>
+            </div>
+          );
+        }),
 
         // Route for testing hydration error detection
         route("hydrationTest", () => (

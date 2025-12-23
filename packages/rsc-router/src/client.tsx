@@ -568,5 +568,11 @@ export {
   type ScrollRestorationProps,
 } from "./browser/react/ScrollRestoration.js";
 
+// Handle API - for accumulating data across route segments
+export { createHandle, isHandle, type Handle } from "./handle.js";
+
+// Handle data hook
+export { useHandle } from "./browser/react/use-handle.js";
+
 // Type-safe href for client-side path validation
 export { href, type ValidPaths, type PatternToPath } from "./href-client.js";

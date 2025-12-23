@@ -50,3 +50,7 @@ export { href } from "./href-client.js";
 
 // Note: useNavigation, useAction, useClientCache are NOT re-exported here
 // because they use client-side state and should only be used in client components
+
+// Handle API - for accumulating data across route segments
+// Works in both RSC and client contexts
+export { createHandle, isHandle, type Handle } from "./handle.js";

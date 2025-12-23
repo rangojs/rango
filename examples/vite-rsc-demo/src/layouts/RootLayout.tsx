@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { Link, ScrollRestoration, href } from "rsc-router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
+import { BreadcrumbNav } from "../components/BreadcrumbNav.js";
 
 export function RootLayout({ children }: { children: ReactNode }) {
   return (
@@ -76,6 +77,7 @@ export function RootLayout({ children }: { children: ReactNode }) {
             Errors
           </Link>
         </nav>
+        <BreadcrumbNav />
         <DebugSegmentWrapper type="layout" name="Root">
           <DebugSegmentWrapper type="outlet" name="Root Outlet">
             {children}

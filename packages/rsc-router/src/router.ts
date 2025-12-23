@@ -31,7 +31,9 @@ import type {
   NotFoundBoundaryHandler,
   NotFoundBoundaryFallbackProps,
   LoaderDataResult,
+  RouterInternalContext,
 } from "./types";
+import type { HandleStore } from "./server/handle-store.js";
 import type { AllUseItems } from "./route-types.js";
 import {
   EntryData,
@@ -346,6 +348,22 @@ export function createRSCRouter<TEnv = any>(
   const findNearestNotFoundBoundary = (entry: EntryData | null) =>
     findNotFoundBoundary(entry, defaultNotFoundBoundary);
 
+  // Helper to get handleStore from context (if available)
+  const getHandleStore = (
+    context: HandlerContext<any, TEnv>
+  ): HandleStore | undefined => {
+    return (context.env as RouterInternalContext)?.__handleStore;
+  };
+
+  // Track a pending handler promise (non-blocking)
+  const trackHandler = <T>(
+    context: HandlerContext<any, TEnv>,
+    promise: Promise<T>
+  ): Promise<T> => {
+    const store = getHandleStore(context);
+    return store ? store.track(promise) : promise;
+  };
+
   // Wrapper for wrapLoaderWithErrorHandling that uses router's error boundary finder
   function wrapLoaderPromise<T>(
     promise: Promise<T>,
@@ -588,6 +606,8 @@ export function createRSCRouter<TEnv = any>(
       }
 
       // Step 4: Execute layout handler and emit layout segment
+      // Set current segment ID for handle data attribution
+      context._currentSegmentId = entry.shortCode;
       const component =
         typeof entry.handler === "function"
           ? await entry.handler(context)
@@ -665,9 +685,16 @@ export function createRSCRouter<TEnv = any>(
       // Step 5: Execute route handler and emit route segment
       // If loading is defined, wrap in Suspense for RSC streaming
       // This allows the fallback to be sent immediately while content streams in
-      let component = entry.loading
-        ? entry.handler(context)
-        : await entry.handler(context);
+      // Set current segment ID for handle data attribution
+      context._currentSegmentId = entry.shortCode;
+      let component: ReactNode | Promise<ReactNode>;
+      if (entry.loading) {
+        const result = entry.handler(context);
+        component =
+          result instanceof Promise ? trackHandler(context, result) : result;
+      } else {
+        component = await entry.handler(context);
+      }
 
       segments.push({
         id: entry.shortCode,
@@ -955,7 +982,7 @@ export function createRSCRouter<TEnv = any>(
 
     if (interceptEntry.loading && loaderPromises.length > 0) {
       // Has loading skeleton - keep everything as Promises for streaming
-      // Wrap component in Promise if not already to ensure consistent streaming
+      // Don't track intercept handlers - they're parallels and shouldn't block handle data
       component =
         handlerResult instanceof Promise
           ? handlerResult
@@ -967,7 +994,7 @@ export function createRSCRouter<TEnv = any>(
       component =
         handlerResult instanceof Promise ? await handlerResult : handlerResult;
     } else {
-      // No loaders
+      // No loaders - don't track intercept handlers (they're parallels)
       component =
         interceptEntry.loading && handlerResult instanceof Promise
           ? handlerResult
@@ -1028,9 +1055,12 @@ export function createRSCRouter<TEnv = any>(
 
     for (const [slot, handler] of Object.entries(slots)) {
       // If loading is defined, don't await the handler (stream with Suspense)
+      // Don't track parallel handlers - they shouldn't block handle data
       let component: ReactNode | Promise<ReactNode>;
       if (parallelEntry.loading) {
-        component = typeof handler === "function" ? handler(context) : handler;
+        const result =
+          typeof handler === "function" ? handler(context) : handler;
+        component = result;
       } else {
         component =
           typeof handler === "function" ? await handler(context) : handler;
@@ -1351,8 +1381,11 @@ export function createRSCRouter<TEnv = any>(
           },
           async () => {
             // If loading is defined, don't await (stream with Suspense)
+            // Don't track parallel handlers - they shouldn't block handle data
             if (parallelEntry.loading) {
-              return typeof handler === "function" ? handler(context) : handler;
+              const result =
+                typeof handler === "function" ? handler(context) : handler;
+              return result;
             }
             return typeof handler === "function"
               ? await handler(context)
@@ -1463,6 +1496,8 @@ export function createRSCRouter<TEnv = any>(
         return shouldRevalidate;
       },
       async () => {
+        // Set current segment ID for handle data attribution
+        context._currentSegmentId = entry.shortCode;
         if (entry.type === "layout") {
           return typeof entry.handler === "function"
             ? await entry.handler(context)
@@ -1476,7 +1511,12 @@ export function createRSCRouter<TEnv = any>(
           return await routeEntry.handler(context);
         }
         if (!actionContext) {
-          return { content: routeEntry.handler(context) }; // NOT awaited - keeps promise pending
+          // NOT awaited - keeps promise pending, but track for completion
+          const result = routeEntry.handler(context);
+          return {
+            content:
+              result instanceof Promise ? trackHandler(context, result) : result,
+          };
         }
         console.log(
           `[Router] Resolving action route with resolved promise: ${entry.id}`
@@ -1781,8 +1821,11 @@ export function createRSCRouter<TEnv = any>(
           },
           async () => {
             // If loading is defined, don't await (stream with Suspense)
+            // Don't track parallel handlers - they shouldn't block handle data
             if (parallelEntry.loading) {
-              return typeof handler === "function" ? handler(context) : handler;
+              const result =
+                typeof handler === "function" ? handler(context) : handler;
+              return result;
             }
             return typeof handler === "function"
               ? await handler(context)
@@ -1919,7 +1962,8 @@ export function createRSCRouter<TEnv = any>(
     }
 
     // Extract bindings from context (if using RouterEnv pattern)
-    const bindings = (context as any)?.Bindings || {};
+    // Use Bindings if present (Cloudflare Workers pattern), otherwise use context directly
+    const bindings = (context as any)?.Bindings ?? context;
 
     const handlerContext = createHandlerContext(
       matched.params,
@@ -2293,8 +2337,9 @@ export function createRSCRouter<TEnv = any>(
       });
     }
 
-    // Extract bindings from context
-    const bindings = (context as any)?.Bindings || {};
+    // Extract bindings from context (if using RouterEnv pattern)
+    // Use Bindings if present (Cloudflare Workers pattern), otherwise use context directly
+    const bindings = (context as any)?.Bindings ?? context;
 
     const handlerContext = createHandlerContext(
       matched.params,

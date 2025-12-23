@@ -1,5 +1,20 @@
 import type { ReactNode } from "react";
 import type { AllUseItems } from "./route-types.js";
+import type { HandleStore } from "./server/handle-store.js";
+import type { Handle } from "./handle.js";
+
+/**
+ * Internal router context properties.
+ * These are used internally by the RSC handler and router,
+ * not exposed to user handlers.
+ */
+export interface RouterInternalContext {
+  /**
+   * Handle store for tracking pending handler promises.
+   * Created by createRSCHandler and passed to router.match().
+   */
+  __handleStore?: HandleStore;
+}
 
 /**
  * Global namespace for module augmentation
@@ -259,20 +274,60 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
     : (key: string, value: any) => void;
   _originalRequest: Request;      // Raw request (includes all system params)
   /**
-   * Access loader data (loaders must be defined in scope)
+   * Access loader data or push handle data.
    *
+   * For loaders: Returns a promise that resolves to the loader data.
    * Loaders are executed in parallel and memoized per request.
-   * Multiple calls to use() with the same loader return the same promise.
+   *
+   * For handles: Returns a push function to add data for this segment.
+   * Handle data accumulates across all matched route segments.
+   * Push accepts: direct value, Promise, or async callback (executed immediately).
    *
    * @example
    * ```typescript
+   * // Loader usage
    * route("cart", async (ctx) => {
    *   const cart = await ctx.use(CartLoader);
    *   return <CartPage cart={cart} />;
    * });
+   *
+   * // Handle usage - direct value
+   * route("shop", (ctx) => {
+   *   const push = ctx.use(Breadcrumbs);
+   *   push({ label: "Shop", href: "/shop" });
+   *   return <ShopPage />;
+   * });
+   *
+   * // Handle usage - Promise
+   * route("product", (ctx) => {
+   *   const push = ctx.use(Breadcrumbs);
+   *   push(fetchProductBreadcrumb(ctx.params.id));
+   *   return <ProductPage />;
+   * });
+   *
+   * // Handle usage - async callback (executed immediately)
+   * route("product", (ctx) => {
+   *   const push = ctx.use(Breadcrumbs);
+   *   push(async () => {
+   *     const product = await db.getProduct(ctx.params.id);
+   *     return { label: product.name, href: `/product/${product.id}` };
+   *   });
+   *   return <ProductPage />;
+   * });
    * ```
    */
-  use: <T, TLoaderParams = any>(loader: LoaderDefinition<T, TLoaderParams>) => Promise<T>;
+  use: {
+    <T, TLoaderParams = any>(loader: LoaderDefinition<T, TLoaderParams>): Promise<T>;
+    <TData, TAccumulated = TData[]>(handle: Handle<TData, TAccumulated>): (
+      data: TData | Promise<TData> | (() => Promise<TData>)
+    ) => void;
+  };
+  /**
+   * Internal: Current segment ID for handle data attribution.
+   * Set by the router before calling each handler.
+   * @internal
+   */
+  _currentSegmentId?: string;
 };
 
 /**

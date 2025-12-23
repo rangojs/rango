@@ -32,6 +32,9 @@ export { renderSegments } from "./segment-system.js";
 // Performance tracking (server-only)
 export { track } from "./server/context.js";
 
+// Handle API (works in both server and client contexts)
+export { createHandle, isHandle, type Handle } from "./handle.js";
+
 // Error classes and utilities
 export {
   RouteNotFoundError,

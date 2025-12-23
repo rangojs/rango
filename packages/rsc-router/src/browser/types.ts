@@ -17,6 +17,11 @@ export interface RscPayload<TMetadata = RscMetadata> {
 }
 
 /**
+ * Handle data structure: handleName -> segmentId -> entries[]
+ */
+export type HandleData = Record<string, Record<string, unknown[]>>;
+
+/**
  * Metadata included in RSC responses
  */
 export interface RscMetadata {
@@ -34,6 +39,8 @@ export interface RscMetadata {
   slots?: Record<string, SlotState>;
   /** Root layout component for browser-side re-renders */
   rootLayout?: ComponentType<{ children: ReactNode }>;
+  /** Handle data accumulated across route segments */
+  handles?: Promise<HandleData>;
 }
 
 /**

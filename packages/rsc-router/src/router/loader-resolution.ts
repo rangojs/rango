@@ -16,8 +16,11 @@ import type {
   ErrorBoundaryHandler,
   ErrorBoundaryFallbackProps,
   ErrorInfo,
+  RouterInternalContext,
 } from "../types";
 import type { LoaderRevalidationResult, ActionContext } from "./types";
+import { isHandle, type Handle } from "../handle.js";
+import type { HandleStore } from "../server/handle-store.js";
 
 /**
  * Wrap a loader promise with error handling for deferred client-side resolution.
@@ -91,19 +94,57 @@ export function wrapLoaderWithErrorHandling<T>(
 }
 
 /**
- * Set up the use() method on handler context to lazily run loaders
- * Loaders are started on first call to ctx.use() and memoized for subsequent calls
+ * Set up the use() method on handler context to access loaders and handles.
+ *
+ * For loaders: Lazily runs loaders, memoizes results per request.
+ * For handles: Returns a push function bound to the current segment.
  */
 export function setupLoaderAccess<TEnv>(
   ctx: HandlerContext<any, TEnv>,
   loaderPromises: Map<string, Promise<any>>
 ): void {
-  ctx.use = <T, TLoaderParams = any>(
-    loader: LoaderDefinition<T, TLoaderParams>
-  ): Promise<T> => {
+  // Get HandleStore from internal context (if available)
+  const getHandleStore = (): HandleStore | undefined => {
+    return (ctx.env as RouterInternalContext)?.__handleStore;
+  };
+
+  // The use() function handles both loaders and handles
+  ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
+    // Handle case: return a push function
+    if (isHandle(item)) {
+      const handle = item;
+      const store = getHandleStore();
+      const segmentId = ctx._currentSegmentId;
+
+      if (!segmentId) {
+        throw new Error(
+          `Handle "${handle.name}" used outside of handler context. ` +
+            `Handles must be used within route/layout handlers.`
+        );
+      }
+
+      // Return a push function bound to this handle and segment
+      // Accepts: value, Promise, or async callback (executed immediately)
+      // Promises are pushed directly - RSC will serialize and stream them
+      return (dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>)) => {
+        if (!store) return;
+
+        // If it's a function, call it immediately to get the promise
+        const valueOrPromise = typeof dataOrFn === "function"
+          ? (dataOrFn as () => Promise<unknown>)()
+          : dataOrFn;
+
+        // Push directly - promises will be serialized by RSC and streamed
+        store.push(handle.name, segmentId, valueOrPromise);
+      };
+    }
+
+    // Loader case: existing behavior
+    const loader = item as LoaderDefinition<any, any>;
+
     // Return cached promise if already started
     if (loaderPromises.has(loader.name)) {
-      return loaderPromises.get(loader.name) as Promise<T>;
+      return loaderPromises.get(loader.name);
     }
 
     // Ensure loader has a function
@@ -134,7 +175,7 @@ export function setupLoaderAccess<TEnv>(
     // Start loader execution with tracking
     const doneLoader = track(`loader:${loader.name}`);
     const promise = Promise.resolve(
-      loader.fn(loaderCtx as LoaderContext<TLoaderParams, TEnv>)
+      loader.fn(loaderCtx as LoaderContext<any, TEnv>)
     ).finally(() => {
       doneLoader();
     });
@@ -142,8 +183,8 @@ export function setupLoaderAccess<TEnv>(
     // Memoize for subsequent calls
     loaderPromises.set(loader.name, promise);
 
-    return promise as Promise<T>;
-  };
+    return promise;
+  }) as typeof ctx.use;
 }
 
 /**

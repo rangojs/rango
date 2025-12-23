@@ -10,6 +10,9 @@ export {
 // Action state tracking hook
 export { useAction, type TrackedActionState } from "./use-action.js";
 
+// Handle data hook
+export { useHandle } from "./use-handle.js";
+
 // Client cache controls hook
 export {
   useClientCache,

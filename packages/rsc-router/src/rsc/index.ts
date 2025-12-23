@@ -1,7 +1,8 @@
 /// <reference types="@vitejs/plugin-rsc/types" />
 import { renderSegments } from "../segment-system.js";
 import type { RSCRouter } from "../router.js";
-import type { ResolvedSegment, SlotState } from "../types.js";
+import type { ResolvedSegment, SlotState, RouterInternalContext } from "../types.js";
+import { createHandleStore, type HandleStore } from "../server/handle-store.js";
 import { RouteNotFoundError } from "../errors.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
@@ -20,6 +21,8 @@ export interface RscPayload {
     slots?: Record<string, SlotState>;
     /** Root layout component for browser-side re-renders (client component reference) */
     rootLayout?: React.ComponentType<{ children: React.ReactNode }>;
+    /** Handle data accumulated across route segments (promise that resolves after handlers settle) */
+    handles?: Promise<import("../server/handle-store.js").HandleData>;
   };
   returnValue?: { ok: boolean; data: unknown };
   formState?: unknown;
@@ -144,6 +147,15 @@ export function createRSCHandler<TEnv = unknown>(
     const actionId =
       request.headers.get("rsc-action") || url.searchParams.get("_rsc_action");
 
+    // Create handle store for tracking pending handlers
+    const handleStore = createHandleStore();
+
+    // Attach handle store to env for router access
+    const envWithHandleStore = {
+      ...env,
+      __handleStore: handleStore,
+    } as TEnv & RouterInternalContext;
+
     let payload: RscPayload;
 
     try {
@@ -198,7 +210,7 @@ export function createRSCHandler<TEnv = unknown>(
           actionStatus = 500;
 
           // Try to render error boundary
-          const errorResult = await router.matchError(request, env, error, "route");
+          const errorResult = await router.matchError(request, envWithHandleStore, error, "route");
 
           if (errorResult) {
             const renderStart = performance.now();
@@ -216,6 +228,7 @@ export function createRSCHandler<TEnv = unknown>(
                 matched: errorResult.matched,
                 diff: errorResult.diff,
                 isError: true,
+                handles: handleStore.getData(),
               },
               returnValue,
             };
@@ -246,11 +259,11 @@ export function createRSCHandler<TEnv = unknown>(
           formData: actionFormData,
         };
 
-        const matchResult = await router.matchPartial(request, env, actionContext);
+        const matchResult = await router.matchPartial(request, envWithHandleStore, actionContext);
 
         if (!matchResult) {
           // Fall back to full render
-          const fullMatch = await router.match(request, env);
+          const fullMatch = await router.match(request, envWithHandleStore);
           const renderStart = performance.now();
           const root = renderSegments(fullMatch.segments, {
             rootLayout: router.rootLayout,
@@ -267,6 +280,7 @@ export function createRSCHandler<TEnv = unknown>(
               segments: fullMatch.segments,
               matched: fullMatch.matched,
               diff: fullMatch.diff,
+              handles: handleStore.getData(),
             },
             returnValue,
           };
@@ -307,6 +321,7 @@ export function createRSCHandler<TEnv = unknown>(
             matched: matchResult.matched,
             diff: matchResult.diff,
             slots: matchResult.slots,
+            handles: handleStore.getData(),
           },
           returnValue,
         };
@@ -335,11 +350,11 @@ export function createRSCHandler<TEnv = unknown>(
 
       if (isPartial) {
         // Partial render (navigation)
-        const result = await router.matchPartial(request, env);
+        const result = await router.matchPartial(request, envWithHandleStore);
 
         if (!result) {
           // Fall back to full render
-          const match = await router.match(request, env);
+          const match = await router.match(request, envWithHandleStore);
           const renderStart = performance.now();
           const root = renderSegments(match.segments, {
             rootLayout: router.rootLayout,
@@ -357,6 +372,7 @@ export function createRSCHandler<TEnv = unknown>(
               matched: match.matched,
               diff: match.diff,
               isPartial: false,
+              handles: handleStore.getData(),
             },
           };
         } else {
@@ -370,12 +386,13 @@ export function createRSCHandler<TEnv = unknown>(
               diff: result.diff,
               isPartial: true,
               slots: result.slots,
+              handles: handleStore.getData(),
             },
           };
         }
       } else {
         // Full render (initial page load)
-        const match = await router.match(request, env);
+        const match = await router.match(request, envWithHandleStore);
         const renderStart = performance.now();
         const root = renderSegments(match.segments, {
           rootLayout: router.rootLayout,
@@ -395,6 +412,7 @@ export function createRSCHandler<TEnv = unknown>(
             isPartial: false,
             // Send rootLayout for browser-side re-renders
             rootLayout: router.rootLayout,
+            handles: handleStore.getData(),
           },
         };
       }
@@ -452,3 +470,10 @@ export function createRSCHandler<TEnv = unknown>(
     }
   };
 }
+
+// Re-export HandleStore types for consumers who need custom handling
+export {
+  createHandleStore,
+  type HandleStore,
+  type HandleData,
+} from "../server/handle-store.js";

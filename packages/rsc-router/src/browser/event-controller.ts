@@ -7,6 +7,7 @@ import type {
   InflightAction,
   ResolvedSegment,
   RscMetadata,
+  HandleData,
 } from "./types.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
@@ -101,6 +102,19 @@ export type StateListener = () => void;
 export type ActionStateListener = (state: TrackedActionState) => void;
 
 /**
+ * Handle state listener
+ */
+export type HandleListener = () => void;
+
+/**
+ * Internal handle state stored in controller
+ */
+export interface HandleState {
+  data: HandleData;
+  segmentOrder: string[];
+}
+
+/**
  * Token for tracking an active stream
  * Call end() when the stream completes
  */
@@ -180,6 +194,15 @@ export interface EventController {
     actionId: string,
     listener: ActionStateListener
   ): () => void;
+  subscribeToHandles(listener: HandleListener): () => void;
+
+  // Handle operations
+  setHandleData(
+    data: HandleData,
+    matched?: string[],
+    isPartial?: boolean
+  ): void;
+  getHandleState(): HandleState;
 
   // Direct state access for advanced use
   getCurrentNavigation(): NavigationEntry | null;
@@ -264,12 +287,17 @@ export function createEventController(
   // Active streaming count (independent of navigation/action lifecycle)
   let activeStreamCount = 0;
 
+  // Handle data from RSC payload
+  let handleData: HandleData = {};
+  let handleSegmentOrder: string[] = [];
+
   // ========================================================================
   // Listeners
   // ========================================================================
 
   const stateListeners = new Set<StateListener>();
   const actionListeners = new Map<string, Set<ActionStateListener>>();
+  const handleListeners = new Set<HandleListener>();
 
   // Debounce state notifications to batch rapid updates
   let notifyTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -306,6 +334,19 @@ export function createEventController(
         }
       }, 0)
     );
+  }
+
+  // Debounce handle notifications
+  let handleNotifyTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  function notifyHandles() {
+    if (handleNotifyTimeout !== null) {
+      clearTimeout(handleNotifyTimeout);
+    }
+    handleNotifyTimeout = setTimeout(() => {
+      handleNotifyTimeout = null;
+      handleListeners.forEach((listener) => listener());
+    }, 0);
   }
 
   // ========================================================================
@@ -671,6 +712,63 @@ export function createEventController(
   }
 
   // ========================================================================
+  // Handle Operations
+  // ========================================================================
+
+  /**
+   * Filter segment IDs to only include routes and layouts.
+   * Excludes parallels (contain .@) and loaders (contain D followed by digit).
+   */
+  function filterSegmentOrder(matched: string[]): string[] {
+    return matched.filter((id) => {
+      if (id.includes(".@")) return false;
+      if (/D\d+\./.test(id)) return false;
+      return true;
+    });
+  }
+
+  function setHandleData(
+    data: HandleData,
+    matched?: string[],
+    isPartial?: boolean
+  ): void {
+    const newSegmentOrder = filterSegmentOrder(matched ?? []);
+
+    if (isPartial && newSegmentOrder.length > 0) {
+      // Partial update: merge new data with existing
+      for (const handleName of Object.keys(data)) {
+        if (!handleData[handleName]) {
+          handleData[handleName] = {};
+        }
+        for (const segmentId of Object.keys(data[handleName])) {
+          handleData[handleName][segmentId] = data[handleName][segmentId];
+        }
+      }
+      // Clean up data from segments no longer in the matched list
+      for (const handleName of Object.keys(handleData)) {
+        for (const segmentId of Object.keys(handleData[handleName])) {
+          if (!newSegmentOrder.includes(segmentId)) {
+            delete handleData[handleName][segmentId];
+          }
+        }
+      }
+    } else {
+      // Full update: replace all data
+      handleData = data;
+    }
+    handleSegmentOrder = newSegmentOrder;
+
+    notifyHandles();
+  }
+
+  function getHandleState(): HandleState {
+    return {
+      data: handleData,
+      segmentOrder: handleSegmentOrder,
+    };
+  }
+
+  // ========================================================================
   // Subscriptions
   // ========================================================================
 
@@ -698,6 +796,11 @@ export function createEventController(
     };
   }
 
+  function subscribeToHandles(listener: HandleListener): () => void {
+    handleListeners.add(listener);
+    return () => handleListeners.delete(listener);
+  }
+
   // ========================================================================
   // Return Controller
   // ========================================================================
@@ -716,9 +819,14 @@ export function createEventController(
     getActionState,
     setLocation,
 
+    // Handles
+    setHandleData,
+    getHandleState,
+
     // Subscriptions
     subscribe,
     subscribeToAction,
+    subscribeToHandles,
 
     // Direct access
     getCurrentNavigation: () => currentNavigation,

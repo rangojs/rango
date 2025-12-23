@@ -4,6 +4,7 @@ import type { shopRoutes } from "../routes.js";
 import { ShopLayout } from "../layouts/ShopLayout.js";
 import { CheckoutLayout } from "../layouts/CheckoutLayout.js";
 import { AccountLayout } from "../layouts/AccountLayout.js";
+import { Breadcrumbs } from "../handles/breadcrumbs.js";
 
 // Import handlers and configuration from modular folders
 import {
@@ -125,10 +126,17 @@ export default map<typeof shopRoutes>(
     //#region Shop Routes
     // Shop layout wraps shop routes
     layout(
-      <>
-        <ParallelOutlet name="@promoBanner" />
-        <ShopLayout />
-      </>,
+      (ctx) => {
+        // Push "Shop" breadcrumb for all shop routes
+        const push = ctx.use(Breadcrumbs);
+        push({ label: "Shop", href: "/shop" });
+        return (
+          <>
+            <ParallelOutlet name="@promoBanner" />
+            <ShopLayout />
+          </>
+        );
+      },
       () => [
         parallel({
           "@promoBanner": () => (
@@ -184,12 +192,33 @@ export default map<typeof shopRoutes>(
         ]),
 
         // Category
-        route("products.category", ProductsCategoryRoute),
+        route("products.category", (ctx) => {
+          // Push category breadcrumb
+          const push = ctx.use(Breadcrumbs);
+          const title = ctx.params.category
+            .split("-")
+            .map((w: string) => w[0].toUpperCase() + w.slice(1))
+            .join(" ");
+          push({ label: title, href: `/shop/products/${ctx.params.category}` });
+          return ProductsCategoryRoute(ctx);
+        }),
 
         // Product detail
         // ProductLoader fetches the specific product by slug
         // RelatedProductsLoader depends on ProductLoader to get related items
-        route("products.detail.view", ProductsDetailRoute, () => [
+        route(
+          "products.detail.view",
+          (ctx) => {
+            // Push product breadcrumb
+            const push = ctx.use(Breadcrumbs);
+            const title = ctx.params.slug
+              .split("-")
+              .map((w: string) => w[0].toUpperCase() + w.slice(1))
+              .join(" ");
+            push({ label: title, href: `/shop/product/${ctx.params.slug}` });
+            return ProductsDetailRoute(ctx);
+          },
+          () => [
           loading(<ProductDetailSkeleton />, true),
           loader(ProductLoader, () => [revalidate(() => false)]),
           loader(RelatedProductsLoader, () => [revalidate(() => false)]),
