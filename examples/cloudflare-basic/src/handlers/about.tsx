@@ -22,5 +22,3 @@ export default map<typeof aboutRoutes>(({ route }) => [
     </main>
   )),
 ]);
-
-// HMR trigger: 1766400518105

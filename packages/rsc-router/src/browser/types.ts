@@ -39,8 +39,10 @@ export interface RscMetadata {
   slots?: Record<string, SlotState>;
   /** Root layout component for browser-side re-renders */
   rootLayout?: ComponentType<{ children: ReactNode }>;
-  /** Handle data accumulated across route segments */
-  handles?: Promise<HandleData>;
+  /** Handle data accumulated across route segments (async generator that yields on each push) */
+  handles?: AsyncGenerator<HandleData, void, unknown>;
+  /** Cached handle data (for back/forward navigation from cache) */
+  cachedHandleData?: HandleData;
 }
 
 /**
@@ -243,12 +245,14 @@ export interface NavigationStore {
   setHistoryKey(key: string): void;
   cacheSegmentsForHistory(
     historyKey: string,
-    segments: ResolvedSegment[]
+    segments: ResolvedSegment[],
+    handleData?: HandleData
   ): void;
   getCachedSegments(
     historyKey: string
-  ): { segments: ResolvedSegment[]; stale: boolean } | undefined;
+  ): { segments: ResolvedSegment[]; stale: boolean; handleData?: HandleData } | undefined;
   hasHistoryCache(historyKey: string): boolean;
+  updateCacheHandleData(historyKey: string, handleData: HandleData): void;
   markCacheAsStale(): void;
   markCacheAsStaleAndBroadcast(): void;
   clearHistoryCache(): void;

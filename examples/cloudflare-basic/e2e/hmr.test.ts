@@ -19,9 +19,24 @@ test.describe("hmr", () => {
     mode: "dev",
   });
 
+  // Store original file contents for cleanup
+  const originalContents = new Map<string, string>();
+
+  test.afterAll(() => {
+    // Restore all modified files to avoid git conflicts
+    for (const [filePath, content] of originalContents) {
+      fs.writeFileSync(filePath, content, "utf-8");
+    }
+  });
+
   async function triggerHMRAndWait(page: Page, filePath: string): Promise<void> {
     const fullPath = path.join(f.root, filePath);
     const content = fs.readFileSync(fullPath, "utf-8");
+
+    // Save original content on first modification
+    if (!originalContents.has(fullPath)) {
+      originalContents.set(fullPath, content);
+    }
 
     const marker = `// HMR trigger: ${Date.now()}`;
     const newContent = content.includes("// HMR trigger:")
