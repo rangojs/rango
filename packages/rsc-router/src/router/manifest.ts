@@ -9,6 +9,12 @@ import { getContext, type EntryData, type MetricsStore } from "../server/context
 import type { RouteEntry } from "../types";
 
 /**
+ * Module-level cache for manifests per mount index.
+ * Only used in production - dev mode skips caching for HMR support.
+ */
+const manifestCache = new Map<number, Map<string, EntryData>>();
+
+/**
  * Load manifest from route entry with AsyncLocalStorage context
  * Handles lazy imports, unwrapping, and validation
  */
@@ -19,10 +25,21 @@ export async function loadManifest(
   metricsStore?: MetricsStore,
   isSSR?: boolean
 ): Promise<EntryData> {
+  const mountIndex = entry.mountIndex;
+  const isDev = process.env.NODE_ENV !== "production";
+
+  // In production, check cache first
+  if (!isDev) {
+    const cachedManifest = manifestCache.get(mountIndex);
+    if (cachedManifest && cachedManifest.has(routeKey)) {
+      return cachedManifest.get(routeKey)!;
+    }
+  }
+
   const Store = getContext().getOrCreateStore(routeKey);
 
   // Set mount index in store for unique shortCode prefixes
-  Store.mountIndex = entry.mountIndex;
+  Store.mountIndex = mountIndex;
 
   // Set isSSR flag so loading() can check if we're in SSR
   Store.isSSR = isSSR;
@@ -70,6 +87,11 @@ export async function loadManifest(
       Store.manifest.has(routeKey),
       `Route must be registered for ${routeKey}`
     );
+
+    // Cache manifest in production after successful build
+    if (!isDev) {
+      manifestCache.set(mountIndex, new Map(Store.manifest));
+    }
 
     return Store.manifest.get(routeKey)!;
   } catch (e) {
