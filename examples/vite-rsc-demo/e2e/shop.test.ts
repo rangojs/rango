@@ -312,6 +312,157 @@ test.describe("shop-actions", () => {
 });
 
 /**
+ * Shop breadcrumb tests - handle data caching through intercept navigation
+ */
+test.describe("shop-breadcrumbs", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "dev",
+  });
+
+  test("should preserve category breadcrumbs after navigating through intercept to detail and back", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Capture console logs for debugging
+    const logs: string[] = [];
+    page.on("console", (msg) => {
+      if (msg.text().includes("[Browser]") || msg.text().includes("[NavigationProvider]") || msg.text().includes("[Store]")) {
+        logs.push(msg.text());
+      }
+    });
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+
+    // Step 1: Navigate to shop page
+    await page.goto(f.url("/shop"));
+    await waitForHydration(page);
+
+    // Verify shop breadcrumb
+    await expect(breadcrumbNav.locator("text=Shop")).toBeVisible();
+
+    // Step 2: Navigate to a category page (sidebar only shown on index)
+    await page.locator('a[href="/shop/products/electronics"]').first().click();
+    await expect(page.locator("h2:has-text('Electronics')")).toBeVisible({ timeout: 5000 });
+
+    // Verify category breadcrumbs: Shop > Electronics
+    await expect(breadcrumbNav.locator("text=Shop")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Electronics")).toBeVisible();
+
+    // Step 3: Click on a product to open intercept modal
+    await page.locator('a[href="/shop/product/wireless-headphones"]').first().click();
+    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 5000 });
+
+    // Step 4: Click "View Full Details" to go to full product page
+    await page.locator("text=View Full Details").click();
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 3000 });
+    await expect(page.locator("text=Test Revalidation Behavior")).toBeVisible({ timeout: 5000 });
+
+    // Step 5: Go back - should return to intercept modal
+    await goBack(page);
+    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 3000 });
+
+    // Step 6: Go back again - should return to category page
+    await goBack(page);
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 3000 });
+
+    // CRITICAL: Category breadcrumbs should be restored: Shop > Electronics
+    await expect(breadcrumbNav.locator("text=Shop")).toBeVisible();
+
+    // Print console logs for debugging
+    console.log("=== Browser Console Logs ===");
+    logs.forEach((log) => console.log(log));
+    console.log("=== End Browser Console Logs ===");
+
+    await expect(breadcrumbNav.locator("text=Electronics")).toBeVisible({ timeout: 3000 });
+  });
+
+  test("should display correct breadcrumbs on shop index", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop"));
+    await waitForHydration(page);
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+    await expect(breadcrumbNav.locator("text=Shop")).toBeVisible();
+  });
+
+  test("should display category breadcrumbs", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop/products/electronics"));
+    await waitForHydration(page);
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+    await expect(breadcrumbNav.locator("text=Shop")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Electronics")).toBeVisible();
+  });
+
+  test("should display product breadcrumbs on direct navigation", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop/product/wireless-headphones"));
+    await waitForHydration(page);
+
+    // Wait for product to load
+    await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({ timeout: 10000 });
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+    await expect(breadcrumbNav.locator("text=Shop")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Wireless Headphones")).toBeVisible();
+  });
+
+  test("should update breadcrumbs when navigating from shop to product detail", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop"));
+    await waitForHydration(page);
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+
+    // Initially only Shop breadcrumb
+    await expect(breadcrumbNav.locator("text=Shop")).toBeVisible();
+
+    // Navigate to product via intercept
+    await page.locator('a[href="/shop/product/wireless-headphones"]').first().click();
+    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 5000 });
+
+    // Go to full product page
+    await page.locator("text=View Full Details").click();
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 3000 });
+
+    // Wait for product page to load
+    await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({ timeout: 10000 });
+
+    // Breadcrumbs should show Shop > Product
+    await expect(breadcrumbNav.locator("text=Shop")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Wireless Headphones")).toBeVisible();
+  });
+
+  test("should restore breadcrumbs on simple back navigation from product to shop", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop"));
+    await waitForHydration(page);
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+
+    // Navigate to product via intercept
+    await page.locator('a[href="/shop/product/wireless-headphones"]').first().click();
+    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 5000 });
+
+    // Go back to shop
+    await goBack(page);
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 3000 });
+
+    // Shop breadcrumb should be restored, no product breadcrumb
+    await expect(breadcrumbNav.locator("text=Shop")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Wireless Headphones")).not.toBeVisible();
+  });
+});
+
+/**
  * Shop concurrent actions tests
  */
 test.describe("shop-concurrent-actions", () => {

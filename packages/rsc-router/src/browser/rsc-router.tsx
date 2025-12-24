@@ -11,7 +11,7 @@ import { createEventController } from "./event-controller.js";
 import { createNavigationClient } from "./navigation-client.js";
 import { createServerActionBridge } from "./server-action-bridge.js";
 import { createNavigationBridge } from "./navigation-bridge.js";
-import { NavigationProvider } from "./react/index.js";
+import { NavigationProvider, initHandleDataSync } from "./react/index.js";
 import type {
   RscPayload,
   RscBrowserDependencies,
@@ -109,10 +109,22 @@ export async function initBrowserApp(
 
   // Initialize handle data from initial payload BEFORE hydration
   // This ensures useHandle returns correct data during hydration to avoid mismatch
+  // The handles property is an async generator that yields on each push
   if (initialPayload.metadata?.handles) {
-    const handleData = await initialPayload.metadata.handles;
-    eventController.setHandleData(handleData, initialPayload.metadata?.matched);
+    const handlesGenerator = initialPayload.metadata.handles;
+    let lastHandleData: Record<string, Record<string, unknown[]>> = {};
+    for await (const handleData of handlesGenerator) {
+      lastHandleData = handleData;
+    }
+    // Initialize both event controller AND module-level SSR state for hydration compatibility
+    eventController.setHandleData(lastHandleData, initialPayload.metadata?.matched);
+    initHandleDataSync(lastHandleData, initialPayload.metadata?.matched);
+
+    // Update the initial cache entry with the processed handleData
+    // The cache entry was created by createNavigationStore but without handleData
+    store.updateCacheHandleData(initialHistoryKey, lastHandleData);
   }
+
 
   // Create composable utilities
   const client = createNavigationClient(deps);
@@ -176,7 +188,8 @@ export async function initBrowserApp(
 
           const historyKey = generateHistoryKey(window.location.href);
           store.setHistoryKey(historyKey);
-          store.cacheSegmentsForHistory(historyKey, segments);
+          const currentHandleData = eventController.getHandleState().data;
+          store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
 
           store.emitUpdate({
             root: renderSegments(segments),

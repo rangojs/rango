@@ -10,6 +10,7 @@ import type {
   InflightAction,
   TrackedActionState,
   ActionStateListener,
+  HandleData,
 } from "./types.js";
 
 /**
@@ -26,9 +27,26 @@ const DEFAULT_ACTION_STATE: TrackedActionState = {
 // Maximum number of history entries to cache (URLs visited)
 const HISTORY_CACHE_SIZE = 20;
 
-// Cache entry: [url-key, segments, stale]
+// Cache entry: [url-key, segments, stale, handleData?]
 // stale=true means the data may be outdated and should be revalidated on access
-type HistoryCacheEntry = [string, ResolvedSegment[], boolean];
+type HistoryCacheEntry = [string, ResolvedSegment[], boolean, HandleData?];
+
+/**
+ * Shallow clone handleData to avoid reference sharing between cache entries.
+ * Only clones the structure (objects and arrays), not the data items themselves,
+ * since mutations happen at the array level, not on individual data objects.
+ * This preserves any non-serializable types (React elements, functions, etc.)
+ */
+function cloneHandleData(handleData: HandleData): HandleData {
+  const cloned: HandleData = {};
+  for (const [handleKey, segmentMap] of Object.entries(handleData)) {
+    cloned[handleKey] = {};
+    for (const [segmentId, dataArray] of Object.entries(segmentMap)) {
+      cloned[handleKey][segmentId] = [...dataArray];
+    }
+  }
+  return cloned;
+}
 
 // BroadcastChannel for cross-tab cache invalidation
 const CACHE_INVALIDATION_CHANNEL = "rsc-router-cache-invalidation";
@@ -554,17 +572,25 @@ export function createNavigationStore(
      */
     cacheSegmentsForHistory(
       historyKey: string,
-      segments: ResolvedSegment[]
+      segments: ResolvedSegment[],
+      handleData?: HandleData
     ): void {
+      // Shallow clone handleData arrays to avoid reference sharing between cache entries
+      // We only clone the structure (objects and arrays), not the data items themselves,
+      // since mutations happen at the array level, not on individual data objects
+      const clonedHandleData = handleData
+        ? cloneHandleData(handleData)
+        : undefined;
+
       // Check if entry already exists and update it
       const existingIndex = historyCache.findIndex(
         ([key]) => key === historyKey
       );
       if (existingIndex !== -1) {
-        historyCache[existingIndex] = [historyKey, segments, false];
+        historyCache[existingIndex] = [historyKey, segments, false, clonedHandleData];
       } else {
         // Add new entry at the end (not stale)
-        historyCache.push([historyKey, segments, false]);
+        historyCache.push([historyKey, segments, false, clonedHandleData]);
         // Remove oldest entries if over limit
         while (historyCache.length > cacheSize) {
           historyCache.shift();
@@ -574,14 +600,14 @@ export function createNavigationStore(
 
     /**
      * Get cached segments for a history entry
-     * Returns { segments, stale } or undefined if not cached
+     * Returns { segments, stale, handleData } or undefined if not cached
      */
     getCachedSegments(
       historyKey: string
-    ): { segments: ResolvedSegment[]; stale: boolean } | undefined {
+    ): { segments: ResolvedSegment[]; stale: boolean; handleData?: HandleData } | undefined {
       const entry = historyCache.find(([key]) => key === historyKey);
       if (!entry) return undefined;
-      return { segments: entry[1], stale: entry[2] };
+      return { segments: entry[1], stale: entry[2], handleData: entry[3] };
     },
 
     /**
@@ -589,6 +615,23 @@ export function createNavigationStore(
      */
     hasHistoryCache(historyKey: string): boolean {
       return historyCache.some(([key]) => key === historyKey);
+    },
+
+    /**
+     * Update only the handleData for an existing cache entry
+     * Does nothing if the cache entry doesn't exist
+     * This is used to fix stale handleData after async handles processing
+     */
+    updateCacheHandleData(historyKey: string, handleData: HandleData): void {
+      const existingIndex = historyCache.findIndex(
+        ([key]) => key === historyKey
+      );
+      if (existingIndex !== -1) {
+        const entry = historyCache[existingIndex];
+        // Shallow clone handleData arrays to avoid reference sharing
+        const clonedHandleData = cloneHandleData(handleData);
+        historyCache[existingIndex] = [entry[0], entry[1], entry[2], clonedHandleData];
+      }
     },
 
     /**

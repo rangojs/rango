@@ -2,9 +2,10 @@
 import { renderSegments } from "../segment-system.js";
 import type { RSCRouter } from "../router.js";
 import type { ResolvedSegment, SlotState, RouterInternalContext } from "../types.js";
-import { createHandleStore, type HandleStore } from "../server/handle-store.js";
+import { createHandleStore, type HandleStore, type HandleData } from "../server/handle-store.js";
 import { RouteNotFoundError } from "../errors.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
+
 
 /**
  * RSC payload sent to the client
@@ -21,8 +22,8 @@ export interface RscPayload {
     slots?: Record<string, SlotState>;
     /** Root layout component for browser-side re-renders (client component reference) */
     rootLayout?: React.ComponentType<{ children: React.ReactNode }>;
-    /** Handle data accumulated across route segments (promise that resolves after handlers settle) */
-    handles?: Promise<import("../server/handle-store.js").HandleData>;
+    /** Handle data accumulated across route segments (async generator that yields on each push) */
+    handles?: AsyncGenerator<HandleData, void, unknown>;
   };
   returnValue?: { ok: boolean; data: unknown };
   formState?: unknown;
@@ -228,7 +229,7 @@ export function createRSCHandler<TEnv = unknown>(
                 matched: errorResult.matched,
                 diff: errorResult.diff,
                 isError: true,
-                handles: handleStore.getData(),
+                handles: handleStore.stream(),
               },
               returnValue,
             };
@@ -280,7 +281,7 @@ export function createRSCHandler<TEnv = unknown>(
               segments: fullMatch.segments,
               matched: fullMatch.matched,
               diff: fullMatch.diff,
-              handles: handleStore.getData(),
+              handles: handleStore.stream(),
             },
             returnValue,
           };
@@ -321,7 +322,7 @@ export function createRSCHandler<TEnv = unknown>(
             matched: matchResult.matched,
             diff: matchResult.diff,
             slots: matchResult.slots,
-            handles: handleStore.getData(),
+            handles: handleStore.stream(),
           },
           returnValue,
         };
@@ -372,7 +373,7 @@ export function createRSCHandler<TEnv = unknown>(
               matched: match.matched,
               diff: match.diff,
               isPartial: false,
-              handles: handleStore.getData(),
+              handles: handleStore.stream(),
             },
           };
         } else {
@@ -386,7 +387,7 @@ export function createRSCHandler<TEnv = unknown>(
               diff: result.diff,
               isPartial: true,
               slots: result.slots,
-              handles: handleStore.getData(),
+              handles: handleStore.stream(),
             },
           };
         }
@@ -412,7 +413,7 @@ export function createRSCHandler<TEnv = unknown>(
             isPartial: false,
             // Send rootLayout for browser-side re-renders
             rootLayout: router.rootLayout,
-            handles: handleStore.getData(),
+            handles: handleStore.stream(),
           },
         };
       }

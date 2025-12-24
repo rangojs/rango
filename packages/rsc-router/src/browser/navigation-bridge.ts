@@ -157,8 +157,9 @@ function createNavigationTransaction(
     const historyKey = generateHistoryKey(url);
     store.setHistoryKey(historyKey);
 
-    // Cache segments (will be overwritten by fresh data on final commit)
-    store.cacheSegmentsForHistory(historyKey, segments);
+    // Cache segments with current handleData (will be overwritten by fresh data on final commit)
+    const currentHandleData = eventController.getHandleState().data;
+    store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
 
     // Update browser URL
     if (replace) {
@@ -212,7 +213,8 @@ function createNavigationTransaction(
     // For cache-only commits (stale revalidation), only update cache and return
     // Don't touch store state or history - user may have navigated elsewhere
     if (cacheOnly) {
-      store.cacheSegmentsForHistory(historyKey, segments);
+      const currentHandleData = eventController.getHandleState().data;
+      store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
       console.log("[Browser] Cache-only commit, historyKey:", historyKey);
       return;
     }
@@ -229,8 +231,9 @@ function createNavigationTransaction(
 
     store.setHistoryKey(historyKey);
 
-    // Cache segments for this history entry (fresh data overwrites optimistic)
-    store.cacheSegmentsForHistory(historyKey, segments);
+    // Cache segments with current handleData for this history entry (fresh data overwrites optimistic)
+    const currentHandleData = eventController.getHandleState().data;
+    store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
 
     // For server actions, skip URL/history updates but still complete navigation
     if (storeOnly) {
@@ -395,6 +398,19 @@ export function createNavigationBridge(
       const targetPath = new URL(url, window.location.origin).pathname;
       if (currentPath !== targetPath) {
         eventController.abortNavigation();
+      }
+
+      // Before navigating away, update the source page's cache with the latest handleData.
+      // This ensures the cache has correct handleData even if handles were streaming.
+      const sourceHistoryKey = store.getHistoryKey();
+      const sourceCached = store.getCachedSegments(sourceHistoryKey);
+      if (sourceCached?.segments && sourceCached.segments.length > 0) {
+        const currentHandleData = eventController.getHandleState().data;
+        store.cacheSegmentsForHistory(
+          sourceHistoryKey,
+          sourceCached.segments,
+          currentHandleData
+        );
       }
 
       // Check if we have cached segments for target URL
@@ -576,15 +592,10 @@ export function createNavigationBridge(
       // Check if we can restore from history cache
       const cached = store.getCachedSegments(historyKey);
       const cachedSegments = cached?.segments;
+      const cachedHandleData = cached?.handleData;
       const isStale = cached?.stale ?? false;
 
       if (cachedSegments && cachedSegments.length > 0) {
-        console.log(
-          "[Browser] Restoring from history cache, key:",
-          historyKey,
-          isStale ? "(stale)" : ""
-        );
-
         // Update store to point to this history entry
         store.setHistoryKey(historyKey);
         store.setSegmentIds(cachedSegments.map((s) => s.id));
@@ -604,6 +615,7 @@ export function createNavigationBridge(
               isPartial: true,
               matched: cachedSegments.map((s) => s.id),
               diff: [],
+              cachedHandleData,
             },
           });
 

@@ -39,9 +39,23 @@ export interface SSRDependencies {
 interface RscPayload {
   root: React.ReactNode;
   metadata?: {
-    handles?: Promise<HandleData>;
+    handles?: AsyncGenerator<HandleData, void, unknown>;
     matched?: string[];
   };
+}
+
+/**
+ * Consume an async generator and return a Promise that resolves with the final value.
+ * Used for SSR where we need to await all handle data before rendering.
+ */
+async function consumeAsyncGenerator(
+  generator: AsyncGenerator<HandleData, void, unknown>
+): Promise<HandleData> {
+  let lastData: HandleData = {};
+  for await (const data of generator) {
+    lastData = data;
+  }
+  return lastData;
 }
 
 /**
@@ -84,13 +98,17 @@ export function createSSRHandler(deps: SSRDependencies) {
 
     // Deserialize RSC stream to React tree
     let payload: Promise<RscPayload> | undefined;
+    let handlesPromise: Promise<HandleData> | undefined;
     function SsrRoot() {
       payload ??= createFromReadableStream<RscPayload>(rscStream1);
       const resolved = React.use(payload);
 
       // Await handles and initialize state before children render
+      // The handles property is an async generator that yields on each push
+      // Memoize the promise since async generators can only be iterated once
       if (resolved.metadata?.handles) {
-        const handleData = React.use(resolved.metadata.handles);
+        handlesPromise ??= consumeAsyncGenerator(resolved.metadata.handles);
+        const handleData = React.use(handlesPromise);
         initHandleDataSync(handleData, resolved.metadata.matched);
       }
 

@@ -17,11 +17,26 @@ test.describe("hmr", () => {
     mode: "dev",
   });
 
+  // Store original file content for cleanup
+  let originalContent: string | null = null;
+  let handlerFilePath: string;
+
+  test.beforeAll(() => {
+    handlerFilePath = path.join(f.root, "src/handlers.tsx");
+    originalContent = fs.readFileSync(handlerFilePath, "utf-8");
+  });
+
+  test.afterAll(() => {
+    // Restore original file content to avoid git conflicts
+    if (originalContent !== null) {
+      fs.writeFileSync(handlerFilePath, originalContent, "utf-8");
+    }
+  });
+
   // Helper to trigger HMR by touching a server component file and waiting for completion
   async function triggerHMRAndWait(page: Page): Promise<void> {
     // Modify handlers.tsx (server component) to trigger RSC HMR
-    const filePath = path.join(f.root, "src/handlers.tsx");
-    const content = fs.readFileSync(filePath, "utf-8");
+    const content = fs.readFileSync(handlerFilePath, "utf-8");
 
     // Add a comment with timestamp to trigger HMR
     const marker = `// HMR trigger: ${Date.now()}`;
@@ -36,7 +51,7 @@ test.describe("hmr", () => {
     });
 
     // Trigger HMR by writing the file
-    fs.writeFileSync(filePath, newContent, "utf-8");
+    fs.writeFileSync(handlerFilePath, newContent, "utf-8");
 
     // Wait for HMR to complete
     await hmrComplete;

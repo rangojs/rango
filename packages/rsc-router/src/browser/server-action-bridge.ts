@@ -307,7 +307,8 @@ export function createServerActionBridge(
 
       // Update store state
       store.setSegmentIds(segmentIdsAfterError);
-      store.cacheSegmentsForHistory(currentKey, fullSegments);
+      const currentHandleData = eventController.getHandleState().data;
+      store.cacheSegmentsForHistory(currentKey, fullSegments, currentHandleData);
 
       console.log(
         `[Browser] Segment IDs updated (excluding error segments):`,
@@ -614,7 +615,8 @@ export function createServerActionBridge(
         const currentKeyNow = store.getHistoryKey();
         if (currentKeyNow === currentKey) {
           store.setSegmentIds(matched);
-          store.cacheSegmentsForHistory(currentKey, fullSegments);
+          const currentHandleData = eventController.getHandleState().data;
+          store.cacheSegmentsForHistory(currentKey, fullSegments, currentHandleData);
         } else {
           console.log(
             `[Browser] History key changed during multi-action (${currentKey} -> ${currentKeyNow}), skipping cache update`
@@ -670,7 +672,8 @@ export function createServerActionBridge(
 
       // Update store state
       store.setSegmentIds(matched);
-      store.cacheSegmentsForHistory(currentKey, fullSegments);
+      const currentHandleData = eventController.getHandleState().data;
+      store.cacheSegmentsForHistory(currentKey, fullSegments, currentHandleData);
       store.markCacheAsStaleAndBroadcast();
 
       console.log(`[Browser] Normal - Returning to React:`, returnData);

@@ -11,7 +11,7 @@ export {
 export { useAction, type TrackedActionState } from "./use-action.js";
 
 // Handle data hook
-export { useHandle } from "./use-handle.js";
+export { useHandle, initHandleDataSync } from "./use-handle.js";
 
 // Client cache controls hook
 export {

@@ -20,6 +20,52 @@ import type {
 } from "../types.js";
 import type { EventController } from "../event-controller.js";
 import { RootErrorBoundary } from "../../root-error-boundary.js";
+import type { HandleData } from "../types.js";
+
+/**
+ * Process handles from an async generator, updating the event controller
+ * and cache as data streams in.
+ *
+ * This handles:
+ * 1. Consuming the async generator and calling setHandleData on each yield
+ * 2. Cleaning up stale data when generator yields nothing
+ * 3. Updating the cache after processing completes (if still on same page)
+ */
+async function processHandles(
+  handlesGenerator: AsyncGenerator<HandleData>,
+  opts: {
+    eventController: EventController;
+    store: NavigationStore;
+    matched?: string[];
+    isPartial?: boolean;
+    historyKey: string;
+  }
+): Promise<void> {
+  const { eventController, store, matched, isPartial, historyKey } = opts;
+
+  let yieldCount = 0;
+  for await (const handleData of handlesGenerator) {
+    yieldCount++;
+    eventController.setHandleData(handleData, matched, isPartial);
+  }
+
+  // For partial updates where the generator yielded nothing (cached handlers),
+  // we still need to update the segment order to clean up stale handle data.
+  // This happens when navigating away from a route - the handlers for the new
+  // route might not push any breadcrumbs, but we still need to remove the old ones.
+  if (yieldCount === 0 && matched) {
+    eventController.setHandleData({}, matched, true);
+  }
+
+  // After handles processing completes, update the cache's handleData.
+  // This fixes a race condition where commit() caches stale handleData before
+  // the async handles processing completes.
+  // Only update if we're still on the same page (historyKey matches).
+  if (historyKey === store.getHistoryKey()) {
+    const finalHandleData = eventController.getHandleState().data;
+    store.updateCacheHandleData(historyKey, finalHandleData);
+  }
+}
 
 /**
  * Props for NavigationProvider
@@ -112,39 +158,40 @@ export function NavigationProvider({
         metadata: update.metadata,
       });
 
-      // Update handle data if present (async, doesn't block UI update)
+      // Update handle data progressively as it streams in
       if (update.metadata.handles) {
-        update.metadata.handles.then((handleData) => {
-          eventController.setHandleData(
-            handleData,
-            update.metadata.matched,
-            update.metadata.isPartial
-          );
-        });
+        // Capture historyKey now - by the time async processing completes,
+        // the user might have navigated elsewhere
+        const historyKey = store.getHistoryKey();
+
+        processHandles(update.metadata.handles, {
+          eventController,
+          store,
+          matched: update.metadata.matched,
+          isPartial: update.metadata.isPartial,
+          historyKey,
+        }).catch((err) =>
+          console.error("[NavigationProvider] Error consuming handles:", err)
+        );
+      } else if (update.metadata.cachedHandleData) {
+        // For back/forward navigation from cache, restore the cached handleData
+        // This restores breadcrumbs to the exact state they were when the page was cached
+        eventController.setHandleData(
+          update.metadata.cachedHandleData,
+          update.metadata.matched,
+          false // full replace - restore entire cached state
+        );
+      } else if (update.metadata.matched) {
+        // For cached navigations without handleData, update segmentOrder to clean up stale data
+        eventController.setHandleData(
+          {}, // Empty data - all existing data not in matched will be cleaned up
+          update.metadata.matched,
+          true // partial update - will clean up segments not in matched
+        );
       }
     });
 
-    console.log("[Browser] NavigationProvider ready");
-
     return unsubscribe;
-  }, []);
-
-  // Note: We intentionally do NOT set isStreaming: true for the initial page load.
-  // The initial RSC stream is already rendered via SSR, so the content is visible.
-  // Setting isStreaming: true during hydration would cause a hydration mismatch
-  // because the server rendered with isStreaming: false.
-  // isStreaming is only set to true during client-side navigations and HMR updates.
-  useEffect(() => {
-    console.log(
-      "[Browser] Initial page load - isStreaming stays false (SSR content already visible)"
-    );
-
-    // Initialize handle data from initial payload
-    if (initialPayload.metadata?.handles) {
-      initialPayload.metadata.handles.then((handleData) => {
-        eventController.setHandleData(handleData, initialPayload.metadata?.matched);
-      });
-    }
   }, []);
 
   // Handle promise case - use() will suspend until resolved
