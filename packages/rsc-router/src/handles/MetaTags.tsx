@@ -4,8 +4,8 @@
  * Component to render collected meta descriptors in the document head.
  *
  * Supports both sync and async meta descriptors. Async descriptors
- * (Promise<MetaDescriptorBase>) are rendered with Suspense and will
- * stream in when resolved.
+ * (Promise<MetaDescriptorBase>) are resolved by RSC streaming before
+ * reaching the client.
  *
  * @example
  * ```tsx
@@ -22,10 +22,9 @@
  * ```
  */
 
-import { Suspense, use } from "react";
 import { useHandle } from "../browser/react/use-handle.ts";
 import { Meta } from "./meta.ts";
-import type { MetaDescriptor, MetaDescriptorBase } from "../router/types.ts";
+import type { MetaDescriptorBase } from "../router/types.ts";
 
 // Type guards for MetaDescriptorBase variants
 function hasCharSet(d: MetaDescriptorBase): d is { charSet: "utf-8" } {
@@ -63,16 +62,10 @@ function hasTagName(d: MetaDescriptorBase): d is { tagName: "meta" | "link"; [na
 }
 
 /**
- * Check if a value is a Promise
+ * Render a single meta descriptor as a React element.
+ * By the time this runs, all promises have been resolved by RSC streaming.
  */
-function isPromise(value: unknown): value is Promise<unknown> {
-  return value instanceof Promise;
-}
-
-/**
- * Render a single resolved meta descriptor as a React element.
- */
-function renderResolvedDescriptor(
+function renderMetaDescriptor(
   descriptor: MetaDescriptorBase,
   index: number
 ): React.ReactNode {
@@ -147,51 +140,17 @@ function renderResolvedDescriptor(
 }
 
 /**
- * Component that resolves a promise and renders the meta descriptor.
- * Uses React's `use()` hook to suspend until the promise resolves.
- */
-function AsyncMetaDescriptor({
-  promise,
-  index,
-}: {
-  promise: Promise<MetaDescriptorBase>;
-  index: number;
-}): React.ReactNode {
-  const resolved = use(promise);
-  return renderResolvedDescriptor(resolved, index);
-}
-
-/**
- * Render a single meta descriptor (sync or async) as a React element.
- */
-function renderMetaDescriptor(
-  descriptor: MetaDescriptor,
-  index: number
-): React.ReactNode {
-  // Handle async descriptors with Suspense
-  if (isPromise(descriptor)) {
-    return (
-      <Suspense key={`async-meta-${index}`} fallback={null}>
-        <AsyncMetaDescriptor promise={descriptor} index={index} />
-      </Suspense>
-    );
-  }
-
-  // Sync descriptor - render directly
-  return renderResolvedDescriptor(descriptor, index);
-}
-
-/**
  * Renders all collected meta descriptors from route handlers.
  *
  * Place this component inside the `<head>` element of your document.
  * It will automatically update when meta descriptors change during navigation.
  *
- * Supports async meta descriptors (Promise<MetaDescriptorBase>) which will
- * stream in when resolved.
+ * Async meta descriptors (Promise<MetaDescriptorBase>) are resolved by RSC
+ * streaming before reaching the client, so no Suspense is needed here.
  */
 export function MetaTags(): React.ReactNode {
-  const descriptors = useHandle(Meta);
+  // By the time useHandle returns, all promises have been resolved by RSC streaming
+  const descriptors = useHandle(Meta) as MetaDescriptorBase[];
 
   return <>{descriptors.map(renderMetaDescriptor)}</>;
 }
