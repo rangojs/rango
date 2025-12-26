@@ -143,26 +143,6 @@ function fileExists(root: string, relativePath: string): boolean {
 }
 
 /**
- * Plugin to alias @vitejs/plugin-rsc internal imports to rsc-router re-exports.
- * This allows consumers to use rsc-router without installing @vitejs/plugin-rsc directly.
- */
-function aliasPluginRscInternals(): Plugin {
-  return {
-    name: "rsc-router:alias-plugin-rsc",
-    enforce: "pre",
-    config() {
-      return {
-        resolve: {
-          alias: {
-            "@vitejs/plugin-rsc/utils/rpc": "rsc-router/internal/deps/utils-rpc",
-          },
-        },
-      };
-    },
-  };
-}
-
-/**
  * Plugin to ensure resolved URLs are available for cloudflare dev server.
  * The cloudflare plugin needs server.resolvedUrls to be set.
  */
@@ -299,9 +279,6 @@ export async function rscRouter(
   const enableExposeActionId = options.exposeActionId ?? true;
 
   const plugins: PluginOption[] = [];
-
-  // Add alias for @vitejs/plugin-rsc internals so consumers don't need to install it directly
-  plugins.push(aliasPluginRscInternals());
 
   if (preset === "cloudflare") {
     // Cloudflare preset: configure entries for cloudflare worker setup

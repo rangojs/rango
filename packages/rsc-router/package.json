@@ -57,10 +57,6 @@
     "./internal/deps/html-stream-server": {
       "types": "./src/deps/html-stream-server.ts",
       "default": "./src/deps/html-stream-server.ts"
-    },
-    "./internal/deps/utils-rpc": {
-      "types": "./src/deps/utils-rpc.ts",
-      "default": "./src/deps/utils-rpc.ts"
     }
   },
   "files": [
