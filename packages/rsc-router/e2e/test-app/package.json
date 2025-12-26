@@ -8,7 +8,6 @@
     "build": "vite build"
   },
   "dependencies": {
-    "@vitejs/plugin-rsc": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "rsc-router": "workspace:*"
