@@ -1,5 +1,5 @@
-import { map } from "rsc-router/server";
-import { Outlet, Link } from "rsc-router/client";
+import { map, Meta } from "rsc-router/server";
+import { Outlet, Link, MetaTags } from "rsc-router/client";
 import type { testRoutes } from "./routes.js";
 import {
   ProductsLoader,
@@ -33,17 +33,18 @@ export default map<typeof testRoutes>(
     layout(
       (ctx) => {
         // Push "Home" breadcrumb for all routes
-        const push = ctx.use(Breadcrumbs);
-        push({ label: "Home", href: "/" });
+        const pushBreadcrumb = ctx.use(Breadcrumbs);
+        pushBreadcrumb({ label: "Home", href: "/" });
+
+        // Set default meta tags for the app
+        const meta = ctx.use(Meta);
+        meta({ title: "RSC Router Test App" });
+        meta({ name: "description", content: "E2E test application for RSC Router" });
+
         return (
           <html lang="en">
             <head>
-              <meta charSet="UTF-8" />
-              <meta
-                name="viewport"
-                content="width=device-width, initial-scale=1.0"
-              />
-              <title>RSC Router Test App</title>
+              <MetaTags />
             </head>
             <body>
               <div data-testid="app-root">
@@ -131,10 +132,31 @@ export default map<typeof testRoutes>(
           "product.detail",
           async (ctx) => {
             // Push product breadcrumb with async content
-            const push = ctx.use(Breadcrumbs);
+            const pushBreadcrumb = ctx.use(Breadcrumbs);
+            const meta = ctx.use(Meta);
             const { product, loadedAt } = await ctx.use(ProductDetailLoader);
             const { quantity } = await ctx.use(CartQuantityLoader);
-            push({
+
+            // Set page-specific meta after awaiting product data (streaming metadata test)
+            meta({ title: `${product.name} - RSC Router Test App` });
+            meta({ name: "description", content: product.description });
+            meta({ property: "og:title", content: product.name });
+            // JSON-LD structured data for product
+            meta({
+              "script:ld+json": {
+                "@context": "https://schema.org",
+                "@type": "Product",
+                name: product.name,
+                description: product.description,
+                offers: {
+                  "@type": "Offer",
+                  price: product.price,
+                  priceCurrency: "USD",
+                },
+              },
+            });
+
+            pushBreadcrumb({
               label: product.name,
               href: `/product/${product.id}`,
               content: new Promise((resolve) =>
@@ -417,8 +439,11 @@ export default map<typeof testRoutes>(
         route(
           "blog.index",
           (ctx) => {
-            const push = ctx.use(Breadcrumbs);
-            push({ label: "Blog", href: "/blog" });
+            const pushBreadcrumb = ctx.use(Breadcrumbs);
+            const meta = ctx.use(Meta);
+            pushBreadcrumb({ label: "Blog", href: "/blog" });
+            meta({ title: "Blog - RSC Router Test App" });
+            meta({ name: "description", content: "Blog posts from RSC Router" });
             return (
               <div data-testid="blog-index-page">
                 <Link to="/" data-testid="back-link">
@@ -444,9 +469,12 @@ export default map<typeof testRoutes>(
         ),
 
         route("blog.post", (ctx) => {
-          const push = ctx.use(Breadcrumbs);
-          push({ label: "Blog", href: "/blog" });
-          push({ label: `Post ${ctx.params.postId}`, href: `/blog/${ctx.params.postId}` });
+          const pushBreadcrumb = ctx.use(Breadcrumbs);
+          const meta = ctx.use(Meta);
+          pushBreadcrumb({ label: "Blog", href: "/blog" });
+          pushBreadcrumb({ label: `Post ${ctx.params.postId}`, href: `/blog/${ctx.params.postId}` });
+          meta({ title: `Post ${ctx.params.postId} - Blog - RSC Router Test App` });
+          meta({ name: "description", content: `Content for post ${ctx.params.postId}` });
           return (
             <div data-testid="blog-post-page">
               <Link to="/blog" data-testid="back-to-blog">
