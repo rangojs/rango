@@ -156,6 +156,8 @@ export function useHandle<T, A, S>(
 
     return ctx.eventController.subscribeToHandles(() => {
       const state = ctx.eventController.getHandleState();
+      const isAction =
+        ctx.eventController.getState().inflightActions.length > 0;
       const collected = collectHandle(handle, state.data, state.segmentOrder);
       const nextValue = selectorRef.current
         ? selectorRef.current(collected)
@@ -164,9 +166,10 @@ export function useHandle<T, A, S>(
       if (!shallowEqual(nextValue, prevValueRef.current)) {
         prevValueRef.current = nextValue;
         startTransition(() => {
-          setOptimisticValue(nextValue);
+          // Skip optimistic update during actions to prevent Suspense fallback
+          if (!isAction) setOptimisticValue(nextValue);
+          setValue(nextValue);
         });
-        setValue(nextValue);
       }
     });
   }, [handle]);

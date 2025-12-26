@@ -198,4 +198,50 @@ test.describe("handle-breadcrumbs", () => {
     await expect(breadcrumbs.locator("text=Post post-2")).toBeVisible();
     await expect(breadcrumbs.locator("text=Post post-1")).not.toBeVisible();
   });
+
+  test("should NOT show skeleton when action triggers revalidation", async ({
+    page,
+  }) => {
+    // Navigate to product page and wait for async breadcrumb content to load
+    await page.goto(f.url("/product/product-b"));
+    await waitForHydration(page);
+
+    // Wait for async breadcrumb content to fully load (1s delay in handler)
+    await expect(testId(page, "breadcrumb-async")).toBeVisible({ timeout: 3000 });
+    const initialContent = await testId(page, "breadcrumb-async").textContent();
+
+    // Track if skeleton appears during action
+    let skeletonAppeared = false;
+    const skeleton = testId(page, "breadcrumbs-skeleton");
+
+    // Start monitoring for skeleton appearance
+    const checkSkeleton = async () => {
+      try {
+        const isVisible = await skeleton.isVisible();
+        if (isVisible) skeletonAppeared = true;
+      } catch {
+        // Element might not exist, which is fine
+      }
+    };
+
+    // Check skeleton visibility periodically during action
+    const intervalId = setInterval(checkSkeleton, 50);
+
+    // Click an action button to trigger revalidation
+    await testId(page, "add-to-cart-btn").click();
+
+    // Wait for action to complete and content to update
+    await page.waitForTimeout(2000);
+
+    // Stop monitoring
+    clearInterval(intervalId);
+
+    // The async breadcrumb content should still be visible (possibly updated)
+    await expect(testId(page, "breadcrumb-async")).toBeVisible();
+
+    // CRITICAL: Skeleton should NOT have appeared during the action
+    // This is the key assertion - during action revalidation, we should
+    // keep showing the old content, not flash a loading skeleton
+    expect(skeletonAppeared).toBe(false);
+  });
 });
