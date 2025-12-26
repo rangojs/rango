@@ -70,12 +70,30 @@ function getMetaKey(descriptor: MetaDescriptor): string | undefined {
 }
 
 /**
+ * Default meta descriptors included automatically.
+ * These can be overridden by route handlers.
+ */
+const defaultMetaDescriptors: MetaDescriptor[] = [
+  { charSet: "utf-8" },
+  { name: "viewport", content: "width=device-width, initial-scale=1" },
+];
+
+/**
  * Collect function for Meta handle.
- * Deduplicates meta descriptors by key, with later routes overriding earlier ones.
+ * Includes default meta descriptors, then deduplicates by key with later routes overriding earlier ones.
  */
 function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
   const result: MetaDescriptor[] = [];
   const keyToIndex = new Map<string, number>();
+
+  // Add defaults first so they can be overridden
+  for (const descriptor of defaultMetaDescriptors) {
+    const key = getMetaKey(descriptor);
+    if (key !== undefined) {
+      keyToIndex.set(key, result.length);
+    }
+    result.push(descriptor);
+  }
 
   for (const descriptors of segments) {
     for (const descriptor of descriptors) {

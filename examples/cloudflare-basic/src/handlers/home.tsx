@@ -4,8 +4,6 @@ import type { homeRoutes } from "../routes.js";
 export default map<typeof homeRoutes>(({ route }) => [
   route("index", (ctx) => {
     const meta = ctx.use(Meta);
-    meta({ charSet: "utf-8" });
-    meta({ name: "viewport", content: "width=device-width, initial-scale=1" });
     meta({ title: "Home - RSC Router Cloudflare" });
     meta({ name: "description", content: "A minimal RSC Router example running on Cloudflare Workers" });
 
