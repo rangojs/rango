@@ -9,10 +9,6 @@ import {
 import fs from "node:fs";
 import path from "node:path";
 
-// Skip on CI due to known wrangler/workerd issues on Linux
-// See: https://github.com/cloudflare/workers-sdk/issues/6280
-test.skip(!!process.env.CI, "Skipped on CI due to wrangler/workerd Linux issues");
-
 test.describe("hmr", () => {
   const f = useFixture({
     root: ".",
