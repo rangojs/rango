@@ -4,10 +4,10 @@ import {
   setServerCallback,
   encodeReply,
   createTemporaryReferenceSet,
-} from "@vitejs/plugin-rsc/browser";
+} from "rsc-router/internal/deps/browser";
 import React from "react";
 import { hydrateRoot } from "react-dom/client";
-import { rscStream } from "rsc-html-stream/client";
+import { rscStream } from "rsc-router/internal/deps/html-stream-client";
 import { initBrowserApp, RSCRouter } from "rsc-router/browser";
 
 async function initializeApp() {

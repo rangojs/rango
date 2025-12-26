@@ -1,6 +1,6 @@
-import { createFromReadableStream } from "@vitejs/plugin-rsc/ssr";
+import { createFromReadableStream } from "rsc-router/internal/deps/ssr";
 import { renderToReadableStream } from "react-dom/server.edge";
-import { injectRSCPayload } from "rsc-html-stream/server";
+import { injectRSCPayload } from "rsc-router/internal/deps/html-stream-server";
 import { createSSRHandler } from "rsc-router/ssr";
 
 export const renderHTML = createSSRHandler({

@@ -8,10 +8,7 @@ import {
   expectNoReload,
 } from "./helper";
 
-// Skip on CI due to known wrangler/workerd issues on Linux
-// See: https://github.com/cloudflare/workers-sdk/issues/6280
 test.describe.configure({ mode: "serial" });
-test.skip(!!process.env.CI, "Skipped on CI due to wrangler/workerd Linux issues");
 
 test.describe("navigation", () => {
   const f = useFixture({

@@ -3,7 +3,7 @@ import {
   decodeReply,
   createTemporaryReferenceSet,
   loadServerAction,
-} from "@vitejs/plugin-rsc/rsc";
+} from "rsc-router/internal/deps/rsc";
 import { router } from "./router.js";
 import { createRSCHandler } from "rsc-router/rsc";
 
