@@ -3,6 +3,10 @@
 /**
  * Component to render collected meta descriptors in the document head.
  *
+ * Supports both sync and async meta descriptors. Async descriptors
+ * (Promise<MetaDescriptorBase>) are rendered with Suspense and will
+ * stream in when resolved.
+ *
  * @example
  * ```tsx
  * function RootLayout() {
@@ -18,50 +22,58 @@
  * ```
  */
 
+import { Suspense, use } from "react";
 import { useHandle } from "../browser/react/use-handle.ts";
 import { Meta } from "./meta.ts";
-import type { MetaDescriptor } from "../router/types.ts";
+import type { MetaDescriptor, MetaDescriptorBase } from "../router/types.ts";
 
-// Type guards for MetaDescriptor variants
-function hasCharSet(d: MetaDescriptor): d is { charSet: "utf-8" } {
+// Type guards for MetaDescriptorBase variants
+function hasCharSet(d: MetaDescriptorBase): d is { charSet: "utf-8" } {
   return "charSet" in d && d.charSet === "utf-8";
 }
 
-function hasTitle(d: MetaDescriptor): d is { title: string } {
+function hasTitle(d: MetaDescriptorBase): d is { title: string } {
   return "title" in d && typeof (d as { title?: unknown }).title === "string";
 }
 
-function hasNameContent(d: MetaDescriptor): d is { name: string; content: string } {
+function hasNameContent(d: MetaDescriptorBase): d is { name: string; content: string } {
   return "name" in d && "content" in d &&
     typeof (d as { name?: unknown }).name === "string" &&
     typeof (d as { content?: unknown }).content === "string";
 }
 
-function hasPropertyContent(d: MetaDescriptor): d is { property: string; content: string } {
+function hasPropertyContent(d: MetaDescriptorBase): d is { property: string; content: string } {
   return "property" in d && "content" in d &&
     typeof (d as { property?: unknown }).property === "string" &&
     typeof (d as { content?: unknown }).content === "string";
 }
 
-function hasHttpEquivContent(d: MetaDescriptor): d is { httpEquiv: string; content: string } {
+function hasHttpEquivContent(d: MetaDescriptorBase): d is { httpEquiv: string; content: string } {
   return "httpEquiv" in d && "content" in d &&
     typeof (d as { httpEquiv?: unknown }).httpEquiv === "string" &&
     typeof (d as { content?: unknown }).content === "string";
 }
 
-function hasScriptLdJson(d: MetaDescriptor): d is { "script:ld+json": object } {
+function hasScriptLdJson(d: MetaDescriptorBase): d is { "script:ld+json": object } {
   return "script:ld+json" in d;
 }
 
-function hasTagName(d: MetaDescriptor): d is { tagName: "meta" | "link"; [name: string]: string } {
+function hasTagName(d: MetaDescriptorBase): d is { tagName: "meta" | "link"; [name: string]: string } {
   return "tagName" in d && ((d as { tagName?: unknown }).tagName === "meta" || (d as { tagName?: unknown }).tagName === "link");
 }
 
 /**
- * Render a single meta descriptor as a React element.
+ * Check if a value is a Promise
  */
-function renderMetaDescriptor(
-  descriptor: MetaDescriptor,
+function isPromise(value: unknown): value is Promise<unknown> {
+  return value instanceof Promise;
+}
+
+/**
+ * Render a single resolved meta descriptor as a React element.
+ */
+function renderResolvedDescriptor(
+  descriptor: MetaDescriptorBase,
   index: number
 ): React.ReactNode {
   // charset
@@ -135,10 +147,48 @@ function renderMetaDescriptor(
 }
 
 /**
+ * Component that resolves a promise and renders the meta descriptor.
+ * Uses React's `use()` hook to suspend until the promise resolves.
+ */
+function AsyncMetaDescriptor({
+  promise,
+  index,
+}: {
+  promise: Promise<MetaDescriptorBase>;
+  index: number;
+}): React.ReactNode {
+  const resolved = use(promise);
+  return renderResolvedDescriptor(resolved, index);
+}
+
+/**
+ * Render a single meta descriptor (sync or async) as a React element.
+ */
+function renderMetaDescriptor(
+  descriptor: MetaDescriptor,
+  index: number
+): React.ReactNode {
+  // Handle async descriptors with Suspense
+  if (isPromise(descriptor)) {
+    return (
+      <Suspense key={`async-meta-${index}`} fallback={null}>
+        <AsyncMetaDescriptor promise={descriptor} index={index} />
+      </Suspense>
+    );
+  }
+
+  // Sync descriptor - render directly
+  return renderResolvedDescriptor(descriptor, index);
+}
+
+/**
  * Renders all collected meta descriptors from route handlers.
  *
  * Place this component inside the `<head>` element of your document.
  * It will automatically update when meta descriptors change during navigation.
+ *
+ * Supports async meta descriptors (Promise<MetaDescriptorBase>) which will
+ * stream in when resolved.
  */
 export function MetaTags(): React.ReactNode {
   const descriptors = useHandle(Meta);

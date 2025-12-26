@@ -577,7 +577,7 @@ export { useHandle } from "./browser/react/use-handle.js";
 // Built-in handles
 export { Meta } from "./handles/meta.js";
 export { MetaTags } from "./handles/MetaTags.js";
-export type { MetaDescriptor } from "./router/types.js";
+export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 
 // Type-safe href for client-side path validation
 export { href, type ValidPaths, type PatternToPath } from "./href-client.js";

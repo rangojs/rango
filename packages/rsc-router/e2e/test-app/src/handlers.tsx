@@ -475,6 +475,16 @@ export default map<typeof testRoutes>(
           pushBreadcrumb({ label: `Post ${ctx.params.postId}`, href: `/blog/${ctx.params.postId}` });
           meta({ title: `Post ${ctx.params.postId} - Blog - RSC Router Test App` });
           meta({ name: "description", content: `Content for post ${ctx.params.postId}` });
+
+          // Test async meta - og:description streams in after 500ms
+          meta(
+            new Promise((resolve) =>
+              setTimeout(
+                () => resolve({ property: "og:description", content: `Async meta for ${ctx.params.postId}` }),
+                500
+              )
+            )
+          );
           return (
             <div data-testid="blog-post-page">
               <Link to="/blog" data-testid="back-to-blog">

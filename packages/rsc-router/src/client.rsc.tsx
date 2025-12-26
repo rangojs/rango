@@ -60,4 +60,4 @@ export { createHandle, isHandle, type Handle } from "./handle.js";
 export { Meta } from "./handles/meta.js";
 // MetaTags is a "use client" component that can be imported from RSC
 export { MetaTags } from "./handles/MetaTags.js";
-export type { MetaDescriptor } from "./router/types.js";
+export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";

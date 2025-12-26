@@ -59,7 +59,10 @@ export interface RouterDependencies<TEnv> {
   ) => Promise<Response | null>;
 }
 
-export type MetaDescriptor =
+/**
+ * Base meta descriptor types (sync values)
+ */
+export type MetaDescriptorBase =
   | { charSet: "utf-8" }
   | { title: string }
   | { name: string; content: string }
@@ -68,6 +71,12 @@ export type MetaDescriptor =
   | { "script:ld+json": LdJsonObject }
   | { tagName: "meta" | "link"; [name: string]: string }
   | { [name: string]: unknown };
+
+/**
+ * Meta descriptor that can be sync or async.
+ * Use Promise<MetaDescriptorBase> for streaming meta that resolves after initial render.
+ */
+export type MetaDescriptor = MetaDescriptorBase | Promise<MetaDescriptorBase>;
 
 type LdJsonObject = { [Key in string]: LdJsonValue } & {
   [Key in string]?: LdJsonValue | undefined;

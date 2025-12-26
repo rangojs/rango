@@ -39,7 +39,7 @@ export { createHandle, isHandle, type Handle } from "./handle.js";
 export { Meta } from "./handles/meta.js";
 
 // Meta types
-export type { MetaDescriptor } from "./router/types.js";
+export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 
 // Error classes and utilities
 export {

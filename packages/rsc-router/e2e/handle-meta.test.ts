@@ -112,6 +112,50 @@ test.describe("handle-meta", () => {
     });
   });
 
+  test.describe("async meta descriptors", () => {
+    test("should stream async meta descriptor (Promise)", async ({ page }) => {
+      await page.goto(f.url("/blog/post-1"));
+      await waitForHydration(page);
+
+      // The og:description is pushed as a Promise that resolves after 500ms
+      // It should stream in and be present in the DOM
+      const ogDescription = page.locator('meta[property="og:description"]');
+      await expect(ogDescription).toHaveAttribute(
+        "content",
+        "Async meta for post-1",
+        { timeout: 3000 }
+      );
+    });
+
+    test("should update async meta on navigation", async ({ page }) => {
+      await page.goto(f.url("/blog/post-1"));
+      await waitForHydration(page);
+
+      // Wait for async meta to stream in
+      let ogDescription = page.locator('meta[property="og:description"]');
+      await expect(ogDescription).toHaveAttribute(
+        "content",
+        "Async meta for post-1",
+        { timeout: 3000 }
+      );
+
+      // Navigate to post-2
+      await testId(page, "back-to-blog").click();
+      await expect(testId(page, "blog-index-page")).toBeVisible({ timeout: 5000 });
+
+      await testId(page, "blog-post-link-2").click();
+      await expect(testId(page, "blog-post-page")).toBeVisible({ timeout: 5000 });
+
+      // Async meta should update for post-2
+      ogDescription = page.locator('meta[property="og:description"]');
+      await expect(ogDescription).toHaveAttribute(
+        "content",
+        "Async meta for post-2",
+        { timeout: 3000 }
+      );
+    });
+  });
+
   test.describe("JSON-LD structured data", () => {
     test("should render JSON-LD script for product", async ({ page }) => {
       await page.goto(f.url("/product/product-a"));
