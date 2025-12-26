@@ -10,10 +10,10 @@ import {
   setServerCallback,
   encodeReply,
   createTemporaryReferenceSet,
-} from "@vitejs/plugin-rsc/browser";
+} from "rsc-router/internal/deps/browser";
 import { createElement, StrictMode } from "react";
 import { hydrateRoot } from "react-dom/client";
-import { rscStream } from "rsc-html-stream/client";
+import { rscStream } from "rsc-router/internal/deps/html-stream-client";
 import { initBrowserApp, RSCRouter } from "rsc-router/browser";
 
 async function initializeApp() {
@@ -37,9 +37,9 @@ initializeApp().catch(console.error);
 `.trim();
 
 export const VIRTUAL_ENTRY_SSR: string = `
-import { createFromReadableStream } from "@vitejs/plugin-rsc/ssr";
+import { createFromReadableStream } from "rsc-router/internal/deps/ssr";
 import { renderToReadableStream } from "react-dom/server.edge";
-import { injectRSCPayload } from "rsc-html-stream/server";
+import { injectRSCPayload } from "rsc-router/internal/deps/html-stream-server";
 import { createSSRHandler } from "rsc-router/ssr";
 
 export const renderHTML = createSSRHandler({
@@ -61,7 +61,7 @@ import {
   decodeReply,
   createTemporaryReferenceSet,
   loadServerAction,
-} from "@vitejs/plugin-rsc/rsc";
+} from "rsc-router/internal/deps/rsc";
 import { router } from "${routerPath}";
 import { createRSCHandler } from "rsc-router/rsc";
 
