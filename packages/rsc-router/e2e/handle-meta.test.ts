@@ -370,6 +370,118 @@ test.describe("handle-meta", () => {
     });
   });
 
+  test.describe("handle passthrough to child RSC", () => {
+    test("should set meta from child RSC component", async ({ page }) => {
+      await page.goto(f.url("/handle-passthrough"));
+      await waitForHydration(page);
+
+      // Title and description should be set by child component
+      await expect(page).toHaveTitle("Child Set Title - RSC Router");
+
+      const description = page.locator('meta[name="description"]');
+      await expect(description).toHaveAttribute(
+        "content",
+        "Meta set by child RSC component"
+      );
+
+      const ogTitle = page.locator('meta[property="og:title"]');
+      await expect(ogTitle).toHaveAttribute(
+        "content",
+        "Child Set Title - RSC Router"
+      );
+    });
+
+    test("should include child-set meta in initial HTML (SSR)", async ({
+      request,
+    }) => {
+      const response = await request.get(f.url("/handle-passthrough"), {
+        headers: { Accept: "text/html,application/xhtml+xml" },
+      });
+      const html = await response.text();
+
+      // Meta set by child RSC should be in initial HTML
+      expect(html).toContain("<title>Child Set Title - RSC Router</title>");
+      expect(html).toContain("Meta set by child RSC component");
+      expect(html).toContain('property="og:title"');
+    });
+
+    test("should render child component content", async ({ page }) => {
+      await page.goto(f.url("/handle-passthrough"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "child-meta-setter")).toBeVisible();
+      await expect(testId(page, "child-set-title")).toContainText(
+        "Set title: Child Set Title - RSC Router"
+      );
+      await expect(testId(page, "child-set-description")).toContainText(
+        "Set description: Meta set by child RSC component"
+      );
+    });
+  });
+
+  test.describe("async handle passthrough (delayed meta) - known limitation", () => {
+    /**
+     * KNOWN LIMITATION: Meta set from async children with loading fallbacks
+     * will NOT be included in the initial SSR response or update the DOM.
+     *
+     * This is because:
+     * 1. Handle values are collected when ctx.use(Handle) is called
+     * 2. For async children wrapped in Suspense, the parent renders immediately
+     * 3. The async child's meta() calls happen AFTER handles are collected
+     *
+     * Workaround: Set meta in the parent component before rendering async children,
+     * or use a loader to fetch data and set meta before the route handler returns.
+     */
+
+    test("async child content should render after delay", async ({ page }) => {
+      await page.goto(f.url("/handle-passthrough-async"));
+      await waitForHydration(page);
+
+      // Wait for async child to resolve (2s delay)
+      await expect(testId(page, "async-child-meta-setter")).toBeVisible({
+        timeout: 5000,
+      });
+
+      // Child content is rendered
+      await expect(testId(page, "async-child-set-title")).toContainText(
+        "Async Child Title - RSC Router"
+      );
+    });
+
+    test("meta from async child should NOT be in SSR response (known limitation)", async ({
+      request,
+    }) => {
+      const response = await request.get(f.url("/handle-passthrough-async"), {
+        headers: { Accept: "text/html,application/xhtml+xml" },
+      });
+      const html = await response.text();
+
+      // The initial <title> is from root layout, NOT the async child
+      expect(html).toContain("<title>RSC Router Test App</title>");
+
+      // The async child's meta is NOT in the <head>
+      expect(html).not.toContain("<title>Async Child Title");
+
+      // But the async child's CONTENT is streamed (just not the meta)
+      expect(html).toContain("async-child-meta-setter");
+    });
+
+    test("meta should remain from parent (async child meta not applied)", async ({
+      page,
+    }) => {
+      await page.goto(f.url("/handle-passthrough-async"));
+      await waitForHydration(page);
+
+      // Wait for async child content
+      await expect(testId(page, "async-child-meta-setter")).toBeVisible({
+        timeout: 5000,
+      });
+
+      // Title remains the root layout default (async child's meta not applied)
+      await expect(page).toHaveTitle("RSC Router Test App");
+    });
+  });
+
   test.describe("no hydration mismatch", () => {
     test("should not show hydration mismatch for meta tags", async ({
       page,

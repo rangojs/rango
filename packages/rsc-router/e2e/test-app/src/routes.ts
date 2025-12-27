@@ -30,4 +30,8 @@ export const testRoutes = route({
     serverError: "/errors/server-error",
     streamingError: "/errors/streaming-error",
   },
+  // Route for testing handle passthrough to child RSC components
+  handlePassthrough: "/handle-passthrough",
+  // Route for testing async handle passthrough (meta set after delay)
+  handlePassthroughAsync: "/handle-passthrough-async",
 });

@@ -26,6 +26,8 @@ import {
 import { HydrationMismatch } from "./components/HydrationMismatch.js";
 import { BreadcrumbNav } from "./components/BreadcrumbNav.js";
 import { ClientErrorThrower } from "./components/ClientErrorThrower.js";
+import { ChildMetaSetter } from "./components/ChildMetaSetter.js";
+import { AsyncChildMetaSetter } from "./components/AsyncChildMetaSetter.js";
 
 export default map<typeof testRoutes>(
   ({ route, layout, intercept, loader, loading }) => [
@@ -573,6 +575,71 @@ export default map<typeof testRoutes>(
             loading(
               <div data-testid="streaming-error-loading">
                 <p>Loading streaming content...</p>
+              </div>
+            ),
+          ]
+        ),
+
+        // Route for testing handle passthrough to child RSC components
+        route("handlePassthrough", (ctx) => {
+          const pushBreadcrumb = ctx.use(Breadcrumbs);
+          const meta = ctx.use(Meta);
+
+          // Push breadcrumb from parent
+          pushBreadcrumb({ label: "Handle Passthrough Test", href: "/handle-passthrough" });
+
+          return (
+            <div data-testid="handle-passthrough-page">
+              <Link to="/" data-testid="back-link">
+                ← Back to Home
+              </Link>
+              <h1 data-testid="passthrough-title">Handle Passthrough Test</h1>
+              <p data-testid="passthrough-description">
+                Testing meta handle passed to child RSC component
+              </p>
+              {/* Pass meta function to child RSC component */}
+              <ChildMetaSetter
+                meta={meta}
+                title="Child Set Title - RSC Router"
+                description="Meta set by child RSC component"
+              />
+            </div>
+          );
+        }),
+
+        // Route for testing async handle passthrough (meta set after delay)
+        route(
+          "handlePassthroughAsync",
+          (ctx) => {
+            const pushBreadcrumb = ctx.use(Breadcrumbs);
+            const meta = ctx.use(Meta);
+
+            // Push breadcrumb from parent
+            pushBreadcrumb({ label: "Async Handle Passthrough", href: "/handle-passthrough-async" });
+
+            return (
+              <div data-testid="handle-passthrough-async-page">
+                <Link to="/" data-testid="back-link">
+                  ← Back to Home
+                </Link>
+                <h1 data-testid="async-passthrough-title">Async Handle Passthrough Test</h1>
+                <p data-testid="async-passthrough-description">
+                  Testing meta handle passed to async child RSC (2s delay)
+                </p>
+                {/* Pass meta function to async child RSC component */}
+                <AsyncChildMetaSetter
+                  meta={meta}
+                  title="Async Child Title - RSC Router"
+                  description="Meta set by async child after 2s delay"
+                  delayMs={2000}
+                />
+              </div>
+            );
+          },
+          () => [
+            loading(
+              <div data-testid="async-passthrough-loading">
+                <p>Loading async child...</p>
               </div>
             ),
           ]
