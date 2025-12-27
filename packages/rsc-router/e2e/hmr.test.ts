@@ -21,13 +21,34 @@ test.describe("hmr", () => {
   let originalContent: string | null = null;
   let handlerFilePath: string;
 
+  /**
+   * Remove any existing HMR trigger comments from content.
+   * This ensures we restore to a clean state.
+   */
+  function stripHmrMarkers(content: string): string {
+    return content.replace(/\n?\/\/ HMR trigger: \d+\n?/g, "");
+  }
+
   test.beforeAll(() => {
     handlerFilePath = path.join(f.root, "src/handlers.tsx");
-    originalContent = fs.readFileSync(handlerFilePath, "utf-8");
+    const currentContent = fs.readFileSync(handlerFilePath, "utf-8");
+    // Store content without any existing HMR markers (clean state)
+    originalContent = stripHmrMarkers(currentContent);
+    // Also immediately clean up any leftover markers from previous runs
+    if (currentContent !== originalContent) {
+      fs.writeFileSync(handlerFilePath, originalContent, "utf-8");
+    }
   });
 
   test.afterAll(() => {
     // Restore original file content to avoid git conflicts
+    if (originalContent !== null) {
+      fs.writeFileSync(handlerFilePath, originalContent, "utf-8");
+    }
+  });
+
+  // Also clean up after each test for extra safety
+  test.afterEach(() => {
     if (originalContent !== null) {
       fs.writeFileSync(handlerFilePath, originalContent, "utf-8");
     }
