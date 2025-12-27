@@ -60,16 +60,31 @@ export interface RouterDependencies<TEnv> {
 }
 
 /**
+ * Title descriptor types for template support
+ */
+export type TitleDescriptor =
+  | string
+  | { template: string; default: string } // For layouts - template applied to child titles
+  | { absolute: string }; // Bypass parent template
+
+/**
+ * Unset descriptor to remove inherited meta
+ * Key format matches getMetaKey output: "title", "name:description", "property:og:image"
+ */
+export type UnsetDescriptor = { unset: string };
+
+/**
  * Base meta descriptor types (sync values)
  */
 export type MetaDescriptorBase =
   | { charSet: "utf-8" }
-  | { title: string }
+  | { title: TitleDescriptor }
   | { name: string; content: string }
   | { property: string; content: string }
   | { httpEquiv: string; content: string }
   | { "script:ld+json": LdJsonObject }
   | { tagName: "meta" | "link"; [name: string]: string }
+  | UnsetDescriptor
   | { [name: string]: unknown };
 
 /**

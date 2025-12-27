@@ -29,13 +29,69 @@
  */
 
 import { createHandle, type Handle } from "../handle.ts";
-import type { MetaDescriptor } from "../router/types.ts";
+import type {
+  MetaDescriptor,
+  TitleDescriptor,
+  UnsetDescriptor,
+} from "../router/types.ts";
+
+/**
+ * Type guard for unset descriptor
+ */
+function isUnsetDescriptor(
+  descriptor: MetaDescriptor
+): descriptor is UnsetDescriptor {
+  return (
+    typeof descriptor === "object" &&
+    descriptor !== null &&
+    "unset" in descriptor &&
+    typeof (descriptor as UnsetDescriptor).unset === "string"
+  );
+}
+
+/**
+ * Type guard for title descriptor (any form)
+ */
+function isTitleDescriptor(
+  descriptor: MetaDescriptor
+): descriptor is { title: TitleDescriptor } {
+  return (
+    typeof descriptor === "object" &&
+    descriptor !== null &&
+    "title" in descriptor
+  );
+}
+
+/**
+ * Type guard for title template descriptor
+ */
+function isTitleTemplate(
+  title: TitleDescriptor
+): title is { template: string; default: string } {
+  return (
+    typeof title === "object" &&
+    title !== null &&
+    "template" in title &&
+    "default" in title
+  );
+}
+
+/**
+ * Type guard for absolute title descriptor
+ */
+function isAbsoluteTitle(title: TitleDescriptor): title is { absolute: string } {
+  return typeof title === "object" && title !== null && "absolute" in title;
+}
 
 /**
  * Get a unique key for a meta descriptor for deduplication.
  * Returns undefined for descriptors that shouldn't be deduplicated.
  */
 function getMetaKey(descriptor: MetaDescriptor): string | undefined {
+  // Skip unset descriptors - they are processed separately
+  if (isUnsetDescriptor(descriptor)) {
+    return undefined;
+  }
   if ("charSet" in descriptor) {
     return "charSet";
   }
@@ -79,12 +135,47 @@ const defaultMetaDescriptors: MetaDescriptor[] = [
 ];
 
 /**
+ * Helper to add or replace a descriptor in the result array
+ */
+function addOrReplace(
+  result: MetaDescriptor[],
+  keyToIndex: Map<string, number>,
+  descriptor: MetaDescriptor,
+  key: string | undefined
+): void {
+  if (key !== undefined && keyToIndex.has(key)) {
+    result[keyToIndex.get(key)!] = descriptor;
+  } else {
+    if (key !== undefined) {
+      keyToIndex.set(key, result.length);
+    }
+    result.push(descriptor);
+  }
+}
+
+/**
+ * Helper to update indices after removing an element
+ */
+function updateIndicesAfterRemoval(
+  keyToIndex: Map<string, number>,
+  removedIndex: number
+): void {
+  for (const [key, index] of keyToIndex) {
+    if (index > removedIndex) {
+      keyToIndex.set(key, index - 1);
+    }
+  }
+}
+
+/**
  * Collect function for Meta handle.
  * Includes default meta descriptors, then deduplicates by key with later routes overriding earlier ones.
+ * Supports title templates, absolute titles, and unset descriptors.
  */
 function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
   const result: MetaDescriptor[] = [];
   const keyToIndex = new Map<string, number>();
+  let titleTemplate: string | undefined;
 
   // Add defaults first so they can be overridden
   for (const descriptor of defaultMetaDescriptors) {
@@ -97,18 +188,47 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
 
   for (const descriptors of segments) {
     for (const descriptor of descriptors) {
-      const key = getMetaKey(descriptor);
-
-      if (key !== undefined && keyToIndex.has(key)) {
-        // Override existing descriptor with same key
-        result[keyToIndex.get(key)!] = descriptor;
-      } else {
-        // Add new descriptor
-        if (key !== undefined) {
-          keyToIndex.set(key, result.length);
+      // Handle unset descriptors
+      if (isUnsetDescriptor(descriptor)) {
+        const keyToRemove = descriptor.unset;
+        if (keyToIndex.has(keyToRemove)) {
+          const idx = keyToIndex.get(keyToRemove)!;
+          result.splice(idx, 1);
+          keyToIndex.delete(keyToRemove);
+          updateIndicesAfterRemoval(keyToIndex, idx);
         }
-        result.push(descriptor);
+        continue;
       }
+
+      // Handle title descriptors with template/absolute support
+      if (isTitleDescriptor(descriptor)) {
+        const titleValue = descriptor.title;
+
+        if (isTitleTemplate(titleValue)) {
+          // Store template for subsequent title descriptors in child segments
+          titleTemplate = titleValue.template;
+          // Set the default title
+          addOrReplace(result, keyToIndex, { title: titleValue.default }, "title");
+          continue;
+        }
+
+        if (isAbsoluteTitle(titleValue)) {
+          // Absolute title bypasses any template
+          addOrReplace(result, keyToIndex, { title: titleValue.absolute }, "title");
+          continue;
+        }
+
+        // String title - apply template if one exists
+        const finalTitle = titleTemplate
+          ? titleTemplate.replace("%s", titleValue as string)
+          : titleValue;
+        addOrReplace(result, keyToIndex, { title: finalTitle as string }, "title");
+        continue;
+      }
+
+      // Handle all other descriptors
+      const key = getMetaKey(descriptor);
+      addOrReplace(result, keyToIndex, descriptor, key);
     }
   }
 

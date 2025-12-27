@@ -513,4 +513,271 @@ test.describe("handle-meta", () => {
       expect(hydrationErrors).toEqual([]);
     });
   });
+
+  test.describe("title templates", () => {
+    test("should use default title when no child title is set", async ({ page }) => {
+      await page.goto(f.url("/meta-template"));
+      await waitForHydration(page);
+
+      // Index route uses the default from template
+      await expect(page).toHaveTitle("Test Site");
+    });
+
+    test("should apply template to child route title", async ({ page }) => {
+      await page.goto(f.url("/meta-template/child"));
+      await waitForHydration(page);
+
+      // Child sets title: "Child Page", template is "%s | Test Site"
+      await expect(page).toHaveTitle("Child Page | Test Site");
+    });
+
+    test("should bypass template with absolute title", async ({ page }) => {
+      await page.goto(f.url("/meta-template/absolute"));
+      await waitForHydration(page);
+
+      // Absolute title should bypass template completely
+      await expect(page).toHaveTitle("Custom Absolute Title");
+    });
+
+    test("should use nested template instead of parent template", async ({ page }) => {
+      await page.goto(f.url("/meta-template/nested"));
+      await waitForHydration(page);
+
+      // Nested layout sets new template with default "Nested Section"
+      await expect(page).toHaveTitle("Nested Section");
+    });
+
+    test("should apply nested template to nested child", async ({ page }) => {
+      await page.goto(f.url("/meta-template/nested/child"));
+      await waitForHydration(page);
+
+      // Nested child sets "Nested Child", nested template is "%s | Nested Section"
+      await expect(page).toHaveTitle("Nested Child | Nested Section");
+    });
+
+    test("template should work with SSR (initial HTML)", async ({ request }) => {
+      const response = await request.get(f.url("/meta-template/child"), {
+        headers: { Accept: "text/html,application/xhtml+xml" },
+      });
+      const html = await response.text();
+
+      expect(html).toContain("<title>Child Page | Test Site</title>");
+    });
+
+    test("absolute title should work with SSR", async ({ request }) => {
+      const response = await request.get(f.url("/meta-template/absolute"), {
+        headers: { Accept: "text/html,application/xhtml+xml" },
+      });
+      const html = await response.text();
+
+      expect(html).toContain("<title>Custom Absolute Title</title>");
+    });
+
+    test("should update title on soft navigation with template", async ({ page }) => {
+      await page.goto(f.url("/meta-template"));
+      await waitForHydration(page);
+
+      await expect(page).toHaveTitle("Test Site");
+
+      // Navigate to child
+      await testId(page, "meta-template-child-link").click();
+      await expect(testId(page, "meta-template-child-page")).toBeVisible({ timeout: 5000 });
+      await expect(page).toHaveTitle("Child Page | Test Site");
+
+      // Navigate to absolute
+      await testId(page, "meta-template-absolute-link").click();
+      await expect(testId(page, "meta-template-absolute-page")).toBeVisible({ timeout: 5000 });
+      await expect(page).toHaveTitle("Custom Absolute Title");
+    });
+  });
+
+  test.describe("meta unset", () => {
+    test("should inherit all parent meta on index route", async ({ page }) => {
+      await page.goto(f.url("/meta-unset"));
+      await waitForHydration(page);
+
+      await expect(page).toHaveTitle("Parent Title");
+
+      const robots = page.locator('meta[name="robots"]');
+      await expect(robots).toHaveAttribute("content", "index, follow");
+
+      const description = page.locator('meta[name="description"]');
+      await expect(description).toHaveAttribute("content", "Parent description");
+
+      const ogImage = page.locator('meta[property="og:image"]');
+      await expect(ogImage).toHaveAttribute("content", "https://example.com/parent.jpg");
+    });
+
+    test("should unset specific meta tags", async ({ page }) => {
+      await page.goto(f.url("/meta-unset/child"));
+      await waitForHydration(page);
+
+      // Title and description should still be present (not unset)
+      await expect(page).toHaveTitle("Parent Title");
+
+      const description = page.locator('meta[name="description"]');
+      await expect(description).toHaveAttribute("content", "Parent description");
+
+      // robots and og:image should be removed
+      const robots = page.locator('meta[name="robots"]');
+      await expect(robots).toHaveCount(0);
+
+      const ogImage = page.locator('meta[property="og:image"]');
+      await expect(ogImage).toHaveCount(0);
+    });
+
+    test("should unset then set new value", async ({ page }) => {
+      await page.goto(f.url("/meta-unset/unset-then-set"));
+      await waitForHydration(page);
+
+      // Title should be the new value after unset + set
+      await expect(page).toHaveTitle("New Title After Unset");
+
+      // Description should be the new value after unset + set
+      const description = page.locator('meta[name="description"]');
+      await expect(description).toHaveAttribute("content", "New description after unset");
+
+      // robots should still be present (not unset in this route)
+      const robots = page.locator('meta[name="robots"]');
+      await expect(robots).toHaveAttribute("content", "index, follow");
+    });
+
+    test("unset should work with SSR", async ({ request }) => {
+      const response = await request.get(f.url("/meta-unset/child"), {
+        headers: { Accept: "text/html,application/xhtml+xml" },
+      });
+      const html = await response.text();
+
+      // Title and description should be present
+      expect(html).toContain("<title>Parent Title</title>");
+      expect(html).toContain("Parent description");
+
+      // robots and og:image should NOT be present
+      expect(html).not.toContain('name="robots"');
+      expect(html).not.toContain('property="og:image"');
+    });
+
+    test("should update meta on soft navigation with unset", async ({ page }) => {
+      await page.goto(f.url("/meta-unset"));
+      await waitForHydration(page);
+
+      // Verify robots exists on index
+      const robotsOnIndex = page.locator('meta[name="robots"]');
+      await expect(robotsOnIndex).toHaveCount(1);
+
+      // Navigate to child that unsets robots
+      await testId(page, "meta-unset-child-link").click();
+      await expect(testId(page, "meta-unset-child-page")).toBeVisible({ timeout: 5000 });
+
+      // robots should be gone
+      const robotsOnChild = page.locator('meta[name="robots"]');
+      await expect(robotsOnChild).toHaveCount(0);
+
+      // Navigate back to index
+      await testId(page, "meta-unset-index-link").click();
+      await expect(testId(page, "meta-unset-index-page")).toBeVisible({ timeout: 5000 });
+
+      // robots should be back
+      const robotsBack = page.locator('meta[name="robots"]');
+      await expect(robotsBack).toHaveCount(1);
+    });
+  });
+
+  test.describe("meta merging behavior", () => {
+    test("child should override parent meta with same key", async ({ page }) => {
+      await page.goto(f.url("/meta-merge/child"));
+      await waitForHydration(page);
+
+      // Title overridden by child
+      await expect(page).toHaveTitle("Merge Child");
+
+      // keywords overridden by child
+      const keywords = page.locator('meta[name="keywords"]');
+      await expect(keywords).toHaveAttribute("content", "child, override");
+    });
+
+    test("child should inherit parent meta for different keys", async ({ page }) => {
+      await page.goto(f.url("/meta-merge/child"));
+      await waitForHydration(page);
+
+      // author inherited from parent (not set by child)
+      const author = page.locator('meta[name="author"]');
+      await expect(author).toHaveAttribute("content", "Root Author");
+
+      // og:site_name inherited from parent
+      const ogSiteName = page.locator('meta[property="og:site_name"]');
+      await expect(ogSiteName).toHaveAttribute("content", "Merge Test Site");
+    });
+
+    test("child should add new meta not in parent", async ({ page }) => {
+      await page.goto(f.url("/meta-merge/child"));
+      await waitForHydration(page);
+
+      // description added by child (not in parent)
+      const description = page.locator('meta[name="description"]');
+      await expect(description).toHaveAttribute("content", "Child description");
+    });
+
+    test("deeply nested routes should merge correctly", async ({ page }) => {
+      await page.goto(f.url("/meta-merge/deep/nested"));
+      await waitForHydration(page);
+
+      // Title from deep page
+      await expect(page).toHaveTitle("Deep Nested Page");
+
+      // keywords from root (not overridden by middle or deep)
+      const keywords = page.locator('meta[name="keywords"]');
+      await expect(keywords).toHaveAttribute("content", "root, test");
+
+      // author from middle layout (overrides root)
+      const author = page.locator('meta[name="author"]');
+      await expect(author).toHaveAttribute("content", "Middle Author");
+
+      // og:site_name from root (not overridden)
+      const ogSiteName = page.locator('meta[property="og:site_name"]');
+      await expect(ogSiteName).toHaveAttribute("content", "Merge Test Site");
+
+      // og:title from deep page (newly added)
+      const ogTitle = page.locator('meta[property="og:title"]');
+      await expect(ogTitle).toHaveAttribute("content", "Deep OG Title");
+    });
+
+    test("merging should work with SSR", async ({ request }) => {
+      const response = await request.get(f.url("/meta-merge/deep/nested"), {
+        headers: { Accept: "text/html,application/xhtml+xml" },
+      });
+      const html = await response.text();
+
+      // Deep page title
+      expect(html).toContain("<title>Deep Nested Page</title>");
+
+      // Root keywords
+      expect(html).toContain("root, test");
+
+      // Middle author
+      expect(html).toContain("Middle Author");
+
+      // Root og:site_name
+      expect(html).toContain("Merge Test Site");
+
+      // Deep og:title
+      expect(html).toContain("Deep OG Title");
+    });
+
+    test("index should have all root meta", async ({ page }) => {
+      await page.goto(f.url("/meta-merge"));
+      await waitForHydration(page);
+
+      await expect(page).toHaveTitle("Merge Root");
+
+      const author = page.locator('meta[name="author"]');
+      await expect(author).toHaveAttribute("content", "Root Author");
+
+      const keywords = page.locator('meta[name="keywords"]');
+      await expect(keywords).toHaveAttribute("content", "root, test");
+
+      const ogSiteName = page.locator('meta[property="og:site_name"]');
+      await expect(ogSiteName).toHaveAttribute("content", "Merge Test Site");
+    });
+  });
 });

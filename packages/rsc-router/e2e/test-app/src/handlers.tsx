@@ -644,6 +644,302 @@ export default map<typeof testRoutes>(
             ),
           ]
         ),
+
+        // =====================================================
+        // META TEMPLATE TESTS
+        // =====================================================
+
+        // Layout with title template - sets template for child routes
+        layout(
+          (ctx) => {
+            const meta = ctx.use(Meta);
+            // Set title template - child routes will have their title wrapped
+            meta({ title: { template: "%s | Test Site", default: "Test Site" } });
+            meta({ name: "author", content: "Test Author" });
+
+            return (
+              <div data-testid="meta-template-layout">
+                <nav data-testid="meta-template-nav">
+                  <Link to="/meta-template" data-testid="meta-template-index-link">
+                    Template Index
+                  </Link>
+                  <Link to="/meta-template/child" data-testid="meta-template-child-link">
+                    Child
+                  </Link>
+                  <Link to="/meta-template/absolute" data-testid="meta-template-absolute-link">
+                    Absolute
+                  </Link>
+                  <Link to="/meta-template/nested" data-testid="meta-template-nested-link">
+                    Nested
+                  </Link>
+                </nav>
+                <Outlet />
+              </div>
+            );
+          },
+          () => [
+            // Index route - uses default title from template
+            route("metaTemplate.index", () => (
+              <div data-testid="meta-template-index-page">
+                <h1 data-testid="meta-template-index-title">Template Index</h1>
+                <p data-testid="meta-template-index-description">
+                  This page uses the default title from the template.
+                </p>
+              </div>
+            )),
+
+            // Child route - string title gets template applied
+            route("metaTemplate.child", (ctx) => {
+              const meta = ctx.use(Meta);
+              meta({ title: "Child Page" }); // Should become "Child Page | Test Site"
+              meta({ name: "description", content: "Child page description" });
+
+              return (
+                <div data-testid="meta-template-child-page">
+                  <h1 data-testid="meta-template-child-title">Template Child</h1>
+                  <p data-testid="meta-template-child-description">
+                    This page title should have template applied.
+                  </p>
+                </div>
+              );
+            }),
+
+            // Absolute route - bypasses template
+            route("metaTemplate.absolute", (ctx) => {
+              const meta = ctx.use(Meta);
+              meta({ title: { absolute: "Custom Absolute Title" } }); // No template
+              meta({ name: "description", content: "Absolute page description" });
+
+              return (
+                <div data-testid="meta-template-absolute-page">
+                  <h1 data-testid="meta-template-absolute-title">Absolute Title</h1>
+                  <p data-testid="meta-template-absolute-description">
+                    This page title bypasses the template.
+                  </p>
+                </div>
+              );
+            }),
+
+            // Nested layout with its own template - overrides parent template
+            layout(
+              (ctx) => {
+                const meta = ctx.use(Meta);
+                // Override parent template with new one
+                meta({ title: { template: "%s | Nested Section", default: "Nested Section" } });
+
+                return (
+                  <div data-testid="meta-template-nested-layout">
+                    <Outlet />
+                  </div>
+                );
+              },
+              () => [
+                // Nested index - uses nested default
+                route("metaTemplate.nested", () => (
+                  <div data-testid="meta-template-nested-page">
+                    <h1 data-testid="meta-template-nested-title">Nested Index</h1>
+                    <p data-testid="meta-template-nested-description">
+                      Uses nested template default.
+                    </p>
+                  </div>
+                )),
+
+                // Nested child - uses nested template
+                route("metaTemplate.nestedChild", (ctx) => {
+                  const meta = ctx.use(Meta);
+                  meta({ title: "Nested Child" }); // Should become "Nested Child | Nested Section"
+
+                  return (
+                    <div data-testid="meta-template-nested-child-page">
+                      <h1 data-testid="meta-template-nested-child-title">Nested Child</h1>
+                      <p data-testid="meta-template-nested-child-description">
+                        Uses nested template.
+                      </p>
+                    </div>
+                  );
+                }),
+              ]
+            ),
+          ]
+        ),
+
+        // =====================================================
+        // META UNSET TESTS
+        // =====================================================
+
+        // Layout that sets meta to be unset by children
+        layout(
+          (ctx) => {
+            const meta = ctx.use(Meta);
+            meta({ title: "Parent Title" });
+            meta({ name: "robots", content: "index, follow" });
+            meta({ name: "description", content: "Parent description" });
+            meta({ property: "og:image", content: "https://example.com/parent.jpg" });
+
+            return (
+              <div data-testid="meta-unset-layout">
+                <nav data-testid="meta-unset-nav">
+                  <Link to="/meta-unset" data-testid="meta-unset-index-link">
+                    Unset Index
+                  </Link>
+                  <Link to="/meta-unset/child" data-testid="meta-unset-child-link">
+                    Unset Child
+                  </Link>
+                  <Link to="/meta-unset/unset-then-set" data-testid="meta-unset-then-set-link">
+                    Unset Then Set
+                  </Link>
+                </nav>
+                <Outlet />
+              </div>
+            );
+          },
+          () => [
+            // Index route - keeps all parent meta
+            route("metaUnset.index", () => (
+              <div data-testid="meta-unset-index-page">
+                <h1 data-testid="meta-unset-index-title">Unset Index</h1>
+                <p data-testid="meta-unset-index-description">
+                  This page inherits all parent meta.
+                </p>
+              </div>
+            )),
+
+            // Child route - unsets some parent meta
+            route("metaUnset.child", (ctx) => {
+              const meta = ctx.use(Meta);
+              // Unset various meta tags
+              meta({ unset: "name:robots" });
+              meta({ unset: "property:og:image" });
+
+              return (
+                <div data-testid="meta-unset-child-page">
+                  <h1 data-testid="meta-unset-child-title">Unset Child</h1>
+                  <p data-testid="meta-unset-child-description">
+                    This page unsets robots and og:image meta.
+                  </p>
+                </div>
+              );
+            }),
+
+            // Route that unsets then sets same meta
+            route("metaUnset.unsetThenSet", (ctx) => {
+              const meta = ctx.use(Meta);
+              // Unset parent description, then set a new one
+              meta({ unset: "name:description" });
+              meta({ name: "description", content: "New description after unset" });
+              // Unset title and set new one
+              meta({ unset: "title" });
+              meta({ title: "New Title After Unset" });
+
+              return (
+                <div data-testid="meta-unset-then-set-page">
+                  <h1 data-testid="meta-unset-then-set-title">Unset Then Set</h1>
+                  <p data-testid="meta-unset-then-set-description">
+                    This page unsets meta then sets new values.
+                  </p>
+                </div>
+              );
+            }),
+          ]
+        ),
+
+        // =====================================================
+        // META MERGING TESTS
+        // =====================================================
+
+        // Layout for testing meta merging
+        layout(
+          (ctx) => {
+            const meta = ctx.use(Meta);
+            meta({ title: "Merge Root" });
+            meta({ name: "author", content: "Root Author" });
+            meta({ name: "keywords", content: "root, test" });
+            meta({ property: "og:site_name", content: "Merge Test Site" });
+
+            return (
+              <div data-testid="meta-merge-layout">
+                <nav data-testid="meta-merge-nav">
+                  <Link to="/meta-merge" data-testid="meta-merge-index-link">
+                    Merge Index
+                  </Link>
+                  <Link to="/meta-merge/child" data-testid="meta-merge-child-link">
+                    Merge Child
+                  </Link>
+                  <Link to="/meta-merge/deep/nested" data-testid="meta-merge-deep-link">
+                    Deep Nested
+                  </Link>
+                </nav>
+                <Outlet />
+              </div>
+            );
+          },
+          () => [
+            // Index - has all root meta
+            route("metaMerge.index", () => (
+              <div data-testid="meta-merge-index-page">
+                <h1 data-testid="meta-merge-index-title">Merge Index</h1>
+                <p data-testid="meta-merge-index-description">
+                  Inherits all root meta.
+                </p>
+              </div>
+            )),
+
+            // Child - overrides some, adds new
+            route("metaMerge.child", (ctx) => {
+              const meta = ctx.use(Meta);
+              // Override title
+              meta({ title: "Merge Child" });
+              // Add new description (not set by parent)
+              meta({ name: "description", content: "Child description" });
+              // Override keywords
+              meta({ name: "keywords", content: "child, override" });
+              // Keep author and og:site_name from parent (don't set them)
+
+              return (
+                <div data-testid="meta-merge-child-page">
+                  <h1 data-testid="meta-merge-child-title">Merge Child</h1>
+                  <p data-testid="meta-merge-child-description">
+                    Overrides title and keywords, adds description, keeps author.
+                  </p>
+                </div>
+              );
+            }),
+
+            // Deep nested - multiple levels of overrides
+            layout(
+              (ctx) => {
+                const meta = ctx.use(Meta);
+                // Middle layout overrides author
+                meta({ name: "author", content: "Middle Author" });
+
+                return (
+                  <div data-testid="meta-merge-middle-layout">
+                    <Outlet />
+                  </div>
+                );
+              },
+              () => [
+                route("metaMerge.deep", (ctx) => {
+                  const meta = ctx.use(Meta);
+                  // Deep page overrides title only
+                  meta({ title: "Deep Nested Page" });
+                  // Add og:title
+                  meta({ property: "og:title", content: "Deep OG Title" });
+                  // Middle author should be kept, not root author
+
+                  return (
+                    <div data-testid="meta-merge-deep-page">
+                      <h1 data-testid="meta-merge-deep-title">Deep Nested</h1>
+                      <p data-testid="meta-merge-deep-description">
+                        Has root keywords, middle author, own title and og:title.
+                      </p>
+                    </div>
+                  );
+                }),
+              ]
+            ),
+          ]
+        ),
       ]
     ),
   ]

@@ -34,4 +34,24 @@ export const testRoutes = route({
   handlePassthrough: "/handle-passthrough",
   // Route for testing async handle passthrough (meta set after delay)
   handlePassthroughAsync: "/handle-passthrough-async",
+  // Routes for testing meta title templates
+  metaTemplate: {
+    index: "/meta-template",
+    child: "/meta-template/child",
+    absolute: "/meta-template/absolute",
+    nested: "/meta-template/nested",
+    nestedChild: "/meta-template/nested/child",
+  },
+  // Routes for testing meta unset functionality
+  metaUnset: {
+    index: "/meta-unset",
+    child: "/meta-unset/child",
+    unsetThenSet: "/meta-unset/unset-then-set",
+  },
+  // Routes for testing meta merging behavior
+  metaMerge: {
+    index: "/meta-merge",
+    child: "/meta-merge/child",
+    deep: "/meta-merge/deep/nested",
+  },
 });
