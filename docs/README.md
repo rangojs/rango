@@ -1,0 +1,406 @@
+# RSC Router API Reference
+
+Code-first, type-safe React Server Components router.
+
+## Quick Start
+
+```typescript
+// 1. Define routes
+import { route } from "rsc-router/server";
+
+export const shopRoutes = route({
+  index: "/",
+  products: {
+    category: "/products/:category",
+    detail: "/product/:slug",
+  },
+  cart: "/cart",
+});
+
+// 2. Create router
+import { createRSCRouter } from "rsc-router/server";
+
+const router = createRSCRouter<AppContext>();
+router.route("/shop", shopRoutes).map(() => import("./handlers/shop"));
+
+// 3. Define handlers
+import { map } from "rsc-router/server";
+
+export default map<typeof shopRoutes>(({ route, layout, middleware, parallel, loader, revalidate, loading, errorBoundary, notFoundBoundary }) => [
+  layout(<RootLayout />),
+  layout(<ShopLayout />, () => [
+    middleware(authMiddleware()),
+
+    route("index", () => <ShopIndex />),
+    route("products.detail", (ctx) => <ProductDetail slug={ctx.params.slug} />, () => [
+      revalidate(({ currentParams, nextParams }) => currentParams.slug !== nextParams.slug),
+      parallel({
+        "@reviews": (ctx) => <Reviews slug={ctx.params.slug} />,
+      }),
+    ]),
+  ]),
+]);
+```
+
+## Route Definition
+
+```typescript
+import { route } from "rsc-router/server";
+
+export const routes = route({
+  index: "/",
+  post: "/:slug",
+  nested: {
+    child: "/nested/:id",
+  },
+});
+```
+
+Routes are relative to mount point. When mounted at `/blog`, `/:slug` becomes `/blog/:slug`.
+
+## Handler Helpers
+
+All helpers are available in the `map()` callback:
+
+| Helper | Purpose |
+|--------|---------|
+| `route(name, handler, use?)` | Define route handler |
+| `layout(component, use?)` | Define layout wrapper |
+| `middleware(...fns)` | Attach middleware |
+| `parallel(slots, use?)` | Define parallel routes |
+| `loader(loaderDef, use?)` | Attach data loader |
+| `revalidate(fn)` | Control revalidation |
+| `loading(component, skipSSR?)` | Loading UI |
+| `errorBoundary(fallback)` | Error fallback |
+| `notFoundBoundary(fallback)` | NotFound fallback |
+| `intercept(slot, route, component, use?)` | Intercept for soft nav |
+
+## Layout Composition
+
+Layouts compose by position in array:
+
+```typescript
+map(({ layout, route }) => [
+  layout(<A />),     // Wraps everything below
+  layout(<B />),     // Stacks on A
+  route("x", ...),   // Gets A -> B -> x
+  route("y", ...),   // Gets A -> B -> y
+]);
+```
+
+Route-scoped layouts:
+
+```typescript
+route("x", Handler, () => [
+  layout(<OnlyForX />),  // Only wraps route x
+]);
+```
+
+## Middleware
+
+```typescript
+middleware((ctx, next) => {
+  if (!ctx.user) throw new Error("Unauthorized");
+  next();
+});
+```
+
+Middleware runs before handlers. Call `next()` to continue chain.
+
+**Context methods:**
+- `ctx.set(key, value)` / `ctx.get(key)` - Store/retrieve values
+- `ctx.var` - Access all stored values
+- `redirect(url)` - Soft redirect (SPA navigation)
+
+## Parallel Routes
+
+```typescript
+parallel({
+  "@sidebar": () => <Sidebar />,
+  "@modal": (ctx) => <Modal id={ctx.params.id} />,
+});
+```
+
+Render with `<Outlet name="@sidebar" />` in layouts.
+
+## Intercepting Routes
+
+Intercepts render alternative content in a named slot during soft navigation (client-side). Hard navigation (direct URL access) renders the normal route instead.
+
+**Use case**: Modal overlays that preserve the background page.
+
+### Definition
+
+```typescript
+layout(<KanbanLayout />, () => [
+  // Intercept "card" route - renders in @modal slot during soft nav
+  intercept("@modal", "card", <CardModal />, () => [
+    loader(CardDetailLoader),
+    revalidate(() => false),
+  ]),
+]),
+
+// Hard navigation to /card renders this instead
+route("card", () => <CardDetailPage />),
+```
+
+### Layout with Outlet
+
+```tsx
+function KanbanLayout({ children }) {
+  return (
+    <div>
+      <KanbanBoard />
+      <Outlet name="@modal" />  {/* Intercept content renders here */}
+      <Outlet />                 {/* Normal route content */}
+    </div>
+  );
+}
+```
+
+### Behavior
+
+| Navigation Type | What Renders |
+|-----------------|--------------|
+| Click link to `/card` | `<CardModal />` in `@modal` slot, background preserved |
+| Direct URL `/card` | `<CardDetailPage />` as full page |
+| Back button from modal | Modal closes, background restored |
+
+### With Loaders and Revalidation
+
+```typescript
+intercept("@modal", "products.detail", <ProductModal />, () => [
+  loader(ProductLoader),
+  revalidate(({ currentParams, nextParams }) =>
+    currentParams.slug !== nextParams.slug
+  ),
+]),
+```
+
+## Data Loading
+
+```typescript
+import { createLoader } from "rsc-router";
+
+export const ProductLoader = createLoader(async (ctx) => {
+  return await db.products.findUnique({ where: { slug: ctx.params.slug } });
+});
+
+// In handler
+route("products.detail", async (ctx) => {
+  const product = await ctx.use(ProductLoader);
+  return <ProductDetail product={product} />;
+}, () => [
+  loader(ProductLoader),
+]);
+```
+
+## Revalidation
+
+Controls when segments re-render during client navigation:
+
+```typescript
+revalidate(({ currentParams, nextParams, defaultShouldRevalidate }) => {
+  return currentParams.slug !== nextParams.slug;
+});
+```
+
+**Return values:**
+- `true` / `false` - Hard decision, stops evaluation
+- `{ defaultShouldRevalidate: boolean }` - Soft decision, continues to next
+
+**Default behavior:**
+- Params changed -> revalidate
+- Only query/hash changed -> skip
+
+## Server Actions
+
+```typescript
+// actions/shop.ts
+"use server";
+
+export async function addToCart(productId: string) {
+  await db.cart.add({ productId });
+}
+
+// In component
+<form>
+  <button formAction={addToCart.bind(null, product.id)}>
+    Add to Cart
+  </button>
+</form>
+```
+
+Actions trigger automatic revalidation.
+
+## Error Boundaries
+
+```typescript
+errorBoundary(({ error, reset }) => (
+  <div>
+    <p>Error: {error.message}</p>
+    <button onClick={reset}>Try again</button>
+  </div>
+));
+```
+
+## NotFound Boundaries
+
+```typescript
+import { notFound } from "rsc-router";
+
+route("products.detail", async (ctx) => {
+  const product = await db.products.get(ctx.params.slug);
+  if (!product) throw notFound("Product not found");
+  return <ProductDetail product={product} />;
+}, () => [
+  notFoundBoundary(<ProductNotFound />),
+]);
+```
+
+## Handle API
+
+Accumulate data across route hierarchy (breadcrumbs, meta, etc.):
+
+```typescript
+// Define handle
+import { createHandle } from "rsc-router/client";
+
+export const Breadcrumbs = createHandle<{ label: string; href: string }>("breadcrumbs");
+
+// Push from handler
+const push = ctx.use(Breadcrumbs);
+push({ label: "Shop", href: "/shop" });
+
+// Consume in client component
+import { useHandle } from "rsc-router/client";
+
+function BreadcrumbNav() {
+  const crumbs = useHandle(Breadcrumbs);
+  return <nav>{crumbs.map(c => <a href={c.href}>{c.label}</a>)}</nav>;
+}
+```
+
+## Type-Safe Links
+
+### Setup: Register Routes
+
+For type-safe links, register your routes via module augmentation:
+
+```typescript
+// router.ts
+import { createRSCRouter, route } from "rsc-router/server";
+
+const shopRoutes = route({
+  index: "/",
+  cart: "/cart",
+  products: { detail: "/product/:slug" },
+});
+
+const router = createRSCRouter<AppEnv>();
+router.route("/shop", shopRoutes).map(() => import("./handlers/shop"));
+
+// Extract route types from router
+type AppRoutes = typeof router.routeMap;
+
+// Register globally for type-safe href
+declare global {
+  namespace RSCRouter {
+    interface RegisteredRoutes extends AppRoutes {}
+  }
+}
+
+// Export for use throughout app
+export { router };
+export const href = router.href;
+```
+
+### Using router.href (Route Names)
+
+Generate URLs from route names with type-safe params:
+
+```typescript
+import { href } from "./router";
+
+// Routes without params
+href("shop.index");  // "/shop"
+href("shop.cart");   // "/shop/cart"
+
+// Routes with params - TypeScript enforces required params
+href("shop.products.detail", { slug: "my-product" });  // "/shop/product/my-product"
+```
+
+### Using href from client (Path Validation)
+
+Validate paths at compile-time against registered routes:
+
+```typescript
+import { href } from "rsc-router/client";
+
+// Valid paths (compile)
+href("/shop/cart");              // matches /shop/cart
+href("/shop/product/widget");    // matches /shop/product/:slug
+
+// With query strings and hashes
+href("/shop/cart?coupon=ABC");
+href("/shop#featured");
+
+// Invalid paths cause TypeScript errors
+href("/nonexistent");  // Error: not assignable to ValidPaths
+```
+
+### Link Component
+
+SPA navigation with prefetch support:
+
+```tsx
+import { Link } from "rsc-router/client";
+
+// Basic usage
+<Link to="/shop">Shop</Link>
+
+// With type-safe href
+<Link to={href("/shop/product/widget")}>View Product</Link>
+
+// Options
+<Link to="/checkout" replace>Checkout</Link>      // Replace history
+<Link to="/about" scroll={false}>About</Link>     // Keep scroll position
+<Link to="/docs" prefetch="hover">Docs</Link>     // Prefetch on hover
+<Link to="/external" reloadDocument>Reload</Link> // Full page load
+```
+
+## Client Components
+
+```typescript
+import { Outlet, Link, useNavigation, useAction, useLoader } from "rsc-router/client";
+
+// Outlet renders child content
+<Outlet />
+<Outlet name="@sidebar" />
+
+// Hooks
+const { pathname, searchParams } = useNavigation();
+const data = useLoader(ProductLoader);
+```
+
+## Handler Context
+
+```typescript
+route("post", (ctx) => {
+  ctx.params.slug;        // Route params
+  ctx.pathname;           // Current path
+  ctx.searchParams;       // URLSearchParams
+  ctx.request;            // Original Request
+  ctx.url;                // URL object
+  // + AppContext fields (db, user, env, etc.)
+});
+```
+
+## Router Options
+
+```typescript
+createRSCRouter<AppContext>({
+  defaultErrorBoundary: ({ error }) => <DefaultError error={error} />,
+  defaultNotFoundBoundary: ({ notFound }) => <DefaultNotFound />,
+});
+```
