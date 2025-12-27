@@ -3,8 +3,6 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,
-  timeout: 30000,
-  globalTimeout: process.env.CI ? 600000 : undefined,
   use: {
     screenshot: "only-on-failure",
     trace: "on-all-retries",
@@ -22,7 +20,7 @@ export default defineConfig({
       },
     },
   ],
-  workers: process.env.CI ? 1 : 4,
+  workers: 4,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   reporter: [

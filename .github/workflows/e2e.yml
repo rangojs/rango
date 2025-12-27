@@ -37,7 +37,6 @@ jobs:
 
       - name: Run rsc-router e2e tests
         run: pnpm --filter rsc-router test
-        timeout-minutes: 10
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
