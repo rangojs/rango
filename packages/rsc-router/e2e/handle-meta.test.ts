@@ -94,7 +94,7 @@ test.describe("handle-meta", () => {
       const description = await page.locator('meta[name="description"]');
       await expect(description).toHaveAttribute(
         "content",
-        "A great product",
+        "First test product",
         { timeout: 5000 }
       );
     });
@@ -203,8 +203,16 @@ test.describe("handle-meta", () => {
 
       await expect(page).toHaveTitle("RSC Router Test App");
 
-      // Click on product link (soft navigation)
+      // Click on product link (opens modal/intercept first)
       await testId(page, "product-link-product-a").click();
+
+      // Wait for modal to appear
+      await expect(testId(page, "product-modal")).toBeVisible({
+        timeout: 5000,
+      });
+
+      // Click "View Full Details" to navigate to actual product page
+      await testId(page, "view-full-details").click();
 
       // Wait for product page and title update
       await expect(testId(page, "product-detail-page")).toBeVisible({
@@ -258,6 +266,107 @@ test.describe("handle-meta", () => {
         "content",
         "Blog posts from RSC Router"
       );
+    });
+  });
+
+  test.describe("SSR meta tags (no JavaScript)", () => {
+    const htmlHeaders = {
+      Accept: "text/html,application/xhtml+xml",
+    };
+
+    test("should include charset and viewport in initial HTML", async ({
+      request,
+    }) => {
+      const response = await request.get(f.url("/"), { headers: htmlHeaders });
+      const html = await response.text();
+
+      expect(html).toContain('<meta charSet="utf-8"');
+      expect(html).toContain('<meta name="viewport"');
+      expect(html).toContain("width=device-width, initial-scale=1");
+    });
+
+    test("should include title in initial HTML", async ({ request }) => {
+      const response = await request.get(f.url("/"), { headers: htmlHeaders });
+      const html = await response.text();
+
+      expect(html).toContain("<title>RSC Router Test App</title>");
+    });
+
+    test("should include description in initial HTML", async ({ request }) => {
+      const response = await request.get(f.url("/"), { headers: htmlHeaders });
+      const html = await response.text();
+
+      expect(html).toContain('<meta name="description"');
+      expect(html).toContain("E2E test application for RSC Router");
+    });
+
+    test("should include route-specific title in initial HTML", async ({
+      request,
+    }) => {
+      const response = await request.get(f.url("/blog"), {
+        headers: htmlHeaders,
+      });
+      const html = await response.text();
+
+      expect(html).toContain("<title>Blog - RSC Router Test App</title>");
+    });
+
+    test("should include route-specific description in initial HTML", async ({
+      request,
+    }) => {
+      const response = await request.get(f.url("/blog"), {
+        headers: htmlHeaders,
+      });
+      const html = await response.text();
+
+      expect(html).toContain('<meta name="description"');
+      expect(html).toContain("Blog posts from RSC Router");
+    });
+
+    test("should include dynamic route meta in initial HTML", async ({
+      request,
+    }) => {
+      const response = await request.get(f.url("/blog/post-1"), {
+        headers: htmlHeaders,
+      });
+      const html = await response.text();
+
+      expect(html).toContain(
+        "<title>Post post-1 - Blog - RSC Router Test App</title>"
+      );
+      expect(html).toContain("Content for post post-1");
+    });
+
+    test("should include awaited async meta in initial HTML (product page)", async ({
+      request,
+    }) => {
+      // Product page sets meta after awaiting ProductDetailLoader
+      const response = await request.get(f.url("/product/product-a"), {
+        headers: htmlHeaders,
+      });
+      const html = await response.text();
+
+      // Title and description are set after awaiting loader data
+      expect(html).toContain(
+        "<title>Product A - RSC Router Test App</title>"
+      );
+      expect(html).toContain("First test product");
+      expect(html).toContain('property="og:title"');
+      expect(html).toContain("Product A");
+    });
+
+    test("should include JSON-LD structured data in initial HTML", async ({
+      request,
+    }) => {
+      const response = await request.get(f.url("/product/product-a"), {
+        headers: htmlHeaders,
+      });
+      const html = await response.text();
+
+      // JSON-LD should be in initial HTML for SEO crawlers
+      expect(html).toContain('type="application/ld+json"');
+      expect(html).toContain("https://schema.org");
+      expect(html).toContain('"@type":"Product"');
     });
   });
 

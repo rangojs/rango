@@ -4,8 +4,7 @@
  * Component to render collected meta descriptors in the document head.
  *
  * Supports both sync and async meta descriptors. Async descriptors
- * (Promise<MetaDescriptorBase>) are resolved by RSC streaming before
- * reaching the client.
+ * (Promise<MetaDescriptorBase>) are resolved using React's use() hook.
  *
  * @example
  * ```tsx
@@ -22,9 +21,10 @@
  * ```
  */
 
+import { use } from "react";
 import { useHandle } from "../browser/react/use-handle.ts";
 import { Meta } from "./meta.ts";
-import type { MetaDescriptorBase } from "../router/types.ts";
+import type { MetaDescriptor, MetaDescriptorBase } from "../router/types.ts";
 
 // Type guards for MetaDescriptorBase variants
 function hasCharSet(d: MetaDescriptorBase): d is { charSet: "utf-8" } {
@@ -62,8 +62,14 @@ function hasTagName(d: MetaDescriptorBase): d is { tagName: "meta" | "link"; [na
 }
 
 /**
+ * Check if a value is a Promise.
+ */
+function isPromise(value: unknown): value is Promise<unknown> {
+  return value !== null && typeof value === "object" && "then" in value;
+}
+
+/**
  * Render a single meta descriptor as a React element.
- * By the time this runs, all promises have been resolved by RSC streaming.
  */
 function renderMetaDescriptor(
   descriptor: MetaDescriptorBase,
@@ -140,17 +146,33 @@ function renderMetaDescriptor(
 }
 
 /**
+ * Wrapper component to resolve a Promise<MetaDescriptorBase> using use().
+ */
+function AsyncMetaTag({ promise, index }: { promise: Promise<MetaDescriptorBase>; index: number }): React.ReactNode {
+  const resolved = use(promise);
+  return renderMetaDescriptor(resolved, index);
+}
+
+/**
  * Renders all collected meta descriptors from route handlers.
  *
  * Place this component inside the `<head>` element of your document.
  * It will automatically update when meta descriptors change during navigation.
  *
- * Async meta descriptors (Promise<MetaDescriptorBase>) are resolved by RSC
- * streaming before reaching the client, so no Suspense is needed here.
+ * Async meta descriptors (Promise<MetaDescriptorBase>) are resolved using
+ * React's use() hook. RSC streaming handles the Promise resolution.
  */
 export function MetaTags(): React.ReactNode {
-  // By the time useHandle returns, all promises have been resolved by RSC streaming
-  const descriptors = useHandle(Meta) as MetaDescriptorBase[];
+  const descriptors = useHandle(Meta) as MetaDescriptor[];
 
-  return <>{descriptors.map(renderMetaDescriptor)}</>;
+  return (
+    <>
+      {descriptors.map((descriptor, index) => {
+        if (isPromise(descriptor)) {
+          return <AsyncMetaTag key={`async-${index}`} promise={descriptor} index={index} />;
+        }
+        return renderMetaDescriptor(descriptor, index);
+      })}
+    </>
+  );
 }

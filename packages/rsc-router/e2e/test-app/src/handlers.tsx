@@ -1,5 +1,5 @@
 import { map, Meta } from "rsc-router/server";
-import { Outlet, Link, MetaTags } from "rsc-router/client";
+import { Outlet, Link } from "rsc-router/client";
 import type { testRoutes } from "./routes.js";
 import {
   ProductsLoader,
@@ -42,26 +42,19 @@ export default map<typeof testRoutes>(
         meta({ name: "description", content: "E2E test application for RSC Router" });
 
         return (
-          <html lang="en">
-            <head>
-              <MetaTags />
-            </head>
-            <body>
-              <div data-testid="app-root">
-                <nav data-testid="nav">
-                  <Link to="/" data-testid="nav-home">
-                    Home
-                  </Link>
-                  <NavigationStatus testId="nav-status" />
-                </nav>
-                <BreadcrumbNav testId="breadcrumbs" />
-                <main data-testid="main-content">
-                  <Outlet />
-                </main>
-                <Outlet name="@modal" />
-              </div>
-            </body>
-          </html>
+          <div data-testid="app-root">
+            <nav data-testid="nav">
+              <Link to="/" data-testid="nav-home">
+                Home
+              </Link>
+              <NavigationStatus testId="nav-status" />
+            </nav>
+            <BreadcrumbNav testId="breadcrumbs" />
+            <main data-testid="main-content">
+              <Outlet />
+            </main>
+            <Outlet name="@modal" />
+          </div>
         );
       },
       () => [
