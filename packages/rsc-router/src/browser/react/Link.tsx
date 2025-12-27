@@ -1,8 +1,13 @@
 "use client";
 
-import React, { forwardRef, useCallback, useContext, type ForwardRefExoticComponent, type RefAttributes } from "react";
+import React, { forwardRef, useCallback, useContext, useRef, type ForwardRefExoticComponent, type RefAttributes } from "react";
 import { NavigationStoreContext } from "./context.js";
 import type { NavigateOptions } from "../types.js";
+
+/**
+ * State value or getter function for just-in-time state resolution
+ */
+export type StateOrGetter<T = unknown> = T | (() => T);
 
 // Track prefetched URLs to avoid duplicate <link> elements
 const prefetchedUrls = new Set<string>();
@@ -65,6 +70,21 @@ export interface LinkProps
    * @default "none"
    */
   prefetch?: PrefetchStrategy;
+  /**
+   * State to pass to history.pushState/replaceState.
+   * Can be a value or a getter function for just-in-time resolution.
+   * Accessible via useLocationState() hook.
+   *
+   * @example
+   * ```tsx
+   * // Static state
+   * <Link to="/product" state={{ from: "list" }}>View</Link>
+   *
+   * // Dynamic state (called at click time)
+   * <Link to="/product" state={() => ({ scrollY: window.scrollY })}>View</Link>
+   * ```
+   */
+  state?: StateOrGetter;
   children: React.ReactNode;
 }
 
@@ -115,6 +135,7 @@ export const Link: ForwardRefExoticComponent<LinkProps & RefAttributes<HTMLAncho
     scroll = true,
     reloadDocument = false,
     prefetch = "none",
+    state,
     children,
     onClick,
     ...props
@@ -123,6 +144,11 @@ export const Link: ForwardRefExoticComponent<LinkProps & RefAttributes<HTMLAncho
 ) {
   const ctx = useContext(NavigationStoreContext);
   const isExternal = isExternalUrl(to);
+
+  // Use ref to always get the latest state/getter without adding to useCallback deps
+  // This enables just-in-time state resolution without causing re-renders
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   const handleClick = useCallback(
     (e: React.MouseEvent<HTMLAnchorElement>) => {
@@ -151,9 +177,16 @@ export const Link: ForwardRefExoticComponent<LinkProps & RefAttributes<HTMLAncho
 
       // Prevent default and use SPA navigation
       e.preventDefault();
+      // Stop propagation to prevent link-interceptor from also handling this
+      e.stopPropagation();
 
       if (ctx?.navigate) {
-        ctx.navigate(to, { replace, scroll } as NavigateOptions);
+        // Resolve state just-in-time: call getter if function, otherwise use value
+        const resolvedState =
+          typeof stateRef.current === "function"
+            ? stateRef.current()
+            : stateRef.current;
+        ctx.navigate(to, { replace, scroll, state: resolvedState });
       }
     },
     [to, isExternal, reloadDocument, replace, scroll, ctx, onClick]
@@ -172,6 +205,8 @@ export const Link: ForwardRefExoticComponent<LinkProps & RefAttributes<HTMLAncho
       href={to}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
+      data-link-component
+      data-external={isExternal ? "" : undefined}
       data-scroll={scroll === false ? "false" : undefined}
       data-replace={replace ? "true" : undefined}
       {...props}

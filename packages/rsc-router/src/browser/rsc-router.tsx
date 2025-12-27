@@ -54,6 +54,21 @@ export interface InitBrowserAppOptions {
      */
     cacheSize?: number;
   };
+
+  /**
+   * Enable global link interception for SPA navigation.
+   * When enabled, clicks on same-origin anchor elements are intercepted
+   * and handled via client-side navigation instead of full page loads.
+   *
+   * Links rendered with the Link component handle their own navigation
+   * regardless of this setting.
+   *
+   * Set to false to disable global interception and rely solely on
+   * Link components for SPA navigation.
+   *
+   * @default true
+   */
+  linkInterception?: boolean;
 }
 
 /**
@@ -82,7 +97,7 @@ let browserAppContext: BrowserAppContext | null = null;
 export async function initBrowserApp(
   options: InitBrowserAppOptions
 ): Promise<BrowserAppContext> {
-  const { rscStream, deps, storeOptions } = options;
+  const { rscStream, deps, storeOptions, linkInterception = true } = options;
 
   // Load initial payload from SSR-injected __FLIGHT_DATA__
   const initialPayload =
@@ -157,7 +172,11 @@ export async function initBrowserApp(
     onUpdate: (update) => store.emitUpdate(update),
     renderSegments,
   });
-  navigationBridge.registerLinkInterception();
+
+  // Optionally enable global link interception
+  if (linkInterception) {
+    navigationBridge.registerLinkInterception();
+  }
 
   // Build initial tree with rootLayout
   const initialTree = renderSegments(initialPayload.metadata!.segments);

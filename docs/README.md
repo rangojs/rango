@@ -367,7 +367,84 @@ import { Link } from "rsc-router/client";
 <Link to="/about" scroll={false}>About</Link>     // Keep scroll position
 <Link to="/docs" prefetch="hover">Docs</Link>     // Prefetch on hover
 <Link to="/external" reloadDocument>Reload</Link> // Full page load
+
+// With navigation state
+<Link to="/product/123" state={{ from: "list" }}>View Product</Link>
 ```
+
+### Navigation State
+
+Pass state through navigation that persists in `history.state`:
+
+```tsx
+import { useNavigation, useLocationState } from "rsc-router/client";
+
+// Navigate with state
+const { navigate } = useNavigation();
+navigate("/product/123", { state: { from: "list", scrollY: 500 } });
+
+// Or via Link (static state)
+<Link to="/product/123" state={{ from: "list" }}>View</Link>
+
+// Just-in-time state getter (called at click time)
+<Link to="/product/123" state={() => ({ scrollY: window.scrollY })}>
+  View
+</Link>
+
+// Read state in target component
+function ProductPage() {
+  const locationState = useLocationState<{ from?: string; scrollY?: number }>();
+
+  if (locationState?.from === "list") {
+    return <BackToListButton scrollY={locationState.scrollY} />;
+  }
+  return <ProductDetails />;
+}
+```
+
+State is preserved on browser back/forward navigation. Using a getter function avoids stale closures and captures the latest values at click time.
+
+## Link Interception
+
+By default, RSC Router intercepts clicks on same-origin anchor elements for SPA navigation. This behavior can be configured.
+
+### Global Interception Toggle
+
+Disable global link interception to rely solely on `<Link>` components:
+
+```typescript
+await initBrowserApp({
+  rscStream,
+  deps,
+  linkInterception: false,  // Disable global interception
+});
+```
+
+### Data Attributes
+
+Control interception behavior on individual anchors:
+
+| Attribute | Effect |
+|-----------|--------|
+| `data-link-component` | Link component marker (auto-added). These anchors handle their own navigation. |
+| `data-external` | External link marker (auto-added by Link). Never intercepted. |
+| `data-no-intercept="true"` | Opt-out individual anchors from global interception. |
+
+```html
+<!-- This anchor won't be intercepted -->
+<a href="/legacy-page" data-no-intercept="true">Legacy Page</a>
+```
+
+### Interception Rules
+
+Links are **not intercepted** when:
+- Cross-origin (different host)
+- Has `download` attribute
+- Has `target` other than `_self`
+- Has `data-no-intercept="true"`
+- Has `data-link-component` (Link component)
+- Has `data-external` (external link)
+- Modifier keys pressed (Cmd/Ctrl/Shift/Alt)
 
 ## Client Components
 

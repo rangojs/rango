@@ -171,6 +171,11 @@ export interface NavigationUpdate {
 export interface NavigateOptions {
   replace?: boolean;
   scroll?: boolean;
+  /**
+   * State to pass to history.pushState/replaceState
+   * Accessible via useLocationState() hook or window.history.state
+   */
+  state?: unknown;
 }
 
 // ============================================================================

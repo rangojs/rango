@@ -52,6 +52,8 @@ interface CommitOptions {
   segments: ResolvedSegment[];
   replace?: boolean;
   scroll?: boolean;
+  /** User-provided state to store in history.state */
+  state?: unknown;
   /** If true, only update store without changing URL/history (for server actions) */
   storeOnly?: boolean;
   /** If true, this is an intercept route - store in history.state for popstate handling */
@@ -70,6 +72,8 @@ interface BoundCommitOverrides {
   scroll?: boolean;
   /** Override replace behavior (e.g., force replace for intercepts) */
   replace?: boolean;
+  /** Override user-provided state */
+  state?: unknown;
   /** Mark this as an intercept route */
   intercept?: boolean;
   /** Source URL where intercept was triggered from */
@@ -130,10 +134,18 @@ function createNavigationTransaction(
 ): NavigationTransaction {
   let committed = false;
   let optimisticallyCommitted = false;
+  let earlyStatePushed = false;
   const currentUrl = window.location.href;
 
   // Start navigation in event controller (this sets loading state)
   const handle = eventController.startNavigation(url, options);
+
+  // If state is provided, push it to history immediately so loading UI can access it
+  // This enables "optimistic state" - showing product names in skeletons etc.
+  if (options?.state !== undefined && !options?.replace) {
+    window.history.pushState({ state: options.state }, "", url);
+    earlyStatePushed = true;
+  }
 
   /**
    * Optimistically commit from cache - renders immediately before revalidation
@@ -161,11 +173,15 @@ function createNavigationTransaction(
     const currentHandleData = eventController.getHandleState().data;
     store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
 
+    // Build history state with user state if provided
+    const historyState = opts.state !== undefined ? { state: opts.state } : null;
+
     // Update browser URL
-    if (replace) {
-      window.history.replaceState(null, "", url);
+    // Use replaceState if we already pushed early (for optimistic state access)
+    if (replace || earlyStatePushed) {
+      window.history.replaceState(historyState, "", url);
     } else {
-      window.history.pushState(null, "", url);
+      window.history.pushState(historyState, "", url);
     }
 
     // Ensure new history entry has a scroll restoration key
@@ -243,14 +259,19 @@ function createNavigationTransaction(
       return;
     }
 
-    // Build history state - include intercept info for popstate handling
-    const historyState = intercept
-      ? { intercept: true, sourceUrl: interceptSourceUrl }
-      : null;
+    // Build history state - include user state and intercept info for popstate handling
+    const historyState: Record<string, unknown> | null =
+      opts.state !== undefined || intercept
+        ? {
+            ...(opts.state !== undefined ? { state: opts.state } : {}),
+            ...(intercept ? { intercept: true, sourceUrl: interceptSourceUrl } : {}),
+          }
+        : null;
 
     // Update browser URL (skip if reconciliation - already done in optimisticCommit)
     if (!isReconciliation) {
-      if (replace) {
+      // Use replaceState if we already pushed early (for optimistic state access) or replace requested
+      if (replace || earlyStatePushed) {
         window.history.replaceState(historyState, "", url);
       } else {
         window.history.pushState(historyState, "", url);
@@ -322,12 +343,16 @@ function createNavigationTransaction(
             overrides?.cacheOnly !== undefined
               ? overrides.cacheOnly
               : opts.cacheOnly;
+          // User state: overrides take precedence, fallback to opts
+          const state =
+            overrides?.state !== undefined ? overrides.state : opts.state;
           commit({
             ...opts,
             segmentIds,
             segments,
             scroll: finalScroll,
             replace: finalReplace,
+            state,
             intercept,
             interceptSourceUrl,
             cacheOnly,
@@ -436,7 +461,7 @@ export function createNavigationBridge(
           hasUsableCache ? cachedSegments!.map((s) => s.id) : undefined,
           false,
           tx.handle.signal,
-          tx.with({ url, replace: options?.replace, scroll: options?.scroll }),
+          tx.with({ url, replace: options?.replace, scroll: options?.scroll, state: options?.state }),
           // Pass cached segments so the segment map is consistent with what we
           // tell the server we have. If server returns empty diff, we use these.
           hasUsableCache ? { targetCacheSegments: cachedSegments } : undefined
