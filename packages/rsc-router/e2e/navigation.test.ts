@@ -431,10 +431,10 @@ test.describe("navigation-state", () => {
       timeout: 5000,
     });
 
-    // Check history state contains our passed state
+    // Check history state contains our passed state (typed location state uses __rsc_ls_ prefix)
     const state = await getHistoryState(page);
-    expect(state?.state?.productName).toBe("Slow Product A");
-    expect(state?.state?.productPrice).toBe(99);
+    expect(state?.__rsc_ls_slowProduct?.productName).toBe("Slow Product A");
+    expect(state?.__rsc_ls_slowProduct?.productPrice).toBe(99);
   });
 });
 

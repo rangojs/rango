@@ -3,11 +3,23 @@
 import React, { forwardRef, useCallback, useContext, useRef, type ForwardRefExoticComponent, type RefAttributes } from "react";
 import { NavigationStoreContext } from "./context.js";
 import type { NavigateOptions } from "../types.js";
+import {
+  type LocationStateEntry,
+  isLocationStateEntry,
+  resolveLocationStateEntries,
+} from "./location-state.js";
 
 /**
- * State value or getter function for just-in-time state resolution
+ * State value or getter function for just-in-time state resolution (legacy)
  */
 export type StateOrGetter<T = unknown> = T | (() => T);
+
+/**
+ * State prop type for Link component
+ * - LocationStateEntry[]: Type-safe state entries (always lazy)
+ * - StateOrGetter: Legacy format for backwards compatibility
+ */
+export type LinkState = LocationStateEntry[] | StateOrGetter;
 
 // Track prefetched URLs to avoid duplicate <link> elements
 const prefetchedUrls = new Set<string>();
@@ -72,19 +84,25 @@ export interface LinkProps
   prefetch?: PrefetchStrategy;
   /**
    * State to pass to history.pushState/replaceState.
-   * Can be a value or a getter function for just-in-time resolution.
    * Accessible via useLocationState() hook.
    *
    * @example
    * ```tsx
-   * // Static state
+   * // Type-safe state with createLocationState (recommended)
+   * const ProductState = createLocationState((p: Product) => ({ name: p.name }));
+   * <Link to="/product" state={[ProductState(product)]}>View</Link>
+   *
+   * // Multiple typed states
+   * <Link to="/checkout" state={[ProductState(p), CartState(c)]}>Checkout</Link>
+   *
+   * // Legacy: static state
    * <Link to="/product" state={{ from: "list" }}>View</Link>
    *
-   * // Dynamic state (called at click time)
+   * // Legacy: dynamic state (called at click time)
    * <Link to="/product" state={() => ({ scrollY: window.scrollY })}>View</Link>
    * ```
    */
-  state?: StateOrGetter;
+  state?: LinkState;
   children: React.ReactNode;
 }
 
@@ -181,11 +199,21 @@ export const Link: ForwardRefExoticComponent<LinkProps & RefAttributes<HTMLAncho
       e.stopPropagation();
 
       if (ctx?.navigate) {
-        // Resolve state just-in-time: call getter if function, otherwise use value
-        const resolvedState =
-          typeof stateRef.current === "function"
-            ? stateRef.current()
-            : stateRef.current;
+        // Resolve state just-in-time based on format
+        let resolvedState: unknown;
+        const currentState = stateRef.current;
+
+        if (Array.isArray(currentState) && currentState.length > 0 && isLocationStateEntry(currentState[0])) {
+          // Type-safe LocationStateEntry[] - resolve each entry into keyed object
+          resolvedState = resolveLocationStateEntries(currentState as LocationStateEntry[]);
+        } else if (typeof currentState === "function") {
+          // Legacy getter function
+          resolvedState = currentState();
+        } else {
+          // Legacy static value
+          resolvedState = currentState;
+        }
+
         ctx.navigate(to, { replace, scroll, state: resolvedState });
       }
     },

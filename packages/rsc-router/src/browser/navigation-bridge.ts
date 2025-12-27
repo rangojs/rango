@@ -5,6 +5,47 @@ import type {
   NavigationStore,
   ResolvedSegment,
 } from "./types.js";
+
+/**
+ * Check if state is from typed LocationStateEntry[] (has __rsc_ls_ keys)
+ */
+function isTypedLocationState(state: unknown): state is Record<string, unknown> {
+  if (state === null || typeof state !== "object") return false;
+  return Object.keys(state).some((key) => key.startsWith("__rsc_ls_"));
+}
+
+/**
+ * Build history state object from user state
+ * - Typed state: spread directly into history.state
+ * - Legacy state: store in history.state.state
+ */
+function buildHistoryState(
+  userState: unknown,
+  routerState?: { intercept?: boolean; sourceUrl?: string }
+): Record<string, unknown> | null {
+  const result: Record<string, unknown> = {};
+
+  // Add router internal state
+  if (routerState?.intercept) {
+    result.intercept = true;
+    if (routerState.sourceUrl) {
+      result.sourceUrl = routerState.sourceUrl;
+    }
+  }
+
+  // Add user state
+  if (userState !== undefined) {
+    if (isTypedLocationState(userState)) {
+      // Typed state: spread directly
+      Object.assign(result, userState);
+    } else {
+      // Legacy state: store in .state
+      result.state = userState;
+    }
+  }
+
+  return Object.keys(result).length > 0 ? result : null;
+}
 import { setupLinkInterception } from "./link-interceptor.js";
 import { createPartialUpdater } from "./partial-update.js";
 import { generateHistoryKey } from "./navigation-store.js";
@@ -143,7 +184,8 @@ function createNavigationTransaction(
   // If state is provided, push it to history immediately so loading UI can access it
   // This enables "optimistic state" - showing product names in skeletons etc.
   if (options?.state !== undefined && !options?.replace) {
-    window.history.pushState({ state: options.state }, "", url);
+    const earlyHistoryState = buildHistoryState(options.state);
+    window.history.pushState(earlyHistoryState, "", url);
     earlyStatePushed = true;
   }
 
@@ -174,7 +216,7 @@ function createNavigationTransaction(
     store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
 
     // Build history state with user state if provided
-    const historyState = opts.state !== undefined ? { state: opts.state } : null;
+    const historyState = buildHistoryState(opts.state);
 
     // Update browser URL
     // Use replaceState if we already pushed early (for optimistic state access)
@@ -260,13 +302,10 @@ function createNavigationTransaction(
     }
 
     // Build history state - include user state and intercept info for popstate handling
-    const historyState: Record<string, unknown> | null =
-      opts.state !== undefined || intercept
-        ? {
-            ...(opts.state !== undefined ? { state: opts.state } : {}),
-            ...(intercept ? { intercept: true, sourceUrl: interceptSourceUrl } : {}),
-          }
-        : null;
+    const historyState = buildHistoryState(opts.state, {
+      intercept,
+      sourceUrl: interceptSourceUrl,
+    });
 
     // Update browser URL (skip if reconciliation - already done in optimisticCommit)
     if (!isReconciliation) {

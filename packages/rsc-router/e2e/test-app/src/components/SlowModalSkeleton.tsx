@@ -2,14 +2,10 @@
 
 import { useLocationState } from "rsc-router/client";
 import { Modal } from "./Modal.js";
-
-interface SlowProductLocationState {
-  productName?: string;
-  productPrice?: number;
-}
+import { SlowProductLocationState } from "../location-states.js";
 
 export function SlowModalSkeleton() {
-  const locationState = useLocationState<SlowProductLocationState>();
+  const locationState = useLocationState(SlowProductLocationState);
   const productName = locationState?.productName;
   const productPrice = locationState?.productPrice;
 

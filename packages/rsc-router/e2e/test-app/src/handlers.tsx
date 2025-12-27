@@ -1,6 +1,7 @@
 import { map } from "rsc-router/server";
 import { Outlet, Link } from "rsc-router/client";
 import type { testRoutes } from "./routes.js";
+import { SlowProductLocationState } from "./location-states.js";
 import {
   ProductsLoader,
   ProductDetailLoader,
@@ -114,7 +115,7 @@ export default map<typeof testRoutes>(
                     <li>
                       <Link
                         to="/slow-product/slow-product-a"
-                        state={{ productName: "Slow Product A", productPrice: 99 }}
+                        state={[SlowProductLocationState({ productName: "Slow Product A", productPrice: 99 })]}
                         data-testid="slow-product-link"
                       >
                         /slow-product - Intercept with streaming loader (with state)
