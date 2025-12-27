@@ -471,7 +471,7 @@ export default map<typeof testRoutes>(
           meta({ title: `Post ${ctx.params.postId} - Blog - RSC Router Test App` });
           meta({ name: "description", content: `Content for post ${ctx.params.postId}` });
 
-          // Test async meta - og:description streams in after 500ms
+          // Test async meta with Promise - og:description streams in after 500ms
           meta(
             new Promise((resolve) =>
               setTimeout(
@@ -480,6 +480,12 @@ export default map<typeof testRoutes>(
               )
             )
           );
+
+          // Test async meta with IIFE pattern - og:author streams in after 300ms
+          meta((async () => {
+            await new Promise((r) => setTimeout(r, 300));
+            return { name: "author", content: `Author of ${ctx.params.postId}` };
+          })());
           return (
             <div data-testid="blog-post-page">
               <Link to="/blog" data-testid="back-to-blog">

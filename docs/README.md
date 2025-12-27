@@ -397,7 +397,7 @@ meta({ "script:ld+json": { "@type": "Product", name: "..." } });
 
 ### Async Meta (Streaming)
 
-Meta can be set after awaiting data - it streams with RSC:
+**Option 1: Await first, then set meta**
 
 ```typescript
 route("product", async (ctx) => {
@@ -411,6 +411,34 @@ route("product", async (ctx) => {
   return <Product product={product} />;
 });
 ```
+
+**Option 2: Pass a Promise directly**
+
+Meta accepts `Promise<MetaDescriptor>` for deferred resolution:
+
+```typescript
+route("product", (ctx) => {
+  const meta = ctx.use(Meta);
+
+  // Pass async function result (Promise) - streams when resolved
+  meta((async () => {
+    const product = await fetchProduct(ctx.params.id);
+    return { property: "og:description", content: product.description };
+  })());
+
+  // Or with explicit Promise
+  meta(
+    fetchProduct(ctx.params.id).then(product => ({
+      property: "og:image",
+      content: product.image
+    }))
+  );
+
+  return <ProductSkeleton />;  // Renders immediately, meta streams in
+});
+```
+
+This pattern is useful when you want the page to render immediately while meta streams in later.
 
 ### Deduplication
 

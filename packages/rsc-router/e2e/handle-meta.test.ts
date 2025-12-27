@@ -127,6 +127,19 @@ test.describe("handle-meta", () => {
       );
     });
 
+    test("should stream async meta from IIFE pattern", async ({ page }) => {
+      await page.goto(f.url("/blog/post-1"));
+      await waitForHydration(page);
+
+      // The author meta is pushed as an async IIFE that resolves after 300ms
+      const author = page.locator('meta[name="author"]');
+      await expect(author).toHaveAttribute(
+        "content",
+        "Author of post-1",
+        { timeout: 3000 }
+      );
+    });
+
     test("should update async meta on navigation", async ({ page }) => {
       await page.goto(f.url("/blog/post-1"));
       await waitForHydration(page);
