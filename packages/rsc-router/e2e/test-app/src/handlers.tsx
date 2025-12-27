@@ -944,3 +944,5 @@ export default map<typeof testRoutes>(
     ),
   ]
 );
+
+// HMR trigger: 1766836681429

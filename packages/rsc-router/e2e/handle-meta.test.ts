@@ -437,7 +437,12 @@ test.describe("handle-meta", () => {
       await page.goto(f.url("/handle-passthrough-async"));
       await waitForHydration(page);
 
-      // Wait for async child to resolve (2s delay)
+      // Wait for loading state to disappear first
+      await expect(testId(page, "async-passthrough-loading")).toBeHidden({
+        timeout: 10000,
+      });
+
+      // Then wait for async child content (2s delay in component)
       await expect(testId(page, "async-child-meta-setter")).toBeVisible({
         timeout: 5000,
       });
@@ -472,7 +477,12 @@ test.describe("handle-meta", () => {
       await page.goto(f.url("/handle-passthrough-async"));
       await waitForHydration(page);
 
-      // Wait for async child content
+      // Wait for loading state to disappear first
+      await expect(testId(page, "async-passthrough-loading")).toBeHidden({
+        timeout: 10000,
+      });
+
+      // Then wait for async child content
       await expect(testId(page, "async-child-meta-setter")).toBeVisible({
         timeout: 5000,
       });
