@@ -3,6 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,
+  globalTimeout: 600000, // 10 minutes max
   use: {
     screenshot: "only-on-failure",
     trace: "on-all-retries",
