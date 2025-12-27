@@ -31,14 +31,32 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
     });
   });
 
-  async function findPort(): Promise<number> {
+  async function findPort(timeoutMs = 60000): Promise<number> {
     let stdout = "";
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(
+          new Error(
+            `Timed out waiting for server to start after ${timeoutMs}ms. Stdout: ${stdout}`
+          )
+        );
+      }, timeoutMs);
+
       child.stdout!.on("data", (data) => {
         stdout += stripVTControlCharacters(String(data));
         const match = stdout.match(/http:\/\/localhost:(\d+)/);
         if (match) {
+          clearTimeout(timeout);
           resolve(Number(match[1]));
+        }
+      });
+
+      child.on("exit", (code) => {
+        clearTimeout(timeout);
+        if (code !== 0) {
+          reject(
+            new Error(`Server exited with code ${code}. Stdout: ${stdout}`)
+          );
         }
       });
     });
