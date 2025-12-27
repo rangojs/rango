@@ -374,35 +374,101 @@ import { Link } from "rsc-router/client";
 
 ### Navigation State
 
-Pass state through navigation that persists in `history.state`:
+Pass typed state through navigation that persists in `history.state`.
+
+#### Type-Safe State (Recommended)
+
+Define state with `createLocationState` for type safety:
 
 ```tsx
-import { useNavigation, useLocationState } from "rsc-router/client";
+// location-states.ts
+import { createLocationState } from "rsc-router/client";
 
-// Navigate with state
-const { navigate } = useNavigation();
-navigate("/product/123", { state: { from: "list", scrollY: 500 } });
+// Define typed state with a stable key
+export const ProductState = createLocationState<{
+  name: string;
+  price: number;
+}>("product");
 
-// Or via Link (static state)
-<Link to="/product/123" state={{ from: "list" }}>View</Link>
+export const ScrollState = createLocationState<{ scrollY: number }>("scroll");
+```
 
-// Just-in-time state getter (called at click time)
-<Link to="/product/123" state={() => ({ scrollY: window.scrollY })}>
-  View
+Use in navigation:
+
+```tsx
+import { Link, useNavigation } from "rsc-router/client";
+import { ProductState, ScrollState } from "./location-states";
+
+// Via Link - pass array of state entries
+<Link
+  to="/product/123"
+  state={[ProductState({ name: "Widget", price: 29 })]}
+>
+  View Product
 </Link>
 
-// Read state in target component
-function ProductPage() {
-  const locationState = useLocationState<{ from?: string; scrollY?: number }>();
+// Multiple states
+<Link
+  to="/checkout"
+  state={[ProductState(product), ScrollState({ scrollY: window.scrollY })]}
+>
+  Checkout
+</Link>
 
-  if (locationState?.from === "list") {
-    return <BackToListButton scrollY={locationState.scrollY} />;
+// Via navigate - same API
+const { navigate } = useNavigation();
+navigate("/product/123", {
+  state: [ProductState({ name: "Widget", price: 29 })]
+});
+```
+
+Read typed state:
+
+```tsx
+import { useLocationState } from "rsc-router/client";
+import { ProductState } from "./location-states";
+
+function ProductModal() {
+  // Type-safe: returns { name: string; price: number } | undefined
+  const product = useLocationState(ProductState);
+
+  if (product) {
+    return <div>Loading {product.name} (${product.price})...</div>;
   }
-  return <ProductDetails />;
+  return <div>Loading...</div>;
 }
 ```
 
-State is preserved on browser back/forward navigation. Using a getter function avoids stale closures and captures the latest values at click time.
+#### Lazy Evaluation
+
+For values that should be captured at click time (not render time):
+
+```tsx
+// Pass a getter function - called when user clicks
+<Link
+  to="/product/123"
+  state={[ScrollState(() => ({ scrollY: window.scrollY }))]}
+>
+  View
+</Link>
+```
+
+#### Legacy Format (Backwards Compatible)
+
+Simple untyped state still works:
+
+```tsx
+// Static state
+<Link to="/product/123" state={{ from: "list" }}>View</Link>
+
+// Navigate with legacy state
+navigate("/product/123", { state: { from: "list" } });
+
+// Read legacy state (untyped)
+const state = useLocationState<{ from?: string }>();
+```
+
+State is preserved on browser back/forward navigation.
 
 ## Link Interception
 

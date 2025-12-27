@@ -5,6 +5,10 @@ import type {
   NavigationStore,
   ResolvedSegment,
 } from "./types.js";
+import {
+  isLocationStateEntry,
+  resolveLocationStateEntries,
+} from "./react/location-state-shared.js";
 
 /**
  * Check if state is from typed LocationStateEntry[] (has __rsc_ls_ keys)
@@ -12,6 +16,18 @@ import type {
 function isTypedLocationState(state: unknown): state is Record<string, unknown> {
   if (state === null || typeof state !== "object") return false;
   return Object.keys(state).some((key) => key.startsWith("__rsc_ls_"));
+}
+
+/**
+ * Resolve navigation state - handles both LocationStateEntry[] and legacy formats
+ */
+function resolveNavigationState(state: unknown): unknown {
+  // Check if it's an array of LocationStateEntry
+  if (Array.isArray(state) && state.length > 0 && isLocationStateEntry(state[0])) {
+    return resolveLocationStateEntries(state);
+  }
+  // Return as-is for legacy formats
+  return state;
 }
 
 /**
@@ -456,6 +472,11 @@ export function createNavigationBridge(
      * Uses optimistic rendering from cache when available (SWR pattern)
      */
     async navigate(url: string, options?: NavigateOptions): Promise<void> {
+      // Resolve LocationStateEntry[] to flat object if needed
+      const resolvedState = options?.state !== undefined
+        ? resolveNavigationState(options.state)
+        : undefined;
+
       // Only abort pending requests when navigating to a different route
       // Same-route navigation (e.g., /todos -> /todos) should not cancel in-flight actions
       const currentPath = new URL(window.location.href).pathname;
@@ -490,6 +511,7 @@ export function createNavigationBridge(
 
       using tx = createNavigationTransaction(store, eventController, url, {
         ...options,
+        state: resolvedState,
         skipLoadingState: hasUsableCache,
       });
 
@@ -500,7 +522,7 @@ export function createNavigationBridge(
           hasUsableCache ? cachedSegments!.map((s) => s.id) : undefined,
           false,
           tx.handle.signal,
-          tx.with({ url, replace: options?.replace, scroll: options?.scroll, state: options?.state }),
+          tx.with({ url, replace: options?.replace, scroll: options?.scroll, state: resolvedState }),
           // Pass cached segments so the segment map is consistent with what we
           // tell the server we have. If server returns empty diff, we use these.
           hasUsableCache ? { targetCacheSegments: cachedSegments } : undefined
