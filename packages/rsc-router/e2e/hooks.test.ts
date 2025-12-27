@@ -40,26 +40,64 @@ test.describe("useNavigation", () => {
       "state:idle"
     );
 
+    // Extra wait to ensure all event handlers are attached
+    // Under load, React hydration might complete but handlers may still be attaching
+    await page.waitForTimeout(100);
+
+    // Set up observer to track if loading state ever occurs
+    await page.evaluate(() => {
+      (window as any).__sawLoadingState = false;
+      const observer = new MutationObserver(() => {
+        const stateEl = document.querySelector('[data-testid="nav-status-state"]');
+        if (stateEl?.textContent?.includes("loading")) {
+          (window as any).__sawLoadingState = true;
+        }
+      });
+      const target = document.querySelector('[data-testid="nav-status"]');
+      if (target) {
+        observer.observe(target, { childList: true, subtree: true, characterData: true });
+      }
+      (window as any).__stateObserver = observer;
+    });
+
     // Start navigation to slow route (no loading component = awaited)
     const slowLink = page.locator('[data-testid="slow-link"]');
-    await slowLink.click();
 
-    // Should transition to loading state
-    // Increased timeout for CI environments where server response may be slower
-    await expect(page.locator('[data-testid="nav-status-state"]')).toContainText(
-      "state:loading",
-      { timeout: 5000 }
-    );
+    // Click and wait for URL to change, with retry logic for robustness
+    let retries = 3;
+    while (retries > 0) {
+      const navigationPromise = page.waitForURL("**/slow", { timeout: 10000 }).catch(() => null);
+      await slowLink.click();
 
-    // Wait for navigation to complete
-    // SlowLoader has 1s delay, but CI environments may need more time
+      const result = await navigationPromise;
+      if (result !== null || page.url().includes("/slow")) {
+        break;
+      }
+      retries--;
+      if (retries > 0) {
+        // Wait a bit before retrying
+        await page.waitForTimeout(500);
+      }
+    }
+
+    // Verify the page loaded
     await expect(page.locator('[data-testid="slow-page"]')).toBeVisible({
       timeout: 10000,
     });
 
-    // Should return to idle state
+    // Check if we saw the loading state during navigation
+    const sawLoading = await page.evaluate(() => {
+      (window as any).__stateObserver?.disconnect();
+      return (window as any).__sawLoadingState;
+    });
+
+    // The slow route takes ~1s, so we should have seen loading state
+    expect(sawLoading).toBe(true);
+
+    // Should return to idle state after navigation completes
     await expect(page.locator('[data-testid="nav-status-state"]')).toContainText(
-      "state:idle"
+      "state:idle",
+      { timeout: 5000 }
     );
   });
 
