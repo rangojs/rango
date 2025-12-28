@@ -32,6 +32,7 @@ import type {
   NotFoundBoundaryFallbackProps,
   LoaderDataResult,
   RouterInternalContext,
+  TrailingSlashMode,
 } from "./types";
 import type { HandleStore } from "./server/handle-store.js";
 import type { AllUseItems } from "./route-types.js";
@@ -2688,6 +2689,9 @@ export function createRSCRouter<TEnv = any>(
     // Auto-register route map for runtime href() usage
     registerRouteMap(mergedRouteMap);
 
+    // Extract trailing slash config if present (attached by route())
+    const trailingSlashConfig = (routes as any).__trailingSlash as Record<string, TrailingSlashMode> | undefined;
+
     return {
       map(
         handler: () =>
@@ -2698,6 +2702,7 @@ export function createRSCRouter<TEnv = any>(
         routesEntries.push({
           prefix,
           routes: routes as ResolvedRouteMap<any>,
+          trailingSlash: trailingSlashConfig,
           handler,
           mountIndex: currentMountIndex,
         });

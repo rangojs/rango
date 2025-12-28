@@ -184,8 +184,31 @@ export type ExtractParams<
 /**
  * Route definition - maps route names to patterns
  */
+/**
+ * Trailing slash handling mode
+ * - "never": Redirect URLs with trailing slash to without
+ * - "always": Redirect URLs without trailing slash to with
+ * - "ignore": Match both with and without trailing slash
+ */
+export type TrailingSlashMode = "never" | "always" | "ignore";
+
+/**
+ * Route configuration object (alternative to string path)
+ */
+export type RouteConfig = {
+  path: string;
+  trailingSlash?: TrailingSlashMode;
+};
+
+/**
+ * Route definition options (global defaults)
+ */
+export type RouteDefinitionOptions = {
+  trailingSlash?: TrailingSlashMode;
+};
+
 export type RouteDefinition = {
-  [key: string]: string | RouteDefinition;
+  [key: string]: string | RouteConfig | RouteDefinition;
 };
 
 /**
@@ -763,6 +786,11 @@ export interface MatchResult {
 export interface RouteEntry<TEnv = any> {
   prefix: string;
   routes: ResolvedRouteMap<any>;
+  /**
+   * Trailing slash config per route key
+   * If not specified for a route, defaults to pattern-based detection
+   */
+  trailingSlash?: Record<string, TrailingSlashMode>;
   handler: () =>
       | Array<AllUseItems>
       | Promise<{ default: () => Array<AllUseItems> }>
