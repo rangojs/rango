@@ -166,6 +166,9 @@ test.describe("pending-actions-navigation", () => {
 
     // 2. Rapidly open modal, action, close - multiple times
     for (let i = 0; i < 3; i++) {
+      // Ensure page is stable before clicking
+      await expect(page.locator('[data-testid="page-title"]')).toBeVisible();
+
       // Open modal
       const productLink = page.locator('[data-testid="product-link-product-a"]');
       await productLink.click();
