@@ -89,7 +89,7 @@ export type {
 } from "./route-types.js";
 
 // Re-export intercept selector types for use in handlers
-export type { InterceptSelectorContext, InterceptWhenFn } from "./server/context";
+export type { InterceptSelectorContext, InterceptSegmentsState, InterceptWhenFn } from "./server/context";
 
 /**
  * Route helpers provided by map()
@@ -316,6 +316,12 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * are present, ALL must return true for the intercept to activate.
    * If no when() is defined, the intercept always activates on soft navigation.
    *
+   * Context properties:
+   * - `from` - Source URL (where user is navigating from)
+   * - `to` - Destination URL (where user is navigating to)
+   * - `params` - Matched route params
+   * - `segments` - Client's current segments with `path` and `ids`
+   *
    * ```typescript
    * // Only intercept when coming from the board page
    * intercept("@modal", "card", <CardModal />, () => [
@@ -323,10 +329,15 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   loader(CardDetailLoader),
    * ])
    *
+   * // Use segments to check current route context
+   * intercept("@modal", "card", <CardModal />, () => [
+   *   when(({ segments }) => segments.path[0] === "kanban"),
+   * ])
+   *
    * // Multiple conditions (AND logic)
    * intercept("@modal", "card", <CardModal />, () => [
    *   when(({ from }) => from.pathname.startsWith("/board")),
-   *   when(({ isAction }) => !isAction),
+   *   when(({ segments }) => segments.ids.includes("kanban-layout")),
    * ])
    * ```
    * @param fn - Selector function receiving navigation context, returns boolean

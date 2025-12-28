@@ -2445,12 +2445,22 @@ export function createRSCRouter<TEnv = any>(
 
       // Build selector context for evaluating when() conditions on intercepts
       // Note: context is TEnv (platform bindings like Cloudflare env)
+      // Filter segment IDs to only include routes and layouts (exclude parallels and loaders)
+      const filteredSegmentIds = clientSegmentIds.filter((id) => {
+        if (id.includes(".@")) return false;  // Exclude parallels
+        if (/D\d+\./.test(id)) return false;  // Exclude loaders
+        return true;
+      });
       const interceptSelectorContext: InterceptSelectorContext = {
         from: prevUrl,
         to: url,
         params: matched.params,
         request,
         env: context,
+        segments: {
+          path: prevUrl.pathname.split("/").filter(Boolean),
+          ids: filteredSegmentIds,
+        },
       };
       const isAction = !!actionContext;
 
