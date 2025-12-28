@@ -1985,6 +1985,17 @@ export function createRSCRouter<TEnv = any>(
       });
     }
 
+    // Handle trailing slash redirect (pattern defines canonical form)
+    if (matched.redirectTo) {
+      const redirectUrl = matched.redirectTo + url.search;
+      return {
+        segments: [],
+        matched: [],
+        diff: [],
+        redirect: redirectUrl,
+      };
+    }
+
     // Load manifest with AsyncLocalStorage context and validation
     // Pass metrics store to be included in context
     // Track manifest loading (direct recording since ALS context not yet available)
@@ -2331,6 +2342,7 @@ export function createRSCRouter<TEnv = any>(
 
     // Match current route
     const matched = findMatch(pathname);
+
     if (metricsStore) {
       const duration = performance.now() - routeMatchStart;
       metricsStore.metrics.push({
@@ -2348,6 +2360,11 @@ export function createRSCRouter<TEnv = any>(
           previousUrl,
         },
       });
+    }
+
+    // If trailing slash redirect is needed, fall back to full match which handles redirects
+    if (matched.redirectTo) {
+      return null;
     }
 
     // Check if routes are from different route groups (different matchers)

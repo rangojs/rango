@@ -749,6 +749,12 @@ export interface MatchResult {
    * Slots are used for intercepting routes during soft navigation
    */
   slots?: Record<string, SlotState>;
+  /**
+   * Redirect URL for trailing slash normalization.
+   * When set, the RSC handler should return a 308 redirect to this URL
+   * instead of rendering the page.
+   */
+  redirect?: string;
 }
 
 /**
