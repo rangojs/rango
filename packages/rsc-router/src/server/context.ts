@@ -52,6 +52,23 @@ export type LoaderEntry = {
 };
 
 /**
+ * Context passed to intercept selector functions (when())
+ * Contains navigation context to determine if interception should occur
+ */
+export type InterceptSelectorContext = {
+  from: URL;                              // Source URL (where user is coming from)
+  to: URL;                                // Destination URL (where user is navigating to)
+  params: Record<string, string>;         // Matched route params
+  request: Request;                       // The HTTP request object
+};
+
+/**
+ * Selector function for conditional interception
+ * Returns true to intercept, false to skip and fall through to route handler
+ */
+export type InterceptWhenFn = (ctx: InterceptSelectorContext) => boolean;
+
+/**
  * Intercept entry stored in EntryData
  * Contains the slot name, route to intercept, and handler
  */
@@ -66,6 +83,7 @@ export type InterceptEntry = {
   loader: LoaderEntry[];
   loading?: ReactNode | false;
   layout?: ReactNode | Handler<any, any>;  // Wrapper layout with <Outlet /> for content
+  when: InterceptWhenFn[];  // Selector conditions - all must return true to intercept
 };
 
 export type EntryPropSegments = {

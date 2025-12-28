@@ -463,6 +463,113 @@ test.describe("shop-breadcrumbs", () => {
 });
 
 /**
+ * Shop conditional intercept tests - when() condition behavior
+ * The shop intercept has: when(({ from }) => !from.pathname.startsWith("/shop/products/"))
+ * This means modal shows from /shop index, but NOT from category pages
+ */
+test.describe("shop-conditional-intercept", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "dev",
+  });
+
+  test("should show modal when navigating from shop index", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    // Start on shop index
+    await page.goto(f.url("/shop"));
+    await waitForHydration(page);
+
+    // Click on a product from index
+    await page.locator('a[href="/shop/product/wireless-headphones"]').first().click();
+
+    // Should show intercept modal (when condition: from=/shop, not starting with /shop/products/)
+    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 5000 });
+
+    // Background should remain visible
+    await expect(page.locator("text=Featured Products")).toBeVisible();
+  });
+
+  test("should NOT show modal when navigating from category page", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    // Start on category page
+    await page.goto(f.url("/shop/products/electronics"));
+    await waitForHydration(page);
+
+    // Verify we're on category page
+    await expect(page.locator("h2:has-text('Electronics')")).toBeVisible({ timeout: 5000 });
+
+    // Click on a product from category
+    await page.locator('a[href="/shop/product/wireless-headphones"]').first().click();
+
+    // Should NOT show intercept modal (when condition fails: from=/shop/products/electronics)
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 3000 });
+
+    // Should show full product page
+    await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({ timeout: 10000 });
+    await expect(page.locator("text=Test Revalidation Behavior")).toBeVisible({ timeout: 5000 });
+  });
+
+  test("should preserve modal during action revalidation", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    // Start on shop index
+    await page.goto(f.url("/shop"));
+    await waitForHydration(page);
+
+    // Open modal from index
+    await page.locator('a[href="/shop/product/wireless-headphones"]').first().click();
+    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 5000 });
+
+    // Wait for modal content to load - "Add to Cart" button appears first
+    const addToCartButton = page.locator("button").filter({ hasText: "Add to Cart" }).first();
+    await expect(addToCartButton).toBeVisible({ timeout: 10000 });
+
+    // First add to cart (this will show quantity controls with + button)
+    await addToCartButton.click();
+
+    // Wait for quantity controls to appear (+ button shows after item is in cart)
+    const plusButton = page.locator("button").filter({ hasText: "+" }).first();
+    await expect(plusButton).toBeVisible({ timeout: 5000 });
+
+    // Perform action in modal (click + to increase quantity)
+    await plusButton.click();
+
+    // Wait for action to complete
+    await page.waitForTimeout(2000);
+
+    // Modal should still be visible (when() is skipped during action revalidation)
+    await expect(page.locator("text=Intercepted")).toBeVisible();
+
+    // Background should still be visible
+    await expect(page.locator("text=Featured Products")).toBeVisible();
+  });
+
+  test("should show modal from index after navigating from category to product to index", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    // Start on category page
+    await page.goto(f.url("/shop/products/electronics"));
+    await waitForHydration(page);
+
+    // Navigate to product (no modal from category)
+    await page.locator('a[href="/shop/product/wireless-headphones"]').first().click();
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 3000 });
+    await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({ timeout: 10000 });
+
+    // Navigate to shop index
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+    await breadcrumbNav.locator("text=Shop").click();
+    await expect(page.locator("text=All Products")).toBeVisible({ timeout: 5000 });
+
+    // Now navigate to product from index (should show modal)
+    await page.locator('a[href="/shop/product/wireless-headphones"]').first().click();
+    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 5000 });
+  });
+});
+
+/**
  * Shop concurrent actions tests
  */
 test.describe("shop-concurrent-actions", () => {
