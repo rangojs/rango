@@ -559,6 +559,7 @@ export {
   Link,
   type LinkProps,
   type PrefetchStrategy,
+  type StateOrGetter,
 } from "./browser/react/Link.js";
 
 // Scroll restoration
@@ -578,6 +579,14 @@ export { useHandle } from "./browser/react/use-handle.js";
 export { Meta } from "./handles/meta.js";
 export { MetaTags } from "./handles/MetaTags.js";
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
+
+// Location state - type-safe navigation state
+export {
+  createLocationState,
+  useLocationState,
+  type LocationStateDefinition,
+  type LocationStateEntry,
+} from "./browser/react/location-state.js";
 
 // Type-safe href for client-side path validation
 export { href, type ValidPaths, type PatternToPath } from "./href-client.js";

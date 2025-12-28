@@ -34,6 +34,16 @@ export function defaultShouldIntercept(link: HTMLAnchorElement): boolean {
     return false;
   }
 
+  // Don't intercept Link component anchors - they handle their own navigation
+  if (link.hasAttribute("data-link-component")) {
+    return false;
+  }
+
+  // Don't intercept external links
+  if (link.hasAttribute("data-external")) {
+    return false;
+  }
+
   return true;
 }
 

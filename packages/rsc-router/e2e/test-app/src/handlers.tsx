@@ -1,6 +1,7 @@
 import { map, Meta } from "rsc-router/server";
 import { Outlet, Link } from "rsc-router/client";
 import type { testRoutes } from "./routes.js";
+import { SlowProductLocationState } from "./location-states.js";
 import {
   ProductsLoader,
   ProductDetailLoader,
@@ -17,6 +18,7 @@ import {
   StreamingActionStatus,
 } from "./components/StreamingActionButton.js";
 import { Modal } from "./components/Modal.js";
+import { SlowModalSkeleton } from "./components/SlowModalSkeleton.js";
 import { RevalidateButton } from "./components/RevalidateButton.js";
 import {
   NavigationStatus,
@@ -109,9 +111,18 @@ export default map<typeof testRoutes>(
                     <li>
                       <Link
                         to="/slow-product/slow-product-a"
+                        state={[SlowProductLocationState({ productName: "Slow Product A", productPrice: 99 })]}
                         data-testid="slow-product-link"
                       >
-                        /slow-product - Intercept with streaming loader
+                        /slow-product - Intercept with streaming loader (with state)
+                      </Link>
+                    </li>
+                    <li>
+                      <Link
+                        to="/slow-product/slow-product-b"
+                        data-testid="slow-product-link-no-state"
+                      >
+                        /slow-product - Intercept without state
                       </Link>
                     </li>
                   </ul>
@@ -327,18 +338,7 @@ export default map<typeof testRoutes>(
           },
           () => [
             loader(SlowProductDetailLoader),
-            loading(
-              <Modal testId="slow-product-modal">
-                <div data-testid="slow-modal-loading">
-                  <p>Loading product details...</p>
-                  <div data-testid="slow-modal-skeleton">
-                    <div style={{ width: "200px", height: "24px", background: "#e0e0e0", marginBottom: "8px" }} />
-                    <div style={{ width: "100px", height: "20px", background: "#e0e0e0", marginBottom: "8px" }} />
-                    <div style={{ width: "250px", height: "16px", background: "#e0e0e0" }} />
-                  </div>
-                </div>
-              </Modal>
-            ),
+            loading(<SlowModalSkeleton />),
           ]
         ),
 

@@ -358,6 +358,86 @@ test.describe("stale-revalidation", () => {
   });
 });
 
+test.describe("navigation-state", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  test("should pass state to loading skeleton via Link state prop", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Click slow product link (has state prop with productName and productPrice)
+    const slowProductLink = page.locator('[data-testid="slow-product-link"]');
+    await slowProductLink.click();
+
+    // Modal with loading skeleton should appear
+    await expect(page.locator('[data-testid="slow-product-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="slow-modal-loading"]')).toBeVisible();
+
+    // State should be available in skeleton - product name and price from Link state
+    await expect(page.locator('[data-testid="slow-modal-state-name"]')).toHaveText("Slow Product A");
+    await expect(page.locator('[data-testid="slow-modal-state-price"]')).toHaveText("$99");
+
+    // Skeleton placeholders should NOT be visible since we have state
+    await expect(page.locator('[data-testid="slow-modal-skeleton-name"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="slow-modal-skeleton-price"]')).not.toBeVisible();
+  });
+
+  test("should show skeleton placeholders when Link has no state prop", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Click slow product link WITHOUT state prop
+    const slowProductLink = page.locator('[data-testid="slow-product-link-no-state"]');
+    await slowProductLink.click();
+
+    // Modal with loading skeleton should appear
+    await expect(page.locator('[data-testid="slow-product-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="slow-modal-loading"]')).toBeVisible();
+
+    // Without state, skeleton placeholders should be visible
+    await expect(page.locator('[data-testid="slow-modal-skeleton-name"]')).toBeVisible();
+    await expect(page.locator('[data-testid="slow-modal-skeleton-price"]')).toBeVisible();
+
+    // State elements should NOT be visible
+    await expect(page.locator('[data-testid="slow-modal-state-name"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="slow-modal-state-price"]')).not.toBeVisible();
+  });
+
+  test("should have state available in history after navigation completes", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Click slow product link with state
+    const slowProductLink = page.locator('[data-testid="slow-product-link"]');
+    await slowProductLink.click();
+
+    // Wait for content to load
+    await expect(page.locator('[data-testid="slow-modal-product-name"]')).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Check history state contains our passed state (typed location state uses __rsc_ls_ prefix)
+    const state = await getHistoryState(page);
+    expect(state?.__rsc_ls_slowProduct?.productName).toBe("Slow Product A");
+    expect(state?.__rsc_ls_slowProduct?.productPrice).toBe(99);
+  });
+});
+
 test.describe("intercept-loading-states", () => {
   const f = useFixture({
     root: "./e2e/test-app",

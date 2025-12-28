@@ -5,6 +5,63 @@ import type {
   NavigationStore,
   ResolvedSegment,
 } from "./types.js";
+import {
+  isLocationStateEntry,
+  resolveLocationStateEntries,
+} from "./react/location-state-shared.js";
+
+/**
+ * Check if state is from typed LocationStateEntry[] (has __rsc_ls_ keys)
+ */
+function isTypedLocationState(state: unknown): state is Record<string, unknown> {
+  if (state === null || typeof state !== "object") return false;
+  return Object.keys(state).some((key) => key.startsWith("__rsc_ls_"));
+}
+
+/**
+ * Resolve navigation state - handles both LocationStateEntry[] and legacy formats
+ */
+function resolveNavigationState(state: unknown): unknown {
+  // Check if it's an array of LocationStateEntry
+  if (Array.isArray(state) && state.length > 0 && isLocationStateEntry(state[0])) {
+    return resolveLocationStateEntries(state);
+  }
+  // Return as-is for legacy formats
+  return state;
+}
+
+/**
+ * Build history state object from user state
+ * - Typed state: spread directly into history.state
+ * - Legacy state: store in history.state.state
+ */
+function buildHistoryState(
+  userState: unknown,
+  routerState?: { intercept?: boolean; sourceUrl?: string }
+): Record<string, unknown> | null {
+  const result: Record<string, unknown> = {};
+
+  // Add router internal state
+  if (routerState?.intercept) {
+    result.intercept = true;
+    if (routerState.sourceUrl) {
+      result.sourceUrl = routerState.sourceUrl;
+    }
+  }
+
+  // Add user state
+  if (userState !== undefined) {
+    if (isTypedLocationState(userState)) {
+      // Typed state: spread directly
+      Object.assign(result, userState);
+    } else {
+      // Legacy state: store in .state
+      result.state = userState;
+    }
+  }
+
+  return Object.keys(result).length > 0 ? result : null;
+}
 import { setupLinkInterception } from "./link-interceptor.js";
 import { createPartialUpdater } from "./partial-update.js";
 import { generateHistoryKey } from "./navigation-store.js";
@@ -52,6 +109,8 @@ interface CommitOptions {
   segments: ResolvedSegment[];
   replace?: boolean;
   scroll?: boolean;
+  /** User-provided state to store in history.state */
+  state?: unknown;
   /** If true, only update store without changing URL/history (for server actions) */
   storeOnly?: boolean;
   /** If true, this is an intercept route - store in history.state for popstate handling */
@@ -70,6 +129,8 @@ interface BoundCommitOverrides {
   scroll?: boolean;
   /** Override replace behavior (e.g., force replace for intercepts) */
   replace?: boolean;
+  /** Override user-provided state */
+  state?: unknown;
   /** Mark this as an intercept route */
   intercept?: boolean;
   /** Source URL where intercept was triggered from */
@@ -130,10 +191,19 @@ function createNavigationTransaction(
 ): NavigationTransaction {
   let committed = false;
   let optimisticallyCommitted = false;
+  let earlyStatePushed = false;
   const currentUrl = window.location.href;
 
   // Start navigation in event controller (this sets loading state)
   const handle = eventController.startNavigation(url, options);
+
+  // If state is provided, push it to history immediately so loading UI can access it
+  // This enables "optimistic state" - showing product names in skeletons etc.
+  if (options?.state !== undefined && !options?.replace) {
+    const earlyHistoryState = buildHistoryState(options.state);
+    window.history.pushState(earlyHistoryState, "", url);
+    earlyStatePushed = true;
+  }
 
   /**
    * Optimistically commit from cache - renders immediately before revalidation
@@ -161,11 +231,15 @@ function createNavigationTransaction(
     const currentHandleData = eventController.getHandleState().data;
     store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
 
+    // Build history state with user state if provided
+    const historyState = buildHistoryState(opts.state);
+
     // Update browser URL
-    if (replace) {
-      window.history.replaceState(null, "", url);
+    // Use replaceState if we already pushed early (for optimistic state access)
+    if (replace || earlyStatePushed) {
+      window.history.replaceState(historyState, "", url);
     } else {
-      window.history.pushState(null, "", url);
+      window.history.pushState(historyState, "", url);
     }
 
     // Ensure new history entry has a scroll restoration key
@@ -243,14 +317,16 @@ function createNavigationTransaction(
       return;
     }
 
-    // Build history state - include intercept info for popstate handling
-    const historyState = intercept
-      ? { intercept: true, sourceUrl: interceptSourceUrl }
-      : null;
+    // Build history state - include user state and intercept info for popstate handling
+    const historyState = buildHistoryState(opts.state, {
+      intercept,
+      sourceUrl: interceptSourceUrl,
+    });
 
     // Update browser URL (skip if reconciliation - already done in optimisticCommit)
     if (!isReconciliation) {
-      if (replace) {
+      // Use replaceState if we already pushed early (for optimistic state access) or replace requested
+      if (replace || earlyStatePushed) {
         window.history.replaceState(historyState, "", url);
       } else {
         window.history.pushState(historyState, "", url);
@@ -322,12 +398,16 @@ function createNavigationTransaction(
             overrides?.cacheOnly !== undefined
               ? overrides.cacheOnly
               : opts.cacheOnly;
+          // User state: overrides take precedence, fallback to opts
+          const state =
+            overrides?.state !== undefined ? overrides.state : opts.state;
           commit({
             ...opts,
             segmentIds,
             segments,
             scroll: finalScroll,
             replace: finalReplace,
+            state,
             intercept,
             interceptSourceUrl,
             cacheOnly,
@@ -392,6 +472,11 @@ export function createNavigationBridge(
      * Uses optimistic rendering from cache when available (SWR pattern)
      */
     async navigate(url: string, options?: NavigateOptions): Promise<void> {
+      // Resolve LocationStateEntry[] to flat object if needed
+      const resolvedState = options?.state !== undefined
+        ? resolveNavigationState(options.state)
+        : undefined;
+
       // Only abort pending requests when navigating to a different route
       // Same-route navigation (e.g., /todos -> /todos) should not cancel in-flight actions
       const currentPath = new URL(window.location.href).pathname;
@@ -426,6 +511,7 @@ export function createNavigationBridge(
 
       using tx = createNavigationTransaction(store, eventController, url, {
         ...options,
+        state: resolvedState,
         skipLoadingState: hasUsableCache,
       });
 
@@ -436,7 +522,7 @@ export function createNavigationBridge(
           hasUsableCache ? cachedSegments!.map((s) => s.id) : undefined,
           false,
           tx.handle.signal,
-          tx.with({ url, replace: options?.replace, scroll: options?.scroll }),
+          tx.with({ url, replace: options?.replace, scroll: options?.scroll, state: resolvedState }),
           // Pass cached segments so the segment map is consistent with what we
           // tell the server we have. If server returns empty diff, we use these.
           hasUsableCache ? { targetCacheSegments: cachedSegments } : undefined

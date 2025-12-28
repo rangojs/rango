@@ -61,3 +61,11 @@ export { Meta } from "./handles/meta.js";
 // MetaTags is a "use client" component that can be imported from RSC
 export { MetaTags } from "./handles/MetaTags.js";
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
+
+// Location state - createLocationState works in RSC (just creates definition)
+// useLocationState is NOT exported here as it uses client hooks
+export {
+  createLocationState,
+  type LocationStateDefinition,
+  type LocationStateEntry,
+} from "./browser/react/location-state-shared.js";
