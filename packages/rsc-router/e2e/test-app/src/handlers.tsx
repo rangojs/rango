@@ -32,7 +32,7 @@ import { ChildMetaSetter } from "./components/ChildMetaSetter.js";
 import { AsyncChildMetaSetter } from "./components/AsyncChildMetaSetter.js";
 
 export default map<typeof testRoutes>(
-  ({ route, layout, intercept, loader, loading }) => [
+  ({ route, layout, intercept, loader, loading, when }) => [
     // Root layout with HTML structure
     layout(
       (ctx) => {
@@ -221,6 +221,7 @@ export default map<typeof testRoutes>(
         ),
 
         // Intercept for modal (soft navigation)
+        // Only intercept when coming from the index page (/), not from other pages like /blog
         intercept(
           "@modal",
           "product.detail",
@@ -262,7 +263,12 @@ export default map<typeof testRoutes>(
               </Modal>
             );
           },
-          () => [loader(ProductDetailLoader), loader(CartQuantityLoader)]
+          () => [
+            // Only intercept when navigating from the index page
+            when(({ from }) => from.pathname === "/"),
+            loader(ProductDetailLoader),
+            loader(CartQuantityLoader),
+          ]
         ),
 
         // Slow product detail route (direct navigation)
@@ -458,6 +464,12 @@ export default map<typeof testRoutes>(
                     </Link>
                   </li>
                 </ul>
+                <div data-testid="blog-product-links" style={{ marginTop: "1rem" }}>
+                  <h3>Featured Products</h3>
+                  <Link to="/product/product-a" data-testid="blog-product-link">
+                    View Product A
+                  </Link>
+                </div>
               </div>
             );
           }
