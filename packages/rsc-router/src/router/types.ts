@@ -58,3 +58,44 @@ export interface RouterDependencies<TEnv> {
     entryId?: string
   ) => Promise<Response | null>;
 }
+
+/**
+ * Title descriptor types for template support
+ */
+export type TitleDescriptor =
+  | string
+  | { template: string; default: string } // For layouts - template applied to child titles
+  | { absolute: string }; // Bypass parent template
+
+/**
+ * Unset descriptor to remove inherited meta
+ * Key format matches getMetaKey output: "title", "name:description", "property:og:image"
+ */
+export type UnsetDescriptor = { unset: string };
+
+/**
+ * Base meta descriptor types (sync values)
+ */
+export type MetaDescriptorBase =
+  | { charSet: "utf-8" }
+  | { title: TitleDescriptor }
+  | { name: string; content: string }
+  | { property: string; content: string }
+  | { httpEquiv: string; content: string }
+  | { "script:ld+json": LdJsonObject }
+  | { tagName: "meta" | "link"; [name: string]: string }
+  | UnsetDescriptor
+  | { [name: string]: unknown };
+
+/**
+ * Meta descriptor that can be sync or async.
+ * Use Promise<MetaDescriptorBase> for streaming meta that resolves after initial render.
+ */
+export type MetaDescriptor = MetaDescriptorBase | Promise<MetaDescriptorBase>;
+
+type LdJsonObject = { [Key in string]: LdJsonValue } & {
+  [Key in string]?: LdJsonValue | undefined;
+};
+type LdJsonArray = LdJsonValue[] | readonly LdJsonValue[];
+type LdJsonPrimitive = string | number | boolean | null;
+type LdJsonValue = LdJsonPrimitive | LdJsonObject | LdJsonArray;

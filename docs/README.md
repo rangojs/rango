@@ -281,6 +281,188 @@ function BreadcrumbNav() {
 }
 ```
 
+## Metadata
+
+Built-in `Meta` handle for managing document metadata with automatic deduplication.
+
+### Basic Usage
+
+```typescript
+import { Meta } from "rsc-router/server";
+import { MetaTags } from "rsc-router/client";
+
+// In route handler
+route("products.detail", async (ctx) => {
+  const meta = ctx.use(Meta);
+  const product = await ctx.use(ProductLoader);
+
+  meta({ title: product.name });
+  meta({ name: "description", content: product.description });
+  meta({ property: "og:title", content: product.name });
+  meta({ property: "og:image", content: product.image });
+
+  return <ProductDetail product={product} />;
+});
+
+// In root layout
+function RootLayout({ children }) {
+  return (
+    <html>
+      <head>
+        <MetaTags />  {/* Renders collected meta tags */}
+      </head>
+      <body>{children}</body>
+    </html>
+  );
+}
+```
+
+### Title Templates
+
+Define a template in layouts, child routes automatically inherit it:
+
+```typescript
+// Layout sets template
+layout((ctx) => {
+  const meta = ctx.use(Meta);
+  meta({ title: { template: "%s | My Site", default: "My Site" } });
+  return <Layout><Outlet /></Layout>;
+});
+
+// Child route - template applied automatically
+route("about", (ctx) => {
+  const meta = ctx.use(Meta);
+  meta({ title: "About" });  // Becomes "About | My Site"
+  return <About />;
+});
+
+// Bypass template with absolute
+route("landing", (ctx) => {
+  const meta = ctx.use(Meta);
+  meta({ title: { absolute: "Special Landing Page" } });  // No template
+  return <Landing />;
+});
+```
+
+**Title descriptor options:**
+
+| Form | Example | Result |
+|------|---------|--------|
+| String | `{ title: "About" }` | Applies template if set |
+| Template | `{ title: { template: "%s \| Site", default: "Site" } }` | Sets template for children |
+| Absolute | `{ title: { absolute: "Custom" } }` | Bypasses template |
+
+### Unset Meta
+
+Remove inherited meta from parent layouts:
+
+```typescript
+// Parent layout sets defaults
+layout((ctx) => {
+  const meta = ctx.use(Meta);
+  meta({ name: "robots", content: "index, follow" });
+  meta({ property: "og:image", content: "/default.jpg" });
+  return <Layout><Outlet /></Layout>;
+});
+
+// Child route removes specific meta
+route("private", (ctx) => {
+  const meta = ctx.use(Meta);
+  meta({ unset: "name:robots" });           // Remove robots meta
+  meta({ unset: "property:og:image" });     // Remove og:image
+  return <PrivatePage />;
+});
+```
+
+**Unset key format:**
+
+| Meta Type | Unset Key |
+|-----------|-----------|
+| Title | `"title"` |
+| Name | `"name:description"`, `"name:robots"` |
+| Property | `"property:og:title"`, `"property:og:image"` |
+| HTTP-Equiv | `"httpEquiv:refresh"` |
+
+### Supported Descriptors
+
+```typescript
+meta({ charSet: "utf-8" });
+meta({ title: "Page Title" });
+meta({ name: "description", content: "..." });
+meta({ property: "og:title", content: "..." });
+meta({ httpEquiv: "refresh", content: "5" });
+meta({ tagName: "link", rel: "canonical", href: "..." });
+meta({ "script:ld+json": { "@type": "Product", name: "..." } });
+```
+
+### Async Meta (Streaming)
+
+**Option 1: Await first, then set meta**
+
+```typescript
+route("product", async (ctx) => {
+  const meta = ctx.use(Meta);
+  const product = await ctx.use(ProductLoader);  // Await data first
+
+  // Meta set after await - streams to client
+  meta({ title: product.name });
+  meta({ property: "og:title", content: product.name });
+
+  return <Product product={product} />;
+});
+```
+
+**Option 2: Pass a Promise directly**
+
+Meta accepts `Promise<MetaDescriptor>` for deferred resolution:
+
+```typescript
+route("product", (ctx) => {
+  const meta = ctx.use(Meta);
+
+  // Pass async function result (Promise) - streams when resolved
+  meta((async () => {
+    const product = await fetchProduct(ctx.params.id);
+    return { property: "og:description", content: product.description };
+  })());
+
+  // Or with explicit Promise
+  meta(
+    fetchProduct(ctx.params.id).then(product => ({
+      property: "og:image",
+      content: product.image
+    }))
+  );
+
+  return <ProductSkeleton />;  // Renders immediately, meta streams in
+});
+```
+
+This pattern is useful when you want the page to render immediately while meta streams in later.
+
+### Deduplication
+
+Later routes override earlier ones for the same key:
+
+```typescript
+// Root layout
+meta({ title: "Site" });
+meta({ name: "author", content: "Default Author" });
+
+// Child route
+meta({ title: "Blog" });  // Overrides root title
+// author meta inherited from root
+```
+
+### Default Meta
+
+These are included automatically (can be overridden):
+
+```typescript
+{ charSet: "utf-8" }
+{ name: "viewport", content: "width=device-width, initial-scale=1" }
+```
+
 ## Type-Safe Links
 
 ### Setup: Register Routes

@@ -1,4 +1,4 @@
-import { map } from "rsc-router/server";
+import { map, Meta } from "rsc-router/server";
 import { Outlet, Link } from "rsc-router/client";
 import type { testRoutes } from "./routes.js";
 import { SlowProductLocationState } from "./location-states.js";
@@ -28,6 +28,8 @@ import {
 import { HydrationMismatch } from "./components/HydrationMismatch.js";
 import { BreadcrumbNav } from "./components/BreadcrumbNav.js";
 import { ClientErrorThrower } from "./components/ClientErrorThrower.js";
+import { ChildMetaSetter } from "./components/ChildMetaSetter.js";
+import { AsyncChildMetaSetter } from "./components/AsyncChildMetaSetter.js";
 
 export default map<typeof testRoutes>(
   ({ route, layout, intercept, loader, loading }) => [
@@ -35,34 +37,28 @@ export default map<typeof testRoutes>(
     layout(
       (ctx) => {
         // Push "Home" breadcrumb for all routes
-        const push = ctx.use(Breadcrumbs);
-        push({ label: "Home", href: "/" });
+        const pushBreadcrumb = ctx.use(Breadcrumbs);
+        pushBreadcrumb({ label: "Home", href: "/" });
+
+        // Set default meta tags for the app
+        const meta = ctx.use(Meta);
+        meta({ title: "RSC Router Test App" });
+        meta({ name: "description", content: "E2E test application for RSC Router" });
+
         return (
-          <html lang="en">
-            <head>
-              <meta charSet="UTF-8" />
-              <meta
-                name="viewport"
-                content="width=device-width, initial-scale=1.0"
-              />
-              <title>RSC Router Test App</title>
-            </head>
-            <body>
-              <div data-testid="app-root">
-                <nav data-testid="nav">
-                  <Link to="/" data-testid="nav-home">
-                    Home
-                  </Link>
-                  <NavigationStatus testId="nav-status" />
-                </nav>
-                <BreadcrumbNav testId="breadcrumbs" />
-                <main data-testid="main-content">
-                  <Outlet />
-                </main>
-                <Outlet name="@modal" />
-              </div>
-            </body>
-          </html>
+          <div data-testid="app-root">
+            <nav data-testid="nav">
+              <Link to="/" data-testid="nav-home">
+                Home
+              </Link>
+              <NavigationStatus testId="nav-status" />
+            </nav>
+            <BreadcrumbNav testId="breadcrumbs" />
+            <main data-testid="main-content">
+              <Outlet />
+            </main>
+            <Outlet name="@modal" />
+          </div>
         );
       },
       () => [
@@ -142,10 +138,31 @@ export default map<typeof testRoutes>(
           "product.detail",
           async (ctx) => {
             // Push product breadcrumb with async content
-            const push = ctx.use(Breadcrumbs);
+            const pushBreadcrumb = ctx.use(Breadcrumbs);
+            const meta = ctx.use(Meta);
             const { product, loadedAt } = await ctx.use(ProductDetailLoader);
             const { quantity } = await ctx.use(CartQuantityLoader);
-            push({
+
+            // Set page-specific meta after awaiting product data (streaming metadata test)
+            meta({ title: `${product.name} - RSC Router Test App` });
+            meta({ name: "description", content: product.description });
+            meta({ property: "og:title", content: product.name });
+            // JSON-LD structured data for product
+            meta({
+              "script:ld+json": {
+                "@context": "https://schema.org",
+                "@type": "Product",
+                name: product.name,
+                description: product.description,
+                offers: {
+                  "@type": "Offer",
+                  price: product.price,
+                  priceCurrency: "USD",
+                },
+              },
+            });
+
+            pushBreadcrumb({
               label: product.name,
               href: `/product/${product.id}`,
               content: new Promise((resolve) =>
@@ -417,8 +434,11 @@ export default map<typeof testRoutes>(
         route(
           "blog.index",
           (ctx) => {
-            const push = ctx.use(Breadcrumbs);
-            push({ label: "Blog", href: "/blog" });
+            const pushBreadcrumb = ctx.use(Breadcrumbs);
+            const meta = ctx.use(Meta);
+            pushBreadcrumb({ label: "Blog", href: "/blog" });
+            meta({ title: "Blog - RSC Router Test App" });
+            meta({ name: "description", content: "Blog posts from RSC Router" });
             return (
               <div data-testid="blog-index-page">
                 <Link to="/" data-testid="back-link">
@@ -444,9 +464,28 @@ export default map<typeof testRoutes>(
         ),
 
         route("blog.post", (ctx) => {
-          const push = ctx.use(Breadcrumbs);
-          push({ label: "Blog", href: "/blog" });
-          push({ label: `Post ${ctx.params.postId}`, href: `/blog/${ctx.params.postId}` });
+          const pushBreadcrumb = ctx.use(Breadcrumbs);
+          const meta = ctx.use(Meta);
+          pushBreadcrumb({ label: "Blog", href: "/blog" });
+          pushBreadcrumb({ label: `Post ${ctx.params.postId}`, href: `/blog/${ctx.params.postId}` });
+          meta({ title: `Post ${ctx.params.postId} - Blog - RSC Router Test App` });
+          meta({ name: "description", content: `Content for post ${ctx.params.postId}` });
+
+          // Test async meta with Promise - og:description streams in after 500ms
+          meta(
+            new Promise((resolve) =>
+              setTimeout(
+                () => resolve({ property: "og:description", content: `Async meta for ${ctx.params.postId}` }),
+                500
+              )
+            )
+          );
+
+          // Test async meta with IIFE pattern - og:author streams in after 300ms
+          meta((async () => {
+            await new Promise((r) => setTimeout(r, 300));
+            return { name: "author", content: `Author of ${ctx.params.postId}` };
+          })());
           return (
             <div data-testid="blog-post-page">
               <Link to="/blog" data-testid="back-to-blog">
@@ -543,6 +582,367 @@ export default map<typeof testRoutes>(
               <div data-testid="streaming-error-loading">
                 <p>Loading streaming content...</p>
               </div>
+            ),
+          ]
+        ),
+
+        // Route for testing handle passthrough to child RSC components
+        route("handlePassthrough", (ctx) => {
+          const pushBreadcrumb = ctx.use(Breadcrumbs);
+          const meta = ctx.use(Meta);
+
+          // Push breadcrumb from parent
+          pushBreadcrumb({ label: "Handle Passthrough Test", href: "/handle-passthrough" });
+
+          return (
+            <div data-testid="handle-passthrough-page">
+              <Link to="/" data-testid="back-link">
+                ← Back to Home
+              </Link>
+              <h1 data-testid="passthrough-title">Handle Passthrough Test</h1>
+              <p data-testid="passthrough-description">
+                Testing meta handle passed to child RSC component
+              </p>
+              {/* Pass meta function to child RSC component */}
+              <ChildMetaSetter
+                meta={meta}
+                title="Child Set Title - RSC Router"
+                description="Meta set by child RSC component"
+              />
+            </div>
+          );
+        }),
+
+        // Route for testing async handle passthrough (meta set after delay)
+        route(
+          "handlePassthroughAsync",
+          (ctx) => {
+            const pushBreadcrumb = ctx.use(Breadcrumbs);
+            const meta = ctx.use(Meta);
+
+            // Push breadcrumb from parent
+            pushBreadcrumb({ label: "Async Handle Passthrough", href: "/handle-passthrough-async" });
+
+            return (
+              <div data-testid="handle-passthrough-async-page">
+                <Link to="/" data-testid="back-link">
+                  ← Back to Home
+                </Link>
+                <h1 data-testid="async-passthrough-title">Async Handle Passthrough Test</h1>
+                <p data-testid="async-passthrough-description">
+                  Testing meta handle passed to async child RSC (2s delay)
+                </p>
+                {/* Pass meta function to async child RSC component */}
+                <AsyncChildMetaSetter
+                  meta={meta}
+                  title="Async Child Title - RSC Router"
+                  description="Meta set by async child after 2s delay"
+                  delayMs={2000}
+                />
+              </div>
+            );
+          },
+          () => [
+            loading(
+              <div data-testid="async-passthrough-loading">
+                <p>Loading async child...</p>
+              </div>
+            ),
+          ]
+        ),
+
+        // =====================================================
+        // META TEMPLATE TESTS
+        // =====================================================
+
+        // Layout with title template - sets template for child routes
+        layout(
+          (ctx) => {
+            const meta = ctx.use(Meta);
+            // Set title template - child routes will have their title wrapped
+            meta({ title: { template: "%s | Test Site", default: "Test Site" } });
+            meta({ name: "author", content: "Test Author" });
+
+            return (
+              <div data-testid="meta-template-layout">
+                <nav data-testid="meta-template-nav">
+                  <Link to="/meta-template" data-testid="meta-template-index-link">
+                    Template Index
+                  </Link>
+                  <Link to="/meta-template/child" data-testid="meta-template-child-link">
+                    Child
+                  </Link>
+                  <Link to="/meta-template/absolute" data-testid="meta-template-absolute-link">
+                    Absolute
+                  </Link>
+                  <Link to="/meta-template/nested" data-testid="meta-template-nested-link">
+                    Nested
+                  </Link>
+                </nav>
+                <Outlet />
+              </div>
+            );
+          },
+          () => [
+            // Index route - uses default title from template
+            route("metaTemplate.index", () => (
+              <div data-testid="meta-template-index-page">
+                <h1 data-testid="meta-template-index-title">Template Index</h1>
+                <p data-testid="meta-template-index-description">
+                  This page uses the default title from the template.
+                </p>
+              </div>
+            )),
+
+            // Child route - string title gets template applied
+            route("metaTemplate.child", (ctx) => {
+              const meta = ctx.use(Meta);
+              meta({ title: "Child Page" }); // Should become "Child Page | Test Site"
+              meta({ name: "description", content: "Child page description" });
+
+              return (
+                <div data-testid="meta-template-child-page">
+                  <h1 data-testid="meta-template-child-title">Template Child</h1>
+                  <p data-testid="meta-template-child-description">
+                    This page title should have template applied.
+                  </p>
+                </div>
+              );
+            }),
+
+            // Absolute route - bypasses template
+            route("metaTemplate.absolute", (ctx) => {
+              const meta = ctx.use(Meta);
+              meta({ title: { absolute: "Custom Absolute Title" } }); // No template
+              meta({ name: "description", content: "Absolute page description" });
+
+              return (
+                <div data-testid="meta-template-absolute-page">
+                  <h1 data-testid="meta-template-absolute-title">Absolute Title</h1>
+                  <p data-testid="meta-template-absolute-description">
+                    This page title bypasses the template.
+                  </p>
+                </div>
+              );
+            }),
+
+            // Nested layout with its own template - overrides parent template
+            layout(
+              (ctx) => {
+                const meta = ctx.use(Meta);
+                // Override parent template with new one
+                meta({ title: { template: "%s | Nested Section", default: "Nested Section" } });
+
+                return (
+                  <div data-testid="meta-template-nested-layout">
+                    <Outlet />
+                  </div>
+                );
+              },
+              () => [
+                // Nested index - uses nested default
+                route("metaTemplate.nested", () => (
+                  <div data-testid="meta-template-nested-page">
+                    <h1 data-testid="meta-template-nested-title">Nested Index</h1>
+                    <p data-testid="meta-template-nested-description">
+                      Uses nested template default.
+                    </p>
+                  </div>
+                )),
+
+                // Nested child - uses nested template
+                route("metaTemplate.nestedChild", (ctx) => {
+                  const meta = ctx.use(Meta);
+                  meta({ title: "Nested Child" }); // Should become "Nested Child | Nested Section"
+
+                  return (
+                    <div data-testid="meta-template-nested-child-page">
+                      <h1 data-testid="meta-template-nested-child-title">Nested Child</h1>
+                      <p data-testid="meta-template-nested-child-description">
+                        Uses nested template.
+                      </p>
+                    </div>
+                  );
+                }),
+              ]
+            ),
+          ]
+        ),
+
+        // =====================================================
+        // META UNSET TESTS
+        // =====================================================
+
+        // Layout that sets meta to be unset by children
+        layout(
+          (ctx) => {
+            const meta = ctx.use(Meta);
+            meta({ title: "Parent Title" });
+            meta({ name: "robots", content: "index, follow" });
+            meta({ name: "description", content: "Parent description" });
+            meta({ property: "og:image", content: "https://example.com/parent.jpg" });
+
+            return (
+              <div data-testid="meta-unset-layout">
+                <nav data-testid="meta-unset-nav">
+                  <Link to="/meta-unset" data-testid="meta-unset-index-link">
+                    Unset Index
+                  </Link>
+                  <Link to="/meta-unset/child" data-testid="meta-unset-child-link">
+                    Unset Child
+                  </Link>
+                  <Link to="/meta-unset/unset-then-set" data-testid="meta-unset-then-set-link">
+                    Unset Then Set
+                  </Link>
+                </nav>
+                <Outlet />
+              </div>
+            );
+          },
+          () => [
+            // Index route - keeps all parent meta
+            route("metaUnset.index", () => (
+              <div data-testid="meta-unset-index-page">
+                <h1 data-testid="meta-unset-index-title">Unset Index</h1>
+                <p data-testid="meta-unset-index-description">
+                  This page inherits all parent meta.
+                </p>
+              </div>
+            )),
+
+            // Child route - unsets some parent meta
+            route("metaUnset.child", (ctx) => {
+              const meta = ctx.use(Meta);
+              // Unset various meta tags
+              meta({ unset: "name:robots" });
+              meta({ unset: "property:og:image" });
+
+              return (
+                <div data-testid="meta-unset-child-page">
+                  <h1 data-testid="meta-unset-child-title">Unset Child</h1>
+                  <p data-testid="meta-unset-child-description">
+                    This page unsets robots and og:image meta.
+                  </p>
+                </div>
+              );
+            }),
+
+            // Route that unsets then sets same meta
+            route("metaUnset.unsetThenSet", (ctx) => {
+              const meta = ctx.use(Meta);
+              // Unset parent description, then set a new one
+              meta({ unset: "name:description" });
+              meta({ name: "description", content: "New description after unset" });
+              // Unset title and set new one
+              meta({ unset: "title" });
+              meta({ title: "New Title After Unset" });
+
+              return (
+                <div data-testid="meta-unset-then-set-page">
+                  <h1 data-testid="meta-unset-then-set-title">Unset Then Set</h1>
+                  <p data-testid="meta-unset-then-set-description">
+                    This page unsets meta then sets new values.
+                  </p>
+                </div>
+              );
+            }),
+          ]
+        ),
+
+        // =====================================================
+        // META MERGING TESTS
+        // =====================================================
+
+        // Layout for testing meta merging
+        layout(
+          (ctx) => {
+            const meta = ctx.use(Meta);
+            meta({ title: "Merge Root" });
+            meta({ name: "author", content: "Root Author" });
+            meta({ name: "keywords", content: "root, test" });
+            meta({ property: "og:site_name", content: "Merge Test Site" });
+
+            return (
+              <div data-testid="meta-merge-layout">
+                <nav data-testid="meta-merge-nav">
+                  <Link to="/meta-merge" data-testid="meta-merge-index-link">
+                    Merge Index
+                  </Link>
+                  <Link to="/meta-merge/child" data-testid="meta-merge-child-link">
+                    Merge Child
+                  </Link>
+                  <Link to="/meta-merge/deep/nested" data-testid="meta-merge-deep-link">
+                    Deep Nested
+                  </Link>
+                </nav>
+                <Outlet />
+              </div>
+            );
+          },
+          () => [
+            // Index - has all root meta
+            route("metaMerge.index", () => (
+              <div data-testid="meta-merge-index-page">
+                <h1 data-testid="meta-merge-index-title">Merge Index</h1>
+                <p data-testid="meta-merge-index-description">
+                  Inherits all root meta.
+                </p>
+              </div>
+            )),
+
+            // Child - overrides some, adds new
+            route("metaMerge.child", (ctx) => {
+              const meta = ctx.use(Meta);
+              // Override title
+              meta({ title: "Merge Child" });
+              // Add new description (not set by parent)
+              meta({ name: "description", content: "Child description" });
+              // Override keywords
+              meta({ name: "keywords", content: "child, override" });
+              // Keep author and og:site_name from parent (don't set them)
+
+              return (
+                <div data-testid="meta-merge-child-page">
+                  <h1 data-testid="meta-merge-child-title">Merge Child</h1>
+                  <p data-testid="meta-merge-child-description">
+                    Overrides title and keywords, adds description, keeps author.
+                  </p>
+                </div>
+              );
+            }),
+
+            // Deep nested - multiple levels of overrides
+            layout(
+              (ctx) => {
+                const meta = ctx.use(Meta);
+                // Middle layout overrides author
+                meta({ name: "author", content: "Middle Author" });
+
+                return (
+                  <div data-testid="meta-merge-middle-layout">
+                    <Outlet />
+                  </div>
+                );
+              },
+              () => [
+                route("metaMerge.deep", (ctx) => {
+                  const meta = ctx.use(Meta);
+                  // Deep page overrides title only
+                  meta({ title: "Deep Nested Page" });
+                  // Add og:title
+                  meta({ property: "og:title", content: "Deep OG Title" });
+                  // Middle author should be kept, not root author
+
+                  return (
+                    <div data-testid="meta-merge-deep-page">
+                      <h1 data-testid="meta-merge-deep-title">Deep Nested</h1>
+                      <p data-testid="meta-merge-deep-description">
+                        Has root keywords, middle author, own title and og:title.
+                      </p>
+                    </div>
+                  );
+                }),
+              ]
             ),
           ]
         ),

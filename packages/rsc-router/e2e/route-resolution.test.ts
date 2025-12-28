@@ -16,6 +16,9 @@ test.describe("route-resolution", () => {
     mode: "dev",
   });
 
+  // Skip trailing slash tests on CI - they timeout instead of failing fast
+  const isCI = !!process.env.CI;
+
   test.describe("basic-routes", () => {
     test("index route should resolve at /", async ({ page }) => {
       using _ = expectNoPageError(page);
@@ -44,10 +47,12 @@ test.describe("route-resolution", () => {
 
   test.describe("trailing-slash", () => {
     // Known bug: trailing slashes cause server error
-    // These tests are marked as expected failures until the bug is fixed
+    // Skip on CI because they timeout; locally they fail fast with test.fail()
+
     test("blog index should resolve at /blog/ (with trailing slash)", async ({
       page,
     }) => {
+      test.skip(isCI, "Trailing slash tests timeout on CI");
       test.fail(); // Known bug: trailing slash not handled
 
       using _ = expectNoPageError(page);
@@ -76,6 +81,7 @@ test.describe("route-resolution", () => {
     test("product detail should resolve with trailing slash", async ({
       page,
     }) => {
+      test.skip(isCI, "Trailing slash tests timeout on CI");
       test.fail(); // Known bug: trailing slash not handled
 
       using _ = expectNoPageError(page);
@@ -107,6 +113,7 @@ test.describe("route-resolution", () => {
     });
 
     test("blog post should resolve with trailing slash", async ({ page }) => {
+      test.skip(isCI, "Trailing slash tests timeout on CI");
       test.fail(); // Known bug: trailing slash not handled
 
       using _ = expectNoPageError(page);

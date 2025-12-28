@@ -35,6 +35,12 @@ export { track } from "./server/context.js";
 // Handle API (works in both server and client contexts)
 export { createHandle, isHandle, type Handle } from "./handle.js";
 
+// Built-in handles
+export { Meta } from "./handles/meta.js";
+
+// Meta types
+export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
+
 // Error classes and utilities
 export {
   RouteNotFoundError,

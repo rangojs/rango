@@ -575,6 +575,11 @@ export { createHandle, isHandle, type Handle } from "./handle.js";
 // Handle data hook
 export { useHandle } from "./browser/react/use-handle.js";
 
+// Built-in handles
+export { Meta } from "./handles/meta.js";
+export { MetaTags } from "./handles/MetaTags.js";
+export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
+
 // Location state - type-safe navigation state
 export {
   createLocationState,

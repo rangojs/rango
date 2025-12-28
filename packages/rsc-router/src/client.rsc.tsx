@@ -55,6 +55,13 @@ export { href } from "./href-client.js";
 // Works in both RSC and client contexts
 export { createHandle, isHandle, type Handle } from "./handle.js";
 
+// Built-in handles
+// Meta handle works in RSC context
+export { Meta } from "./handles/meta.js";
+// MetaTags is a "use client" component that can be imported from RSC
+export { MetaTags } from "./handles/MetaTags.js";
+export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
+
 // Location state - createLocationState works in RSC (just creates definition)
 // useLocationState is NOT exported here as it uses client hooks
 export {

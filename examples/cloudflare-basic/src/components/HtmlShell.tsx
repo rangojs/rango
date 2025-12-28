@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Outlet } from "rsc-router/client";
+import { Outlet, MetaTags } from "rsc-router/client";
 
 /**
  * RSC Root layout that renders the full HTML shell.
@@ -8,13 +8,12 @@ import { Outlet } from "rsc-router/client";
  * since this RSC element handles all the HTML structure.
  *
  * Uses <Outlet /> to render child route content.
+ * Uses <MetaTags /> to render route-defined meta tags.
  */
 export const HtmlShell = (
   <html lang="en">
     <head>
-      <meta charSet="utf-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <title>RSC Router - Cloudflare Example</title>
+      <MetaTags />
       <style
         dangerouslySetInnerHTML={{
           __html: `
