@@ -13,7 +13,6 @@ export {
   redirect,
   type RouteHelpers,
   type InterceptSelectorContext,
-  type InterceptSegmentsState,
   type InterceptWhenFn,
 } from "./route-definition.js";
 

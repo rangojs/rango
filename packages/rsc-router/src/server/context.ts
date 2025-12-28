@@ -52,17 +52,6 @@ export type LoaderEntry = {
 };
 
 /**
- * Segments state for intercept context
- * Matches the structure from useSegments() for consistency
- */
-export type InterceptSegmentsState = {
-  /** URL path segments (e.g., /shop/products/123 → ["shop", "products", "123"]) */
-  path: readonly string[];
-  /** Matched segment IDs in order (layouts and routes only, e.g., ["L0", "L0L1", "L0L1R0"]) */
-  ids: readonly string[];
-};
-
-/**
  * Context passed to intercept selector functions (when())
  * Contains navigation context to determine if interception should occur.
  *
@@ -75,7 +64,6 @@ export type InterceptSelectorContext<TEnv = any> = {
   params: Record<string, string>;         // Matched route params
   request: Request;                       // The HTTP request object
   env: TEnv;                              // Platform bindings (Cloudflare env, etc.)
-  segments: InterceptSegmentsState;       // Client's current segments (where navigating FROM)
 };
 
 /**
