@@ -22,7 +22,7 @@ export default defineConfig({
       },
     },
   ],
-  workers: 4,
+  workers: process.env.CI ? 2 : 4,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   reporter: [
