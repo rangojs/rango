@@ -542,6 +542,9 @@ export {
 // Action state tracking hook
 export { useAction, type ServerActionFunction } from "./browser/react/use-action.js";
 
+// Segments state hook
+export { useSegments, type SegmentsState } from "./browser/react/use-segments.js";
+
 // Client cache controls hook
 export {
   useClientCache,
