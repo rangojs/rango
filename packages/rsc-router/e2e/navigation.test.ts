@@ -673,3 +673,61 @@ test.describe("intercept-loading-states", () => {
     await expect(page.locator('[data-testid="slow-modal-product-name"]')).toBeVisible();
   });
 });
+
+test.describe("use-segments-hook", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "dev",
+  });
+
+  test("should display segments on index and update on navigation", async ({ page }) => {
+    // Capture errors and logs for debugging
+    const errors: Error[] = [];
+    const logs: string[] = [];
+    page.on("pageerror", (error) => {
+      console.log("Page error:", error.message);
+      errors.push(error);
+    });
+    page.on("console", (msg) => {
+      if (msg.text().includes("[SegmentsDisplay]") || msg.text().includes("[useSegments]")) {
+        logs.push(msg.text());
+      }
+    });
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Wait a bit for component to mount and log
+    await page.waitForTimeout(500);
+    console.log("Browser logs:", logs);
+
+    // Check segments display is visible with correct initial values
+    const segmentsDisplay = page.locator('[data-testid="segments-display"]');
+    await expect(segmentsDisplay).toBeVisible();
+
+    // Path should be empty array for root
+    await expect(page.locator('[data-testid="segments-path"]')).toContainText("[]");
+
+    // Pathname should show /
+    await expect(page.locator('[data-testid="segments-pathname"]')).toContainText("Pathname: /");
+
+    // Should have segment IDs
+    await expect(page.locator('[data-testid="segments-ids"]')).toContainText("M0L0");
+
+    // Navigate to product page
+    await page.locator('[data-testid="product-link-product-a"]').click();
+    await expect(page).toHaveURL(/\/product\/product-a/);
+
+    // Path should update
+    await expect(page.locator('[data-testid="segments-path"]')).toContainText('["product","product-a"]');
+
+    // Pathname should update
+    await expect(page.locator('[data-testid="segments-pathname"]')).toContainText("/product/product-a");
+
+    // Log any errors for debugging
+    if (errors.length > 0) {
+      console.log("Captured page errors:", errors.map(e => e.message).join("\n"));
+    }
+    expect(errors).toEqual([]);
+  });
+});

@@ -11,7 +11,7 @@ import { createEventController } from "./event-controller.js";
 import { createNavigationClient } from "./navigation-client.js";
 import { createServerActionBridge } from "./server-action-bridge.js";
 import { createNavigationBridge } from "./navigation-bridge.js";
-import { NavigationProvider, initHandleDataSync } from "./react/index.js";
+import { NavigationProvider, initHandleDataSync, initSegmentsSync } from "./react/index.js";
 import type {
   RscPayload,
   RscBrowserDependencies,
@@ -121,6 +121,12 @@ export async function initBrowserApp(
   const eventController = createEventController({
     initialLocation: new URL(window.location.href),
   });
+
+  // Initialize segments state BEFORE hydration to avoid mismatch
+  initSegmentsSync(initialPayload.metadata?.matched, initialPayload.metadata?.pathname);
+
+  // Initialize event controller with segment order (even without handles)
+  eventController.setHandleData({}, initialPayload.metadata?.matched);
 
   // Initialize handle data from initial payload BEFORE hydration
   // This ensures useHandle returns correct data during hydration to avoid mismatch

@@ -1,5 +1,6 @@
 import React from "react";
 import { initHandleDataSync } from "../browser/react/use-handle.js";
+import { initSegmentsSync } from "../browser/react/use-segments.js";
 import type { HandleData } from "../browser/types.js";
 
 /**
@@ -41,6 +42,7 @@ interface RscPayload {
   metadata?: {
     handles?: AsyncGenerator<HandleData, void, unknown>;
     matched?: string[];
+    pathname?: string;
   };
 }
 
@@ -102,6 +104,9 @@ export function createSSRHandler(deps: SSRDependencies) {
     function SsrRoot() {
       payload ??= createFromReadableStream<RscPayload>(rscStream1);
       const resolved = React.use(payload);
+
+      // Initialize segments state before children render (for useSegments hook)
+      initSegmentsSync(resolved.metadata?.matched, resolved.metadata?.pathname);
 
       // Await handles and initialize state before children render
       // The handles property is an async generator that yields on each push

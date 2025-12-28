@@ -30,6 +30,7 @@ import { BreadcrumbNav } from "./components/BreadcrumbNav.js";
 import { ClientErrorThrower } from "./components/ClientErrorThrower.js";
 import { ChildMetaSetter } from "./components/ChildMetaSetter.js";
 import { AsyncChildMetaSetter } from "./components/AsyncChildMetaSetter.js";
+import { SegmentsDisplay } from "./components/SegmentsDisplay.js";
 
 export default map<typeof testRoutes>(
   ({ route, layout, intercept, loader, loading }) => [
@@ -54,6 +55,7 @@ export default map<typeof testRoutes>(
               <NavigationStatus testId="nav-status" />
             </nav>
             <BreadcrumbNav testId="breadcrumbs" />
+            <SegmentsDisplay />
             <main data-testid="main-content">
               <Outlet />
             </main>
