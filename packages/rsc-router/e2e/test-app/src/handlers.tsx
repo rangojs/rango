@@ -31,6 +31,7 @@ import { ClientErrorThrower } from "./components/ClientErrorThrower.js";
 import { ChildMetaSetter } from "./components/ChildMetaSetter.js";
 import { AsyncChildMetaSetter } from "./components/AsyncChildMetaSetter.js";
 import { SegmentsDisplay } from "./components/SegmentsDisplay.js";
+import { LinkPendingBadge } from "./components/LinkStatusDisplay.js";
 
 export default map<typeof testRoutes>(
   ({ route, layout, intercept, loader, loading, when }) => [
@@ -85,9 +86,33 @@ export default map<typeof testRoutes>(
                       >
                         <h3>{product.name}</h3>
                         <p>${product.price}</p>
+                        <LinkPendingBadge />
                       </Link>
                     </div>
                   ))}
+                </div>
+                <div data-testid="link-status-test" style={{ marginTop: "2rem" }}>
+                  <h2>Link Status Tests (useLinkStatus)</h2>
+                  <p style={{ fontSize: "12px", color: "#666" }}>
+                    Click a link to see its pending badge change. Only the clicked link shows pending.
+                  </p>
+                  <ul>
+                    <li>
+                      <Link to="/slow" data-testid="link-status-slow">
+                        Slow Route <LinkPendingBadge />
+                      </Link>
+                    </li>
+                    <li>
+                      <Link to="/slow-streaming" data-testid="link-status-slow-streaming">
+                        Slow Streaming <LinkPendingBadge />
+                      </Link>
+                    </li>
+                    <li>
+                      <Link to="/blog" data-testid="link-status-blog">
+                        Blog <LinkPendingBadge />
+                      </Link>
+                    </li>
+                  </ul>
                 </div>
                 <div data-testid="loader-test-links" style={{ marginTop: "2rem" }}>
                   <h2>Loader Behavior Tests</h2>

@@ -79,6 +79,8 @@ export interface DerivedNavigationState {
   isStreaming: boolean;
   /** Current committed location */
   location: NavigationLocation;
+  /** URL being navigated to (null if idle) */
+  pendingUrl: string | null;
   /** List of inflight actions (for compatibility) */
   inflightActions: InflightAction[];
 }
@@ -376,6 +378,8 @@ export function createEventController(
       state,
       isStreaming,
       location,
+      // pendingUrl only during fetching phase - once streaming starts (URL changed), not pending
+      pendingUrl: currentNavigation?.phase === "fetching" ? currentNavigation.url : null,
       inflightActions: inflightActionsList,
     };
   }

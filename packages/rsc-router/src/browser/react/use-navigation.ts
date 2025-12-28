@@ -44,6 +44,7 @@ const SSR_DEFAULT_STATE: PublicNavigationState = {
   state: "idle",
   isStreaming: false,
   location: new URL("/", "http://localhost"),
+  pendingUrl: null,
 };
 
 /**

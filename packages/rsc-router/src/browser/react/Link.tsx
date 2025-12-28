@@ -2,6 +2,7 @@
 
 import React, { forwardRef, useCallback, useContext, useRef, type ForwardRefExoticComponent, type RefAttributes } from "react";
 import { NavigationStoreContext } from "./context.js";
+import { LinkContext } from "./use-link-status.js";
 import type { NavigateOptions } from "../types.js";
 import {
   type LocationStateEntry,
@@ -239,7 +240,9 @@ export const Link: ForwardRefExoticComponent<LinkProps & RefAttributes<HTMLAncho
       data-replace={replace ? "true" : undefined}
       {...props}
     >
-      {children}
+      <LinkContext.Provider value={to}>
+        {children}
+      </LinkContext.Provider>
     </a>
   );
 });
