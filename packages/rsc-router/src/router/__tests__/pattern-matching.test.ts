@@ -1,14 +1,16 @@
 import { describe, it, expect } from "vitest";
 import { compilePattern, findMatch } from "../pattern-matching";
-import type { RouteEntry } from "../../types";
+import type { RouteEntry, TrailingSlashMode } from "../../types";
 
 // Helper to create route entries for testing
 const createRouteEntry = (
   prefix: string,
-  routes: Record<string, string>
+  routes: Record<string, string>,
+  trailingSlash?: Record<string, TrailingSlashMode>
 ): RouteEntry => ({
   prefix,
   routes: routes as any,
+  trailingSlash,
   handler: () => [],
   mountIndex: 0,
 });
@@ -401,6 +403,175 @@ describe("constrained parameters", () => {
       expect(result).not.toBeNull();
       expect(result!.params).toEqual({ locale: "" });
       expect(result!.optionalParams.has("locale")).toBe(true);
+    });
+  });
+});
+
+describe("trailing slash handling", () => {
+  describe("trailingSlash: ignore", () => {
+    it("should match without trailing slash, no redirect", () => {
+      const entries = [
+        createRouteEntry("", { api: "/api" }, { api: "ignore" }),
+      ];
+      const result = findMatch("/api", entries);
+      expect(result).not.toBeNull();
+      expect(result!.routeKey).toBe("api");
+      expect(result!.redirectTo).toBeUndefined();
+    });
+
+    it("should match with trailing slash, no redirect", () => {
+      const entries = [
+        createRouteEntry("", { api: "/api" }, { api: "ignore" }),
+      ];
+      const result = findMatch("/api/", entries);
+      expect(result).not.toBeNull();
+      expect(result!.routeKey).toBe("api");
+      expect(result!.redirectTo).toBeUndefined();
+    });
+
+    it("should work with dynamic params", () => {
+      const entries = [
+        createRouteEntry("", { "product": "/product/:id" }, { product: "ignore" }),
+      ];
+
+      const withoutSlash = findMatch("/product/123", entries);
+      expect(withoutSlash).not.toBeNull();
+      expect(withoutSlash!.params).toEqual({ id: "123" });
+      expect(withoutSlash!.redirectTo).toBeUndefined();
+
+      const withSlash = findMatch("/product/123/", entries);
+      expect(withSlash).not.toBeNull();
+      expect(withSlash!.params).toEqual({ id: "123" });
+      expect(withSlash!.redirectTo).toBeUndefined();
+    });
+  });
+
+  describe("trailingSlash: never", () => {
+    it("should match without trailing slash, no redirect", () => {
+      const entries = [
+        createRouteEntry("", { blog: "/blog" }, { blog: "never" }),
+      ];
+      const result = findMatch("/blog", entries);
+      expect(result).not.toBeNull();
+      expect(result!.routeKey).toBe("blog");
+      expect(result!.redirectTo).toBeUndefined();
+    });
+
+    it("should match with trailing slash and redirect to without", () => {
+      const entries = [
+        createRouteEntry("", { blog: "/blog" }, { blog: "never" }),
+      ];
+      const result = findMatch("/blog/", entries);
+      expect(result).not.toBeNull();
+      expect(result!.routeKey).toBe("blog");
+      expect(result!.redirectTo).toBe("/blog");
+    });
+
+    it("should redirect dynamic routes to no trailing slash", () => {
+      const entries = [
+        createRouteEntry("", { "post": "/blog/:slug" }, { post: "never" }),
+      ];
+      const result = findMatch("/blog/hello-world/", entries);
+      expect(result).not.toBeNull();
+      expect(result!.params).toEqual({ slug: "hello-world" });
+      expect(result!.redirectTo).toBe("/blog/hello-world");
+    });
+  });
+
+  describe("trailingSlash: always", () => {
+    it("should match with trailing slash, no redirect", () => {
+      const entries = [
+        createRouteEntry("", { docs: "/docs" }, { docs: "always" }),
+      ];
+      const result = findMatch("/docs/", entries);
+      expect(result).not.toBeNull();
+      expect(result!.routeKey).toBe("docs");
+      expect(result!.redirectTo).toBeUndefined();
+    });
+
+    it("should match without trailing slash and redirect to with", () => {
+      const entries = [
+        createRouteEntry("", { docs: "/docs" }, { docs: "always" }),
+      ];
+      const result = findMatch("/docs", entries);
+      expect(result).not.toBeNull();
+      expect(result!.routeKey).toBe("docs");
+      expect(result!.redirectTo).toBe("/docs/");
+    });
+
+    it("should redirect dynamic routes to with trailing slash", () => {
+      const entries = [
+        createRouteEntry("", { "category": "/shop/:cat" }, { category: "always" }),
+      ];
+      const result = findMatch("/shop/electronics", entries);
+      expect(result).not.toBeNull();
+      expect(result!.params).toEqual({ cat: "electronics" });
+      expect(result!.redirectTo).toBe("/shop/electronics/");
+    });
+  });
+
+  describe("pattern-based fallback (no explicit config)", () => {
+    it("should redirect trailing slash to no trailing slash by default", () => {
+      const entries = [
+        createRouteEntry("", { about: "/about" }), // no trailingSlash config
+      ];
+      const result = findMatch("/about/", entries);
+      expect(result).not.toBeNull();
+      expect(result!.routeKey).toBe("about");
+      expect(result!.redirectTo).toBe("/about");
+    });
+
+    it("should match exact pattern without redirect", () => {
+      const entries = [
+        createRouteEntry("", { about: "/about" }),
+      ];
+      const result = findMatch("/about", entries);
+      expect(result).not.toBeNull();
+      expect(result!.redirectTo).toBeUndefined();
+    });
+  });
+
+  describe("root path handling", () => {
+    it("should match root path without redirect", () => {
+      const entries = [
+        createRouteEntry("", { index: "/" }),
+      ];
+      const result = findMatch("/", entries);
+      expect(result).not.toBeNull();
+      expect(result!.routeKey).toBe("index");
+      expect(result!.redirectTo).toBeUndefined();
+    });
+  });
+
+  describe("mixed routes with different configs", () => {
+    it("should apply correct config per route", () => {
+      const entries = [
+        createRouteEntry(
+          "",
+          {
+            api: "/api",
+            blog: "/blog",
+            docs: "/docs",
+          },
+          {
+            api: "ignore",
+            blog: "never",
+            docs: "always",
+          }
+        ),
+      ];
+
+      // api: ignore - both work, no redirect
+      expect(findMatch("/api", entries)!.redirectTo).toBeUndefined();
+      expect(findMatch("/api/", entries)!.redirectTo).toBeUndefined();
+
+      // blog: never - redirect trailing to no trailing
+      expect(findMatch("/blog", entries)!.redirectTo).toBeUndefined();
+      expect(findMatch("/blog/", entries)!.redirectTo).toBe("/blog");
+
+      // docs: always - redirect no trailing to trailing
+      expect(findMatch("/docs/", entries)!.redirectTo).toBeUndefined();
+      expect(findMatch("/docs", entries)!.redirectTo).toBe("/docs/");
     });
   });
 });

@@ -8,6 +8,15 @@ export const testRoutes = route({
   product: {
     detail: "/product/:productId",
   },
+  // Routes for testing trailing slash configuration
+  trailingSlash: {
+    // Explicit "ignore" - matches both /path and /path/, no redirect
+    ignore: { path: "/ts-ignore", trailingSlash: "ignore" },
+    // Explicit "always" - redirects /path to /path/
+    always: { path: "/ts-always", trailingSlash: "always" },
+    // Explicit "never" - redirects /path/ to /path
+    never: { path: "/ts-never", trailingSlash: "never" },
+  },
   // Routes for testing loader behavior with/without loading component
   slow: "/slow",
   slowStreaming: "/slow-streaming",

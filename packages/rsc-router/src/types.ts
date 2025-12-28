@@ -214,6 +214,7 @@ export type RouteDefinition = {
 /**
  * Recursively flatten nested routes with depth limit to prevent infinite recursion
  * Transforms: { products: { detail: "/product/:slug" } } => { "products.detail": "/product/:slug" }
+ * Also handles RouteConfig objects: { api: { path: "/api" } } => { "api": "/api" }
  */
 type FlattenRoutes<
   T extends RouteDefinition,
@@ -224,9 +225,11 @@ type FlattenRoutes<
   : {
       [K in keyof T]: T[K] extends string
         ? Record<`${Prefix}${K & string}`, T[K]>
-        : T[K] extends RouteDefinition
-          ? FlattenRoutes<T[K], `${Prefix}${K & string}.`, readonly [...Depth, unknown]>
-          : never;
+        : T[K] extends RouteConfig
+          ? Record<`${Prefix}${K & string}`, T[K]['path']>
+          : T[K] extends RouteDefinition
+            ? FlattenRoutes<T[K], `${Prefix}${K & string}.`, readonly [...Depth, unknown]>
+            : never;
     }[keyof T];
 
 /**

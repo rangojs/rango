@@ -89,6 +89,89 @@ test.describe("route-resolution", () => {
     });
   });
 
+  test.describe("trailing-slash-config", () => {
+    // Tests for per-route trailing slash configuration
+
+    test("trailingSlash: ignore - should match /ts-ignore without redirect", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/ts-ignore"));
+      await waitForHydration(page);
+
+      await expect(page.locator('[data-testid="ts-ignore-page"]')).toBeVisible();
+      await expect(page.locator('[data-testid="ts-ignore-title"]')).toContainText(
+        "Trailing Slash: Ignore"
+      );
+    });
+
+    test("trailingSlash: ignore - should match /ts-ignore/ without redirect", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/ts-ignore/"));
+      await waitForHydration(page);
+
+      await expect(page.locator('[data-testid="ts-ignore-page"]')).toBeVisible();
+      await expect(page.locator('[data-testid="ts-ignore-title"]')).toContainText(
+        "Trailing Slash: Ignore"
+      );
+    });
+
+    test("trailingSlash: always - should redirect /ts-always to /ts-always/", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      // Navigate to /ts-always (without trailing slash)
+      const response = await page.goto(f.url("/ts-always"));
+      await waitForHydration(page);
+
+      // Should redirect to /ts-always/ and render the page
+      expect(page.url()).toContain("/ts-always/");
+      await expect(page.locator('[data-testid="ts-always-page"]')).toBeVisible();
+    });
+
+    test("trailingSlash: always - should match /ts-always/ directly", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/ts-always/"));
+      await waitForHydration(page);
+
+      await expect(page.locator('[data-testid="ts-always-page"]')).toBeVisible();
+    });
+
+    test("trailingSlash: never - should redirect /ts-never/ to /ts-never", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      // Navigate to /ts-never/ (with trailing slash)
+      await page.goto(f.url("/ts-never/"));
+      await waitForHydration(page);
+
+      // Should redirect to /ts-never and render the page
+      expect(page.url()).not.toContain("/ts-never/");
+      expect(page.url()).toContain("/ts-never");
+      await expect(page.locator('[data-testid="ts-never-page"]')).toBeVisible();
+    });
+
+    test("trailingSlash: never - should match /ts-never directly", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/ts-never"));
+      await waitForHydration(page);
+
+      await expect(page.locator('[data-testid="ts-never-page"]')).toBeVisible();
+    });
+  });
+
   test.describe("nested-routes", () => {
     test("blog post should resolve at /blog/:postId", async ({ page }) => {
       using _ = expectNoPageError(page);

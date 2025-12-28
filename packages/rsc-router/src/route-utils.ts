@@ -4,7 +4,19 @@
  * These utilities can be imported in client code without pulling in server dependencies.
  */
 
-import type { RouteDefinition, ResolvedRouteMap } from "./types.js";
+import type { RouteDefinition, RouteConfig, ResolvedRouteMap } from "./types.js";
+
+/**
+ * Check if a value is a RouteConfig object
+ */
+function isRouteConfig(value: unknown): value is RouteConfig {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "path" in value &&
+    typeof (value as RouteConfig).path === "string"
+  );
+}
 
 /**
  * Flatten nested route definitions
@@ -19,6 +31,9 @@ function flattenRoutes(
     if (typeof value === "string") {
       // Direct route pattern - include prefix
       flattened[prefix + key] = value;
+    } else if (isRouteConfig(value)) {
+      // Route config object - extract path
+      flattened[prefix + key] = value.path;
     } else {
       // Nested routes - flatten recursively
       const nested = flattenRoutes(value, `${prefix}${key}.`);

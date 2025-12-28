@@ -538,6 +538,37 @@ export default map<typeof testRoutes>(
           );
         }),
 
+        // Trailing slash configuration test routes
+        route("trailingSlash.ignore", () => (
+          <div data-testid="ts-ignore-page">
+            <Link to="/" data-testid="back-link">← Back to Home</Link>
+            <h1 data-testid="ts-ignore-title">Trailing Slash: Ignore</h1>
+            <p data-testid="ts-ignore-description">
+              This route matches both /ts-ignore and /ts-ignore/ without redirect.
+            </p>
+          </div>
+        )),
+
+        route("trailingSlash.always", () => (
+          <div data-testid="ts-always-page">
+            <Link to="/" data-testid="back-link">← Back to Home</Link>
+            <h1 data-testid="ts-always-title">Trailing Slash: Always</h1>
+            <p data-testid="ts-always-description">
+              This route redirects /ts-always to /ts-always/ (308).
+            </p>
+          </div>
+        )),
+
+        route("trailingSlash.never", () => (
+          <div data-testid="ts-never-page">
+            <Link to="/" data-testid="back-link">← Back to Home</Link>
+            <h1 data-testid="ts-never-title">Trailing Slash: Never</h1>
+            <p data-testid="ts-never-description">
+              This route redirects /ts-never/ to /ts-never (308).
+            </p>
+          </div>
+        )),
+
         // Route for testing hydration error detection
         route("hydrationTest", () => (
           <div data-testid="hydration-test-page">
