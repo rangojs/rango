@@ -199,6 +199,7 @@ export function createNavigationStore(
     location: config?.initialLocation
       ? createLocation(config.initialLocation)
       : defaultLocation,
+    pendingUrl: null,
     inflightActions: [],
   };
 

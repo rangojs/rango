@@ -41,6 +41,9 @@ export {
   type PrefetchStrategy,
 } from "./Link.js";
 
+// Link status hook
+export { useLinkStatus, type LinkStatus } from "./use-link-status.js";
+
 // Scroll restoration
 export {
   ScrollRestoration,

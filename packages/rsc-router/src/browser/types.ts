@@ -90,6 +90,9 @@ export interface NavigationState {
   /** Current location (updated optimistically) */
   location: NavigationLocation;
 
+  /** URL being navigated to (null when idle) */
+  pendingUrl: string | null;
+
   /** List of inflight server actions (internal use only) */
   inflightActions: InflightAction[];
 }

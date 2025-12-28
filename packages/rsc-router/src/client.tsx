@@ -565,6 +565,9 @@ export {
   type StateOrGetter,
 } from "./browser/react/Link.js";
 
+// Link status hook
+export { useLinkStatus, type LinkStatus } from "./browser/react/use-link-status.js";
+
 // Scroll restoration
 export {
   ScrollRestoration,
