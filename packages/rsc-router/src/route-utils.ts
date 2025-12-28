@@ -4,7 +4,7 @@
  * These utilities can be imported in client code without pulling in server dependencies.
  */
 
-import type { RouteDefinition, RouteConfig, ResolvedRouteMap } from "./types.js";
+import type { RouteDefinition, RouteConfig, ResolvedRouteMap, TrailingSlashMode } from "./types.js";
 
 /**
  * Check if a value is a RouteConfig object
@@ -23,20 +23,25 @@ function isRouteConfig(value: unknown): value is RouteConfig {
  */
 function flattenRoutes(
   routes: RouteDefinition,
-  prefix: string
+  prefix: string,
+  trailingSlashConfig: Record<string, TrailingSlashMode>
 ): Record<string, string> {
   const flattened: Record<string, string> = {};
 
   for (const [key, value] of Object.entries(routes)) {
+    const fullKey = prefix + key;
     if (typeof value === "string") {
       // Direct route pattern - include prefix
-      flattened[prefix + key] = value;
+      flattened[fullKey] = value;
     } else if (isRouteConfig(value)) {
-      // Route config object - extract path
-      flattened[prefix + key] = value.path;
+      // Route config object - extract path and trailing slash config
+      flattened[fullKey] = value.path;
+      if (value.trailingSlash) {
+        trailingSlashConfig[fullKey] = value.trailingSlash;
+      }
     } else {
       // Nested routes - flatten recursively
-      const nested = flattenRoutes(value, `${prefix}${key}.`);
+      const nested = flattenRoutes(value, `${fullKey}.`, trailingSlashConfig);
       Object.assign(flattened, nested);
     }
   }
@@ -69,5 +74,16 @@ function flattenRoutes(
 export function route<const T extends RouteDefinition>(
   input: T
 ): ResolvedRouteMap<T> {
-  return flattenRoutes(input as RouteDefinition, "") as ResolvedRouteMap<T>;
+  const trailingSlash: Record<string, TrailingSlashMode> = {};
+  const routes = flattenRoutes(input as RouteDefinition, "", trailingSlash);
+
+  const result = routes as ResolvedRouteMap<T> & { __trailingSlash?: Record<string, TrailingSlashMode> };
+  if (Object.keys(trailingSlash).length > 0) {
+    Object.defineProperty(result, "__trailingSlash", {
+      value: trailingSlash,
+      enumerable: false,
+      writable: false,
+    });
+  }
+  return result;
 }
