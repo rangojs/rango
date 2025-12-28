@@ -6,7 +6,16 @@
  */
 
 // Route definition helpers (server-only)
-export { route, map, createLoader, redirect, type RouteHelpers } from "./route-definition.js";
+export {
+  route,
+  map,
+  createLoader,
+  redirect,
+  type RouteHelpers,
+  type InterceptSelectorContext,
+  type InterceptSegmentsState,
+  type InterceptWhenFn,
+} from "./route-definition.js";
 
 // Core router (server-only)
 export {

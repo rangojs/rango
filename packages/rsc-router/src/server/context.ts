@@ -52,6 +52,39 @@ export type LoaderEntry = {
 };
 
 /**
+ * Segments state for intercept context
+ * Matches the structure from useSegments() for consistency
+ */
+export type InterceptSegmentsState = {
+  /** URL path segments (e.g., /shop/products/123 → ["shop", "products", "123"]) */
+  path: readonly string[];
+  /** Matched segment IDs in order (layouts and routes only, e.g., ["L0", "L0L1", "L0L1R0"]) */
+  ids: readonly string[];
+};
+
+/**
+ * Context passed to intercept selector functions (when())
+ * Contains navigation context to determine if interception should occur.
+ *
+ * Note: when() is evaluated during route matching, BEFORE middleware runs.
+ * So ctx.get()/ctx.use() are not available, but env (platform bindings) is.
+ */
+export type InterceptSelectorContext<TEnv = any> = {
+  from: URL;                              // Source URL (where user is coming from)
+  to: URL;                                // Destination URL (where user is navigating to)
+  params: Record<string, string>;         // Matched route params
+  request: Request;                       // The HTTP request object
+  env: TEnv;                              // Platform bindings (Cloudflare env, etc.)
+  segments: InterceptSegmentsState;       // Client's current segments (where navigating FROM)
+};
+
+/**
+ * Selector function for conditional interception
+ * Returns true to intercept, false to skip and fall through to route handler
+ */
+export type InterceptWhenFn<TEnv = any> = (ctx: InterceptSelectorContext<TEnv>) => boolean;
+
+/**
  * Intercept entry stored in EntryData
  * Contains the slot name, route to intercept, and handler
  */
@@ -66,6 +99,7 @@ export type InterceptEntry = {
   loader: LoaderEntry[];
   loading?: ReactNode | false;
   layout?: ReactNode | Handler<any, any>;  // Wrapper layout with <Outlet /> for content
+  when: InterceptWhenFn[];  // Selector conditions - all must return true to intercept
 };
 
 export type EntryPropSegments = {

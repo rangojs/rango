@@ -96,6 +96,7 @@ export default map<typeof shopRoutes>(
     loader,
     loading,
     intercept,
+    when,
   }) => [
     //#region Global Layout & Middleware
     // Orphan layouts for testing
@@ -156,12 +157,15 @@ export default map<typeof shopRoutes>(
 
         // Intercept product detail - shows modal during soft navigation
         // Hard navigation (direct URL) shows the full ProductsDetailRoute
+        // Only intercept when coming from /shop index, NOT from category pages
         // layout() wraps both content and loading skeleton with ModalWrapper
         intercept(
           "@modal",
           "products.detail.view",
           <ProductModalContent />,
           () => [
+            // Only show modal when navigating from shop index, not from category pages
+            when(({ from }) => !from.pathname.startsWith("/shop/products/")),
             layout(<ModalWrapper />),
             loading(<ProductModalContentSkeleton />),
             loader(ProductLoader),

@@ -39,6 +39,7 @@ import {
   EntryData,
   LoaderEntry,
   InterceptEntry,
+  InterceptSelectorContext,
   getContext,
   track,
   MetricsStore,
@@ -783,6 +784,40 @@ export function createRSCRouter<TEnv = any>(
   }
 
   /**
+   * Check if an intercept's when conditions are satisfied
+   * All when() functions must return true for the intercept to activate.
+   * If no when() conditions are defined, the intercept always activates.
+   *
+   * IMPORTANT: During action revalidation, when() is NOT evaluated.
+   * The intercept was already activated during navigation, and we preserve
+   * that state to avoid accidentally closing modals after actions.
+   */
+  function evaluateInterceptWhen(
+    intercept: InterceptEntry,
+    selectorContext: InterceptSelectorContext | null,
+    isAction: boolean
+  ): boolean {
+    // During action revalidation, skip when() evaluation - preserve current state
+    // The intercept was already activated during navigation
+    if (isAction) {
+      return true;
+    }
+
+    // If no when conditions, always intercept (backwards compatible)
+    if (!intercept.when || intercept.when.length === 0) {
+      return true;
+    }
+
+    // If no selector context provided, can't evaluate - skip intercept
+    if (!selectorContext) {
+      return false;
+    }
+
+    // All when conditions must return true (AND logic)
+    return intercept.when.every((fn) => fn(selectorContext));
+  }
+
+  /**
    * Find an intercept for the target route by walking up the entry chain
    * Returns the first (innermost) matching intercept along with the entry that defines it
    *
@@ -792,20 +827,27 @@ export function createRSCRouter<TEnv = any>(
    *
    * @param targetRouteKey - The route key to find an intercept for (e.g., "card")
    * @param fromEntry - Starting entry to walk up from (usually the route entry)
+   * @param selectorContext - Navigation context for evaluating when() conditions
+   * @param isAction - Whether this is an action revalidation (skips when() evaluation)
    * @returns The matching intercept and its defining entry, or null if none found
    */
   function findInterceptForRoute(
     targetRouteKey: string,
-    fromEntry: EntryData | null
+    fromEntry: EntryData | null,
+    selectorContext: InterceptSelectorContext | null = null,
+    isAction: boolean = false
   ): { intercept: InterceptEntry; entry: EntryData } | null {
     let current: EntryData | null = fromEntry;
 
     while (current) {
       // Check if this entry has intercepts defined
       if (current.intercept && current.intercept.length > 0) {
-        // Find intercept matching the target route name
+        // Find intercept matching the target route name and when conditions
         for (const intercept of current.intercept) {
-          if (intercept.routeName === targetRouteKey) {
+          if (
+            intercept.routeName === targetRouteKey &&
+            evaluateInterceptWhen(intercept, selectorContext, isAction)
+          ) {
             return { intercept, entry: current };
           }
         }
@@ -818,7 +860,10 @@ export function createRSCRouter<TEnv = any>(
         for (const siblingLayout of current.layout) {
           if (siblingLayout.intercept && siblingLayout.intercept.length > 0) {
             for (const intercept of siblingLayout.intercept) {
-              if (intercept.routeName === targetRouteKey) {
+              if (
+                intercept.routeName === targetRouteKey &&
+                evaluateInterceptWhen(intercept, selectorContext, isAction)
+              ) {
                 return { intercept, entry: siblingLayout };
               }
             }
@@ -2398,6 +2443,27 @@ export function createRSCRouter<TEnv = any>(
         ? matched.routeKey.split(".").pop()!
         : matched.routeKey;
 
+      // Build selector context for evaluating when() conditions on intercepts
+      // Note: context is TEnv (platform bindings like Cloudflare env)
+      // Filter segment IDs to only include routes and layouts (exclude parallels and loaders)
+      const filteredSegmentIds = clientSegmentIds.filter((id) => {
+        if (id.includes(".@")) return false;  // Exclude parallels
+        if (/D\d+\./.test(id)) return false;  // Exclude loaders
+        return true;
+      });
+      const interceptSelectorContext: InterceptSelectorContext = {
+        from: prevUrl,
+        to: url,
+        params: matched.params,
+        request,
+        env: context,
+        segments: {
+          path: prevUrl.pathname.split("/").filter(Boolean),
+          ids: filteredSegmentIds,
+        },
+      };
+      const isAction = !!actionContext;
+
       // Walk up from route's parent to find intercept (parent layouts can intercept child routes)
       // Try both full route key and local name for flexible matching
       // Skip intercept lookup entirely if navigating within the same route
@@ -2409,14 +2475,13 @@ export function createRSCRouter<TEnv = any>(
       const clientHasInterceptSegments = [...clientSegmentSet].some((id) =>
         id.includes(".@")
       );
-      const skipInterceptForAction =
-        actionContext && !clientHasInterceptSegments;
+      const skipInterceptForAction = isAction && !clientHasInterceptSegments;
       const interceptResult =
         isSameRouteNavigation || skipInterceptForAction
           ? null
-          : findInterceptForRoute(matched.routeKey, manifestEntry.parent) ||
+          : findInterceptForRoute(matched.routeKey, manifestEntry.parent, interceptSelectorContext, isAction) ||
             (localRouteName !== matched.routeKey
-              ? findInterceptForRoute(localRouteName, manifestEntry.parent)
+              ? findInterceptForRoute(localRouteName, manifestEntry.parent, interceptSelectorContext, isAction)
               : null);
 
       // Build slots state - intercepts render in named slots

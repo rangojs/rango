@@ -17,6 +17,7 @@ export declare const LoaderBrand: unique symbol;
 export declare const LoadingBrand: unique symbol;
 export declare const ErrorBoundaryBrand: unique symbol;
 export declare const NotFoundBoundaryBrand: unique symbol;
+export declare const WhenBrand: unique symbol;
 
 export type LayoutItem = {
   name: string;
@@ -77,6 +78,11 @@ export type NotFoundBoundaryItem = {
   uses?: AllUseItems[];
   [NotFoundBoundaryBrand]: void;
 };
+export type WhenItem = {
+  name: string;
+  type: "when";
+  [WhenBrand]: void;
+};
 
 /**
  * Union types for use() callbacks
@@ -127,5 +133,6 @@ export type InterceptUseItem =
   | ErrorBoundaryItem
   | NotFoundBoundaryItem
   | LayoutItem
-  | RouteItem;
+  | RouteItem
+  | WhenItem;
 export type LoaderUseItem = RevalidateItem;

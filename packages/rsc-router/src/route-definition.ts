@@ -13,7 +13,7 @@ import type {
   RouteDefinition,
   ShouldRevalidateFn,
 } from "./types.js";
-import { getContext, type EntryData, type InterceptEntry } from "./server/context";
+import { getContext, type EntryData, type InterceptEntry, type InterceptWhenFn, type InterceptSelectorContext } from "./server/context";
 import { invariant } from "./errors";
 import RootLayout from "./server/root-layout";
 import type {
@@ -33,6 +33,7 @@ import type {
   ParallelUseItem,
   InterceptUseItem,
   LoaderUseItem,
+  WhenItem,
 } from "./route-types.js";
 // const __DEV__ = import.meta.MODE === "development";
 /**
@@ -84,7 +85,11 @@ export type {
   RouteUseItem,
   ParallelUseItem,
   InterceptUseItem,
+  WhenItem,
 } from "./route-types.js";
+
+// Re-export intercept selector types for use in handlers
+export type { InterceptSelectorContext, InterceptSegmentsState, InterceptWhenFn } from "./server/context";
 
 /**
  * Route helpers provided by map()
@@ -304,6 +309,40 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
   notFoundBoundary: (
     fallback: ReactNode | NotFoundBoundaryHandler
   ) => NotFoundBoundaryItem;
+  /**
+   * Define a condition for when an intercept should activate
+   *
+   * Only valid inside intercept() use() callback. When multiple when() calls
+   * are present, ALL must return true for the intercept to activate.
+   * If no when() is defined, the intercept always activates on soft navigation.
+   *
+   * Context properties:
+   * - `from` - Source URL (where user is navigating from)
+   * - `to` - Destination URL (where user is navigating to)
+   * - `params` - Matched route params
+   * - `segments` - Client's current segments with `path` and `ids`
+   *
+   * ```typescript
+   * // Only intercept when coming from the board page
+   * intercept("@modal", "card", <CardModal />, () => [
+   *   when(({ from }) => from.pathname.startsWith("/board")),
+   *   loader(CardDetailLoader),
+   * ])
+   *
+   * // Use segments to check current route context
+   * intercept("@modal", "card", <CardModal />, () => [
+   *   when(({ segments }) => segments.path[0] === "kanban"),
+   * ])
+   *
+   * // Multiple conditions (AND logic)
+   * intercept("@modal", "card", <CardModal />, () => [
+   *   when(({ from }) => from.pathname.startsWith("/board")),
+   *   when(({ segments }) => segments.ids.includes("kanban-layout")),
+   * ])
+   * ```
+   * @param fn - Selector function receiving navigation context, returns boolean
+   */
+  when: (fn: InterceptWhenFn) => WhenItem;
 };
 
 const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
@@ -410,6 +449,30 @@ const notFoundBoundary: RouteHelpers<any, any>["notFoundBoundary"] = (
   return { name, type: "notFoundBoundary" } as NotFoundBoundaryItem;
 };
 
+/**
+ * When helper - defines a condition for intercept activation
+ *
+ * Only valid inside intercept() use() callback. The when() function
+ * is captured by the intercept and stored in its `when` array.
+ * During soft navigation, all when() conditions must return true
+ * for the intercept to activate.
+ */
+const when: RouteHelpers<any, any>["when"] = (fn) => {
+  const ctx = getContext().getStore();
+  if (!ctx) throw new Error("when() must be called inside intercept()");
+
+  // The when() function needs to be captured by the intercept's tempParent
+  // which should have a `when` array. If not present, we're not inside intercept()
+  const parent = ctx.parent as any;
+  if (!parent || !("when" in parent)) {
+    invariant(false, "when() can only be used inside intercept() use() callback");
+  }
+
+  const name = `$${getContext().getNextIndex("when")}`;
+  parent.when.push(fn);
+  return { name, type: "when" } as WhenItem;
+};
+
 const middleware: RouteHelpers<any, any>["middleware"] = (...fn) => {
   const ctx = getContext().getStore();
   if (!ctx) throw new Error("middleware() must be called inside map()");
@@ -483,7 +546,7 @@ const intercept: RouteHelpers<any, any>["intercept"] = (
 
   const namespace = `${ctx.namespace}.$${store.getNextIndex("intercept")}.${slotName}`;
 
-  // Create intercept entry with its own loaders/revalidate/middleware
+  // Create intercept entry with its own loaders/revalidate/middleware/when
   const entry: InterceptEntry = {
     slotName: slotName as `@${string}`,
     routeName,
@@ -493,6 +556,7 @@ const intercept: RouteHelpers<any, any>["intercept"] = (
     errorBoundary: [],
     notFoundBoundary: [],
     loader: [],
+    when: [],  // Selector conditions for conditional interception
   };
 
   // Run use callback if provided to collect loaders, revalidate, middleware, etc.
@@ -512,6 +576,7 @@ const intercept: RouteHelpers<any, any>["intercept"] = (
       notFoundBoundary: entry.notFoundBoundary,
       loader: entry.loader,
       layout: capturedLayouts,  // Capture layout() calls
+      when: entry.when,  // Capture when() conditions
       // Use getter/setter to capture loading on the entry
       get loading() {
         return entry.loading;
@@ -752,6 +817,7 @@ const isValidUseItem = (item: any): item is AllUseItems | undefined | null => {
         "loading",
         "errorBoundary",
         "notFoundBoundary",
+        "when",
       ].includes(item.type))
   );
 };
@@ -856,6 +922,13 @@ const createLayoutHelper = <TEnv>(): RouteHelpers<any, TEnv>["layout"] => {
 };
 
 /**
+ * Create when helper for intercept conditions
+ */
+const createWhenHelper = (): RouteHelpers<any, any>["when"] => {
+  return when;
+};
+
+/**
  * Type-safe handler definition helper
  *
  */
@@ -880,6 +953,7 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
       loading: createLoadingHelper(),
       errorBoundary: createErrorBoundaryHelper<TEnv>(),
       notFoundBoundary: createNotFoundBoundaryHelper<TEnv>(),
+      when: createWhenHelper(),
     };
 
     return [layout(RootLayout, () => builder(helpers))].flat(3);
