@@ -184,13 +184,37 @@ export type ExtractParams<
 /**
  * Route definition - maps route names to patterns
  */
+/**
+ * Trailing slash handling mode
+ * - "never": Redirect URLs with trailing slash to without
+ * - "always": Redirect URLs without trailing slash to with
+ * - "ignore": Match both with and without trailing slash
+ */
+export type TrailingSlashMode = "never" | "always" | "ignore";
+
+/**
+ * Route configuration object (alternative to string path)
+ */
+export type RouteConfig = {
+  path: string;
+  trailingSlash?: TrailingSlashMode;
+};
+
+/**
+ * Route definition options (global defaults)
+ */
+export type RouteDefinitionOptions = {
+  trailingSlash?: TrailingSlashMode;
+};
+
 export type RouteDefinition = {
-  [key: string]: string | RouteDefinition;
+  [key: string]: string | RouteConfig | RouteDefinition;
 };
 
 /**
  * Recursively flatten nested routes with depth limit to prevent infinite recursion
  * Transforms: { products: { detail: "/product/:slug" } } => { "products.detail": "/product/:slug" }
+ * Also handles RouteConfig objects: { api: { path: "/api" } } => { "api": "/api" }
  */
 type FlattenRoutes<
   T extends RouteDefinition,
@@ -201,9 +225,11 @@ type FlattenRoutes<
   : {
       [K in keyof T]: T[K] extends string
         ? Record<`${Prefix}${K & string}`, T[K]>
-        : T[K] extends RouteDefinition
-          ? FlattenRoutes<T[K], `${Prefix}${K & string}.`, readonly [...Depth, unknown]>
-          : never;
+        : T[K] extends RouteConfig
+          ? Record<`${Prefix}${K & string}`, T[K]['path']>
+          : T[K] extends RouteDefinition
+            ? FlattenRoutes<T[K], `${Prefix}${K & string}.`, readonly [...Depth, unknown]>
+            : never;
     }[keyof T];
 
 /**
@@ -749,6 +775,12 @@ export interface MatchResult {
    * Slots are used for intercepting routes during soft navigation
    */
   slots?: Record<string, SlotState>;
+  /**
+   * Redirect URL for trailing slash normalization.
+   * When set, the RSC handler should return a 308 redirect to this URL
+   * instead of rendering the page.
+   */
+  redirect?: string;
 }
 
 /**
@@ -757,6 +789,11 @@ export interface MatchResult {
 export interface RouteEntry<TEnv = any> {
   prefix: string;
   routes: ResolvedRouteMap<any>;
+  /**
+   * Trailing slash config per route key
+   * If not specified for a route, defaults to pattern-based detection
+   */
+  trailingSlash?: Record<string, TrailingSlashMode>;
   handler: () =>
       | Array<AllUseItems>
       | Promise<{ default: () => Array<AllUseItems> }>

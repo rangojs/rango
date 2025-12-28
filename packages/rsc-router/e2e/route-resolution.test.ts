@@ -16,9 +16,6 @@ test.describe("route-resolution", () => {
     mode: "dev",
   });
 
-  // Skip trailing slash tests on CI - they timeout instead of failing fast
-  const isCI = !!process.env.CI;
-
   test.describe("basic-routes", () => {
     test("index route should resolve at /", async ({ page }) => {
       using _ = expectNoPageError(page);
@@ -46,15 +43,11 @@ test.describe("route-resolution", () => {
   });
 
   test.describe("trailing-slash", () => {
-    // Known bug: trailing slashes cause server error
-    // Skip on CI because they timeout; locally they fail fast with test.fail()
+    // Trailing slash handling: routes with trailing slash redirect to without (trailingSlash: "never" default)
 
     test("blog index should resolve at /blog/ (with trailing slash)", async ({
       page,
     }) => {
-      test.skip(isCI, "Trailing slash tests timeout on CI");
-      test.fail(); // Known bug: trailing slash not handled
-
       using _ = expectNoPageError(page);
 
       await page.goto(f.url("/blog/"));
@@ -81,9 +74,6 @@ test.describe("route-resolution", () => {
     test("product detail should resolve with trailing slash", async ({
       page,
     }) => {
-      test.skip(isCI, "Trailing slash tests timeout on CI");
-      test.fail(); // Known bug: trailing slash not handled
-
       using _ = expectNoPageError(page);
 
       // /product/product-a/ should work the same as /product/product-a
@@ -96,6 +86,89 @@ test.describe("route-resolution", () => {
       await expect(page.locator('[data-testid="product-name"]')).toContainText(
         "Product A"
       );
+    });
+  });
+
+  test.describe("trailing-slash-config", () => {
+    // Tests for per-route trailing slash configuration
+
+    test("trailingSlash: ignore - should match /ts-ignore without redirect", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/ts-ignore"));
+      await waitForHydration(page);
+
+      await expect(page.locator('[data-testid="ts-ignore-page"]')).toBeVisible();
+      await expect(page.locator('[data-testid="ts-ignore-title"]')).toContainText(
+        "Trailing Slash: Ignore"
+      );
+    });
+
+    test("trailingSlash: ignore - should match /ts-ignore/ without redirect", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/ts-ignore/"));
+      await waitForHydration(page);
+
+      await expect(page.locator('[data-testid="ts-ignore-page"]')).toBeVisible();
+      await expect(page.locator('[data-testid="ts-ignore-title"]')).toContainText(
+        "Trailing Slash: Ignore"
+      );
+    });
+
+    test("trailingSlash: always - should redirect /ts-always to /ts-always/", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      // Navigate to /ts-always (without trailing slash)
+      const response = await page.goto(f.url("/ts-always"));
+      await waitForHydration(page);
+
+      // Should redirect to /ts-always/ and render the page
+      expect(page.url()).toContain("/ts-always/");
+      await expect(page.locator('[data-testid="ts-always-page"]')).toBeVisible();
+    });
+
+    test("trailingSlash: always - should match /ts-always/ directly", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/ts-always/"));
+      await waitForHydration(page);
+
+      await expect(page.locator('[data-testid="ts-always-page"]')).toBeVisible();
+    });
+
+    test("trailingSlash: never - should redirect /ts-never/ to /ts-never", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      // Navigate to /ts-never/ (with trailing slash)
+      await page.goto(f.url("/ts-never/"));
+      await waitForHydration(page);
+
+      // Should redirect to /ts-never and render the page
+      expect(page.url()).not.toContain("/ts-never/");
+      expect(page.url()).toContain("/ts-never");
+      await expect(page.locator('[data-testid="ts-never-page"]')).toBeVisible();
+    });
+
+    test("trailingSlash: never - should match /ts-never directly", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/ts-never"));
+      await waitForHydration(page);
+
+      await expect(page.locator('[data-testid="ts-never-page"]')).toBeVisible();
     });
   });
 
@@ -113,9 +186,6 @@ test.describe("route-resolution", () => {
     });
 
     test("blog post should resolve with trailing slash", async ({ page }) => {
-      test.skip(isCI, "Trailing slash tests timeout on CI");
-      test.fail(); // Known bug: trailing slash not handled
-
       using _ = expectNoPageError(page);
 
       await page.goto(f.url("/blog/my-first-post/"));

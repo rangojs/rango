@@ -265,6 +265,17 @@ export function createRSCHandler<TEnv = unknown>(
         if (!matchResult) {
           // Fall back to full render
           const fullMatch = await router.match(request, envWithHandleStore);
+
+          // Handle trailing slash redirect
+          if (fullMatch.redirect) {
+            return new Response(null, {
+              status: 308,
+              headers: {
+                Location: fullMatch.redirect,
+              },
+            });
+          }
+
           const renderStart = performance.now();
           const root = renderSegments(fullMatch.segments, {
             rootLayout: router.rootLayout,
@@ -356,6 +367,17 @@ export function createRSCHandler<TEnv = unknown>(
         if (!result) {
           // Fall back to full render
           const match = await router.match(request, envWithHandleStore);
+
+          // Handle trailing slash redirect
+          if (match.redirect) {
+            return new Response(null, {
+              status: 308,
+              headers: {
+                Location: match.redirect,
+              },
+            });
+          }
+
           const renderStart = performance.now();
           const root = renderSegments(match.segments, {
             rootLayout: router.rootLayout,
@@ -394,6 +416,17 @@ export function createRSCHandler<TEnv = unknown>(
       } else {
         // Full render (initial page load)
         const match = await router.match(request, envWithHandleStore);
+
+        // Handle trailing slash redirect
+        if (match.redirect) {
+          return new Response(null, {
+            status: 308,
+            headers: {
+              Location: match.redirect,
+            },
+          });
+        }
+
         const renderStart = performance.now();
         const root = renderSegments(match.segments, {
           rootLayout: router.rootLayout,

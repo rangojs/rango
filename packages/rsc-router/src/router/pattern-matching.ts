@@ -4,7 +4,7 @@
  * Route pattern compilation and matching utilities.
  */
 
-import type { RouteEntry } from "../types";
+import type { RouteEntry, TrailingSlashMode } from "../types";
 import type { EntryData } from "../server/context";
 
 /**
@@ -81,8 +81,14 @@ export function compilePattern(pattern: string): {
   regex: RegExp;
   paramNames: string[];
   optionalParams: Set<string>;
+  hasTrailingSlash: boolean;
 } {
-  const segments = parsePattern(pattern);
+  // Detect if pattern has trailing slash (but not just "/")
+  const hasTrailingSlash = pattern.length > 1 && pattern.endsWith("/");
+  // Remove trailing slash for parsing (we'll add it back to regex if needed)
+  const normalizedPattern = hasTrailingSlash ? pattern.slice(0, -1) : pattern;
+
+  const segments = parsePattern(normalizedPattern);
   const paramNames: string[] = [];
   const optionalParams = new Set<string>();
 
@@ -116,10 +122,16 @@ export function compilePattern(pattern: string): {
     regexPattern = "/";
   }
 
+  // Add trailing slash to regex if pattern has one
+  if (hasTrailingSlash) {
+    regexPattern += "/";
+  }
+
   return {
     regex: new RegExp(`^${regexPattern}$`),
     paramNames,
     optionalParams,
+    hasTrailingSlash,
   };
 }
 
@@ -135,6 +147,15 @@ function escapeRegex(str: string): string {
  *
  * Note: Optional params that are absent in the path will have empty string value.
  * Use the pattern definition to determine if a param is optional.
+ *
+ * Trailing slash handling (priority order):
+ * 1. Per-route `trailingSlash` config from route()
+ * 2. Pattern-based detection (pattern ending with `/`)
+ *
+ * Modes:
+ * - "never": Redirect to no trailing slash
+ * - "always": Redirect to with trailing slash
+ * - "ignore": Match both, no redirect
  */
 export function findMatch<TEnv>(
   pathname: string,
@@ -144,7 +165,14 @@ export function findMatch<TEnv>(
   routeKey: string;
   params: Record<string, string>;
   optionalParams: Set<string>;
+  redirectTo?: string;
 } | null {
+  const pathnameHasTrailingSlash = pathname.length > 1 && pathname.endsWith("/");
+  // Try alternate pathname for redirect matching
+  const alternatePathname = pathnameHasTrailingSlash
+    ? pathname.slice(0, -1)
+    : pathname + "/";
+
   for (const entry of routesEntries) {
     const routeEntries = Object.entries(entry.routes);
 
@@ -159,17 +187,61 @@ export function findMatch<TEnv>(
         fullPattern = entry.prefix + pattern;
       }
 
-      const { regex, paramNames, optionalParams } = compilePattern(fullPattern);
-      const match = regex.exec(pathname);
+      const { regex, paramNames, optionalParams, hasTrailingSlash } = compilePattern(fullPattern);
 
+      // Get trailing slash mode for this route (per-route config or pattern-based)
+      const trailingSlashMode: TrailingSlashMode | undefined = entry.trailingSlash?.[routeKey];
+
+      // Try exact match first
+      const match = regex.exec(pathname);
       if (match) {
         const params: Record<string, string> = {};
         paramNames.forEach((name, index) => {
-          // Use empty string for absent optional params (backwards compatible)
           params[name] = match[index + 1] ?? "";
         });
 
+        // Check if trailing slash mode requires redirect even on exact match
+        if (trailingSlashMode === "always" && !pathnameHasTrailingSlash && pathname !== "/") {
+          // Mode says always have trailing slash, but pathname doesn't have it
+          return { entry, routeKey, params, optionalParams, redirectTo: pathname + "/" };
+        } else if (trailingSlashMode === "never" && pathnameHasTrailingSlash) {
+          // Mode says never have trailing slash, but pathname has it
+          return { entry, routeKey, params, optionalParams, redirectTo: pathname.slice(0, -1) };
+        }
+
         return { entry, routeKey, params, optionalParams };
+      }
+
+      // Try alternate pathname (opposite trailing slash)
+      const altMatch = regex.exec(alternatePathname);
+      if (altMatch) {
+        const params: Record<string, string> = {};
+        paramNames.forEach((name, index) => {
+          params[name] = altMatch[index + 1] ?? "";
+        });
+
+        // Determine redirect behavior based on mode
+        if (trailingSlashMode === "ignore") {
+          // Match without redirect
+          return { entry, routeKey, params, optionalParams };
+        } else if (trailingSlashMode === "never") {
+          // Redirect to no trailing slash
+          if (pathnameHasTrailingSlash) {
+            return { entry, routeKey, params, optionalParams, redirectTo: alternatePathname };
+          }
+          return { entry, routeKey, params, optionalParams };
+        } else if (trailingSlashMode === "always") {
+          // Redirect to with trailing slash
+          if (!pathnameHasTrailingSlash) {
+            return { entry, routeKey, params, optionalParams, redirectTo: alternatePathname };
+          }
+          return { entry, routeKey, params, optionalParams };
+        } else {
+          // No explicit mode - use pattern-based detection
+          // Redirect to canonical form (what the pattern defines)
+          const canonicalPath = hasTrailingSlash ? alternatePathname : pathname.slice(0, -1);
+          return { entry, routeKey, params, optionalParams, redirectTo: canonicalPath };
+        }
       }
     }
   }
