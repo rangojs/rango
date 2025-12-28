@@ -367,7 +367,150 @@ import { Link } from "rsc-router/client";
 <Link to="/about" scroll={false}>About</Link>     // Keep scroll position
 <Link to="/docs" prefetch="hover">Docs</Link>     // Prefetch on hover
 <Link to="/external" reloadDocument>Reload</Link> // Full page load
+
+// With navigation state
+<Link to="/product/123" state={{ from: "list" }}>View Product</Link>
 ```
+
+### Navigation State
+
+Pass typed state through navigation that persists in `history.state`.
+
+#### Type-Safe State (Recommended)
+
+Define state with `createLocationState` for type safety:
+
+```tsx
+// location-states.ts
+import { createLocationState } from "rsc-router/client";
+
+// Define typed state with a stable key
+export const ProductState = createLocationState<{
+  name: string;
+  price: number;
+}>("product");
+
+export const ScrollState = createLocationState<{ scrollY: number }>("scroll");
+```
+
+Use in navigation:
+
+```tsx
+import { Link, useNavigation } from "rsc-router/client";
+import { ProductState, ScrollState } from "./location-states";
+
+// Via Link - pass array of state entries
+<Link
+  to="/product/123"
+  state={[ProductState({ name: "Widget", price: 29 })]}
+>
+  View Product
+</Link>
+
+// Multiple states
+<Link
+  to="/checkout"
+  state={[ProductState(product), ScrollState({ scrollY: window.scrollY })]}
+>
+  Checkout
+</Link>
+
+// Via navigate - same API
+const { navigate } = useNavigation();
+navigate("/product/123", {
+  state: [ProductState({ name: "Widget", price: 29 })]
+});
+```
+
+Read typed state:
+
+```tsx
+import { useLocationState } from "rsc-router/client";
+import { ProductState } from "./location-states";
+
+function ProductModal() {
+  // Type-safe: returns { name: string; price: number } | undefined
+  const product = useLocationState(ProductState);
+
+  if (product) {
+    return <div>Loading {product.name} (${product.price})...</div>;
+  }
+  return <div>Loading...</div>;
+}
+```
+
+#### Lazy Evaluation
+
+For values that should be captured at click time (not render time):
+
+```tsx
+// Pass a getter function - called when user clicks
+<Link
+  to="/product/123"
+  state={[ScrollState(() => ({ scrollY: window.scrollY }))]}
+>
+  View
+</Link>
+```
+
+#### Legacy Format (Backwards Compatible)
+
+Simple untyped state still works:
+
+```tsx
+// Static state
+<Link to="/product/123" state={{ from: "list" }}>View</Link>
+
+// Navigate with legacy state
+navigate("/product/123", { state: { from: "list" } });
+
+// Read legacy state (untyped)
+const state = useLocationState<{ from?: string }>();
+```
+
+State is preserved on browser back/forward navigation.
+
+## Link Interception
+
+By default, RSC Router intercepts clicks on same-origin anchor elements for SPA navigation. This behavior can be configured.
+
+### Global Interception Toggle
+
+Disable global link interception to rely solely on `<Link>` components:
+
+```typescript
+await initBrowserApp({
+  rscStream,
+  deps,
+  linkInterception: false,  // Disable global interception
+});
+```
+
+### Data Attributes
+
+Control interception behavior on individual anchors:
+
+| Attribute | Effect |
+|-----------|--------|
+| `data-link-component` | Link component marker (auto-added). These anchors handle their own navigation. |
+| `data-external` | External link marker (auto-added by Link). Never intercepted. |
+| `data-no-intercept="true"` | Opt-out individual anchors from global interception. |
+
+```html
+<!-- This anchor won't be intercepted -->
+<a href="/legacy-page" data-no-intercept="true">Legacy Page</a>
+```
+
+### Interception Rules
+
+Links are **not intercepted** when:
+- Cross-origin (different host)
+- Has `download` attribute
+- Has `target` other than `_self`
+- Has `data-no-intercept="true"`
+- Has `data-link-component` (Link component)
+- Has `data-external` (external link)
+- Modifier keys pressed (Cmd/Ctrl/Shift/Alt)
 
 ## Client Components
 

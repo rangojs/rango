@@ -1,11 +1,14 @@
 "use client";
 
 import { useState, useOptimistic, startTransition } from "react";
-import { Outlet, useLoader, Link } from "rsc-router/client";
+import { Outlet, useLoader, Link, useLocationState } from "rsc-router/client";
 import { ProductLoader } from "../loaders/product.js";
 import { ModalRecommendationsLoader } from "../loaders/modal-recommendations.js";
 import { ProductCartLoader } from "../loaders/product-cart.js";
-import { addToCartWithResult, updateCartQuantity } from "../actions/shop.actions.js";
+import {
+  addToCartWithResult,
+  updateCartQuantity,
+} from "../actions/shop.actions.js";
 import { LoadingSpinner } from "./loading.js";
 
 const styles = {
@@ -229,7 +232,11 @@ export function ProductModalContent() {
                   ...quantityStyles.decrementButton,
                 }}
                 onClick={() => handleQuantityChange(-1)}
-                title={optimisticQuantity === 1 ? "Remove from cart" : "Decrease quantity"}
+                title={
+                  optimisticQuantity === 1
+                    ? "Remove from cart"
+                    : "Decrease quantity"
+                }
               >
                 {optimisticQuantity === 1 ? "x" : "-"}
               </button>
@@ -335,28 +342,57 @@ const skeletonStyle = {
   borderRadius: "4px",
 };
 
+interface ProductLocationState {
+  productName?: string;
+  productPrice?: number;
+}
+
 export function ProductModalContentSkeleton() {
+  // Read product info from navigation state for instant skeleton personalization
+  const locationState = useLocationState<ProductLocationState>();
+  const productName = locationState?.productName;
+  const productPrice = locationState?.productPrice;
+
   return (
     <>
       <div style={styles.header}>
-        <div
-          style={{
-            ...skeletonStyle,
-            height: "24px",
-            width: "60%",
-            background: "rgba(255,255,255,0.3)",
-          }}
-        />
+        {productName ? (
+          <h2 style={{ margin: 0, fontSize: "1.25rem", color: "white" }}>
+            {productName}
+          </h2>
+        ) : (
+          <div
+            style={{
+              ...skeletonStyle,
+              height: "24px",
+              width: "60%",
+              background: "rgba(255,255,255,0.3)",
+            }}
+          />
+        )}
       </div>
       <div style={styles.body}>
-        <div
-          style={{
-            ...skeletonStyle,
-            height: "32px",
-            width: "40%",
-            marginBottom: "1rem",
-          }}
-        />
+        {productPrice !== undefined ? (
+          <p
+            style={{
+              fontSize: "1.5rem",
+              fontWeight: "bold",
+              color: "#667eea",
+              margin: "0 0 1rem 0",
+            }}
+          >
+            ${productPrice}
+          </p>
+        ) : (
+          <div
+            style={{
+              ...skeletonStyle,
+              height: "32px",
+              width: "40%",
+              marginBottom: "1rem",
+            }}
+          />
+        )}
         <div
           style={{
             ...skeletonStyle,

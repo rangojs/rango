@@ -54,3 +54,11 @@ export { href } from "./href-client.js";
 // Handle API - for accumulating data across route segments
 // Works in both RSC and client contexts
 export { createHandle, isHandle, type Handle } from "./handle.js";
+
+// Location state - createLocationState works in RSC (just creates definition)
+// useLocationState is NOT exported here as it uses client hooks
+export {
+  createLocationState,
+  type LocationStateDefinition,
+  type LocationStateEntry,
+} from "./browser/react/location-state-shared.js";

@@ -247,6 +247,7 @@ export function ProductCard({
     <Link
       key={product.id}
       to={`/shop/product/${product.slug}`}
+      state={{ productName: product.name, productPrice: product.price }}
       style={{
         display: "block",
         background: "#fff",
@@ -286,6 +287,7 @@ export function ProductCardSimple({
     <Link
       key={product.id}
       to={`/shop/product/${product.slug}`}
+      state={{ productName: product.name, productPrice: product.price }}
       style={{
         display: "block",
         background: "#fff",
