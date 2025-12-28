@@ -53,20 +53,24 @@ export type LoaderEntry = {
 
 /**
  * Context passed to intercept selector functions (when())
- * Contains navigation context to determine if interception should occur
+ * Contains navigation context to determine if interception should occur.
+ *
+ * Note: when() is evaluated during route matching, BEFORE middleware runs.
+ * So ctx.get()/ctx.use() are not available, but env (platform bindings) is.
  */
-export type InterceptSelectorContext = {
+export type InterceptSelectorContext<TEnv = any> = {
   from: URL;                              // Source URL (where user is coming from)
   to: URL;                                // Destination URL (where user is navigating to)
   params: Record<string, string>;         // Matched route params
   request: Request;                       // The HTTP request object
+  env: TEnv;                              // Platform bindings (Cloudflare env, etc.)
 };
 
 /**
  * Selector function for conditional interception
  * Returns true to intercept, false to skip and fall through to route handler
  */
-export type InterceptWhenFn = (ctx: InterceptSelectorContext) => boolean;
+export type InterceptWhenFn<TEnv = any> = (ctx: InterceptSelectorContext<TEnv>) => boolean;
 
 /**
  * Intercept entry stored in EntryData

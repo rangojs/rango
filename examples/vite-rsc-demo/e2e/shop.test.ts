@@ -320,7 +320,7 @@ test.describe("shop-breadcrumbs", () => {
     mode: "dev",
   });
 
-  test("should preserve category breadcrumbs after navigating through intercept to detail and back", async ({
+  test("should preserve category breadcrumbs after navigating to product detail and back (no intercept from category)", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -350,20 +350,13 @@ test.describe("shop-breadcrumbs", () => {
     await expect(breadcrumbNav.locator("text=Shop")).toBeVisible();
     await expect(breadcrumbNav.locator("text=Electronics")).toBeVisible();
 
-    // Step 3: Click on a product to open intercept modal
+    // Step 3: Click on a product - should go directly to full product page (no intercept from category)
+    // Note: when() condition only allows intercept from shop index, not from category pages
     await page.locator('a[href="/shop/product/wireless-headphones"]').first().click();
-    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 5000 });
-
-    // Step 4: Click "View Full Details" to go to full product page
-    await page.locator("text=View Full Details").click();
     await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 3000 });
     await expect(page.locator("text=Test Revalidation Behavior")).toBeVisible({ timeout: 5000 });
 
-    // Step 5: Go back - should return to intercept modal
-    await goBack(page);
-    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 3000 });
-
-    // Step 6: Go back again - should return to category page
+    // Step 4: Go back - should return to category page
     await goBack(page);
     await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 3000 });
 

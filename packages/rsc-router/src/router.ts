@@ -2444,11 +2444,13 @@ export function createRSCRouter<TEnv = any>(
         : matched.routeKey;
 
       // Build selector context for evaluating when() conditions on intercepts
+      // Note: context is TEnv (platform bindings like Cloudflare env)
       const interceptSelectorContext: InterceptSelectorContext = {
         from: prevUrl,
         to: url,
         params: matched.params,
         request,
+        env: context,
       };
       const isAction = !!actionContext;
 
