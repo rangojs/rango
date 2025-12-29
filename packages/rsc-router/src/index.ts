@@ -29,6 +29,7 @@ export {
 
 // Types (safe to import anywhere - no runtime code)
 export type {
+  DocumentProps,
   RouterEnv,
   DefaultEnv,
   RouteDefinition,
