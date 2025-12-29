@@ -1,16 +1,12 @@
 /// <reference types="@cloudflare/workers-types" />
 import { createRSCHandler } from "rsc-router/rsc";
 import { router } from "./router.js";
-
-export interface Env {
-  // Add your bindings here
-  KV: KVNamespace;
-}
+import type { AppBindings } from "./env.js";
 
 const handler = createRSCHandler({ router });
 
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request, env) {
     const url = new URL(request.url);
 
     // Skip browser metadata requests
@@ -21,6 +17,6 @@ export default {
       return new Response(null, { status: 404 });
     }
 
-    return handler(request, env);
+    return handler(request, { Bindings: env, Variables: {} });
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<AppBindings>;
