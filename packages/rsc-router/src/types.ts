@@ -4,6 +4,13 @@ import type { HandleStore } from "./server/handle-store.js";
 import type { Handle } from "./handle.js";
 
 /**
+ * Props for the Document component that wraps the entire application.
+ */
+export type DocumentProps = {
+  children: ReactNode;
+};
+
+/**
  * Internal router context properties.
  * These are used internally by the RSC handler and router,
  * not exposed to user handlers.

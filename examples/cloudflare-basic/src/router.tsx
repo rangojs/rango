@@ -1,28 +1,7 @@
-import { createRSCRouter, type RouterEnv } from "rsc-router/server";
+import { createRSCRouter } from "rsc-router/server";
 import { homeRoutes, aboutRoutes, counterRoutes } from "./routes.js";
 import { AppShell } from "./components/AppShell.js";
-
-// Cloudflare Workers bindings (D1, KV, etc.)
-export interface AppBindings {
-  // Add your bindings here:
-  // DB?: D1Database;
-  // KV?: KVNamespace;
-}
-
-// Middleware-injected variables
-export interface AppVariables {
-  requestId?: string;
-}
-
-// Combined app environment
-export type AppEnv = RouterEnv<AppBindings, AppVariables>;
-
-// Module augmentation for global type inference
-declare global {
-  namespace RSCRouter {
-    interface Env extends AppEnv {}
-  }
-}
+import type { AppEnv } from "./env.js";
 
 // Create the router with document component
 // AppShell wraps both route content and error boundaries,

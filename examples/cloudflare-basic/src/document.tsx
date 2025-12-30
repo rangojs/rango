@@ -1,4 +1,4 @@
-import type { DocumentProps } from "rsc-router/handler";
+import type { DocumentProps } from "rsc-router";
 
 export default function Document({ children }: DocumentProps) {
   return (
