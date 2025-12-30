@@ -1,11 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 import { createRSCHandler } from "rsc-router/rsc";
 import { router } from "./router.js";
-
-export interface Env {
-  // Add your bindings here
-  KV: KVNamespace;
-}
+import type { AppBindings } from "./env.js";
 
 // Create handler with nonce support for CSP
 const handler = createRSCHandler({
@@ -47,7 +43,7 @@ export default {
       return new Response(null, { status: 404 });
     }
 
-    const response = await handler(request, env);
+    const response = await handler(request, { Bindings: env, Variables: {} });
 
     // Add CSP headers for HTML responses
     const contentType = response.headers.get("content-type") || "";
@@ -79,4 +75,4 @@ export default {
 
     return response;
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<AppBindings>;
