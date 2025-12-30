@@ -116,6 +116,55 @@ test.describe("intercept-navigation", () => {
     const state = await getHistoryState(page);
     expect(state?.intercept).toBe(true);
   });
+
+  test("should show index background when reopening modal after detail page navigation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Step 1: Click product to open modal
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
+    await productLink.click();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+
+    // Background should show index content (product list visible)
+    await expect(page.locator('[data-testid="product-link-product-b"]')).toBeVisible();
+
+    // Step 2: Click "View Full Details" to navigate to detail page
+    await page.locator('[data-testid="view-full-details"]').click();
+    await page.waitForURL(/\/product\//);
+
+    // Modal should be gone, full detail page visible
+    await expect(page.locator('[data-testid="product-modal"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+
+    // Step 3: Navigate back - should show modal again with index background
+    await goBack(page);
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+
+    // Background should still show index content (not detail page)
+    await expect(page.locator('[data-testid="product-link-product-b"]')).toBeVisible();
+
+    // Step 4: Close modal by navigating back again
+    await goBack(page);
+    await expect(page.locator('[data-testid="product-modal"]')).not.toBeVisible();
+    await expect(page).toHaveURL(/\/$/);
+
+    // Index content should be visible
+    await expect(page.locator('[data-testid="product-link-product-a"]')).toBeVisible();
+
+    // Step 5: Click the same product again
+    await productLink.click();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+
+    // BUG: Background should show index content, NOT the detail page
+    // The detail page has segment-metadata, index has the product list
+    await expect(page.locator('[data-testid="segment-metadata"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="product-link-product-b"]')).toBeVisible();
+  });
 });
 
 test.describe("action-cache-consistency", () => {
