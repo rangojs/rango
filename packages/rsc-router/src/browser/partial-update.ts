@@ -367,6 +367,22 @@ export function createPartialUpdater(
         ? Object.values(payload.metadata.slots).some((slot) => slot.active)
         : false;
 
+      // BUG FIX: When navigating with cached target segments but receiving an intercept response,
+      // the background segments should come from the SOURCE page (where we navigated from),
+      // not the TARGET cache. This happens when:
+      // 1. User visits /product/xxx (detail page) - cached under key "/product/xxx"
+      // 2. User navigates back to /
+      // 3. User clicks product link → cache hit for "/product/xxx" (detail page)
+      // 4. But server returns intercept response (modal with index background)
+      // 5. Without this fix: background uses detail page segments (wrong!)
+      // 6. With this fix: rebuild currentSegmentMap from source page
+      if (hasActiveIntercept && targetCacheSegments) {
+        console.log(
+          `[Browser] Intercept response with target cache - rebuilding segment map from source page`
+        );
+        currentSegmentMap = getCurrentSegmentMap();
+      }
+
       // Track intercept context for action revalidation (only on navigation, not actions or stale revalidation)
       if (!isAction && !staleRevalidation) {
         if (hasActiveIntercept) {

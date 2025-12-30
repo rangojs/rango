@@ -502,12 +502,21 @@ export function createNavigationBridge(
       const historyKey = generateHistoryKey(url);
       const cached = store.getCachedSegments(historyKey);
       const cachedSegments = cached?.segments;
-      // Skip optimistic rendering for intercept caches - interception depends on
-      // source page context, so we can't reliably reuse intercept responses
+
+      // Also check if there's an intercept cache entry for this URL
+      // If so, this URL CAN be intercepted, and we shouldn't use the non-intercept cache
+      // because the navigation might result in an intercept (depending on source URL)
+      const interceptHistoryKey = generateHistoryKey(url, { intercept: true });
+      const hasInterceptCache = store.hasHistoryCache(interceptHistoryKey);
+
+      // Skip optimistic rendering for:
+      // 1. intercept caches - interception depends on source page context
+      // 2. routes that CAN be intercepted - we don't know if this navigation will intercept
       const hasUsableCache =
         cachedSegments &&
         cachedSegments.length > 0 &&
-        !isInterceptOnlyCache(cachedSegments);
+        !isInterceptOnlyCache(cachedSegments) &&
+        !hasInterceptCache;
 
       using tx = createNavigationTransaction(store, eventController, url, {
         ...options,

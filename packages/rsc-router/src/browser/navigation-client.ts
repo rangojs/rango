@@ -77,7 +77,6 @@ export function createNavigationClient(
       const streamComplete = new Promise<void>((resolve) => {
         resolveStreamComplete = resolve;
       });
-      console.log("[navigation-client", new Error().stack);
 
       // Create a response promise that tracks stream completion
       const responsePromise = fetch(fetchUrl, {
