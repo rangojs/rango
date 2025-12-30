@@ -4,6 +4,16 @@ import { initSegmentsSync } from "../browser/react/use-segments.js";
 import type { HandleData } from "../browser/types.js";
 
 /**
+ * Options for injectRSCPayload
+ */
+export interface InjectRSCPayloadOptions {
+  /**
+   * Nonce for Content Security Policy (CSP)
+   */
+  nonce?: string;
+}
+
+/**
  * SSR dependencies from external packages
  */
 export interface SSRDependencies {
@@ -17,14 +27,15 @@ export interface SSRDependencies {
    */
   renderToReadableStream: (
     element: React.ReactNode,
-    options?: { bootstrapScriptContent?: string }
+    options?: { bootstrapScriptContent?: string; nonce?: string }
   ) => Promise<ReadableStream<Uint8Array>>;
 
   /**
    * injectRSCPayload from rsc-html-stream/server
    */
   injectRSCPayload: (
-    rscStream: ReadableStream<Uint8Array>
+    rscStream: ReadableStream<Uint8Array>,
+    options?: InjectRSCPayloadOptions
   ) => TransformStream<Uint8Array, Uint8Array>;
 
   /**
@@ -61,6 +72,16 @@ async function consumeAsyncGenerator(
 }
 
 /**
+ * Options for renderHTML
+ */
+export interface RenderHTMLOptions {
+  /**
+   * Nonce for Content Security Policy (CSP)
+   */
+  nonce?: string;
+}
+
+/**
  * Create an SSR handler that converts RSC streams to HTML.
  *
  * @example
@@ -91,8 +112,10 @@ export function createSSRHandler(deps: SSRDependencies) {
    * Render RSC stream to HTML stream
    */
   return async function renderHTML(
-    rscStream: ReadableStream<Uint8Array>
+    rscStream: ReadableStream<Uint8Array>,
+    options?: RenderHTMLOptions
   ): Promise<ReadableStream<Uint8Array>> {
+    const { nonce } = options ?? {};
     // Tee the stream:
     // - rscStream1: For SSR rendering (deserialize to React VDOM)
     // - rscStream2: For browser hydration (inject as __FLIGHT_DATA__)
@@ -123,12 +146,13 @@ export function createSSRHandler(deps: SSRDependencies) {
     // Get bootstrap script content
     const bootstrapScriptContent = await loadBootstrapScriptContent();
 
-    // Render React tree to HTML stream
+    // Render React tree to HTML stream with optional nonce for CSP
     const htmlStream = await renderToReadableStream(<SsrRoot />, {
       bootstrapScriptContent,
+      nonce,
     });
 
-    // Inject RSC payload into HTML as <script>__FLIGHT_DATA__</script>
-    return htmlStream.pipeThrough(injectRSCPayload(rscStream2));
+    // Inject RSC payload into HTML as <script nonce="...">__FLIGHT_DATA__</script>
+    return htmlStream.pipeThrough(injectRSCPayload(rscStream2, { nonce }));
   };
 }

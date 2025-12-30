@@ -61,16 +61,35 @@ export interface RSCDependencies {
 }
 
 /**
+ * Options for SSR HTML rendering
+ */
+export interface SSRRenderOptions {
+  /**
+   * Nonce for Content Security Policy (CSP)
+   */
+  nonce?: string;
+}
+
+/**
  * SSR module interface for HTML rendering
  */
 export interface SSRModule {
-  renderHTML: (rscStream: ReadableStream<Uint8Array>) => Promise<ReadableStream<Uint8Array>>;
+  renderHTML: (rscStream: ReadableStream<Uint8Array>, options?: SSRRenderOptions) => Promise<ReadableStream<Uint8Array>>;
 }
 
 /**
  * Function to load SSR module dynamically
  */
 export type LoadSSRModule = () => Promise<SSRModule>;
+
+/**
+ * Nonce provider function type.
+ * Can return a nonce string, or true to auto-generate one.
+ */
+export type NonceProvider<TEnv = unknown> = (
+  request: Request,
+  env: TEnv
+) => string | true | Promise<string | true>;
 
 /**
  * Options for creating an RSC handler
@@ -92,6 +111,34 @@ export interface CreateRSCHandlerOptions<TEnv = unknown> {
    * Defaults to: () => import.meta.viteRsc.loadModule("ssr", "index")
    */
   loadSSRModule?: LoadSSRModule;
+
+  /**
+   * Nonce provider for Content Security Policy (CSP).
+   *
+   * Can be:
+   * - A function that returns a nonce string
+   * - A function that returns `true` to auto-generate a nonce
+   * - Undefined to disable nonce (default)
+   *
+   * The nonce will be applied to inline scripts injected by the RSC payload.
+   *
+   * @example Auto-generate nonce
+   * ```tsx
+   * createRSCHandler({
+   *   router,
+   *   nonce: () => true,
+   * });
+   * ```
+   *
+   * @example Custom nonce from request context
+   * ```tsx
+   * createRSCHandler({
+   *   router,
+   *   nonce: (request, env) => env.nonce,
+   * });
+   * ```
+   */
+  nonce?: NonceProvider<TEnv>;
 }
 
 /**
@@ -118,10 +165,24 @@ export interface CreateRSCHandlerOptions<TEnv = unknown> {
  * });
  * ```
  */
+/**
+ * Generate a cryptographic nonce for CSP
+ */
+function generateNonce(): string {
+  const array = new Uint8Array(16);
+  crypto.getRandomValues(array);
+  // Convert to base64
+  let binary = "";
+  for (let i = 0; i < array.length; i++) {
+    binary += String.fromCharCode(array[i]);
+  }
+  return btoa(binary);
+}
+
 export function createRSCHandler<TEnv = unknown>(
   options: CreateRSCHandlerOptions<TEnv>
 ) {
-  const { router } = options;
+  const { router, nonce: nonceProvider } = options;
 
   // Use provided deps or default to @vitejs/plugin-rsc/rsc exports
   const deps = options.deps ?? rscDeps;
@@ -141,6 +202,12 @@ export function createRSCHandler<TEnv = unknown>(
     request: Request,
     env: TEnv = {} as TEnv
   ): Promise<Response> {
+    // Resolve nonce if provider is set
+    let nonce: string | undefined;
+    if (nonceProvider) {
+      const result = await nonceProvider(request, env);
+      nonce = result === true ? generateNonce() : result;
+    }
     const url = new URL(request.url);
     const isPartial = url.searchParams.has("_rsc_partial");
     const isAction =
@@ -476,13 +543,17 @@ export function createRSCHandler<TEnv = unknown>(
 
       // Delegate to SSR for HTML response
       const ssrModule = await loadSSRModule();
-      const htmlStream = await ssrModule.renderHTML(rscStream);
+      const htmlStream = await ssrModule.renderHTML(rscStream, { nonce });
 
       const htmlHeaders: Record<string, string> = {
         "content-type": "text/html;charset=utf-8",
       };
       if (serverTiming) {
         htmlHeaders["Server-Timing"] = serverTiming;
+      }
+      // Expose nonce in response header for CSP header construction
+      if (nonce) {
+        htmlHeaders["x-nonce"] = nonce;
       }
 
       return new Response(htmlStream, {
