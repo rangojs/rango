@@ -1016,9 +1016,49 @@ export type LoaderFn<T, TParams = Record<string, string | undefined>, TEnv = any
  * const cart = useLoader(CartLoader);
  * ```
  */
+/**
+ * Options for fetchable loaders
+ */
+export type FetchableLoaderOptions = {
+  middleware?: MiddlewareFn<any>[];
+};
+
+/**
+ * Options for load() calls - type-safe union based on method
+ */
+export type LoadOptions =
+  | {
+      method?: "GET";
+      params?: Record<string, string>;
+    }
+  | {
+      method: "POST" | "PUT" | "PATCH" | "DELETE";
+      params?: Record<string, string>;
+      body?: FormData | Record<string, any>;
+    };
+
+/**
+ * Context passed to loader action on server
+ */
+export type LoaderActionContext = {
+  method: string;
+  params: Record<string, string>;
+  body?: FormData | Record<string, any>;
+  formData?: FormData;
+};
+
+/**
+ * Loader action function type
+ */
+export type LoaderAction<T> = ((options?: LoadOptions) => Promise<T>) & {
+  /** Form action for progressive enhancement */
+  formAction?: (formData: FormData) => Promise<T>;
+};
+
 export type LoaderDefinition<T = any, TParams = Record<string, string | undefined>> = {
   __brand: "loader";
   name: string;
   fn?: LoaderFn<T, TParams, any>;  // Optional - stripped on client via "use server"
+  action?: LoaderAction<T>;  // Optional - for fetchable loaders
 };
 
