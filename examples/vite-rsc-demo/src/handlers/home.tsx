@@ -2,6 +2,9 @@ import { map } from "rsc-router/server";
 import type { homeRoutes } from "../routes.js";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { Outlet, ParallelOutlet } from "rsc-router/client";
+import { TestGetLoaderComponent } from "../components/TestGetLoader.js";
+// Import loader to ensure it registers on server
+import "../loaders/test-get-loader.js";
 
 /**
  * Home handlers - array-based API with use() pattern
@@ -17,6 +20,9 @@ export default map<typeof homeRoutes>(
             <h1>🏠 Test</h1>
             <p className="segment-id">Segment: Home Route</p>
             <p>Welcome to the RSC Router demo!</p>
+
+            <TestGetLoaderComponent />
+
             <h2>Features to Test:</h2>
             <ul>
               <li>✅ Route matching</li>

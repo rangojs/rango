@@ -1,9 +1,10 @@
 /// <reference types="@vitejs/plugin-rsc/types" />
 import { renderSegments } from "../segment-system.js";
 import type { RSCRouter } from "../router.js";
-import type { ResolvedSegment, SlotState, RouterInternalContext } from "../types.js";
+import type { ResolvedSegment, SlotState, RouterInternalContext, LoaderActionContext } from "../types.js";
 import { createHandleStore, type HandleStore, type HandleData } from "../server/handle-store.js";
 import { RouteNotFoundError } from "../errors.js";
+import { getLoader } from "../server/loader-registry.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
 
@@ -349,6 +350,96 @@ export function createRSCHandler<TEnv = unknown>(
           status: actionStatus,
           headers: actionHeaders,
         });
+      }
+
+      // ============================================================================
+      // LOADER FETCH EXECUTION (GET-based data fetching with RSC serialization)
+      // ============================================================================
+      const isLoaderRequest = url.searchParams.has("_rsc_loader");
+      if (isLoaderRequest) {
+        const loaderName = url.searchParams.get("_rsc_loader");
+        const loaderParamsJson = url.searchParams.get("_rsc_loader_params");
+
+        if (!loaderName) {
+          return new Response("Missing _rsc_loader parameter", {
+            status: 400,
+          });
+        }
+
+        // Look up loader in registry
+        const registeredLoader = getLoader(loaderName);
+        if (!registeredLoader) {
+          return new Response(`Loader "${loaderName}" not found in registry`, {
+            status: 404,
+          });
+        }
+
+        // Parse params
+        let loaderParams: Record<string, string> = {};
+        if (loaderParamsJson) {
+          try {
+            loaderParams = JSON.parse(loaderParamsJson);
+          } catch {
+            return new Response("Invalid _rsc_loader_params JSON", {
+              status: 400,
+            });
+          }
+        }
+
+        // Execute the loader
+        try {
+          const { fn, middleware } = registeredLoader;
+
+          // Build context
+          const ctx: LoaderActionContext = {
+            method: "GET",
+            params: loaderParams,
+            body: undefined,
+            formData: undefined,
+          };
+
+          // Run middleware chain
+          for (const mw of middleware) {
+            await mw(ctx as any, async () => {});
+          }
+
+          // Execute loader function
+          const result = await fn(ctx as any);
+
+          // Serialize result with RSC
+          interface LoaderPayload {
+            loaderResult: unknown;
+          }
+          const loaderPayload: LoaderPayload = { loaderResult: result };
+          const rscStream = renderToReadableStream<LoaderPayload>(loaderPayload);
+
+          return new Response(rscStream, {
+            headers: {
+              "content-type": "text/x-component;charset=utf-8",
+              // Allow browser/CDN caching for GET requests
+              "cache-control": "public, max-age=0, must-revalidate",
+            },
+          });
+        } catch (error) {
+          console.error("[RSC] Loader error:", error);
+
+          // Return error as RSC payload
+          const errorPayload = {
+            loaderResult: null,
+            loaderError: {
+              message: error instanceof Error ? error.message : String(error),
+              name: error instanceof Error ? error.name : "Error",
+            },
+          };
+          const rscStream = renderToReadableStream(errorPayload);
+
+          return new Response(rscStream, {
+            status: 500,
+            headers: {
+              "content-type": "text/x-component;charset=utf-8",
+            },
+          });
+        }
       }
 
       // ============================================================================

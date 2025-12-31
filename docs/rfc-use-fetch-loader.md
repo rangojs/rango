@@ -238,12 +238,182 @@ This separation is intentional:
 | Progressive enhancement | Yes | Yes |
 | Middleware | No | Yes |
 
+## GET-based Fetching with RSC Serialization
+
+The current server action approach uses POST for all requests, which is not cacheable. For data fetching, we want GET-based requests with RSC serialization.
+
+### Problem with Server Actions for Data Fetching
+
+| Concern | Server Actions (POST) | GET + RSC |
+|---------|----------------------|-----------|
+| HTTP Method | POST only | GET |
+| Browser caching | Not cacheable | Cacheable |
+| CDN caching | Not cacheable | Cacheable |
+| Semantics | For mutations | For data fetching |
+| Response format | Action-specific | RSC stream |
+
+### Architecture for GET-based Fetching
+
+```
+Client                          Server (RSC Handler)
+  │                                    │
+  │ fetch(/_rsc?_rsc_loader=name&...)  │
+  ├───────────────────────────────────►│
+  │                                    │ 1. Parse _rsc_loader param
+  │                                    │ 2. Load loader via action ID
+  │                                    │ 3. Execute loader function
+  │                                    │ 4. renderToReadableStream(result)
+  │◄───────────────────────────────────┤
+  │ RSC Stream (x-component)           │
+  │                                    │
+  │ createFromFetch() deserialize      │
+  │                                    │
+```
+
+### Loader Action Reference
+
+When a fetchable loader is created, the server action gets an ID from the bundler:
+
+```typescript
+const ProductLoader = createLoader("product", async (ctx) => {
+  "use server";
+  return db.products.get(ctx.params.id);
+}, true);
+
+// Internally creates:
+// - action: server action function
+// - actionId: bundler-generated ID (e.g., "loaders.ts#_action_abc123")
+```
+
+The loader stores the action ID, which can be used for GET requests.
+
+### RSC Handler Extension
+
+```typescript
+// In rsc/index.ts handler
+const isLoaderRequest = url.searchParams.has("_rsc_loader");
+
+if (isLoaderRequest) {
+  const actionId = url.searchParams.get("_rsc_loader_action");
+  const paramsJson = url.searchParams.get("_rsc_loader_params");
+  const params = paramsJson ? JSON.parse(paramsJson) : {};
+
+  // Load the action function
+  const action = await loadServerAction(actionId);
+
+  // Build context
+  const ctx = {
+    method: "GET",
+    params,
+    // ... other context fields
+  };
+
+  // Execute loader
+  const result = await action(ctx);
+
+  // Serialize result with RSC
+  const payload = { loaderResult: result };
+  const rscStream = renderToReadableStream(payload);
+
+  return new Response(rscStream, {
+    headers: {
+      "content-type": "text/x-component;charset=utf-8",
+      "cache-control": "public, max-age=60", // Cacheable!
+    },
+  });
+}
+```
+
+### Client-side Changes
+
+```typescript
+export function useFetchLoader<T>(loader: LoaderDefinition<T>) {
+  // ...
+
+  const load = useCallback(async (options?: LoadOptions) => {
+    if (!loader.action) {
+      throw new Error(`Loader "${loader.name}" is not fetchable.`);
+    }
+
+    const method = options?.method || "GET";
+
+    if (method === "GET") {
+      // Use fetch + RSC deserialization for GET requests
+      const url = new URL("/_rsc", window.location.origin);
+      url.searchParams.set("_rsc_loader", loader.name);
+      url.searchParams.set("_rsc_loader_action", loader.actionId!);
+
+      if (options?.params) {
+        url.searchParams.set("_rsc_loader_params", JSON.stringify(options.params));
+      }
+
+      const response = fetch(url);
+      const payload = await createFromFetch<{ loaderResult: T }>(response);
+      setData(payload.loaderResult);
+      return payload.loaderResult;
+    } else {
+      // Use server action for mutations (POST, PUT, DELETE, etc.)
+      const result = await loader.action(options);
+      setData(result);
+      return result;
+    }
+  }, [loader]);
+
+  // ...
+}
+```
+
+### Benefits of GET-based Approach
+
+1. **Browser caching**: GET requests can be cached by the browser
+2. **CDN caching**: Public loaders can be cached at the edge
+3. **Prefetching**: Can use `<link rel="prefetch">` for loader data
+4. **Semantic correctness**: GET for reading, POST for mutations
+5. **RSC serialization**: Full React component support in responses
+
+### Implementation Steps
+
+1. Add `actionId` to `LoaderDefinition` type
+2. Extract action ID from server action in `createLoader`
+3. Extend RSC handler to detect `_rsc_loader` requests
+4. Update `useFetchLoader` to use fetch for GET, server action for POST
+5. Expose `createFromFetch` to the hook (via deps or context)
+
+### Current Limitation: RSC Transform in Library Code
+
+**Issue:** The `$$id` property (required for GET-based fetching) is not exposed on actions defined in library code (rsc-router package). The RSC transform that converts inline `"use server"` directives into server references may not process workspace packages the same way it processes user code.
+
+**Current Behavior:**
+- When `createLoader` creates an action with inline `"use server"`, the RSC plugin should transform it into a server reference
+- The `exposeActionId` plugin should then attach `$$id` to the function
+- However, for actions in library code, `$$id` remains undefined
+
+**Fallback Implementation:**
+The `useFetchLoader` hook now gracefully falls back to server action (POST) when `$$id` is not available:
+
+```typescript
+const canUseGetFetch = method === "GET" && actionId;
+
+if (canUseGetFetch) {
+  // Use GET + RSC deserialization (cacheable)
+  // ...
+} else {
+  // Fall back to server action (POST-based)
+  result = await action(options);
+}
+```
+
+**Path Forward:**
+1. **User-defined loaders:** If users define loaders in their source files (not imported from library), the RSC transform should work correctly
+2. **Registry-based approach:** Implement a server-side loader registry that maps loader names to functions, avoiding reliance on `$$id`
+3. **Build configuration:** Investigate Vite/RSC plugin configuration to process workspace packages
+
 ## Future Enhancements
 
 1. **Client-side caching**: SWR-style stale-while-revalidate
-2. **GET endpoint**: For browser/CDN caching of public data
-3. **Deduplication**: Prevent duplicate in-flight requests
-4. **Prefetching**: `prefetchLoader(ProductLoader, { params })`
+2. **Deduplication**: Prevent duplicate in-flight requests
+3. **Prefetching**: `prefetchLoader(ProductLoader, { params })`
+4. **Cache headers**: Automatic cache-control based on loader config
 
 ## POC Validation
 

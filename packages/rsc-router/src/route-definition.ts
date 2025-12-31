@@ -22,6 +22,7 @@ import type {
 import { getContext, type EntryData, type InterceptEntry, type InterceptWhenFn, type InterceptSelectorContext } from "./server/context";
 import { invariant } from "./errors";
 import RootLayout from "./server/root-layout";
+import { registerLoader } from "./server/loader-registry";
 import type {
   AllUseItems,
   LayoutItem,
@@ -1179,6 +1180,9 @@ export function createLoader<T>(
 
     action = mainAction as LoaderDefinition<Awaited<T>>["action"];
     action!.formAction = formAction;
+
+    // Register loader for GET-based fetching via RSC handler
+    registerLoader(name, fn, middleware);
   }
 
   return {
