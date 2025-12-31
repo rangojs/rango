@@ -20,6 +20,15 @@ import {
   type ResolvedSegment,
 } from "./types";
 import { RouteContentWrapper, LoaderBoundary } from "./route-content-wrapper.js";
+import { createFromFetch } from "./deps/browser.js";
+
+/**
+ * Payload returned by loader RSC requests
+ */
+interface LoaderRscPayload<T = unknown> {
+  loaderResult: T;
+  loaderError?: { message: string; name: string };
+}
 
 /**
  * Outlet component - renders child content in layouts
@@ -504,11 +513,48 @@ export function useFetchLoader<T>(
         );
       }
 
+      const action = loader.action;
+      const method = options?.method || "GET";
+
       setIsLoading(true);
       setError(null);
 
       try {
-        const result = await loader.action(options);
+        let result: T;
+
+        if (method === "GET") {
+          // GET requests use fetch + RSC deserialization (cacheable)
+          // Server looks up loader by name in registry
+          const url = new URL(window.location.pathname, window.location.origin);
+          url.searchParams.set("_rsc_loader", loader.name);
+
+          if (options?.params && Object.keys(options.params).length > 0) {
+            url.searchParams.set(
+              "_rsc_loader_params",
+              JSON.stringify(options.params)
+            );
+          }
+
+          // Fetch and deserialize RSC response
+          const response = fetch(url.toString(), {
+            method: "GET",
+            headers: {
+              Accept: "text/x-component",
+            },
+          });
+
+          const payload = await createFromFetch<LoaderRscPayload<T>>(response);
+
+          if (payload.loaderError) {
+            throw new Error(payload.loaderError.message);
+          }
+
+          result = payload.loaderResult;
+        } else {
+          // POST/PUT/PATCH/DELETE use server action directly (for mutations)
+          result = await action(options);
+        }
+
         setData(result);
         return result;
       } catch (e) {
