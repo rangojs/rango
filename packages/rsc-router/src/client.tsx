@@ -3,8 +3,10 @@
 import {
   Component,
   createElement,
+  useCallback,
   useContext,
   useMemo,
+  useState,
   Suspense,
   type ReactNode,
 } from "react";
@@ -14,6 +16,7 @@ import {
   type ErrorInfo,
   type LoaderDefinition,
   type LoaderFn,
+  type LoadOptions,
   type ResolvedSegment,
 } from "./types";
 import { RouteContentWrapper, LoaderBoundary } from "./route-content-wrapper.js";
@@ -416,6 +419,120 @@ export function createLoader(
   return {
     __brand: "loader",
     name,
+  };
+}
+
+/**
+ * Result type for useFetchLoader hook
+ */
+export interface UseFetchLoaderResult<T> {
+  /** The loaded data, undefined until first successful load */
+  data: T | undefined;
+  /** True while a load is in progress */
+  isLoading: boolean;
+  /** Error from the most recent load attempt, null if successful */
+  error: Error | null;
+  /** Function to trigger a load with options */
+  load: LoadFunction<T>;
+  /** Alias for load - triggers a refetch */
+  refetch: LoadFunction<T>;
+}
+
+/**
+ * Load function type with form action support
+ */
+export type LoadFunction<T> = ((options?: LoadOptions) => Promise<T>) & {
+  /** Form action for progressive enhancement */
+  formAction?: (formData: FormData) => Promise<T>;
+};
+
+/**
+ * Hook for fetching loader data directly from client components
+ *
+ * Use this to fetch data from fetchable loaders outside of route navigation.
+ * The loader must be created with the fetchable option (true or { middleware: [...] }).
+ *
+ * @param loader - A fetchable loader definition
+ * @returns Object with data, isLoading, error, load, and refetch
+ *
+ * @example
+ * ```tsx
+ * "use client";
+ * import { useFetchLoader } from "rsc-router/client";
+ * import { ProductLoader } from "./loaders";
+ *
+ * function ProductCard({ id }: { id: string }) {
+ *   const { data, isLoading, error, load } = useFetchLoader(ProductLoader);
+ *
+ *   useEffect(() => {
+ *     load({ params: { id } });
+ *   }, [id, load]);
+ *
+ *   if (isLoading) return <Skeleton />;
+ *   if (error) return <Error error={error} />;
+ *   return <div>{data?.name}</div>;
+ * }
+ * ```
+ *
+ * @example Form action for file upload
+ * ```tsx
+ * function FileUpload() {
+ *   const { data, load } = useFetchLoader(FileLoader);
+ *
+ *   return (
+ *     <form action={load.formAction}>
+ *       <input type="file" name="file" />
+ *       <button type="submit">Upload</button>
+ *     </form>
+ *   );
+ * }
+ * ```
+ */
+export function useFetchLoader<T>(
+  loader: LoaderDefinition<T>
+): UseFetchLoaderResult<T> {
+  const [data, setData] = useState<T | undefined>(undefined);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  const load = useCallback(
+    async (options?: LoadOptions): Promise<T> => {
+      if (!loader.action) {
+        throw new Error(
+          `Loader "${loader.name}" is not fetchable. ` +
+            `Add \`true\` or \`{ middleware: [...] }\` as the third argument to createLoader.`
+        );
+      }
+
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const result = await loader.action(options);
+        setData(result);
+        return result;
+      } catch (e) {
+        const err = e instanceof Error ? e : new Error(String(e));
+        setError(err);
+        throw err;
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [loader]
+  ) as LoadFunction<T>;
+
+  // Attach form action if available
+  if (loader.action?.formAction) {
+    load.formAction = loader.action.formAction;
+  }
+
+  return {
+    data,
+    isLoading,
+    error,
+    load,
+    refetch: load,
   };
 }
 
