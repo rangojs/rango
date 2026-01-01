@@ -4,7 +4,7 @@ import type { RSCRouter } from "../router.js";
 import type { ResolvedSegment, SlotState, RouterInternalContext, LoaderActionContext } from "../types.js";
 import { createHandleStore, type HandleStore, type HandleData } from "../server/handle-store.js";
 import { RouteNotFoundError } from "../errors.js";
-import { getLoader } from "../server/loader-registry.js";
+import { getLoaderLazy } from "../server/loader-registry.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
 
@@ -366,8 +366,8 @@ export function createRSCHandler<TEnv = unknown>(
           });
         }
 
-        // Look up loader in registry
-        const registeredLoader = getLoader(loaderName);
+        // Look up loader lazily (imports on-demand if not already loaded)
+        const registeredLoader = await getLoaderLazy(loaderName);
         if (!registeredLoader) {
           return new Response(`Loader "${loaderName}" not found in registry`, {
             status: 404,

@@ -1,7 +1,7 @@
 /**
  * Server-side loader registry for GET-based fetching
  *
- * Loaders register themselves when created with `fetchable: true`.
+ * Loaders are loaded lazily via dynamic imports when first requested.
  * The RSC handler looks up loaders by $$id to execute them.
  */
 
@@ -13,8 +13,22 @@ interface RegisteredLoader {
   middleware: MiddlewareFn<any>[];
 }
 
-// Server-side registry - maps loader name to function and middleware
+// Server-side registry - maps loader $$id to function and middleware
 const loaderRegistry = new Map<string, RegisteredLoader>();
+
+// Lazy import map - set by the loader manifest
+// Maps loader $$id to a function that imports the loader module
+type LazyLoaderImport = () => Promise<{ $$id?: string; name: string }>;
+let lazyLoaderImports: Map<string, LazyLoaderImport> | null = null;
+
+/**
+ * Set the lazy loader imports map (called by the loader manifest)
+ */
+export function setLoaderImports(
+  imports: Record<string, LazyLoaderImport>
+): void {
+  lazyLoaderImports = new Map(Object.entries(imports));
+}
 
 /**
  * Register a fetchable loader
@@ -35,11 +49,84 @@ export function registerLoader(
 }
 
 /**
- * Get a registered loader by name
+ * Get a registered loader by name (synchronous)
  * Returns undefined if loader is not registered
  */
 export function getLoader(name: string): RegisteredLoader | undefined {
   return loaderRegistry.get(name);
+}
+
+/**
+ * Get a loader by $$id, loading it lazily if needed
+ * This is the primary method for the RSC handler to get loaders
+ *
+ * In production: IDs are hashed, looked up via the lazy import map
+ * In dev: IDs are "filePath#exportName", resolved via dynamic import
+ */
+export async function getLoaderLazy(
+  id: string
+): Promise<RegisteredLoader | undefined> {
+  // Check if already cached
+  const existing = loaderRegistry.get(id);
+  if (existing) {
+    return existing;
+  }
+
+  // Try to lazy load from the import map (production mode)
+  if (lazyLoaderImports && lazyLoaderImports.size > 0) {
+    const lazyImport = lazyLoaderImports.get(id);
+    if (lazyImport) {
+      try {
+        // Import the loader - this triggers createLoader which registers fn in fetchableLoaderRegistry
+        const loader = await lazyImport();
+
+        // Get fn directly from the internal registry (keyed by loader.name)
+        const internalLoader = getFetchableLoader(loader.name);
+        if (internalLoader) {
+          // Cache for future requests
+          const registered: RegisteredLoader = {
+            fn: internalLoader.fn,
+            middleware: internalLoader.middleware,
+          };
+          loaderRegistry.set(id, registered);
+          return registered;
+        }
+      } catch (error) {
+        console.error(`[LoaderRegistry] Failed to load loader "${id}":`, error);
+      }
+    }
+  }
+
+  // Dev mode fallback: parse the ID and use Vite's dynamic import
+  // ID format in dev: "src/path/to/file.ts#ExportName"
+  const hashIndex = id.indexOf("#");
+  if (hashIndex !== -1) {
+    const filePath = id.slice(0, hashIndex);
+    const exportName = id.slice(hashIndex + 1);
+
+    try {
+      // In dev mode, Vite handles dynamic imports
+      const module = await import(/* @vite-ignore */ `/${filePath}`);
+      const loader = module[exportName];
+
+      if (loader) {
+        // Get fn from the internal registry (set when createLoader runs)
+        const internalLoader = getFetchableLoader(loader.name);
+        if (internalLoader) {
+          const registered: RegisteredLoader = {
+            fn: internalLoader.fn,
+            middleware: internalLoader.middleware,
+          };
+          loaderRegistry.set(id, registered);
+          return registered;
+        }
+      }
+    } catch (error) {
+      console.error(`[LoaderRegistry] Failed to load loader "${id}":`, error);
+    }
+  }
+
+  return undefined;
 }
 
 /**

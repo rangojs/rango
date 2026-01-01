@@ -1,12 +1,23 @@
 import type { Plugin, ResolvedConfig } from "vite";
 import MagicString from "magic-string";
 import path from "node:path";
+import crypto from "node:crypto";
 
 /**
  * Normalize path to forward slashes
  */
 function normalizePath(p: string): string {
   return p.split(path.sep).join("/");
+}
+
+/**
+ * Generate a short hash for a loader ID
+ * Uses first 8 chars of SHA-256 hash for uniqueness while keeping IDs short
+ */
+function hashLoaderId(filePath: string, exportName: string): string {
+  const input = `${filePath}#${exportName}`;
+  const hash = crypto.createHash("sha256").update(input).digest("hex");
+  return hash.slice(0, 12);
 }
 
 /**
@@ -22,13 +33,14 @@ function hasCreateLoaderImport(code: string): boolean {
 
 /**
  * Find all export const X = createLoader(...) patterns and inject $$id
- * Optionally also inject registration calls (server-side only)
+ * In production, IDs are hashed to avoid exposing file paths.
+ * In dev, IDs use filePath#exportName for easier debugging.
  */
 function transformLoaderExports(
   code: string,
   filePath: string,
   sourceId?: string,
-  options: { includeRegistration: boolean } = { includeRegistration: false }
+  isBuild: boolean = false
 ): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
   // Quick bail-out
   if (!code.includes("createLoader")) {
@@ -47,7 +59,6 @@ function transformLoaderExports(
   const s = new MagicString(code);
   let hasChanges = false;
   let match: RegExpExecArray | null;
-  const loaderNames: string[] = [];
 
   while ((match = pattern.exec(code)) !== null) {
     const exportName = match[1];
@@ -72,29 +83,20 @@ function transformLoaderExports(
       statementEnd++;
     }
 
-    // Build the $$id value
-    const loaderId = `${filePath}#${exportName}`;
+    // In production: hash ID to avoid exposing file paths
+    // In dev: use readable format for easier debugging
+    const loaderId = isBuild
+      ? hashLoaderId(filePath, exportName)
+      : `${filePath}#${exportName}`;
 
     // Inject $$id assignment after the statement
     const injection = `\n${exportName}.$$id = "${loaderId}";`;
     s.appendRight(statementEnd, injection);
     hasChanges = true;
-    loaderNames.push(exportName);
   }
 
   if (!hasChanges) {
     return null;
-  }
-
-  // Add registration import and calls (server-side only)
-  // This ensures loaders are registered when the module is imported on the server
-  if (options.includeRegistration) {
-    const registrations = loaderNames
-      .map((name) => `__registerLoaderById(${name});`)
-      .join("\n");
-    s.append(
-      `\nimport { registerLoaderById as __registerLoaderById } from "rsc-router/server";\n${registrations}\n`
-    );
   }
 
   return {
@@ -127,7 +129,7 @@ export function exposeLoaderId(): Plugin {
   let config: ResolvedConfig;
   let isBuild = false;
 
-  // Track discovered loaders: $$id -> { filePath, exportName }
+  // Track discovered loaders: hashedId -> { filePath, exportName }
   const loaderRegistry = new Map<
     string,
     { filePath: string; exportName: string }
@@ -192,8 +194,8 @@ export function exposeLoaderId(): Plugin {
 
           while ((match = pattern.exec(content)) !== null) {
             const exportName = match[1];
-            const loaderId = `${relativePath}#${exportName}`;
-            loaderRegistry.set(loaderId, {
+            const hashedId = hashLoaderId(relativePath, exportName);
+            loaderRegistry.set(hashedId, {
               filePath: relativePath,
               exportName,
             });
@@ -213,43 +215,46 @@ export function exposeLoaderId(): Plugin {
 
     load(id) {
       if (id === RESOLVED_VIRTUAL_LOADER_MANIFEST) {
-        // During dev/build, loaders are discovered during transform
-        // In dev: return dynamic registration code that works at runtime
-        // In build: this will be re-transformed after all modules are processed
+        // Generate a lazy import map for on-demand loader loading
+        // This avoids importing all loader modules at startup
 
         if (!isBuild) {
-          // Dev mode: return a no-op, loaders are discovered and registered
-          // via dynamic import fallback in RSC handler
-          return `// Dev mode: loaders registered via dynamic import\nexport {};`;
+          // Dev mode: empty map - use fallback path parsing in loader registry
+          // IDs in dev mode are "filePath#exportName" format for easier debugging
+          return `import { setLoaderImports } from "rsc-router/server";
+
+// Dev mode: empty map, loaders are resolved dynamically via path parsing
+setLoaderImports({});
+`;
         }
 
-        // Build mode: generate manifest code with static imports and registration
-        // This module has side effects - it registers all discovered loaders
-        const imports: string[] = [];
-        const registrations: string[] = [];
+        // Build mode: generate lazy import map
+        // Each loader is only imported when first requested
+        // Keys are hashed IDs to avoid exposing file paths
+        const lazyImports: string[] = [];
 
-        let i = 0;
-        for (const [loaderId, { filePath, exportName }] of loaderRegistry) {
-          const importName = `_loader${i}`;
-          imports.push(
-            `import { ${exportName} as ${importName} } from "/${filePath}";`
+        for (const [hashedId, { filePath, exportName }] of loaderRegistry) {
+          // Create a lazy import function for each loader
+          lazyImports.push(
+            `  "${hashedId}": () => import("/${filePath}").then(m => m.${exportName})`
           );
-          registrations.push(`registerLoaderById(${importName});`);
-          i++;
         }
 
-        // If no loaders discovered, return placeholder
-        if (imports.length === 0) {
-          return `// No fetchable loaders discovered during build\nexport {};`;
+        // If no loaders discovered, set empty map
+        if (lazyImports.length === 0) {
+          return `import { setLoaderImports } from "rsc-router/server";
+
+// No fetchable loaders discovered during build
+setLoaderImports({});
+`;
         }
 
-        const code = `import { registerLoaderById } from "rsc-router/server";
-${imports.join("\n")}
+        const code = `import { setLoaderImports } from "rsc-router/server";
 
-// Register all loaders in the registry
-${registrations.join("\n")}
-
-export {};
+// Lazy import map - loaders are loaded on-demand when first requested
+setLoaderImports({
+${lazyImports.join(",\n")}
+});
 `;
         return code;
       }
@@ -284,15 +289,14 @@ export {};
         let match: RegExpExecArray | null;
         while ((match = pattern.exec(code)) !== null) {
           const exportName = match[1];
-          const loaderId = `${relativePath}#${exportName}`;
-          loaderRegistry.set(loaderId, { filePath: relativePath, exportName });
+          const hashedId = hashLoaderId(relativePath, exportName);
+          loaderRegistry.set(hashedId, { filePath: relativePath, exportName });
         }
       }
 
-      // Transform: inject $$id in all environments, registration only in RSC
-      return transformLoaderExports(code, relativePath, id, {
-        includeRegistration: isRscEnv,
-      });
+      // Transform: inject $$id in all environments
+      // In build mode, IDs are hashed; in dev mode, they're readable
+      return transformLoaderExports(code, relativePath, id, isBuild);
     },
   };
 }
