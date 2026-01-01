@@ -11,6 +11,7 @@ import {
   AddUserForm,
   FormActionSearch,
   RSCContentDisplay,
+  NotesManager,
 } from "./loaders-demo/components.js";
 
 /**
@@ -180,6 +181,7 @@ function LoadersStatsPage() {
         <StatsDisplay />
         <UserSearch />
         <FormActionSearch />
+        <NotesManager />
         <RSCContentDisplay />
         <AddUserForm />
 

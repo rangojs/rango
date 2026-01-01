@@ -1,14 +1,16 @@
 "use client";
 
-import { useState, useActionState } from "react";
+import { useState, useActionState, useEffect, useRef } from "react";
 import { useLoader, useFetchLoader } from "rsc-router/client";
 import {
   UsersLoader,
   StatsLoader,
   UserSearchLoader,
   RSCContentLoader,
+  NotesLoader,
   type UsersLoaderData,
   type RSCContentLoaderData,
+  type NotesLoaderData,
 } from "./loaders.js";
 import {
   incrementPageViewsAction,
@@ -561,6 +563,132 @@ export const RSCContentLoader = createLoader(
 // Client renders the content directly
 const { data } = useFetchLoader(RSCContentLoader);
 return <div>{data.content}</div>;`}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * NotesManager - Demonstrates loader as both GET (on mount) and form action
+ *
+ * This is the key pattern: a single loader handles both fetching and mutations.
+ * - useEffect(() => load(), []) fetches notes on component mount
+ * - load.formAction handles form submissions to add new notes
+ * - Same loader, same response shape, unified data flow
+ */
+export function NotesManager() {
+  const { data, isLoading, error, load } = useFetchLoader<NotesLoaderData>(NotesLoader);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // Fetch notes on mount - this is the GET request
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Handle form submission - wraps formAction to clear input after success
+  const handleSubmit = async (formData: FormData) => {
+    await load.formAction(formData);
+    formRef.current?.reset();
+  };
+
+  return (
+    <div style={cardStyle}>
+      <h3 style={headingStyle}>
+        Loader as GET + Form Action
+      </h3>
+      <p style={descStyle}>
+        Single loader handles both fetching (via <code>useEffect</code>) and
+        mutations (via <code>load.formAction</code>). Unified data flow pattern.
+      </p>
+
+      <form ref={formRef} action={handleSubmit} style={{ marginBottom: "1rem" }}>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <input
+            type="text"
+            name="note"
+            placeholder="Add a quick note..."
+            required
+            style={{ ...inputStyle, flex: 1 }}
+          />
+          <button
+            type="submit"
+            disabled={isLoading}
+            style={{ ...buttonStyle, background: "#10b981" }}
+          >
+            {isLoading ? "..." : "Add"}
+          </button>
+        </div>
+      </form>
+
+      {error && (
+        <div style={errorStyle}>Error: {error.message}</div>
+      )}
+
+      {data && (
+        <>
+          <div style={metaStyle}>
+            <span>Notes: {data.notes.length}</span>
+            <span>Fetched: {new Date(data.fetchedAt).toLocaleTimeString()}</span>
+            {data.addedNote && <span style={{ color: "#10b981" }}>Added!</span>}
+          </div>
+
+          <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+            {data.notes.map((note) => (
+              <li
+                key={note.id}
+                style={{
+                  padding: "0.75rem",
+                  borderBottom: "1px solid #e5e7eb",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <span>{note.text}</span>
+                <span style={{ fontSize: "0.75rem", color: "#9ca3af" }}>
+                  {new Date(note.createdAt).toLocaleTimeString()}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {!data && isLoading && (
+        <div style={emptyStateStyle}>Loading notes...</div>
+      )}
+
+      <div
+        style={{
+          marginTop: "1rem",
+          padding: "1rem",
+          background: "#ecfdf5",
+          borderRadius: "8px",
+          fontSize: "0.875rem",
+        }}
+      >
+        <strong>Pattern:</strong>
+        <pre style={{ margin: "0.5rem 0 0 0", whiteSpace: "pre-wrap" }}>
+{`const { data, load } = useFetchLoader(NotesLoader);
+
+// GET on mount
+useEffect(() => {
+  load();
+}, [load]);
+
+// Form action for mutations
+<form action={load.formAction}>
+  <input name="note" />
+  <button type="submit">Add</button>
+</form>
+
+// Server loader handles both:
+async (ctx) => {
+  const noteText = ctx.formData?.get("note");
+  if (noteText) addNote(noteText); // mutation
+  return { notes: getAllNotes() }; // always return current state
+}`}
         </pre>
       </div>
     </div>
