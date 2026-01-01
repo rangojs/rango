@@ -345,6 +345,102 @@ if (result.success) {
   );
 }
 
+/**
+ * FormActionSearch - Demonstrates load.formAction for progressive enhancement
+ *
+ * Shows how to use useFetchLoader with forms for:
+ * - Progressive enhancement (works without JS)
+ * - Automatic loading states
+ * - Server-side execution
+ */
+export function FormActionSearch() {
+  const { data, isLoading, error, load } = useFetchLoader(UserSearchLoader);
+
+  return (
+    <div style={cardStyle}>
+      <h3 style={headingStyle}>
+        load.formAction - Progressive Enhancement
+      </h3>
+      <p style={descStyle}>
+        Use <code>load.formAction</code> as a form action for progressive
+        enhancement. Works without JavaScript, enhanced with loading states when JS is available.
+      </p>
+
+      <form action={load.formAction} style={{ marginBottom: "1rem" }}>
+        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+          <input
+            type="text"
+            name="query"
+            placeholder="Search users..."
+            style={inputStyle}
+          />
+          <select name="role" style={selectStyle}>
+            <option value="all">All Roles</option>
+            <option value="admin">Admin</option>
+            <option value="user">User</option>
+            <option value="guest">Guest</option>
+          </select>
+          <button
+            type="submit"
+            disabled={isLoading}
+            style={buttonStyle}
+          >
+            {isLoading ? "Searching..." : "Search"}
+          </button>
+        </div>
+      </form>
+
+      {error && (
+        <div style={errorStyle}>Error: {error.message}</div>
+      )}
+
+      {data && (
+        <>
+          <div style={metaStyle}>
+            <span>Query: "{data.query || "(empty)"}"</span>
+            <span>Role: {data.roleFilter}</span>
+            <span>Matches: {data.totalMatches}</span>
+          </div>
+
+          {data.results.length > 0 ? (
+            <ul style={{ margin: 0, paddingLeft: "1.5rem" }}>
+              {data.results.map((user) => (
+                <li key={user.id}>
+                  <strong>{user.name}</strong> ({user.role}) - {user.email}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div style={emptyStateStyle}>No users match your search</div>
+          )}
+        </>
+      )}
+
+      <div
+        style={{
+          marginTop: "1rem",
+          padding: "1rem",
+          background: "#fef3c7",
+          borderRadius: "8px",
+          fontSize: "0.875rem",
+        }}
+      >
+        <strong>Usage:</strong>
+        <pre style={{ margin: "0.5rem 0 0 0", whiteSpace: "pre-wrap" }}>
+{`const { load, isLoading } = useFetchLoader(UserSearchLoader);
+
+<form action={load.formAction}>
+  <input name="query" />
+  <button type="submit" disabled={isLoading}>
+    {isLoading ? "Searching..." : "Search"}
+  </button>
+</form>`}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
 // Helper component for stats display
 function StatCard({ label, value }: { label: string; value: number }) {
   return (
