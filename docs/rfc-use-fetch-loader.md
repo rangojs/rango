@@ -138,6 +138,31 @@ function FileUpload() {
 }
 ```
 
+### Key Benefit: No Refetch Needed
+
+When using `load.action`, the loader handles both the mutation AND returns updated data. No separate refetch call is required:
+
+```typescript
+// Server loader handles mutation + returns updated data
+const NotesLoader = createLoader("notes", async (ctx) => {
+  "use server";
+
+  const noteText = ctx.formData?.get("note");
+  if (noteText) addNote(noteText);  // mutation
+
+  return { notes: getAllNotes() };  // returns updated data
+}, true);
+
+// Client - no refetch needed!
+const { data, load } = useFetchLoader(NotesLoader);
+
+useEffect(() => { load(); }, [load]);  // initial GET
+
+<form action={load.action}>  {/* mutation updates data automatically */}
+  <input name="note" />
+</form>
+```
+
 ## Implementation
 
 ### Core Mechanism
@@ -379,34 +404,25 @@ export function useFetchLoader<T>(loader: LoaderDefinition<T>) {
 4. Update `useFetchLoader` to use fetch for GET, server action for POST
 5. Expose `createFromFetch` to the hook (via deps or context)
 
-### Current Limitation: RSC Transform in Library Code
+### Implemented: Loader Registry with Hashed IDs
 
-**Issue:** The `$$id` property (required for GET-based fetching) is not exposed on actions defined in library code (rsc-router package). The RSC transform that converts inline `"use server"` directives into server references may not process workspace packages the same way it processes user code.
+The GET-based fetching is implemented using a server-side loader registry and Vite plugin:
 
-**Current Behavior:**
-- When `createLoader` creates an action with inline `"use server"`, the RSC plugin should transform it into a server reference
-- The `exposeActionId` plugin should then attach `$$id` to the function
-- However, for actions in library code, `$$id` remains undefined
+**How it works:**
+1. `exposeLoaderId` Vite plugin scans for fetchable loaders in user code
+2. Generates `$$id` for each loader:
+   - **Dev mode**: Readable format `filePath#exportName`
+   - **Production**: SHA-256 hash (12 chars) to avoid exposing file paths
+3. Server registry maps `$$id` → loader function
+4. GET requests use `$$id` to look up and execute the loader
 
-**Fallback Implementation:**
-The `useFetchLoader` hook now gracefully falls back to server action (POST) when `$$id` is not available:
-
-```typescript
-const canUseGetFetch = method === "GET" && actionId;
-
-if (canUseGetFetch) {
-  // Use GET + RSC deserialization (cacheable)
-  // ...
-} else {
-  // Fall back to server action (POST-based)
-  result = await action(options);
-}
+**ID Format Examples:**
+```
+Dev:  src/handlers/loaders.ts#ProductLoader
+Prod: a1b2c3d4e5f6
 ```
 
-**Path Forward:**
-1. **User-defined loaders:** If users define loaders in their source files (not imported from library), the RSC transform should work correctly
-2. **Registry-based approach:** Implement a server-side loader registry that maps loader names to functions, avoiding reliance on `$$id`
-3. **Build configuration:** Investigate Vite/RSC plugin configuration to process workspace packages
+**Security:** Production builds use hashed IDs so file paths are never exposed to clients.
 
 ## Future Enhancements
 
@@ -415,13 +431,13 @@ if (canUseGetFetch) {
 3. **Prefetching**: `prefetchLoader(ProductLoader, { params })`
 4. **Cache headers**: Automatic cache-control based on loader config
 
-## POC Validation
+## Implementation Status
 
-The approach was validated with a working test:
+**Fully implemented.** See demo at `/loaders` route in `examples/vite-rsc-demo`.
 
-1. Created `createLoaderSimple` with inline `"use server"` action
-2. Action closes over `fn` and `middleware`
-3. Client calls action, server executes with closure access
-4. Result returned successfully
-
-Test location: `examples/vite-rsc-demo/src/loader-fetch-test/`
+Demo includes:
+- `useLoader` - SSR/navigation data access
+- `useFetchLoader` - Client-side GET fetching
+- `load.action` - Form-based mutations
+- File uploads via FormData
+- RSC content (loaders returning ReactNode)
