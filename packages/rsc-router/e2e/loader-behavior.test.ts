@@ -245,10 +245,13 @@ test.describe("loader-behavior", () => {
         page.locator('[data-testid="slow-revalidate-btn-result"]')
       ).toBeVisible({ timeout: 5000 });
 
-      // Wait for loader to revalidate (takes 1s)
-      await page.waitForTimeout(1500);
+      // Wait for loader to revalidate by polling until count changes
+      // (loader takes 1s, but use polling instead of fixed timeout for reliability)
+      await expect(
+        page.locator('[data-testid="slow-count"]')
+      ).not.toHaveText(`Load count: ${initialNum}`, { timeout: 5000 });
 
-      // Load count should have incremented
+      // Verify count incremented
       const newCountText = await page
         .locator('[data-testid="slow-count"]')
         .textContent();
@@ -286,10 +289,13 @@ test.describe("loader-behavior", () => {
         page.locator('[data-testid="slow-streaming-revalidate-btn-result"]')
       ).toBeVisible({ timeout: 5000 });
 
-      // Wait for loader to revalidate (takes 1s)
-      await page.waitForTimeout(1500);
+      // Wait for loader to revalidate by polling until count changes
+      // (loader takes 1s, but use polling instead of fixed timeout for reliability)
+      await expect(
+        page.locator('[data-testid="slow-streaming-count"]')
+      ).not.toHaveText(`Load count: ${initialNum}`, { timeout: 5000 });
 
-      // Load count should have incremented
+      // Verify count incremented
       const newCount = await page
         .locator('[data-testid="slow-streaming-count"]')
         .textContent();

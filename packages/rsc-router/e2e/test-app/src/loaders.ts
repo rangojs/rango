@@ -119,6 +119,10 @@ export const FetchableTestLoader = createLoader(
   async (ctx) => {
     fetchableLoaderCount++;
     const id = ctx.params.id || "default";
+
+    // Add delay to ensure loading state is visible in tests
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
     return {
       message: "Fetched via GET!",
       id,
