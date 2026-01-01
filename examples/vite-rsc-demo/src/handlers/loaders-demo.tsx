@@ -207,7 +207,7 @@ export default map<typeof loadersRoutes>(
       loader(UsersLoader),
 
       // Loading component while UsersLoader is pending
-      loading(() => (
+      loading(
         <div
           style={{
             padding: "2rem",
@@ -217,7 +217,7 @@ export default map<typeof loadersRoutes>(
         >
           Loading users...
         </div>
-      )),
+      ),
 
       // Index route - demonstrates useLoader
       route("index", () => <LoadersIndexPage />),
