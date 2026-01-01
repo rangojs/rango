@@ -454,7 +454,7 @@ export interface UseFetchLoaderResult<T> {
  */
 export type LoadFunction<T> = ((options?: LoadOptions) => Promise<T>) & {
   /** Form action for progressive enhancement - can be passed to form action prop */
-  formAction: (formData: FormData) => Promise<void>;
+  action: (formData: FormData) => Promise<void>;
 };
 
 /**
@@ -491,7 +491,7 @@ export type LoadFunction<T> = ((options?: LoadOptions) => Promise<T>) & {
  *   const { data, load } = useFetchLoader(FileLoader);
  *
  *   return (
- *     <form action={load.formAction}>
+ *     <form action={load.action}>
  *       <input type="file" name="file" />
  *       <button type="submit">Upload</button>
  *     </form>
@@ -570,7 +570,7 @@ export function useFetchLoader<T>(
   // Create the form action that wraps the loader's server action
   // This allows progressive enhancement with forms
   // Returns void to match React's expected form action signature
-  const formAction = useCallback(
+  const action = useCallback(
     async (formData: FormData): Promise<void> => {
       if (!loader.action) {
         throw new Error(
@@ -596,16 +596,16 @@ export function useFetchLoader<T>(
     [loader]
   );
 
-  // Attach formAction to load function
-  const loadWithFormAction = load as LoadFunction<T>;
-  loadWithFormAction.formAction = formAction;
+  // Attach action to load function
+  const loadWithAction = load as LoadFunction<T>;
+  loadWithAction.action = action;
 
   return {
     data,
     isLoading,
     error,
-    load: loadWithFormAction,
-    refetch: loadWithFormAction,
+    load: loadWithAction,
+    refetch: loadWithAction,
   };
 }
 

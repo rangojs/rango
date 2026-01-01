@@ -350,7 +350,7 @@ if (result.success) {
 }
 
 /**
- * FormActionSearch - Demonstrates load.formAction for progressive enhancement
+ * FormActionSearch - Demonstrates load.action for progressive enhancement
  *
  * Shows how to use useFetchLoader with forms for:
  * - Progressive enhancement (works without JS)
@@ -363,14 +363,14 @@ export function FormActionSearch() {
   return (
     <div style={cardStyle}>
       <h3 style={headingStyle}>
-        load.formAction - Progressive Enhancement
+        load.action - Progressive Enhancement
       </h3>
       <p style={descStyle}>
-        Use <code>load.formAction</code> as a form action for progressive
+        Use <code>load.action</code> as a form action for progressive
         enhancement. Works without JavaScript, enhanced with loading states when JS is available.
       </p>
 
-      <form action={load.formAction} style={{ marginBottom: "1rem" }}>
+      <form action={load.action} style={{ marginBottom: "1rem" }}>
         <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
           <input
             type="text"
@@ -433,7 +433,7 @@ export function FormActionSearch() {
         <pre style={{ margin: "0.5rem 0 0 0", whiteSpace: "pre-wrap" }}>
 {`const { load, isLoading } = useFetchLoader(UserSearchLoader);
 
-<form action={load.formAction}>
+<form action={load.action}>
   <input name="query" />
   <button type="submit" disabled={isLoading}>
     {isLoading ? "Searching..." : "Search"}
@@ -574,7 +574,7 @@ return <div>{data.content}</div>;`}
  *
  * This is the key pattern: a single loader handles both fetching and mutations.
  * - useEffect(() => load(), []) fetches notes on component mount
- * - load.formAction handles form submissions to add new notes
+ * - load.action handles form submissions to add new notes
  * - Same loader, same response shape, unified data flow
  */
 export function NotesManager() {
@@ -588,7 +588,7 @@ export function NotesManager() {
 
   // Handle form submission - wraps formAction to clear input after success
   const handleSubmit = async (formData: FormData) => {
-    await load.formAction(formData);
+    await load.action(formData);
     formRef.current?.reset();
   };
 
@@ -599,7 +599,7 @@ export function NotesManager() {
       </h3>
       <p style={descStyle}>
         Single loader handles both fetching (via <code>useEffect</code>) and
-        mutations (via <code>load.formAction</code>). Unified data flow pattern.
+        mutations (via <code>load.action</code>). Unified data flow pattern.
       </p>
 
       <form ref={formRef} action={handleSubmit} style={{ marginBottom: "1rem" }}>
@@ -678,7 +678,7 @@ useEffect(() => {
 }, [load]);
 
 // Form action for mutations
-<form action={load.formAction}>
+<form action={load.action}>
   <input name="note" />
   <button type="submit">Add</button>
 </form>

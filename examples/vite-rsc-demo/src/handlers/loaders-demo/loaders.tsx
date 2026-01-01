@@ -271,7 +271,7 @@ export type RSCContentLoaderData = {
  *
  * This loader serves dual purposes:
  * 1. GET request: Fetches all notes (used with useEffect on mount)
- * 2. Form action: Adds a new note when submitted via load.formAction
+ * 2. Form action: Adds a new note when submitted via load.action
  *
  * The loader checks ctx.formData to determine if it's handling a mutation.
  * This pattern allows a single loader to handle both reading and writing.
