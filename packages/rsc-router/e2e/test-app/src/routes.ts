@@ -63,4 +63,6 @@ export const testRoutes = route({
     child: "/meta-merge/child",
     deep: "/meta-merge/deep/nested",
   },
+  // Route for testing useFetchLoader hook (GET-based loader fetching)
+  fetchLoader: "/fetch-loader",
 });

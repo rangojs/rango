@@ -1058,6 +1058,7 @@ export type LoaderAction<T> = ((options?: LoadOptions) => Promise<T>) & {
 export type LoaderDefinition<T = any, TParams = Record<string, string | undefined>> = {
   __brand: "loader";
   name: string;
+  $$id?: string;  // Injected by Vite plugin (exposeLoaderId) - used for GET-based fetching
   fn?: LoaderFn<T, TParams, any>;  // Optional - stripped on client via "use server"
   action?: LoaderAction<T>;  // Optional - for fetchable loaders
 };

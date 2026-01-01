@@ -3,13 +3,10 @@ import type {
   DefaultEnv,
   ErrorBoundaryHandler,
   ExtractRouteParams,
-  FetchableLoaderOptions,
   Handler,
   HandlersForRouteMap,
-  LoaderActionContext,
   LoaderDefinition,
   LoaderFn,
-  LoadOptions,
   MiddlewareFn,
   NotFoundBoundaryHandler,
   ResolvedRouteMap,
@@ -22,7 +19,6 @@ import type {
 import { getContext, type EntryData, type InterceptEntry, type InterceptWhenFn, type InterceptSelectorContext } from "./server/context";
 import { invariant } from "./errors";
 import RootLayout from "./server/root-layout";
-import { registerLoader } from "./server/loader-registry";
 import type {
   AllUseItems,
   LayoutItem,
@@ -1085,113 +1081,9 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
  * const cart = useLoader(CartLoader);
  * ```
  */
-// Overload 1: With function, infer return type (not fetchable)
-export function createLoader<T>(
-  name: string,
-  fn: LoaderFn<T, Record<string, string | undefined>, any>
-): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
-
-// Overload 2: No function (client-side reference only)
-export function createLoader(
-  name: string
-): LoaderDefinition<any, Record<string, string | undefined>>;
-
-// Overload 3: Fetchable with `true` (no middleware)
-export function createLoader<T>(
-  name: string,
-  fn: LoaderFn<T, Record<string, string | undefined>, any>,
-  fetchable: true
-): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
-
-// Overload 4: Fetchable with middleware
-export function createLoader<T>(
-  name: string,
-  fn: LoaderFn<T, Record<string, string | undefined>, any>,
-  options: FetchableLoaderOptions
-): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
-
-// Implementation
-export function createLoader<T>(
-  name: string,
-  fn?: LoaderFn<T, Record<string, string | undefined>, any>,
-  fetchable?: true | FetchableLoaderOptions
-): LoaderDefinition<Awaited<T>, Record<string, string | undefined>> {
-  const middleware = fetchable === true ? [] : fetchable?.middleware || [];
-
-  // If fetchable, create an action that closes over fn and middleware
-  let action: LoaderDefinition<Awaited<T>>["action"];
-
-  if (fetchable !== undefined && fn) {
-    // Create action with inline "use server"
-    const loaderFn = fn;
-    const loaderMiddleware = middleware;
-
-    const mainAction = async (options?: LoadOptions): Promise<Awaited<T>> => {
-      "use server";
-
-      // Build context
-      const method = options?.method || "GET";
-      const params = options?.params || {};
-      const body = options && "body" in options ? options.body : undefined;
-
-      const ctx: LoaderActionContext = {
-        method,
-        params,
-        body,
-        formData: body instanceof FormData ? body : undefined,
-      };
-
-      // Run middleware chain
-      for (const mw of loaderMiddleware) {
-        await mw(ctx as any, async () => {});
-      }
-
-      // Execute loader function
-      return loaderFn(ctx as any) as Awaited<T>;
-    };
-
-    // Also create form action for progressive enhancement
-    const formAction = async (formData: FormData): Promise<Awaited<T>> => {
-      "use server";
-
-      // Extract params from FormData
-      const params: Record<string, string> = {};
-      formData.forEach((value, key) => {
-        if (typeof value === "string") {
-          params[key] = value;
-        }
-      });
-
-      const ctx: LoaderActionContext = {
-        method: "POST",
-        params,
-        body: formData,
-        formData,
-      };
-
-      // Run middleware chain
-      for (const mw of loaderMiddleware) {
-        await mw(ctx as any, async () => {});
-      }
-
-      // Execute loader function
-      return loaderFn(ctx as any) as Awaited<T>;
-    };
-
-    action = mainAction as LoaderDefinition<Awaited<T>>["action"];
-    action!.formAction = formAction;
-
-    // Register loader for GET-based fetching via RSC handler
-    registerLoader(name, fn, middleware);
-  }
-
-  return {
-    __brand: "loader",
-    name,
-    fn: fn as LoaderFn<Awaited<T>, Record<string, string | undefined>, any> | undefined,
-    action,
-  };
-}
+// Re-export createLoader from loader.ts to ensure consistent implementation
+// between server and client contexts
+export { createLoader } from "./loader.js";
 
 /**
  * Create a soft redirect Response for middleware short-circuit

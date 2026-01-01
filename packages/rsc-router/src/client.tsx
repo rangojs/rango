@@ -20,7 +20,9 @@ import {
   type ResolvedSegment,
 } from "./types";
 import { RouteContentWrapper, LoaderBoundary } from "./route-content-wrapper.js";
-import { createFromFetch } from "./deps/browser.js";
+// Note: createFromFetch is imported dynamically inside useFetchLoader to avoid
+// pulling browser-only dependencies at module level (client.tsx is also imported
+// in RSC context via client.rsc.tsx)
 
 /**
  * Payload returned by loader RSC requests
@@ -506,54 +508,51 @@ export function useFetchLoader<T>(
 
   const load = useCallback(
     async (options?: LoadOptions): Promise<T> => {
-      if (!loader.action) {
+      // Verify the loader has $$id (injected by exposeLoaderId Vite plugin)
+      if (!loader.$$id) {
         throw new Error(
-          `Loader "${loader.name}" is not fetchable. ` +
-            `Add \`true\` or \`{ middleware: [...] }\` as the third argument to createLoader.`
+          `Loader "${loader.name}" is missing $$id. ` +
+            `Make sure the exposeLoaderId Vite plugin is enabled and the loader is created with fetchable: true.`
         );
       }
-
-      const action = loader.action;
-      const method = options?.method || "GET";
 
       setIsLoading(true);
       setError(null);
 
       try {
-        let result: T;
+        // GET-based fetching - server looks up loader by $$id in registry
+        const url = new URL(window.location.pathname, window.location.origin);
+        url.searchParams.set("_rsc_loader", loader.$$id);
 
-        if (method === "GET") {
-          // GET requests use fetch + RSC deserialization (cacheable)
-          // Server looks up loader by name in registry
-          const url = new URL(window.location.pathname, window.location.origin);
-          url.searchParams.set("_rsc_loader", loader.name);
-
-          if (options?.params && Object.keys(options.params).length > 0) {
-            url.searchParams.set(
-              "_rsc_loader_params",
-              JSON.stringify(options.params)
-            );
-          }
-
-          // Fetch and deserialize RSC response
-          const response = fetch(url.toString(), {
-            method: "GET",
-            headers: {
-              Accept: "text/x-component",
-            },
-          });
-
-          const payload = await createFromFetch<LoaderRscPayload<T>>(response);
-
-          if (payload.loaderError) {
-            throw new Error(payload.loaderError.message);
-          }
-
-          result = payload.loaderResult;
-        } else {
-          // POST/PUT/PATCH/DELETE use server action directly (for mutations)
-          result = await action(options);
+        if (options?.params && Object.keys(options.params).length > 0) {
+          url.searchParams.set(
+            "_rsc_loader_params",
+            JSON.stringify(options.params)
+          );
         }
+
+        // Cache-busting parameter to ensure fresh data on each fetch
+        url.searchParams.set("_rsc_ts", Date.now().toString());
+
+        // Fetch and deserialize RSC response
+        const response = fetch(url.toString(), {
+          method: "GET",
+          headers: {
+            Accept: "text/x-component",
+          },
+          cache: "no-store", // Don't cache loader requests
+        });
+
+        // Dynamic import to avoid pulling browser-only deps at module level
+        // (client.tsx is also imported in RSC context via client.rsc.tsx)
+        const { createFromFetch } = await import("./deps/browser.js");
+        const payload = await createFromFetch<LoaderRscPayload<T>>(response);
+
+        if (payload.loaderError) {
+          throw new Error(payload.loaderError.message);
+        }
+
+        const result = payload.loaderResult;
 
         setData(result);
         return result;
@@ -567,11 +566,6 @@ export function useFetchLoader<T>(
     },
     [loader]
   ) as LoadFunction<T>;
-
-  // Attach form action if available
-  if (loader.action?.formAction) {
-    load.formAction = loader.action.formAction;
-  }
 
   return {
     data,
@@ -759,3 +753,6 @@ export {
 
 // Type-safe href for client-side path validation
 export { href, type ValidPaths, type PatternToPath } from "./href-client.js";
+
+// Loader definition type - for typing loader props in client components
+export type { LoaderDefinition } from "./types.js";

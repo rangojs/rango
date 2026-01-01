@@ -5,17 +5,45 @@
  * This file can be safely imported from both server and client contexts.
  *
  * For non-fetchable loaders: returns a stub loader definition
- * For fetchable loaders: creates a server action that can be called from client
+ * For fetchable loaders: stores fn in registry and returns a serializable loader
  */
 
 import type {
   FetchableLoaderOptions,
-  LoaderActionContext,
   LoaderDefinition,
   LoaderFn,
-  LoadOptions,
   MiddlewareFn,
 } from "./types.js";
+
+// Internal registry for fetchable loaders (server-side only)
+// Maps loader name to its function and middleware
+// This allows server actions to look up the loader without capturing it in closure
+const fetchableLoaderRegistry = new Map<
+  string,
+  { fn: LoaderFn<any, any, any>; middleware: MiddlewareFn<any>[] }
+>();
+
+/**
+ * Register a fetchable loader's function internally
+ * Called during module initialization
+ */
+function registerFetchableLoader(
+  name: string,
+  fn: LoaderFn<any, any, any>,
+  middleware: MiddlewareFn<any>[]
+): void {
+  fetchableLoaderRegistry.set(name, { fn, middleware });
+}
+
+/**
+ * Get a fetchable loader's function from registry
+ * Called by server actions to execute the loader
+ */
+export function getFetchableLoader(
+  name: string
+): { fn: LoaderFn<any, any, any>; middleware: MiddlewareFn<any>[] } | undefined {
+  return fetchableLoaderRegistry.get(name);
+}
 
 // Overload 1: With function, infer return type (not fetchable)
 export function createLoader<T>(
@@ -48,7 +76,7 @@ export function createLoader<T>(
   fn?: LoaderFn<T, Record<string, string | undefined>, any>,
   fetchable?: true | FetchableLoaderOptions
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>> {
-  // If not fetchable, return a simple stub
+  // If not fetchable, return a simple stub with fn included
   if (fetchable === undefined) {
     return {
       __brand: "loader",
@@ -57,70 +85,22 @@ export function createLoader<T>(
     };
   }
 
-  // Fetchable loader - create action with inline "use server"
-  const middleware: MiddlewareFn<any>[] = fetchable === true ? [] : fetchable?.middleware || [];
-  const loaderFn = fn!;
-  const loaderMiddleware = middleware;
+  // Fetchable loader - store fn in registry and return a serializable object
+  const middleware: MiddlewareFn<any>[] =
+    fetchable === true ? [] : fetchable?.middleware || [];
 
-  const mainAction = async (options?: LoadOptions): Promise<Awaited<T>> => {
-    "use server";
+  // Register the function in the internal registry (server-side only)
+  // The server action will look it up by name when executed
+  if (fn) {
+    registerFetchableLoader(name, fn, middleware);
+  }
 
-    // Build context
-    const method = options?.method || "GET";
-    const params = options?.params || {};
-    const body = options && "body" in options ? options.body : undefined;
-
-    const ctx: LoaderActionContext = {
-      method,
-      params,
-      body,
-      formData: body instanceof FormData ? body : undefined,
-    };
-
-    // Run middleware chain
-    for (const mw of loaderMiddleware) {
-      await mw(ctx as any, async () => {});
-    }
-
-    // Execute loader function
-    return loaderFn(ctx as any) as Awaited<T>;
-  };
-
-  // Also create form action for progressive enhancement
-  const formAction = async (formData: FormData): Promise<Awaited<T>> => {
-    "use server";
-
-    // Extract params from FormData
-    const params: Record<string, string> = {};
-    formData.forEach((value, key) => {
-      if (typeof value === "string") {
-        params[key] = value;
-      }
-    });
-
-    const ctx: LoaderActionContext = {
-      method: "POST",
-      params,
-      body: formData,
-      formData,
-    };
-
-    // Run middleware chain
-    for (const mw of loaderMiddleware) {
-      await mw(ctx as any, async () => {});
-    }
-
-    // Execute loader function
-    return loaderFn(ctx as any) as Awaited<T>;
-  };
-
-  const action = mainAction as LoaderDefinition<Awaited<T>>["action"];
-  action!.formAction = formAction;
-
+  // Return a loader object WITHOUT fn - the action captures only the name (string)
+  // and looks up the function from registry when executed
   return {
     __brand: "loader",
     name,
-    fn: fn as LoaderFn<Awaited<T>, Record<string, string | undefined>, any> | undefined,
-    action,
+    // Note: fn is intentionally omitted to allow passing to client components
+    // The exposeLoaderId plugin will also add $$id for GET-based fetching
   };
 }
