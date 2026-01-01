@@ -18,6 +18,37 @@ export interface Stats {
   pageViews: number;
 }
 
+// Quick notes store for demonstrating loader as GET + action
+export interface Note {
+  id: string;
+  text: string;
+  createdAt: string;
+}
+
+export const notesStore: Note[] = [
+  { id: "1", text: "Remember to review the PR", createdAt: new Date(Date.now() - 3600000).toISOString() },
+  { id: "2", text: "Check loader documentation", createdAt: new Date(Date.now() - 1800000).toISOString() },
+];
+
+export function addNote(text: string): Note {
+  const note: Note = {
+    id: String(Date.now()),
+    text,
+    createdAt: new Date().toISOString(),
+  };
+  notesStore.unshift(note);
+  return note;
+}
+
+export function deleteNote(id: string): boolean {
+  const index = notesStore.findIndex((n) => n.id === id);
+  if (index !== -1) {
+    notesStore.splice(index, 1);
+    return true;
+  }
+  return false;
+}
+
 // In-memory user store
 export const usersStore: User[] = [
   {

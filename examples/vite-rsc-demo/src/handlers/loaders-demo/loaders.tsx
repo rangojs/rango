@@ -2,15 +2,18 @@ import type { ReactNode } from "react";
 import { createLoader } from "rsc-router";
 import {
   usersStore,
+  notesStore,
+  addNote,
   getStats,
   getLoaderCallCount,
   getFetchableLoaderCallCount,
   type User,
   type Stats,
+  type Note,
 } from "./data.js";
 
 // Export types for use in components
-export type { User, Stats };
+export type { User, Stats, Note };
 
 /**
  * UsersLoader - Standard loader for SSR/navigation
@@ -261,4 +264,49 @@ export type RSCContentLoaderData = {
   style: string;
   count: number;
   renderedAt: string;
+};
+
+/**
+ * NotesLoader - Demonstrates loader as both GET and form action
+ *
+ * This loader serves dual purposes:
+ * 1. GET request: Fetches all notes (used with useEffect on mount)
+ * 2. Form action: Adds a new note when submitted via load.formAction
+ *
+ * The loader checks ctx.formData to determine if it's handling a mutation.
+ * This pattern allows a single loader to handle both reading and writing.
+ *
+ * Use case: Simple CRUD operations where read and write share the same endpoint
+ */
+export const NotesLoader = createLoader(
+  "loaders-demo-notes",
+  async (ctx) => {
+    "use server";
+
+    // Simulate network latency
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    // Check if this is a form submission (mutation)
+    const noteText = ctx.formData?.get("note") as string | null;
+    let addedNote: Note | null = null;
+
+    if (noteText && noteText.trim()) {
+      // This is a mutation - add the note
+      addedNote = addNote(noteText.trim());
+    }
+
+    // Return current notes (whether we just added one or not)
+    return {
+      notes: [...notesStore],
+      addedNote,
+      fetchedAt: new Date().toISOString(),
+    };
+  },
+  true // Enable fetchable - allows both GET and form action
+);
+
+export type NotesLoaderData = {
+  notes: Note[];
+  addedNote: Note | null;
+  fetchedAt: string;
 };
