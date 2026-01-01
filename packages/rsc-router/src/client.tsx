@@ -453,8 +453,8 @@ export interface UseFetchLoaderResult<T> {
  * Load function type with form action support
  */
 export type LoadFunction<T> = ((options?: LoadOptions) => Promise<T>) & {
-  /** Form action for progressive enhancement */
-  formAction?: (formData: FormData) => Promise<T>;
+  /** Form action for progressive enhancement - can be passed to form action prop */
+  formAction: (formData: FormData) => Promise<void>;
 };
 
 /**
@@ -565,14 +565,47 @@ export function useFetchLoader<T>(
       }
     },
     [loader]
-  ) as LoadFunction<T>;
+  );
+
+  // Create the form action that wraps the loader's server action
+  // This allows progressive enhancement with forms
+  // Returns void to match React's expected form action signature
+  const formAction = useCallback(
+    async (formData: FormData): Promise<void> => {
+      if (!loader.action) {
+        throw new Error(
+          `Loader "${loader.name}" does not have an action. ` +
+            `Make sure the loader is created with fetchable: true.`
+        );
+      }
+
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const result = await loader.action(formData);
+        setData(result);
+      } catch (e) {
+        const err = e instanceof Error ? e : new Error(String(e));
+        setError(err);
+        throw err;
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [loader]
+  );
+
+  // Attach formAction to load function
+  const loadWithFormAction = load as LoadFunction<T>;
+  loadWithFormAction.formAction = formAction;
 
   return {
     data,
     isLoading,
     error,
-    load,
-    refetch: load,
+    load: loadWithFormAction,
+    refetch: loadWithFormAction,
   };
 }
 

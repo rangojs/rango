@@ -95,12 +95,56 @@ export function createLoader<T>(
     registerFetchableLoader(name, fn, middleware);
   }
 
-  // Return a loader object WITHOUT fn - the action captures only the name (string)
-  // and looks up the function from registry when executed
+  // Create server action for form-based fetching
+  // This action is serializable and can be passed to client components
+  async function loaderAction(formData: FormData): Promise<Awaited<T>> {
+    "use server";
+
+    // Look up the loader from registry by name
+    const registered = fetchableLoaderRegistry.get(name);
+    if (!registered) {
+      throw new Error(`Loader "${name}" not found in registry`);
+    }
+
+    // Convert FormData to params object
+    const params: Record<string, string> = {};
+    formData.forEach((value, key) => {
+      if (typeof value === "string") {
+        params[key] = value;
+      }
+    });
+
+    // Build minimal context for the loader
+    // Using 'any' to avoid complex type compatibility issues
+    const ctx: any = {
+      method: "POST",
+      params,
+      formData,
+      searchParams: new URLSearchParams(),
+      pathname: "/",
+      url: new URL("http://localhost/"),
+      request: new Request("http://localhost/", { method: "POST" }),
+      get: (key: string) => params[key],
+      set: () => {},
+      use: () => undefined,
+      var: {},
+      env: {},
+    };
+
+    // Run middleware chain (middleware expects HandlerContext which is compatible)
+    for (const mw of registered.middleware) {
+      await mw(ctx, async () => {});
+    }
+
+    // Execute and return result
+    return registered.fn(ctx);
+  }
+
+  // Return a loader object with action for form-based fetching
+  // The exposeLoaderId plugin will also add $$id for GET-based fetching
   return {
     __brand: "loader",
     name,
-    // Note: fn is intentionally omitted to allow passing to client components
-    // The exposeLoaderId plugin will also add $$id for GET-based fetching
+    action: loaderAction,
   };
 }

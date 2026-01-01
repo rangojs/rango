@@ -1048,12 +1048,10 @@ export type LoaderActionContext = {
 };
 
 /**
- * Loader action function type
+ * Loader action function type - server action for form-based fetching
+ * This is a server action that can be passed to form action prop
  */
-export type LoaderAction<T> = ((options?: LoadOptions) => Promise<T>) & {
-  /** Form action for progressive enhancement */
-  formAction?: (formData: FormData) => Promise<T>;
-};
+export type LoaderAction<T> = (formData: FormData) => Promise<T>;
 
 export type LoaderDefinition<T = any, TParams = Record<string, string | undefined>> = {
   __brand: "loader";
