@@ -8,6 +8,7 @@ import {
   CartQuantityLoader,
   SlowLoader,
   SlowProductDetailLoader,
+  FetchableTestLoader,
 } from "./loaders.js";
 import { Breadcrumbs } from "./handles.js";
 import { AddToCartButton } from "./components/AddToCartButton.js";
@@ -32,6 +33,7 @@ import { ChildMetaSetter } from "./components/ChildMetaSetter.js";
 import { AsyncChildMetaSetter } from "./components/AsyncChildMetaSetter.js";
 import { SegmentsDisplay } from "./components/SegmentsDisplay.js";
 import { LinkPendingBadge } from "./components/LinkStatusDisplay.js";
+import { FetchLoaderTest } from "./components/FetchLoaderTest.js";
 
 export default map<typeof testRoutes>(
   ({ route, layout, intercept, loader, loading, when }) => [
@@ -1016,6 +1018,23 @@ export default map<typeof testRoutes>(
             ),
           ]
         ),
+
+        // =====================================================
+        // FETCH LOADER TEST
+        // =====================================================
+        // Route for testing useFetchLoader hook (GET-based loader fetching)
+        route("fetchLoader", () => (
+          <div data-testid="fetch-loader-page">
+            <Link to="/" data-testid="back-link">
+              ← Back to Home
+            </Link>
+            <h1 data-testid="fetch-loader-title">useFetchLoader Test</h1>
+            <p data-testid="fetch-loader-description">
+              Test GET-based loader fetching with useFetchLoader hook
+            </p>
+            <FetchLoaderTest loader={FetchableTestLoader} />
+          </div>
+        )),
       ]
     ),
   ]

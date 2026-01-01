@@ -106,3 +106,25 @@ export const SlowProductDetailLoader = createLoader(
     return { product, loadedAt: new Date().toISOString() };
   }
 );
+
+// Counter to track fetchable loader invocations
+let fetchableLoaderCount = 0;
+
+/**
+ * Fetchable loader for testing useFetchLoader hook (GET-based loader fetching)
+ * The third argument `true` makes this loader fetchable via GET requests
+ */
+export const FetchableTestLoader = createLoader(
+  "fetchable-test",
+  async (ctx) => {
+    fetchableLoaderCount++;
+    const id = ctx.params.id || "default";
+    return {
+      message: "Fetched via GET!",
+      id,
+      count: fetchableLoaderCount,
+      timestamp: new Date().toISOString(),
+    };
+  },
+  true // Enable fetchable (GET-based fetching)
+);
