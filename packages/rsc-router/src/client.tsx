@@ -458,12 +458,26 @@ export type LoadFunction<T> = ((options?: LoadOptions) => Promise<T>) & {
 };
 
 /**
+ * Options for useFetchLoader hook
+ */
+export interface UseFetchLoaderOptions {
+  /**
+   * If true (default), errors will be thrown to the nearest error boundary.
+   * If false, errors are only captured in the `error` state (no throw).
+   * @default true
+   */
+  throwOnError?: boolean;
+}
+
+/**
  * Hook for fetching loader data directly from client components
  *
  * Use this to fetch data from fetchable loaders outside of route navigation.
  * The loader must be created with the fetchable option (true or { middleware: [...] }).
  *
  * @param loader - A fetchable loader definition
+ * @param options - Optional configuration
+ * @param options.throwOnError - If true (default), throws to error boundary. Set false to use error state only.
  * @returns Object with data, isLoading, error, load, and refetch
  *
  * @example
@@ -473,15 +487,25 @@ export type LoadFunction<T> = ((options?: LoadOptions) => Promise<T>) & {
  * import { ProductLoader } from "./loaders";
  *
  * function ProductCard({ id }: { id: string }) {
- *   const { data, isLoading, error, load } = useFetchLoader(ProductLoader);
+ *   // Errors throw to nearest ErrorBoundary by default
+ *   const { data, isLoading, load } = useFetchLoader(ProductLoader);
  *
  *   useEffect(() => {
  *     load({ params: { id } });
  *   }, [id, load]);
  *
  *   if (isLoading) return <Skeleton />;
- *   if (error) return <Error error={error} />;
  *   return <div>{data?.name}</div>;
+ * }
+ * ```
+ *
+ * @example Handle errors manually (don't throw)
+ * ```tsx
+ * function ProductCard({ id }: { id: string }) {
+ *   // Errors won't throw, check error state instead
+ *   const { data, error, load } = useFetchLoader(ProductLoader, { throwOnError: false });
+ *   if (error) return <ErrorUI error={error} />;
+ *   // ...
  * }
  * ```
  *
@@ -500,11 +524,15 @@ export type LoadFunction<T> = ((options?: LoadOptions) => Promise<T>) & {
  * ```
  */
 export function useFetchLoader<T>(
-  loader: LoaderDefinition<T>
+  loader: LoaderDefinition<T>,
+  options?: UseFetchLoaderOptions
 ): UseFetchLoaderResult<T> {
   const [data, setData] = useState<T | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+
+  // Default to throwing errors (caught by error boundary)
+  const throwOnError = options?.throwOnError ?? true;
 
   const load = useCallback(
     async (options?: LoadOptions): Promise<T> => {
@@ -559,12 +587,16 @@ export function useFetchLoader<T>(
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));
         setError(err);
-        throw err;
+        if (throwOnError) {
+          throw err;
+        }
+        // Return undefined when not throwing - caller should check error state
+        return undefined as T;
       } finally {
         setIsLoading(false);
       }
     },
-    [loader]
+    [loader, throwOnError]
   );
 
   // Create the form action that wraps the loader's server action
@@ -588,12 +620,14 @@ export function useFetchLoader<T>(
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));
         setError(err);
-        throw err;
+        if (throwOnError) {
+          throw err;
+        }
       } finally {
         setIsLoading(false);
       }
     },
-    [loader]
+    [loader, throwOnError]
   );
 
   // Attach action to load function

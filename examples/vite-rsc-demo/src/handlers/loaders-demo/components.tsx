@@ -63,7 +63,7 @@ export function UsersDisplay() {
  * Perfect for data that should be loaded lazily or refreshed frequently.
  */
 export function StatsDisplay() {
-  const { data, isLoading, error, load } = useFetchLoader(StatsLoader);
+  const { data, isLoading, error, load } = useFetchLoader(StatsLoader, { throwOnError: false });
   const [actionResult, setActionResult] = useState<string | null>(null);
 
   const handleFetch = async () => {
@@ -142,7 +142,7 @@ export function StatsDisplay() {
  * The loader receives params via ctx.params.
  */
 export function UserSearch() {
-  const { data, isLoading, error, load } = useFetchLoader(UserSearchLoader);
+  const { data, isLoading, error, load } = useFetchLoader(UserSearchLoader, { throwOnError: false });
   const [query, setQuery] = useState("");
   const [role, setRole] = useState("all");
 
@@ -360,7 +360,7 @@ if (result.success) {
  * - Server-side execution
  */
 export function FormActionSearch() {
-  const { data, isLoading, error, load } = useFetchLoader(UserSearchLoader);
+  const { data, isLoading, error, load } = useFetchLoader(UserSearchLoader, { throwOnError: false });
 
   return (
     <div style={cardStyle}>
@@ -454,7 +454,7 @@ export function FormActionSearch() {
  * The RSC protocol serializes React elements and streams them to the client.
  */
 export function RSCContentDisplay() {
-  const { data, isLoading, error, load } = useFetchLoader<RSCContentLoaderData>(RSCContentLoader);
+  const { data, isLoading, error, load } = useFetchLoader<RSCContentLoaderData>(RSCContentLoader, { throwOnError: false });
   const [style, setStyle] = useState<"default" | "cards">("default");
   const [count, setCount] = useState("3");
 
@@ -580,7 +580,7 @@ return <div>{data.content}</div>;`}
  * - No refetch needed! The action returns updated data automatically
  */
 export function NotesManager() {
-  const { data, isLoading, error, load } = useFetchLoader<NotesLoaderData>(NotesLoader);
+  const { data, isLoading, error, load } = useFetchLoader<NotesLoaderData>(NotesLoader, { throwOnError: false });
   const formRef = useRef<HTMLFormElement>(null);
 
   // Fetch notes on mount - this is the GET request
@@ -697,7 +697,7 @@ useEffect(() => { load(); }, [load]);
  * - No refetch needed! Server returns updated file list automatically
  */
 export function FileUploader() {
-  const { data, isLoading, error, load } = useFetchLoader<FileUploadLoaderData>(FileUploadLoader);
+  const { data, isLoading, error, load } = useFetchLoader<FileUploadLoaderData>(FileUploadLoader, { throwOnError: false });
   const formRef = useRef<HTMLFormElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
