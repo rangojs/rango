@@ -8,9 +8,11 @@ import {
   UserSearchLoader,
   RSCContentLoader,
   NotesLoader,
+  FileUploadLoader,
   type UsersLoaderData,
   type RSCContentLoaderData,
   type NotesLoaderData,
+  type FileUploadLoaderData,
 } from "./loaders.js";
 import {
   incrementPageViewsAction,
@@ -572,10 +574,10 @@ return <div>{data.content}</div>;`}
 /**
  * NotesManager - Demonstrates loader as both GET (on mount) and form action
  *
- * This is the key pattern: a single loader handles both fetching and mutations.
- * - useEffect(() => load(), []) fetches notes on component mount
- * - load.action handles form submissions to add new notes
- * - Same loader, same response shape, unified data flow
+ * Key pattern: a single loader handles both fetching and mutations.
+ * - useEffect(() => load(), []) fetches notes on mount
+ * - load.action handles form submissions
+ * - No refetch needed! The action returns updated data automatically
  */
 export function NotesManager() {
   const { data, isLoading, error, load } = useFetchLoader<NotesLoaderData>(NotesLoader);
@@ -673,22 +675,160 @@ export function NotesManager() {
 {`const { data, load } = useFetchLoader(NotesLoader);
 
 // GET on mount
-useEffect(() => {
-  load();
-}, [load]);
+useEffect(() => { load(); }, [load]);
 
-// Form action for mutations
+// Form action for mutations - no refetch needed!
+// load.action returns updated data automatically
 <form action={load.action}>
   <input name="note" />
   <button type="submit">Add</button>
-</form>
+</form>`}
+        </pre>
+      </div>
+    </div>
+  );
+}
 
-// Server loader handles both:
+/**
+ * FileUploader - Demonstrates file upload via load.action
+ *
+ * - useEffect fetches existing files on mount
+ * - load.action uploads file via FormData
+ * - No refetch needed! Server returns updated file list automatically
+ */
+export function FileUploader() {
+  const { data, isLoading, error, load } = useFetchLoader<FileUploadLoaderData>(FileUploadLoader);
+  const formRef = useRef<HTMLFormElement>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+  // Fetch existing files on mount
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Handle form submission
+  const handleSubmit = async (formData: FormData) => {
+    await load.action(formData);
+    formRef.current?.reset();
+    setSelectedFile(null);
+  };
+
+  // Format file size
+  const formatSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  return (
+    <div style={cardStyle}>
+      <h3 style={headingStyle}>
+        File Upload via load.action
+      </h3>
+      <p style={descStyle}>
+        Upload files using <code>load.action</code>. The server receives the file
+        via <code>ctx.formData.get("file")</code> as a File object.
+      </p>
+
+      <form ref={formRef} action={handleSubmit} style={{ marginBottom: "1rem" }}>
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+          <input
+            type="file"
+            name="file"
+            onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+            style={{
+              padding: "0.5rem",
+              border: "1px solid #d1d5db",
+              borderRadius: "6px",
+              fontSize: "0.875rem",
+            }}
+          />
+          <button
+            type="submit"
+            disabled={isLoading || !selectedFile}
+            style={{
+              ...buttonStyle,
+              background: selectedFile ? "#3b82f6" : "#9ca3af",
+              cursor: selectedFile ? "pointer" : "not-allowed",
+            }}
+          >
+            {isLoading ? "Uploading..." : "Upload"}
+          </button>
+        </div>
+        {selectedFile && (
+          <div style={{ marginTop: "0.5rem", fontSize: "0.75rem", color: "#6b7280" }}>
+            Selected: {selectedFile.name} ({formatSize(selectedFile.size)})
+          </div>
+        )}
+      </form>
+
+      {error && (
+        <div style={errorStyle}>Error: {error.message}</div>
+      )}
+
+      {data && (
+        <>
+          <div style={metaStyle}>
+            <span>Files: {data.files.length}</span>
+            <span>Fetched: {new Date(data.fetchedAt).toLocaleTimeString()}</span>
+            {data.uploadedFile && <span style={{ color: "#10b981" }}>Uploaded!</span>}
+          </div>
+
+          {data.files.length > 0 ? (
+            <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+              {data.files.map((file) => (
+                <li
+                  key={file.id}
+                  style={{
+                    padding: "0.75rem",
+                    borderBottom: "1px solid #e5e7eb",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <div>
+                    <strong>{file.name}</strong>
+                    <div style={{ fontSize: "0.75rem", color: "#6b7280" }}>
+                      {file.type} - {formatSize(file.size)}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: "0.75rem", color: "#9ca3af" }}>
+                    {new Date(file.uploadedAt).toLocaleTimeString()}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div style={emptyStateStyle}>No files uploaded yet</div>
+          )}
+        </>
+      )}
+
+      {!data && isLoading && (
+        <div style={emptyStateStyle}>Loading files...</div>
+      )}
+
+      <div
+        style={{
+          marginTop: "1rem",
+          padding: "1rem",
+          background: "#eff6ff",
+          borderRadius: "8px",
+          fontSize: "0.875rem",
+        }}
+      >
+        <strong>Key benefit:</strong> No refetch needed after upload!
+        <pre style={{ margin: "0.5rem 0 0 0", whiteSpace: "pre-wrap" }}>
+{`// Server loader handles upload AND returns updated list
 async (ctx) => {
-  const noteText = ctx.formData?.get("note");
-  if (noteText) addNote(noteText); // mutation
-  return { notes: getAllNotes() }; // always return current state
-}`}
+  const file = ctx.formData?.get("file") as File;
+  if (file) await saveFile(file); // mutation
+  return { files: getFiles() };   // updated data
+};
+
+// Client - load.action updates state automatically
+await load.action(formData); // data now has new file`}
         </pre>
       </div>
     </div>

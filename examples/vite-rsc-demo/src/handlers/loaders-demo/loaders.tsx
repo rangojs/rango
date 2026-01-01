@@ -4,16 +4,19 @@ import {
   usersStore,
   notesStore,
   addNote,
+  uploadedFilesStore,
+  addUploadedFile,
   getStats,
   getLoaderCallCount,
   getFetchableLoaderCallCount,
   type User,
   type Stats,
   type Note,
+  type UploadedFile,
 } from "./data.js";
 
 // Export types for use in components
-export type { User, Stats, Note };
+export type { User, Stats, Note, UploadedFile };
 
 /**
  * UsersLoader - Standard loader for SSR/navigation
@@ -308,5 +311,55 @@ export const NotesLoader = createLoader(
 export type NotesLoaderData = {
   notes: Note[];
   addedNote: Note | null;
+  fetchedAt: string;
+};
+
+/**
+ * FileUploadLoader - Demonstrates file upload handling via load.action
+ *
+ * This loader handles file uploads through FormData:
+ * - GET request: Returns list of uploaded files
+ * - Form action: Processes uploaded file(s) and returns updated list
+ *
+ * Note: This is a demo that stores file metadata only (not actual file contents).
+ * In a real app, you'd save to disk, S3, or a database.
+ *
+ * Use case: File upload forms with progressive enhancement
+ */
+export const FileUploadLoader = createLoader(
+  "loaders-demo-file-upload",
+  async (ctx) => {
+    "use server";
+
+    // Simulate network latency
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // Check if this is a file upload (form submission)
+    const file = ctx.formData?.get("file") as File | null;
+    let uploadedFile: UploadedFile | null = null;
+
+    if (file && file.size > 0) {
+      // Process the uploaded file
+      // In a real app, you'd save the file contents somewhere
+      uploadedFile = addUploadedFile({
+        name: file.name,
+        size: file.size,
+        type: file.type || "application/octet-stream",
+      });
+    }
+
+    // Return current files list
+    return {
+      files: [...uploadedFilesStore],
+      uploadedFile,
+      fetchedAt: new Date().toISOString(),
+    };
+  },
+  true // Enable fetchable
+);
+
+export type FileUploadLoaderData = {
+  files: UploadedFile[];
+  uploadedFile: UploadedFile | null;
   fetchedAt: string;
 };

@@ -114,3 +114,30 @@ export function resetLoaderCallCounts(): void {
   loaderCallCount = 0;
   fetchableLoaderCallCount = 0;
 }
+
+// File upload store (in-memory, simulates file storage)
+export interface UploadedFile {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  uploadedAt: string;
+}
+
+export const uploadedFilesStore: UploadedFile[] = [];
+
+export function addUploadedFile(file: { name: string; size: number; type: string }): UploadedFile {
+  const uploaded: UploadedFile = {
+    id: String(Date.now()),
+    name: file.name,
+    size: file.size,
+    type: file.type,
+    uploadedAt: new Date().toISOString(),
+  };
+  uploadedFilesStore.unshift(uploaded);
+  return uploaded;
+}
+
+export function clearUploadedFiles(): void {
+  uploadedFilesStore.length = 0;
+}

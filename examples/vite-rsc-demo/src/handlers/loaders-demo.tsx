@@ -12,6 +12,7 @@ import {
   FormActionSearch,
   RSCContentDisplay,
   NotesManager,
+  FileUploader,
 } from "./loaders-demo/components.js";
 
 /**
@@ -182,6 +183,7 @@ function LoadersStatsPage() {
         <UserSearch />
         <FormActionSearch />
         <NotesManager />
+        <FileUploader />
         <RSCContentDisplay />
         <AddUserForm />
 
@@ -206,24 +208,11 @@ function LoadersStatsPage() {
  * Loaders Demo handler - demonstrates loader APIs
  */
 export default map<typeof loadersRoutes>(
-  ({ route, layout, loader, loading }) => [
+  ({ route, layout, loader, revalidate }) => [
     // Layout with users loader (for useLoader demo)
     layout(<LoadersDemoLayout />, () => [
       // Global loader for the demo - provides users data
-      loader(UsersLoader),
-
-      // Loading component while UsersLoader is pending
-      loading(
-        <div
-          style={{
-            padding: "2rem",
-            textAlign: "center",
-            color: "#6b7280",
-          }}
-        >
-          Loading users...
-        </div>
-      ),
+      loader(UsersLoader, () => [revalidate(() => true)]),
 
       // Index route - demonstrates useLoader
       route("index", () => <LoadersIndexPage />),
