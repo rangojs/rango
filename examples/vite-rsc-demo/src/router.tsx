@@ -11,6 +11,7 @@ import {
   todosRoutes,
   errorRoutes,
   kanbanRoutes,
+  loadersRoutes,
 } from "./routes.js";
 
 /**
@@ -88,7 +89,10 @@ const router = createRSCRouter<AppEnv>({ debugPerformance: true, document: RootL
   .map(() => import("./handlers/error.js"))
 
   .routes("/kanban", kanbanRoutes) // Kanban - demonstrates optimistic updates
-  .map(() => import("./handlers/kanban.js"));
+  .map(() => import("./handlers/kanban.js"))
+
+  .routes("/loaders", loadersRoutes) // Loaders - demonstrates useLoader & useFetchLoader
+  .map(() => import("./handlers/loaders-demo.js"));
 
 /**
  * Extract route types directly from the router chain
@@ -111,4 +115,4 @@ declare global {
 export { router };
 export const href = router.href;
 
-console.log("[Router] Configured with 10 route groups (lazy-loaded handlers)");
+console.log("[Router] Configured with 11 route groups (lazy-loaded handlers)");
