@@ -6,7 +6,9 @@ import {
   UsersLoader,
   StatsLoader,
   UserSearchLoader,
+  RSCContentLoader,
   type UsersLoaderData,
+  type RSCContentLoaderData,
 } from "./loaders.js";
 import {
   incrementPageViewsAction,
@@ -435,6 +437,130 @@ export function FormActionSearch() {
     {isLoading ? "Searching..." : "Search"}
   </button>
 </form>`}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * RSCContentDisplay - Demonstrates useFetchLoader returning React Server Components
+ *
+ * Shows that loaders can return ReactNode, not just data.
+ * The RSC protocol serializes React elements and streams them to the client.
+ */
+export function RSCContentDisplay() {
+  const { data, isLoading, error, load } = useFetchLoader<RSCContentLoaderData>(RSCContentLoader);
+  const [style, setStyle] = useState<"default" | "cards">("default");
+  const [count, setCount] = useState("3");
+
+  const handleLoad = async () => {
+    await load({
+      params: {
+        style,
+        count,
+      },
+    });
+  };
+
+  return (
+    <div style={cardStyle}>
+      <h3 style={headingStyle}>
+        useFetchLoader with RSC Content
+      </h3>
+      <p style={descStyle}>
+        Loaders can return <code>ReactNode</code> instead of just data.
+        The RSC protocol serializes React elements and streams them to the client.
+      </p>
+
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", flexWrap: "wrap" }}>
+        <select
+          value={style}
+          onChange={(e) => setStyle(e.target.value as "default" | "cards")}
+          style={selectStyle}
+        >
+          <option value="default">List View</option>
+          <option value="cards">Card View</option>
+        </select>
+        <select
+          value={count}
+          onChange={(e) => setCount(e.target.value)}
+          style={selectStyle}
+        >
+          <option value="1">1 User</option>
+          <option value="2">2 Users</option>
+          <option value="3">3 Users</option>
+          <option value="5">5 Users</option>
+        </select>
+        <button onClick={handleLoad} disabled={isLoading} style={buttonStyle}>
+          {isLoading ? "Loading RSC..." : data ? "Refresh Content" : "Load RSC Content"}
+        </button>
+      </div>
+
+      {error && (
+        <div style={errorStyle}>Error: {error.message}</div>
+      )}
+
+      {data && (
+        <>
+          <div style={metaStyle}>
+            <span>Style: {data.style}</span>
+            <span>Count: {data.count}</span>
+            <span>Rendered: {new Date(data.renderedAt).toLocaleTimeString()}</span>
+          </div>
+
+          <div
+            style={{
+              border: "2px dashed #c4b5fd",
+              borderRadius: "8px",
+              padding: "1rem",
+              background: "#faf5ff",
+            }}
+          >
+            <div style={{ fontSize: "0.75rem", color: "#6d28d9", marginBottom: "0.5rem" }}>
+              ↓ Server-rendered React content ↓
+            </div>
+            {data.content}
+          </div>
+        </>
+      )}
+
+      {!data && !isLoading && !error && (
+        <div style={emptyStateStyle}>
+          Click "Load RSC Content" to fetch server-rendered React components
+        </div>
+      )}
+
+      <div
+        style={{
+          marginTop: "1rem",
+          padding: "1rem",
+          background: "#f5f3ff",
+          borderRadius: "8px",
+          fontSize: "0.875rem",
+        }}
+      >
+        <strong>How it works:</strong>
+        <pre style={{ margin: "0.5rem 0 0 0", whiteSpace: "pre-wrap" }}>
+{`// Server loader returns ReactNode
+export const RSCContentLoader = createLoader(
+  "loaders-demo-rsc-content",
+  async (ctx) => {
+    "use server";
+    const style = ctx.params.style;
+
+    // Return server-rendered JSX
+    return {
+      content: <UserCards users={users} />,
+      style,
+    };
+  },
+  true // fetchable
+);
+
+// Client renders the content directly
+const { data } = useFetchLoader(RSCContentLoader);
+return <div>{data.content}</div>;`}
         </pre>
       </div>
     </div>
