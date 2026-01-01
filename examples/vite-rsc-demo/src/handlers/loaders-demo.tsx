@@ -10,6 +10,7 @@ import {
   ResetCounters,
   AddUserForm,
   FormActionSearch,
+  RSCContentDisplay,
 } from "./loaders-demo/components.js";
 
 /**
@@ -179,6 +180,7 @@ function LoadersStatsPage() {
         <StatsDisplay />
         <UserSearch />
         <FormActionSearch />
+        <RSCContentDisplay />
         <AddUserForm />
 
         <div
