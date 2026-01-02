@@ -937,9 +937,12 @@ export function ChatStream() {
     };
   }, [data]);
 
-  // Auto-scroll to bottom as text streams
+  // Auto-scroll within chat container only (not the page)
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = messagesEndRef.current?.parentElement;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
   }, [streamedText]);
 
   const handleSubmit = async (e: React.FormEvent) => {
