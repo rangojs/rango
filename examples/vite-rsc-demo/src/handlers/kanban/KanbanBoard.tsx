@@ -8,10 +8,6 @@ import { DebugSegmentWrapper } from "../../components/DebugSegmentWrapper.js";
 export function KanbanBoardContent() {
   const { data: board } = useLoader(KanbanLoader);
 
-  if (!board) {
-    return <div>Loading board...</div>;
-  }
-
   return (
     <DebugSegmentWrapper type="route" name="Kanban Index">
       <div

@@ -78,10 +78,6 @@ function FeaturedProductsLoading() {
 export function FeaturedProducts() {
   const { data } = useLoader(FeaturedProductsLoader);
 
-  if (!data) {
-    return <FeaturedProductsLoading />;
-  }
-
   return (
     <div
       style={{

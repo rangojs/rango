@@ -31,10 +31,6 @@ import {
 export function UsersDisplay() {
   const { data } = useLoader<UsersLoaderData>(UsersLoader);
 
-  if (!data) {
-    return <div style={cardStyle}>Loading users...</div>;
-  }
-
   return (
     <div style={cardStyle}>
       <h3 style={headingStyle}>useLoader - SSR/Navigation Data</h3>

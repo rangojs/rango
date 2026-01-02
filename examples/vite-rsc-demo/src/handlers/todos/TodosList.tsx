@@ -18,17 +18,13 @@ export function TodosCount() {
         fontSize: "0.875rem",
       }}
     >
-      {data?.stats.pending ?? 0} pending
+      {data.stats.pending} pending
     </span>
   );
 }
 
 export function TodosIndexContent({ serverValue }: { serverValue?: string }) {
   const { data } = useLoader(TodosLoader);
-
-  if (!data) {
-    return <div>Loading...</div>;
-  }
 
   return (
     <DebugSegmentWrapper type="route" name="Todos Index">

@@ -216,21 +216,20 @@ export function CardDetailContent() {
   const { navigate } = useNavigation();
   const [isPending, startTransition] = useTransition();
 
-  const card = data?.card;
-  const columnTitle = data?.columnTitle;
+  const { card, columnTitle } = data;
 
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
-  const [editTitle, setEditTitle] = useState(card?.title ?? "");
-  const [editDescription, setEditDescription] = useState(card?.description ?? "");
-  const [selectedLabels, setSelectedLabels] = useState<string[]>(card?.labels ?? []);
-  const [optimisticTitle, setOptimisticTitle] = useOptimistic(card?.title ?? "");
+  const [editTitle, setEditTitle] = useState(card.title);
+  const [editDescription, setEditDescription] = useState(card.description);
+  const [selectedLabels, setSelectedLabels] = useState<string[]>(card.labels);
+  const [optimisticTitle, setOptimisticTitle] = useOptimistic(card.title);
   const [optimisticDescription, setOptimisticDescription] = useOptimistic(
-    card?.description ?? ""
+    card.description
   );
 
   // Client-side error trigger: if description contains "error", throw during render
-  if (card?.description?.toLowerCase().includes("error")) {
+  if (card.description.toLowerCase().includes("error")) {
     throw new Error(
       "Card description contains 'error' - this is a simulated client-side error"
     );
@@ -238,16 +237,10 @@ export function CardDetailContent() {
 
   // Sync state when card data changes (e.g., from cross-tab sync)
   useEffect(() => {
-    if (!card) return;
     setSelectedLabels(card.labels);
     setEditTitle(card.title);
     setEditDescription(card.description);
-  }, [card?.labels, card?.title, card?.description]);
-
-  // Early return if card is not loaded yet
-  if (!card) {
-    return <CardDetailSkeleton />;
-  }
+  }, [card.labels, card.title, card.description]);
 
   function handleClose() {
     navigate("/kanban");

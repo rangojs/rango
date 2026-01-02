@@ -15,10 +15,6 @@ export function CartBadge() {
   const { data: cart } = useLoader(CartLoader);
   console.log("CartBadge", cart);
 
-  if (!cart) {
-    return <span className="cart-badge">🛒 (0)</span>;
-  }
-
   return (
     <span className="cart-badge" title={`Total: $${cart.total.toFixed(2)}`}>
       🛒 ({cart.itemCount})
@@ -36,10 +32,6 @@ export function CartBadge() {
 export function UserGreeting() {
   const { data: user } = useLoader(UserLoader);
   console.log("UserGreeting", user);
-
-  if (!user) {
-    return <span className="user-greeting">Guest</span>;
-  }
 
   return (
     <span className="user-greeting" title={user.email}>

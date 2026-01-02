@@ -8,10 +8,6 @@ import { SegmentTimer } from "../../components/SegmentTimer.js";
 export function TodoDetailContent() {
   const { data: todo } = useLoader(TodoDetailLoader);
 
-  if (!todo) {
-    return <div>Loading...</div>;
-  }
-
   return (
     <DebugSegmentWrapper type="route" name="Todo Detail">
       <div style={{ maxWidth: "600px", margin: "0 auto" }}>

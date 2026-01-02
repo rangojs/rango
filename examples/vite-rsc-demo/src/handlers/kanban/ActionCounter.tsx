@@ -5,8 +5,8 @@ import { ActionCounterLoader } from "./loader.js";
 
 export function ActionCounterDisplay() {
   const { data } = useLoader(ActionCounterLoader);
-  const counts = data?.counts ?? {};
-  const total = data?.total ?? 0;
+  const counts = data.counts;
+  const total = data.total;
 
   return (
     <div

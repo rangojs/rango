@@ -162,7 +162,7 @@ export function ProductModalContent() {
 
   // Optimistic quantity state - updates immediately before server confirms
   const [optimisticQuantity, setOptimisticQuantity] = useOptimistic(
-    productCart?.quantity ?? 0,
+    productCart.quantity,
     (_current, newQuantity: number) => newQuantity
   );
 
@@ -178,7 +178,6 @@ export function ProductModalContent() {
   }
 
   async function handleAddToCart() {
-    if (!product) return;
     setIsLoading(true);
     try {
       const result = await addToCartWithResult(product.slug, 1);
@@ -191,7 +190,6 @@ export function ProductModalContent() {
   }
 
   function handleQuantityChange(delta: number) {
-    if (!product) return;
     const newQuantity = Math.max(0, optimisticQuantity + delta);
 
     startTransition(async () => {
@@ -201,10 +199,6 @@ export function ProductModalContent() {
       // Then perform the actual server action
       await updateCartQuantity(product.slug, delta);
     });
-  }
-
-  if (!product || !recommendations) {
-    return null;
   }
 
   return (
