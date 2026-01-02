@@ -1,4 +1,5 @@
 import type { Plugin, PluginOption } from "vite";
+import * as Vite from "vite";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { exposeActionId } from "./expose-action-id.ts";
@@ -249,6 +250,26 @@ function createVirtualEntriesPlugin(
 }
 
 /**
+ * Manual chunks configuration for client build.
+ * Splits React and router packages into separate chunks for better caching.
+ */
+function getManualChunks(id: string): string | undefined {
+  const normalized = Vite.normalizePath(id);
+  if (
+    normalized.includes("node_modules/react/") ||
+    normalized.includes("node_modules/react-dom/") ||
+    normalized.includes("node_modules/react-server-dom-webpack/") ||
+    normalized.includes("node_modules/@vitejs/plugin-rsc/")
+  ) {
+    return "react";
+  }
+  if (normalized.includes("node_modules/rsc-router/")) {
+    return "router";
+  }
+  return undefined;
+}
+
+/**
  * Vite plugin for rsc-router.
  *
  * Includes @vitejs/plugin-rsc and all necessary transforms for the router
@@ -315,6 +336,15 @@ export async function rscRouter(
         // Configure environments for cloudflare deployment
         return {
           environments: {
+            client: {
+              build: {
+                rollupOptions: {
+                  output: {
+                    manualChunks: getManualChunks,
+                  },
+                },
+              },
+            },
             rsc: {
               build: {
                 rollupOptions: {
@@ -403,6 +433,21 @@ export async function rscRouter(
             rsc: fileExists(projectRoot, entryPaths.rsc)
               ? entryPaths.rsc
               : VIRTUAL_IDS.rsc,
+          };
+
+          // Configure client environment for manual chunks
+          return {
+            environments: {
+              client: {
+                build: {
+                  rollupOptions: {
+                    output: {
+                      manualChunks: getManualChunks,
+                    },
+                  },
+                },
+              },
+            },
           };
         },
 
