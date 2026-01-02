@@ -13,6 +13,7 @@ import {
   RSCContentDisplay,
   NotesManager,
   FileUploader,
+  ChatStream,
 } from "./loaders-demo/components.js";
 
 /**
@@ -181,6 +182,7 @@ function LoadersStatsPage() {
         <ResetCounters />
         <UsersDisplay />
         <StatsDisplay />
+        <ChatStream />
         <UserSearch />
         <FormActionSearch />
         <NotesManager />
