@@ -296,8 +296,18 @@ test.describe("shop-actions", () => {
       timeout: 5000,
     });
 
-    // Modal has "+" button to increase quantity
+    // Wait for modal content to load - "Add to Cart" button appears first
+    const addToCartButton = page.locator("button").filter({ hasText: "Add to Cart" }).first();
+    await expect(addToCartButton).toBeVisible({ timeout: 10000 });
+
+    // First add to cart (this will show quantity controls with + button)
+    await addToCartButton.click();
+
+    // Wait for quantity controls to appear (+ button shows after item is in cart)
     const plusButton = page.locator("button").filter({ hasText: "+" }).first();
+    await expect(plusButton).toBeVisible({ timeout: 5000 });
+
+    // Click + to increase quantity
     await plusButton.click();
 
     // Wait for action to complete
