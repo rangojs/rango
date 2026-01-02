@@ -203,6 +203,12 @@ function useLoaderInternal<T>(
   const loadWithAction = load as LoadFunction<T>;
   loadWithAction.action = action;
 
+  // Throw during render if there's an error and throwOnError is true
+  // This allows ErrorBoundaries to catch async errors from load()
+  if (error && throwOnError) {
+    throw error;
+  }
+
   return {
     data,
     isLoading,

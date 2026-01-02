@@ -120,3 +120,117 @@ export const FetchableTestLoader = createLoader(
   true // Enable fetchable (GET-based fetching)
 );
 
+// ============================================================================
+// useLoader / useFetchLoader Feature Tests
+// ============================================================================
+
+// Counter for hook test loader
+let hookTestLoaderCount = 0;
+
+/**
+ * Loader for testing useLoader and useFetchLoader hooks.
+ * Fetchable so it can be passed to client components.
+ * Also registered on routes via loader() for SSR preloading.
+ */
+export const HookTestLoader = createLoader(
+  async (ctx) => {
+    hookTestLoaderCount++;
+    const routeId = ctx.params.routeId || "default";
+
+    return {
+      routeId,
+      count: hookTestLoaderCount,
+      source: "server",
+      timestamp: new Date().toISOString(),
+    };
+  },
+  true // Fetchable - allows passing to client components
+);
+
+export type HookTestLoaderData = {
+  routeId: string;
+  count: number;
+  source: string;
+  timestamp: string;
+};
+
+// Counter for second route loader (to test navigation)
+let hookTestLoaderBCount = 0;
+
+/**
+ * Second loader for testing navigation between routes.
+ * Fetchable so it can be passed to client components.
+ */
+export const HookTestLoaderB = createLoader(
+  async (ctx) => {
+    hookTestLoaderBCount++;
+    const routeId = ctx.params.routeId || "route-b";
+
+    return {
+      routeId,
+      count: hookTestLoaderBCount,
+      source: "server-b",
+      timestamp: new Date().toISOString(),
+    };
+  },
+  true // Fetchable - allows passing to client components
+);
+
+/**
+ * Fetchable loader for testing useFetchLoader on-demand fetching.
+ * This loader is NOT registered on any route - used for client-side fetching only.
+ */
+export const UnregisteredLoader = createLoader(
+  async (ctx) => {
+    const id = ctx.params.id || "unregistered";
+    return {
+      id,
+      message: "Fetched from unregistered loader",
+      timestamp: new Date().toISOString(),
+    };
+  },
+  true // Fetchable - for client-side load() calls
+);
+
+/**
+ * Loader that throws an error - for testing error state handling
+ */
+export const ErrorLoader = createLoader(
+  async (ctx) => {
+    const shouldFail = ctx.params.shouldFail !== "false";
+    if (shouldFail) {
+      throw new Error("Intentional loader error for testing");
+    }
+    return {
+      message: "Success - error was bypassed",
+      timestamp: new Date().toISOString(),
+    };
+  },
+  true
+);
+
+/**
+ * Protected loader with middleware - for testing security
+ * Middleware checks for an "authToken" param and rejects if missing/invalid
+ */
+export const ProtectedLoader = createLoader(
+  async (ctx) => {
+    return {
+      secret: "This is protected data",
+      userId: ctx.params.userId || "anonymous",
+      timestamp: new Date().toISOString(),
+    };
+  },
+  {
+    middleware: [
+      async (ctx, next) => {
+        const authToken = ctx.params.authToken;
+        if (!authToken || authToken !== "valid-token") {
+          throw new Error("Unauthorized: Invalid or missing auth token");
+        }
+        await next();
+      },
+    ],
+  }
+);
+

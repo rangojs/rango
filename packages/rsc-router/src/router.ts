@@ -157,6 +157,40 @@ export interface RSCRouterOptions {
    * If not provided, DataNotFoundError will be treated as a regular error
    */
   defaultNotFoundBoundary?: ReactNode | NotFoundBoundaryHandler;
+
+  /**
+   * Callback invoked when an error occurs in loaders or route handlers.
+   * Use this for error monitoring, logging to external services, etc.
+   *
+   * The error is always logged to the server console with full details.
+   * In production, only a sanitized error message is sent to the client.
+   *
+   * @param error - The original error with full stack trace
+   * @param context - Additional context about where the error occurred
+   *
+   * @example
+   * ```typescript
+   * const router = createRSCRouter<AppEnv>({
+   *   onError: (error, context) => {
+   *     // Send to error monitoring service
+   *     Sentry.captureException(error, {
+   *       tags: { source: context.source, path: context.pathname },
+   *     });
+   *   },
+   * });
+   * ```
+   */
+  onError?: (
+    error: Error,
+    context: {
+      /** Where the error occurred: 'loader', 'action', 'route' */
+      source: "loader" | "action" | "route";
+      /** The request pathname */
+      pathname: string;
+      /** The loader ID if source is 'loader' */
+      loaderId?: string;
+    }
+  ) => void;
 }
 
 /**
@@ -250,6 +284,12 @@ export interface RSCRouter<
    */
   readonly rootLayout?: ComponentType<RootLayoutProps>;
 
+  /**
+   * Error callback for monitoring/alerting
+   * Called when errors occur in loaders, actions, or routes
+   */
+  readonly onError?: RSCRouterOptions["onError"];
+
   match(request: Request, context: TEnv): Promise<MatchResult>;
 
   matchPartial(
@@ -318,6 +358,7 @@ export function createRSCRouter<TEnv = any>(
     document: documentOption,
     defaultErrorBoundary,
     defaultNotFoundBoundary,
+    onError,
   } = options;
 
   // Validate document is a function (component)
@@ -2748,6 +2789,9 @@ export function createRSCRouter<TEnv = any>(
 
     // Expose rootLayout for renderSegments
     rootLayout,
+
+    // Expose onError callback for error handling
+    onError,
 
     match,
     matchPartial,

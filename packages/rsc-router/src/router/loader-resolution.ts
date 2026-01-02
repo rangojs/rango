@@ -21,6 +21,7 @@ import type {
 import type { LoaderRevalidationResult, ActionContext } from "./types";
 import { isHandle, type Handle } from "../handle.js";
 import type { HandleStore } from "../server/handle-store.js";
+import { getFetchableLoader } from "../loader.js";
 
 /**
  * Wrap a loader promise with error handling for deferred client-side resolution.
@@ -147,8 +148,18 @@ export function setupLoaderAccess<TEnv>(
       return loaderPromises.get(loader.$$id);
     }
 
+    // Get loader function - either from loader object or fetchable registry
+    // Fetchable loaders store fn in registry (not on object) to avoid client bundling issues
+    let loaderFn = loader.fn;
+    if (!loaderFn) {
+      const fetchable = getFetchableLoader(loader.$$id);
+      if (fetchable) {
+        loaderFn = fetchable.fn;
+      }
+    }
+
     // Ensure loader has a function
-    if (!loader.fn) {
+    if (!loaderFn) {
       throw new Error(
         `Loader "${loader.$$id}" has no function. This usually means the loader was defined without "use server" and the function was not included in the build.`
       );
@@ -175,7 +186,7 @@ export function setupLoaderAccess<TEnv>(
     // Start loader execution with tracking
     const doneLoader = track(`loader:${loader.$$id}`);
     const promise = Promise.resolve(
-      loader.fn(loaderCtx as LoaderContext<any, TEnv>)
+      loaderFn(loaderCtx as LoaderContext<any, TEnv>)
     ).finally(() => {
       doneLoader();
     });

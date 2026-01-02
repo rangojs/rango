@@ -9,6 +9,11 @@ import {
   SlowLoader,
   SlowProductDetailLoader,
   FetchableTestLoader,
+  HookTestLoader,
+  HookTestLoaderB,
+  UnregisteredLoader,
+  ErrorLoader,
+  ProtectedLoader,
 } from "./loaders.js";
 import { Breadcrumbs } from "./handles.js";
 import { AddToCartButton } from "./components/AddToCartButton.js";
@@ -34,6 +39,20 @@ import { AsyncChildMetaSetter } from "./components/AsyncChildMetaSetter.js";
 import { SegmentsDisplay } from "./components/SegmentsDisplay.js";
 import { LinkPendingBadge } from "./components/LinkStatusDisplay.js";
 import { FetchLoaderTest } from "./components/FetchLoaderTest.js";
+import {
+  UseLoaderTest,
+  UseFetchLoaderPreloadedTest,
+  UseFetchLoaderUnregisteredTest,
+  UseLoaderTestB,
+  UseFetchLoaderTestB,
+  ErrorLoaderTest,
+  ProtectedLoaderTest,
+  UnhandledErrorLoaderTest,
+  UseLoaderThrowsTest,
+  IsLoadingTest,
+  FormActionTest,
+  FormActionProgressiveTest,
+} from "./components/HookTests.js";
 
 export default map<typeof testRoutes>(
   ({ route, layout, intercept, loader, loading, when }) => [
@@ -1033,6 +1052,125 @@ export default map<typeof testRoutes>(
               Test GET-based loader fetching with useFetchLoader hook
             </p>
             <FetchLoaderTest loader={FetchableTestLoader} />
+          </div>
+        )),
+
+        // =====================================================
+        // useLoader / useFetchLoader HOOK TESTS
+        // =====================================================
+        // Index route with links to test routes
+        route("hookTests.index", () => (
+          <div data-testid="hook-tests-index">
+            <Link to="/" data-testid="back-link">
+              ← Back to Home
+            </Link>
+            <h1 data-testid="hook-tests-title">useLoader / useFetchLoader Tests</h1>
+            <nav data-testid="hook-tests-nav">
+              <Link to="/hook-tests/route-a" data-testid="hook-tests-route-a-link">
+                Route A (Pre-loaded)
+              </Link>
+              <br />
+              <Link to="/hook-tests/route-b" data-testid="hook-tests-route-b-link">
+                Route B (For Navigation)
+              </Link>
+            </nav>
+          </div>
+        )),
+
+        // Route A - has HookTestLoader registered via loader()
+        route(
+          "hookTests.routeA",
+          () => (
+            <div data-testid="hook-tests-route-a">
+              <Link to="/" data-testid="back-link">
+                ← Back to Home
+              </Link>
+              <Link
+                to="/hook-tests/route-b"
+                data-testid="navigate-to-b-link"
+                style={{ marginLeft: "1rem" }}
+              >
+                Navigate to Route B
+              </Link>
+              <h1 data-testid="route-a-title">Route A - Pre-loaded Loaders</h1>
+
+              <div style={{ display: "flex", gap: "2rem", flexWrap: "wrap" }}>
+                <UseLoaderTest loader={HookTestLoader} />
+                <UseFetchLoaderPreloadedTest loader={HookTestLoader} />
+                <UseFetchLoaderUnregisteredTest loader={UnregisteredLoader} />
+              </div>
+
+              <hr style={{ margin: "2rem 0" }} />
+              <h2 data-testid="error-tests-title">Error Handling Tests</h2>
+              <div style={{ display: "flex", gap: "2rem", flexWrap: "wrap" }}>
+                <ErrorLoaderTest loader={ErrorLoader} />
+                <UnhandledErrorLoaderTest loader={ErrorLoader} />
+              </div>
+
+              <hr style={{ margin: "2rem 0" }} />
+              <h2 data-testid="middleware-tests-title">Middleware / Security Tests</h2>
+              <div style={{ display: "flex", gap: "2rem", flexWrap: "wrap" }}>
+                <ProtectedLoaderTest loader={ProtectedLoader} />
+              </div>
+            </div>
+          ),
+          () => [loader(HookTestLoader)]
+        ),
+
+        // Route B - has HookTestLoaderB registered via loader()
+        route(
+          "hookTests.routeB",
+          () => (
+            <div data-testid="hook-tests-route-b">
+              <Link to="/" data-testid="back-link">
+                ← Back to Home
+              </Link>
+              <Link
+                to="/hook-tests/route-a"
+                data-testid="navigate-to-a-link"
+                style={{ marginLeft: "1rem" }}
+              >
+                Navigate to Route A
+              </Link>
+              <h1 data-testid="route-b-title">Route B - Navigation Target</h1>
+
+              <div style={{ display: "flex", gap: "2rem", flexWrap: "wrap" }}>
+                <UseLoaderTestB loader={HookTestLoaderB} />
+                <UseFetchLoaderTestB loader={HookTestLoaderB} />
+              </div>
+            </div>
+          ),
+          () => [loader(HookTestLoaderB)]
+        ),
+
+        // Route WITHOUT loader registered - for testing useLoader throws
+        route("hookTests.noLoader", () => (
+          <div data-testid="hook-tests-no-loader">
+            <Link to="/" data-testid="back-link">
+              ← Back to Home
+            </Link>
+            <h1 data-testid="no-loader-title">No Loader Route</h1>
+            <p>This route does NOT have HookTestLoader registered via loader()</p>
+
+            <div style={{ display: "flex", gap: "2rem", flexWrap: "wrap" }}>
+              <UseLoaderThrowsTest loader={HookTestLoader} />
+            </div>
+          </div>
+        )),
+
+        // Route for testing form action and isLoading state
+        route("hookTests.formAction", () => (
+          <div data-testid="hook-tests-form-action">
+            <Link to="/" data-testid="back-link">
+              ← Back to Home
+            </Link>
+            <h1 data-testid="form-action-title">Form Action Test Route</h1>
+
+            <div style={{ display: "flex", gap: "2rem", flexWrap: "wrap" }}>
+              <IsLoadingTest loader={UnregisteredLoader} />
+              <FormActionTest loader={UnregisteredLoader} />
+              <FormActionProgressiveTest loader={UnregisteredLoader} />
+            </div>
           </div>
         )),
       ]

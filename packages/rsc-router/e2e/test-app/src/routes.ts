@@ -65,4 +65,14 @@ export const testRoutes = route({
   },
   // Route for testing useFetchLoader hook (GET-based loader fetching)
   fetchLoader: "/fetch-loader",
+  // Routes for testing useLoader and useFetchLoader hooks
+  hookTests: {
+    index: "/hook-tests",
+    routeA: "/hook-tests/route-a",
+    routeB: "/hook-tests/route-b",
+    // Route WITHOUT loader registered - for testing useLoader throws
+    noLoader: "/hook-tests/no-loader",
+    // Route for testing form action
+    formAction: "/hook-tests/form-action",
+  },
 });

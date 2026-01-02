@@ -421,14 +421,31 @@ export function createRSCHandler<TEnv = unknown>(
             },
           });
         } catch (error) {
+          const err = error instanceof Error ? error : new Error(String(error));
+          const isDev = process.env.NODE_ENV !== "production";
+
+          // Always log full error details on server
           console.error("[RSC] Loader error:", error);
 
-          // Return error as RSC payload
+          // Call onError callback if configured (for monitoring/alerting)
+          if (router.onError) {
+            try {
+              router.onError(err, {
+                source: "loader",
+                pathname: url.pathname,
+                loaderId,
+              });
+            } catch (callbackError) {
+              console.error("[RSC] onError callback failed:", callbackError);
+            }
+          }
+
+          // Sanitize error for client - only expose details in development
           const errorPayload = {
             loaderResult: null,
             loaderError: {
-              message: error instanceof Error ? error.message : String(error),
-              name: error instanceof Error ? error.name : "Error",
+              message: isDev ? err.message : "An error occurred",
+              name: err.name,
             },
           };
           const rscStream = renderToReadableStream(errorPayload);
