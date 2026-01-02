@@ -12,7 +12,7 @@ import { UserLoader } from "../handlers/shop/loaders/user.js";
  * and its data is passed to the client via RSC payload.
  */
 export function CartBadge() {
-  const cart = useLoader(CartLoader);
+  const { data: cart } = useLoader(CartLoader);
   console.log("CartBadge", cart);
 
   if (!cart) {
@@ -34,7 +34,7 @@ export function CartBadge() {
  * client component via the RSC payload.
  */
 export function UserGreeting() {
-  const user = useLoader(UserLoader);
+  const { data: user } = useLoader(UserLoader);
   console.log("UserGreeting", user);
 
   if (!user) {

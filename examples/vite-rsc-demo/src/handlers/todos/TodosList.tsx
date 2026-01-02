@@ -8,7 +8,7 @@ import { AddTodoForm, TodoItem, TodoStats } from "./components.js";
 import { LoadingSpinner } from "../shop/components/loading.js";
 
 export function TodosCount() {
-  const data = useLoader(TodosLoader);
+  const { data } = useLoader(TodosLoader);
   return (
     <span
       style={{
@@ -18,13 +18,17 @@ export function TodosCount() {
         fontSize: "0.875rem",
       }}
     >
-      {data.stats.pending} pending
+      {data?.stats.pending ?? 0} pending
     </span>
   );
 }
 
 export function TodosIndexContent({ serverValue }: { serverValue?: string }) {
-  const data = useLoader(TodosLoader);
+  const { data } = useLoader(TodosLoader);
+
+  if (!data) {
+    return <div>Loading...</div>;
+  }
 
   return (
     <DebugSegmentWrapper type="route" name="Todos Index">

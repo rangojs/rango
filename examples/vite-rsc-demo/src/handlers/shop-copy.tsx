@@ -254,6 +254,6 @@ const cartLoader = createLoader(
 );
 
 const Cart = () => {
-  const cart = useLoader(cartLoader);
+  const { data: cart } = useLoader(cartLoader);
   return <div>Cart</div>;
 };

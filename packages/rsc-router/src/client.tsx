@@ -5,7 +5,9 @@ import {
   createElement,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   Suspense,
   type ReactNode,
@@ -289,53 +291,231 @@ export function useOutlet(): ReactNode {
 }
 
 /**
- * Hook to access loader data on the client
+ * Load function type with form action support
+ */
+export type LoadFunction<T> = ((options?: LoadOptions) => Promise<T>) & {
+  /** Form action for progressive enhancement - can be passed to form action prop */
+  action: (formData: FormData) => Promise<void>;
+};
+
+/**
+ * Result type for useLoader hook
+ */
+export interface UseLoaderResult<T> {
+  /** The loaded data - from SSR/navigation context or from load() call */
+  data: T | undefined;
+  /** True while a load() is in progress */
+  isLoading: boolean;
+  /** Error from the most recent load attempt, null if successful */
+  error: Error | null;
+  /** Function to trigger a fetch (only works if loader is fetchable) */
+  load: LoadFunction<T>;
+  /** Alias for load */
+  refetch: LoadFunction<T>;
+}
+
+/**
+ * Options for useLoader hook
+ */
+export interface UseLoaderOptions {
+  /**
+   * If true (default), errors from load() will be thrown to the nearest error boundary.
+   * If false, errors are only captured in the `error` state.
+   * @default true
+   */
+  throwOnError?: boolean;
+}
+
+/**
+ * Hook to access loader data and optionally refetch it
  *
- * Loaders are server-only data fetchers. Their data is passed to the client
- * via RSC payload and made available through this hook.
+ * This unified hook provides:
+ * 1. Automatic access to SSR/navigation loader data (if loader is registered on route)
+ * 2. On-demand fetching via load() (if loader is fetchable)
+ * 3. Automatic updates when navigation occurs
  *
- * The loader must be attached to the current layout/route or a parent layout
- * to be accessible via this hook. The hook walks up the context chain to find
- * the loader data.
+ * @param loader - The loader definition
+ * @param options - Optional configuration
+ * @returns Object with data, isLoading, error, load, and refetch
  *
- * @param loader - The loader definition (from createLoader())
- * @returns The loader's data, or undefined if not available
- *
- * @example
+ * @example Basic usage - SSR data with refetch capability
  * ```tsx
- * // loaders/cart.ts
- * export const CartLoader = createLoader(async (ctx) => {
- *   "use server";
- *   const user = ctx.get("user");
- *   return await db.cart.get(user.id);
- * });
- *
- * // components/CartIcon.tsx (client component)
  * "use client";
  * import { useLoader } from "rsc-router/client";
  * import { CartLoader } from "../loaders/cart";
  *
  * export function CartIcon() {
- *   const cart = useLoader(CartLoader);
- *   return <span>Cart ({cart?.items.length ?? 0})</span>;
+ *   const { data, load, isLoading } = useLoader(CartLoader);
+ *
+ *   return (
+ *     <div>
+ *       <span>Cart ({data?.items.length ?? 0})</span>
+ *       <button onClick={() => load()} disabled={isLoading}>
+ *         {isLoading ? "Refreshing..." : "Refresh"}
+ *       </button>
+ *     </div>
+ *   );
  * }
  * ```
+ *
+ * @example On-demand fetching with params
+ * ```tsx
+ * const { data, load, isLoading } = useLoader(SearchLoader);
+ *
+ * const handleSearch = async (query: string) => {
+ *   await load({ params: { query } });
+ * };
+ * ```
+ *
+ * @example Form action for progressive enhancement
+ * ```tsx
+ * const { data, load } = useLoader(NotesLoader);
+ *
+ * return (
+ *   <form action={load.action}>
+ *     <input name="note" />
+ *     <button type="submit">Add Note</button>
+ *   </form>
+ * );
+ * ```
  */
-export function useLoader<T>(loader: LoaderDefinition<T>): T {
+export function useLoader<T>(
+  loader: LoaderDefinition<T>,
+  options?: UseLoaderOptions
+): UseLoaderResult<T> {
   const context = useContext(OutletContext);
 
-  // Walk up the context chain to find this loader's data
-  let current: OutletContextValue | null | undefined = context;
-  while (current) {
-    if (current.loaderData && loader.$$id in current.loaderData) {
-      return current.loaderData[loader.$$id] as T;
+  // Get data from context (SSR/navigation)
+  const getContextData = useCallback((): T | undefined => {
+    let current: OutletContextValue | null | undefined = context;
+    while (current) {
+      if (current.loaderData && loader.$$id in current.loaderData) {
+        return current.loaderData[loader.$$id] as T;
+      }
+      current = current.parent;
     }
-    current = current.parent;
-  }
+    return undefined;
+  }, [context, loader.$$id]);
 
-  throw new Error(
-    `Loader data for "${loader.$$id}" not found in current outlet context. Make sure the loader is attached to this route or a parent layout.`
+  const contextData = getContextData();
+
+  // Local state for fetched data (from load() calls)
+  const [fetchedData, setFetchedData] = useState<T | undefined>(undefined);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  // Track context data changes to reset fetched data on navigation
+  const prevContextDataRef = useRef(contextData);
+  useEffect(() => {
+    if (prevContextDataRef.current !== contextData) {
+      // Navigation happened, clear fetched data so context takes precedence
+      setFetchedData(undefined);
+      setError(null);
+      prevContextDataRef.current = contextData;
+    }
+  }, [contextData]);
+
+  // Data priority: fetched data (if any) > context data
+  const data = fetchedData ?? contextData;
+
+  const throwOnError = options?.throwOnError ?? true;
+
+  // Load function for fetching data
+  const load = useCallback(
+    async (loadOptions?: LoadOptions): Promise<T> => {
+      // Verify the loader has $$id
+      if (!loader.$$id) {
+        throw new Error(
+          `Loader is missing $$id. Make sure the exposeLoaderId Vite plugin is enabled.`
+        );
+      }
+
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        // GET-based fetching - server looks up loader by $$id
+        const url = new URL(window.location.pathname, window.location.origin);
+        url.searchParams.set("_rsc_loader", loader.$$id);
+
+        if (loadOptions?.params && Object.keys(loadOptions.params).length > 0) {
+          url.searchParams.set(
+            "_rsc_loader_params",
+            JSON.stringify(loadOptions.params)
+          );
+        }
+
+        const response = fetch(url.toString(), {
+          method: "GET",
+          headers: {
+            Accept: "text/x-component",
+          },
+        });
+
+        const { createFromFetch } = await import("./deps/browser.js");
+        const payload = await createFromFetch<LoaderRscPayload<T>>(response);
+
+        if (payload.loaderError) {
+          throw new Error(payload.loaderError.message);
+        }
+
+        const result = payload.loaderResult;
+        setFetchedData(result);
+        return result;
+      } catch (e) {
+        const err = e instanceof Error ? e : new Error(String(e));
+        setError(err);
+        if (throwOnError) {
+          throw err;
+        }
+        return undefined as T;
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [loader, throwOnError]
   );
+
+  // Form action for progressive enhancement
+  const action = useCallback(
+    async (formData: FormData): Promise<void> => {
+      if (!loader.action) {
+        throw new Error(
+          `Loader "${loader.$$id}" does not have an action. ` +
+            `Make sure the loader is created with fetchable: true.`
+        );
+      }
+
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const result = await loader.action(formData);
+        setFetchedData(result);
+      } catch (e) {
+        const err = e instanceof Error ? e : new Error(String(e));
+        setError(err);
+        if (throwOnError) {
+          throw err;
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [loader, throwOnError]
+  );
+
+  // Attach action to load function
+  const loadWithAction = load as LoadFunction<T>;
+  loadWithAction.action = action;
+
+  return {
+    data,
+    isLoading,
+    error,
+    load: loadWithAction,
+    refetch: loadWithAction,
+  };
 }
 
 /**
@@ -436,210 +616,10 @@ export function createLoader(
 }
 
 /**
- * Result type for useFetchLoader hook
+ * @deprecated Use useLoader instead. useFetchLoader is now unified into useLoader.
+ * This alias exists for backwards compatibility.
  */
-export interface UseFetchLoaderResult<T> {
-  /** The loaded data, undefined until first successful load */
-  data: T | undefined;
-  /** True while a load is in progress */
-  isLoading: boolean;
-  /** Error from the most recent load attempt, null if successful */
-  error: Error | null;
-  /** Function to trigger a load with options */
-  load: LoadFunction<T>;
-  /** Alias for load - triggers a refetch */
-  refetch: LoadFunction<T>;
-}
-
-/**
- * Load function type with form action support
- */
-export type LoadFunction<T> = ((options?: LoadOptions) => Promise<T>) & {
-  /** Form action for progressive enhancement - can be passed to form action prop */
-  action: (formData: FormData) => Promise<void>;
-};
-
-/**
- * Options for useFetchLoader hook
- */
-export interface UseFetchLoaderOptions {
-  /**
-   * If true (default), errors will be thrown to the nearest error boundary.
-   * If false, errors are only captured in the `error` state (no throw).
-   * @default true
-   */
-  throwOnError?: boolean;
-}
-
-/**
- * Hook for fetching loader data directly from client components
- *
- * Use this to fetch data from fetchable loaders outside of route navigation.
- * The loader must be created with the fetchable option (true or { middleware: [...] }).
- *
- * @param loader - A fetchable loader definition
- * @param options - Optional configuration
- * @param options.throwOnError - If true (default), throws to error boundary. Set false to use error state only.
- * @returns Object with data, isLoading, error, load, and refetch
- *
- * @example
- * ```tsx
- * "use client";
- * import { useFetchLoader } from "rsc-router/client";
- * import { ProductLoader } from "./loaders";
- *
- * function ProductCard({ id }: { id: string }) {
- *   // Errors throw to nearest ErrorBoundary by default
- *   const { data, isLoading, load } = useFetchLoader(ProductLoader);
- *
- *   useEffect(() => {
- *     load({ params: { id } });
- *   }, [id, load]);
- *
- *   if (isLoading) return <Skeleton />;
- *   return <div>{data?.name}</div>;
- * }
- * ```
- *
- * @example Handle errors manually (don't throw)
- * ```tsx
- * function ProductCard({ id }: { id: string }) {
- *   // Errors won't throw, check error state instead
- *   const { data, error, load } = useFetchLoader(ProductLoader, { throwOnError: false });
- *   if (error) return <ErrorUI error={error} />;
- *   // ...
- * }
- * ```
- *
- * @example Form action for file upload
- * ```tsx
- * function FileUpload() {
- *   const { data, load } = useFetchLoader(FileLoader);
- *
- *   return (
- *     <form action={load.action}>
- *       <input type="file" name="file" />
- *       <button type="submit">Upload</button>
- *     </form>
- *   );
- * }
- * ```
- */
-export function useFetchLoader<T>(
-  loader: LoaderDefinition<T>,
-  options?: UseFetchLoaderOptions
-): UseFetchLoaderResult<T> {
-  const [data, setData] = useState<T | undefined>(undefined);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
-
-  // Default to throwing errors (caught by error boundary)
-  const throwOnError = options?.throwOnError ?? true;
-
-  const load = useCallback(
-    async (options?: LoadOptions): Promise<T> => {
-      // Verify the loader has $$id (injected by exposeLoaderId Vite plugin)
-      if (!loader.$$id) {
-        throw new Error(
-          `Loader is missing $$id. ` +
-            `Make sure the exposeLoaderId Vite plugin is enabled and the loader is created with fetchable: true.`
-        );
-      }
-
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        // GET-based fetching - server looks up loader by $$id in registry
-        const url = new URL(window.location.pathname, window.location.origin);
-        url.searchParams.set("_rsc_loader", loader.$$id);
-
-        if (options?.params && Object.keys(options.params).length > 0) {
-          url.searchParams.set(
-            "_rsc_loader_params",
-            JSON.stringify(options.params)
-          );
-        }
-
-        // Fetch and deserialize RSC response
-        const response = fetch(url.toString(), {
-          method: "GET",
-          headers: {
-            Accept: "text/x-component",
-          },
-        });
-
-        // Dynamic import to avoid pulling browser-only deps at module level
-        // (client.tsx is also imported in RSC context via client.rsc.tsx)
-        const { createFromFetch } = await import("./deps/browser.js");
-        const payload = await createFromFetch<LoaderRscPayload<T>>(response);
-
-        if (payload.loaderError) {
-          throw new Error(payload.loaderError.message);
-        }
-
-        const result = payload.loaderResult;
-
-        setData(result);
-        return result;
-      } catch (e) {
-        const err = e instanceof Error ? e : new Error(String(e));
-        setError(err);
-        if (throwOnError) {
-          throw err;
-        }
-        // Return undefined when not throwing - caller should check error state
-        return undefined as T;
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [loader, throwOnError]
-  );
-
-  // Create the form action that wraps the loader's server action
-  // This allows progressive enhancement with forms
-  // Returns void to match React's expected form action signature
-  const action = useCallback(
-    async (formData: FormData): Promise<void> => {
-      if (!loader.action) {
-        throw new Error(
-          `Loader "${loader.$$id}" does not have an action. ` +
-            `Make sure the loader is created with fetchable: true.`
-        );
-      }
-
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const result = await loader.action(formData);
-        setData(result);
-      } catch (e) {
-        const err = e instanceof Error ? e : new Error(String(e));
-        setError(err);
-        if (throwOnError) {
-          throw err;
-        }
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [loader, throwOnError]
-  );
-
-  // Attach action to load function
-  const loadWithAction = load as LoadFunction<T>;
-  loadWithAction.action = action;
-
-  return {
-    data,
-    isLoading,
-    error,
-    load: loadWithAction,
-    refetch: loadWithAction,
-  };
-}
+export const useFetchLoader: typeof useLoader = useLoader;
 
 /**
  * Props for the ErrorBoundary component

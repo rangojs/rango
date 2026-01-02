@@ -29,7 +29,11 @@ import {
  * useLoader() simply accesses the data from the loader context.
  */
 export function UsersDisplay() {
-  const data = useLoader<UsersLoaderData>(UsersLoader);
+  const { data } = useLoader<UsersLoaderData>(UsersLoader);
+
+  if (!data) {
+    return <div style={cardStyle}>Loading users...</div>;
+  }
 
   return (
     <div style={cardStyle}>
