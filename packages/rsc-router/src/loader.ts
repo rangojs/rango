@@ -6,6 +6,9 @@
  *
  * For non-fetchable loaders: returns a stub loader definition
  * For fetchable loaders: stores fn in registry and returns a serializable loader
+ *
+ * The $$id is injected by the Vite exposeLoaderId plugin as a hidden parameter.
+ * Users don't need to pass any name - IDs are auto-generated from file path.
  */
 
 import type {
@@ -16,7 +19,7 @@ import type {
 } from "./types.js";
 
 // Internal registry for fetchable loaders (server-side only)
-// Maps loader name to its function and middleware
+// Maps loader $$id to its function and middleware
 // This allows server actions to look up the loader without capturing it in closure
 const fetchableLoaderRegistry = new Map<
   string,
@@ -25,63 +28,60 @@ const fetchableLoaderRegistry = new Map<
 
 /**
  * Register a fetchable loader's function internally
- * Called during module initialization
+ * Called during module initialization with the $$id
  */
 function registerFetchableLoader(
-  name: string,
+  id: string,
   fn: LoaderFn<any, any, any>,
   middleware: MiddlewareFn<any>[]
 ): void {
-  fetchableLoaderRegistry.set(name, { fn, middleware });
+  fetchableLoaderRegistry.set(id, { fn, middleware });
 }
 
 /**
- * Get a fetchable loader's function from registry
- * Called by server actions to execute the loader
+ * Get a fetchable loader's function from registry by $$id
+ * Called by server actions and loader-registry to execute the loader
  */
 export function getFetchableLoader(
-  name: string
+  id: string
 ): { fn: LoaderFn<any, any, any>; middleware: MiddlewareFn<any>[] } | undefined {
-  return fetchableLoaderRegistry.get(name);
+  return fetchableLoaderRegistry.get(id);
 }
 
-// Overload 1: With function, infer return type (not fetchable)
+// Overload 1: With function only (not fetchable)
 export function createLoader<T>(
-  name: string,
   fn: LoaderFn<T, Record<string, string | undefined>, any>
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
 
-// Overload 2: No function (client-side reference only)
-export function createLoader(
-  name: string
-): LoaderDefinition<any, Record<string, string | undefined>>;
-
-// Overload 3: Fetchable with `true` (no middleware)
+// Overload 2: Fetchable with `true` (no middleware)
 export function createLoader<T>(
-  name: string,
   fn: LoaderFn<T, Record<string, string | undefined>, any>,
   fetchable: true
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
 
-// Overload 4: Fetchable with middleware
+// Overload 3: Fetchable with middleware options
 export function createLoader<T>(
-  name: string,
   fn: LoaderFn<T, Record<string, string | undefined>, any>,
   options: FetchableLoaderOptions
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
 
-// Implementation
+// Implementation - the $$id parameter is injected by Vite plugin, not user-provided
 export function createLoader<T>(
-  name: string,
-  fn?: LoaderFn<T, Record<string, string | undefined>, any>,
-  fetchable?: true | FetchableLoaderOptions
+  fn: LoaderFn<T, Record<string, string | undefined>, any>,
+  fetchable?: true | FetchableLoaderOptions,
+  // Hidden parameter injected by Vite exposeLoaderId plugin
+  __injectedId?: string
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>> {
+  // The $$id will be set on the returned object by Vite plugin
+  // For fetchable loaders, __injectedId is also passed as a parameter
+  const loaderId = __injectedId || "";
+
   // If not fetchable, return a simple stub with fn included
   if (fetchable === undefined) {
     return {
       __brand: "loader",
-      name,
-      fn: fn as LoaderFn<Awaited<T>, Record<string, string | undefined>, any> | undefined,
+      $$id: loaderId,
+      fn: fn as LoaderFn<Awaited<T>, Record<string, string | undefined>, any>,
     };
   }
 
@@ -89,21 +89,22 @@ export function createLoader<T>(
   const middleware: MiddlewareFn<any>[] =
     fetchable === true ? [] : fetchable?.middleware || [];
 
-  // Register the function in the internal registry (server-side only)
-  // The server action will look it up by name when executed
-  if (fn) {
-    registerFetchableLoader(name, fn, middleware);
+  // Register the function in the internal registry by $$id (server-side only)
+  // The server action will look it up by $$id when executed
+  if (fn && loaderId) {
+    registerFetchableLoader(loaderId, fn, middleware);
   }
 
   // Create server action for form-based fetching
   // This action is serializable and can be passed to client components
+  // The loaderId is captured in closure (it's a primitive string)
   async function loaderAction(formData: FormData): Promise<Awaited<T>> {
     "use server";
 
-    // Look up the loader from registry by name
-    const registered = fetchableLoaderRegistry.get(name);
+    // Look up the loader from registry by $$id
+    const registered = fetchableLoaderRegistry.get(loaderId);
     if (!registered) {
-      throw new Error(`Loader "${name}" not found in registry`);
+      throw new Error(`Loader "${loaderId}" not found in registry`);
     }
 
     // Convert FormData to params object
@@ -141,10 +142,10 @@ export function createLoader<T>(
   }
 
   // Return a loader object with action for form-based fetching
-  // The exposeLoaderId plugin will also add $$id for GET-based fetching
+  // The exposeLoaderId plugin will set $$id on this object
   return {
     __brand: "loader",
-    name,
+    $$id: loaderId,
     action: loaderAction,
   };
 }

@@ -18,7 +18,7 @@ const loaderRegistry = new Map<string, RegisteredLoader>();
 
 // Lazy import map - set by the loader manifest
 // Maps loader $$id to a function that imports the loader module
-type LazyLoaderImport = () => Promise<{ $$id?: string; name: string }>;
+type LazyLoaderImport = () => Promise<{ $$id: string }>;
 let lazyLoaderImports: Map<string, LazyLoaderImport> | null = null;
 
 /**
@@ -31,29 +31,27 @@ export function setLoaderImports(
 }
 
 /**
- * Register a fetchable loader
+ * Register a fetchable loader by $$id
  * Called by createLoader when fetchable option is provided
  */
 export function registerLoader(
-  name: string,
+  id: string,
   fn: LoaderFn<any, any, any>,
   middleware: MiddlewareFn<any>[] = []
 ): void {
-  if (loaderRegistry.has(name)) {
-    console.warn(
-      `[LoaderRegistry] Loader "${name}" is already registered. ` +
-      `This may cause issues if different loaders share the same name.`
-    );
+  if (loaderRegistry.has(id)) {
+    // Already registered (can happen during HMR)
+    return;
   }
-  loaderRegistry.set(name, { fn, middleware });
+  loaderRegistry.set(id, { fn, middleware });
 }
 
 /**
- * Get a registered loader by name (synchronous)
+ * Get a registered loader by $$id (synchronous)
  * Returns undefined if loader is not registered
  */
-export function getLoader(name: string): RegisteredLoader | undefined {
-  return loaderRegistry.get(name);
+export function getLoader(id: string): RegisteredLoader | undefined {
+  return loaderRegistry.get(id);
 }
 
 /**
@@ -66,10 +64,18 @@ export function getLoader(name: string): RegisteredLoader | undefined {
 export async function getLoaderLazy(
   id: string
 ): Promise<RegisteredLoader | undefined> {
-  // Check if already cached
+  // Check if already cached in main registry
   const existing = loaderRegistry.get(id);
   if (existing) {
     return existing;
+  }
+
+  // Check the fetchable loader registry (populated by createLoader)
+  const fetchable = getFetchableLoader(id);
+  if (fetchable) {
+    // Cache in main registry for future requests
+    loaderRegistry.set(id, fetchable);
+    return fetchable;
   }
 
   // Try to lazy load from the import map (production mode)
@@ -77,17 +83,12 @@ export async function getLoaderLazy(
     const lazyImport = lazyLoaderImports.get(id);
     if (lazyImport) {
       try {
-        // Import the loader - this triggers createLoader which registers fn in fetchableLoaderRegistry
-        const loader = await lazyImport();
+        // Import the loader module - this triggers createLoader which registers fn
+        await lazyImport();
 
-        // Get fn directly from the internal registry (keyed by loader.name)
-        const internalLoader = getFetchableLoader(loader.name);
-        if (internalLoader) {
-          // Cache for future requests
-          const registered: RegisteredLoader = {
-            fn: internalLoader.fn,
-            middleware: internalLoader.middleware,
-          };
+        // Now try to get from fetchable registry (createLoader registered it)
+        const registered = getFetchableLoader(id);
+        if (registered) {
           loaderRegistry.set(id, registered);
           return registered;
         }
@@ -102,24 +103,17 @@ export async function getLoaderLazy(
   const hashIndex = id.indexOf("#");
   if (hashIndex !== -1) {
     const filePath = id.slice(0, hashIndex);
-    const exportName = id.slice(hashIndex + 1);
 
     try {
       // In dev mode, Vite handles dynamic imports
-      const module = await import(/* @vite-ignore */ `/${filePath}`);
-      const loader = module[exportName];
+      // Just importing the module triggers createLoader which registers the fn
+      await import(/* @vite-ignore */ `/${filePath}`);
 
-      if (loader) {
-        // Get fn from the internal registry (set when createLoader runs)
-        const internalLoader = getFetchableLoader(loader.name);
-        if (internalLoader) {
-          const registered: RegisteredLoader = {
-            fn: internalLoader.fn,
-            middleware: internalLoader.middleware,
-          };
-          loaderRegistry.set(id, registered);
-          return registered;
-        }
+      // Now try to get from fetchable registry
+      const registered = getFetchableLoader(id);
+      if (registered) {
+        loaderRegistry.set(id, registered);
+        return registered;
       }
     } catch (error) {
       console.error(`[LoaderRegistry] Failed to load loader "${id}":`, error);
@@ -130,30 +124,28 @@ export async function getLoaderLazy(
 }
 
 /**
- * Check if a loader is registered
+ * Check if a loader is registered by $$id
  */
-export function hasLoader(name: string): boolean {
-  return loaderRegistry.has(name);
+export function hasLoader(id: string): boolean {
+  return loaderRegistry.has(id) || getFetchableLoader(id) !== undefined;
 }
 
 /**
- * Get all registered loader names (for debugging)
+ * Get all registered loader IDs (for debugging)
  */
-export function getRegisteredLoaderNames(): string[] {
+export function getRegisteredLoaderIds(): string[] {
   return Array.from(loaderRegistry.keys());
 }
 
 /**
  * Register a loader by its $$id (injected by Vite plugin)
- * This is called by the exposeLoaderId plugin during module loading
+ * This is called during module loading to cache loaders
  */
 export function registerLoaderById(loader: {
-  $$id?: string;
-  name: string;
+  $$id: string;
   fn?: LoaderFn<any, any, any>;
 }): void {
   if (!loader.$$id) {
-    // Skip loaders without $$id (non-fetchable loaders)
     return;
   }
   if (loaderRegistry.has(loader.$$id)) {
@@ -161,14 +153,10 @@ export function registerLoaderById(loader: {
     return;
   }
 
-  // For fetchable loaders, fn is stored in the internal registry, not on the loader object
-  // Look it up by name to get the fn and middleware
-  const internalLoader = getFetchableLoader(loader.name);
-  if (internalLoader) {
-    loaderRegistry.set(loader.$$id, {
-      fn: internalLoader.fn,
-      middleware: internalLoader.middleware,
-    });
+  // For fetchable loaders, fn is stored in the fetchable registry by $$id
+  const fetchable = getFetchableLoader(loader.$$id);
+  if (fetchable) {
+    loaderRegistry.set(loader.$$id, fetchable);
     return;
   }
 

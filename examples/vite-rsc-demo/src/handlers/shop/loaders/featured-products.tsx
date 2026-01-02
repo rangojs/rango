@@ -21,7 +21,6 @@ import type { Product } from "./product.js";
  *   return <>{content}</>;
  */
 export const FeaturedProductsLoader = createLoader<FeaturedProductsData>(
-  "featuredProducts",
   async (_ctx) => {
     "use server";
 

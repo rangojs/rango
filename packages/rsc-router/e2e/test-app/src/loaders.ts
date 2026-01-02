@@ -25,41 +25,32 @@ const products = [
 /**
  * Load all products
  */
-export const ProductsLoader = createLoader(
-  "products",
-  async () => {
-    return { products, loadedAt: new Date().toISOString() };
-  }
-);
+export const ProductsLoader = createLoader(async () => {
+  return { products, loadedAt: new Date().toISOString() };
+});
 
 /**
  * Load single product by ID
  */
-export const ProductDetailLoader = createLoader(
-  "product-detail",
-  async (ctx) => {
-    const productId = ctx.params.productId;
-    const product = products.find((p) => p.id === productId);
-    if (!product) {
-      throw new Error(`Product not found: ${productId}`);
-    }
-    return { product, loadedAt: new Date().toISOString() };
+export const ProductDetailLoader = createLoader(async (ctx) => {
+  const productId = ctx.params.productId;
+  const product = products.find((p) => p.id === productId);
+  if (!product) {
+    throw new Error(`Product not found: ${productId}`);
   }
-);
+  return { product, loadedAt: new Date().toISOString() };
+});
 
 /**
  * Load cart quantity for a product
  */
-export const CartQuantityLoader = createLoader(
-  "cart-quantity",
-  async (ctx) => {
-    const productId = ctx.params.productId;
-    // Import dynamically to avoid "use server" directive issues
-    const { getCartQuantity } = await import("./actions.jsx");
-    const quantity = await getCartQuantity(productId);
-    return { productId, quantity };
-  }
-);
+export const CartQuantityLoader = createLoader(async (ctx) => {
+  const productId = ctx.params.productId;
+  // Import dynamically to avoid "use server" directive issues
+  const { getCartQuantity } = await import("./actions.jsx");
+  const quantity = await getCartQuantity(productId);
+  return { productId, quantity };
+});
 
 // Counter to track loader invocations for revalidation testing
 let slowLoaderCount = 0;
@@ -68,7 +59,7 @@ let slowLoaderCount = 0;
  * Slow loader with 1s delay - used to test loading behavior
  * Tracks invocation count to verify revalidation
  */
-export const SlowLoader = createLoader("slow-loader", async () => {
+export const SlowLoader = createLoader(async () => {
   slowLoaderCount++;
   const count = slowLoaderCount;
   await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -92,20 +83,17 @@ const slowProducts = [
 /**
  * Slow product detail loader - 2s delay for testing intercept loading states
  */
-export const SlowProductDetailLoader = createLoader(
-  "slow-product-detail",
-  async (ctx) => {
-    const productId = ctx.params.productId;
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    const product = slowProducts.find((p) => p.id === productId) || {
-      id: productId,
-      name: `Product ${productId}`,
-      price: 99.99,
-      description: "Dynamic slow loading product",
-    };
-    return { product, loadedAt: new Date().toISOString() };
-  }
-);
+export const SlowProductDetailLoader = createLoader(async (ctx) => {
+  const productId = ctx.params.productId;
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+  const product = slowProducts.find((p) => p.id === productId) || {
+    id: productId,
+    name: `Product ${productId}`,
+    price: 99.99,
+    description: "Dynamic slow loading product",
+  };
+  return { product, loadedAt: new Date().toISOString() };
+});
 
 // Counter to track fetchable loader invocations
 let fetchableLoaderCount = 0;
@@ -115,7 +103,6 @@ let fetchableLoaderCount = 0;
  * The third argument `true` makes this loader fetchable via GET requests
  */
 export const FetchableTestLoader = createLoader(
-  "fetchable-test",
   async (ctx) => {
     fetchableLoaderCount++;
     const id = ctx.params.id || "default";

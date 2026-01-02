@@ -24,7 +24,7 @@ export type { User, Stats, Note, UploadedFile };
  *
  * Use case: Initial page data that should be available immediately
  */
-export const UsersLoader = createLoader("loaders-demo-users", async (_ctx) => {
+export const UsersLoader = createLoader(async (_ctx) => {
   "use server";
 
   // Simulate network latency
@@ -57,7 +57,6 @@ export type UsersLoaderData = {
  * Use case: Data that should be fetched on-demand, not during initial load
  */
 export const StatsLoader = createLoader(
-  "loaders-demo-stats",
   async (_ctx) => {
     "use server";
 
@@ -91,7 +90,6 @@ export type StatsLoaderData = {
  * Use case: Search/filter functionality triggered by user interaction
  */
 export const UserSearchLoader = createLoader(
-  "loaders-demo-user-search",
   async (ctx) => {
     "use server";
 
@@ -147,7 +145,6 @@ export type UserSearchLoaderData = {
  * Use case: Server-rendered UI that should be fetched on-demand
  */
 export const RSCContentLoader = createLoader(
-  "loaders-demo-rsc-content",
   async (ctx) => {
     "use server";
 
@@ -284,7 +281,6 @@ export type RSCContentLoaderData = {
  * Use case: Simple CRUD operations where read and write share the same endpoint
  */
 export const NotesLoader = createLoader(
-  "loaders-demo-notes",
   async (ctx) => {
     "use server";
 
@@ -329,7 +325,6 @@ export type NotesLoaderData = {
  * Use case: File upload forms with progressive enhancement
  */
 export const FileUploadLoader = createLoader(
-  "loaders-demo-file-upload",
   async (ctx) => {
     "use server";
 
