@@ -212,7 +212,11 @@ export default map<typeof loadersRoutes>(
     // Layout with users loader (for useLoader demo)
     layout(<LoadersDemoLayout />, () => [
       // Global loader for the demo - provides users data
-      loader(UsersLoader, () => [revalidate(() => true)]),
+      loader(UsersLoader, () => [
+        revalidate(({ actionId, actionUrl, defaultShouldRevalidate }) => {
+          return actionId?.includes("loader-demo") ?? defaultShouldRevalidate;
+        }),
+      ]),
 
       // Index route - demonstrates useLoader
       route("index", () => <LoadersIndexPage />),
