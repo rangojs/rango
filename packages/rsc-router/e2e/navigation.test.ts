@@ -143,22 +143,32 @@ test.describe("intercept-navigation", () => {
 
     // Step 3: Navigate back - should show modal again with index background
     await goBack(page);
-    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible({
+      timeout: 5000,
+    });
 
     // Background should still show index content (not detail page)
-    await expect(page.locator('[data-testid="product-link-product-b"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-link-product-b"]')).toBeVisible({
+      timeout: 5000,
+    });
 
     // Step 4: Close modal by navigating back again
     await goBack(page);
-    await expect(page.locator('[data-testid="product-modal"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).not.toBeVisible({
+      timeout: 5000,
+    });
     await expect(page).toHaveURL(/\/$/);
 
     // Index content should be visible
-    await expect(page.locator('[data-testid="product-link-product-a"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-link-product-a"]')).toBeVisible({
+      timeout: 5000,
+    });
 
     // Step 5: Click the same product again
     await productLink.click();
-    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible({
+      timeout: 5000,
+    });
 
     // BUG: Background should show index content, NOT the detail page
     // The detail page has segment-metadata, index has the product list

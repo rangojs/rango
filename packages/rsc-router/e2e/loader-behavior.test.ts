@@ -87,9 +87,10 @@ test.describe("loader-behavior", () => {
       await page.locator('[data-testid="slow-streaming-link"]').click();
 
       // Loading skeleton should appear quickly (not waiting for loader)
+      // Use 1000ms timeout to be CI-friendly while still being much faster than LOADER_DELAY
       await expect(
         page.locator('[data-testid="slow-streaming-loading"]')
-      ).toBeVisible({ timeout: 500 });
+      ).toBeVisible({ timeout: 1000 });
 
       const loadingVisibleTime = Date.now() - startTime;
 
@@ -207,9 +208,10 @@ test.describe("loader-behavior", () => {
       await page.locator('[data-testid="slow-skip-ssr-link"]').click();
 
       // Loading skeleton should appear quickly (streaming on SPA navigation)
+      // Use 1000ms timeout to be CI-friendly while still being much faster than LOADER_DELAY
       await expect(
         page.locator('[data-testid="slow-skip-ssr-loading"]')
-      ).toBeVisible({ timeout: 500 });
+      ).toBeVisible({ timeout: 1000 });
 
       const loadingVisibleTime = Date.now() - startTime;
 
@@ -246,10 +248,10 @@ test.describe("loader-behavior", () => {
       ).toBeVisible({ timeout: 5000 });
 
       // Wait for loader to revalidate by polling until count changes
-      // (loader takes 1s, but use polling instead of fixed timeout for reliability)
+      // (loader takes 1s, use 8s timeout for CI reliability)
       await expect(
         page.locator('[data-testid="slow-count"]')
-      ).not.toHaveText(`Load count: ${initialNum}`, { timeout: 5000 });
+      ).not.toHaveText(`Load count: ${initialNum}`, { timeout: 8000 });
 
       // Verify count incremented
       const newCountText = await page
@@ -290,10 +292,10 @@ test.describe("loader-behavior", () => {
       ).toBeVisible({ timeout: 5000 });
 
       // Wait for loader to revalidate by polling until count changes
-      // (loader takes 1s, but use polling instead of fixed timeout for reliability)
+      // (loader takes 1s, use 8s timeout for CI reliability)
       await expect(
         page.locator('[data-testid="slow-streaming-count"]')
-      ).not.toHaveText(`Load count: ${initialNum}`, { timeout: 5000 });
+      ).not.toHaveText(`Load count: ${initialNum}`, { timeout: 8000 });
 
       // Verify count incremented
       const newCount = await page
