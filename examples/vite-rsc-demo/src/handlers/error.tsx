@@ -43,14 +43,14 @@ const SimpleErrorFallback = (
 /**
  * Loader that deliberately throws an error
  */
-const FailingLoader = createLoader("failingLoader", async () => {
+const FailingLoader = createLoader(async () => {
   throw new Error("Simulated loader failure - database connection timeout");
 });
 
 /**
  * Loader that throws notFound()
  */
-const NotFoundLoader = createLoader("notFoundLoader", async () => {
+const NotFoundLoader = createLoader(async () => {
   // Simulate checking for a resource that doesn't exist
   const resource = null; // Simulating resource not found in database
   if (!resource) {

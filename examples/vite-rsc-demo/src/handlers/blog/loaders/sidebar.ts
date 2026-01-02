@@ -31,7 +31,7 @@ const mockSidebarData: BlogSidebarData = {
  * Demonstrates parallel routes with their own loaders.
  * Has artificial delay to showcase loading states.
  */
-export const BlogSidebarLoader = createLoader("blog-sidebar", async (_ctx) => {
+export const BlogSidebarLoader = createLoader(async (_ctx) => {
   "use server";
   // Simulate slow API call to demonstrate loading state
   await new Promise((resolve) => setTimeout(resolve, 5500));

@@ -35,6 +35,10 @@ function hasCreateLoaderImport(code: string): boolean {
  * Find all export const X = createLoader(...) patterns and inject $$id
  * In production, IDs are hashed to avoid exposing file paths.
  * In dev, IDs use filePath#exportName for easier debugging.
+ *
+ * The ID is injected in two ways:
+ * 1. As a hidden third parameter to createLoader() for registry registration
+ * 2. As a property assignment X.$$id = "..." for external access
  */
 function transformLoaderExports(
   code: string,
@@ -74,6 +78,9 @@ function transformLoaderExports(
       i++;
     }
 
+    // i now points just after the closing )
+    const closeParenPos = i - 1;
+
     // Find the semicolon or end of statement
     let statementEnd = i;
     while (statementEnd < code.length && /\s/.test(code[statementEnd])) {
@@ -89,9 +96,14 @@ function transformLoaderExports(
       ? hashLoaderId(filePath, exportName)
       : `${filePath}#${exportName}`;
 
-    // Inject $$id assignment after the statement
-    const injection = `\n${exportName}.$$id = "${loaderId}";`;
-    s.appendRight(statementEnd, injection);
+    // Inject $$id as hidden third parameter before the closing paren
+    // This allows createLoader to register the fn with the ID immediately
+    const paramInjection = `, "${loaderId}"`;
+    s.appendLeft(closeParenPos, paramInjection);
+
+    // Also set $$id property for external access (useLoader, useFetchLoader)
+    const propInjection = `\n${exportName}.$$id = "${loaderId}";`;
+    s.appendRight(statementEnd, propInjection);
     hasChanges = true;
   }
 

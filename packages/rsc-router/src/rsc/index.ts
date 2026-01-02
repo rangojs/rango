@@ -357,19 +357,19 @@ export function createRSCHandler<TEnv = unknown>(
       // ============================================================================
       const isLoaderRequest = url.searchParams.has("_rsc_loader");
       if (isLoaderRequest) {
-        const loaderName = url.searchParams.get("_rsc_loader");
+        const loaderId = url.searchParams.get("_rsc_loader");
         const loaderParamsJson = url.searchParams.get("_rsc_loader_params");
 
-        if (!loaderName) {
+        if (!loaderId) {
           return new Response("Missing _rsc_loader parameter", {
             status: 400,
           });
         }
 
         // Look up loader lazily (imports on-demand if not already loaded)
-        const registeredLoader = await getLoaderLazy(loaderName);
+        const registeredLoader = await getLoaderLazy(loaderId);
         if (!registeredLoader) {
-          return new Response(`Loader "${loaderName}" not found in registry`, {
+          return new Response(`Loader "${loaderId}" not found in registry`, {
             status: 404,
           });
         }

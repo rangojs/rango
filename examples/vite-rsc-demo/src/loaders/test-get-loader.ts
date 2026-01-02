@@ -5,7 +5,6 @@ import { createLoader } from "rsc-router";
  * This loader registers itself in the server-side registry
  */
 export const TestGetLoader = createLoader(
-  "test-get",
   async (ctx) => {
     "use server";
 
