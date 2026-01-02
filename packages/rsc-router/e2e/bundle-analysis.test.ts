@@ -76,11 +76,11 @@ test.describe("bundle-analysis", () => {
       expect(rscBundle).toContain("Product A");
       expect(rscBundle).toContain("99.99");
 
-      // Loader names should be in RSC bundle
-      expect(rscBundle).toContain("products");
-      expect(rscBundle).toContain("product-detail");
-      expect(rscBundle).toContain("cart-quantity");
-      expect(rscBundle).toContain("slow-loader");
+      // Loader export names should be in RSC bundle ($$id uses export name with hash prefix)
+      expect(rscBundle).toContain("ProductsLoader");
+      expect(rscBundle).toContain("ProductDetailLoader");
+      expect(rscBundle).toContain("CartQuantityLoader");
+      expect(rscBundle).toContain("SlowLoader");
     });
 
     test("client bundle should only have loader name references", async () => {
