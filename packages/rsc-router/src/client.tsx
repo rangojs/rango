@@ -299,10 +299,26 @@ export type LoadFunction<T> = ((options?: LoadOptions) => Promise<T>) & {
 };
 
 /**
- * Result type for useLoader hook
+ * Result type for useLoader hook (strict - data is required)
  */
 export interface UseLoaderResult<T> {
-  /** The loaded data - from SSR/navigation context or from load() call */
+  /** The loaded data - guaranteed to exist when loader is registered on route */
+  data: T;
+  /** True while a load() is in progress */
+  isLoading: boolean;
+  /** Error from the most recent load attempt, null if successful */
+  error: Error | null;
+  /** Function to trigger a fetch (only works if loader is fetchable) */
+  load: LoadFunction<T>;
+  /** Alias for load */
+  refetch: LoadFunction<T>;
+}
+
+/**
+ * Result type for useFetchLoader hook (flexible - data is optional)
+ */
+export interface UseFetchLoaderResult<T> {
+  /** The loaded data - may be undefined if not yet fetched or not in context */
   data: T | undefined;
   /** True while a load() is in progress */
   isLoading: boolean;
@@ -327,62 +343,12 @@ export interface UseLoaderOptions {
 }
 
 /**
- * Hook to access loader data and optionally refetch it
- *
- * This unified hook provides:
- * 1. Automatic access to SSR/navigation loader data (if loader is registered on route)
- * 2. On-demand fetching via load() (if loader is fetchable)
- * 3. Automatic updates when navigation occurs
- *
- * @param loader - The loader definition
- * @param options - Optional configuration
- * @returns Object with data, isLoading, error, load, and refetch
- *
- * @example Basic usage - SSR data with refetch capability
- * ```tsx
- * "use client";
- * import { useLoader } from "rsc-router/client";
- * import { CartLoader } from "../loaders/cart";
- *
- * export function CartIcon() {
- *   const { data, load, isLoading } = useLoader(CartLoader);
- *
- *   return (
- *     <div>
- *       <span>Cart ({data?.items.length ?? 0})</span>
- *       <button onClick={() => load()} disabled={isLoading}>
- *         {isLoading ? "Refreshing..." : "Refresh"}
- *       </button>
- *     </div>
- *   );
- * }
- * ```
- *
- * @example On-demand fetching with params
- * ```tsx
- * const { data, load, isLoading } = useLoader(SearchLoader);
- *
- * const handleSearch = async (query: string) => {
- *   await load({ params: { query } });
- * };
- * ```
- *
- * @example Form action for progressive enhancement
- * ```tsx
- * const { data, load } = useLoader(NotesLoader);
- *
- * return (
- *   <form action={load.action}>
- *     <input name="note" />
- *     <button type="submit">Add Note</button>
- *   </form>
- * );
- * ```
+ * Internal hook implementation shared by useLoader and useFetchLoader
  */
-export function useLoader<T>(
+function useLoaderInternal<T>(
   loader: LoaderDefinition<T>,
   options?: UseLoaderOptions
-): UseLoaderResult<T> {
+): UseFetchLoaderResult<T> {
   const context = useContext(OutletContext);
 
   // Get data from context (SSR/navigation)
@@ -519,6 +485,106 @@ export function useLoader<T>(
 }
 
 /**
+ * Hook to access loader data from route context (strict version)
+ *
+ * Use this when the loader is registered on the route via `loader()`.
+ * The data is guaranteed to exist - throws an error if not found.
+ *
+ * For on-demand fetching or when loader might not be in context,
+ * use `useFetchLoader` instead.
+ *
+ * @param loader - The loader definition (must be registered on route)
+ * @param options - Optional configuration
+ * @returns Object with data (guaranteed), isLoading, error, load, and refetch
+ * @throws Error if loader data is not found in context
+ *
+ * @example Basic usage - accessing route loader data
+ * ```tsx
+ * "use client";
+ * import { useLoader } from "rsc-router/client";
+ * import { CartLoader } from "../loaders/cart";
+ *
+ * // In route definition: loader(CartLoader)
+ *
+ * export function CartIcon() {
+ *   const { data } = useLoader(CartLoader);
+ *   // data is guaranteed to be CartData, not CartData | undefined
+ *   return <span>Cart ({data.items.length})</span>;
+ * }
+ * ```
+ */
+export function useLoader<T>(
+  loader: LoaderDefinition<T>,
+  options?: UseLoaderOptions
+): UseLoaderResult<T> {
+  const result = useLoaderInternal(loader, options);
+
+  // Strict mode: throw if data is not in context
+  if (result.data === undefined) {
+    throw new Error(
+      `useLoader: Loader "${loader.$$id}" data not found in context. ` +
+        `Make sure the loader is registered on the route with loader(). ` +
+        `If you need on-demand fetching, use useFetchLoader() instead.`
+    );
+  }
+
+  return result as UseLoaderResult<T>;
+}
+
+/**
+ * Hook to access loader data with optional fetching (flexible version)
+ *
+ * Use this when:
+ * - The loader might not be registered on the route
+ * - You want to fetch data on-demand from the client
+ * - You're building a reusable component that doesn't assume route context
+ *
+ * If the loader IS registered on the route, it will still get the initial
+ * data from context - you just have to handle the `undefined` case in types.
+ *
+ * @param loader - The loader definition
+ * @param options - Optional configuration
+ * @returns Object with data (may be undefined), isLoading, error, load, and refetch
+ *
+ * @example On-demand fetching
+ * ```tsx
+ * "use client";
+ * import { useFetchLoader } from "rsc-router/client";
+ * import { SearchLoader } from "../loaders/search";
+ *
+ * export function SearchResults() {
+ *   const { data, load, isLoading } = useFetchLoader(SearchLoader);
+ *
+ *   const handleSearch = async (query: string) => {
+ *     await load({ params: { query } });
+ *   };
+ *
+ *   return (
+ *     <div>
+ *       <button onClick={() => handleSearch("test")}>Search</button>
+ *       {isLoading && <span>Loading...</span>}
+ *       {data?.results.map(r => <div key={r.id}>{r.name}</div>)}
+ *     </div>
+ *   );
+ * }
+ * ```
+ *
+ * @example With route context (hybrid usage)
+ * ```tsx
+ * // Loader registered on route: loader(UserLoader)
+ * // useFetchLoader still works - gets initial data from context
+ * const { data, load } = useFetchLoader(UserLoader);
+ * // data is UserData | undefined (even though it will have initial value)
+ * ```
+ */
+export function useFetchLoader<T>(
+  loader: LoaderDefinition<T>,
+  options?: UseLoaderOptions
+): UseFetchLoaderResult<T> {
+  return useLoaderInternal(loader, options);
+}
+
+/**
  * Hook to access all loader data in the current context
  *
  * Returns a record of all loader data available in the current outlet context
@@ -614,12 +680,6 @@ export function createLoader(
     $$id: __injectedId || "",
   };
 }
-
-/**
- * @deprecated Use useLoader instead. useFetchLoader is now unified into useLoader.
- * This alias exists for backwards compatibility.
- */
-export const useFetchLoader: typeof useLoader = useLoader;
 
 /**
  * Props for the ErrorBoundary component
