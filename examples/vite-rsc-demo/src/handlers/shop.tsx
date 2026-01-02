@@ -111,7 +111,9 @@ export default map<typeof shopRoutes>(
     // CartLoader: cart data for header badge, cart page, checkout
     // Revalidates when cart actions are performed
     loader(CartLoader, () => [
-      revalidate(({ actionId }) => actionId?.startsWith("cart:") ?? false),
+      // Match actions from shop.actions.ts that contain "Cart" in export name
+      // Full actionId format: "src/handlers/shop/actions/shop.actions.ts#addToCart"
+      revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
     ]),
     // CategoriesLoader: product categories for navigation
     loader(CategoriesLoader),

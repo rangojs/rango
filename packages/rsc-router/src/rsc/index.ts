@@ -316,12 +316,8 @@ export function createRSCHandler<TEnv = unknown>(
         }
 
         // Revalidate after action
-        const actionName = actionId.includes("#")
-          ? actionId.split("#").pop()!
-          : actionId;
-
         const actionContext = {
-          actionId: actionName,
+          actionId,
           actionUrl: new URL(request.url),
           actionResult: returnValue.data,
           formData: actionFormData,
