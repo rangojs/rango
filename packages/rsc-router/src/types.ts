@@ -714,11 +714,11 @@ export interface ResolvedSegment {
   layoutName?: string; // For layouts: the layout name identifier
   parallelName?: string; // For parallels: the parallel group name (used to match with revalidations)
   // Loader-specific fields
-  loaderName?: string; // For loaders: the loader name identifier
+  loaderId?: string; // For loaders: the loader $$id identifier
   loaderData?: any; // For loaders: the resolved data from loader execution
   // Intercept loader fields (for streaming loader data in parallel segments)
   loaderDataPromise?: Promise<any[]> | any[]; // Loader data promise or resolved array
-  loaderNames?: string[]; // Names of loaders for this segment
+  loaderIds?: string[]; // IDs ($$id) of loaders for this segment
   // Error-specific fields
   error?: ErrorInfo; // For error segments: the error information
   // NotFound-specific fields
@@ -734,7 +734,7 @@ export interface SegmentMetadata {
   index: number;
   params?: Record<string, string>;
   slot?: string;
-  loaderName?: string;
+  loaderId?: string;
   error?: ErrorInfo;
   notFoundInfo?: NotFoundInfo;
 }
@@ -928,14 +928,14 @@ export type RouteMiddlewareFn<
  *
  * @example
  * ```typescript
- * const CartLoader = createLoader("cart", async (ctx) => {
+ * const CartLoader = createLoader(async (ctx) => {
  *   "use server";
  *   const user = ctx.get("user");  // From auth middleware
  *   return await db.cart.get(user.id);
  * });
  *
  * // With typed params:
- * const ProductLoader = createLoader<Product, { slug: string }>("product", async (ctx) => {
+ * const ProductLoader = createLoader<Product, { slug: string }>(async (ctx) => {
  *   "use server";
  *   const { slug } = ctx.params;  // slug is typed as string
  *   return await db.products.findBySlug(slug);
@@ -997,13 +997,13 @@ export type LoaderFn<T, TParams = Record<string, string | undefined>, TEnv = any
  * @example
  * ```typescript
  * // Definition (same file works on server and client)
- * export const CartLoader = createLoader("cart", async (ctx) => {
+ * export const CartLoader = createLoader(async (ctx) => {
  *   "use server";
  *   return await db.cart.get(ctx.get("user").id);
  * });
  *
  * // With typed params:
- * export const ProductLoader = createLoader<Product, { slug: string }>("product", async (ctx) => {
+ * export const ProductLoader = createLoader<Product, { slug: string }>(async (ctx) => {
  *   "use server";
  *   const { slug } = ctx.params;  // slug is typed as string
  *   return await db.products.findBySlug(slug);
@@ -1055,8 +1055,7 @@ export type LoaderAction<T> = (formData: FormData) => Promise<T>;
 
 export type LoaderDefinition<T = any, TParams = Record<string, string | undefined>> = {
   __brand: "loader";
-  name: string;
-  $$id?: string;  // Injected by Vite plugin (exposeLoaderId) - used for GET-based fetching
+  $$id: string;  // Injected by Vite plugin (exposeLoaderId) - unique identifier
   fn?: LoaderFn<T, TParams, any>;  // Optional - stripped on client via "use server"
   action?: LoaderAction<T>;  // Optional - for fetchable loaders
 };

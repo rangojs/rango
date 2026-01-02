@@ -18,7 +18,7 @@ export type Product = {
  *
  * Type-safe: ctx.params.slug is typed as string
  */
-export const ProductLoader = createLoader("product", async (ctx) => {
+export const ProductLoader = createLoader(async (ctx) => {
   "use server";
 
   const { slug } = ctx.params;

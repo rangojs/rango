@@ -143,14 +143,14 @@ export function setupLoaderAccess<TEnv>(
     const loader = item as LoaderDefinition<any, any>;
 
     // Return cached promise if already started
-    if (loaderPromises.has(loader.name)) {
-      return loaderPromises.get(loader.name);
+    if (loaderPromises.has(loader.$$id)) {
+      return loaderPromises.get(loader.$$id);
     }
 
     // Ensure loader has a function
     if (!loader.fn) {
       throw new Error(
-        `Loader "${loader.name}" has no function. This usually means the loader was defined without "use server" and the function was not included in the build.`
+        `Loader "${loader.$$id}" has no function. This usually means the loader was defined without "use server" and the function was not included in the build.`
       );
     }
 
@@ -173,7 +173,7 @@ export function setupLoaderAccess<TEnv>(
     };
 
     // Start loader execution with tracking
-    const doneLoader = track(`loader:${loader.name}`);
+    const doneLoader = track(`loader:${loader.$$id}`);
     const promise = Promise.resolve(
       loader.fn(loaderCtx as LoaderContext<any, TEnv>)
     ).finally(() => {
@@ -181,7 +181,7 @@ export function setupLoaderAccess<TEnv>(
     });
 
     // Memoize for subsequent calls
-    loaderPromises.set(loader.name, promise);
+    loaderPromises.set(loader.$$id, promise);
 
     return promise;
   }) as typeof ctx.use;

@@ -15,7 +15,7 @@ export function incrementActionCount(actionId: string) {
 /**
  * ActionCounterLoader - tracks action counts for revalidation testing
  */
-export const ActionCounterLoader = createLoader("actionCounter", async (_ctx) => {
+export const ActionCounterLoader = createLoader(async (_ctx) => {
   "use server";
   return {
     counts: { ...actionCounts },
@@ -26,7 +26,7 @@ export const ActionCounterLoader = createLoader("actionCounter", async (_ctx) =>
 /**
  * KanbanLoader - fetches the board with columns and cards
  */
-export const KanbanLoader = createLoader("kanban", async (_ctx) => {
+export const KanbanLoader = createLoader(async (_ctx) => {
   "use server";
   // Simulate network latency
   await new Promise((resolve) => setTimeout(resolve, 300));
@@ -43,7 +43,7 @@ export const KanbanLoader = createLoader("kanban", async (_ctx) => {
 /**
  * CardDetailLoader - fetches a single card by ID
  */
-export const CardDetailLoader = createLoader("cardDetail", async (ctx) => {
+export const CardDetailLoader = createLoader(async (ctx) => {
   "use server";
   await new Promise((resolve) => setTimeout(resolve, 200));
 

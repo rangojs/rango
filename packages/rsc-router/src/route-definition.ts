@@ -1044,20 +1044,20 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
  *
  * Return type is automatically inferred from the callback.
  *
- * @param name - Unique identifier for the loader (used for client-side lookup)
  * @param fn - Async function that fetches data (should contain "use server" directive)
+ * @param fetchable - Optional flag to make the loader fetchable via useFetchLoader
  *
  * @example
  * ```typescript
  * // loaders/cart.ts - return type inferred from callback
- * export const CartLoader = createLoader("cart", async (ctx) => {
+ * export const CartLoader = createLoader(async (ctx) => {
  *   "use server";
  *   const user = ctx.get("user");
  *   return await db.cart.get(user.id); // Return type inferred!
  * });
  *
  * // loaders/product.ts - return type inferred
- * export const ProductLoader = createLoader("product", async (ctx) => {
+ * export const ProductLoader = createLoader(async (ctx) => {
  *   "use server";
  *   const { slug } = ctx.params;
  *   return await db.products.findBySlug(slug); // Return type inferred!

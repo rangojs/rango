@@ -44,7 +44,6 @@ test.describe.serial("loader-hmr", () => {
 let hmrTestCount = 0;
 
 export const HMRDynamicLoader = createLoader(
-  "hmr-dynamic-test",
   async (ctx) => {
     hmrTestCount++;
     return {
@@ -81,7 +80,6 @@ export const HMRDynamicLoader = createLoader(
     const newLoaderCode = `
 // HMR Test: Loader to be removed
 export const HMRRemovableLoader = createLoader(
-  "hmr-removable",
   async () => ({ message: "Will be removed" }),
   true
 );
@@ -134,7 +132,6 @@ export const HMRRemovableLoader = createLoader(
     const newLoaderCode = `
 // HMR Test: Another loader
 export const HMRAnotherLoader = createLoader(
-  "hmr-another",
   async () => ({ message: "Another loader" }),
   true
 );

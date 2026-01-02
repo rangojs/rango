@@ -13,11 +13,12 @@ function normalizePath(p: string): string {
 /**
  * Generate a short hash for a loader ID
  * Uses first 8 chars of SHA-256 hash for uniqueness while keeping IDs short
+ * Appends export name for easier debugging in production: "abc123#CartLoader"
  */
 function hashLoaderId(filePath: string, exportName: string): string {
   const input = `${filePath}#${exportName}`;
   const hash = crypto.createHash("sha256").update(input).digest("hex");
-  return hash.slice(0, 12);
+  return `${hash.slice(0, 8)}#${exportName}`;
 }
 
 /**
@@ -32,9 +33,48 @@ function hasCreateLoaderImport(code: string): boolean {
 }
 
 /**
+ * Count the number of arguments in a createLoader call
+ * Returns the count of top-level arguments (not counting nested commas)
+ */
+function countCreateLoaderArgs(code: string, startPos: number, endPos: number): number {
+  let depth = 0;
+  let argCount = 0;
+  let hasContent = false;
+
+  for (let i = startPos; i < endPos; i++) {
+    const char = code[i];
+
+    // Track nested structures
+    if (char === "(" || char === "[" || char === "{") {
+      depth++;
+      hasContent = true;
+    } else if (char === ")" || char === "]" || char === "}") {
+      depth--;
+    } else if (char === "," && depth === 0) {
+      // Top-level comma means another argument
+      argCount++;
+    } else if (!/\s/.test(char)) {
+      hasContent = true;
+    }
+  }
+
+  // If there's content, we have at least one argument
+  return hasContent ? argCount + 1 : 0;
+}
+
+/**
  * Find all export const X = createLoader(...) patterns and inject $$id
  * In production, IDs are hashed to avoid exposing file paths.
  * In dev, IDs use filePath#exportName for easier debugging.
+ *
+ * The ID is injected in two ways:
+ * 1. As a hidden third parameter to createLoader() for registry registration
+ * 2. As a property assignment X.$$id = "..." for external access
+ *
+ * IMPORTANT: The $$id must always be the THIRD parameter to createLoader.
+ * createLoader(fn, fetchable?, __injectedId?)
+ * If the user only provides fn, we inject: undefined, "id"
+ * If the user provides fn and fetchable, we inject: , "id"
  */
 function transformLoaderExports(
   code: string,
@@ -74,6 +114,12 @@ function transformLoaderExports(
       i++;
     }
 
+    // i now points just after the closing )
+    const closeParenPos = i - 1;
+
+    // Count existing arguments
+    const argCount = countCreateLoaderArgs(code, matchEnd, closeParenPos);
+
     // Find the semicolon or end of statement
     let statementEnd = i;
     while (statementEnd < code.length && /\s/.test(code[statementEnd])) {
@@ -89,9 +135,18 @@ function transformLoaderExports(
       ? hashLoaderId(filePath, exportName)
       : `${filePath}#${exportName}`;
 
-    // Inject $$id assignment after the statement
-    const injection = `\n${exportName}.$$id = "${loaderId}";`;
-    s.appendRight(statementEnd, injection);
+    // Inject $$id as hidden third parameter before the closing paren
+    // If user only has 1 arg (fn), we need to add undefined for fetchable
+    // createLoader(fn) -> createLoader(fn, undefined, "id")
+    // createLoader(fn, true) -> createLoader(fn, true, "id")
+    const paramInjection = argCount === 1
+      ? `, undefined, "${loaderId}"`
+      : `, "${loaderId}"`;
+    s.appendLeft(closeParenPos, paramInjection);
+
+    // Also set $$id property for external access (useLoader, useFetchLoader)
+    const propInjection = `\n${exportName}.$$id = "${loaderId}";`;
+    s.appendRight(statementEnd, propInjection);
     hasChanges = true;
   }
 
