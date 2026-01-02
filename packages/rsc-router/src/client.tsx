@@ -561,16 +561,12 @@ export function useFetchLoader<T>(
           );
         }
 
-        // Cache-busting parameter to ensure fresh data on each fetch
-        url.searchParams.set("_rsc_ts", Date.now().toString());
-
         // Fetch and deserialize RSC response
         const response = fetch(url.toString(), {
           method: "GET",
           headers: {
             Accept: "text/x-component",
           },
-          cache: "no-store", // Don't cache loader requests
         });
 
         // Dynamic import to avoid pulling browser-only deps at module level
