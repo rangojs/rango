@@ -155,9 +155,9 @@ const quantityStyles = {
 
 // Product modal content - uses loader data
 export function ProductModalContent() {
-  const product = useLoader(ProductLoader);
-  const recommendations = useLoader(ModalRecommendationsLoader);
-  const productCart = useLoader(ProductCartLoader);
+  const { data: product } = useLoader(ProductLoader);
+  const { data: recommendations } = useLoader(ModalRecommendationsLoader);
+  const { data: productCart } = useLoader(ProductCartLoader);
   console.log("ProductModalContent loader", { productCart });
 
   // Optimistic quantity state - updates immediately before server confirms
