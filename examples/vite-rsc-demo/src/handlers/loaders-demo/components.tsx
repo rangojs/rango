@@ -31,11 +31,10 @@ export function UsersDisplay() {
 
   return (
     <div style={cardStyle}>
-      <h3 style={headingStyle}>
-        useLoader - SSR/Navigation Data
-      </h3>
+      <h3 style={headingStyle}>useLoader - SSR/Navigation Data</h3>
       <p style={descStyle}>
-        Data loaded during SSR or navigation. Already available when component renders.
+        Data loaded during SSR or navigation. Already available when component
+        renders.
       </p>
 
       <div style={metaStyle}>
@@ -63,7 +62,9 @@ export function UsersDisplay() {
  * Perfect for data that should be loaded lazily or refreshed frequently.
  */
 export function StatsDisplay() {
-  const { data, isLoading, error, load } = useFetchLoader(StatsLoader, { throwOnError: false });
+  const { data, isLoading, error, load } = useFetchLoader(StatsLoader, {
+    throwOnError: false,
+  });
   const [actionResult, setActionResult] = useState<string | null>(null);
 
   const handleFetch = async () => {
@@ -80,12 +81,10 @@ export function StatsDisplay() {
 
   return (
     <div style={cardStyle}>
-      <h3 style={headingStyle}>
-        useFetchLoader - On-Demand Client Fetching
-      </h3>
+      <h3 style={headingStyle}>useFetchLoader - On-Demand Client Fetching</h3>
       <p style={descStyle}>
-        Data fetched via GET request when you click the button.
-        Not loaded during SSR - perfect for lazy loading.
+        Data fetched via GET request when you click the button. Not loaded
+        during SSR - perfect for lazy loading.
       </p>
 
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
@@ -101,13 +100,9 @@ export function StatsDisplay() {
         </button>
       </div>
 
-      {actionResult && (
-        <div style={actionResultStyle}>{actionResult}</div>
-      )}
+      {actionResult && <div style={actionResultStyle}>{actionResult}</div>}
 
-      {error && (
-        <div style={errorStyle}>Error: {error.message}</div>
-      )}
+      {error && <div style={errorStyle}>Error: {error.message}</div>}
 
       {data && (
         <>
@@ -142,7 +137,9 @@ export function StatsDisplay() {
  * The loader receives params via ctx.params.
  */
 export function UserSearch() {
-  const { data, isLoading, error, load } = useFetchLoader(UserSearchLoader, { throwOnError: false });
+  const { data, isLoading, error, load } = useFetchLoader(UserSearchLoader, {
+    throwOnError: false,
+  });
   const [query, setQuery] = useState("");
   const [role, setRole] = useState("all");
 
@@ -157,15 +154,20 @@ export function UserSearch() {
 
   return (
     <div style={cardStyle}>
-      <h3 style={headingStyle}>
-        useFetchLoader with Parameters
-      </h3>
+      <h3 style={headingStyle}>useFetchLoader with Parameters</h3>
       <p style={descStyle}>
-        Pass dynamic parameters from client to server loader.
-        Parameters are available via ctx.params on the server.
+        Pass dynamic parameters from client to server loader. Parameters are
+        available via ctx.params on the server.
       </p>
 
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", flexWrap: "wrap" }}>
+      <div
+        style={{
+          display: "flex",
+          gap: "0.5rem",
+          marginBottom: "1rem",
+          flexWrap: "wrap",
+        }}
+      >
         <input
           type="text"
           placeholder="Search by name or email..."
@@ -188,9 +190,7 @@ export function UserSearch() {
         </button>
       </div>
 
-      {error && (
-        <div style={errorStyle}>Error: {error.message}</div>
-      )}
+      {error && <div style={errorStyle}>Error: {error.message}</div>}
 
       {data && (
         <>
@@ -237,10 +237,17 @@ export function ResetCounters() {
 
   return (
     <div style={{ marginBottom: "1rem" }}>
-      <button onClick={handleReset} style={{ ...buttonStyle, background: "#6b7280" }}>
+      <button
+        onClick={handleReset}
+        style={{ ...buttonStyle, background: "#6b7280" }}
+      >
         Reset Call Counters
       </button>
-      {message && <span style={{ marginLeft: "0.5rem", color: "#10b981" }}>{message}</span>}
+      {message && (
+        <span style={{ marginLeft: "0.5rem", color: "#10b981" }}>
+          {message}
+        </span>
+      )}
     </div>
   );
 }
@@ -272,16 +279,21 @@ export function AddUserForm() {
 
   return (
     <div style={cardStyle}>
-      <h3 style={headingStyle}>
-        Action + useFetchLoader Refetch Pattern
-      </h3>
+      <h3 style={headingStyle}>Action + useFetchLoader Refetch Pattern</h3>
       <p style={descStyle}>
         Use a server action to modify data, then call <code>load()</code> to
         refetch updated data via the fetchable loader.
       </p>
 
       <form action={formAction} style={{ marginBottom: "1rem" }}>
-        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.5rem" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: "0.5rem",
+            flexWrap: "wrap",
+            marginBottom: "0.5rem",
+          }}
+        >
           <input
             type="text"
             name="name"
@@ -340,7 +352,7 @@ export function AddUserForm() {
       >
         <strong>Pattern:</strong>
         <pre style={{ margin: "0.5rem 0 0 0", whiteSpace: "pre-wrap" }}>
-{`const result = await addUserAction(formData);
+          {`const result = await addUserAction(formData);
 if (result.success) {
   // Refetch to get updated data
   await load({ params: { query: "", role: "all" } });
@@ -360,16 +372,17 @@ if (result.success) {
  * - Server-side execution
  */
 export function FormActionSearch() {
-  const { data, isLoading, error, load } = useFetchLoader(UserSearchLoader, { throwOnError: false });
+  const { data, isLoading, error, load } = useFetchLoader(UserSearchLoader, {
+    throwOnError: false,
+  });
 
   return (
     <div style={cardStyle}>
-      <h3 style={headingStyle}>
-        load.action - Progressive Enhancement
-      </h3>
+      <h3 style={headingStyle}>load.action - Progressive Enhancement</h3>
       <p style={descStyle}>
         Use <code>load.action</code> as a form action for progressive
-        enhancement. Works without JavaScript, enhanced with loading states when JS is available.
+        enhancement. Works without JavaScript, enhanced with loading states when
+        JS is available.
       </p>
 
       <form action={load.action} style={{ marginBottom: "1rem" }}>
@@ -386,19 +399,13 @@ export function FormActionSearch() {
             <option value="user">User</option>
             <option value="guest">Guest</option>
           </select>
-          <button
-            type="submit"
-            disabled={isLoading}
-            style={buttonStyle}
-          >
+          <button type="submit" disabled={isLoading} style={buttonStyle}>
             {isLoading ? "Searching..." : "Search"}
           </button>
         </div>
       </form>
 
-      {error && (
-        <div style={errorStyle}>Error: {error.message}</div>
-      )}
+      {error && <div style={errorStyle}>Error: {error.message}</div>}
 
       {data && (
         <>
@@ -433,7 +440,7 @@ export function FormActionSearch() {
       >
         <strong>Usage:</strong>
         <pre style={{ margin: "0.5rem 0 0 0", whiteSpace: "pre-wrap" }}>
-{`const { load, isLoading } = useFetchLoader(UserSearchLoader);
+          {`const { load, isLoading } = useFetchLoader(UserSearchLoader);
 
 <form action={load.action}>
   <input name="query" />
@@ -454,7 +461,10 @@ export function FormActionSearch() {
  * The RSC protocol serializes React elements and streams them to the client.
  */
 export function RSCContentDisplay() {
-  const { data, isLoading, error, load } = useFetchLoader<RSCContentLoaderData>(RSCContentLoader, { throwOnError: false });
+  const { data, isLoading, error, load } = useFetchLoader<RSCContentLoaderData>(
+    RSCContentLoader,
+    { throwOnError: false }
+  );
   const [style, setStyle] = useState<"default" | "cards">("default");
   const [count, setCount] = useState("3");
 
@@ -469,15 +479,20 @@ export function RSCContentDisplay() {
 
   return (
     <div style={cardStyle}>
-      <h3 style={headingStyle}>
-        useFetchLoader with RSC Content
-      </h3>
+      <h3 style={headingStyle}>useFetchLoader with RSC Content</h3>
       <p style={descStyle}>
-        Loaders can return <code>ReactNode</code> instead of just data.
-        The RSC protocol serializes React elements and streams them to the client.
+        Loaders can return <code>ReactNode</code> instead of just data. The RSC
+        protocol serializes React elements and streams them to the client.
       </p>
 
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", flexWrap: "wrap" }}>
+      <div
+        style={{
+          display: "flex",
+          gap: "0.5rem",
+          marginBottom: "1rem",
+          flexWrap: "wrap",
+        }}
+      >
         <select
           value={style}
           onChange={(e) => setStyle(e.target.value as "default" | "cards")}
@@ -497,20 +512,24 @@ export function RSCContentDisplay() {
           <option value="5">5 Users</option>
         </select>
         <button onClick={handleLoad} disabled={isLoading} style={buttonStyle}>
-          {isLoading ? "Loading RSC..." : data ? "Refresh Content" : "Load RSC Content"}
+          {isLoading
+            ? "Loading RSC..."
+            : data
+              ? "Refresh Content"
+              : "Load RSC Content"}
         </button>
       </div>
 
-      {error && (
-        <div style={errorStyle}>Error: {error.message}</div>
-      )}
+      {error && <div style={errorStyle}>Error: {error.message}</div>}
 
       {data && (
         <>
           <div style={metaStyle}>
             <span>Style: {data.style}</span>
             <span>Count: {data.count}</span>
-            <span>Rendered: {new Date(data.renderedAt).toLocaleTimeString()}</span>
+            <span>
+              Rendered: {new Date(data.renderedAt).toLocaleTimeString()}
+            </span>
           </div>
 
           <div
@@ -521,7 +540,13 @@ export function RSCContentDisplay() {
               background: "#faf5ff",
             }}
           >
-            <div style={{ fontSize: "0.75rem", color: "#6d28d9", marginBottom: "0.5rem" }}>
+            <div
+              style={{
+                fontSize: "0.75rem",
+                color: "#6d28d9",
+                marginBottom: "0.5rem",
+              }}
+            >
               ↓ Server-rendered React content ↓
             </div>
             {data.content}
@@ -546,7 +571,7 @@ export function RSCContentDisplay() {
       >
         <strong>How it works:</strong>
         <pre style={{ margin: "0.5rem 0 0 0", whiteSpace: "pre-wrap" }}>
-{`// Server loader returns ReactNode
+          {`// Server loader returns ReactNode
 export const RSCContentLoader = createLoader(
   "loaders-demo-rsc-content",
   async (ctx) => {
@@ -580,7 +605,10 @@ return <div>{data.content}</div>;`}
  * - No refetch needed! The action returns updated data automatically
  */
 export function NotesManager() {
-  const { data, isLoading, error, load } = useFetchLoader<NotesLoaderData>(NotesLoader, { throwOnError: false });
+  const { data, isLoading, error, load } = useFetchLoader<NotesLoaderData>(
+    NotesLoader,
+    { throwOnError: false }
+  );
   const formRef = useRef<HTMLFormElement>(null);
 
   // Fetch notes on mount - this is the GET request
@@ -596,15 +624,17 @@ export function NotesManager() {
 
   return (
     <div style={cardStyle}>
-      <h3 style={headingStyle}>
-        Loader as GET + Form Action
-      </h3>
+      <h3 style={headingStyle}>Loader as GET + Form Action</h3>
       <p style={descStyle}>
         Single loader handles both fetching (via <code>useEffect</code>) and
         mutations (via <code>load.action</code>). Unified data flow pattern.
       </p>
 
-      <form ref={formRef} action={handleSubmit} style={{ marginBottom: "1rem" }}>
+      <form
+        ref={formRef}
+        action={handleSubmit}
+        style={{ marginBottom: "1rem" }}
+      >
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <input
             type="text"
@@ -623,15 +653,15 @@ export function NotesManager() {
         </div>
       </form>
 
-      {error && (
-        <div style={errorStyle}>Error: {error.message}</div>
-      )}
+      {error && <div style={errorStyle}>Error: {error.message}</div>}
 
       {data && (
         <>
           <div style={metaStyle}>
             <span>Notes: {data.notes.length}</span>
-            <span>Fetched: {new Date(data.fetchedAt).toLocaleTimeString()}</span>
+            <span>
+              Fetched: {new Date(data.fetchedAt).toLocaleTimeString()}
+            </span>
             {data.addedNote && <span style={{ color: "#10b981" }}>Added!</span>}
           </div>
 
@@ -672,7 +702,7 @@ export function NotesManager() {
       >
         <strong>Pattern:</strong>
         <pre style={{ margin: "0.5rem 0 0 0", whiteSpace: "pre-wrap" }}>
-{`const { data, load } = useFetchLoader(NotesLoader);
+          {`const { data, load } = useFetchLoader(NotesLoader);
 
 // GET on mount
 useEffect(() => { load(); }, [load]);
@@ -697,7 +727,10 @@ useEffect(() => { load(); }, [load]);
  * - No refetch needed! Server returns updated file list automatically
  */
 export function FileUploader() {
-  const { data, isLoading, error, load } = useFetchLoader<FileUploadLoaderData>(FileUploadLoader, { throwOnError: false });
+  const { data, isLoading, error, load } = useFetchLoader<FileUploadLoaderData>(
+    FileUploadLoader,
+    { throwOnError: false }
+  );
   const formRef = useRef<HTMLFormElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
@@ -722,16 +755,25 @@ export function FileUploader() {
 
   return (
     <div style={cardStyle}>
-      <h3 style={headingStyle}>
-        File Upload via load.action
-      </h3>
+      <h3 style={headingStyle}>File Upload via load.action</h3>
       <p style={descStyle}>
-        Upload files using <code>load.action</code>. The server receives the file
-        via <code>ctx.formData.get("file")</code> as a File object.
+        Upload files using <code>load.action</code>. The server receives the
+        file via <code>ctx.formData.get("file")</code> as a File object.
       </p>
 
-      <form ref={formRef} action={handleSubmit} style={{ marginBottom: "1rem" }}>
-        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+      <form
+        ref={formRef}
+        action={handleSubmit}
+        style={{ marginBottom: "1rem" }}
+      >
+        <div
+          style={{
+            display: "flex",
+            gap: "0.5rem",
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
           <input
             type="file"
             name="file"
@@ -756,22 +798,30 @@ export function FileUploader() {
           </button>
         </div>
         {selectedFile && (
-          <div style={{ marginTop: "0.5rem", fontSize: "0.75rem", color: "#6b7280" }}>
+          <div
+            style={{
+              marginTop: "0.5rem",
+              fontSize: "0.75rem",
+              color: "#6b7280",
+            }}
+          >
             Selected: {selectedFile.name} ({formatSize(selectedFile.size)})
           </div>
         )}
       </form>
 
-      {error && (
-        <div style={errorStyle}>Error: {error.message}</div>
-      )}
+      {error && <div style={errorStyle}>Error: {error.message}</div>}
 
       {data && (
         <>
           <div style={metaStyle}>
             <span>Files: {data.files.length}</span>
-            <span>Fetched: {new Date(data.fetchedAt).toLocaleTimeString()}</span>
-            {data.uploadedFile && <span style={{ color: "#10b981" }}>Uploaded!</span>}
+            <span>
+              Fetched: {new Date(data.fetchedAt).toLocaleTimeString()}
+            </span>
+            {data.uploadedFile && (
+              <span style={{ color: "#10b981" }}>Uploaded!</span>
+            )}
           </div>
 
           {data.files.length > 0 ? (
@@ -820,7 +870,7 @@ export function FileUploader() {
       >
         <strong>Key benefit:</strong> No refetch needed after upload!
         <pre style={{ margin: "0.5rem 0 0 0", whiteSpace: "pre-wrap" }}>
-{`// Server loader handles upload AND returns updated list
+          {`// Server loader handles upload AND returns updated list
 async (ctx) => {
   const file = ctx.formData?.get("file") as File;
   if (file) await saveFile(file); // mutation
