@@ -13,11 +13,12 @@ function normalizePath(p: string): string {
 /**
  * Generate a short hash for a loader ID
  * Uses first 8 chars of SHA-256 hash for uniqueness while keeping IDs short
+ * Appends export name for easier debugging in production: "abc123#CartLoader"
  */
 function hashLoaderId(filePath: string, exportName: string): string {
   const input = `${filePath}#${exportName}`;
   const hash = crypto.createHash("sha256").update(input).digest("hex");
-  return hash.slice(0, 12);
+  return `${hash.slice(0, 8)}#${exportName}`;
 }
 
 /**
