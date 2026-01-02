@@ -9,10 +9,12 @@ import {
   RSCContentLoader,
   NotesLoader,
   FileUploadLoader,
+  ChatStreamLoader,
   type UsersLoaderData,
   type RSCContentLoaderData,
   type NotesLoaderData,
   type FileUploadLoaderData,
+  type ChatStreamLoaderData,
 } from "./loaders.js";
 import {
   incrementPageViewsAction,
@@ -881,6 +883,293 @@ async (ctx) => {
 await load.action(formData); // data now has new file`}
         </pre>
       </div>
+    </div>
+  );
+}
+
+/**
+ * ChatStream - Demonstrates async iterator/streaming from loader
+ *
+ * Shows how to consume an async generator returned from a loader.
+ * The stream yields words one at a time, creating a typing effect
+ * similar to AI chat interfaces.
+ */
+export function ChatStream() {
+  const { data, isLoading, error, load } =
+    useFetchLoader<ChatStreamLoaderData>(ChatStreamLoader, {
+      throwOnError: false,
+    });
+  const [prompt, setPrompt] = useState("");
+  const [streamedText, setStreamedText] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [wordCount, setWordCount] = useState(0);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Consume the async iterator when data arrives
+  useEffect(() => {
+    if (!data?.stream) return;
+
+    let cancelled = false;
+    setStreamedText("");
+    setWordCount(0);
+    setIsStreaming(true);
+
+    async function consumeStream() {
+      try {
+        for await (const word of data!.stream) {
+          if (cancelled) break;
+          setStreamedText((prev) => prev + word);
+          setWordCount((prev) => prev + 1);
+        }
+      } catch (e) {
+        console.error("Stream error:", e);
+      } finally {
+        if (!cancelled) {
+          setIsStreaming(false);
+        }
+      }
+    }
+
+    consumeStream();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [data]);
+
+  // Auto-scroll to bottom as text streams
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [streamedText]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!prompt.trim()) return;
+
+    setStreamedText("");
+    setWordCount(0);
+    await load({ params: { prompt } });
+  };
+
+  const handleQuickPrompt = async (text: string) => {
+    setPrompt(text);
+    setStreamedText("");
+    setWordCount(0);
+    await load({ params: { prompt: text } });
+  };
+
+  return (
+    <div style={cardStyle}>
+      <h3 style={headingStyle}>Async Iterator - Streaming Chat Demo</h3>
+      <p style={descStyle}>
+        Loader returns an async generator that yields words with delays.
+        The client consumes the stream with <code>for await...of</code>,
+        creating a real-time typing effect like AI chat interfaces.
+      </p>
+
+      {/* Quick prompts */}
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem", flexWrap: "wrap" }}>
+        <span style={{ fontSize: "0.75rem", color: "#6b7280", alignSelf: "center" }}>
+          Try:
+        </span>
+        {["hello", "help", "stream", "react"].map((word) => (
+          <button
+            key={word}
+            onClick={() => handleQuickPrompt(word)}
+            disabled={isLoading || isStreaming}
+            style={{
+              ...buttonStyle,
+              padding: "0.25rem 0.75rem",
+              fontSize: "0.75rem",
+              background: "#e5e7eb",
+              color: "#374151",
+            }}
+          >
+            {word}
+          </button>
+        ))}
+      </div>
+
+      {/* Chat input */}
+      <form onSubmit={handleSubmit} style={{ marginBottom: "1rem" }}>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <input
+            type="text"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="Type a message..."
+            disabled={isLoading || isStreaming}
+            style={{ ...inputStyle, flex: 1 }}
+          />
+          <button
+            type="submit"
+            disabled={isLoading || isStreaming || !prompt.trim()}
+            style={{
+              ...buttonStyle,
+              background: isLoading || isStreaming ? "#9ca3af" : "#8b5cf6",
+            }}
+          >
+            {isLoading ? "Loading..." : isStreaming ? "Streaming..." : "Send"}
+          </button>
+        </div>
+      </form>
+
+      {error && <div style={errorStyle}>Error: {error.message}</div>}
+
+      {/* Chat display */}
+      <div
+        style={{
+          border: "1px solid #e5e7eb",
+          borderRadius: "8px",
+          padding: "1rem",
+          minHeight: "150px",
+          maxHeight: "300px",
+          overflowY: "auto",
+          background: "#f9fafb",
+          fontFamily: "system-ui, sans-serif",
+        }}
+      >
+        {data && (
+          <>
+            {/* User message */}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                marginBottom: "0.75rem",
+              }}
+            >
+              <div
+                style={{
+                  background: "#8b5cf6",
+                  color: "white",
+                  padding: "0.5rem 1rem",
+                  borderRadius: "16px 16px 4px 16px",
+                  maxWidth: "80%",
+                }}
+              >
+                {data.prompt}
+              </div>
+            </div>
+
+            {/* AI response */}
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <div
+                style={{
+                  width: "32px",
+                  height: "32px",
+                  borderRadius: "50%",
+                  background: "linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "white",
+                  fontSize: "0.875rem",
+                  fontWeight: "bold",
+                  flexShrink: 0,
+                }}
+              >
+                AI
+              </div>
+              <div
+                style={{
+                  background: "white",
+                  border: "1px solid #e5e7eb",
+                  padding: "0.75rem 1rem",
+                  borderRadius: "4px 16px 16px 16px",
+                  maxWidth: "80%",
+                  lineHeight: 1.5,
+                }}
+              >
+                {streamedText}
+                {isStreaming && (
+                  <span
+                    style={{
+                      display: "inline-block",
+                      width: "8px",
+                      height: "16px",
+                      background: "#8b5cf6",
+                      marginLeft: "2px",
+                      animation: "blink 1s infinite",
+                    }}
+                  />
+                )}
+              </div>
+            </div>
+          </>
+        )}
+
+        {!data && !isLoading && (
+          <div style={{ ...emptyStateStyle, background: "transparent" }}>
+            Send a message to see streaming in action
+          </div>
+        )}
+
+        {isLoading && !data && (
+          <div style={{ ...emptyStateStyle, background: "transparent" }}>
+            Connecting...
+          </div>
+        )}
+
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Stream stats */}
+      {data && (
+        <div style={{ ...metaStyle, marginTop: "0.75rem", marginBottom: 0 }}>
+          <span>Words: {wordCount}/{data.totalWords}</span>
+          <span>Started: {new Date(data.startedAt).toLocaleTimeString()}</span>
+          <span style={{ color: isStreaming ? "#8b5cf6" : "#10b981" }}>
+            {isStreaming ? "● Streaming" : "✓ Complete"}
+          </span>
+        </div>
+      )}
+
+      {/* Code example */}
+      <div
+        style={{
+          marginTop: "1rem",
+          padding: "1rem",
+          background: "#faf5ff",
+          borderRadius: "8px",
+          fontSize: "0.875rem",
+        }}
+      >
+        <strong>How it works:</strong>
+        <pre style={{ margin: "0.5rem 0 0 0", whiteSpace: "pre-wrap" }}>
+          {`// Server: return async generator
+export const ChatStreamLoader = createLoader(
+  async (ctx) => {
+    async function* streamWords() {
+      for (const word of words) {
+        await delay(150);
+        yield word + " ";
+      }
+    }
+    return { stream: streamWords() };
+  },
+  true
+);
+
+// Client: consume with for await...of
+useEffect(() => {
+  async function consume() {
+    for await (const word of data.stream) {
+      setText(prev => prev + word);
+    }
+  }
+  consume();
+}, [data]);`}
+        </pre>
+      </div>
+
+      {/* CSS for cursor blink animation */}
+      <style>{`
+        @keyframes blink {
+          0%, 50% { opacity: 1; }
+          51%, 100% { opacity: 0; }
+        }
+      `}</style>
     </div>
   );
 }

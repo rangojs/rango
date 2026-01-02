@@ -360,3 +360,67 @@ export type FileUploadLoaderData = {
   uploadedFile: UploadedFile | null;
   fetchedAt: string;
 };
+
+/**
+ * ChatStreamLoader - Demonstrates async iterator/streaming response
+ *
+ * Returns an async generator that yields words one at a time with delays,
+ * simulating an AI chat response. The RSC protocol streams each yield
+ * to the client, enabling real-time UI updates.
+ *
+ * Use case: AI chat interfaces, real-time data feeds, progressive content loading
+ */
+export const ChatStreamLoader = createLoader(
+  async (ctx) => {
+    "use server";
+
+    const prompt = (ctx.params.prompt as string) || "Hello! How can I help you today?";
+
+    // Simulated AI responses based on prompt keywords
+    const responses: Record<string, string> = {
+      hello: "Hello! I'm a demo AI assistant. I can help you understand how streaming works in RSC. Each word you see is being streamed from the server in real-time!",
+      help: "I'd be happy to help! This demo shows how async iterators can be used to stream content from server to client. It's perfect for AI chat interfaces, live feeds, and progressive loading.",
+      stream: "Streaming in RSC works by yielding values from an async generator. The RSC protocol serializes each yielded value and sends it to the client incrementally. This creates a smooth, real-time experience!",
+      react: "React Server Components are amazing! They let you write server-side code that streams to the client. Combined with async iterators, you can build incredibly responsive UIs.",
+      default: "This is a streaming response demo. Each word is sent from the server with a small delay to simulate an AI typing. Try different prompts like 'hello', 'help', 'stream', or 'react'!",
+    };
+
+    // Select response based on prompt keywords
+    const lowerPrompt = prompt.toLowerCase();
+    let responseText = responses.default;
+    for (const [keyword, response] of Object.entries(responses)) {
+      if (lowerPrompt.includes(keyword)) {
+        responseText = response;
+        break;
+      }
+    }
+
+    const words = responseText.split(" ");
+
+    // Create async generator that yields words with delay
+    async function* streamWords() {
+      for (let i = 0; i < words.length; i++) {
+        // Variable delay: shorter for common words, longer for punctuation
+        const word = words[i];
+        const delay = word.match(/[.!?]$/) ? 400 : 150;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        yield word + (i < words.length - 1 ? " " : "");
+      }
+    }
+
+    return {
+      stream: streamWords(),
+      prompt,
+      totalWords: words.length,
+      startedAt: new Date().toISOString(),
+    };
+  },
+  true // Enable fetchable
+);
+
+export type ChatStreamLoaderData = {
+  stream: AsyncGenerator<string, void, unknown>;
+  prompt: string;
+  totalWords: number;
+  startedAt: string;
+};
