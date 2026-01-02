@@ -90,7 +90,7 @@ export default map<typeof todosRoutes>(
       // Global todos loader
       loader(TodosLoader, () => [
         // Revalidate on any todo action
-        // Note: actionId format is like "/src/handlers/todos/actions.ts#addTodo"
+        // actionId format: "src/handlers/todos/actions.ts#addTodo"
         revalidate(({ actionId, method, defaultShouldRevalidate }) => {
           console.log("loader revalidation called", { actionId, method });
 

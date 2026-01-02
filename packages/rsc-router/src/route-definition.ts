@@ -293,9 +293,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   currentParams.slug !== nextParams.slug
    * )
    *
-   * // Revalidate after specific actions
+   * // Revalidate after specific actions (actionId format: "path/to/file.ts#exportName")
    * revalidate(({ actionId }) =>
-   *   actionId === "cartUpdate" || actionId === "cartRemove"
+   *   actionId?.includes("Cart") ?? false
    * )
    *
    * // Soft decision (suggest but allow override)
@@ -311,9 +311,9 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * ```typescript
    * loader(ProductLoader)
    *
-   * // With loader-specific revalidation
+   * // With loader-specific revalidation (match by file or export name)
    * loader(CartLoader, () => [
-   *   revalidate(({ actionId }) => actionId?.startsWith("cart:")),
+   *   revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
    * ])
    *
    * // Access loader data in handlers via ctx.use()
@@ -1067,7 +1067,7 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
  * layout(<ShopLayout />, () => [
  *   loader(CartLoader),
  *   loader(CartLoader, () => [
- *     revalidate(({ action }) => action === "cart:update"),
+ *     revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
  *   ]),
  * ])
  *
