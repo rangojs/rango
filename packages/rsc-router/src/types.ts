@@ -450,7 +450,7 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
   layoutName?: string;      // Layout name (e.g., "root", "shop", "auth") - only for layouts
   slotName?: string;        // Slot name (e.g., "@sidebar", "@modal") - only for parallels
   // Action context (populated when revalidation triggered by server action):
-  actionId?: string;        // Action identifier (e.g., "actions/shop.actions!addToCart")
+  actionId?: string;        // Action identifier (e.g., "src/actions.ts#addToCart")
   actionUrl?: URL;          // URL where action was executed
   actionResult?: any;       // Return value from action execution
   formData?: FormData;      // FormData from action request
