@@ -501,7 +501,21 @@ export function createNavigationBridge(
       // Check if we have cached segments for target URL
       const historyKey = generateHistoryKey(url);
       const cached = store.getCachedSegments(historyKey);
-      const cachedSegments = cached?.segments;
+
+      // For shared segments (same ID on current and target), use current page's version
+      // since it may have fresher data after an action revalidation.
+      // This avoids unnecessary server round-trips for shared layout loaders.
+      let cachedSegments = cached?.segments;
+      if (cachedSegments && sourceCached?.segments) {
+        const sourceSegmentMap = new Map(
+          sourceCached.segments.map((s) => [s.id, s])
+        );
+        cachedSegments = cachedSegments.map((targetSeg) => {
+          const sourceSeg = sourceSegmentMap.get(targetSeg.id);
+          // Use source (current page) version for shared segments - it's fresher
+          return sourceSeg || targetSeg;
+        });
+      }
 
       // Also check if there's an intercept cache entry for this URL
       // If so, this URL CAN be intercepted, and we shouldn't use the non-intercept cache
@@ -532,8 +546,10 @@ export function createNavigationBridge(
           false,
           tx.handle.signal,
           tx.with({ url, replace: options?.replace, scroll: options?.scroll, state: resolvedState }),
-          // Pass cached segments so the segment map is consistent with what we
-          // tell the server we have. If server returns empty diff, we use these.
+          // Pass cached segments (merged with current page's fresh segments for shared IDs)
+          // so the segment map is consistent with what we tell the server we have.
+          // Server decides what needs revalidation based on route matching and custom functions.
+          // No need for staleRevalidation flag - we're sending the freshest segments we have.
           hasUsableCache ? { targetCacheSegments: cachedSegments } : undefined
         );
         tx;

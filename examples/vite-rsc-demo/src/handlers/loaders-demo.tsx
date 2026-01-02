@@ -179,6 +179,7 @@ function LoadersStatsPage() {
         </div>
 
         <ResetCounters />
+        <UsersDisplay />
         <StatsDisplay />
         <UserSearch />
         <FormActionSearch />
@@ -213,8 +214,17 @@ export default map<typeof loadersRoutes>(
     layout(<LoadersDemoLayout />, () => [
       // Global loader for the demo - provides users data
       loader(UsersLoader, () => [
-        revalidate(({ actionId, actionUrl, defaultShouldRevalidate }) => {
-          return actionId?.includes("loader-demo") ?? defaultShouldRevalidate;
+        revalidate(({ actionId, stale, defaultShouldRevalidate }) => {
+          console.log("actionId", {
+            actionId,
+            isaction: actionId?.includes("loaders-demo"),
+          });
+
+          return (
+            actionId?.includes("loaders-demo") ??
+            stale ??
+            defaultShouldRevalidate
+          );
         }),
       ]),
 
