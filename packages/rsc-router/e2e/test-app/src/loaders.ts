@@ -179,10 +179,13 @@ export const HookTestLoaderB = createLoader(
 /**
  * Fetchable loader for testing useFetchLoader on-demand fetching.
  * This loader is NOT registered on any route - used for client-side fetching only.
+ * Has 500ms delay to make loading state observable in tests.
  */
 export const UnregisteredLoader = createLoader(
   async (ctx) => {
     const id = ctx.params.id || "unregistered";
+    // Delay to ensure loading state is visible in tests
+    await new Promise((resolve) => setTimeout(resolve, 500));
     return {
       id,
       message: "Fetched from unregistered loader",
