@@ -1,11 +1,35 @@
 import { map, Meta } from "rsc-router/server";
+import { Link } from "rsc-router/client";
 import type { homeRoutes } from "../routes.js";
+import { Breadcrumbs } from "../handles/breadcrumbs.js";
+import { FeatureLocationState } from "../location-states.js";
+
+const features = [
+  {
+    slug: "server-components",
+    name: "Server Components",
+    description: "React components that render on the server",
+  },
+  {
+    slug: "server-actions",
+    name: "Server Actions",
+    description: "Functions that run on the server",
+  },
+  {
+    slug: "streaming",
+    name: "Streaming",
+    description: "Progressive rendering with Suspense",
+  },
+];
 
 export default map<typeof homeRoutes>(({ route }) => [
   route("index", (ctx) => {
     const meta = ctx.use(Meta);
     meta({ title: "Home - RSC Router Cloudflare" });
     meta({ name: "description", content: "A minimal RSC Router example running on Cloudflare Workers" });
+
+    const breadcrumb = ctx.use(Breadcrumbs);
+    breadcrumb({ label: "Home", href: "/" });
 
     return (
       <main data-testid="home-page">
@@ -17,6 +41,27 @@ export default map<typeof homeRoutes>(({ route }) => [
           <li>Client-side navigation with partial rendering</li>
           <li>Server Actions (see the Counter page)</li>
           <li>Cloudflare Workers deployment</li>
+        </ul>
+
+        <h2 style={{ marginTop: "2rem" }}>Features</h2>
+        <p style={{ marginBottom: "1rem" }}>
+          Click a feature to see details (with location state for instant loading preview):
+        </p>
+        <ul style={{ marginLeft: "1.5rem" }} data-testid="feature-links">
+          {features.map((feature) => (
+            <li key={feature.slug} style={{ marginBottom: "0.5rem" }}>
+              <Link
+                to={`/features/${feature.slug}`}
+                state={[FeatureLocationState({ name: feature.name, description: feature.description })]}
+                data-testid={`feature-link-${feature.slug}`}
+                style={{ color: "#0070f3", textDecoration: "none" }}
+              >
+                {feature.name}
+              </Link>
+              {" - "}
+              <span style={{ color: "#666" }}>{feature.description}</span>
+            </li>
+          ))}
         </ul>
       </main>
     );
