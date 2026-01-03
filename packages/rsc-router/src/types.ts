@@ -21,6 +21,12 @@ export interface RouterInternalContext {
    * Created by createRSCHandler and passed to router.match().
    */
   __handleStore?: HandleStore;
+
+  /**
+   * Shared variables between app-level middleware and route handlers.
+   * Set by middleware via ctx.set(), read by route handlers via ctx.get().
+   */
+  __middlewareVariables?: Record<string, any>;
 }
 
 /**
@@ -714,11 +720,11 @@ export interface ResolvedSegment {
   layoutName?: string; // For layouts: the layout name identifier
   parallelName?: string; // For parallels: the parallel group name (used to match with revalidations)
   // Loader-specific fields
-  loaderName?: string; // For loaders: the loader name identifier
+  loaderId?: string; // For loaders: the loader $$id identifier
   loaderData?: any; // For loaders: the resolved data from loader execution
   // Intercept loader fields (for streaming loader data in parallel segments)
   loaderDataPromise?: Promise<any[]> | any[]; // Loader data promise or resolved array
-  loaderNames?: string[]; // Names of loaders for this segment
+  loaderIds?: string[]; // IDs ($$id) of loaders for this segment
   // Error-specific fields
   error?: ErrorInfo; // For error segments: the error information
   // NotFound-specific fields
@@ -734,7 +740,7 @@ export interface SegmentMetadata {
   index: number;
   params?: Record<string, string>;
   slot?: string;
-  loaderName?: string;
+  loaderId?: string;
   error?: ErrorInfo;
   notFoundInfo?: NotFoundInfo;
 }
@@ -928,14 +934,14 @@ export type RouteMiddlewareFn<
  *
  * @example
  * ```typescript
- * const CartLoader = createLoader("cart", async (ctx) => {
+ * const CartLoader = createLoader(async (ctx) => {
  *   "use server";
  *   const user = ctx.get("user");  // From auth middleware
  *   return await db.cart.get(user.id);
  * });
  *
  * // With typed params:
- * const ProductLoader = createLoader<Product, { slug: string }>("product", async (ctx) => {
+ * const ProductLoader = createLoader<Product, { slug: string }>(async (ctx) => {
  *   "use server";
  *   const { slug } = ctx.params;  // slug is typed as string
  *   return await db.products.findBySlug(slug);
@@ -997,13 +1003,13 @@ export type LoaderFn<T, TParams = Record<string, string | undefined>, TEnv = any
  * @example
  * ```typescript
  * // Definition (same file works on server and client)
- * export const CartLoader = createLoader("cart", async (ctx) => {
+ * export const CartLoader = createLoader(async (ctx) => {
  *   "use server";
  *   return await db.cart.get(ctx.get("user").id);
  * });
  *
  * // With typed params:
- * export const ProductLoader = createLoader<Product, { slug: string }>("product", async (ctx) => {
+ * export const ProductLoader = createLoader<Product, { slug: string }>(async (ctx) => {
  *   "use server";
  *   const { slug } = ctx.params;  // slug is typed as string
  *   return await db.products.findBySlug(slug);
@@ -1016,9 +1022,47 @@ export type LoaderFn<T, TParams = Record<string, string | undefined>, TEnv = any
  * const cart = useLoader(CartLoader);
  * ```
  */
+/**
+ * Options for fetchable loaders
+ */
+export type FetchableLoaderOptions = {
+  middleware?: MiddlewareFn<any>[];
+};
+
+/**
+ * Options for load() calls - type-safe union based on method
+ */
+export type LoadOptions =
+  | {
+      method?: "GET";
+      params?: Record<string, string>;
+    }
+  | {
+      method: "POST" | "PUT" | "PATCH" | "DELETE";
+      params?: Record<string, string>;
+      body?: FormData | Record<string, any>;
+    };
+
+/**
+ * Context passed to loader action on server
+ */
+export type LoaderActionContext = {
+  method: string;
+  params: Record<string, string>;
+  body?: FormData | Record<string, any>;
+  formData?: FormData;
+};
+
+/**
+ * Loader action function type - server action for form-based fetching
+ * This is a server action that can be passed to form action prop
+ */
+export type LoaderAction<T> = (formData: FormData) => Promise<T>;
+
 export type LoaderDefinition<T = any, TParams = Record<string, string | undefined>> = {
   __brand: "loader";
-  name: string;
+  $$id: string;  // Injected by Vite plugin (exposeLoaderId) - unique identifier
   fn?: LoaderFn<T, TParams, any>;  // Optional - stripped on client via "use server"
+  action?: LoaderAction<T>;  // Optional - for fetchable loaders
 };
 

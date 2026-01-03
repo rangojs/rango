@@ -6,7 +6,7 @@ import { KanbanBoard } from "./components.js";
 import { DebugSegmentWrapper } from "../../components/DebugSegmentWrapper.js";
 
 export function KanbanBoardContent() {
-  const board = useLoader(KanbanLoader);
+  const { data: board } = useLoader(KanbanLoader);
 
   return (
     <DebugSegmentWrapper type="route" name="Kanban Index">

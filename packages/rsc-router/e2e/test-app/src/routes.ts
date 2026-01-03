@@ -63,4 +63,36 @@ export const testRoutes = route({
     child: "/meta-merge/child",
     deep: "/meta-merge/deep/nested",
   },
+  // Route for testing useFetchLoader hook (GET-based loader fetching)
+  fetchLoader: "/fetch-loader",
+  // Routes for testing useLoader and useFetchLoader hooks
+  hookTests: {
+    index: "/hook-tests",
+    routeA: "/hook-tests/route-a",
+    routeB: "/hook-tests/route-b",
+    // Route WITHOUT loader registered - for testing useLoader throws
+    noLoader: "/hook-tests/no-loader",
+    // Route for testing form action
+    formAction: "/hook-tests/form-action",
+  },
+  // Route for testing ctx.use(loader) composition
+  loaderComposition: "/loader-composition",
+  // Route for testing inline actions (defined directly in RSC, not imported)
+  inlineAction: "/inline-action",
+  // Routes for testing app-level middleware
+  middlewareTest: {
+    // Index page for middleware tests
+    index: "/middleware-test",
+    // Protected route - requires auth cookie
+    protected: "/middleware-test/protected",
+    protectedDashboard: "/middleware-test/protected/dashboard",
+    // Error handling route - middleware catches errors
+    errorHandler: "/middleware-test/error-handler/trigger",
+    // Cookie test route - middleware sets/reads cookies
+    cookies: "/middleware-test/cookies",
+    // Params test route - middleware extracts :id param
+    params: "/middleware-test/params/:paramId",
+    // Shared variables test - middleware sets ctx.set(), handler reads
+    sharedVars: "/middleware-test/shared-vars",
+  },
 });

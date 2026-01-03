@@ -65,6 +65,11 @@ import {
 import { router } from "${routerPath}";
 import { createRSCHandler } from "rsc-router/rsc";
 
+// Import loader manifest to ensure all fetchable loaders are registered at startup
+// This is critical for serverless/multi-process deployments where the loader module
+// might not be imported before a GET request arrives
+import "virtual:rsc-router/loader-manifest";
+
 export default createRSCHandler({
   router,
   deps: {

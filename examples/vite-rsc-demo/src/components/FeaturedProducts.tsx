@@ -76,11 +76,7 @@ function FeaturedProductsLoading() {
  * consume the promise - the content streams in when ready.
  */
 export function FeaturedProducts() {
-  const data = useLoader(FeaturedProductsLoader) as FeaturedProductsData | null;
-
-  if (!data) {
-    return <FeaturedProductsLoading />;
-  }
+  const { data } = useLoader(FeaturedProductsLoader);
 
   return (
     <div

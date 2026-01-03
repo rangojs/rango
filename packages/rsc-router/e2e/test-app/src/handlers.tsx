@@ -8,6 +8,16 @@ import {
   CartQuantityLoader,
   SlowLoader,
   SlowProductDetailLoader,
+  FetchableTestLoader,
+  HookTestLoader,
+  HookTestLoaderB,
+  UnregisteredLoader,
+  ErrorLoader,
+  ProtectedLoader,
+  ComposingNonFetchableUsesNonFetchable,
+  ComposingNonFetchableUsesFetchable,
+  ComposingFetchableUsesFetchable,
+  ComposingFetchableUsesNonFetchable,
 } from "./loaders.js";
 import { Breadcrumbs } from "./handles.js";
 import { AddToCartButton } from "./components/AddToCartButton.js";
@@ -32,6 +42,21 @@ import { ChildMetaSetter } from "./components/ChildMetaSetter.js";
 import { AsyncChildMetaSetter } from "./components/AsyncChildMetaSetter.js";
 import { SegmentsDisplay } from "./components/SegmentsDisplay.js";
 import { LinkPendingBadge } from "./components/LinkStatusDisplay.js";
+import { FetchLoaderTest } from "./components/FetchLoaderTest.js";
+import {
+  UseLoaderTest,
+  UseFetchLoaderPreloadedTest,
+  UseFetchLoaderUnregisteredTest,
+  UseLoaderTestB,
+  UseFetchLoaderTestB,
+  ErrorLoaderTest,
+  ProtectedLoaderTest,
+  UnhandledErrorLoaderTest,
+  UseLoaderThrowsTest,
+  IsLoadingTest,
+  FormActionTest,
+  FormActionProgressiveTest,
+} from "./components/HookTests.js";
 
 export default map<typeof testRoutes>(
   ({ route, layout, intercept, loader, loading, when }) => [
@@ -1016,7 +1041,387 @@ export default map<typeof testRoutes>(
             ),
           ]
         ),
+
+        // =====================================================
+        // FETCH LOADER TEST
+        // =====================================================
+        // Route for testing useFetchLoader hook (GET-based loader fetching)
+        route("fetchLoader", () => (
+          <div data-testid="fetch-loader-page">
+            <Link to="/" data-testid="back-link">
+              ← Back to Home
+            </Link>
+            <h1 data-testid="fetch-loader-title">useFetchLoader Test</h1>
+            <p data-testid="fetch-loader-description">
+              Test GET-based loader fetching with useFetchLoader hook
+            </p>
+            <FetchLoaderTest loader={FetchableTestLoader} />
+          </div>
+        )),
+
+        // =====================================================
+        // useLoader / useFetchLoader HOOK TESTS
+        // =====================================================
+        // Index route with links to test routes
+        route("hookTests.index", () => (
+          <div data-testid="hook-tests-index">
+            <Link to="/" data-testid="back-link">
+              ← Back to Home
+            </Link>
+            <h1 data-testid="hook-tests-title">useLoader / useFetchLoader Tests</h1>
+            <nav data-testid="hook-tests-nav">
+              <Link to="/hook-tests/route-a" data-testid="hook-tests-route-a-link">
+                Route A (Pre-loaded)
+              </Link>
+              <br />
+              <Link to="/hook-tests/route-b" data-testid="hook-tests-route-b-link">
+                Route B (For Navigation)
+              </Link>
+            </nav>
+          </div>
+        )),
+
+        // Route A - has HookTestLoader registered via loader()
+        route(
+          "hookTests.routeA",
+          () => (
+            <div data-testid="hook-tests-route-a">
+              <Link to="/" data-testid="back-link">
+                ← Back to Home
+              </Link>
+              <Link
+                to="/hook-tests/route-b"
+                data-testid="navigate-to-b-link"
+                style={{ marginLeft: "1rem" }}
+              >
+                Navigate to Route B
+              </Link>
+              <h1 data-testid="route-a-title">Route A - Pre-loaded Loaders</h1>
+
+              <div style={{ display: "flex", gap: "2rem", flexWrap: "wrap" }}>
+                <UseLoaderTest loader={HookTestLoader} />
+                <UseFetchLoaderPreloadedTest loader={HookTestLoader} />
+                <UseFetchLoaderUnregisteredTest loader={UnregisteredLoader} />
+              </div>
+
+              <hr style={{ margin: "2rem 0" }} />
+              <h2 data-testid="error-tests-title">Error Handling Tests</h2>
+              <div style={{ display: "flex", gap: "2rem", flexWrap: "wrap" }}>
+                <ErrorLoaderTest loader={ErrorLoader} />
+                <UnhandledErrorLoaderTest loader={ErrorLoader} />
+              </div>
+
+              <hr style={{ margin: "2rem 0" }} />
+              <h2 data-testid="middleware-tests-title">Middleware / Security Tests</h2>
+              <div style={{ display: "flex", gap: "2rem", flexWrap: "wrap" }}>
+                <ProtectedLoaderTest loader={ProtectedLoader} />
+              </div>
+            </div>
+          ),
+          () => [loader(HookTestLoader)]
+        ),
+
+        // Route B - has HookTestLoaderB registered via loader()
+        route(
+          "hookTests.routeB",
+          () => (
+            <div data-testid="hook-tests-route-b">
+              <Link to="/" data-testid="back-link">
+                ← Back to Home
+              </Link>
+              <Link
+                to="/hook-tests/route-a"
+                data-testid="navigate-to-a-link"
+                style={{ marginLeft: "1rem" }}
+              >
+                Navigate to Route A
+              </Link>
+              <h1 data-testid="route-b-title">Route B - Navigation Target</h1>
+
+              <div style={{ display: "flex", gap: "2rem", flexWrap: "wrap" }}>
+                <UseLoaderTestB loader={HookTestLoaderB} />
+                <UseFetchLoaderTestB loader={HookTestLoaderB} />
+              </div>
+            </div>
+          ),
+          () => [loader(HookTestLoaderB)]
+        ),
+
+        // Route WITHOUT loader registered - for testing useLoader throws
+        route("hookTests.noLoader", () => (
+          <div data-testid="hook-tests-no-loader">
+            <Link to="/" data-testid="back-link">
+              ← Back to Home
+            </Link>
+            <h1 data-testid="no-loader-title">No Loader Route</h1>
+            <p>This route does NOT have HookTestLoader registered via loader()</p>
+
+            <div style={{ display: "flex", gap: "2rem", flexWrap: "wrap" }}>
+              <UseLoaderThrowsTest loader={HookTestLoader} />
+            </div>
+          </div>
+        )),
+
+        // Route for testing form action and isLoading state
+        route("hookTests.formAction", () => (
+          <div data-testid="hook-tests-form-action">
+            <Link to="/" data-testid="back-link">
+              ← Back to Home
+            </Link>
+            <h1 data-testid="form-action-title">Form Action Test Route</h1>
+
+            <div style={{ display: "flex", gap: "2rem", flexWrap: "wrap" }}>
+              <IsLoadingTest loader={UnregisteredLoader} />
+              <FormActionTest loader={UnregisteredLoader} />
+              <FormActionProgressiveTest loader={UnregisteredLoader} />
+            </div>
+          </div>
+        )),
       ]
+    ),
+
+    // Route for testing inline actions (defined directly in RSC, not imported from "use server" module)
+    // This tests that actions without a hash-to-file mapping still work correctly
+    route("inlineAction", () => {
+      // Inline action defined directly in the RSC component
+      async function inlineTestAction(formData: FormData) {
+        "use server";
+        const value = formData.get("testValue") as string;
+        return {
+          success: true,
+          receivedValue: value,
+          timestamp: new Date().toISOString(),
+        };
+      }
+
+      return (
+        <div data-testid="inline-action-page">
+          <Link to="/" data-testid="back-link">
+            ← Back to Home
+          </Link>
+          <h1 data-testid="inline-action-title">Inline Action Test</h1>
+          <p data-testid="inline-action-description">
+            Tests an action defined directly in the RSC (not imported from a "use server" module).
+          </p>
+          <form action={inlineTestAction} data-testid="inline-action-form">
+            <input
+              type="text"
+              name="testValue"
+              defaultValue="test-inline"
+              data-testid="inline-action-input"
+            />
+            <button type="submit" data-testid="inline-action-submit">
+              Submit Inline Action
+            </button>
+          </form>
+        </div>
+      );
+    }),
+
+    // =====================================================
+    // MIDDLEWARE TEST ROUTES
+    // =====================================================
+
+    // Middleware test index
+    route("middlewareTest.index", (ctx) => {
+      // Check if redirected from protected route
+      const authRequired = ctx.url.searchParams.get("auth") === "required";
+      return (
+        <div data-testid="middleware-test-index">
+          <Link to="/" data-testid="back-link">
+            ← Back to Home
+          </Link>
+          <h1 data-testid="middleware-test-title">Middleware Tests</h1>
+          {authRequired && (
+            <p data-testid="auth-required-message">Authentication required. Please login.</p>
+          )}
+          <nav data-testid="middleware-test-nav">
+            <ul>
+              <li>
+                <Link to="/middleware-test/protected" data-testid="protected-link">
+                  Protected Route (requires auth)
+                </Link>
+              </li>
+              <li>
+                <Link to="/middleware-test/protected/dashboard" data-testid="protected-dashboard-link">
+                  Protected Dashboard
+                </Link>
+              </li>
+              <li>
+                <Link to="/middleware-test/error-handler/trigger" data-testid="error-handler-link">
+                  Error Handler Test
+                </Link>
+              </li>
+              <li>
+                <Link to="/middleware-test/cookies" data-testid="cookies-link">
+                  Cookie Test
+                </Link>
+              </li>
+              <li>
+                <Link to="/middleware-test/params/test-123" data-testid="params-link">
+                  Params Test (id=test-123)
+                </Link>
+              </li>
+              <li>
+                <Link to="/middleware-test/shared-vars" data-testid="shared-vars-link">
+                  Shared Variables Test
+                </Link>
+              </li>
+            </ul>
+          </nav>
+        </div>
+      );
+    }),
+
+    // Protected route - requires auth cookie (set by middleware)
+    route("middlewareTest.protected", (ctx) => {
+      // Get user from middleware-set context variable
+      const user = ctx.get("user") as { id: string; name: string } | undefined;
+      return (
+        <div data-testid="middleware-test-protected">
+          <Link to="/middleware-test" data-testid="back-link">
+            ← Back to Middleware Tests
+          </Link>
+          <h1 data-testid="protected-title">Protected Route</h1>
+          {user ? (
+            <div data-testid="user-info">
+              <p data-testid="user-id">User ID: {user.id}</p>
+              <p data-testid="user-name">User Name: {user.name}</p>
+            </div>
+          ) : (
+            <p data-testid="no-user">No user context (this shouldn't happen)</p>
+          )}
+        </div>
+      );
+    }),
+
+    // Protected dashboard - also requires auth
+    route("middlewareTest.protectedDashboard", (ctx) => {
+      const user = ctx.get("user") as { id: string; name: string } | undefined;
+      return (
+        <div data-testid="middleware-test-protected-dashboard">
+          <Link to="/middleware-test" data-testid="back-link">
+            ← Back to Middleware Tests
+          </Link>
+          <h1 data-testid="dashboard-title">Protected Dashboard</h1>
+          {user && (
+            <p data-testid="dashboard-user">Welcome, {user.name}!</p>
+          )}
+        </div>
+      );
+    }),
+
+    // Error handler test - throws error, caught by middleware
+    route("middlewareTest.errorHandler", () => {
+      throw new Error("Test error from handler");
+      return (
+        <div data-testid="error-handler-page">
+          This should never render
+        </div>
+      );
+    }),
+
+    // Cookie test route
+    route("middlewareTest.cookies", (ctx) => {
+      const visitCount = ctx.get("visitCount") as number | undefined;
+      return (
+        <div data-testid="middleware-test-cookies">
+          <Link to="/middleware-test" data-testid="back-link">
+            ← Back to Middleware Tests
+          </Link>
+          <h1 data-testid="cookies-title">Cookie Test</h1>
+          <p data-testid="visit-count">Visit count: {visitCount ?? "unknown"}</p>
+          <p data-testid="cookies-description">
+            Refresh the page to see the visit count increment.
+          </p>
+        </div>
+      );
+    }),
+
+    // Params test route - middleware extracts :id param
+    route("middlewareTest.params", (ctx) => {
+      const middlewareParams = ctx.get("middlewareParams") as Record<string, string> | undefined;
+      return (
+        <div data-testid="middleware-test-params">
+          <Link to="/middleware-test" data-testid="back-link">
+            ← Back to Middleware Tests
+          </Link>
+          <h1 data-testid="params-title">Params Test</h1>
+          <p data-testid="route-param-id">Route param ID: {ctx.params.paramId}</p>
+          <p data-testid="middleware-param-id">
+            Middleware param ID: {middlewareParams?.id ?? "none"}
+          </p>
+        </div>
+      );
+    }),
+
+    // Shared variables test
+    route("middlewareTest.sharedVars", (ctx) => {
+      // This route doesn't have specific middleware, so test that global middleware variables work
+      return (
+        <div data-testid="middleware-test-shared-vars">
+          <Link to="/middleware-test" data-testid="back-link">
+            ← Back to Middleware Tests
+          </Link>
+          <h1 data-testid="shared-vars-title">Shared Variables Test</h1>
+          <p data-testid="shared-vars-description">
+            This page tests that middleware can share variables with handlers via ctx.set/get.
+          </p>
+        </div>
+      );
+    }),
+
+    // Route for testing ctx.use(loader) composition
+    // Tests all combinations: fetchable/non-fetchable loaders using fetchable/non-fetchable dependencies
+    // Also tests memoization - base loaders should only be invoked once per request
+    route(
+      "loaderComposition",
+      async (ctx) => {
+        // Load all four composition scenarios
+        // Note: Two loaders use BaseNonFetchableLoader, two use BaseFetchableLoader
+        // If memoization works, each base loader should only be invoked once
+        const nfUsesNf = await ctx.use(ComposingNonFetchableUsesNonFetchable);
+        const nfUsesF = await ctx.use(ComposingNonFetchableUsesFetchable);
+        const fUsesF = await ctx.use(ComposingFetchableUsesFetchable);
+        const fUsesNf = await ctx.use(ComposingFetchableUsesNonFetchable);
+
+        return (
+          <div data-testid="loader-composition-page">
+            <Link to="/" data-testid="back-link">
+              ← Back to Home
+            </Link>
+            <h1 data-testid="page-title">Loader Composition Test</h1>
+
+            <div data-testid="nf-uses-nf" data-composer={nfUsesNf.composerType} data-dependency={nfUsesNf.dependencyType}>
+              <h2>Non-Fetchable uses Non-Fetchable</h2>
+              <p data-testid="nf-uses-nf-base">Base value: {nfUsesNf.baseValue}</p>
+              <p data-testid="nf-uses-nf-computed">Computed: {nfUsesNf.computed}</p>
+              <p data-testid="nf-uses-nf-invocations">Invocations: {nfUsesNf.baseInvocationCount}</p>
+            </div>
+
+            <div data-testid="nf-uses-f" data-composer={nfUsesF.composerType} data-dependency={nfUsesF.dependencyType}>
+              <h2>Non-Fetchable uses Fetchable</h2>
+              <p data-testid="nf-uses-f-base">Base value: {nfUsesF.baseValue}</p>
+              <p data-testid="nf-uses-f-computed">Computed: {nfUsesF.computed}</p>
+              <p data-testid="nf-uses-f-invocations">Invocations: {nfUsesF.baseInvocationCount}</p>
+            </div>
+
+            <div data-testid="f-uses-f" data-composer={fUsesF.composerType} data-dependency={fUsesF.dependencyType}>
+              <h2>Fetchable uses Fetchable</h2>
+              <p data-testid="f-uses-f-base">Base value: {fUsesF.baseValue}</p>
+              <p data-testid="f-uses-f-computed">Computed: {fUsesF.computed}</p>
+              <p data-testid="f-uses-f-invocations">Invocations: {fUsesF.baseInvocationCount}</p>
+            </div>
+
+            <div data-testid="f-uses-nf" data-composer={fUsesNf.composerType} data-dependency={fUsesNf.dependencyType}>
+              <h2>Fetchable uses Non-Fetchable</h2>
+              <p data-testid="f-uses-nf-base">Base value: {fUsesNf.baseValue}</p>
+              <p data-testid="f-uses-nf-computed">Computed: {fUsesNf.computed}</p>
+              <p data-testid="f-uses-nf-invocations">Invocations: {fUsesNf.baseInvocationCount}</p>
+            </div>
+          </div>
+        );
+      }
     ),
   ]
 );

@@ -73,6 +73,9 @@ export function RootLayout({ children }: { children: ReactNode }) {
           <Link to={href("/kanban")} prefetch="hover">
             Kanban
           </Link>
+          <Link to={href("/loaders")} prefetch="hover">
+            Loaders
+          </Link>
           <Link to={href("/errors")} prefetch="hover">
             Errors
           </Link>

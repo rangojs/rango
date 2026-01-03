@@ -21,6 +21,7 @@ import type {
 import type { LoaderRevalidationResult, ActionContext } from "./types";
 import { isHandle, type Handle } from "../handle.js";
 import type { HandleStore } from "../server/handle-store.js";
+import { getFetchableLoader } from "../loader.js";
 
 /**
  * Wrap a loader promise with error handling for deferred client-side resolution.
@@ -118,7 +119,7 @@ export function setupLoaderAccess<TEnv>(
 
       if (!segmentId) {
         throw new Error(
-          `Handle "${handle.name}" used outside of handler context. ` +
+          `Handle "${handle.$$id}" used outside of handler context. ` +
             `Handles must be used within route/layout handlers.`
         );
       }
@@ -135,7 +136,7 @@ export function setupLoaderAccess<TEnv>(
           : dataOrFn;
 
         // Push directly - promises will be serialized by RSC and streamed
-        store.push(handle.name, segmentId, valueOrPromise);
+        store.push(handle.$$id, segmentId, valueOrPromise);
       };
     }
 
@@ -143,14 +144,24 @@ export function setupLoaderAccess<TEnv>(
     const loader = item as LoaderDefinition<any, any>;
 
     // Return cached promise if already started
-    if (loaderPromises.has(loader.name)) {
-      return loaderPromises.get(loader.name);
+    if (loaderPromises.has(loader.$$id)) {
+      return loaderPromises.get(loader.$$id);
+    }
+
+    // Get loader function - either from loader object or fetchable registry
+    // Fetchable loaders store fn in registry (not on object) to avoid client bundling issues
+    let loaderFn = loader.fn;
+    if (!loaderFn) {
+      const fetchable = getFetchableLoader(loader.$$id);
+      if (fetchable) {
+        loaderFn = fetchable.fn;
+      }
     }
 
     // Ensure loader has a function
-    if (!loader.fn) {
+    if (!loaderFn) {
       throw new Error(
-        `Loader "${loader.name}" has no function. This usually means the loader was defined without "use server" and the function was not included in the build.`
+        `Loader "${loader.$$id}" has no function. This usually means the loader was defined without "use server" and the function was not included in the build.`
       );
     }
 
@@ -173,15 +184,15 @@ export function setupLoaderAccess<TEnv>(
     };
 
     // Start loader execution with tracking
-    const doneLoader = track(`loader:${loader.name}`);
+    const doneLoader = track(`loader:${loader.$$id}`);
     const promise = Promise.resolve(
-      loader.fn(loaderCtx as LoaderContext<any, TEnv>)
+      loaderFn(loaderCtx as LoaderContext<any, TEnv>)
     ).finally(() => {
       doneLoader();
     });
 
     // Memoize for subsequent calls
-    loaderPromises.set(loader.name, promise);
+    loaderPromises.set(loader.$$id, promise);
 
     return promise;
   }) as typeof ctx.use;

@@ -90,6 +90,13 @@ import type {
   SegmentRevalidationResult,
   ActionContext,
 } from "./router/types.js";
+import {
+  type AppMiddlewareFn,
+  type AppMiddlewareEntry,
+  parsePattern,
+  matchMiddleware,
+  executeAppMiddleware,
+} from "./router/app-middleware.js";
 
 /**
  * Props passed to the root layout component
@@ -157,6 +164,40 @@ export interface RSCRouterOptions {
    * If not provided, DataNotFoundError will be treated as a regular error
    */
   defaultNotFoundBoundary?: ReactNode | NotFoundBoundaryHandler;
+
+  /**
+   * Callback invoked when an error occurs in loaders or route handlers.
+   * Use this for error monitoring, logging to external services, etc.
+   *
+   * The error is always logged to the server console with full details.
+   * In production, only a sanitized error message is sent to the client.
+   *
+   * @param error - The original error with full stack trace
+   * @param context - Additional context about where the error occurred
+   *
+   * @example
+   * ```typescript
+   * const router = createRSCRouter<AppEnv>({
+   *   onError: (error, context) => {
+   *     // Send to error monitoring service
+   *     Sentry.captureException(error, {
+   *       tags: { source: context.source, path: context.pathname },
+   *     });
+   *   },
+   * });
+   * ```
+   */
+  onError?: (
+    error: Error,
+    context: {
+      /** Where the error occurred: 'loader', 'action', 'route' */
+      source: "loader" | "action" | "route";
+      /** The request pathname */
+      pathname: string;
+      /** The loader ID if source is 'loader' */
+      loaderId?: string;
+    }
+  ) => void;
 }
 
 /**
@@ -168,6 +209,23 @@ interface RouteBuilder<
   TEnv,
   TRoutes extends Record<string, string>,
 > {
+  /**
+   * Add middleware scoped to this mount
+   * Called between .routes() and .map()
+   *
+   * @example
+   * ```typescript
+   * .routes("/admin", adminRoutes)
+   * .use(authMiddleware)           // All of /admin/*
+   * .use("/danger/*", superAuth)   // Only /admin/danger/*
+   * .map(() => import("./admin"))
+   * ```
+   */
+  use(
+    patternOrMiddleware: string | AppMiddlewareFn<TEnv>,
+    middleware?: AppMiddlewareFn<TEnv>
+  ): RouteBuilder<T, TEnv, TRoutes>;
+
   map(
     handler: () =>
       | Array<AllUseItems>
@@ -212,6 +270,24 @@ export interface RSCRouter<
   ): RouteBuilder<RouteDefinition, TEnv, TRoutes & T>;
 
   /**
+   * Add global middleware that runs on all routes
+   * Position matters: middleware before any .routes() is global
+   *
+   * @example
+   * ```typescript
+   * createRSCRouter({ document: RootLayout })
+   *   .use(loggerMiddleware)           // All routes
+   *   .use("/api/*", rateLimiter)      // Pattern match
+   *   .routes(homeRoutes)
+   *   .map(() => import("./home"))
+   * ```
+   */
+  use(
+    patternOrMiddleware: string | AppMiddlewareFn<TEnv>,
+    middleware?: AppMiddlewareFn<TEnv>
+  ): RSCRouter<TEnv, TRoutes>;
+
+  /**
    * Type-safe URL builder for registered routes
    * Types are inferred from the accumulated route registrations
    *
@@ -249,6 +325,18 @@ export interface RSCRouter<
    * Access this to pass to renderSegments
    */
   readonly rootLayout?: ComponentType<RootLayoutProps>;
+
+  /**
+   * Error callback for monitoring/alerting
+   * Called when errors occur in loaders, actions, or routes
+   */
+  readonly onError?: RSCRouterOptions["onError"];
+
+  /**
+   * App-level middleware entries (for internal use by RSC handler)
+   * These wrap the entire request/response cycle
+   */
+  readonly appMiddleware: AppMiddlewareEntry<TEnv>[];
 
   match(request: Request, context: TEnv): Promise<MatchResult>;
 
@@ -318,6 +406,7 @@ export function createRSCRouter<TEnv = any>(
     document: documentOption,
     defaultErrorBoundary,
     defaultNotFoundBoundary,
+    onError,
   } = options;
 
   // Validate document is a function (component)
@@ -336,6 +425,58 @@ export function createRSCRouter<TEnv = any>(
   const rootLayout = documentOption ?? DefaultDocument;
   const routesEntries: RouteEntry<TEnv>[] = [];
   let mountIndex = 0;
+
+  // App-level middleware storage
+  const appMiddleware: AppMiddlewareEntry<TEnv>[] = [];
+
+  // Helper to add middleware entry
+  function addMiddleware(
+    patternOrMiddleware: string | AppMiddlewareFn<TEnv>,
+    middleware?: AppMiddlewareFn<TEnv>,
+    mountPrefix: string | null = null
+  ): void {
+    let pattern: string | null = null;
+    let handler: AppMiddlewareFn<TEnv>;
+
+    if (typeof patternOrMiddleware === "string") {
+      // Pattern + middleware
+      pattern = patternOrMiddleware;
+      if (!middleware) {
+        throw new Error("Middleware function required when pattern is provided");
+      }
+      handler = middleware;
+    } else {
+      // Just middleware (no pattern)
+      handler = patternOrMiddleware;
+    }
+
+    // If mount-scoped, prepend mount prefix to pattern
+    let fullPattern = pattern;
+    if (mountPrefix && pattern) {
+      // e.g., mountPrefix="/blog", pattern="/admin/*" → "/blog/admin/*"
+      fullPattern = pattern === "*" ? `${mountPrefix}/*` : `${mountPrefix}${pattern}`;
+    } else if (mountPrefix && !pattern) {
+      // Mount-scoped middleware without pattern applies to all of mount
+      fullPattern = `${mountPrefix}/*`;
+    }
+
+    // Parse pattern into regex
+    let regex: RegExp | null = null;
+    let paramNames: string[] = [];
+    if (fullPattern) {
+      const parsed = parsePattern(fullPattern);
+      regex = parsed.regex;
+      paramNames = parsed.paramNames;
+    }
+
+    appMiddleware.push({
+      pattern: fullPattern,
+      regex,
+      paramNames,
+      handler,
+      mountPrefix,
+    });
+  }
 
   // Track all registered routes with their prefixes for href()
   const mergedRouteMap: Record<string, string> = {};
@@ -411,7 +552,7 @@ export function createRSCRouter<TEnv = any>(
     // Don't await - wrap promises with error handling for deferred client-side resolution
     return Promise.all(
       loaderEntries.map(async ({ loader }, i) => {
-        const segmentId = `${shortCode}D${i}.${loader.name}`;
+        const segmentId = `${shortCode}D${i}.${loader.$$id}`;
         return {
           id: segmentId,
           namespace: entry.id,
@@ -419,7 +560,7 @@ export function createRSCRouter<TEnv = any>(
           index: i,
           component: null, // Loaders don't render directly
           params: ctx.params,
-          loaderName: loader.name,
+          loaderId: loader.$$id,
           loaderData: await wrapLoaderPromise(
             entry.loading === false ? await ctx.use(loader) : ctx.use(loader),
             entry,
@@ -480,7 +621,7 @@ export function createRSCRouter<TEnv = any>(
       ({ loader, revalidate: loaderRevalidateFns }, i) => ({
         loader,
         loaderRevalidateFns,
-        segmentId: `${shortCode}D${i}.${loader.name}`,
+        segmentId: `${shortCode}D${i}.${loader.$$id}`,
         index: i,
       })
     );
@@ -504,7 +645,7 @@ export function createRSCRouter<TEnv = any>(
                 index,
                 component: null,
                 params: ctx.params,
-                loaderName: loader.name,
+                loaderId: loader.$$id,
                 belongsToRoute,
               };
 
@@ -545,7 +686,7 @@ export function createRSCRouter<TEnv = any>(
         index,
         component: null,
         params: ctx.params,
-        loaderName: loader.name,
+        loaderId: loader.$$id,
         loaderData: wrapLoaderPromise(
           ctx.use(loader),
           entry,
@@ -929,12 +1070,12 @@ export function createRSCRouter<TEnv = any>(
     // Step 2: Collect intercept loaders as promises (with revalidation check)
     // These will be attached directly to the intercept segment for streaming
     const loaderPromises: Promise<any>[] = [];
-    const loaderNames: string[] = [];
+    const loaderIds: string[] = [];
 
     for (let i = 0; i < interceptEntry.loader.length; i++) {
       const { loader, revalidate: loaderRevalidateFns } =
         interceptEntry.loader[i];
-      const segmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}D${i}.${loader.name}`;
+      const segmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}D${i}.${loader.$$id}`;
 
       // Check revalidation if context provided (partial updates)
       if (revalidationContext) {
@@ -960,7 +1101,7 @@ export function createRSCRouter<TEnv = any>(
             index: i,
             component: null,
             params,
-            loaderName: loader.name,
+            loaderId: loader.$$id,
             belongsToRoute,
           };
 
@@ -983,17 +1124,17 @@ export function createRSCRouter<TEnv = any>(
 
           if (!shouldRevalidate) {
             console.log(
-              `[Router] Intercept loader ${loader.name} skipped (revalidation=false)`
+              `[Router] Intercept loader ${loader.$$id} skipped (revalidation=false)`
             );
             continue;
           }
           console.log(
-            `[Router] Intercept loader ${loader.name} revalidating (stale=${stale})`
+            `[Router] Intercept loader ${loader.$$id} revalidating (stale=${stale})`
           );
         }
       }
 
-      loaderNames.push(loader.name);
+      loaderIds.push(loader.$$id);
       loaderPromises.push(
         wrapLoaderPromise(
           context.use(loader),
@@ -1063,7 +1204,7 @@ export function createRSCRouter<TEnv = any>(
       parallelName: `intercept:${interceptEntry.routeName}.${interceptEntry.slotName}`,
       // Attach loader info directly to segment for streaming
       loaderDataPromise,
-      loaderNames: loaderNames.length > 0 ? loaderNames : undefined,
+      loaderIds: loaderIds.length > 0 ? loaderIds : undefined,
     };
     segments.push(interceptSegment);
 
@@ -2020,7 +2161,11 @@ export function createRSCRouter<TEnv = any>(
 
     // Extract bindings from context (if using RouterEnv pattern)
     // Use Bindings if present (Cloudflare Workers pattern), otherwise use context directly
-    const bindings = (context as any)?.Bindings ?? context;
+    // Preserve internal context (__handleStore) from outer context
+    const rawBindings = (context as any)?.Bindings ?? context;
+    const bindings = (context as RouterInternalContext)?.__handleStore
+      ? { ...rawBindings, __handleStore: (context as RouterInternalContext).__handleStore }
+      : rawBindings;
 
     const handlerContext = createHandlerContext(
       matched.params,
@@ -2231,7 +2376,7 @@ export function createRSCRouter<TEnv = any>(
     current = boundaryEntry;
     const stack: {
       shortCode: string;
-      loaderEntries: { loader: { name: string } }[];
+      loaderEntries: LoaderEntry[];
     }[] = [];
     while (current) {
       if (current.shortCode) {
@@ -2247,8 +2392,8 @@ export function createRSCRouter<TEnv = any>(
       matchedIds.push(item.shortCode);
       // Add loader segment IDs for this entry
       for (let i = 0; i < item.loaderEntries.length; i++) {
-        const loaderName = item.loaderEntries[i].loader?.name || "unknown";
-        matchedIds.push(`${item.shortCode}D${i}.${loaderName}`);
+        const loaderId = item.loaderEntries[i].loader?.$$id || "unknown";
+        matchedIds.push(`${item.shortCode}D${i}.${loaderId}`);
       }
     }
 
@@ -2402,7 +2547,11 @@ export function createRSCRouter<TEnv = any>(
 
     // Extract bindings from context (if using RouterEnv pattern)
     // Use Bindings if present (Cloudflare Workers pattern), otherwise use context directly
-    const bindings = (context as any)?.Bindings ?? context;
+    // Preserve internal context (__handleStore) from outer context
+    const rawBindings = (context as any)?.Bindings ?? context;
+    const bindings = (context as RouterInternalContext)?.__handleStore
+      ? { ...rawBindings, __handleStore: (context as RouterInternalContext).__handleStore }
+      : rawBindings;
 
     const handlerContext = createHandlerContext(
       matched.params,
@@ -2692,7 +2841,17 @@ export function createRSCRouter<TEnv = any>(
     // Extract trailing slash config if present (attached by route())
     const trailingSlashConfig = (routes as any).__trailingSlash as Record<string, TrailingSlashMode> | undefined;
 
-    return {
+    // Create builder object so .use() can return it
+    const builder: RouteBuilder<RouteDefinition, TEnv, TNewRoutes> = {
+      use(
+        patternOrMiddleware: string | AppMiddlewareFn<TEnv>,
+        middleware?: AppMiddlewareFn<TEnv>
+      ) {
+        // Mount-scoped middleware - prefix is the mount prefix
+        addMiddleware(patternOrMiddleware, middleware, prefix || null);
+        return builder;
+      },
+
       map(
         handler: () =>
           | Array<AllUseItems>
@@ -2716,6 +2875,8 @@ export function createRSCRouter<TEnv = any>(
         return mergedRouteMap as TNewRoutes;
       },
     };
+
+    return builder;
   }
 
   /**
@@ -2736,6 +2897,15 @@ export function createRSCRouter<TEnv = any>(
       return createRouteBuilder("", prefixOrRoutes as Record<string, string>);
     },
 
+    use(
+      patternOrMiddleware: string | AppMiddlewareFn<TEnv>,
+      middleware?: AppMiddlewareFn<TEnv>
+    ): any {
+      // Global middleware - no mount prefix
+      addMiddleware(patternOrMiddleware, middleware, null);
+      return router;
+    },
+
     // Type-safe URL builder using merged route map
     // Types are tracked through the builder chain via TRoutes parameter
     href: createHref(mergedRouteMap),
@@ -2748,6 +2918,12 @@ export function createRSCRouter<TEnv = any>(
 
     // Expose rootLayout for renderSegments
     rootLayout,
+
+    // Expose onError callback for error handling
+    onError,
+
+    // Expose app middleware for RSC handler
+    appMiddleware,
 
     match,
     matchPartial,

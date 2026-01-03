@@ -3,3 +3,6 @@ dist
 .turbo
 playwright-report
 test-results
+
+# Temporary research docs
+MIDDLEWARE_RESEARCH.md

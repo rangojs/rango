@@ -143,22 +143,32 @@ test.describe("intercept-navigation", () => {
 
     // Step 3: Navigate back - should show modal again with index background
     await goBack(page);
-    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible({
+      timeout: 5000,
+    });
 
     // Background should still show index content (not detail page)
-    await expect(page.locator('[data-testid="product-link-product-b"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-link-product-b"]')).toBeVisible({
+      timeout: 5000,
+    });
 
     // Step 4: Close modal by navigating back again
     await goBack(page);
-    await expect(page.locator('[data-testid="product-modal"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).not.toBeVisible({
+      timeout: 5000,
+    });
     await expect(page).toHaveURL(/\/$/);
 
     // Index content should be visible
-    await expect(page.locator('[data-testid="product-link-product-a"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-link-product-a"]')).toBeVisible({
+      timeout: 5000,
+    });
 
     // Step 5: Click the same product again
     await productLink.click();
-    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible({
+      timeout: 5000,
+    });
 
     // BUG: Background should show index content, NOT the detail page
     // The detail page has segment-metadata, index has the product list
@@ -481,9 +491,13 @@ test.describe("navigation-state", () => {
     });
 
     // Check history state contains our passed state (typed location state uses __rsc_ls_ prefix)
+    // Key is auto-generated: __rsc_ls_src/location-states.ts#SlowProductLocationState
     const state = await getHistoryState(page);
-    expect(state?.__rsc_ls_slowProduct?.productName).toBe("Slow Product A");
-    expect(state?.__rsc_ls_slowProduct?.productPrice).toBe(99);
+    const locationStateKey = Object.keys(state || {}).find(k => k.includes("SlowProductLocationState"));
+    expect(locationStateKey).toBeDefined();
+    const locationState = state?.[locationStateKey!];
+    expect(locationState?.productName).toBe("Slow Product A");
+    expect(locationState?.productPrice).toBe(99);
   });
 });
 
@@ -1135,5 +1149,125 @@ test.describe("use-link-status-hook", () => {
 
     // Badge should still be idle - no pending state from popstate
     await expect(productBadge).toHaveAttribute("data-pending", "false");
+  });
+});
+
+/**
+ * Production build tests for navigation functionality
+ */
+test.describe("navigation (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("basic navigation works in production", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Navigate to product
+    await page.locator('[data-testid="product-link-product-a"]').click();
+
+    // Modal should appear (intercept)
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible({
+      timeout: 5000,
+    });
+
+    // URL should change
+    await expect(page).toHaveURL(/\/product\/product-a/);
+  });
+
+  test("intercept navigation shows modal in production", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Click product link
+    await page.locator('[data-testid="product-link-product-a"]').click();
+
+    // Modal should show
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Navigate to full details
+    await page.locator('[data-testid="view-full-details"]').click();
+
+    // Should see full product page
+    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible({
+      timeout: 5000,
+    });
+  });
+
+  test("back navigation works in production", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Navigate to product modal
+    await page.locator('[data-testid="product-link-product-a"]').click();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Go to full details
+    await page.locator('[data-testid="view-full-details"]').click();
+    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Back should show modal
+    await page.goBack();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Back again should show index
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+  });
+
+  test("hard navigation to product shows full page in production", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Direct navigation (hard) to product
+    await page.goto(f.url("/product/product-a"));
+    await waitForHydration(page);
+
+    // Should show full product page, not modal
+    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="product-modal"]')
+    ).not.toBeVisible();
+  });
+
+  test("loader revalidation works after action in production", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/product/product-a"));
+    await waitForHydration(page);
+
+    // Get initial quantity
+    const quantityEl = page.locator('[data-testid="quantity-display"]');
+    const initialQuantity = await quantityEl.textContent();
+
+    // Add to cart
+    await page.locator('[data-testid="add-to-cart-btn"]').click();
+
+    // Wait for quantity to update (revalidation)
+    await expect(async () => {
+      const newQuantity = await quantityEl.textContent();
+      expect(newQuantity).not.toEqual(initialQuantity);
+    }).toPass({ timeout: 5000 });
   });
 });

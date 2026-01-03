@@ -4,7 +4,7 @@
  * Creates the handler context object passed to route handlers, middleware, and loaders.
  */
 
-import type { HandlerContext } from "../types";
+import type { HandlerContext, RouterInternalContext } from "../types";
 
 /**
  * Create HandlerContext with typed env/var/get/set
@@ -17,8 +17,10 @@ export function createHandlerContext<TEnv>(
   url: URL,
   bindings: any = {}
 ): HandlerContext<any, TEnv> {
-  // Variables object (mutable by middleware)
-  const variables: any = {};
+  // Use middleware variables if available, otherwise create fresh object
+  // This allows app-level middleware to share state with route handlers
+  const variables: any =
+    (bindings as RouterInternalContext)?.__middlewareVariables ?? {};
 
   // Filter system parameters (starting with _rsc) from searchParams
   // This ensures handlers only see user-facing query params

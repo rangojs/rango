@@ -100,7 +100,7 @@ const SuspenderCallback = <T,>({
  */
 export interface LoaderBoundaryProps {
   loaderDataPromise: Promise<any[]> | any[];
-  loaderNames: string[];
+  loaderIds: string[];
   fallback?: ReactNode;
   outletKey: string;
   outletContent: ReactNode;
@@ -111,7 +111,7 @@ export interface LoaderBoundaryProps {
 
 export function LoaderBoundary({
   loaderDataPromise,
-  loaderNames,
+  loaderIds,
   fallback,
   outletKey,
   outletContent,
@@ -125,7 +125,7 @@ export function LoaderBoundary({
     <Suspense fallback={fallback ?? null} key={`loader-boundary-${id}`}>
       <LoaderResolver
         loaderDataPromise={loaderDataPromise}
-        loaderNames={loaderNames}
+        loaderIds={loaderIds}
         outletKey={outletKey}
         outletContent={outletContent}
         segment={segment}
@@ -142,7 +142,7 @@ export function LoaderBoundary({
  */
 function LoaderResolver({
   loaderDataPromise,
-  loaderNames,
+  loaderIds,
   outletKey,
   outletContent,
   segment,
@@ -159,12 +159,12 @@ function LoaderResolver({
   const loaderData: Record<string, any> = {};
   let loaderErrorFallback: ReactNode = null;
 
-  loaderNames.forEach((name, i) => {
+  loaderIds.forEach((id, i) => {
     const result = resolvedData[i];
 
     if (isLoaderDataResult(result)) {
       if (result.ok) {
-        loaderData[name] = result.data;
+        loaderData[id] = result.data;
       } else {
         if (result.fallback) {
           loaderErrorFallback = result.fallback;
@@ -174,7 +174,7 @@ function LoaderResolver({
       }
     } else {
       // Legacy format - direct data
-      loaderData[name] = result;
+      loaderData[id] = result;
     }
   });
 

@@ -7,9 +7,7 @@ import { ProductLoader } from "./product.js";
  *
  * This loader depends on ProductLoader to get the current product's category.
  */
-export const RelatedProductsLoader = createLoader(
-  "relatedProducts",
-  async (ctx) => {
+export const RelatedProductsLoader = createLoader(async (ctx) => {
     "use server";
 
     const product = await ctx.use(ProductLoader);

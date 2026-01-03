@@ -1,9 +1,15 @@
 /// <reference types="@vitejs/plugin-rsc/types" />
 import { renderSegments } from "../segment-system.js";
 import type { RSCRouter } from "../router.js";
-import type { ResolvedSegment, SlotState, RouterInternalContext } from "../types.js";
+import type { ResolvedSegment, SlotState, RouterInternalContext, LoaderActionContext } from "../types.js";
 import { createHandleStore, type HandleStore, type HandleData } from "../server/handle-store.js";
 import { RouteNotFoundError } from "../errors.js";
+import { getLoaderLazy } from "../server/loader-registry.js";
+import { executeLoaderMiddleware } from "../loader.js";
+import {
+  matchMiddleware,
+  executeAppMiddleware,
+} from "../router/app-middleware.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
 
@@ -209,6 +215,39 @@ export function createRSCHandler<TEnv = unknown>(
       nonce = result === true ? generateNonce() : result;
     }
     const url = new URL(request.url);
+
+    // Match app-level middleware
+    const matchedMiddleware = matchMiddleware(url.pathname, router.appMiddleware);
+
+    // Shared variables between middleware and route handlers
+    const variables: Record<string, any> = {};
+
+    // Core handler logic (wrapped by middleware)
+    const coreHandler = async (): Promise<Response> => {
+      return coreRequestHandler(request, env, url, variables);
+    };
+
+    // Execute middleware chain if any, otherwise call core handler directly
+    if (matchedMiddleware.length > 0) {
+      return executeAppMiddleware(
+        matchedMiddleware,
+        request,
+        env,
+        variables,
+        coreHandler
+      );
+    }
+
+    return coreHandler();
+  };
+
+  // Core request handling logic (separated for middleware wrapping)
+  async function coreRequestHandler(
+    request: Request,
+    env: TEnv,
+    url: URL,
+    variables: Record<string, any>
+  ): Promise<Response> {
     const isPartial = url.searchParams.has("_rsc_partial");
     const isAction =
       request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
@@ -218,10 +257,11 @@ export function createRSCHandler<TEnv = unknown>(
     // Create handle store for tracking pending handlers
     const handleStore = createHandleStore();
 
-    // Attach handle store to env for router access
+    // Attach handle store and shared variables to env for router access
     const envWithHandleStore = {
       ...env,
       __handleStore: handleStore,
+      __middlewareVariables: variables,
     } as TEnv & RouterInternalContext;
 
     let payload: RscPayload;
@@ -269,9 +309,12 @@ export function createRSCHandler<TEnv = unknown>(
         let returnValue: { ok: boolean; data: unknown };
         let actionStatus = 200;
 
+        // Track the action reference for extracting $id
+        let loadedAction: Function | undefined;
+
         try {
-          const action = await loadServerAction(actionId);
-          const data = await action.apply(null, args);
+          loadedAction = await loadServerAction(actionId);
+          const data = await loadedAction.apply(null, args);
           returnValue = { ok: true, data };
         } catch (error) {
           returnValue = { ok: false, data: error };
@@ -316,8 +359,17 @@ export function createRSCHandler<TEnv = unknown>(
         }
 
         // Revalidate after action
+        // Use the action's $id (file path) if available, otherwise fall back to $$id or request actionId (hash)
+        // In production builds, $id contains the file path for server bundles, enabling
+        // revalidation functions to match actions by their source file path
+        // Note: We use $id (single dollar) instead of $$id because React's registerServerReference
+        // sets $$id as a non-writable property
+        const resolvedActionId =
+          (loadedAction as { $id?: string; $$id?: string } | undefined)?.$id ??
+          (loadedAction as { $$id?: string } | undefined)?.$$id ??
+          actionId;
         const actionContext = {
-          actionId,
+          actionId: resolvedActionId,
           actionUrl: new URL(request.url),
           actionResult: returnValue.data,
           formData: actionFormData,
@@ -416,6 +468,119 @@ export function createRSCHandler<TEnv = unknown>(
           status: actionStatus,
           headers: actionHeaders,
         });
+      }
+
+      // ============================================================================
+      // LOADER FETCH EXECUTION (GET-based data fetching with RSC serialization)
+      // ============================================================================
+      const isLoaderRequest = url.searchParams.has("_rsc_loader");
+      if (isLoaderRequest) {
+        const loaderId = url.searchParams.get("_rsc_loader");
+        const loaderParamsJson = url.searchParams.get("_rsc_loader_params");
+
+        if (!loaderId) {
+          return new Response("Missing _rsc_loader parameter", {
+            status: 400,
+          });
+        }
+
+        // Look up loader lazily (imports on-demand if not already loaded)
+        const registeredLoader = await getLoaderLazy(loaderId);
+        if (!registeredLoader) {
+          return new Response(`Loader "${loaderId}" not found in registry`, {
+            status: 404,
+          });
+        }
+
+        // Parse params
+        let loaderParams: Record<string, string> = {};
+        if (loaderParamsJson) {
+          try {
+            loaderParams = JSON.parse(loaderParamsJson);
+          } catch {
+            return new Response("Invalid _rsc_loader_params JSON", {
+              status: 400,
+            });
+          }
+        }
+
+        // Execute the loader
+        try {
+          const { fn, middleware } = registeredLoader;
+
+          // Build context
+          const ctx: LoaderActionContext = {
+            method: "GET",
+            params: loaderParams,
+            body: undefined,
+            formData: undefined,
+          };
+
+          // Run middleware chain with proper next() chaining
+          const middlewareResponse = await executeLoaderMiddleware(
+            middleware,
+            ctx
+          );
+
+          // If middleware returned a Response (e.g., auth redirect), return it
+          if (middlewareResponse) {
+            return middlewareResponse;
+          }
+
+          // Execute loader function
+          const result = await fn(ctx as any);
+
+          // Serialize result with RSC
+          interface LoaderPayload {
+            loaderResult: unknown;
+          }
+          const loaderPayload: LoaderPayload = { loaderResult: result };
+          const rscStream = renderToReadableStream<LoaderPayload>(loaderPayload);
+
+          return new Response(rscStream, {
+            headers: {
+              "content-type": "text/x-component;charset=utf-8",
+              // Allow browser/CDN caching for GET requests
+              "cache-control": "public, max-age=0, must-revalidate",
+            },
+          });
+        } catch (error) {
+          const err = error instanceof Error ? error : new Error(String(error));
+          const isDev = process.env.NODE_ENV !== "production";
+
+          // Always log full error details on server
+          console.error("[RSC] Loader error:", error);
+
+          // Call onError callback if configured (for monitoring/alerting)
+          if (router.onError) {
+            try {
+              router.onError(err, {
+                source: "loader",
+                pathname: url.pathname,
+                loaderId,
+              });
+            } catch (callbackError) {
+              console.error("[RSC] onError callback failed:", callbackError);
+            }
+          }
+
+          // Sanitize error for client - only expose details in development
+          const errorPayload = {
+            loaderResult: null,
+            loaderError: {
+              message: isDev ? err.message : "An error occurred",
+              name: err.name,
+            },
+          };
+          const rscStream = renderToReadableStream(errorPayload);
+
+          return new Response(rscStream, {
+            status: 500,
+            headers: {
+              "content-type": "text/x-component;charset=utf-8",
+            },
+          });
+        }
       }
 
       // ============================================================================
@@ -569,7 +734,7 @@ export function createRSCHandler<TEnv = unknown>(
       console.error(`[RSC] Error:`, error);
       throw error;
     }
-  };
+  }
 }
 
 // Re-export HandleStore types for consumers who need custom handling

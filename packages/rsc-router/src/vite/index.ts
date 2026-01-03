@@ -3,6 +3,9 @@ import * as Vite from "vite";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { exposeActionId } from "./expose-action-id.ts";
+import { exposeLoaderId } from "./expose-loader-id.ts";
+import { exposeHandleId } from "./expose-handle-id.ts";
+import { exposeLocationStateId } from "./expose-location-state-id.ts";
 import {
   VIRTUAL_ENTRY_BROWSER,
   VIRTUAL_ENTRY_SSR,
@@ -10,8 +13,11 @@ import {
   VIRTUAL_IDS,
 } from "./virtual-entries.ts";
 
-// Re-export plugin
+// Re-export plugins
 export { exposeActionId } from "./expose-action-id.ts";
+export { exposeLoaderId } from "./expose-loader-id.ts";
+export { exposeHandleId } from "./expose-handle-id.ts";
+export { exposeLocationStateId } from "./expose-location-state-id.ts";
 
 /**
  * Default entry file paths (relative to project root)
@@ -486,6 +492,15 @@ export async function rscRouter(
   if (enableExposeActionId) {
     plugins.push(exposeActionId());
   }
+
+  // Always add exposeLoaderId for GET-based loader fetching with useFetchLoader
+  plugins.push(exposeLoaderId());
+
+  // Always add exposeHandleId for auto-generated handle IDs
+  plugins.push(exposeHandleId());
+
+  // Always add exposeLocationStateId for auto-generated location state keys
+  plugins.push(exposeLocationStateId());
 
   return plugins;
 }
