@@ -990,9 +990,6 @@ test.describe("shop-actions (production)", () => {
     await page.goto(f.url("/shop"));
     await waitForHydration(page);
 
-    // Wait for event handlers to attach
-    await page.waitForTimeout(100);
-
     await page
       .locator('a[href="/shop/product/wireless-headphones"]')
       .first()
@@ -1001,16 +998,21 @@ test.describe("shop-actions (production)", () => {
       timeout: 10000,
     });
 
+    // Wait for Add to Cart button and click it
     const addToCartButton = page.locator("button").filter({ hasText: "Add to Cart" }).first();
     await expect(addToCartButton).toBeVisible({ timeout: 15000 });
     await addToCartButton.click();
 
+    // Wait for the + button to appear (indicates cart was updated)
     const plusButton = page.locator("button").filter({ hasText: "+" }).first();
-    await expect(plusButton).toBeVisible({ timeout: 10000 });
+    await expect(plusButton).toBeVisible({ timeout: 15000 });
     await plusButton.click();
 
-    await page.waitForTimeout(3000);
+    // Wait for quantity to update (action completes)
+    // The quantity display should show "2" after clicking +
+    await expect(page.locator("text=2").first()).toBeVisible({ timeout: 10000 });
 
+    // Verify modal and background are still visible
     await expect(page.locator("text=Intercepted")).toBeVisible();
     await expect(page.locator("text=Featured Products")).toBeVisible();
   });
