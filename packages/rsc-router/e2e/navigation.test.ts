@@ -491,9 +491,13 @@ test.describe("navigation-state", () => {
     });
 
     // Check history state contains our passed state (typed location state uses __rsc_ls_ prefix)
+    // Key is auto-generated: __rsc_ls_src/location-states.ts#SlowProductLocationState
     const state = await getHistoryState(page);
-    expect(state?.__rsc_ls_slowProduct?.productName).toBe("Slow Product A");
-    expect(state?.__rsc_ls_slowProduct?.productPrice).toBe(99);
+    const locationStateKey = Object.keys(state || {}).find(k => k.includes("SlowProductLocationState"));
+    expect(locationStateKey).toBeDefined();
+    const locationState = state?.[locationStateKey!];
+    expect(locationState?.productName).toBe("Slow Product A");
+    expect(locationState?.productPrice).toBe(99);
   });
 });
 

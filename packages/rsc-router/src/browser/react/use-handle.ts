@@ -40,7 +40,7 @@ function collectHandle<T, A>(
   data: HandleData,
   segmentOrder: string[]
 ): A {
-  const segmentData = data[handle.name];
+  const segmentData = data[handle.$$id];
 
   if (!segmentData) {
     return handle.collect([]);

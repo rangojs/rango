@@ -242,6 +242,6 @@ function collectMeta(segments: MetaDescriptor[][]): MetaDescriptor[] {
  * Use `<MetaTags />` component to render them in the document head.
  */
 export const Meta: Handle<MetaDescriptor, MetaDescriptor[]> = createHandle<MetaDescriptor, MetaDescriptor[]>(
-  "__rsc_router_meta__",
-  collectMeta
+  collectMeta,
+  "__rsc_router_meta__"
 );
