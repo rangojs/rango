@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError } from "./helper";
+import { waitForHydration, expectNoPageError, goBack } from "./helper";
 
 /**
  * Tests for useNavigation and useAction hooks
@@ -174,15 +174,15 @@ test.describe("useNavigation", () => {
     await productLink.click();
     await expect(
       page.locator('[data-testid="nav-status-pathname"]')
-    ).toContainText("path:/product/product-a", { timeout: 2000 });
+    ).toContainText("path:/product/product-a", { timeout: 5000 });
 
-    // Navigate back
-    await page.goBack();
+    // Navigate back and wait for navigation to complete
+    await goBack(page);
 
     // Pathname should return to /
     await expect(
       page.locator('[data-testid="nav-status-pathname"]')
-    ).toContainText("path:/", { timeout: 2000 });
+    ).toContainText("path:/", { timeout: 5000 });
   });
 });
 

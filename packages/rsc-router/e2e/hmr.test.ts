@@ -116,6 +116,10 @@ test.describe("hmr", () => {
     await page.goto(f.url("/"));
     await waitForHydration(page);
 
+    // Extra wait to ensure all event handlers are attached
+    // Under load, React hydration might complete but handlers may still be attaching
+    await page.waitForTimeout(100);
+
     // Click on slow-streaming link
     await testId(page, "slow-streaming-link").click();
 

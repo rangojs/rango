@@ -203,6 +203,10 @@ test.describe("loader-behavior", () => {
       await page.goto(f.url("/"));
       await waitForHydration(page);
 
+      // Extra wait to ensure all event handlers are attached
+      // Under load, React hydration might complete but handlers may still be attaching
+      await page.waitForTimeout(100);
+
       // Click link to skip-ssr route
       const startTime = Date.now();
       await page.locator('[data-testid="slow-skip-ssr-link"]').click();
