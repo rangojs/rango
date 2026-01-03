@@ -753,8 +753,10 @@ test.describe("Form action support", () => {
     expect(formHtml).not.toContain("javascript:throw");
   });
 
-  // This test is expected to fail until the framework supports returning HTML
-  // instead of RSC payload for no-JS clients
+  // Progressive enhancement for useActionState requires deeper React SSR integration.
+  // Direct server actions (action={serverAction}) work, but useActionState needs
+  // the form state to be passed to renderToReadableStream which requires more work.
+  // See: progressive-enhancement.test.ts for working direct server action tests.
   test.fail(
     "form action works without JavaScript (progressive enhancement)",
     async ({ browser }) => {
@@ -778,9 +780,9 @@ test.describe("Form action support", () => {
         // Wait for navigation to complete
         await page.waitForLoadState("networkidle");
 
-        // EXPECTED TO FAIL: Server returns RSC payload (text/x-component)
-        // instead of HTML, so without JS the result can't be displayed.
-        // When framework adds HTML fallback support, this test should pass.
+        // EXPECTED TO FAIL: useActionState requires form state to be passed
+        // to renderToReadableStream during SSR, which needs deeper integration.
+        // Direct server actions (action={serverAction}) work with progressive enhancement.
         await expect(
           testId(page, "form-action-progressive-data")
         ).toBeVisible({ timeout: 5000 });

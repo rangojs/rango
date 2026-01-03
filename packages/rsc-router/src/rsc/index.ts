@@ -163,7 +163,135 @@ export function createRSCHandler<TEnv = unknown>(
 
     try {
       // ============================================================================
-      // SERVER ACTION EXECUTION
+      // PROGRESSIVE ENHANCEMENT: No-JS Form Submissions
+      // When JavaScript is disabled, React renders forms with hidden fields
+      // ($ACTION_REF_*, $ACTION_KEY) containing the action reference.
+      // We detect these and return HTML instead of RSC stream.
+      // Note: Forms can submit as either multipart/form-data or
+      // application/x-www-form-urlencoded (the default).
+      // ============================================================================
+      const contentType = request.headers.get("content-type") || "";
+      const isFormSubmission =
+        contentType.includes("multipart/form-data") ||
+        contentType.includes("application/x-www-form-urlencoded");
+
+      if (request.method === "POST" && !isAction && isFormSubmission) {
+        // Clone the request to read FormData without consuming it
+        const formData = await request.clone().formData();
+
+        // Look for React's progressive enhancement hidden fields.
+        // React adds different patterns depending on how the action is used:
+        //
+        // 1. Direct server action: action={myServerAction}
+        //    Hidden field: $ACTION_ID_<actionId> (ID in field name)
+        //
+        // 2. useActionState: const [state, action] = useActionState(serverAction, ...)
+        //    Hidden fields:
+        //    - $ACTION_REF_<n> (reference marker)
+        //    - $ACTION_<n>:0 (JSON with "id" field containing action ID)
+        //    - $ACTION_<n>:1, $ACTION_<n>:2 (bound state data)
+        //    - $ACTION_KEY (action key)
+        //
+        let progressiveActionId: string | null = null;
+        // Use forEach since TypeScript may not have entries() in FormData type
+        formData.forEach((value, key) => {
+          if (progressiveActionId) return; // Already found
+
+          if (key.startsWith("$ACTION_ID_")) {
+            // Pattern 1: Direct server action
+            // The action ID is embedded in the field name: $ACTION_ID_<actionId>
+            progressiveActionId = key.slice("$ACTION_ID_".length);
+          } else if (/^\$ACTION_\d+:0$/.test(key)) {
+            // Pattern 2: useActionState action
+            // The action ID is in the JSON value: {"id":"<actionId>","bound":"..."}
+            try {
+              const parsed = JSON.parse(value as string);
+              if (parsed.id) {
+                progressiveActionId = parsed.id;
+              }
+            } catch {
+              // Not valid JSON, continue
+            }
+          }
+        });
+
+        if (progressiveActionId) {
+          // This is a no-JS form submission - execute action and return HTML
+          const temporaryReferences = createTemporaryReferenceSet();
+
+          // Decode action arguments from FormData
+          let args: unknown[] = [];
+          try {
+            args = await decodeReply(formData, { temporaryReferences });
+          } catch {
+            // If decoding fails, pass FormData as the argument (for form actions that expect FormData)
+            args = [formData];
+          }
+
+          // Execute the server action and capture result for useActionState
+          let actionResult: unknown = undefined;
+          try {
+            const loadedAction = await loadServerAction(progressiveActionId);
+            actionResult = await loadedAction.apply(null, args);
+          } catch (error) {
+            console.error("[RSC] Progressive enhancement action error:", error);
+            // Continue to render the page even if action fails
+          }
+
+          // Re-render the page and return HTML
+          // Create a GET request to the same URL for rendering
+          const renderRequest = new Request(url.toString(), {
+            method: "GET",
+            headers: new Headers({
+              accept: "text/html",
+            }),
+          });
+
+          // Match and render the route
+          const match = await router.match(renderRequest, envWithHandleStore);
+
+          // Handle trailing slash redirect
+          if (match.redirect) {
+            return new Response(null, {
+              status: 308,
+              headers: { Location: match.redirect },
+            });
+          }
+
+          const root = renderSegments(match.segments, {
+            rootLayout: router.rootLayout,
+          });
+
+          payload = {
+            root,
+            metadata: {
+              pathname: url.pathname,
+              segments: match.segments,
+              matched: match.matched,
+              diff: match.diff,
+              isPartial: false,
+              rootLayout: router.rootLayout,
+              handles: handleStore.stream(),
+            },
+            // Pass the action result as formState for useActionState
+            formState: actionResult,
+          };
+
+          // Render to RSC stream, then to HTML
+          const rscStream = renderToReadableStream<RscPayload>(payload);
+          const ssrModule = await loadSSRModule();
+          const htmlStream = await ssrModule.renderHTML(rscStream);
+
+          return new Response(htmlStream, {
+            headers: {
+              "content-type": "text/html;charset=utf-8",
+            },
+          });
+        }
+      }
+
+      // ============================================================================
+      // SERVER ACTION EXECUTION (JavaScript-enabled client)
       // ============================================================================
       if (isAction && actionId) {
         const temporaryReferences = createTemporaryReferenceSet();
