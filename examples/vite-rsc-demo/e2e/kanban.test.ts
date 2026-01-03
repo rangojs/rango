@@ -456,3 +456,166 @@ test.describe("kanban-navigation-history", () => {
     await expect(testId(page, "card-modal")).not.toBeVisible();
   });
 });
+
+/**
+ * Production build tests for kanban
+ */
+test.describe("kanban-intercept-routes (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("should show modal when clicking card from board", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/kanban"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "kanban-board")).toBeVisible();
+
+    const cardLink = testId(page, "card-link-card-1");
+    await cardLink.click();
+
+    await expect(testId(page, "card-modal")).toBeVisible();
+    await expect(page).toHaveURL(/\/kanban\/card\/card-1/);
+    await expect(testId(page, "kanban-board")).toBeVisible();
+  });
+
+  test("should close modal and return to board on back navigation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/kanban"));
+    await waitForHydration(page);
+
+    const cardLink = testId(page, "card-link-card-1");
+    await cardLink.click();
+    await expect(testId(page, "card-modal")).toBeVisible();
+
+    await goBack(page);
+
+    await expect(page).toHaveURL(/\/kanban$/);
+    await expect(testId(page, "card-modal")).not.toBeVisible();
+    await expect(testId(page, "kanban-board")).toBeVisible();
+  });
+
+  test("should show full card page on direct URL navigation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/kanban/card/card-1"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "card-modal")).toBeVisible();
+    await expect(testId(page, "card-title")).toContainText("Set up project structure");
+    await expect(testId(page, "kanban-board")).toBeVisible();
+  });
+
+  test("should close modal when clicking close button", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/kanban"));
+    await waitForHydration(page);
+
+    const cardLink = testId(page, "card-link-card-1");
+    await cardLink.click();
+    await expect(testId(page, "card-modal")).toBeVisible();
+
+    await testId(page, "card-modal-close").click();
+
+    await expect(testId(page, "card-modal")).not.toBeVisible();
+    await expect(page).toHaveURL(/\/kanban$/);
+  });
+
+  test("should preserve board state when opening and closing modal", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/kanban"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "kanban-column-col-todo")).toBeVisible();
+    await expect(testId(page, "kanban-column-col-progress")).toBeVisible();
+    await expect(testId(page, "kanban-column-col-done")).toBeVisible();
+
+    await testId(page, "card-link-card-1").click();
+    await expect(testId(page, "card-modal")).toBeVisible();
+
+    await testId(page, "card-modal-close").click();
+    await expect(testId(page, "card-modal")).not.toBeVisible();
+
+    await expect(testId(page, "kanban-column-col-todo")).toBeVisible();
+    await expect(testId(page, "kanban-column-col-progress")).toBeVisible();
+    await expect(testId(page, "kanban-column-col-done")).toBeVisible();
+  });
+});
+
+test.describe("kanban-actions (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("should display action counter on kanban page", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/kanban"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "action-counter")).toBeVisible();
+  });
+
+  test("should handle label toggle in modal", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/kanban"));
+    await waitForHydration(page);
+
+    await testId(page, "card-link-card-1").click();
+    await expect(testId(page, "card-modal")).toBeVisible();
+
+    const labelButton = page.locator("button").filter({ hasText: "docs" }).first();
+    await labelButton.click();
+
+    await page.waitForTimeout(3000);
+
+    await expect(testId(page, "card-modal")).toBeVisible();
+    await expect(testId(page, "kanban-board")).toBeVisible();
+  });
+});
+
+test.describe("kanban-navigation-history (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("should restore board from cache on back navigation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/kanban"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "kanban-board")).toBeVisible();
+
+    await testId(page, "card-link-card-1").click();
+    await expect(testId(page, "card-modal")).toBeVisible();
+
+    await goBack(page);
+
+    await expect(testId(page, "kanban-board")).toBeVisible();
+    await expect(testId(page, "card-modal")).not.toBeVisible();
+  });
+});

@@ -378,3 +378,177 @@ test.describe("todos-revalidation", () => {
     await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
   });
 });
+
+/**
+ * Production build tests for todos
+ */
+test.describe("todos-navigation (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("should display todos index page", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/todos"));
+    await waitForHydration(page);
+
+    await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
+    await expect(
+      page.locator('input[placeholder="What needs to be done?"]')
+    ).toBeVisible();
+    await expect(page.locator("button:has-text('Add Todo')")).toBeVisible();
+  });
+
+  test("should show todos list with existing items", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/todos"));
+    await waitForHydration(page);
+
+    await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
+    await expect(page.locator("text=/\\d+ pending/")).toBeVisible({
+      timeout: 5000,
+    });
+  });
+
+  test("should preserve todos list on back navigation", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/todos"));
+    await waitForHydration(page);
+
+    await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
+    await expect(page.locator("text=/\\d+ pending/")).toBeVisible({
+      timeout: 5000,
+    });
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await goBack(page);
+
+    await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
+    await expect(page.locator("text=/\\d+ pending/")).toBeVisible({
+      timeout: 5000,
+    });
+  });
+});
+
+test.describe("todos-actions (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("should add a new todo", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/todos"));
+    await waitForHydration(page);
+
+    await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
+    await expect(page.locator("button:has-text('Add Todo')")).toBeVisible();
+
+    const input = page.locator('input[placeholder="What needs to be done?"]');
+    await input.fill("Production Test Todo");
+
+    const addButton = page.locator("button:has-text('Add Todo')");
+    await addButton.click();
+
+    await expect(page.locator("button:has-text('Add Todo')")).toBeVisible({
+      timeout: 10000,
+    });
+
+    await expect(page.locator("text=Production Test Todo")).toBeVisible({
+      timeout: 10000,
+    });
+  });
+
+  test("should toggle existing todo completion", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/todos"));
+    await waitForHydration(page);
+
+    await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
+
+    const uncheckedCheckbox = page
+      .locator('input[type="checkbox"]:not(:checked)')
+      .first();
+    await expect(uncheckedCheckbox).toBeVisible({ timeout: 5000 });
+    await uncheckedCheckbox.click();
+
+    await page.waitForTimeout(2000);
+
+    await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
+  });
+
+  test("should enter and exit edit mode", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/todos"));
+    await waitForHydration(page);
+
+    await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
+
+    const editButton = page.locator("button:has-text('Edit')").first();
+    await expect(editButton).toBeVisible({ timeout: 5000 });
+    await editButton.click();
+
+    const saveButton = page.locator("button:has-text('Save')").first();
+    await expect(saveButton).toBeVisible({ timeout: 5000 });
+
+    const editInputs = page.locator('input[type="text"]');
+    const editInput = editInputs.nth(1);
+    await expect(editInput).toBeVisible({ timeout: 5000 });
+
+    await editInput.fill("Production Updated Title");
+    await saveButton.click();
+
+    await expect(page.locator("button:has-text('Edit')").first()).toBeVisible({
+      timeout: 10000,
+    });
+
+    await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
+  });
+});
+
+test.describe("todos-revalidation (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("should revalidate loader after action", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/todos"));
+    await waitForHydration(page);
+
+    await expect(page.locator("button:has-text('Add Todo')")).toBeVisible({
+      timeout: 5000,
+    });
+
+    const input = page.locator('input[placeholder="What needs to be done?"]');
+    await input.fill("Production Revalidation Test");
+    await page.locator("button:has-text('Add Todo')").click();
+
+    await expect(page.locator("button:has-text('Add Todo')")).toBeVisible({
+      timeout: 10000,
+    });
+
+    await expect(page.locator("text=Production Revalidation Test")).toBeVisible({
+      timeout: 10000,
+    });
+
+    await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
+  });
+});
