@@ -119,7 +119,7 @@ export function setupLoaderAccess<TEnv>(
 
       if (!segmentId) {
         throw new Error(
-          `Handle "${handle.name}" used outside of handler context. ` +
+          `Handle "${handle.$$id}" used outside of handler context. ` +
             `Handles must be used within route/layout handlers.`
         );
       }
@@ -136,7 +136,7 @@ export function setupLoaderAccess<TEnv>(
           : dataOrFn;
 
         // Push directly - promises will be serialized by RSC and streamed
-        store.push(handle.name, segmentId, valueOrPromise);
+        store.push(handle.$$id, segmentId, valueOrPromise);
       };
     }
 

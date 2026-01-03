@@ -10,5 +10,7 @@ export interface BreadcrumbItem {
  * Breadcrumbs handle - accumulates breadcrumb items across route segments.
  * Each layout/route can push breadcrumb items, and they are collected
  * in parent-to-child order for display.
+ *
+ * The handle ID is auto-generated from file path + export name.
  */
-export const Breadcrumbs = createHandle<BreadcrumbItem>("breadcrumbs");
+export const Breadcrumbs = createHandle<BreadcrumbItem>();
