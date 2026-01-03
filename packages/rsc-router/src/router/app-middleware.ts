@@ -9,6 +9,38 @@
  */
 
 /**
+ * Built-in context variables set by the framework.
+ * Always available - nonce is set when createRSCHandler has nonce option.
+ */
+export interface BuiltInVariables {
+  /** CSP nonce (set when createRSCHandler has nonce option) */
+  nonce?: string;
+}
+
+/**
+ * Extract user variables from TEnv and merge with built-ins.
+ * Works with RouterEnv<Bindings, Variables> pattern.
+ */
+type MergedVariables<TEnv> = TEnv extends { Variables: infer V }
+  ? BuiltInVariables & V
+  : BuiltInVariables;
+
+/**
+ * Type-safe get function for context variables
+ */
+type GetVariableFn<TEnv> = <K extends keyof MergedVariables<TEnv>>(
+  key: K
+) => MergedVariables<TEnv>[K];
+
+/**
+ * Type-safe set function for context variables
+ */
+type SetVariableFn<TEnv> = <K extends keyof MergedVariables<TEnv>>(
+  key: K,
+  value: MergedVariables<TEnv>[K]
+) => void;
+
+/**
  * Cookie options for setting cookies
  */
 export interface CookieOptions {
@@ -67,11 +99,17 @@ export interface AppMiddlewareContext<TEnv = any> {
   /** Delete a cookie */
   deleteCookie(name: string, options?: Pick<CookieOptions, "domain" | "path">): void;
 
-  /** Get a context variable (shared with route handlers) */
-  get<K extends string>(key: K): any;
+  /**
+   * Get a context variable (shared with route handlers).
+   * Type-safe when TEnv extends RouterEnv.
+   */
+  get: GetVariableFn<TEnv>;
 
-  /** Set a context variable (shared with route handlers) */
-  set<K extends string>(key: K, value: any): void;
+  /**
+   * Set a context variable (shared with route handlers).
+   * Type-safe when TEnv extends RouterEnv.
+   */
+  set: SetVariableFn<TEnv>;
 
   /**
    * Set a response header

@@ -222,9 +222,14 @@ export function createRSCHandler<TEnv = unknown>(
     // Shared variables between middleware and route handlers
     const variables: Record<string, any> = {};
 
+    // Store nonce in variables so middleware can access via ctx.get('nonce')
+    if (nonce) {
+      variables.nonce = nonce;
+    }
+
     // Core handler logic (wrapped by middleware)
     const coreHandler = async (): Promise<Response> => {
-      return coreRequestHandler(request, env, url, variables);
+      return coreRequestHandler(request, env, url, variables, nonce);
     };
 
     // Execute middleware chain if any, otherwise call core handler directly
@@ -246,7 +251,8 @@ export function createRSCHandler<TEnv = unknown>(
     request: Request,
     env: TEnv,
     url: URL,
-    variables: Record<string, any>
+    variables: Record<string, any>,
+    nonce: string | undefined
   ): Promise<Response> {
     const isPartial = url.searchParams.has("_rsc_partial");
     const isAction =
@@ -711,10 +717,6 @@ export function createRSCHandler<TEnv = unknown>(
       };
       if (serverTiming) {
         htmlHeaders["Server-Timing"] = serverTiming;
-      }
-      // Expose nonce in response header for CSP header construction
-      if (nonce) {
-        htmlHeaders["x-nonce"] = nonce;
       }
 
       return new Response(htmlStream, {

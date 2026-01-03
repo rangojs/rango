@@ -58,6 +58,7 @@ export type {
   AppMiddlewareFn,
   AppMiddlewareContext,
   CookieOptions,
+  BuiltInVariables,
 } from "./router/app-middleware.js";
 
 // Error classes and utilities
