@@ -173,3 +173,66 @@ test.describe("loader-composition", () => {
     ).toContainText("Computed: 300");
   });
 });
+
+/**
+ * Production build tests for loader composition
+ * Ensures ctx.use(loader) works correctly after tree-shaking and bundling
+ */
+test.describe("loader-composition (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test.setTimeout(120000); // Build takes time
+
+  test("all composition patterns work in production build", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/loader-composition"));
+    await waitForHydration(page);
+
+    // Verify all four sections render correctly
+    await expect(page.locator('[data-testid="nf-uses-nf"]')).toBeVisible();
+    await expect(page.locator('[data-testid="nf-uses-f"]')).toBeVisible();
+    await expect(page.locator('[data-testid="f-uses-f"]')).toBeVisible();
+    await expect(page.locator('[data-testid="f-uses-nf"]')).toBeVisible();
+
+    // Verify computed values - confirms loader composition worked
+    await expect(
+      page.locator('[data-testid="nf-uses-nf-computed"]')
+    ).toContainText("Computed: 200");
+    await expect(
+      page.locator('[data-testid="nf-uses-f-computed"]')
+    ).toContainText("Computed: 400");
+    await expect(
+      page.locator('[data-testid="f-uses-f-computed"]')
+    ).toContainText("Computed: 600");
+    await expect(
+      page.locator('[data-testid="f-uses-nf-computed"]')
+    ).toContainText("Computed: 300");
+  });
+
+  test("memoization works in production build", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/loader-composition"));
+    await waitForHydration(page);
+
+    // All base loaders should only be invoked once (memoization)
+    await expect(
+      page.locator('[data-testid="nf-uses-nf-invocations"]')
+    ).toContainText("Invocations: 1");
+    await expect(
+      page.locator('[data-testid="f-uses-nf-invocations"]')
+    ).toContainText("Invocations: 1");
+    await expect(
+      page.locator('[data-testid="nf-uses-f-invocations"]')
+    ).toContainText("Invocations: 1");
+    await expect(
+      page.locator('[data-testid="f-uses-f-invocations"]')
+    ).toContainText("Invocations: 1");
+  });
+});
