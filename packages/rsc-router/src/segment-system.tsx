@@ -18,23 +18,23 @@ import { RootErrorBoundary } from "./root-error-boundary.js";
  */
 function resolveLoaderData(
   resolvedData: any[],
-  loaderNames: string[]
+  loaderIds: string[]
 ): { loaderData: Record<string, any>; errorFallback: ReactNode } {
   const loaderData: Record<string, any> = {};
   let errorFallback: ReactNode = null;
 
-  for (let i = 0; i < loaderNames.length; i++) {
-    const name = loaderNames[i];
+  for (let i = 0; i < loaderIds.length; i++) {
+    const id = loaderIds[i];
     const result = resolvedData[i];
 
     if (!isLoaderDataResult(result)) {
       // Legacy format - direct data
-      loaderData[name] = result;
+      loaderData[id] = result;
       continue;
     }
 
     if (result.ok) {
-      loaderData[name] = result.data;
+      loaderData[id] = result.data;
       continue;
     }
 
@@ -173,7 +173,7 @@ export async function renderSegments(
 
     // Get loader entries for this node
     const loaderEntries = node.loaders.filter(
-      (loader) => loader.loaderName && loader.loaderData !== undefined
+      (loader) => loader.loaderId && loader.loaderData !== undefined
     );
 
     // Determine the component content (with or without Suspense wrapper)
@@ -206,7 +206,7 @@ export async function renderSegments(
     }
 
     // Has loaders - prepare loader data
-    const loaderNames = loaderEntries.map((loader) => loader.loaderName!);
+    const loaderIds = loaderEntries.map((loader) => loader.loaderId!);
     const loaderDataPromise = Promise.all(
       loaderEntries.map((loader) =>
         loader.loaderData instanceof Promise
@@ -225,7 +225,7 @@ export async function renderSegments(
         loaderDataPromise: forceAwait
           ? await loaderDataPromise
           : loaderDataPromise,
-        loaderNames,
+        loaderIds,
         fallback: loading,
         outletKey: key,
         outletContent,
@@ -240,7 +240,7 @@ export async function renderSegments(
     const resolvedData = await loaderDataPromise;
     const { loaderData, errorFallback } = resolveLoaderData(
       resolvedData,
-      loaderNames
+      loaderIds
     );
 
     content = createElement(OutletProvider, {
@@ -325,7 +325,7 @@ function* segmentTreeWalk(
     } else if (segment.type === "loader") {
       // Extract parent ID from loader ID
       // Example: "L0D0.cart" → "L0"
-      // Loader ID format: {parentShortCode}D{index}.{loaderName}
+      // Loader ID format: {parentShortCode}D{index}.{loaderId}
       const parentId = segment.id.split("D")[0];
       if (!loadersByParent.has(parentId)) {
         loadersByParent.set(parentId, []);

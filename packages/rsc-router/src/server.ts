@@ -47,6 +47,9 @@ export { createHandle, isHandle, type Handle } from "./handle.js";
 // Built-in handles
 export { Meta } from "./handles/meta.js";
 
+// Loader registry (for GET-based loader fetching)
+export { registerLoaderById, setLoaderImports } from "./server/loader-registry.js";
+
 // Meta types
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 

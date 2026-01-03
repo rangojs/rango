@@ -1,9 +1,10 @@
 /// <reference types="@vitejs/plugin-rsc/types" />
 import { renderSegments } from "../segment-system.js";
 import type { RSCRouter } from "../router.js";
-import type { ResolvedSegment, SlotState, RouterInternalContext, OnErrorCallback, ErrorPhase, OnErrorContext } from "../types.js";
+import type { ResolvedSegment, SlotState, RouterInternalContext, OnErrorCallback, ErrorPhase, OnErrorContext, LoaderActionContext } from "../types.js";
 import { createHandleStore, type HandleStore, type HandleData } from "../server/handle-store.js";
 import { RouteNotFoundError } from "../errors.js";
+import { getLoaderLazy } from "../server/loader-registry.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
 
@@ -280,9 +281,12 @@ export function createRSCHandler<TEnv = unknown>(
         let returnValue: { ok: boolean; data: unknown };
         let actionStatus = 200;
 
+        // Track the action reference for extracting $$id
+        let loadedAction: Function | undefined;
+
         try {
-          const action = await loadServerAction(actionId);
-          const data = await action.apply(null, args);
+          loadedAction = await loadServerAction(actionId);
+          const data = await loadedAction.apply(null, args);
           returnValue = { ok: true, data };
         } catch (error) {
           returnValue = { ok: false, data: error };
@@ -337,8 +341,13 @@ export function createRSCHandler<TEnv = unknown>(
         }
 
         // Revalidate after action
+        // Use the action's $$id (file path) if available, otherwise fall back to request actionId (hash)
+        // In production builds, $$id contains the file path for server bundles, enabling
+        // revalidation functions to match actions by their source file path
+        const resolvedActionId =
+          (loadedAction as { $$id?: string } | undefined)?.$$id ?? actionId;
         const actionContext = {
-          actionId,
+          actionId: resolvedActionId,
           actionUrl: new URL(request.url),
           actionResult: returnValue.data,
           formData: actionFormData,
@@ -437,6 +446,113 @@ export function createRSCHandler<TEnv = unknown>(
           status: actionStatus,
           headers: actionHeaders,
         });
+      }
+
+      // ============================================================================
+      // LOADER FETCH EXECUTION (GET-based data fetching with RSC serialization)
+      // ============================================================================
+      const isLoaderRequest = url.searchParams.has("_rsc_loader");
+      if (isLoaderRequest) {
+        const loaderId = url.searchParams.get("_rsc_loader");
+        const loaderParamsJson = url.searchParams.get("_rsc_loader_params");
+
+        if (!loaderId) {
+          return new Response("Missing _rsc_loader parameter", {
+            status: 400,
+          });
+        }
+
+        // Look up loader lazily (imports on-demand if not already loaded)
+        const registeredLoader = await getLoaderLazy(loaderId);
+        if (!registeredLoader) {
+          return new Response(`Loader "${loaderId}" not found in registry`, {
+            status: 404,
+          });
+        }
+
+        // Parse params
+        let loaderParams: Record<string, string> = {};
+        if (loaderParamsJson) {
+          try {
+            loaderParams = JSON.parse(loaderParamsJson);
+          } catch {
+            return new Response("Invalid _rsc_loader_params JSON", {
+              status: 400,
+            });
+          }
+        }
+
+        // Execute the loader
+        try {
+          const { fn, middleware } = registeredLoader;
+
+          // Build context
+          const ctx: LoaderActionContext = {
+            method: "GET",
+            params: loaderParams,
+            body: undefined,
+            formData: undefined,
+          };
+
+          // Run middleware chain
+          for (const mw of middleware) {
+            await mw(ctx as any, async () => {});
+          }
+
+          // Execute loader function
+          const result = await fn(ctx as any);
+
+          // Serialize result with RSC
+          interface LoaderPayload {
+            loaderResult: unknown;
+          }
+          const loaderPayload: LoaderPayload = { loaderResult: result };
+          const rscStream = renderToReadableStream<LoaderPayload>(loaderPayload);
+
+          return new Response(rscStream, {
+            headers: {
+              "content-type": "text/x-component;charset=utf-8",
+              // Allow browser/CDN caching for GET requests
+              "cache-control": "public, max-age=0, must-revalidate",
+            },
+          });
+        } catch (error) {
+          const err = error instanceof Error ? error : new Error(String(error));
+          const isDev = process.env.NODE_ENV !== "production";
+
+          // Always log full error details on server
+          console.error("[RSC] Loader error:", error);
+
+          // Call onError callback if configured (for monitoring/alerting)
+          if (router.onError) {
+            try {
+              router.onError(err, {
+                source: "loader",
+                pathname: url.pathname,
+                loaderId,
+              });
+            } catch (callbackError) {
+              console.error("[RSC] onError callback failed:", callbackError);
+            }
+          }
+
+          // Sanitize error for client - only expose details in development
+          const errorPayload = {
+            loaderResult: null,
+            loaderError: {
+              message: isDev ? err.message : "An error occurred",
+              name: err.name,
+            },
+          };
+          const rscStream = renderToReadableStream(errorPayload);
+
+          return new Response(rscStream, {
+            status: 500,
+            headers: {
+              "content-type": "text/x-component;charset=utf-8",
+            },
+          });
+        }
       }
 
       // ============================================================================

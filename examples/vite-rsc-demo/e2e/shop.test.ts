@@ -746,6 +746,8 @@ test.describe("shop-concurrent-actions", () => {
     mode: "dev",
   });
 
+  test.setTimeout(30000);
+
   test("should handle rapid quantity changes from modal", async ({ page }) => {
     using _ = expectNoPageError(page);
 
@@ -861,5 +863,234 @@ test.describe("shop-concurrent-actions", () => {
 
     // Page should be functional
     await expect(page.locator("text=Intercepted")).not.toBeVisible();
+  });
+});
+
+/**
+ * Production build tests for shop
+ */
+test.describe("shop-navigation (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("should display shop index with products", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop"));
+    await waitForHydration(page);
+
+    await expect(page.locator("text=All Products")).toBeVisible();
+    await expect(page.locator("text=Featured Products")).toBeVisible();
+    await expect(
+      page.locator('a[href="/shop/product/wireless-headphones"]').first()
+    ).toBeVisible();
+  });
+
+  test("should show intercept modal when clicking product", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop"));
+    await waitForHydration(page);
+
+    await page
+      .locator('a[href="/shop/product/wireless-headphones"]')
+      .first()
+      .click();
+
+    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("text=Featured Products")).toBeVisible();
+  });
+
+  test("should close intercept modal on back navigation", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop"));
+    await waitForHydration(page);
+
+    await page
+      .locator('a[href="/shop/product/wireless-headphones"]')
+      .first()
+      .click();
+    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 5000 });
+
+    await goBack(page);
+
+    await expect(page.locator("text=Intercepted")).not.toBeVisible();
+    await expect(page.locator("text=All Products")).toBeVisible();
+  });
+
+  test("should NOT show modal on direct navigation (SSR)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop/product/wireless-headphones"));
+    await waitForHydration(page);
+
+    // Product detail has 1s artificial delay + loading time
+    await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({
+      timeout: 15000,
+    });
+    await expect(page.locator("text=Intercepted")).not.toBeVisible();
+  });
+});
+
+test.describe("shop-actions (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("should add product to cart from product detail page", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop/product/wireless-headphones"));
+    await waitForHydration(page);
+
+    // Product detail has 1s artificial delay + loading time
+    await expect(
+      page.locator("h2:has-text('Wireless Headphones')")
+    ).toBeVisible({
+      timeout: 15000,
+    });
+
+    await expect(page.locator("text=Add to Cart - Tests")).toBeVisible({
+      timeout: 10000,
+    });
+
+    // Wait for event handlers to attach
+    await page.waitForTimeout(100);
+
+    const addToCartButton = page
+      .locator("button")
+      .filter({ hasText: "Add to Cart (useActionState)" })
+      .first();
+    await addToCartButton.click();
+
+    await page.waitForTimeout(3000);
+
+    await expect(
+      page.locator("h2:has-text('Wireless Headphones')")
+    ).toBeVisible();
+  });
+
+  test("should update cart quantity from intercept modal", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop"));
+    await waitForHydration(page);
+
+    // Wait for event handlers to attach
+    await page.waitForTimeout(100);
+
+    await page
+      .locator('a[href="/shop/product/wireless-headphones"]')
+      .first()
+      .click();
+    await expect(page.locator("text=Intercepted")).toBeVisible({
+      timeout: 10000,
+    });
+
+    const addToCartButton = page.locator("button").filter({ hasText: "Add to Cart" }).first();
+    await expect(addToCartButton).toBeVisible({ timeout: 15000 });
+    await addToCartButton.click();
+
+    const plusButton = page.locator("button").filter({ hasText: "+" }).first();
+    await expect(plusButton).toBeVisible({ timeout: 10000 });
+    await plusButton.click();
+
+    await page.waitForTimeout(3000);
+
+    await expect(page.locator("text=Intercepted")).toBeVisible();
+    await expect(page.locator("text=Featured Products")).toBeVisible();
+  });
+});
+
+test.describe("shop-breadcrumbs (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("should display correct breadcrumbs on shop index", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop"));
+    await waitForHydration(page);
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+    await expect(breadcrumbNav.locator("text=Shop")).toBeVisible({ timeout: 5000 });
+  });
+
+  test("should display category breadcrumbs", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop/products/electronics"));
+    await waitForHydration(page);
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+    await expect(breadcrumbNav.locator("text=Shop")).toBeVisible({ timeout: 5000 });
+    await expect(breadcrumbNav.locator("text=Electronics")).toBeVisible({ timeout: 5000 });
+  });
+
+  test("should display product breadcrumbs on direct navigation", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop/product/wireless-headphones"));
+    await waitForHydration(page);
+
+    // Product detail has 1s artificial delay + loading time
+    await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({ timeout: 15000 });
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+    await expect(breadcrumbNav.locator("text=Shop")).toBeVisible({ timeout: 5000 });
+    await expect(breadcrumbNav.locator("text=Wireless Headphones")).toBeVisible({ timeout: 5000 });
+  });
+});
+
+test.describe("shop-conditional-intercept (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("should show modal when navigating from shop index", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop"));
+    await waitForHydration(page);
+
+    await page.locator('a[href="/shop/product/wireless-headphones"]').first().click();
+
+    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("text=Featured Products")).toBeVisible();
+  });
+
+  test("should NOT show modal when navigating from category page", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop/products/electronics"));
+    await waitForHydration(page);
+
+    await expect(page.locator("h2:has-text('Electronics')")).toBeVisible({ timeout: 5000 });
+
+    await page.locator('a[href="/shop/product/wireless-headphones"]').first().click();
+
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 3000 });
+    await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({ timeout: 10000 });
   });
 });

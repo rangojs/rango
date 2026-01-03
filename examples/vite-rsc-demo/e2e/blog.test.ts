@@ -262,3 +262,133 @@ test.describe("blog-breadcrumbs", () => {
     await expect(breadcrumbNav.locator('text=/\\d{1,2}\\/\\d{1,2}\\/\\d{4}/')).toBeVisible();
   });
 });
+
+/**
+ * Production build tests for blog
+ */
+test.describe("blog-navigation (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("should display blog index with post links", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog"));
+    await waitForHydration(page);
+
+    // Wait for sidebar to load
+    await expect(page.locator("text=Recent Posts")).toBeVisible({
+      timeout: 10000,
+    });
+
+    await expect(page.locator("text=Blog Posts")).toBeVisible();
+    await expect(
+      page.locator('a[href="/blog/hello-world"]').first()
+    ).toBeVisible();
+  });
+
+  test("should display blog post with sidebar content", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog/hello-world"));
+    await waitForHydration(page);
+
+    await expect(page.locator("text=Recent Posts")).toBeVisible({
+      timeout: 10000,
+    });
+
+    await expect(page.locator("h2:has-text('Hello World')")).toBeVisible();
+    await expect(page.locator("text=Categories")).toBeVisible();
+  });
+
+  test("should preserve sidebar when navigating between posts", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog/hello-world"));
+    await waitForHydration(page);
+
+    await expect(page.locator("text=Recent Posts")).toBeVisible({
+      timeout: 10000,
+    });
+
+    await page.locator('a[href="/blog/rsc-routing"]').click();
+
+    await expect(page.locator("text=Recent Posts")).toBeVisible();
+    await expect(page.locator("h2:has-text('Rsc Routing')")).toBeVisible({
+      timeout: 5000,
+    });
+  });
+
+  test("should preserve state on back navigation", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog"));
+    await waitForHydration(page);
+
+    await expect(page.locator("text=Recent Posts")).toBeVisible({
+      timeout: 10000,
+    });
+
+    await page.locator('a[href="/blog/hello-world"]').first().click();
+    await expect(page.locator("h2:has-text('Hello World')")).toBeVisible({
+      timeout: 5000,
+    });
+
+    await goBack(page);
+
+    await expect(page.locator("text=Blog Posts")).toBeVisible();
+    await expect(
+      page.locator('a[href="/blog/hello-world"]').first()
+    ).toBeVisible();
+  });
+});
+
+test.describe("blog-breadcrumbs (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("should display breadcrumbs on blog index", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog"));
+    await waitForHydration(page);
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+    await expect(breadcrumbNav).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Blog")).toBeVisible();
+  });
+
+  test("should display nested breadcrumbs on blog post", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog/hello-world"));
+    await waitForHydration(page);
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+    await expect(breadcrumbNav).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Blog")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Hello World")).toBeVisible();
+  });
+
+  test("should stream async breadcrumb content", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog/hello-world"));
+    await waitForHydration(page);
+
+    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
+    await expect(breadcrumbNav.locator('text=/Content for "Hello World"/')).toBeVisible({
+      timeout: 8000,
+    });
+  });
+});
