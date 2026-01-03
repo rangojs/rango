@@ -340,6 +340,20 @@ export interface RSCRouter<
 
   match(request: Request, context: TEnv): Promise<MatchResult>;
 
+  /**
+   * Preview match - returns route middleware without segment resolution
+   * Used by RSC handler to execute route middleware before full matching
+   */
+  previewMatch(
+    request: Request,
+    context: TEnv
+  ): Promise<{
+    routeMiddleware?: Array<{
+      handler: import("./router/app-middleware.js").AppMiddlewareFn;
+      params: Record<string, string>;
+    }>;
+  } | null>;
+
   matchPartial(
     request: Request,
     context: TEnv,
@@ -716,19 +730,10 @@ export function createRSCRouter<TEnv = any>(
 
     if (entry.type === "layout") {
       // Layout execution order:
-      // 1. Layout MW → 2. Layout Loader → 3. Layout Parallels (emit segments) → 4. Layout Handler (emit segment) → 5. Orphan Layouts
+      // 1. Layout Loader → 2. Layout Parallels (emit segments) → 3. Layout Handler (emit segment) → 4. Orphan Layouts
+      // Note: Layout middleware is now collected and executed at the top level (coreRequestHandler)
 
-      // Step 1: Run layout middleware
-      if (entry.middleware.length > 0) {
-        const middlewareResponse = await executeMiddleware(
-          entry.middleware,
-          context,
-          entry.id
-        );
-        if (middlewareResponse) throw middlewareResponse;
-      }
-
-      // Step 2: Run layout loaders
+      // Step 1: Run layout loaders
       const loaderSegments = await resolveLoaders(
         entry,
         context,
@@ -781,19 +786,10 @@ export function createRSCRouter<TEnv = any>(
       }
     } else if (entry.type === "route") {
       // Route execution order:
-      // 1. Route MW → 2. Route Loader → 3. Orphan Layouts → 4. Route Parallels (emit segments) → 5. Route Handler (emit segment)
+      // 1. Route Loader → 2. Orphan Layouts → 3. Route Parallels (emit segments) → 4. Route Handler (emit segment)
+      // Note: Route middleware is now collected and executed at the top level (coreRequestHandler)
 
-      // Step 1: Run route middleware
-      if (entry.middleware.length > 0) {
-        const middlewareResponse = await executeMiddleware(
-          entry.middleware,
-          context,
-          entry.id
-        );
-        if (middlewareResponse) throw middlewareResponse;
-      }
-
-      // Step 2: Run route loaders
+      // Step 1: Run route loaders
       const loaderSegments = await resolveLoaders(
         entry,
         context,
@@ -872,19 +868,10 @@ export function createRSCRouter<TEnv = any>(
       `Expected orphan to be a layout, got: ${orphan.type}`
     );
 
-    // Orphan MW → Orphan Loader → Orphan Parallels → Orphan Handler
+    // Orphan Loader → Orphan Parallels → Orphan Handler
+    // Note: Orphan middleware is now collected and executed at the top level (coreRequestHandler)
 
-    // Step 1: Run orphan middleware
-    if (orphan.middleware.length > 0) {
-      const middlewareResponse = await executeMiddleware(
-        orphan.middleware,
-        context,
-        orphan.id
-      );
-      if (middlewareResponse) throw middlewareResponse;
-    }
-
-    // Step 2: Run orphan loaders
+    // Step 1: Run orphan loaders
     const loaderSegments = await resolveLoaders(
       orphan,
       context,
@@ -1760,17 +1747,9 @@ export function createRSCRouter<TEnv = any>(
 
     const belongsToRoute = entry.type === "route";
 
-    // Step 1: Run middleware (same for both layout and route)
-    if (entry.middleware.length > 0) {
-      const response = await executeMiddleware(
-        entry.middleware,
-        context,
-        entry.id
-      );
-      if (response) throw response;
-    }
+    // Note: Middleware is now collected and executed at the top level (coreRequestHandler)
 
-    // Step 2: Run loaders with revalidation
+    // Step 1: Run loaders with revalidation
     const loaderResult = await resolveLoadersWithRevalidation(
       entry,
       context,
@@ -1905,17 +1884,9 @@ export function createRSCRouter<TEnv = any>(
     const segments: ResolvedSegment[] = [];
     const matchedIds: string[] = [];
 
-    // Step 1: Run orphan middleware
-    if (orphan.middleware.length > 0) {
-      const middlewareResponse = await executeMiddleware(
-        orphan.middleware,
-        context,
-        orphan.id
-      );
-      if (middlewareResponse) throw middlewareResponse;
-    }
+    // Note: Orphan middleware is now collected and executed at the top level (coreRequestHandler)
 
-    // Step 2: Run orphan loaders with revalidation
+    // Step 1: Run orphan loaders with revalidation
     const loaderResult = await resolveLoadersWithRevalidation(
       orphan,
       context,
@@ -2159,6 +2130,37 @@ export function createRSCRouter<TEnv = any>(
       });
     }
 
+    // Collect route-level middleware from entry tree (root to matched route)
+    // These run with same onion-style execution as app-level middleware
+    // Includes middleware from orphan layouts (inline layouts within routes)
+    const routeMiddleware: Array<{
+      handler: import("./router/app-middleware.js").AppMiddlewareFn;
+      params: Record<string, string>;
+    }> = [];
+
+    // Helper to collect middleware from an entry and its orphan layouts
+    const collectEntryMiddleware = (entry: EntryData) => {
+      // Collect entry's own middleware
+      if (entry.middleware && entry.middleware.length > 0) {
+        for (const mw of entry.middleware) {
+          routeMiddleware.push({
+            handler: mw as import("./router/app-middleware.js").AppMiddlewareFn,
+            params: matched.params,
+          });
+        }
+      }
+      // Collect middleware from orphan layouts (recursive)
+      if (entry.layout && entry.layout.length > 0) {
+        for (const orphan of entry.layout) {
+          collectEntryMiddleware(orphan);
+        }
+      }
+    };
+
+    for (const entry of traverseBack(manifestEntry)) {
+      collectEntryMiddleware(entry);
+    }
+
     // Extract bindings from context (if using RouterEnv pattern)
     // Use Bindings if present (Cloudflare Workers pattern), otherwise use context directly
     // Preserve internal context (__handleStore) from outer context
@@ -2234,6 +2236,7 @@ export function createRSCRouter<TEnv = any>(
         matched: segmentIds,
         diff: segmentIds,
         serverTiming,
+        routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
       };
     } catch (error) {
       // Check if middleware/handler short-circuited with Response
@@ -2545,6 +2548,37 @@ export function createRSCRouter<TEnv = any>(
       });
     }
 
+    // Collect route-level middleware from entry tree (root to matched route)
+    // These run with same onion-style execution as app-level middleware
+    // Includes middleware from orphan layouts (inline layouts within routes)
+    const routeMiddleware: Array<{
+      handler: import("./router/app-middleware.js").AppMiddlewareFn;
+      params: Record<string, string>;
+    }> = [];
+
+    // Helper to collect middleware from an entry and its orphan layouts
+    const collectEntryMiddleware = (entry: EntryData) => {
+      // Collect entry's own middleware
+      if (entry.middleware && entry.middleware.length > 0) {
+        for (const mw of entry.middleware) {
+          routeMiddleware.push({
+            handler: mw as import("./router/app-middleware.js").AppMiddlewareFn,
+            params: matched.params,
+          });
+        }
+      }
+      // Collect middleware from orphan layouts (recursive)
+      if (entry.layout && entry.layout.length > 0) {
+        for (const orphan of entry.layout) {
+          collectEntryMiddleware(orphan);
+        }
+      }
+    };
+
+    for (const entry of traverseBack(manifestEntry)) {
+      collectEntryMiddleware(entry);
+    }
+
     // Extract bindings from context (if using RouterEnv pattern)
     // Use Bindings if present (Cloudflare Workers pattern), otherwise use context directly
     // Preserve internal context (__handleStore) from outer context
@@ -2793,6 +2827,7 @@ export function createRSCRouter<TEnv = any>(
         serverTiming,
         // Include slots state - browser uses this to know which slots are active
         slots: Object.keys(slots).length > 0 ? slots : undefined,
+        routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
       };
     } catch (error) {
       // Check if middleware/handler short-circuited with Response
@@ -2807,6 +2842,77 @@ export function createRSCRouter<TEnv = any>(
       console.error(`[Router.matchPartial] Error during matchPartial:`, error);
       throw sanitizeError(error);
     }
+  }
+
+  /**
+   * Preview match - returns route middleware without segment resolution
+   * Used by RSC handler to execute route middleware before full matching
+   */
+  async function previewMatch(
+    request: Request,
+    context: TEnv
+  ): Promise<{
+    routeMiddleware?: Array<{
+      handler: import("./router/app-middleware.js").AppMiddlewareFn;
+      params: Record<string, string>;
+    }>;
+  } | null> {
+    const url = new URL(request.url);
+    const pathname = url.pathname;
+
+    // Quick route matching
+    const matched = findMatch(pathname);
+    if (!matched) {
+      return null;
+    }
+
+    // Skip redirect check - will be handled in full match
+    if (matched.redirectTo) {
+      return { routeMiddleware: undefined };
+    }
+
+    // Load manifest (without segment resolution)
+    const manifestEntry = await loadManifest(
+      matched.entry,
+      matched.routeKey,
+      pathname,
+      undefined, // No metrics store for preview
+      false // isSSR - doesn't matter for preview
+    );
+
+    // Collect route-level middleware from entry tree
+    // Includes middleware from orphan layouts (inline layouts within routes)
+    const routeMiddleware: Array<{
+      handler: import("./router/app-middleware.js").AppMiddlewareFn;
+      params: Record<string, string>;
+    }> = [];
+
+    // Helper to collect middleware from an entry and its orphan layouts
+    const collectEntryMiddleware = (entry: EntryData) => {
+      // Collect entry's own middleware
+      if (entry.middleware && entry.middleware.length > 0) {
+        for (const mw of entry.middleware) {
+          routeMiddleware.push({
+            handler: mw as import("./router/app-middleware.js").AppMiddlewareFn,
+            params: matched.params,
+          });
+        }
+      }
+      // Collect middleware from orphan layouts (recursive)
+      if (entry.layout && entry.layout.length > 0) {
+        for (const orphan of entry.layout) {
+          collectEntryMiddleware(orphan);
+        }
+      }
+    };
+
+    for (const entry of traverseBack(manifestEntry)) {
+      collectEntryMiddleware(entry);
+    }
+
+    return {
+      routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
+    };
   }
 
   /**
@@ -2928,6 +3034,7 @@ export function createRSCRouter<TEnv = any>(
     match,
     matchPartial,
     matchError,
+    previewMatch,
   };
 
   return router;

@@ -122,23 +122,50 @@ function useLoaderInternal<T>(
       setError(null);
 
       try {
-        // GET-based fetching - server looks up loader by $$id
         const url = new URL(window.location.pathname, window.location.origin);
         url.searchParams.set("_rsc_loader", loader.$$id);
 
-        if (loadOptions?.params && Object.keys(loadOptions.params).length > 0) {
-          url.searchParams.set(
-            "_rsc_loader_params",
-            JSON.stringify(loadOptions.params)
-          );
+        const method = loadOptions?.method ?? "GET";
+        const isBodyMethod = method !== "GET";
+
+        let fetchOptions: RequestInit;
+
+        if (isBodyMethod) {
+          // POST/PUT/PATCH/DELETE - send params and body as JSON
+          const bodyPayload: { params?: Record<string, string>; body?: unknown } = {};
+          if (loadOptions?.params && Object.keys(loadOptions.params).length > 0) {
+            bodyPayload.params = loadOptions.params;
+          }
+          if ("body" in (loadOptions ?? {}) && (loadOptions as any).body !== undefined) {
+            bodyPayload.body = (loadOptions as any).body;
+          }
+
+          fetchOptions = {
+            method,
+            headers: {
+              Accept: "text/x-component",
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(bodyPayload),
+          };
+        } else {
+          // GET - send params in query string
+          if (loadOptions?.params && Object.keys(loadOptions.params).length > 0) {
+            url.searchParams.set(
+              "_rsc_loader_params",
+              JSON.stringify(loadOptions.params)
+            );
+          }
+
+          fetchOptions = {
+            method: "GET",
+            headers: {
+              Accept: "text/x-component",
+            },
+          };
         }
 
-        const response = fetch(url.toString(), {
-          method: "GET",
-          headers: {
-            Accept: "text/x-component",
-          },
-        });
+        const response = fetch(url.toString(), fetchOptions);
 
         const { createFromFetch } = await import("./deps/browser.js");
         const payload = await createFromFetch<LoaderRscPayload<T>>(response);

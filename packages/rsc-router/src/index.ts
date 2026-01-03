@@ -57,6 +57,7 @@ export type {
   LoadOptions,
   LoaderActionContext,
   LoaderAction,
+  LoaderMiddlewareFn,
   // Error boundary types
   ErrorInfo,
   ErrorBoundaryFallbackProps,

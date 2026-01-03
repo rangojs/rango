@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { AllUseItems } from "./route-types.js";
 import type { HandleStore } from "./server/handle-store.js";
 import type { Handle } from "./handle.js";
+import type { AppMiddlewareFn } from "./router/app-middleware.js";
 
 /**
  * Props for the Document component that wraps the entire application.
@@ -492,10 +493,20 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
  * ]
  * ```
  */
+/**
+ * Middleware function signature for route-level middleware.
+ * Uses the same signature as app-level middleware (AppMiddlewareFn) for consistency.
+ *
+ * - `await next()` returns the Response
+ * - `ctx.res` available after next() for header modification
+ * - Type-safe params from route pattern
+ *
+ * @deprecated Use AppMiddlewareFn from "rsc-router/server" instead
+ */
 export type MiddlewareFn<TParams = GenericParams, TEnv = any> = (
-  ctx: HandlerContext<TParams, TEnv>,
-  next: () => void | Promise<void>
-) => void | Promise<void> | Response | Promise<Response>;
+  ctx: import("./router/app-middleware.js").AppMiddlewareContext<TEnv, TParams>,
+  next: () => Promise<Response>
+) => Response | Promise<Response> | void | Promise<void>;
 
 /**
  * Extract all route keys from a route definition (includes flattened nested routes)
@@ -794,6 +805,15 @@ export interface MatchResult {
    * instead of rendering the page.
    */
   redirect?: string;
+  /**
+   * Route-level middleware collected from the matched entry tree.
+   * These run with the same onion-style execution as app-level middleware,
+   * wrapping the entire RSC response creation.
+   */
+  routeMiddleware?: Array<{
+    handler: import("./router/app-middleware.js").AppMiddlewareFn;
+    params: Record<string, string>;
+  }>;
 }
 
 /**
@@ -897,19 +917,22 @@ export type RouteRevalidateFn<
  * import { RouteMiddlewareFn } from "rsc-router";
  * import { shopRoutes } from "./routes.js";
  *
- * export const checkoutMiddleware: RouteMiddlewareFn<typeof shopRoutes, "checkout.index"> = (ctx, next) => {
+ * export const checkoutMiddleware: RouteMiddlewareFn<typeof shopRoutes, "checkout.index"> = async (ctx, next) => {
  *   // ctx.params is typed correctly for checkout.index route
  *   // ctx.get('user') is type-safe via global augmentation
  *   if (!ctx.get('user')) {
  *     return redirect('/login');
  *   }
- *   next();
+ *   await next();
+ *   // ctx.res available here for header modification
  * }
  *
- * export const productMiddleware: RouteMiddlewareFn<typeof shopRoutes, "products.detail"> = (ctx, next) => {
+ * export const productMiddleware: RouteMiddlewareFn<typeof shopRoutes, "products.detail"> = async (ctx, next) => {
  *   // ctx.params.slug is automatically typed as string
  *   console.log('Viewing product:', ctx.params.slug);
- *   next();
+ *   const response = await next();
+ *   response.headers.set('X-Product', ctx.params.slug);
+ *   return response;
  * }
  * ```
  */
@@ -1024,9 +1047,12 @@ export type LoaderFn<T, TParams = Record<string, string | undefined>, TEnv = any
  */
 /**
  * Options for fetchable loaders
+ *
+ * Middleware uses the same AppMiddlewareFn signature as route/app middleware,
+ * enabling reuse of the same middleware functions everywhere.
  */
 export type FetchableLoaderOptions = {
-  middleware?: MiddlewareFn<any>[];
+  middleware?: AppMiddlewareFn[];
 };
 
 /**
@@ -1052,6 +1078,18 @@ export type LoaderActionContext = {
   body?: FormData | Record<string, any>;
   formData?: FormData;
 };
+
+/**
+ * @deprecated Use AppMiddlewareFn instead for fetchable loader middleware.
+ * This type is kept for backwards compatibility but will be removed in a future version.
+ *
+ * Fetchable loaders now use the same middleware signature as routes,
+ * enabling middleware reuse across routes and loaders.
+ */
+export type LoaderMiddlewareFn = (
+  ctx: LoaderActionContext,
+  next: () => Promise<void>
+) => Response | Promise<Response> | void | Promise<void>;
 
 /**
  * Loader action function type - server action for form-based fetching

@@ -5,11 +5,13 @@ import type { ResolvedSegment, SlotState, RouterInternalContext, LoaderActionCon
 import { createHandleStore, type HandleStore, type HandleData } from "../server/handle-store.js";
 import { RouteNotFoundError } from "../errors.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
-import { executeLoaderMiddleware } from "../loader.js";
 import {
   matchMiddleware,
   executeAppMiddleware,
+  executeLoaderAppMiddleware,
+  type AppMiddlewareEntry,
 } from "../router/app-middleware.js";
+import { runWithRequestContext } from "../server/request-context.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
 
@@ -155,27 +157,72 @@ export function createRSCHandler<TEnv = unknown>(
     // Shared variables between middleware and route handlers
     const variables: Record<string, any> = {};
 
-    // Core handler logic (wrapped by middleware)
-    const coreHandler = async (): Promise<Response> => {
-      return coreRequestHandler(request, env, url, variables);
-    };
+    // Wrap entire request handling in request context
+    // Makes env, request, url, variables available via getRequestContext() throughout:
+    // - Middleware execution
+    // - Route handlers and loaders
+    // - Server components during rendering
+    // - Error boundaries
+    // - Streaming
+    return runWithRequestContext({ env, request, url, variables }, async () => {
+      // Core handler logic (wrapped by middleware)
+      const coreHandler = async (): Promise<Response> => {
+        return coreRequestHandler(request, env, url, variables);
+      };
 
-    // Execute middleware chain if any, otherwise call core handler directly
-    if (matchedMiddleware.length > 0) {
-      return executeAppMiddleware(
-        matchedMiddleware,
-        request,
-        env,
-        variables,
-        coreHandler
-      );
-    }
+      // Execute middleware chain if any, otherwise call core handler directly
+      if (matchedMiddleware.length > 0) {
+        return executeAppMiddleware(
+          matchedMiddleware,
+          request,
+          env,
+          variables,
+          coreHandler
+        );
+      }
 
-    return coreHandler();
+      return coreHandler();
+    });
   };
 
   // Core request handling logic (separated for middleware wrapping)
   async function coreRequestHandler(
+    request: Request,
+    env: TEnv,
+    url: URL,
+    variables: Record<string, any>
+  ): Promise<Response> {
+    // First, check for route-level middleware
+    const preview = await router.previewMatch(request, env);
+    if (preview?.routeMiddleware && preview.routeMiddleware.length > 0) {
+      // Convert route middleware to app middleware format for execution
+      const middlewareEntries = preview.routeMiddleware.map((mw) => ({
+        entry: {
+          pattern: null,
+          regex: null,
+          paramNames: [],
+          handler: mw.handler,
+          mountPrefix: null,
+        },
+        params: mw.params,
+      }));
+
+      // Execute route middleware wrapping the actual request handling
+      return executeAppMiddleware(
+        middlewareEntries,
+        request,
+        env,
+        variables,
+        () => coreRequestHandlerInner(request, env, url, variables)
+      );
+    }
+
+    // No route middleware, proceed directly
+    return coreRequestHandlerInner(request, env, url, variables);
+  }
+
+  // Inner request handler (actual RSC logic, wrapped by route middleware if any)
+  async function coreRequestHandlerInner(
     request: Request,
     env: TEnv,
     url: URL,
@@ -247,7 +294,8 @@ export function createRSCHandler<TEnv = unknown>(
 
         try {
           loadedAction = await loadServerAction(actionId);
-          const data = await loadedAction.apply(null, args);
+          // Request context already available from handler wrapper (runWithRequestContext)
+          const data = await loadedAction!.apply(null, args);
           returnValue = { ok: true, data };
         } catch (error) {
           returnValue = { ok: false, data: error };
@@ -437,46 +485,58 @@ export function createRSCHandler<TEnv = unknown>(
           }
         }
 
-        // Execute the loader
+        // Execute the loader with onion-style middleware
         try {
           const { fn, middleware } = registeredLoader;
 
-          // Build context
-          const ctx: LoaderActionContext = {
-            method: "GET",
-            params: loaderParams,
-            body: undefined,
-            formData: undefined,
+          // Execute middleware wrapping the loader execution
+          // Middleware uses AppMiddlewareFn signature - same as route middleware
+          // Variables are shared between app-level middleware, loader middleware, and loader function
+          //
+          // Build env with middleware variables so createHandlerContext can access them
+          const envWithVariables = {
+            ...env,
+            __middlewareVariables: variables,
           };
 
-          // Run middleware chain with proper next() chaining
-          const middlewareResponse = await executeLoaderMiddleware(
+          return await executeLoaderAppMiddleware(
             middleware,
-            ctx
+            request,
+            env,
+            loaderParams,
+            variables,
+            async () => {
+              // Use createHandlerContext to build proper context
+              // This ensures consistency with route handlers and proper variable sharing
+              const { createHandlerContext } = await import("../router/handler-context.js");
+              const ctx = createHandlerContext(
+                loaderParams,
+                request,
+                url.searchParams,
+                url.pathname,
+                url,
+                envWithVariables
+              );
+
+              // Execute loader function
+              const result = await fn(ctx as any);
+
+              // Serialize result with RSC
+              interface LoaderPayload {
+                loaderResult: unknown;
+              }
+              const loaderPayload: LoaderPayload = { loaderResult: result };
+              const rscStream = renderToReadableStream<LoaderPayload>(loaderPayload);
+
+              return new Response(rscStream, {
+                headers: {
+                  "content-type": "text/x-component;charset=utf-8",
+                  // Allow browser/CDN caching for GET requests
+                  "cache-control": "public, max-age=0, must-revalidate",
+                },
+              });
+            }
           );
-
-          // If middleware returned a Response (e.g., auth redirect), return it
-          if (middlewareResponse) {
-            return middlewareResponse;
-          }
-
-          // Execute loader function
-          const result = await fn(ctx as any);
-
-          // Serialize result with RSC
-          interface LoaderPayload {
-            loaderResult: unknown;
-          }
-          const loaderPayload: LoaderPayload = { loaderResult: result };
-          const rscStream = renderToReadableStream<LoaderPayload>(loaderPayload);
-
-          return new Response(rscStream, {
-            headers: {
-              "content-type": "text/x-component;charset=utf-8",
-              // Allow browser/CDN caching for GET requests
-              "cache-control": "public, max-age=0, must-revalidate",
-            },
-          });
         } catch (error) {
           const err = error instanceof Error ? error : new Error(String(error));
           const isDev = process.env.NODE_ENV !== "production";

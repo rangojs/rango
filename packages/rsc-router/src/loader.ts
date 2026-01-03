@@ -15,42 +15,8 @@ import type {
   FetchableLoaderOptions,
   LoaderDefinition,
   LoaderFn,
-  MiddlewareFn,
 } from "./types.js";
-
-/**
- * Execute loader middleware chain with proper next() chaining
- * Returns Response if middleware short-circuits, null otherwise
- */
-export async function executeLoaderMiddleware(
-  middleware: MiddlewareFn<any>[],
-  ctx: any
-): Promise<Response | null> {
-  if (middleware.length === 0) {
-    return null;
-  }
-
-  let index = 0;
-  let earlyResponse: Response | null = null;
-
-  const next = async (): Promise<void> => {
-    if (index >= middleware.length || earlyResponse) {
-      return;
-    }
-
-    const currentIndex = index++;
-    const currentMiddleware = middleware[currentIndex];
-
-    const result = await currentMiddleware(ctx, next);
-
-    if (result instanceof Response) {
-      earlyResponse = result;
-    }
-  };
-
-  await next();
-  return earlyResponse;
-}
+import type { AppMiddlewareFn } from "./router/app-middleware.js";
 
 // Internal registry for fetchable loaders (server-side only)
 // Maps loader $$id to its function and middleware
@@ -65,7 +31,7 @@ export async function executeLoaderMiddleware(
 // 3. Both to share the same source of truth (this registry)
 const fetchableLoaderRegistry = new Map<
   string,
-  { fn: LoaderFn<any, any, any>; middleware: MiddlewareFn<any>[] }
+  { fn: LoaderFn<any, any, any>; middleware: AppMiddlewareFn[] }
 >();
 
 /**
@@ -75,7 +41,7 @@ const fetchableLoaderRegistry = new Map<
 function registerFetchableLoader(
   id: string,
   fn: LoaderFn<any, any, any>,
-  middleware: MiddlewareFn<any>[]
+  middleware: AppMiddlewareFn[]
 ): void {
   fetchableLoaderRegistry.set(id, { fn, middleware });
 }
@@ -97,7 +63,7 @@ function registerFetchableLoader(
  */
 export function getFetchableLoader(
   id: string
-): { fn: LoaderFn<any, any, any>; middleware: MiddlewareFn<any>[] } | undefined {
+): { fn: LoaderFn<any, any, any>; middleware: AppMiddlewareFn[] } | undefined {
   return fetchableLoaderRegistry.get(id);
 }
 
@@ -139,7 +105,7 @@ export function createLoader<T>(
   }
 
   // Fetchable loader - store fn in registry and return a serializable object
-  const middleware: MiddlewareFn<any>[] =
+  const middleware: AppMiddlewareFn[] =
     fetchable === true ? [] : fetchable?.middleware || [];
 
   // Register the function in the internal registry by $$id (server-side only)
@@ -160,6 +126,11 @@ export function createLoader<T>(
       throw new Error(`Loader "${loaderId}" not found in registry`);
     }
 
+    // Get request context (env, request, url, variables) from the RSC handler
+    // This is set by runWithRequestContext in rsc/index.ts when executing actions
+    const { getRequestContext } = await import("./server/request-context.js");
+    const requestCtx = getRequestContext();
+
     // Convert FormData to params object
     const params: Record<string, string> = {};
     formData.forEach((value, key) => {
@@ -168,36 +139,48 @@ export function createLoader<T>(
       }
     });
 
-    // Build minimal context for the loader
-    // Using 'any' to avoid complex type compatibility issues
-    const ctx: any = {
-      method: "POST",
-      params,
-      formData,
-      searchParams: new URLSearchParams(),
-      pathname: "/",
-      url: new URL("http://localhost/"),
-      request: new Request("http://localhost/", { method: "POST" }),
-      get: (key: string) => params[key],
-      set: () => {},
-      use: () => undefined,
-      var: {},
-      env: {},
-    };
+    // Use real request/url from context, or fall back to synthetic for edge cases
+    const actionUrl = requestCtx?.url ?? new URL("http://localhost/");
+    const actionRequest = requestCtx?.request ?? new Request(actionUrl, { method: "POST" });
+    const env = requestCtx?.env ?? {};
 
-    // Run middleware chain with proper next() chaining
-    const middlewareResponse = await executeLoaderMiddleware(
-      registered.middleware,
-      ctx
-    );
+    // Merge variables from request context (app-level middleware) with loader-specific variables
+    const variables: Record<string, any> = { ...requestCtx?.variables };
 
-    // If middleware returned a Response (e.g., auth redirect), throw error
-    // since we can't return a Response from a server action
-    if (middlewareResponse) {
-      throw new Error(
-        `Loader middleware returned a Response. Status: ${middlewareResponse.status}`
+    // Execute middleware for auth checks (server actions can't return Response)
+    // If middleware returns Response, we throw an error
+    if (registered.middleware.length > 0) {
+      const { executeServerActionMiddleware } = await import(
+        "./router/app-middleware.js"
+      );
+      await executeServerActionMiddleware(
+        registered.middleware,
+        actionRequest,
+        env,
+        params,
+        variables
       );
     }
+
+    // Build context using createHandlerContext for consistency with route handlers
+    // Pass variables in __middlewareVariables so they're properly shared
+    const { createHandlerContext } = await import("./router/handler-context.js");
+    const envWithVariables = { ...env, __middlewareVariables: variables };
+    const baseCtx = createHandlerContext(
+      params,
+      actionRequest,
+      actionUrl.searchParams,
+      actionUrl.pathname,
+      actionUrl,
+      envWithVariables
+    );
+
+    // Extend with server action specific properties
+    const ctx: any = {
+      ...baseCtx,
+      method: "POST",
+      formData,
+    };
 
     // Execute and return result
     return registered.fn(ctx);

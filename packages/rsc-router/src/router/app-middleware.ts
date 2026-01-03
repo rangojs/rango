@@ -22,9 +22,12 @@ export interface CookieOptions {
 }
 
 /**
- * Context passed to app-level middleware
+ * Context passed to middleware (app-level and route-level)
+ *
+ * @template TEnv - Environment type (bindings, variables)
+ * @template TParams - URL params type (typed for route middleware, Record<string, string> for app middleware)
  */
-export interface AppMiddlewareContext<TEnv = any> {
+export interface AppMiddlewareContext<TEnv = any, TParams = Record<string, string>> {
   /** Original request */
   request: Request;
 
@@ -37,8 +40,8 @@ export interface AppMiddlewareContext<TEnv = any> {
   /** Platform bindings (Cloudflare, etc.) */
   env: TEnv;
 
-  /** URL params extracted from middleware pattern */
-  params: Record<string, string>;
+  /** URL params extracted from route/middleware pattern */
+  params: TParams;
 
   /**
    * Response object (available after `await next()`)
@@ -81,10 +84,13 @@ export interface AppMiddlewareContext<TEnv = any> {
 }
 
 /**
- * App-level middleware function signature
+ * Middleware function signature (used for both app-level and route-level)
+ *
+ * @template TEnv - Environment type
+ * @template TParams - URL params type (typed for route middleware)
  */
-export type AppMiddlewareFn<TEnv = any> = (
-  ctx: AppMiddlewareContext<TEnv>,
+export type AppMiddlewareFn<TEnv = any, TParams = Record<string, string>> = (
+  ctx: AppMiddlewareContext<TEnv, TParams>,
   next: () => Promise<Response>
 ) => Response | Promise<Response> | void | Promise<void>;
 
@@ -443,4 +449,99 @@ export async function executeAppMiddleware<TEnv>(
 
   // Apply any cookies that were set during middleware execution
   return applyPendingCookies(finalResponse, pendingCookies);
+}
+
+/**
+ * Execute middleware for server actions (no Response available)
+ *
+ * Server actions can't return Response, so this function:
+ * - Runs middleware for auth checks, variable setting, etc.
+ * - Throws if middleware returns Response (can't return from server action)
+ * - Provides limited ctx (no ctx.res access)
+ */
+export async function executeServerActionMiddleware<TEnv>(
+  middlewares: AppMiddlewareFn<TEnv>[],
+  request: Request,
+  env: TEnv,
+  params: Record<string, string>,
+  variables: Record<string, any>
+): Promise<void> {
+  if (middlewares.length === 0) {
+    return;
+  }
+
+  const pendingCookies: string[] = [];
+  let index = 0;
+
+  // No response holder - server actions can't return Response
+  const responseHolder: ResponseHolder = { response: null };
+
+  const next = async (): Promise<Response> => {
+    if (index >= middlewares.length) {
+      // End of middleware chain - return a dummy response
+      // This response is never actually used, just needed for the type
+      responseHolder.response = new Response(null, { status: 200 });
+      return responseHolder.response;
+    }
+
+    const middleware = middlewares[index++];
+    const ctx = createAppMiddlewareContext(
+      request,
+      env,
+      params,
+      variables,
+      pendingCookies,
+      responseHolder
+    );
+
+    const result = await middleware(ctx, next);
+
+    // If middleware returned a Response, throw an error
+    // Server actions can't return Response
+    if (result instanceof Response) {
+      throw new Error(
+        `Loader middleware returned a Response (status: ${result.status}). ` +
+          `Server actions cannot return Response. ` +
+          `Use GET-based loader fetching for redirects, or throw an error instead.`
+      );
+    }
+
+    // Return dummy response for type compatibility
+    return responseHolder.response || new Response(null, { status: 200 });
+  };
+
+  await next();
+}
+
+/**
+ * Execute middleware chain for loaders (simpler signature)
+ *
+ * Takes an array of AppMiddlewareFn directly (no entry wrapper needed).
+ * Used for fetchable loader middleware execution.
+ */
+export async function executeLoaderAppMiddleware<TEnv>(
+  middlewares: AppMiddlewareFn<TEnv>[],
+  request: Request,
+  env: TEnv,
+  params: Record<string, string>,
+  variables: Record<string, any>,
+  finalHandler: () => Promise<Response>
+): Promise<Response> {
+  if (middlewares.length === 0) {
+    return finalHandler();
+  }
+
+  // Convert to the format executeAppMiddleware expects
+  const middlewareEntries = middlewares.map((handler) => ({
+    entry: {
+      pattern: null,
+      regex: null,
+      paramNames: [],
+      handler,
+      mountPrefix: null,
+    } as AppMiddlewareEntry<TEnv>,
+    params,
+  }));
+
+  return executeAppMiddleware(middlewareEntries, request, env, variables, finalHandler);
 }
