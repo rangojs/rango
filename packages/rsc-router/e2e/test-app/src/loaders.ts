@@ -237,3 +237,124 @@ export const ProtectedLoader = createLoader(
   }
 );
 
+// ============================================================================
+// ctx.use(loader) Composition Tests
+// Test loaders calling other loaders via ctx.use()
+// Also tests memoization - loaders should only run once per request
+// ============================================================================
+
+// Counters to track loader invocations for memoization testing
+// Reset these per-request by tracking request timestamp
+let baseNonFetchableCount = 0;
+let baseFetchableCount = 0;
+let lastRequestTimestamp = "";
+
+function resetCountersIfNewRequest(timestamp: string) {
+  if (timestamp !== lastRequestTimestamp) {
+    baseNonFetchableCount = 0;
+    baseFetchableCount = 0;
+    lastRequestTimestamp = timestamp;
+  }
+}
+
+/**
+ * Base non-fetchable loader - used as a dependency
+ * Tracks invocation count to verify memoization
+ */
+export const BaseNonFetchableLoader = createLoader(async (ctx) => {
+  // Use request timestamp to detect new requests
+  const requestTimestamp = ctx.request.headers.get("x-request-id") || Date.now().toString();
+  resetCountersIfNewRequest(requestTimestamp);
+  baseNonFetchableCount++;
+
+  return {
+    type: "non-fetchable",
+    id: ctx.params.id || "base",
+    value: 100,
+    invocationCount: baseNonFetchableCount,
+  };
+});
+
+/**
+ * Base fetchable loader - used as a dependency
+ * Tracks invocation count to verify memoization
+ */
+export const BaseFetchableLoader = createLoader(
+  async (ctx) => {
+    // Use request timestamp to detect new requests
+    const requestTimestamp = ctx.request.headers.get("x-request-id") || Date.now().toString();
+    resetCountersIfNewRequest(requestTimestamp);
+    baseFetchableCount++;
+
+    return {
+      type: "fetchable",
+      id: ctx.params.id || "base",
+      value: 200,
+      invocationCount: baseFetchableCount,
+    };
+  },
+  true // fetchable
+);
+
+/**
+ * Non-fetchable loader that uses another non-fetchable loader via ctx.use()
+ */
+export const ComposingNonFetchableUsesNonFetchable = createLoader(async (ctx) => {
+  const base = await ctx.use(BaseNonFetchableLoader);
+  return {
+    composerType: "non-fetchable",
+    dependencyType: "non-fetchable",
+    baseValue: base.value,
+    baseInvocationCount: base.invocationCount,
+    computed: base.value * 2,
+  };
+});
+
+/**
+ * Non-fetchable loader that uses a fetchable loader via ctx.use()
+ */
+export const ComposingNonFetchableUsesFetchable = createLoader(async (ctx) => {
+  const base = await ctx.use(BaseFetchableLoader);
+  return {
+    composerType: "non-fetchable",
+    dependencyType: "fetchable",
+    baseValue: base.value,
+    baseInvocationCount: base.invocationCount,
+    computed: base.value * 2,
+  };
+});
+
+/**
+ * Fetchable loader that uses another fetchable loader via ctx.use()
+ */
+export const ComposingFetchableUsesFetchable = createLoader(
+  async (ctx) => {
+    const base = await ctx.use(BaseFetchableLoader);
+    return {
+      composerType: "fetchable",
+      dependencyType: "fetchable",
+      baseValue: base.value,
+      baseInvocationCount: base.invocationCount,
+      computed: base.value * 3,
+    };
+  },
+  true // fetchable
+);
+
+/**
+ * Fetchable loader that uses a non-fetchable loader via ctx.use()
+ */
+export const ComposingFetchableUsesNonFetchable = createLoader(
+  async (ctx) => {
+    const base = await ctx.use(BaseNonFetchableLoader);
+    return {
+      composerType: "fetchable",
+      dependencyType: "non-fetchable",
+      baseValue: base.value,
+      baseInvocationCount: base.invocationCount,
+      computed: base.value * 3,
+    };
+  },
+  true // fetchable
+);
+

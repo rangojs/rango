@@ -14,6 +14,10 @@ import {
   UnregisteredLoader,
   ErrorLoader,
   ProtectedLoader,
+  ComposingNonFetchableUsesNonFetchable,
+  ComposingNonFetchableUsesFetchable,
+  ComposingFetchableUsesFetchable,
+  ComposingFetchableUsesNonFetchable,
 } from "./loaders.js";
 import { Breadcrumbs } from "./handles.js";
 import { AddToCartButton } from "./components/AddToCartButton.js";
@@ -1174,6 +1178,59 @@ export default map<typeof testRoutes>(
           </div>
         )),
       ]
+    ),
+
+    // Route for testing ctx.use(loader) composition
+    // Tests all combinations: fetchable/non-fetchable loaders using fetchable/non-fetchable dependencies
+    // Also tests memoization - base loaders should only be invoked once per request
+    route(
+      "loaderComposition",
+      async (ctx) => {
+        // Load all four composition scenarios
+        // Note: Two loaders use BaseNonFetchableLoader, two use BaseFetchableLoader
+        // If memoization works, each base loader should only be invoked once
+        const nfUsesNf = await ctx.use(ComposingNonFetchableUsesNonFetchable);
+        const nfUsesF = await ctx.use(ComposingNonFetchableUsesFetchable);
+        const fUsesF = await ctx.use(ComposingFetchableUsesFetchable);
+        const fUsesNf = await ctx.use(ComposingFetchableUsesNonFetchable);
+
+        return (
+          <div data-testid="loader-composition-page">
+            <Link to="/" data-testid="back-link">
+              ← Back to Home
+            </Link>
+            <h1 data-testid="page-title">Loader Composition Test</h1>
+
+            <div data-testid="nf-uses-nf" data-composer={nfUsesNf.composerType} data-dependency={nfUsesNf.dependencyType}>
+              <h2>Non-Fetchable uses Non-Fetchable</h2>
+              <p data-testid="nf-uses-nf-base">Base value: {nfUsesNf.baseValue}</p>
+              <p data-testid="nf-uses-nf-computed">Computed: {nfUsesNf.computed}</p>
+              <p data-testid="nf-uses-nf-invocations">Invocations: {nfUsesNf.baseInvocationCount}</p>
+            </div>
+
+            <div data-testid="nf-uses-f" data-composer={nfUsesF.composerType} data-dependency={nfUsesF.dependencyType}>
+              <h2>Non-Fetchable uses Fetchable</h2>
+              <p data-testid="nf-uses-f-base">Base value: {nfUsesF.baseValue}</p>
+              <p data-testid="nf-uses-f-computed">Computed: {nfUsesF.computed}</p>
+              <p data-testid="nf-uses-f-invocations">Invocations: {nfUsesF.baseInvocationCount}</p>
+            </div>
+
+            <div data-testid="f-uses-f" data-composer={fUsesF.composerType} data-dependency={fUsesF.dependencyType}>
+              <h2>Fetchable uses Fetchable</h2>
+              <p data-testid="f-uses-f-base">Base value: {fUsesF.baseValue}</p>
+              <p data-testid="f-uses-f-computed">Computed: {fUsesF.computed}</p>
+              <p data-testid="f-uses-f-invocations">Invocations: {fUsesF.baseInvocationCount}</p>
+            </div>
+
+            <div data-testid="f-uses-nf" data-composer={fUsesNf.composerType} data-dependency={fUsesNf.dependencyType}>
+              <h2>Fetchable uses Non-Fetchable</h2>
+              <p data-testid="f-uses-nf-base">Base value: {fUsesNf.baseValue}</p>
+              <p data-testid="f-uses-nf-computed">Computed: {fUsesNf.computed}</p>
+              <p data-testid="f-uses-nf-invocations">Invocations: {fUsesNf.baseInvocationCount}</p>
+            </div>
+          </div>
+        );
+      }
     ),
   ]
 );

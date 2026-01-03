@@ -75,4 +75,6 @@ export const testRoutes = route({
     // Route for testing form action
     formAction: "/hook-tests/form-action",
   },
+  // Route for testing ctx.use(loader) composition
+  loaderComposition: "/loader-composition",
 });
