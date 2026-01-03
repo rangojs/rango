@@ -100,4 +100,8 @@ export type {
   NotFoundInfo,
   NotFoundBoundaryFallbackProps,
   NotFoundBoundaryHandler,
+  // Error handling callback types
+  ErrorPhase,
+  OnErrorContext,
+  OnErrorCallback,
 } from "./types.js";

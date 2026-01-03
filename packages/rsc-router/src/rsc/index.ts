@@ -1,7 +1,7 @@
 /// <reference types="@vitejs/plugin-rsc/types" />
 import { renderSegments } from "../segment-system.js";
 import type { RSCRouter } from "../router.js";
-import type { ResolvedSegment, SlotState, RouterInternalContext } from "../types.js";
+import type { ResolvedSegment, SlotState, RouterInternalContext, OnErrorCallback, ErrorPhase, OnErrorContext } from "../types.js";
 import { createHandleStore, type HandleStore, type HandleData } from "../server/handle-store.js";
 import { RouteNotFoundError } from "../errors.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
@@ -92,6 +92,30 @@ export interface CreateRSCHandlerOptions<TEnv = unknown> {
    * Defaults to: () => import.meta.viteRsc.loadModule("ssr", "index")
    */
   loadSSRModule?: LoadSSRModule;
+
+  /**
+   * Callback invoked when an error occurs during RSC handling.
+   *
+   * This callback is for notification/logging purposes - it cannot modify
+   * the error handling flow. Use errorBoundary() in route definitions to
+   * customize error UI.
+   *
+   * Note: The router also has its own onError callback which is invoked
+   * for errors during route matching and segment resolution. This callback
+   * is for RSC handler-specific errors (action execution, rendering).
+   *
+   * @example
+   * ```typescript
+   * export default createRSCHandler({
+   *   router,
+   *   onError: (context) => {
+   *     console.error(`[RSC] ${context.phase} error:`, context.error);
+   *     Sentry.captureException(context.error);
+   *   },
+   * });
+   * ```
+   */
+  onError?: OnErrorCallback<TEnv>;
 }
 
 /**
@@ -121,7 +145,7 @@ export interface CreateRSCHandlerOptions<TEnv = unknown> {
 export function createRSCHandler<TEnv = unknown>(
   options: CreateRSCHandlerOptions<TEnv>
 ) {
-  const { router } = options;
+  const { router, onError } = options;
 
   // Use provided deps or default to @vitejs/plugin-rsc/rsc exports
   const deps = options.deps ?? rscDeps;
@@ -137,11 +161,65 @@ export function createRSCHandler<TEnv = unknown>(
     options.loadSSRModule ??
     (() => import.meta.viteRsc.loadModule("ssr", "index"));
 
+  /**
+   * Invoke the onError callback with comprehensive context
+   * Catches any errors in the callback itself to prevent masking the original error
+   */
+  function invokeOnError(
+    error: unknown,
+    phase: ErrorPhase,
+    context: {
+      request: Request;
+      url: URL;
+      env: TEnv;
+      actionId?: string;
+      isPartial?: boolean;
+      handledByBoundary?: boolean;
+      metadata?: Record<string, unknown>;
+    },
+    requestStartTime?: number
+  ): void {
+    if (!onError) return;
+
+    const errorObj = error instanceof Error ? error : new Error(String(error));
+    const duration = requestStartTime ? performance.now() - requestStartTime : undefined;
+
+    const errorContext: OnErrorContext<TEnv> = {
+      error: errorObj,
+      phase,
+      request: context.request,
+      url: context.url,
+      pathname: context.url.pathname,
+      method: context.request.method,
+      actionId: context.actionId,
+      env: context.env,
+      duration,
+      isPartial: context.isPartial,
+      handledByBoundary: context.handledByBoundary,
+      stack: errorObj.stack,
+      metadata: context.metadata,
+    };
+
+    try {
+      const result = onError(errorContext);
+      // If onError returns a promise, catch any rejections
+      if (result instanceof Promise) {
+        result.catch((callbackError) => {
+          console.error("[RSCHandler.onError] Callback error:", callbackError);
+        });
+      }
+    } catch (callbackError) {
+      // Log but don't throw - we don't want callback errors to mask the original error
+      console.error("[RSCHandler.onError] Callback error:", callbackError);
+    }
+  }
+
   return async function handler(
     request: Request,
     env: TEnv = {} as TEnv
   ): Promise<Response> {
     const url = new URL(request.url);
+    const requestStartTime = performance.now();
     const isPartial = url.searchParams.has("_rsc_partial");
     const isAction =
       request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
@@ -209,6 +287,16 @@ export function createRSCHandler<TEnv = unknown>(
         } catch (error) {
           returnValue = { ok: false, data: error };
           actionStatus = 500;
+
+          // Invoke onError callback for action errors
+          invokeOnError(error, "action", {
+            request,
+            url,
+            env,
+            actionId: actionId || undefined,
+            isPartial: true,
+            handledByBoundary: false, // Will update if error boundary catches
+          }, requestStartTime);
 
           // Try to render error boundary
           const errorResult = await router.matchError(request, envWithHandleStore, error, "route");
@@ -492,8 +580,24 @@ export function createRSCHandler<TEnv = unknown>(
 
       // Return 404 for unmatched routes instead of 500
       if (error instanceof RouteNotFoundError) {
+        invokeOnError(error, "routing", {
+          request,
+          url,
+          env,
+          isPartial,
+          handledByBoundary: false,
+        }, requestStartTime);
         return new Response("Not Found", { status: 404 });
       }
+
+      // Invoke onError for unhandled rendering errors
+      invokeOnError(error, "rendering", {
+        request,
+        url,
+        env,
+        isPartial,
+        handledByBoundary: false,
+      }, requestStartTime);
 
       console.error(`[RSC] Error:`, error);
       throw error;

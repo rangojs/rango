@@ -26,6 +26,8 @@ import type { HandleStore } from "../server/handle-store.js";
  * Wrap a loader promise with error handling for deferred client-side resolution.
  * Catches errors and converts them to LoaderDataResult objects that include
  * error info and pre-rendered fallback UI when an error boundary is available.
+ *
+ * @param onError - Optional callback invoked when loader errors occur
  */
 export function wrapLoaderWithErrorHandling<T>(
   promise: Promise<T>,
@@ -39,8 +41,19 @@ export function wrapLoaderWithErrorHandling<T>(
     error: unknown,
     segmentId: string,
     segmentType: ErrorInfo["segmentType"]
-  ) => ErrorInfo
+  ) => ErrorInfo,
+  onError?: (
+    error: unknown,
+    context: {
+      segmentId: string;
+      loaderName: string;
+      handledByBoundary: boolean;
+    }
+  ) => void
 ): Promise<LoaderDataResult<T>> {
+  // Extract loader name from segmentId (format: "M1L0D0.loaderName")
+  const loaderName = segmentId.split(".").pop() || "unknown";
+
   return Promise.resolve(promise)
     .then(
       (data): LoaderDataResult<T> => ({
@@ -55,6 +68,13 @@ export function wrapLoaderWithErrorHandling<T>(
 
       // Create error info
       const errorInfo = createErrorInfo(error, segmentId, "loader");
+
+      // Invoke onError callback if provided
+      onError?.(error, {
+        segmentId,
+        loaderName,
+        handledByBoundary: !!fallback,
+      });
 
       if (!fallback) {
         // No error boundary - return error result without fallback
