@@ -2241,7 +2241,11 @@ export function createRSCRouter<TEnv = any>(
 
     // Extract bindings from context (if using RouterEnv pattern)
     // Use Bindings if present (Cloudflare Workers pattern), otherwise use context directly
-    const bindings = (context as any)?.Bindings ?? context;
+    // Preserve internal context (__handleStore) from outer context
+    const rawBindings = (context as any)?.Bindings ?? context;
+    const bindings = (context as RouterInternalContext)?.__handleStore
+      ? { ...rawBindings, __handleStore: (context as RouterInternalContext).__handleStore }
+      : rawBindings;
 
     const handlerContext = createHandlerContext(
       matched.params,
@@ -2640,7 +2644,11 @@ export function createRSCRouter<TEnv = any>(
 
     // Extract bindings from context (if using RouterEnv pattern)
     // Use Bindings if present (Cloudflare Workers pattern), otherwise use context directly
-    const bindings = (context as any)?.Bindings ?? context;
+    // Preserve internal context (__handleStore) from outer context
+    const rawBindings = (context as any)?.Bindings ?? context;
+    const bindings = (context as RouterInternalContext)?.__handleStore
+      ? { ...rawBindings, __handleStore: (context as RouterInternalContext).__handleStore }
+      : rawBindings;
 
     const handlerContext = createHandlerContext(
       matched.params,

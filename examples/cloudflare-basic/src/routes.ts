@@ -14,3 +14,8 @@ export const aboutRoutes = route({
 export const counterRoutes = route({
   index: "/counter",
 });
+
+// Features route: /features/:slug (demonstrates location state)
+export const featuresRoutes = route({
+  detail: "/features/:slug",
+});
