@@ -300,18 +300,19 @@ test.describe("shop-actions", () => {
     const addToCartButton = page.locator("button").filter({ hasText: "Add to Cart" }).first();
     await expect(addToCartButton).toBeVisible({ timeout: 10000 });
 
-    // First add to cart (this will show quantity controls with + button)
+    // First add to cart (this will show quantity controls)
     await addToCartButton.click();
 
-    // Wait for quantity controls to appear (+ button shows after item is in cart)
-    const plusButton = page.locator("button").filter({ hasText: "+" }).first();
-    await expect(plusButton).toBeVisible({ timeout: 5000 });
+    // Wait for quantity controls to appear
+    const quantityDisplay = page.locator('[data-testid="cart-quantity"]');
+    await expect(quantityDisplay).toBeVisible({ timeout: 10000 });
+    await expect(quantityDisplay).toHaveText("1", { timeout: 5000 });
 
     // Click + to increase quantity
-    await plusButton.click();
+    await page.locator('[data-testid="quantity-increment"]').click();
 
-    // Wait for action to complete
-    await page.waitForTimeout(2000);
+    // Wait for quantity to update to "2"
+    await expect(quantityDisplay).toHaveText("2", { timeout: 10000 });
 
     // Modal should still be visible
     await expect(page.locator("text=Intercepted")).toBeVisible();
@@ -1003,21 +1004,16 @@ test.describe("shop-actions (production)", () => {
     await expect(addToCartButton).toBeVisible({ timeout: 15000 });
     await addToCartButton.click();
 
-    // Wait for quantity controls to appear (x/- button, quantity, + button)
-    // After Add to Cart, quantity is 1, so we see [x] [1] [+]
-    const plusButton = page.locator("button").filter({ hasText: "+" }).first();
-    await expect(plusButton).toBeVisible({ timeout: 15000 });
-
-    // Verify quantity shows "1" before clicking +
-    // The quantity is the span between the -/x and + buttons
-    const quantityContainer = plusButton.locator(".."); // parent container
-    await expect(quantityContainer.locator("span")).toContainText("1", { timeout: 10000 });
+    // Wait for quantity controls to appear
+    const quantityDisplay = page.locator('[data-testid="cart-quantity"]');
+    await expect(quantityDisplay).toBeVisible({ timeout: 15000 });
+    await expect(quantityDisplay).toHaveText("1", { timeout: 10000 });
 
     // Click + to increment
-    await plusButton.click();
+    await page.locator('[data-testid="quantity-increment"]').click();
 
     // Wait for quantity to update to "2"
-    await expect(quantityContainer.locator("span")).toContainText("2", { timeout: 15000 });
+    await expect(quantityDisplay).toHaveText("2", { timeout: 15000 });
 
     // Verify modal and background are still visible
     await expect(page.locator("text=Intercepted")).toBeVisible();
