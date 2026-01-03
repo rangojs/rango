@@ -310,3 +310,114 @@ test.describe("loader-behavior", () => {
     });
   });
 });
+
+/**
+ * Production build tests for loader behavior
+ */
+test.describe("loader-behavior (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("loaders execute on SSR in production", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Products should be loaded from SSR
+    await expect(page.locator('[data-testid="product-list"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="product-link-product-a"]')
+    ).toBeVisible();
+  });
+
+  test("streaming loader shows loading skeleton in production", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Extra wait for hydration
+    await page.waitForTimeout(100);
+
+    // Navigate to streaming route
+    await page.locator('[data-testid="slow-streaming-link"]').click();
+
+    // Loading skeleton should appear
+    await expect(
+      page.locator('[data-testid="slow-streaming-loading"]')
+    ).toBeVisible({ timeout: 2000 });
+
+    // Eventually content loads
+    await expect(
+      page.locator('[data-testid="slow-streaming-page"]')
+    ).toBeVisible({ timeout: 5000 });
+  });
+
+  test("loader revalidation works in production", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/slow-streaming"));
+    await waitForHydration(page);
+
+    // Wait for content
+    await expect(
+      page.locator('[data-testid="slow-streaming-page"]')
+    ).toBeVisible({ timeout: 5000 });
+
+    // Get initial count
+    const initialCount = await page
+      .locator('[data-testid="slow-streaming-count"]')
+      .textContent();
+    const initialNum = parseInt(initialCount?.match(/\d+/)?.[0] || "0");
+
+    // Trigger revalidation
+    await page.locator('[data-testid="slow-streaming-revalidate-btn"]').click();
+
+    // Wait for action to complete
+    await expect(
+      page.locator('[data-testid="slow-streaming-revalidate-btn-result"]')
+    ).toBeVisible({ timeout: 5000 });
+
+    // Count should increment
+    await expect(async () => {
+      const newCount = await page
+        .locator('[data-testid="slow-streaming-count"]')
+        .textContent();
+      const newNum = parseInt(newCount?.match(/\d+/)?.[0] || "0");
+      expect(newNum).toBeGreaterThan(initialNum);
+    }).toPass({ timeout: 8000 });
+  });
+
+  test("skipSSR loader streams on SPA navigation in production", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Extra wait for hydration
+    await page.waitForTimeout(100);
+
+    // Navigate to skip-ssr route
+    await page.locator('[data-testid="slow-skip-ssr-link"]').click();
+
+    // Content should eventually load (skipSSR streams on SPA nav)
+    // Note: Loading skeleton may or may not be visible depending on timing
+    await expect(
+      page.locator('[data-testid="slow-skip-ssr-page"]')
+    ).toBeVisible({ timeout: 5000 });
+
+    // Verify loader data is present
+    await expect(
+      page.locator('[data-testid="slow-skip-ssr-message"]')
+    ).toContainText("Slow data loaded");
+  });
+});

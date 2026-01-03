@@ -795,29 +795,125 @@ test.describe("Form action support", () => {
   );
 });
 
-// TODO: Error sanitization in production test requires preview script in test-app
-// test.describe("Error sanitization in production", () => {
-//   const f = useFixture({
-//     root: "./e2e/test-app",
-//     mode: "build",
-//   });
-//
-//   test.setTimeout(60000);
-//
-//   test("loader errors are sanitized in production (no detailed message)", async ({
-//     page,
-//   }) => {
-//     await page.goto(f.url("/hook-tests/route-a"));
-//     await waitForHydration(page);
-//     await testId(page, "protected-loader-unauthorized-btn").click();
-//     await expect(testId(page, "protected-loader-error")).toBeVisible({
-//       timeout: 5000,
-//     });
-//     await expect(testId(page, "protected-loader-error")).toContainText(
-//       "An error occurred"
-//     );
-//     await expect(testId(page, "protected-loader-error")).not.toContainText(
-//       "Unauthorized"
-//     );
-//   });
-// });
+/**
+ * Production build tests for useLoader and useFetchLoader hooks
+ * Ensures hooks work correctly after tree-shaking and bundling
+ */
+test.describe("useLoader hooks (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test.setTimeout(120000); // Build takes time
+
+  test("useLoader returns SSR data on initial load", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/hook-tests/route-a"));
+    await waitForHydration(page);
+
+    // Data should be available immediately from SSR
+    await expect(testId(page, "use-loader-data")).toBeVisible();
+    await expect(testId(page, "use-loader-route-id")).toContainText("Route ID:");
+    await expect(testId(page, "use-loader-source")).toContainText("server");
+  });
+
+  test("useFetchLoader works with preloaded data", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/hook-tests/route-a"));
+    await waitForHydration(page);
+
+    // Preloaded data should be available
+    await expect(testId(page, "use-fetch-loader-preloaded-data")).toBeVisible();
+    await expect(
+      testId(page, "use-fetch-loader-preloaded-route-id")
+    ).toContainText("Route ID:");
+  });
+
+  test("useFetchLoader refetch works in production", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/hook-tests/route-a"));
+    await waitForHydration(page);
+
+    // Get initial count
+    const initialCount = await testId(page, "use-loader-count").textContent();
+
+    // Click refetch
+    await testId(page, "use-loader-refetch-btn").click();
+
+    // Wait for count to change
+    await expect(async () => {
+      const newCount = await testId(page, "use-loader-count").textContent();
+      expect(newCount).not.toEqual(initialCount);
+    }).toPass({ timeout: 5000 });
+  });
+
+  test("useFetchLoader load() fetches unregistered loader", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/hook-tests/route-a"));
+    await waitForHydration(page);
+
+    // Click load button for unregistered loader
+    await testId(page, "use-fetch-loader-unregistered-fetch-btn").click();
+
+    // Wait for data to appear
+    await expect(
+      testId(page, "use-fetch-loader-unregistered-data")
+    ).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(
+      testId(page, "use-fetch-loader-unregistered-message")
+    ).toContainText("Fetched from unregistered loader");
+  });
+
+  test("useFetchLoader load() with custom params works", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/hook-tests/route-a"));
+    await waitForHydration(page);
+
+    // Click the button that passes custom params via load()
+    await testId(page, "use-loader-fetch-custom-btn").click();
+
+    // Wait for loading to finish and verify custom param
+    await expect(testId(page, "use-loader-loading")).not.toBeVisible({
+      timeout: 5000,
+    });
+    await expect(testId(page, "use-loader-route-id")).toContainText(
+      "custom-via-load"
+    );
+  });
+
+  test("middleware security works in production", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/hook-tests/route-a"));
+    await waitForHydration(page);
+
+    // Try unauthorized request
+    await testId(page, "protected-loader-unauthorized-btn").click();
+
+    // Should show error
+    await expect(testId(page, "protected-loader-error")).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Try authorized request
+    await testId(page, "protected-loader-authorized-btn").click();
+
+    // Should show data
+    await expect(testId(page, "protected-loader-data")).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(testId(page, "protected-loader-secret")).toContainText(
+      "This is protected data"
+    );
+  });
+});

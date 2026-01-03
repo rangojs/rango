@@ -1147,3 +1147,123 @@ test.describe("use-link-status-hook", () => {
     await expect(productBadge).toHaveAttribute("data-pending", "false");
   });
 });
+
+/**
+ * Production build tests for navigation functionality
+ */
+test.describe("navigation (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("basic navigation works in production", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Navigate to product
+    await page.locator('[data-testid="product-link-product-a"]').click();
+
+    // Modal should appear (intercept)
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible({
+      timeout: 5000,
+    });
+
+    // URL should change
+    await expect(page).toHaveURL(/\/product\/product-a/);
+  });
+
+  test("intercept navigation shows modal in production", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Click product link
+    await page.locator('[data-testid="product-link-product-a"]').click();
+
+    // Modal should show
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Navigate to full details
+    await page.locator('[data-testid="view-full-details"]').click();
+
+    // Should see full product page
+    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible({
+      timeout: 5000,
+    });
+  });
+
+  test("back navigation works in production", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Navigate to product modal
+    await page.locator('[data-testid="product-link-product-a"]').click();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Go to full details
+    await page.locator('[data-testid="view-full-details"]').click();
+    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Back should show modal
+    await page.goBack();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Back again should show index
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+  });
+
+  test("hard navigation to product shows full page in production", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Direct navigation (hard) to product
+    await page.goto(f.url("/product/product-a"));
+    await waitForHydration(page);
+
+    // Should show full product page, not modal
+    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="product-modal"]')
+    ).not.toBeVisible();
+  });
+
+  test("loader revalidation works after action in production", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/product/product-a"));
+    await waitForHydration(page);
+
+    // Get initial quantity
+    const quantityEl = page.locator('[data-testid="quantity-display"]');
+    const initialQuantity = await quantityEl.textContent();
+
+    // Add to cart
+    await page.locator('[data-testid="add-to-cart-btn"]').click();
+
+    // Wait for quantity to update (revalidation)
+    await expect(async () => {
+      const newQuantity = await quantityEl.textContent();
+      expect(newQuantity).not.toEqual(initialQuantity);
+    }).toPass({ timeout: 5000 });
+  });
+});
