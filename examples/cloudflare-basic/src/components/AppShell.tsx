@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { Link, href, MetaTags } from "rsc-router/client";
+import { BreadcrumbNav } from "./BreadcrumbNav.js";
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (
@@ -30,6 +31,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Link to={href("/about")} data-testid="nav-about">About</Link>
           <Link to={href("/counter")} data-testid="nav-counter">Counter</Link>
         </nav>
+        <BreadcrumbNav />
         {children}
       </body>
     </html>

@@ -1,5 +1,6 @@
 import { map, Meta } from "rsc-router/server";
 import type { aboutRoutes } from "../routes.js";
+import { Breadcrumbs } from "../handles/breadcrumbs.js";
 
 export default map<typeof aboutRoutes>(({ route }) => [
   route("index", (ctx) => {
@@ -7,6 +8,10 @@ export default map<typeof aboutRoutes>(({ route }) => [
     meta({ title: "About - RSC Router Cloudflare" });
     meta({ name: "description", content: "Learn about RSC Router - a code-first, type-safe router for React Server Components" });
     meta({ property: "og:title", content: "About RSC Router" });
+
+    const breadcrumb = ctx.use(Breadcrumbs);
+    breadcrumb({ label: "Home", href: "/" });
+    breadcrumb({ label: "About", href: "/about" });
 
     return (
       <main data-testid="about-page">
