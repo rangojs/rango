@@ -18,9 +18,51 @@ import type {
   MiddlewareFn,
 } from "./types.js";
 
+/**
+ * Execute loader middleware chain with proper next() chaining
+ * Returns Response if middleware short-circuits, null otherwise
+ */
+export async function executeLoaderMiddleware(
+  middleware: MiddlewareFn<any>[],
+  ctx: any
+): Promise<Response | null> {
+  if (middleware.length === 0) {
+    return null;
+  }
+
+  let index = 0;
+  let earlyResponse: Response | null = null;
+
+  const next = async (): Promise<void> => {
+    if (index >= middleware.length || earlyResponse) {
+      return;
+    }
+
+    const currentIndex = index++;
+    const currentMiddleware = middleware[currentIndex];
+
+    const result = await currentMiddleware(ctx, next);
+
+    if (result instanceof Response) {
+      earlyResponse = result;
+    }
+  };
+
+  await next();
+  return earlyResponse;
+}
+
 // Internal registry for fetchable loaders (server-side only)
 // Maps loader $$id to its function and middleware
-// This allows server actions to look up the loader without capturing it in closure
+//
+// WHY TWO REGISTRIES?
+// This registry (fetchableLoaderRegistry) is populated immediately when createLoader() runs.
+// The other registry in loader-registry.ts (loaderRegistry) is a cache used by the RSC handler
+// for GET-based fetching. The RSC handler calls getFetchableLoader() from here to populate
+// its cache. This separation allows:
+// 1. Server actions to look up loaders directly without going through lazy loading
+// 2. The RSC handler to use lazy loading for production builds
+// 3. Both to share the same source of truth (this registry)
 const fetchableLoaderRegistry = new Map<
   string,
   { fn: LoaderFn<any, any, any>; middleware: MiddlewareFn<any>[] }
@@ -39,8 +81,19 @@ function registerFetchableLoader(
 }
 
 /**
- * Get a fetchable loader's function from registry by $$id
- * Called by server actions and loader-registry to execute the loader
+ * Get a fetchable loader's function from the internal registry by $$id
+ *
+ * This is used internally by:
+ * - Server actions (loaderAction) to execute loader functions
+ * - loader-registry.ts to populate the main registry for GET-based fetching
+ *
+ * Loaders are registered here when createLoader() is called with fetchable: true.
+ * The $$id is injected by the Vite exposeLoaderId plugin.
+ *
+ * @param id - The loader's $$id (auto-generated from file path + export name)
+ * @returns The loader function and middleware, or undefined if not found
+ *
+ * @internal This is primarily for internal use by the router infrastructure
  */
 export function getFetchableLoader(
   id: string
@@ -132,9 +185,18 @@ export function createLoader<T>(
       env: {},
     };
 
-    // Run middleware chain (middleware expects HandlerContext which is compatible)
-    for (const mw of registered.middleware) {
-      await mw(ctx, async () => {});
+    // Run middleware chain with proper next() chaining
+    const middlewareResponse = await executeLoaderMiddleware(
+      registered.middleware,
+      ctx
+    );
+
+    // If middleware returned a Response (e.g., auth redirect), throw error
+    // since we can't return a Response from a server action
+    if (middlewareResponse) {
+      throw new Error(
+        `Loader middleware returned a Response. Status: ${middlewareResponse.status}`
+      );
     }
 
     // Execute and return result

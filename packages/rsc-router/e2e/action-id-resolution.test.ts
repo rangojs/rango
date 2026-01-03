@@ -6,7 +6,7 @@ import * as path from "node:path";
 
 /**
  * Tests for action ID resolution in production builds:
- * 1. Server bundles should have file paths in action $$id for revalidation matching
+ * 1. Server bundles should have file paths in action $id for revalidation matching
  * 2. Client bundles should NOT expose file paths (security - only hashed IDs)
  */
 

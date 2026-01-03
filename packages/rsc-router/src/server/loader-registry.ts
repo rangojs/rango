@@ -13,7 +13,13 @@ interface RegisteredLoader {
   middleware: MiddlewareFn<any>[];
 }
 
-// Server-side registry - maps loader $$id to function and middleware
+// Server-side cache - maps loader $$id to function and middleware
+// This is a CACHE populated by getLoaderLazy() when loaders are first accessed.
+// The source of truth is fetchableLoaderRegistry in loader.ts, which is populated
+// when createLoader() runs. This cache exists to:
+// 1. Avoid repeated lookups/imports for the same loader
+// 2. Support lazy loading in production (loaders imported on-demand)
+// 3. Provide a stable reference for the RSC handler
 const loaderRegistry = new Map<string, RegisteredLoader>();
 
 // Lazy import map - set by the loader manifest

@@ -5,6 +5,7 @@ import type { ResolvedSegment, SlotState, RouterInternalContext, OnErrorCallback
 import { createHandleStore, type HandleStore, type HandleData } from "../server/handle-store.js";
 import { RouteNotFoundError } from "../errors.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
+import { executeLoaderMiddleware } from "../loader.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
 
@@ -281,7 +282,7 @@ export function createRSCHandler<TEnv = unknown>(
         let returnValue: { ok: boolean; data: unknown };
         let actionStatus = 200;
 
-        // Track the action reference for extracting $$id
+        // Track the action reference for extracting $id
         let loadedAction: Function | undefined;
 
         try {
@@ -498,9 +499,15 @@ export function createRSCHandler<TEnv = unknown>(
             formData: undefined,
           };
 
-          // Run middleware chain
-          for (const mw of middleware) {
-            await mw(ctx as any, async () => {});
+          // Run middleware chain with proper next() chaining
+          const middlewareResponse = await executeLoaderMiddleware(
+            middleware,
+            ctx
+          );
+
+          // If middleware returned a Response (e.g., auth redirect), return it
+          if (middlewareResponse) {
+            return middlewareResponse;
           }
 
           // Execute loader function
