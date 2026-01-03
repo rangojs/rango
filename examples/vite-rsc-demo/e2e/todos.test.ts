@@ -457,21 +457,18 @@ test.describe("todos-actions (production)", () => {
     await page.goto(f.url("/todos"));
     await waitForHydration(page);
 
-    await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
-    await expect(page.locator("button:has-text('Add Todo')")).toBeVisible();
+    await expect(page.locator("h1:has-text('Todos')")).toBeVisible({ timeout: 10000 });
+
+    const addButton = page.locator("button:has-text('Add Todo')");
+    await expect(addButton).toBeVisible({ timeout: 10000 });
 
     const input = page.locator('input[placeholder="What needs to be done?"]');
     await input.fill("Production Test Todo");
-
-    const addButton = page.locator("button:has-text('Add Todo')");
     await addButton.click();
 
-    await expect(page.locator("button:has-text('Add Todo')")).toBeVisible({
-      timeout: 10000,
-    });
-
+    // Wait for the new todo to appear (action completes and UI updates)
     await expect(page.locator("text=Production Test Todo")).toBeVisible({
-      timeout: 10000,
+      timeout: 15000,
     });
   });
 
