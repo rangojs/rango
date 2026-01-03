@@ -6,6 +6,10 @@ import { createHandleStore, type HandleStore, type HandleData } from "../server/
 import { RouteNotFoundError } from "../errors.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
 import { executeLoaderMiddleware } from "../loader.js";
+import {
+  matchMiddleware,
+  executeAppMiddleware,
+} from "../router/app-middleware.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
 
@@ -144,6 +148,39 @@ export function createRSCHandler<TEnv = unknown>(
     env: TEnv = {} as TEnv
   ): Promise<Response> {
     const url = new URL(request.url);
+
+    // Match app-level middleware
+    const matchedMiddleware = matchMiddleware(url.pathname, router.appMiddleware);
+
+    // Shared variables between middleware and route handlers
+    const variables: Record<string, any> = {};
+
+    // Core handler logic (wrapped by middleware)
+    const coreHandler = async (): Promise<Response> => {
+      return coreRequestHandler(request, env, url, variables);
+    };
+
+    // Execute middleware chain if any, otherwise call core handler directly
+    if (matchedMiddleware.length > 0) {
+      return executeAppMiddleware(
+        matchedMiddleware,
+        request,
+        env,
+        variables,
+        coreHandler
+      );
+    }
+
+    return coreHandler();
+  };
+
+  // Core request handling logic (separated for middleware wrapping)
+  async function coreRequestHandler(
+    request: Request,
+    env: TEnv,
+    url: URL,
+    variables: Record<string, any>
+  ): Promise<Response> {
     const isPartial = url.searchParams.has("_rsc_partial");
     const isAction =
       request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
@@ -153,10 +190,11 @@ export function createRSCHandler<TEnv = unknown>(
     // Create handle store for tracking pending handlers
     const handleStore = createHandleStore();
 
-    // Attach handle store to env for router access
+    // Attach handle store and shared variables to env for router access
     const envWithHandleStore = {
       ...env,
       __handleStore: handleStore,
+      __middlewareVariables: variables,
     } as TEnv & RouterInternalContext;
 
     let payload: RscPayload;
@@ -625,7 +663,7 @@ export function createRSCHandler<TEnv = unknown>(
       console.error(`[RSC] Error:`, error);
       throw error;
     }
-  };
+  }
 }
 
 // Re-export HandleStore types for consumers who need custom handling

@@ -53,6 +53,13 @@ export { registerLoaderById, setLoaderImports } from "./server/loader-registry.j
 // Meta types
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 
+// App-level middleware types
+export type {
+  AppMiddlewareFn,
+  AppMiddlewareContext,
+  CookieOptions,
+} from "./router/app-middleware.js";
+
 // Error classes and utilities
 export {
   RouteNotFoundError,

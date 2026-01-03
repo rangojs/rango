@@ -21,6 +21,12 @@ export interface RouterInternalContext {
    * Created by createRSCHandler and passed to router.match().
    */
   __handleStore?: HandleStore;
+
+  /**
+   * Shared variables between app-level middleware and route handlers.
+   * Set by middleware via ctx.set(), read by route handlers via ctx.get().
+   */
+  __middlewareVariables?: Record<string, any>;
 }
 
 /**

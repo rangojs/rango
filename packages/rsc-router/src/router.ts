@@ -90,6 +90,13 @@ import type {
   SegmentRevalidationResult,
   ActionContext,
 } from "./router/types.js";
+import {
+  type AppMiddlewareFn,
+  type AppMiddlewareEntry,
+  parsePattern,
+  matchMiddleware,
+  executeAppMiddleware,
+} from "./router/app-middleware.js";
 
 /**
  * Props passed to the root layout component
@@ -202,6 +209,23 @@ interface RouteBuilder<
   TEnv,
   TRoutes extends Record<string, string>,
 > {
+  /**
+   * Add middleware scoped to this mount
+   * Called between .routes() and .map()
+   *
+   * @example
+   * ```typescript
+   * .routes("/admin", adminRoutes)
+   * .use(authMiddleware)           // All of /admin/*
+   * .use("/danger/*", superAuth)   // Only /admin/danger/*
+   * .map(() => import("./admin"))
+   * ```
+   */
+  use(
+    patternOrMiddleware: string | AppMiddlewareFn<TEnv>,
+    middleware?: AppMiddlewareFn<TEnv>
+  ): RouteBuilder<T, TEnv, TRoutes>;
+
   map(
     handler: () =>
       | Array<AllUseItems>
@@ -244,6 +268,24 @@ export interface RSCRouter<
   routes<T extends ResolvedRouteMap<any>>(
     routes: T
   ): RouteBuilder<RouteDefinition, TEnv, TRoutes & T>;
+
+  /**
+   * Add global middleware that runs on all routes
+   * Position matters: middleware before any .routes() is global
+   *
+   * @example
+   * ```typescript
+   * createRSCRouter({ document: RootLayout })
+   *   .use(loggerMiddleware)           // All routes
+   *   .use("/api/*", rateLimiter)      // Pattern match
+   *   .routes(homeRoutes)
+   *   .map(() => import("./home"))
+   * ```
+   */
+  use(
+    patternOrMiddleware: string | AppMiddlewareFn<TEnv>,
+    middleware?: AppMiddlewareFn<TEnv>
+  ): RSCRouter<TEnv, TRoutes>;
 
   /**
    * Type-safe URL builder for registered routes
@@ -289,6 +331,12 @@ export interface RSCRouter<
    * Called when errors occur in loaders, actions, or routes
    */
   readonly onError?: RSCRouterOptions["onError"];
+
+  /**
+   * App-level middleware entries (for internal use by RSC handler)
+   * These wrap the entire request/response cycle
+   */
+  readonly appMiddleware: AppMiddlewareEntry<TEnv>[];
 
   match(request: Request, context: TEnv): Promise<MatchResult>;
 
@@ -377,6 +425,58 @@ export function createRSCRouter<TEnv = any>(
   const rootLayout = documentOption ?? DefaultDocument;
   const routesEntries: RouteEntry<TEnv>[] = [];
   let mountIndex = 0;
+
+  // App-level middleware storage
+  const appMiddleware: AppMiddlewareEntry<TEnv>[] = [];
+
+  // Helper to add middleware entry
+  function addMiddleware(
+    patternOrMiddleware: string | AppMiddlewareFn<TEnv>,
+    middleware?: AppMiddlewareFn<TEnv>,
+    mountPrefix: string | null = null
+  ): void {
+    let pattern: string | null = null;
+    let handler: AppMiddlewareFn<TEnv>;
+
+    if (typeof patternOrMiddleware === "string") {
+      // Pattern + middleware
+      pattern = patternOrMiddleware;
+      if (!middleware) {
+        throw new Error("Middleware function required when pattern is provided");
+      }
+      handler = middleware;
+    } else {
+      // Just middleware (no pattern)
+      handler = patternOrMiddleware;
+    }
+
+    // If mount-scoped, prepend mount prefix to pattern
+    let fullPattern = pattern;
+    if (mountPrefix && pattern) {
+      // e.g., mountPrefix="/blog", pattern="/admin/*" → "/blog/admin/*"
+      fullPattern = pattern === "*" ? `${mountPrefix}/*` : `${mountPrefix}${pattern}`;
+    } else if (mountPrefix && !pattern) {
+      // Mount-scoped middleware without pattern applies to all of mount
+      fullPattern = `${mountPrefix}/*`;
+    }
+
+    // Parse pattern into regex
+    let regex: RegExp | null = null;
+    let paramNames: string[] = [];
+    if (fullPattern) {
+      const parsed = parsePattern(fullPattern);
+      regex = parsed.regex;
+      paramNames = parsed.paramNames;
+    }
+
+    appMiddleware.push({
+      pattern: fullPattern,
+      regex,
+      paramNames,
+      handler,
+      mountPrefix,
+    });
+  }
 
   // Track all registered routes with their prefixes for href()
   const mergedRouteMap: Record<string, string> = {};
@@ -2741,7 +2841,17 @@ export function createRSCRouter<TEnv = any>(
     // Extract trailing slash config if present (attached by route())
     const trailingSlashConfig = (routes as any).__trailingSlash as Record<string, TrailingSlashMode> | undefined;
 
-    return {
+    // Create builder object so .use() can return it
+    const builder: RouteBuilder<RouteDefinition, TEnv, TNewRoutes> = {
+      use(
+        patternOrMiddleware: string | AppMiddlewareFn<TEnv>,
+        middleware?: AppMiddlewareFn<TEnv>
+      ) {
+        // Mount-scoped middleware - prefix is the mount prefix
+        addMiddleware(patternOrMiddleware, middleware, prefix || null);
+        return builder;
+      },
+
       map(
         handler: () =>
           | Array<AllUseItems>
@@ -2765,6 +2875,8 @@ export function createRSCRouter<TEnv = any>(
         return mergedRouteMap as TNewRoutes;
       },
     };
+
+    return builder;
   }
 
   /**
@@ -2785,6 +2897,15 @@ export function createRSCRouter<TEnv = any>(
       return createRouteBuilder("", prefixOrRoutes as Record<string, string>);
     },
 
+    use(
+      patternOrMiddleware: string | AppMiddlewareFn<TEnv>,
+      middleware?: AppMiddlewareFn<TEnv>
+    ): any {
+      // Global middleware - no mount prefix
+      addMiddleware(patternOrMiddleware, middleware, null);
+      return router;
+    },
+
     // Type-safe URL builder using merged route map
     // Types are tracked through the builder chain via TRoutes parameter
     href: createHref(mergedRouteMap),
@@ -2800,6 +2921,9 @@ export function createRSCRouter<TEnv = any>(
 
     // Expose onError callback for error handling
     onError,
+
+    // Expose app middleware for RSC handler
+    appMiddleware,
 
     match,
     matchPartial,
