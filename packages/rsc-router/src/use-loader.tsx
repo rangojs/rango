@@ -167,6 +167,9 @@ function useLoaderInternal<T>(
   );
 
   // Form action for progressive enhancement
+  // This wrapper is for useFetchLoader's load.action - it manages state internally
+  // and doesn't use React's useActionState. For true PE, use loader.action directly
+  // with useActionState.
   const action = useCallback(
     async (formData: FormData): Promise<void> => {
       if (!loader.action) {
@@ -180,7 +183,8 @@ function useLoaderInternal<T>(
       setError(null);
 
       try {
-        const result = await loader.action(formData);
+        // Pass null as prevState - this wrapper manages state internally
+        const result = await loader.action(null, formData);
         setFetchedData(result);
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));

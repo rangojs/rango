@@ -32,6 +32,11 @@ export interface RscPayload {
 }
 
 /**
+ * React form state type for useActionState progressive enhancement
+ */
+export type ReactFormState = unknown;
+
+/**
  * RSC dependencies from @vitejs/plugin-rsc/rsc
  */
 export interface RSCDependencies {
@@ -60,13 +65,44 @@ export interface RSCDependencies {
    * loadServerAction from @vitejs/plugin-rsc/rsc
    */
   loadServerAction: (actionId: string) => Promise<Function>;
+
+  /**
+   * decodeAction from @vitejs/plugin-rsc/rsc
+   * Decodes a FormData into a bound action function (for useActionState forms)
+   */
+  decodeAction: (body: FormData) => Promise<() => Promise<unknown>>;
+
+  /**
+   * decodeFormState from @vitejs/plugin-rsc/rsc
+   * Decodes the action result into a ReactFormState for useActionState progressive enhancement
+   */
+  decodeFormState: (
+    actionResult: unknown,
+    body: FormData
+  ) => Promise<ReactFormState | null>;
+}
+
+/**
+ * Options for SSR HTML rendering
+ */
+export interface SSRRenderOptions {
+  /**
+   * Form state for useActionState progressive enhancement.
+   * This is the result of decodeFormState() and should be passed to
+   * react-dom's renderToReadableStream to enable useActionState to
+   * receive the action result during SSR.
+   */
+  formState?: ReactFormState | null;
 }
 
 /**
  * SSR module interface for HTML rendering
  */
 export interface SSRModule {
-  renderHTML: (rscStream: ReadableStream<Uint8Array>) => Promise<ReadableStream<Uint8Array>>;
+  renderHTML: (
+    rscStream: ReadableStream<Uint8Array>,
+    options?: SSRRenderOptions
+  ) => Promise<ReadableStream<Uint8Array>>;
 }
 
 /**
@@ -132,6 +168,8 @@ export function createRSCHandler<TEnv = unknown>(
     decodeReply,
     createTemporaryReferenceSet,
     loadServerAction,
+    decodeAction,
+    decodeFormState,
   } = deps;
 
   // Use provided loadSSRModule or default to vite RSC module loader
@@ -182,60 +220,76 @@ export function createRSCHandler<TEnv = unknown>(
         // Look for React's progressive enhancement hidden fields.
         // React adds different patterns depending on how the action is used:
         //
-        // 1. Direct server action: action={myServerAction}
+        // Pattern 1: Direct server action: action={myServerAction}
         //    Hidden field: $ACTION_ID_<actionId> (ID in field name)
         //
-        // 2. useActionState: const [state, action] = useActionState(serverAction, ...)
+        // Pattern 2: useActionState: const [state, action] = useActionState(serverAction, ...)
         //    Hidden fields:
         //    - $ACTION_REF_<n> (reference marker)
         //    - $ACTION_<n>:0 (JSON with "id" field containing action ID)
         //    - $ACTION_<n>:1, $ACTION_<n>:2 (bound state data)
         //    - $ACTION_KEY (action key)
         //
-        let progressiveActionId: string | null = null;
+        let isDirectAction = false;
+        let isUseActionState = false;
+        let directActionId: string | null = null;
+
         // Use forEach since TypeScript may not have entries() in FormData type
         formData.forEach((value, key) => {
-          if (progressiveActionId) return; // Already found
-
           if (key.startsWith("$ACTION_ID_")) {
             // Pattern 1: Direct server action
-            // The action ID is embedded in the field name: $ACTION_ID_<actionId>
-            progressiveActionId = key.slice("$ACTION_ID_".length);
-          } else if (/^\$ACTION_\d+:0$/.test(key)) {
-            // Pattern 2: useActionState action
-            // The action ID is in the JSON value: {"id":"<actionId>","bound":"..."}
-            try {
-              const parsed = JSON.parse(value as string);
-              if (parsed.id) {
-                progressiveActionId = parsed.id;
-              }
-            } catch {
-              // Not valid JSON, continue
-            }
+            isDirectAction = true;
+            directActionId = key.slice("$ACTION_ID_".length);
+          } else if (key.startsWith("$ACTION_REF_")) {
+            // Pattern 2: useActionState action (has reference marker)
+            isUseActionState = true;
           }
         });
 
-        if (progressiveActionId) {
+        if (isDirectAction || isUseActionState) {
           // This is a no-JS form submission - execute action and return HTML
-          const temporaryReferences = createTemporaryReferenceSet();
+          let actionResult: unknown = undefined;
+          let reactFormState: ReactFormState | null = null;
 
-          // Decode action arguments from FormData
-          let args: unknown[] = [];
-          try {
-            args = await decodeReply(formData, { temporaryReferences });
-          } catch {
-            // If decoding fails, pass FormData as the argument (for form actions that expect FormData)
-            args = [formData];
+          if (isUseActionState) {
+            // Pattern 2: useActionState - use decodeAction to get the bound action
+            // decodeAction returns a function that, when called, executes the action
+            // with the proper bound state arguments
+            try {
+              const boundAction = await decodeAction(formData);
+              actionResult = await boundAction();
+            } catch (error) {
+              console.error("[RSC] Progressive enhancement action error:", error);
+            }
+          } else if (isDirectAction && directActionId) {
+            // Pattern 1: Direct server action - load and execute manually
+            const temporaryReferences = createTemporaryReferenceSet();
+
+            // Decode action arguments from FormData
+            let args: unknown[] = [];
+            try {
+              args = await decodeReply(formData, { temporaryReferences });
+            } catch {
+              // If decoding fails, pass FormData as the argument
+              args = [formData];
+            }
+
+            try {
+              const loadedAction = await loadServerAction(directActionId);
+              actionResult = await loadedAction.apply(null, args);
+            } catch (error) {
+              console.error("[RSC] Progressive enhancement action error:", error);
+            }
           }
 
-          // Execute the server action and capture result for useActionState
-          let actionResult: unknown = undefined;
+          // Decode the form state for useActionState progressive enhancement.
+          // This converts the action result into a ReactFormState that React's
+          // renderToReadableStream can use to initialize useActionState hooks.
           try {
-            const loadedAction = await loadServerAction(progressiveActionId);
-            actionResult = await loadedAction.apply(null, args);
+            reactFormState = await decodeFormState(actionResult, formData);
           } catch (error) {
-            console.error("[RSC] Progressive enhancement action error:", error);
-            // Continue to render the page even if action fails
+            console.error("[RSC] Failed to decode form state:", error);
+            // Continue without form state - useActionState won't receive the result
           }
 
           // Re-render the page and return HTML
@@ -280,7 +334,10 @@ export function createRSCHandler<TEnv = unknown>(
           // Render to RSC stream, then to HTML
           const rscStream = renderToReadableStream<RscPayload>(payload);
           const ssrModule = await loadSSRModule();
-          const htmlStream = await ssrModule.renderHTML(rscStream);
+          // Pass the decoded form state to SSR for useActionState progressive enhancement
+          const htmlStream = await ssrModule.renderHTML(rscStream, {
+            formState: reactFormState,
+          });
 
           return new Response(htmlStream, {
             headers: {

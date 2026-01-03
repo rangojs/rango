@@ -94,10 +94,8 @@ test.describe("progressive-enhancement", () => {
       expect(content).toMatch(/<html/i);
     });
 
-    // useActionState progressive enhancement requires deeper React SSR integration.
-    // The form state needs to be passed to renderToReadableStream during SSR.
-    // Direct server actions (action={serverAction}) work, but useActionState doesn't yet.
-    test.fail(
+    // useActionState progressive enhancement - form state is passed to renderToReadableStream
+    test(
       "useActionState form submission should work without JavaScript",
       async ({ page }) => {
         // Navigate to the form-action page which uses useActionState

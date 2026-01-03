@@ -4,6 +4,27 @@ import { initSegmentsSync } from "../browser/react/use-segments.js";
 import type { HandleData } from "../browser/types.js";
 
 /**
+ * Options for renderToReadableStream from react-dom/server
+ */
+interface RenderToReadableStreamOptions {
+  bootstrapScriptContent?: string;
+  formState?: unknown;
+}
+
+/**
+ * Options for the renderHTML function
+ */
+export interface SSRRenderOptions {
+  /**
+   * Form state for useActionState progressive enhancement.
+   * This is the result of decodeFormState() and should be passed to
+   * react-dom's renderToReadableStream to enable useActionState to
+   * receive the action result during SSR.
+   */
+  formState?: unknown;
+}
+
+/**
  * SSR dependencies from external packages
  */
 export interface SSRDependencies {
@@ -17,7 +38,7 @@ export interface SSRDependencies {
    */
   renderToReadableStream: (
     element: React.ReactNode,
-    options?: { bootstrapScriptContent?: string }
+    options?: RenderToReadableStreamOptions
   ) => Promise<ReadableStream<Uint8Array>>;
 
   /**
@@ -89,9 +110,13 @@ export function createSSRHandler(deps: SSRDependencies) {
 
   /**
    * Render RSC stream to HTML stream
+   *
+   * @param rscStream - The RSC stream to render
+   * @param options - Optional render options including formState for useActionState
    */
   return async function renderHTML(
-    rscStream: ReadableStream<Uint8Array>
+    rscStream: ReadableStream<Uint8Array>,
+    options?: SSRRenderOptions
   ): Promise<ReadableStream<Uint8Array>> {
     // Tee the stream:
     // - rscStream1: For SSR rendering (deserialize to React VDOM)
@@ -124,8 +149,10 @@ export function createSSRHandler(deps: SSRDependencies) {
     const bootstrapScriptContent = await loadBootstrapScriptContent();
 
     // Render React tree to HTML stream
+    // Pass formState for useActionState progressive enhancement if provided
     const htmlStream = await renderToReadableStream(<SsrRoot />, {
       bootstrapScriptContent,
+      formState: options?.formState,
     });
 
     // Inject RSC payload into HTML as <script>__FLIGHT_DATA__</script>
