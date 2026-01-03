@@ -185,8 +185,11 @@ function transformRegisterServerReference(
     const filePath = hashToFileMap.get(hash);
     if (filePath) {
       hasChanges = true;
-      // Replace hash with file path in the registerServerReference call
-      const replacement = `registerServerReference(${fnArg}, "${filePath}", "${exportName}")`;
+      // WRAP the call to add $$id property with file path
+      // Keep the original hash for React's action registry (so loadServerAction works)
+      // Add $$id with file path for revalidation matching
+      const filePathId = `${filePath}#${exportName}`;
+      const replacement = `(function(fn) { fn.$$id = "${filePathId}"; return fn; })(registerServerReference(${fnArg}, "${hash}", "${exportName}"))`;
       s.overwrite(start, end, replacement);
     }
   }
@@ -301,13 +304,13 @@ export function exposeActionId(): Plugin {
 
     // Build mode: renderChunk runs after all transforms and bundling complete
     renderChunk(code, chunk) {
-      // Determine if this is a server environment (RSC or SSR)
-      // Client bundles should NOT get file paths (security)
-      const isServerEnv =
-        this.environment?.name === "rsc" || this.environment?.name === "ssr";
+      // Only RSC bundle should get file paths for revalidation matching
+      // SSR bundle must NOT use file paths because client components run there
+      // and need to match the client bundle during hydration (otherwise: error #418)
+      const isRscEnv = this.environment?.name === "rsc";
 
-      // Only use file path mapping for server environments
-      const effectiveMap = isServerEnv ? hashToFileMap : undefined;
+      // Only use file path mapping for RSC environment
+      const effectiveMap = isRscEnv ? hashToFileMap : undefined;
 
       // Transform createServerReference calls (client-side)
       const result = transformServerReferences(
@@ -316,9 +319,9 @@ export function exposeActionId(): Plugin {
         effectiveMap
       );
 
-      // For server bundles, also transform registerServerReference calls
+      // For RSC bundles, also transform registerServerReference calls
       // This replaces hashed IDs with file paths so $$id contains the actual path
-      if (isServerEnv && hashToFileMap) {
+      if (isRscEnv && hashToFileMap) {
         const codeToTransform = result ? result.code : code;
         const registerResult = transformRegisterServerReference(
           codeToTransform,
