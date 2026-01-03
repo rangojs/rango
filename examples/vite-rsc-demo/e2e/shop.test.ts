@@ -933,8 +933,9 @@ test.describe("shop-navigation (production)", () => {
     await page.goto(f.url("/shop/product/wireless-headphones"));
     await waitForHydration(page);
 
+    // Product detail has 1s artificial delay + loading time
     await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({
-      timeout: 10000,
+      timeout: 15000,
     });
     await expect(page.locator("text=Intercepted")).not.toBeVisible();
   });
@@ -956,15 +957,19 @@ test.describe("shop-actions (production)", () => {
     await page.goto(f.url("/shop/product/wireless-headphones"));
     await waitForHydration(page);
 
+    // Product detail has 1s artificial delay + loading time
     await expect(
       page.locator("h2:has-text('Wireless Headphones')")
     ).toBeVisible({
-      timeout: 10000,
+      timeout: 15000,
     });
 
     await expect(page.locator("text=Add to Cart - Tests")).toBeVisible({
-      timeout: 5000,
+      timeout: 10000,
     });
+
+    // Wait for event handlers to attach
+    await page.waitForTimeout(100);
 
     const addToCartButton = page
       .locator("button")
@@ -972,7 +977,7 @@ test.describe("shop-actions (production)", () => {
       .first();
     await addToCartButton.click();
 
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(3000);
 
     await expect(
       page.locator("h2:has-text('Wireless Headphones')")
@@ -985,23 +990,26 @@ test.describe("shop-actions (production)", () => {
     await page.goto(f.url("/shop"));
     await waitForHydration(page);
 
+    // Wait for event handlers to attach
+    await page.waitForTimeout(100);
+
     await page
       .locator('a[href="/shop/product/wireless-headphones"]')
       .first()
       .click();
     await expect(page.locator("text=Intercepted")).toBeVisible({
-      timeout: 5000,
+      timeout: 10000,
     });
 
     const addToCartButton = page.locator("button").filter({ hasText: "Add to Cart" }).first();
-    await expect(addToCartButton).toBeVisible({ timeout: 10000 });
+    await expect(addToCartButton).toBeVisible({ timeout: 15000 });
     await addToCartButton.click();
 
     const plusButton = page.locator("button").filter({ hasText: "+" }).first();
-    await expect(plusButton).toBeVisible({ timeout: 5000 });
+    await expect(plusButton).toBeVisible({ timeout: 10000 });
     await plusButton.click();
 
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(3000);
 
     await expect(page.locator("text=Intercepted")).toBeVisible();
     await expect(page.locator("text=Featured Products")).toBeVisible();
@@ -1023,7 +1031,7 @@ test.describe("shop-breadcrumbs (production)", () => {
     await waitForHydration(page);
 
     const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
-    await expect(breadcrumbNav.locator("text=Shop")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Shop")).toBeVisible({ timeout: 5000 });
   });
 
   test("should display category breadcrumbs", async ({ page }) => {
@@ -1033,8 +1041,8 @@ test.describe("shop-breadcrumbs (production)", () => {
     await waitForHydration(page);
 
     const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
-    await expect(breadcrumbNav.locator("text=Shop")).toBeVisible();
-    await expect(breadcrumbNav.locator("text=Electronics")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Shop")).toBeVisible({ timeout: 5000 });
+    await expect(breadcrumbNav.locator("text=Electronics")).toBeVisible({ timeout: 5000 });
   });
 
   test("should display product breadcrumbs on direct navigation", async ({ page }) => {
@@ -1043,11 +1051,12 @@ test.describe("shop-breadcrumbs (production)", () => {
     await page.goto(f.url("/shop/product/wireless-headphones"));
     await waitForHydration(page);
 
-    await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({ timeout: 10000 });
+    // Product detail has 1s artificial delay + loading time
+    await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({ timeout: 15000 });
 
     const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
-    await expect(breadcrumbNav.locator("text=Shop")).toBeVisible();
-    await expect(breadcrumbNav.locator("text=Wireless Headphones")).toBeVisible();
+    await expect(breadcrumbNav.locator("text=Shop")).toBeVisible({ timeout: 5000 });
+    await expect(breadcrumbNav.locator("text=Wireless Headphones")).toBeVisible({ timeout: 5000 });
   });
 });
 

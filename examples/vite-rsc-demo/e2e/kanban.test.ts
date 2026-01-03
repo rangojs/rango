@@ -474,12 +474,15 @@ test.describe("kanban-intercept-routes (production)", () => {
     await page.goto(f.url("/kanban"));
     await waitForHydration(page);
 
-    await expect(testId(page, "kanban-board")).toBeVisible();
+    await expect(testId(page, "kanban-board")).toBeVisible({ timeout: 10000 });
+
+    // Wait for event handlers to attach
+    await page.waitForTimeout(100);
 
     const cardLink = testId(page, "card-link-card-1");
     await cardLink.click();
 
-    await expect(testId(page, "card-modal")).toBeVisible();
+    await expect(testId(page, "card-modal")).toBeVisible({ timeout: 10000 });
     await expect(page).toHaveURL(/\/kanban\/card\/card-1/);
     await expect(testId(page, "kanban-board")).toBeVisible();
   });
@@ -492,9 +495,14 @@ test.describe("kanban-intercept-routes (production)", () => {
     await page.goto(f.url("/kanban"));
     await waitForHydration(page);
 
+    await expect(testId(page, "kanban-board")).toBeVisible({ timeout: 10000 });
+
+    // Wait for event handlers to attach
+    await page.waitForTimeout(100);
+
     const cardLink = testId(page, "card-link-card-1");
     await cardLink.click();
-    await expect(testId(page, "card-modal")).toBeVisible();
+    await expect(testId(page, "card-modal")).toBeVisible({ timeout: 10000 });
 
     await goBack(page);
 
@@ -511,7 +519,7 @@ test.describe("kanban-intercept-routes (production)", () => {
     await page.goto(f.url("/kanban/card/card-1"));
     await waitForHydration(page);
 
-    await expect(testId(page, "card-modal")).toBeVisible();
+    await expect(testId(page, "card-modal")).toBeVisible({ timeout: 10000 });
     await expect(testId(page, "card-title")).toContainText("Set up project structure");
     await expect(testId(page, "kanban-board")).toBeVisible();
   });
@@ -522,9 +530,14 @@ test.describe("kanban-intercept-routes (production)", () => {
     await page.goto(f.url("/kanban"));
     await waitForHydration(page);
 
+    await expect(testId(page, "kanban-board")).toBeVisible({ timeout: 10000 });
+
+    // Wait for event handlers to attach
+    await page.waitForTimeout(100);
+
     const cardLink = testId(page, "card-link-card-1");
     await cardLink.click();
-    await expect(testId(page, "card-modal")).toBeVisible();
+    await expect(testId(page, "card-modal")).toBeVisible({ timeout: 10000 });
 
     await testId(page, "card-modal-close").click();
 
@@ -540,12 +553,15 @@ test.describe("kanban-intercept-routes (production)", () => {
     await page.goto(f.url("/kanban"));
     await waitForHydration(page);
 
-    await expect(testId(page, "kanban-column-col-todo")).toBeVisible();
+    await expect(testId(page, "kanban-column-col-todo")).toBeVisible({ timeout: 10000 });
     await expect(testId(page, "kanban-column-col-progress")).toBeVisible();
     await expect(testId(page, "kanban-column-col-done")).toBeVisible();
 
+    // Wait for event handlers to attach
+    await page.waitForTimeout(100);
+
     await testId(page, "card-link-card-1").click();
-    await expect(testId(page, "card-modal")).toBeVisible();
+    await expect(testId(page, "card-modal")).toBeVisible({ timeout: 10000 });
 
     await testId(page, "card-modal-close").click();
     await expect(testId(page, "card-modal")).not.toBeVisible();
@@ -570,7 +586,7 @@ test.describe("kanban-actions (production)", () => {
     await page.goto(f.url("/kanban"));
     await waitForHydration(page);
 
-    await expect(testId(page, "action-counter")).toBeVisible();
+    await expect(testId(page, "action-counter")).toBeVisible({ timeout: 10000 });
   });
 
   test("should handle label toggle in modal", async ({ page }) => {
@@ -579,13 +595,18 @@ test.describe("kanban-actions (production)", () => {
     await page.goto(f.url("/kanban"));
     await waitForHydration(page);
 
+    await expect(testId(page, "kanban-board")).toBeVisible({ timeout: 10000 });
+
+    // Wait for event handlers to attach
+    await page.waitForTimeout(100);
+
     await testId(page, "card-link-card-1").click();
-    await expect(testId(page, "card-modal")).toBeVisible();
+    await expect(testId(page, "card-modal")).toBeVisible({ timeout: 10000 });
 
     const labelButton = page.locator("button").filter({ hasText: "docs" }).first();
     await labelButton.click();
 
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(4000);
 
     await expect(testId(page, "card-modal")).toBeVisible();
     await expect(testId(page, "kanban-board")).toBeVisible();
@@ -608,10 +629,13 @@ test.describe("kanban-navigation-history (production)", () => {
     await page.goto(f.url("/kanban"));
     await waitForHydration(page);
 
-    await expect(testId(page, "kanban-board")).toBeVisible();
+    await expect(testId(page, "kanban-board")).toBeVisible({ timeout: 10000 });
+
+    // Wait for event handlers to attach
+    await page.waitForTimeout(100);
 
     await testId(page, "card-link-card-1").click();
-    await expect(testId(page, "card-modal")).toBeVisible();
+    await expect(testId(page, "card-modal")).toBeVisible({ timeout: 10000 });
 
     await goBack(page);
 

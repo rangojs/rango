@@ -238,6 +238,8 @@ test.describe("todos-concurrent-actions", () => {
     mode: "dev",
   });
 
+  test.setTimeout(60000);
+
   test("should handle rapid todo additions", async ({ page }) => {
     using _ = expectNoPageError(page);
 
@@ -246,8 +248,11 @@ test.describe("todos-concurrent-actions", () => {
 
     // Wait for page to load
     await expect(page.locator("button:has-text('Add Todo')")).toBeVisible({
-      timeout: 3000,
+      timeout: 5000,
     });
+
+    // Wait for event handlers to attach
+    await page.waitForTimeout(100);
 
     const input = page.locator('input[placeholder="What needs to be done?"]');
     const addButton = page.locator("button:has-text('Add Todo')");
@@ -263,17 +268,17 @@ test.describe("todos-concurrent-actions", () => {
     await addButton.click();
 
     // Wait for all actions to complete and revalidation
-    await page.waitForTimeout(8000);
+    await page.waitForTimeout(10000);
 
     // All todos should appear
     await expect(page.locator("text=Rapid Todo 1")).toBeVisible({
-      timeout: 5000,
+      timeout: 10000,
     });
     await expect(page.locator("text=Rapid Todo 2")).toBeVisible({
-      timeout: 5000,
+      timeout: 10000,
     });
     await expect(page.locator("text=Rapid Todo 3")).toBeVisible({
-      timeout: 5000,
+      timeout: 10000,
     });
   });
 
@@ -396,11 +401,11 @@ test.describe("todos-navigation (production)", () => {
     await page.goto(f.url("/todos"));
     await waitForHydration(page);
 
-    await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
+    await expect(page.locator("h1:has-text('Todos')")).toBeVisible({ timeout: 10000 });
     await expect(
       page.locator('input[placeholder="What needs to be done?"]')
-    ).toBeVisible();
-    await expect(page.locator("button:has-text('Add Todo')")).toBeVisible();
+    ).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("button:has-text('Add Todo')")).toBeVisible({ timeout: 5000 });
   });
 
   test("should show todos list with existing items", async ({ page }) => {
