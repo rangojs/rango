@@ -253,11 +253,15 @@ export function createRSCHandler<TEnv = unknown>(
         }
 
         // Revalidate after action
-        // Use the action's $$id (file path) if available, otherwise fall back to request actionId (hash)
-        // In production builds, $$id contains the file path for server bundles, enabling
+        // Use the action's $id (file path) if available, otherwise fall back to $$id or request actionId (hash)
+        // In production builds, $id contains the file path for server bundles, enabling
         // revalidation functions to match actions by their source file path
+        // Note: We use $id (single dollar) instead of $$id because React's registerServerReference
+        // sets $$id as a non-writable property
         const resolvedActionId =
-          (loadedAction as { $$id?: string } | undefined)?.$$id ?? actionId;
+          (loadedAction as { $id?: string; $$id?: string } | undefined)?.$id ??
+          (loadedAction as { $$id?: string } | undefined)?.$$id ??
+          actionId;
         const actionContext = {
           actionId: resolvedActionId,
           actionUrl: new URL(request.url),

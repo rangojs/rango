@@ -185,11 +185,13 @@ function transformRegisterServerReference(
     const filePath = hashToFileMap.get(hash);
     if (filePath) {
       hasChanges = true;
-      // WRAP the call to add $$id property with file path
+      // WRAP the call to add $id property with file path
       // Keep the original hash for React's action registry (so loadServerAction works)
-      // Add $$id with file path for revalidation matching
+      // Add $id (single dollar) with file path for revalidation matching
+      // Note: We use $id instead of $$id because React's registerServerReference
+      // sets $$id as a non-writable property
       const filePathId = `${filePath}#${exportName}`;
-      const replacement = `(function(fn) { fn.$$id = "${filePathId}"; return fn; })(registerServerReference(${fnArg}, "${hash}", "${exportName}"))`;
+      const replacement = `(function(fn) { fn.$id = "${filePathId}"; return fn; })(registerServerReference(${fnArg}, "${hash}", "${exportName}"))`;
       s.overwrite(start, end, replacement);
     }
   }
