@@ -12,4 +12,4 @@ export interface BreadcrumbItem {
  * Each layout/route can push breadcrumb items, and they are collected
  * in parent-to-child order for display.
  */
-export const Breadcrumbs = createHandle<BreadcrumbItem>("breadcrumbs");
+export const Breadcrumbs = createHandle<BreadcrumbItem>();

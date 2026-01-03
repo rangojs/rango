@@ -5,4 +5,4 @@ export interface SlowProductState {
   productPrice: number;
 }
 
-export const SlowProductLocationState = createLocationState<SlowProductState>("slowProduct");
+export const SlowProductLocationState = createLocationState<SlowProductState>();
