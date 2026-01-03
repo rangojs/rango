@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  useCallback,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
 import type { LoaderDefinition, LoadOptions } from "./types.js";
 
@@ -162,12 +156,14 @@ function useLoaderInternal<T>(
         if (throwOnError) {
           throw err;
         }
-        return undefined as T;
+        // When throwOnError is false, return the current data (previous successful
+        // value or undefined). Caller should check error state for error handling.
+        return data as T;
       } finally {
         setIsLoading(false);
       }
     },
-    [loader, throwOnError]
+    [throwOnError]
   );
 
   // Form action for progressive enhancement
@@ -196,7 +192,7 @@ function useLoaderInternal<T>(
         setIsLoading(false);
       }
     },
-    [loader, throwOnError]
+    [throwOnError]
   );
 
   // Attach action to load function

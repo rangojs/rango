@@ -82,7 +82,7 @@ function isUseServerModule(filePath: string): boolean {
 
 /**
  * Transform code to expose action IDs on createServerReference calls.
- * Wraps each call with an IIFE that attaches $$id to the returned function.
+ * Wraps each call with an IIFE that attaches $id to the returned function.
  *
  * @param code - The source code to transform
  * @param sourceId - The source file identifier (for sourcemap)
@@ -212,10 +212,10 @@ function transformRegisterServerReference(
  * When React Server Components creates server references via createServerReference(),
  * the action ID (format: "hash#actionName") is passed as the first argument but not
  * exposed on the returned function. This plugin transforms the output to attach
- * the $$id property to each server reference function, enabling the router to
+ * the $id property to each server reference function, enabling the router to
  * identify which action was called during revalidation.
  *
- * Server bundles (RSC/SSR) get file paths in $$id for filtering (e.g., "src/actions.ts#add").
+ * Server bundles (RSC/SSR) get file paths in $id for filtering (e.g., "src/actions.ts#add").
  * Client bundles keep hashed IDs for security (e.g., "ec387bc704d4#add").
  *
  * Works in:
@@ -322,7 +322,7 @@ export function exposeActionId(): Plugin {
       );
 
       // For RSC bundles, also transform registerServerReference calls
-      // This replaces hashed IDs with file paths so $$id contains the actual path
+      // This replaces hashed IDs with file paths so $id contains the actual path
       if (isRscEnv && hashToFileMap) {
         const codeToTransform = result ? result.code : code;
         const registerResult = transformRegisterServerReference(
