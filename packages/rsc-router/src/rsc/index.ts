@@ -203,9 +203,12 @@ export function createRSCHandler<TEnv = unknown>(
         let returnValue: { ok: boolean; data: unknown };
         let actionStatus = 200;
 
+        // Track the action reference for extracting $$id
+        let loadedAction: Function | undefined;
+
         try {
-          const action = await loadServerAction(actionId);
-          const data = await action.apply(null, args);
+          loadedAction = await loadServerAction(actionId);
+          const data = await loadedAction.apply(null, args);
           returnValue = { ok: true, data };
         } catch (error) {
           returnValue = { ok: false, data: error };
@@ -250,8 +253,13 @@ export function createRSCHandler<TEnv = unknown>(
         }
 
         // Revalidate after action
+        // Use the action's $$id (file path) if available, otherwise fall back to request actionId (hash)
+        // In production builds, $$id contains the file path for server bundles, enabling
+        // revalidation functions to match actions by their source file path
+        const resolvedActionId =
+          (loadedAction as { $$id?: string } | undefined)?.$$id ?? actionId;
         const actionContext = {
-          actionId,
+          actionId: resolvedActionId,
           actionUrl: new URL(request.url),
           actionResult: returnValue.data,
           formData: actionFormData,

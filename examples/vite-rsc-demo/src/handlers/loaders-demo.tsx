@@ -217,16 +217,17 @@ export default map<typeof loadersRoutes>(
       // Global loader for the demo - provides users data
       loader(UsersLoader, () => [
         revalidate(({ actionId, stale, defaultShouldRevalidate }) => {
+          // Check if this is a user-related action by matching the source file path
+          // actionId format is "src/handlers/loaders-demo/actions.ts#addUserAction"
+          // (in both dev and production thanks to $$id resolution)
+          const isUserAction = actionId?.includes("loaders-demo/actions");
+
           console.log("actionId", {
             actionId,
-            isaction: actionId?.includes("loaders-demo"),
+            isUserAction,
           });
 
-          return (
-            actionId?.includes("loaders-demo") ??
-            stale ??
-            defaultShouldRevalidate
-          );
+          return isUserAction ?? stale ?? defaultShouldRevalidate;
         }),
       ]),
 

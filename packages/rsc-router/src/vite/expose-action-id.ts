@@ -1,6 +1,7 @@
 import type { Plugin, ResolvedConfig } from "vite";
 import MagicString from "magic-string";
 import path from "node:path";
+import fs from "node:fs";
 
 /**
  * Type for the RSC plugin's manager API
@@ -54,6 +55,32 @@ function normalizePath(p: string): string {
 }
 
 /**
+ * Check if a file is a "use server" module (has the directive at the module level).
+ * This distinguishes module-level server action files from files with inline actions.
+ *
+ * Module-level "use server" files should have their hash replaced with file paths
+ * for revalidation matching. Inline actions (defined in RSC components) should
+ * keep their hashed IDs for client security.
+ */
+function isUseServerModule(filePath: string): boolean {
+  try {
+    const content = fs.readFileSync(filePath, "utf-8");
+    // Remove leading comments and whitespace to find the first meaningful content
+    const trimmed = content
+      .replace(/^\s*\/\/[^\n]*\n/gm, "") // Remove single-line comments
+      .replace(/^\s*\/\*[\s\S]*?\*\/\s*/gm, "") // Remove multi-line comments
+      .trimStart();
+
+    // Check if the file starts with "use server" directive
+    return (
+      trimmed.startsWith('"use server"') || trimmed.startsWith("'use server'")
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Transform code to expose action IDs on createServerReference calls.
  * Wraps each call with an IIFE that attaches $$id to the returned function.
  *
@@ -104,6 +131,64 @@ function transformServerReferences(
     // Wrap the createServerReference call to attach $$id to the returned function
     const replacement = `(function(fn) { fn.$$id = ${finalIdArg}; return fn; })(${fnCall}(${idArg}${rest}))`;
     s.overwrite(start, end, replacement);
+  }
+
+  if (!hasChanges) {
+    return null;
+  }
+
+  return {
+    code: s.toString(),
+    map: s.generateMap({ source: sourceId, includeContent: true }),
+  };
+}
+
+/**
+ * Transform registerServerReference calls in server bundles to use file paths instead of hashes.
+ * Pattern: registerServerReference(fn, "hash", "exportName")
+ * React's registerServerReference sets $$id = hash + "#" + exportName
+ * By replacing the hash with file path, $$id will contain the file path for revalidation matching.
+ *
+ * Only actions from module-level "use server" files are transformed.
+ * Inline actions (defined in RSC components with "use server" inside a function) are NOT in
+ * hashToFileMap and keep their hashed IDs. This is intentional for client security:
+ * - Module-level "use server" files: shared action modules, file path helps revalidation
+ * - Inline actions: one-off actions in RSC, hash ID prevents file path exposure to client
+ *
+ * @param code - The source code to transform
+ * @param sourceId - The source file identifier (for sourcemap)
+ * @param hashToFileMap - Mapping from hash to file path (only module-level "use server" files)
+ */
+function transformRegisterServerReference(
+  code: string,
+  sourceId?: string,
+  hashToFileMap?: Map<string, string>
+): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
+  if (!hashToFileMap || !code.includes("registerServerReference(")) {
+    return null;
+  }
+
+  // Match: registerServerReference(fn, "hash", "exportName")
+  // The hash is the second argument, exportName is the third
+  const pattern = /registerServerReference\(([^,]+),\s*"([^"]+)",\s*"([^"]+)"\)/g;
+
+  const s = new MagicString(code);
+  let hasChanges = false;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(code)) !== null) {
+    const [fullMatch, fnArg, hash, exportName] = match;
+    const start = match.index;
+    const end = start + fullMatch.length;
+
+    // Look up the file path for this hash
+    const filePath = hashToFileMap.get(hash);
+    if (filePath) {
+      hasChanges = true;
+      // Replace hash with file path in the registerServerReference call
+      const replacement = `registerServerReference(${fnArg}, "${filePath}", "${exportName}")`;
+      s.overwrite(start, end, replacement);
+    }
   }
 
   if (!hasChanges) {
@@ -175,6 +260,12 @@ export function exposeActionId(): Plugin {
       for (const [absolutePath, meta] of Object.entries(
         serverReferenceMetaMap
       )) {
+        // Only include module-level "use server" files
+        // Inline actions (defined in RSC components) should keep hashed IDs for client security
+        if (!isUseServerModule(absolutePath)) {
+          continue;
+        }
+
         const relativePath = normalizePath(
           path.relative(config.root, absolutePath)
         );
@@ -218,11 +309,27 @@ export function exposeActionId(): Plugin {
       // Only use file path mapping for server environments
       const effectiveMap = isServerEnv ? hashToFileMap : undefined;
 
+      // Transform createServerReference calls (client-side)
       const result = transformServerReferences(
         code,
         chunk.fileName,
         effectiveMap
       );
+
+      // For server bundles, also transform registerServerReference calls
+      // This replaces hashed IDs with file paths so $$id contains the actual path
+      if (isServerEnv && hashToFileMap) {
+        const codeToTransform = result ? result.code : code;
+        const registerResult = transformRegisterServerReference(
+          codeToTransform,
+          chunk.fileName,
+          hashToFileMap
+        );
+        if (registerResult) {
+          return { code: registerResult.code, map: registerResult.map };
+        }
+      }
+
       if (result) {
         return { code: result.code, map: result.map };
       }

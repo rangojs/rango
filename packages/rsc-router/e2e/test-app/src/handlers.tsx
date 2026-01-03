@@ -1180,6 +1180,44 @@ export default map<typeof testRoutes>(
       ]
     ),
 
+    // Route for testing inline actions (defined directly in RSC, not imported from "use server" module)
+    // This tests that actions without a hash-to-file mapping still work correctly
+    route("inlineAction", () => {
+      // Inline action defined directly in the RSC component
+      async function inlineTestAction(formData: FormData) {
+        "use server";
+        const value = formData.get("testValue") as string;
+        return {
+          success: true,
+          receivedValue: value,
+          timestamp: new Date().toISOString(),
+        };
+      }
+
+      return (
+        <div data-testid="inline-action-page">
+          <Link to="/" data-testid="back-link">
+            ← Back to Home
+          </Link>
+          <h1 data-testid="inline-action-title">Inline Action Test</h1>
+          <p data-testid="inline-action-description">
+            Tests an action defined directly in the RSC (not imported from a "use server" module).
+          </p>
+          <form action={inlineTestAction} data-testid="inline-action-form">
+            <input
+              type="text"
+              name="testValue"
+              defaultValue="test-inline"
+              data-testid="inline-action-input"
+            />
+            <button type="submit" data-testid="inline-action-submit">
+              Submit Inline Action
+            </button>
+          </form>
+        </div>
+      );
+    }),
+
     // Route for testing ctx.use(loader) composition
     // Tests all combinations: fetchable/non-fetchable loaders using fetchable/non-fetchable dependencies
     // Also tests memoization - base loaders should only be invoked once per request

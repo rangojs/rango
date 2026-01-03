@@ -77,4 +77,6 @@ export const testRoutes = route({
   },
   // Route for testing ctx.use(loader) composition
   loaderComposition: "/loader-composition",
+  // Route for testing inline actions (defined directly in RSC, not imported)
+  inlineAction: "/inline-action",
 });
