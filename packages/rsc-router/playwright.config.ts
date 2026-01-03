@@ -1,5 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const browserConfig = {
+  ...devices["Desktop Chrome"],
+  viewport: null,
+  deviceScaleFactor: undefined,
+};
+
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,
@@ -14,12 +20,14 @@ export default defineConfig({
   },
   projects: [
     {
-      name: "chromium",
-      use: {
-        ...devices["Desktop Chrome"],
-        viewport: null,
-        deviceScaleFactor: undefined,
-      },
+      name: "dev",
+      grep: /^(?!.*\(production\))/,
+      use: browserConfig,
+    },
+    {
+      name: "production",
+      grep: /\(production\)/,
+      use: browserConfig,
     },
   ],
   workers: process.env.CI ? 2 : 4,
