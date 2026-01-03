@@ -9,6 +9,8 @@ const browserConfig = {
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,
+  globalTimeout: 600000, // 10 minutes max
+  timeout: process.env.CI ? 60000 : 30000, // 60s on CI, 30s locally
   use: {
     screenshot: "only-on-failure",
     trace: "on-all-retries",
@@ -26,9 +28,14 @@ export default defineConfig({
       name: "production",
       grep: /\(production\)/,
       use: browserConfig,
+      // Run production tests serially to avoid port conflicts
+      // Each test file spins up its own preview server
+      fullyParallel: false,
+      // Use single worker to prevent parallel server startups
+      metadata: { workers: 1 },
     },
   ],
-  workers: 4,
+  workers: process.env.CI ? 2 : 4,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   reporter: [
