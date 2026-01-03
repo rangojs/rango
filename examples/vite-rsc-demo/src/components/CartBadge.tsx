@@ -12,12 +12,8 @@ import { UserLoader } from "../handlers/shop/loaders/user.js";
  * and its data is passed to the client via RSC payload.
  */
 export function CartBadge() {
-  const cart = useLoader(CartLoader);
+  const { data: cart } = useLoader(CartLoader);
   console.log("CartBadge", cart);
-
-  if (!cart) {
-    return <span className="cart-badge">🛒 (0)</span>;
-  }
 
   return (
     <span className="cart-badge" title={`Total: $${cart.total.toFixed(2)}`}>
@@ -34,12 +30,8 @@ export function CartBadge() {
  * client component via the RSC payload.
  */
 export function UserGreeting() {
-  const user = useLoader(UserLoader);
+  const { data: user } = useLoader(UserLoader);
   console.log("UserGreeting", user);
-
-  if (!user) {
-    return <span className="user-greeting">Guest</span>;
-  }
 
   return (
     <span className="user-greeting" title={user.email}>

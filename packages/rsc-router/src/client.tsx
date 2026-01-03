@@ -87,11 +87,11 @@ export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
       // Check if this segment has loaders that need streaming
       // The layout renders immediately, LoaderBoundary becomes the outlet content
       // When layout renders <Outlet />, it gets the LoaderBoundary which suspends
-      if (segment.loaderDataPromise && segment.loaderNames) {
+      if (segment.loaderDataPromise && segment.loaderIds) {
         const loaderAwareContent = (
           <LoaderBoundary
             loaderDataPromise={segment.loaderDataPromise}
-            loaderNames={segment.loaderNames}
+            loaderIds={segment.loaderIds}
             fallback={segment.loading}
             outletKey={segment.id + "-loader"}
             outletContent={null}
@@ -183,11 +183,11 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
   if (segment.layout) {
     // Check if this segment has loaders that need streaming
     // The layout renders immediately, LoaderBoundary becomes the outlet content
-    if (segment.loaderDataPromise && segment.loaderNames) {
+    if (segment.loaderDataPromise && segment.loaderIds) {
       const loaderAwareContent = (
         <LoaderBoundary
           loaderDataPromise={segment.loaderDataPromise}
-          loaderNames={segment.loaderNames}
+          loaderIds={segment.loaderIds}
           fallback={segment.loading}
           outletKey={segment.id + "-loader"}
           outletContent={null}
@@ -274,55 +274,15 @@ export function useOutlet(): ReactNode {
   return context?.content ?? null;
 }
 
-/**
- * Hook to access loader data on the client
- *
- * Loaders are server-only data fetchers. Their data is passed to the client
- * via RSC payload and made available through this hook.
- *
- * The loader must be attached to the current layout/route or a parent layout
- * to be accessible via this hook. The hook walks up the context chain to find
- * the loader data.
- *
- * @param loader - The loader definition (from createLoader())
- * @returns The loader's data, or undefined if not available
- *
- * @example
- * ```tsx
- * // loaders/cart.ts
- * export const CartLoader = createLoader("cart", async (ctx) => {
- *   "use server";
- *   const user = ctx.get("user");
- *   return await db.cart.get(user.id);
- * });
- *
- * // components/CartIcon.tsx (client component)
- * "use client";
- * import { useLoader } from "rsc-router/client";
- * import { CartLoader } from "../loaders/cart";
- *
- * export function CartIcon() {
- *   const cart = useLoader(CartLoader);
- *   return <span>Cart ({cart?.items.length ?? 0})</span>;
- * }
- * ```
- */
-export function useLoader<T>(loader: LoaderDefinition<T>): T {
-  const context = useContext(OutletContext);
-
-  // Walk up the context chain to find this loader's data
-  let current: OutletContextValue | null | undefined = context;
-  while (current) {
-    if (current.loaderData && loader.name in current.loaderData) {
-      return current.loaderData[loader.name] as T;
-    }
-    current = current.parent;
-  }
-
-  throw new Error(
-    `Loader data for "${loader.name}" not found in current outlet context. Make sure the loader is attached to this route or a parent layout.`
-  );
-}
+// Loader hooks - re-exported from dedicated file
+export {
+  useLoader,
+  useFetchLoader,
+  type LoadFunction,
+  type UseLoaderResult,
+  type UseFetchLoaderResult,
+  type UseLoaderOptions,
+} from "./use-loader.js";
 
 /**
  * Hook to access all loader data in the current context
@@ -374,22 +334,22 @@ export function useLoaderData(): Record<string, any> {
  * Client-safe createLoader factory
  *
  * Creates a loader definition that can be used with useLoader().
- * This is the client-side version that only stores the name - the function
+ * This is the client-side version that only stores the $$id - the function
  * is ignored since loaders only execute on the server.
  *
- * Use this when you need to reference a loader in a client component
- * without importing the server-side loader file.
+ * The $$id is injected by the exposeLoaderId Vite plugin. In most cases,
+ * you should import the loader directly from the server file rather than
+ * creating a reference manually.
  *
- * @param name - Unique name for the loader (must match server loader name)
- * @param _fn - Ignored on client (kept for API compatibility with server version)
+ * @param fn - Loader function (ignored on client, kept for API compatibility)
+ * @param _fetchable - Optional fetchable flag (ignored on client)
+ * @param __injectedId - $$id injected by Vite plugin
  *
  * @example
  * ```tsx
  * "use client";
- * import { useLoader, createLoader } from "rsc-router/client";
- *
- * // Re-create loader definition client-side with matching name
- * const CartLoader = createLoader<Cart>("cart");
+ * import { useLoader } from "rsc-router/client";
+ * import { CartLoader } from "../loaders/cart"; // Import from server file
  *
  * export function CartIcon() {
  *   const cart = useLoader(CartLoader);
@@ -397,25 +357,27 @@ export function useLoaderData(): Record<string, any> {
  * }
  * ```
  */
-// Overload 1: With function, infer return type
+// Overload 1: With function only (not fetchable)
 export function createLoader<T>(
-  name: string,
   fn: LoaderFn<T, Record<string, string | undefined>, any>
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
 
-// Overload 2: No function (client-side reference only)
-export function createLoader(
-  name: string
-): LoaderDefinition<any, Record<string, string | undefined>>;
+// Overload 2: With function and fetchable flag
+export function createLoader<T>(
+  fn: LoaderFn<T, Record<string, string | undefined>, any>,
+  fetchable: true
+): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
 
 // Implementation - function is ignored at runtime on client
+// The $$id is injected by Vite plugin as hidden third parameter
 export function createLoader(
-  name: string,
-  _fn?: LoaderFn<any, Record<string, string | undefined>, any>
+  _fn: LoaderFn<any, Record<string, string | undefined>, any>,
+  _fetchable?: true,
+  __injectedId?: string
 ): LoaderDefinition<any, Record<string, string | undefined>> {
   return {
     __brand: "loader",
-    name,
+    $$id: __injectedId || "",
   };
 }
 
@@ -596,3 +558,6 @@ export {
 
 // Type-safe href for client-side path validation
 export { href, type ValidPaths, type PatternToPath } from "./href-client.js";
+
+// Loader definition type - for typing loader props in client components
+export type { LoaderDefinition } from "./types.js";

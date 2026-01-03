@@ -6,7 +6,7 @@ import { DebugSegmentWrapper } from "../../components/DebugSegmentWrapper.js";
 import { SegmentTimer } from "../../components/SegmentTimer.js";
 
 export function TodoDetailContent() {
-  const todo = useLoader(TodoDetailLoader);
+  const { data: todo } = useLoader(TodoDetailLoader);
 
   return (
     <DebugSegmentWrapper type="route" name="Todo Detail">

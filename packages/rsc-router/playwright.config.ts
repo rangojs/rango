@@ -1,5 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const browserConfig = {
+  ...devices["Desktop Chrome"],
+  viewport: null,
+  deviceScaleFactor: undefined,
+};
+
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,
@@ -14,12 +20,19 @@ export default defineConfig({
   },
   projects: [
     {
-      name: "chromium",
-      use: {
-        ...devices["Desktop Chrome"],
-        viewport: null,
-        deviceScaleFactor: undefined,
-      },
+      name: "dev",
+      grep: /^(?!.*\(production\))/,
+      use: browserConfig,
+    },
+    {
+      name: "production",
+      grep: /\(production\)/,
+      use: browserConfig,
+      // Run production tests serially to avoid port conflicts
+      // Each test file spins up its own preview server
+      fullyParallel: false,
+      // Use single worker to prevent parallel server startups
+      metadata: { workers: 1 },
     },
   ],
   workers: process.env.CI ? 2 : 4,

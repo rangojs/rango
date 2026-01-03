@@ -52,6 +52,11 @@ export type {
   LoaderDefinition,
   LoaderFn,
   LoaderContext,
+  // Fetchable loader types
+  FetchableLoaderOptions,
+  LoadOptions,
+  LoaderActionContext,
+  LoaderAction,
   // Error boundary types
   ErrorInfo,
   ErrorBoundaryFallbackProps,

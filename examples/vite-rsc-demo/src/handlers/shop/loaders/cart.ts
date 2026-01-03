@@ -21,7 +21,7 @@ const mockCart: Cart = {
  * Available throughout the shop to display cart count in header,
  * cart contents in cart page, and order summary in checkout.
  */
-export const CartLoader = createLoader("cart", async (_ctx) => {
+export const CartLoader = createLoader(async (_ctx) => {
   "use server";
   await new Promise((resolve) => setTimeout(resolve, 75));
   return mockCart;

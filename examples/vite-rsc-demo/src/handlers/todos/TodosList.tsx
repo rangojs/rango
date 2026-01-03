@@ -8,7 +8,7 @@ import { AddTodoForm, TodoItem, TodoStats } from "./components.js";
 import { LoadingSpinner } from "../shop/components/loading.js";
 
 export function TodosCount() {
-  const data = useLoader(TodosLoader);
+  const { data } = useLoader(TodosLoader);
   return (
     <span
       style={{
@@ -24,7 +24,7 @@ export function TodosCount() {
 }
 
 export function TodosIndexContent({ serverValue }: { serverValue?: string }) {
-  const data = useLoader(TodosLoader);
+  const { data } = useLoader(TodosLoader);
 
   return (
     <DebugSegmentWrapper type="route" name="Todos Index">

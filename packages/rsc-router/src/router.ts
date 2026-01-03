@@ -157,6 +157,40 @@ export interface RSCRouterOptions {
    * If not provided, DataNotFoundError will be treated as a regular error
    */
   defaultNotFoundBoundary?: ReactNode | NotFoundBoundaryHandler;
+
+  /**
+   * Callback invoked when an error occurs in loaders or route handlers.
+   * Use this for error monitoring, logging to external services, etc.
+   *
+   * The error is always logged to the server console with full details.
+   * In production, only a sanitized error message is sent to the client.
+   *
+   * @param error - The original error with full stack trace
+   * @param context - Additional context about where the error occurred
+   *
+   * @example
+   * ```typescript
+   * const router = createRSCRouter<AppEnv>({
+   *   onError: (error, context) => {
+   *     // Send to error monitoring service
+   *     Sentry.captureException(error, {
+   *       tags: { source: context.source, path: context.pathname },
+   *     });
+   *   },
+   * });
+   * ```
+   */
+  onError?: (
+    error: Error,
+    context: {
+      /** Where the error occurred: 'loader', 'action', 'route' */
+      source: "loader" | "action" | "route";
+      /** The request pathname */
+      pathname: string;
+      /** The loader ID if source is 'loader' */
+      loaderId?: string;
+    }
+  ) => void;
 }
 
 /**
@@ -250,6 +284,12 @@ export interface RSCRouter<
    */
   readonly rootLayout?: ComponentType<RootLayoutProps>;
 
+  /**
+   * Error callback for monitoring/alerting
+   * Called when errors occur in loaders, actions, or routes
+   */
+  readonly onError?: RSCRouterOptions["onError"];
+
   match(request: Request, context: TEnv): Promise<MatchResult>;
 
   matchPartial(
@@ -318,6 +358,7 @@ export function createRSCRouter<TEnv = any>(
     document: documentOption,
     defaultErrorBoundary,
     defaultNotFoundBoundary,
+    onError,
   } = options;
 
   // Validate document is a function (component)
@@ -411,7 +452,7 @@ export function createRSCRouter<TEnv = any>(
     // Don't await - wrap promises with error handling for deferred client-side resolution
     return Promise.all(
       loaderEntries.map(async ({ loader }, i) => {
-        const segmentId = `${shortCode}D${i}.${loader.name}`;
+        const segmentId = `${shortCode}D${i}.${loader.$$id}`;
         return {
           id: segmentId,
           namespace: entry.id,
@@ -419,7 +460,7 @@ export function createRSCRouter<TEnv = any>(
           index: i,
           component: null, // Loaders don't render directly
           params: ctx.params,
-          loaderName: loader.name,
+          loaderId: loader.$$id,
           loaderData: await wrapLoaderPromise(
             entry.loading === false ? await ctx.use(loader) : ctx.use(loader),
             entry,
@@ -480,7 +521,7 @@ export function createRSCRouter<TEnv = any>(
       ({ loader, revalidate: loaderRevalidateFns }, i) => ({
         loader,
         loaderRevalidateFns,
-        segmentId: `${shortCode}D${i}.${loader.name}`,
+        segmentId: `${shortCode}D${i}.${loader.$$id}`,
         index: i,
       })
     );
@@ -504,7 +545,7 @@ export function createRSCRouter<TEnv = any>(
                 index,
                 component: null,
                 params: ctx.params,
-                loaderName: loader.name,
+                loaderId: loader.$$id,
                 belongsToRoute,
               };
 
@@ -545,7 +586,7 @@ export function createRSCRouter<TEnv = any>(
         index,
         component: null,
         params: ctx.params,
-        loaderName: loader.name,
+        loaderId: loader.$$id,
         loaderData: wrapLoaderPromise(
           ctx.use(loader),
           entry,
@@ -929,12 +970,12 @@ export function createRSCRouter<TEnv = any>(
     // Step 2: Collect intercept loaders as promises (with revalidation check)
     // These will be attached directly to the intercept segment for streaming
     const loaderPromises: Promise<any>[] = [];
-    const loaderNames: string[] = [];
+    const loaderIds: string[] = [];
 
     for (let i = 0; i < interceptEntry.loader.length; i++) {
       const { loader, revalidate: loaderRevalidateFns } =
         interceptEntry.loader[i];
-      const segmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}D${i}.${loader.name}`;
+      const segmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}D${i}.${loader.$$id}`;
 
       // Check revalidation if context provided (partial updates)
       if (revalidationContext) {
@@ -960,7 +1001,7 @@ export function createRSCRouter<TEnv = any>(
             index: i,
             component: null,
             params,
-            loaderName: loader.name,
+            loaderId: loader.$$id,
             belongsToRoute,
           };
 
@@ -983,17 +1024,17 @@ export function createRSCRouter<TEnv = any>(
 
           if (!shouldRevalidate) {
             console.log(
-              `[Router] Intercept loader ${loader.name} skipped (revalidation=false)`
+              `[Router] Intercept loader ${loader.$$id} skipped (revalidation=false)`
             );
             continue;
           }
           console.log(
-            `[Router] Intercept loader ${loader.name} revalidating (stale=${stale})`
+            `[Router] Intercept loader ${loader.$$id} revalidating (stale=${stale})`
           );
         }
       }
 
-      loaderNames.push(loader.name);
+      loaderIds.push(loader.$$id);
       loaderPromises.push(
         wrapLoaderPromise(
           context.use(loader),
@@ -1063,7 +1104,7 @@ export function createRSCRouter<TEnv = any>(
       parallelName: `intercept:${interceptEntry.routeName}.${interceptEntry.slotName}`,
       // Attach loader info directly to segment for streaming
       loaderDataPromise,
-      loaderNames: loaderNames.length > 0 ? loaderNames : undefined,
+      loaderIds: loaderIds.length > 0 ? loaderIds : undefined,
     };
     segments.push(interceptSegment);
 
@@ -2231,7 +2272,7 @@ export function createRSCRouter<TEnv = any>(
     current = boundaryEntry;
     const stack: {
       shortCode: string;
-      loaderEntries: { loader: { name: string } }[];
+      loaderEntries: LoaderEntry[];
     }[] = [];
     while (current) {
       if (current.shortCode) {
@@ -2247,8 +2288,8 @@ export function createRSCRouter<TEnv = any>(
       matchedIds.push(item.shortCode);
       // Add loader segment IDs for this entry
       for (let i = 0; i < item.loaderEntries.length; i++) {
-        const loaderName = item.loaderEntries[i].loader?.name || "unknown";
-        matchedIds.push(`${item.shortCode}D${i}.${loaderName}`);
+        const loaderId = item.loaderEntries[i].loader?.$$id || "unknown";
+        matchedIds.push(`${item.shortCode}D${i}.${loaderId}`);
       }
     }
 
@@ -2748,6 +2789,9 @@ export function createRSCRouter<TEnv = any>(
 
     // Expose rootLayout for renderSegments
     rootLayout,
+
+    // Expose onError callback for error handling
+    onError,
 
     match,
     matchPartial,

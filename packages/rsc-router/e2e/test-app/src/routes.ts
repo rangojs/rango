@@ -63,4 +63,20 @@ export const testRoutes = route({
     child: "/meta-merge/child",
     deep: "/meta-merge/deep/nested",
   },
+  // Route for testing useFetchLoader hook (GET-based loader fetching)
+  fetchLoader: "/fetch-loader",
+  // Routes for testing useLoader and useFetchLoader hooks
+  hookTests: {
+    index: "/hook-tests",
+    routeA: "/hook-tests/route-a",
+    routeB: "/hook-tests/route-b",
+    // Route WITHOUT loader registered - for testing useLoader throws
+    noLoader: "/hook-tests/no-loader",
+    // Route for testing form action
+    formAction: "/hook-tests/form-action",
+  },
+  // Route for testing ctx.use(loader) composition
+  loaderComposition: "/loader-composition",
+  // Route for testing inline actions (defined directly in RSC, not imported)
+  inlineAction: "/inline-action",
 });

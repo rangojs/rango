@@ -19,7 +19,7 @@ const mockUser: User = {
  *
  * Available throughout the shop to display user info in header, etc.
  */
-export const UserLoader = createLoader("user", async (_ctx) => {
+export const UserLoader = createLoader(async (_ctx) => {
   "use server";
   await new Promise((resolve) => setTimeout(resolve, 50));
   return mockUser;

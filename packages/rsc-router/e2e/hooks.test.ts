@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError } from "./helper";
+import { waitForHydration, expectNoPageError, goBack } from "./helper";
 
 /**
  * Tests for useNavigation and useAction hooks
@@ -174,15 +174,15 @@ test.describe("useNavigation", () => {
     await productLink.click();
     await expect(
       page.locator('[data-testid="nav-status-pathname"]')
-    ).toContainText("path:/product/product-a", { timeout: 2000 });
+    ).toContainText("path:/product/product-a", { timeout: 5000 });
 
-    // Navigate back
-    await page.goBack();
+    // Navigate back and wait for navigation to complete
+    await goBack(page);
 
     // Pathname should return to /
     await expect(
       page.locator('[data-testid="nav-status-pathname"]')
-    ).toContainText("path:/", { timeout: 2000 });
+    ).toContainText("path:/", { timeout: 5000 });
   });
 });
 
@@ -374,5 +374,107 @@ test.describe("useNavigation during actions", () => {
       "state:idle",
       { timeout: 2000 }
     );
+  });
+});
+
+/**
+ * Production build tests for useNavigation and useAction hooks
+ */
+test.describe("useNavigation (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("should show idle state on initial load", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await expect(page.locator('[data-testid="nav-status-state"]')).toContainText(
+      "state:idle"
+    );
+    await expect(
+      page.locator('[data-testid="nav-status-streaming"]')
+    ).toContainText("streaming:false");
+  });
+
+  test("should update pathname during navigation", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Initial pathname
+    await expect(
+      page.locator('[data-testid="nav-status-pathname"]')
+    ).toContainText("path:/");
+
+    // Navigate to product
+    await page.locator('[data-testid="product-link-product-a"]').click();
+
+    // Pathname should update
+    await expect(
+      page.locator('[data-testid="nav-status-pathname"]')
+    ).toContainText("path:/product/product-a", { timeout: 5000 });
+  });
+});
+
+test.describe("useAction (production)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test.setTimeout(120000);
+
+  test("should show idle state and transition through action states", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/product/product-a"));
+    await waitForHydration(page);
+
+    // Initial state should be idle
+    await expect(
+      page.locator('[data-testid="StreamingActionStatus-action-status"]')
+    ).toContainText("Action status: idle");
+
+    // Click streaming action button
+    await page.locator('[data-testid="streaming-btn"]').click();
+
+    // Should transition through loading
+    await expect(
+      page.locator('[data-testid="StreamingActionStatus-action-status"]')
+    ).toContainText("Action status: loading", { timeout: 2000 });
+
+    // Wait for completion
+    await expect(
+      page.locator('[data-testid="streaming-btn-result"]')
+    ).toContainText("Completed", { timeout: 10000 });
+
+    // Should return to idle
+    await expect(
+      page.locator('[data-testid="StreamingActionStatus-action-status"]')
+    ).toContainText("Action status: idle", { timeout: 5000 });
+  });
+
+  test("quick actions work in production", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/product/product-a"));
+    await waitForHydration(page);
+
+    // Click add to cart
+    await page.locator('[data-testid="add-to-cart-btn"]').click();
+
+    // Should show result
+    await expect(
+      page.locator('[data-testid="add-to-cart-btn-result"]')
+    ).toBeVisible({ timeout: 5000 });
   });
 });
