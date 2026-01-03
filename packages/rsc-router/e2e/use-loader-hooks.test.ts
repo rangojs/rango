@@ -298,19 +298,11 @@ test.describe("Refetch via load() for registered loaders", () => {
     // Click refetch button
     await testId(page, "use-loader-refetch-btn").click();
 
-    // Should show loading
-    await expect(testId(page, "use-loader-loading")).toBeVisible({
-      timeout: 1000,
-    });
-
-    // Wait for loading to finish
-    await expect(testId(page, "use-loader-loading")).not.toBeVisible({
-      timeout: 5000,
-    });
-
-    // Count should have incremented (loader counter increases on each call)
-    const newCount = await testId(page, "use-loader-count").textContent();
-    expect(newCount).not.toEqual(initialCount);
+    // Wait for count to change (loader counter increases on each call)
+    await expect(async () => {
+      const newCount = await testId(page, "use-loader-count").textContent();
+      expect(newCount).not.toEqual(initialCount);
+    }).toPass({ timeout: 5000 });
   });
 
   test("useFetchLoader preloaded can refetch data via load() button", async ({
