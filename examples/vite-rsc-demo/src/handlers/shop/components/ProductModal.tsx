@@ -225,7 +225,7 @@ export function ProductModalContent() {
             Quantity in cart:
           </div>
           {optimisticQuantity > 0 ? (
-            <div style={quantityStyles.container}>
+            <div style={quantityStyles.container} data-testid="cart-quantity-controls">
               <button
                 style={{
                   ...quantityStyles.button,
@@ -237,10 +237,11 @@ export function ProductModalContent() {
                     ? "Remove from cart"
                     : "Decrease quantity"
                 }
+                data-testid="quantity-decrement"
               >
                 {optimisticQuantity === 1 ? "x" : "-"}
               </button>
-              <span style={quantityStyles.quantity}>{optimisticQuantity}</span>
+              <span style={quantityStyles.quantity} data-testid="cart-quantity">{optimisticQuantity}</span>
               <button
                 style={{
                   ...quantityStyles.button,
@@ -248,6 +249,7 @@ export function ProductModalContent() {
                 }}
                 onClick={() => handleQuantityChange(1)}
                 title="Increase quantity"
+                data-testid="quantity-increment"
               >
                 +
               </button>

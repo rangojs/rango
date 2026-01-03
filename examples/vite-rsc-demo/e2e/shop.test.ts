@@ -300,18 +300,19 @@ test.describe("shop-actions", () => {
     const addToCartButton = page.locator("button").filter({ hasText: "Add to Cart" }).first();
     await expect(addToCartButton).toBeVisible({ timeout: 10000 });
 
-    // First add to cart (this will show quantity controls with + button)
+    // First add to cart (this will show quantity controls)
     await addToCartButton.click();
 
-    // Wait for quantity controls to appear (+ button shows after item is in cart)
-    const plusButton = page.locator("button").filter({ hasText: "+" }).first();
-    await expect(plusButton).toBeVisible({ timeout: 5000 });
+    // Wait for quantity controls to appear
+    const quantityDisplay = page.locator('[data-testid="cart-quantity"]');
+    await expect(quantityDisplay).toBeVisible({ timeout: 10000 });
+    await expect(quantityDisplay).toHaveText("1", { timeout: 5000 });
 
     // Click + to increase quantity
-    await plusButton.click();
+    await page.locator('[data-testid="quantity-increment"]').click();
 
-    // Wait for action to complete
-    await page.waitForTimeout(2000);
+    // Wait for quantity to update to "2"
+    await expect(quantityDisplay).toHaveText("2", { timeout: 10000 });
 
     // Modal should still be visible
     await expect(page.locator("text=Intercepted")).toBeVisible();
@@ -990,9 +991,6 @@ test.describe("shop-actions (production)", () => {
     await page.goto(f.url("/shop"));
     await waitForHydration(page);
 
-    // Wait for event handlers to attach
-    await page.waitForTimeout(100);
-
     await page
       .locator('a[href="/shop/product/wireless-headphones"]')
       .first()
@@ -1001,16 +999,23 @@ test.describe("shop-actions (production)", () => {
       timeout: 10000,
     });
 
+    // Wait for Add to Cart button and click it
     const addToCartButton = page.locator("button").filter({ hasText: "Add to Cart" }).first();
     await expect(addToCartButton).toBeVisible({ timeout: 15000 });
     await addToCartButton.click();
 
-    const plusButton = page.locator("button").filter({ hasText: "+" }).first();
-    await expect(plusButton).toBeVisible({ timeout: 10000 });
-    await plusButton.click();
+    // Wait for quantity controls to appear
+    const quantityDisplay = page.locator('[data-testid="cart-quantity"]');
+    await expect(quantityDisplay).toBeVisible({ timeout: 15000 });
+    await expect(quantityDisplay).toHaveText("1", { timeout: 10000 });
 
-    await page.waitForTimeout(3000);
+    // Click + to increment
+    await page.locator('[data-testid="quantity-increment"]').click();
 
+    // Wait for quantity to update to "2"
+    await expect(quantityDisplay).toHaveText("2", { timeout: 15000 });
+
+    // Verify modal and background are still visible
     await expect(page.locator("text=Intercepted")).toBeVisible();
     await expect(page.locator("text=Featured Products")).toBeVisible();
   });

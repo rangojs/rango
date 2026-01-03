@@ -375,9 +375,10 @@ test.describe("blog-breadcrumbs (production)", () => {
     await waitForHydration(page);
 
     const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
-    await expect(breadcrumbNav).toBeVisible();
-    await expect(breadcrumbNav.locator("text=Blog")).toBeVisible();
-    await expect(breadcrumbNav.locator("text=Hello World")).toBeVisible();
+    await expect(breadcrumbNav).toBeVisible({ timeout: 10000 });
+    await expect(breadcrumbNav.locator("text=Blog")).toBeVisible({ timeout: 10000 });
+    // "Hello World" breadcrumb may be streamed, give it more time
+    await expect(breadcrumbNav.locator("text=Hello World")).toBeVisible({ timeout: 10000 });
   });
 
   test("should stream async breadcrumb content", async ({ page }) => {

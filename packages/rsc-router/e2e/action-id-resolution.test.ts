@@ -39,18 +39,20 @@ test.describe("action-id-resolution (production)", () => {
         const filePath = path.join(distPath, file);
         const content = fs.readFileSync(filePath, "utf-8");
 
-        // Check if this file has registerServerReference calls with file paths
-        // Pattern: registerServerReference(fn, "src/...", "exportName")
+        // Check if this file has $id set to file paths
+        // The transformation wraps registerServerReference and sets fn.$id = "src/..."
+        // Pattern: fn.$id = "src/path/to/file.tsx#actionName"
+        // Note: We use $id (single dollar) because React's $$id is non-writable
         if (
           content.includes("registerServerReference") &&
-          content.includes("src/")
+          content.includes('$id = "src/')
         ) {
           foundFilePathInServerBundle = true;
           serverActionFileContent = content;
 
-          // Verify the pattern: registerServerReference(fn, "src/path/to/file.tsx", "actionName")
+          // Verify the $id pattern: fn.$id = "src/path/to/file.tsx#actionName"
           const matches = content.match(
-            /registerServerReference\([^,]+,\s*"(src\/[^"]+)"/g
+            /\$id\s*=\s*"(src\/[^"]+#[^"]+)"/g
           );
           if (matches && matches.length > 0) {
             // Verify at least one match contains a proper file path
@@ -62,10 +64,10 @@ test.describe("action-id-resolution (production)", () => {
 
       expect(foundFilePathInServerBundle).toBe(true);
 
-      // Verify the file path format is correct (should be relative path like "src/actions.tsx")
+      // Verify the $id format is correct (should be "src/path/to/file.tsx#actionName")
       // Note: test-app uses .tsx files for actions
       expect(serverActionFileContent).toMatch(
-        /registerServerReference\([^,]+,\s*"src\/[^"]+\.tsx?"/
+        /\$id\s*=\s*"src\/[^"]+\.tsx?#[^"]+"/
       );
     });
 
