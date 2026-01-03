@@ -115,3 +115,12 @@ export const kanbanRoutes = route({
   card: "/card/:cardId",
 });
 
+/**
+ * Loaders demo routes - demonstrates useLoader and useFetchLoader APIs
+ * Shows SSR loader data access vs on-demand client-side fetching
+ */
+export const loadersRoutes = route({
+  index: "/",
+  stats: "/stats",
+});
+

@@ -12,7 +12,7 @@ export type ProductCartData = {
  * This loader gets the cart and returns how many of the current product
  * are in the cart. Useful for displaying "X in cart" in product modals.
  */
-export const ProductCartLoader = createLoader("productCart", async (ctx) => {
+export const ProductCartLoader = createLoader(async (ctx) => {
   "use server";
 
   const { slug } = ctx.params;

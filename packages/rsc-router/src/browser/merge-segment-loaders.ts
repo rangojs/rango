@@ -15,11 +15,11 @@ export function mergeSegmentLoaders(
   fromServer: ResolvedSegment,
   fromCache: ResolvedSegment
 ): ResolvedSegment {
-  const serverLoaderNames = fromServer.loaderNames || [];
-  const cachedLoaderNames = fromCache.loaderNames || [];
+  const serverLoaderIds = fromServer.loaderIds || [];
+  const cachedLoaderIds = fromCache.loaderIds || [];
 
   console.log(
-    `[Browser] Merging partial loaders: server has ${serverLoaderNames.join(", ")}, cache has ${cachedLoaderNames.join(", ")}`
+    `[Browser] Merging partial loaders: server has ${serverLoaderIds.join(", ")}, cache has ${cachedLoaderIds.join(", ")}`
   );
 
   return {
@@ -32,16 +32,16 @@ export function mergeSegmentLoaders(
       fromCache.loaderDataPromise!,
     ]).then(([newData, cachedData]) => {
       // Build merged array: use new data for updated loaders, cached for rest
-      return cachedLoaderNames.map((name: string, i: number) => {
-        const newIndex = serverLoaderNames.indexOf(name);
+      return cachedLoaderIds.map((id: string, i: number) => {
+        const newIndex = serverLoaderIds.indexOf(id);
         if (newIndex !== -1) {
           return (newData as any[])[newIndex]; // Use fresh data
         }
         return (cachedData as any[])[i]; // Use cached data
       });
     }),
-    // Keep all loader names from cache
-    loaderNames: fromCache.loaderNames,
+    // Keep all loader IDs from cache
+    loaderIds: fromCache.loaderIds,
   };
 }
 
@@ -58,9 +58,9 @@ export function needsLoaderMerge(
 ): fromCache is ResolvedSegment {
   return !!(
     fromCache &&
-    fromServer.loaderNames &&
-    fromCache.loaderNames &&
-    fromServer.loaderNames.length < fromCache.loaderNames.length &&
+    fromServer.loaderIds &&
+    fromCache.loaderIds &&
+    fromServer.loaderIds.length < fromCache.loaderIds.length &&
     fromServer.loaderDataPromise &&
     fromCache.loaderDataPromise
   );
@@ -74,7 +74,7 @@ export function needsLoaderMerge(
  * the matched array. This function inserts them at the correct position
  * (after their parent layout segment).
  *
- * Loader segment IDs follow the pattern: {parentLayoutId}D{index}.{loaderName}
+ * Loader segment IDs follow the pattern: {parentLayoutId}D{index}.{loaderId}
  * Example: M9L0L1D0.actionCounter has parent layout M9L0L1
  *
  * @param allSegments - Mutable array of segments to insert into

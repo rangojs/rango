@@ -1044,20 +1044,20 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
  *
  * Return type is automatically inferred from the callback.
  *
- * @param name - Unique identifier for the loader (used for client-side lookup)
  * @param fn - Async function that fetches data (should contain "use server" directive)
+ * @param fetchable - Optional flag to make the loader fetchable via useFetchLoader
  *
  * @example
  * ```typescript
  * // loaders/cart.ts - return type inferred from callback
- * export const CartLoader = createLoader("cart", async (ctx) => {
+ * export const CartLoader = createLoader(async (ctx) => {
  *   "use server";
  *   const user = ctx.get("user");
  *   return await db.cart.get(user.id); // Return type inferred!
  * });
  *
  * // loaders/product.ts - return type inferred
- * export const ProductLoader = createLoader("product", async (ctx) => {
+ * export const ProductLoader = createLoader(async (ctx) => {
  *   "use server";
  *   const { slug } = ctx.params;
  *   return await db.products.findBySlug(slug); // Return type inferred!
@@ -1081,28 +1081,9 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
  * const cart = useLoader(CartLoader);
  * ```
  */
-// Overload 1: With function, infer return type
-export function createLoader<T>(
-  name: string,
-  fn: LoaderFn<T, Record<string, string | undefined>, any>
-): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
-
-// Overload 2: No function (client-side reference only)
-export function createLoader(
-  name: string
-): LoaderDefinition<any, Record<string, string | undefined>>;
-
-// Implementation
-export function createLoader(
-  name: string,
-  fn?: LoaderFn<any, Record<string, string | undefined>, any>
-): LoaderDefinition<any, Record<string, string | undefined>> {
-  return {
-    __brand: "loader",
-    name,
-    fn,
-  };
-}
+// Re-export createLoader from loader.ts to ensure consistent implementation
+// between server and client contexts
+export { createLoader } from "./loader.js";
 
 /**
  * Create a soft redirect Response for middleware short-circuit

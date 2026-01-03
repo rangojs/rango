@@ -15,9 +15,7 @@ export type Recommendation = {
  * It has a 2 second delay and revalidates when cart actions occur,
  * so after adding to cart, the recommendations will stream in.
  */
-export const ModalRecommendationsLoader = createLoader(
-  "modalRecommendations",
-  async (ctx) => {
+export const ModalRecommendationsLoader = createLoader(async (ctx) => {
     "use server";
 
     const { slug } = ctx.params;

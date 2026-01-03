@@ -212,9 +212,11 @@ export function CardDetailSkeleton() {
 }
 
 export function CardDetailContent() {
-  const { card, columnTitle } = useLoader(CardDetailLoader);
+  const { data } = useLoader(CardDetailLoader);
   const { navigate } = useNavigation();
   const [isPending, startTransition] = useTransition();
+
+  const { card, columnTitle } = data;
 
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
