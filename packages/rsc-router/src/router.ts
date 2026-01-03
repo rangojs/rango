@@ -294,7 +294,7 @@ export interface RSCRouter<
    * Error callback for monitoring/alerting
    * Called when errors occur in loaders, actions, or routes
    */
-  readonly onError?: RSCRouterOptions["onError"];
+  readonly onError?: RSCRouterOptions<TEnv>["onError"];
 
   match(request: Request, context: TEnv): Promise<MatchResult>;
 
@@ -367,9 +367,6 @@ export function createRSCRouter<TEnv = any>(
     onError,
   } = options;
 
-  // Request start time for duration tracking
-  let requestStartTime: number | undefined;
-
   /**
    * Invoke the onError callback with comprehensive context
    * Catches any errors in the callback itself to prevent masking the original error
@@ -391,12 +388,15 @@ export function createRSCRouter<TEnv = any>(
       isPartial?: boolean;
       handledByBoundary?: boolean;
       metadata?: Record<string, unknown>;
+      requestStartTime?: number;
     }
   ): void {
     if (!onError) return;
 
     const errorObj = error instanceof Error ? error : new Error(String(error));
-    const duration = requestStartTime ? performance.now() - requestStartTime : undefined;
+    const duration = context.requestStartTime
+      ? performance.now() - context.requestStartTime
+      : undefined;
 
     const errorContext: OnErrorContext<TEnv> = {
       error: errorObj,
@@ -494,6 +494,7 @@ export function createRSCRouter<TEnv = any>(
       params?: Record<string, string>;
       env?: TEnv;
       isPartial?: boolean;
+      requestStartTime?: number;
     }
   ): Promise<LoaderDataResult<T>> {
     return wrapLoaderWithErrorHandling(
@@ -517,6 +518,7 @@ export function createRSCRouter<TEnv = any>(
               env: errorContext.env,
               isPartial: errorContext.isPartial,
               handledByBoundary: ctx.handledByBoundary,
+              requestStartTime: errorContext.requestStartTime,
             });
           }
         : undefined
@@ -1308,6 +1310,7 @@ export function createRSCRouter<TEnv = any>(
     errorContext?: {
       env?: TEnv;
       isPartial?: boolean;
+      requestStartTime?: number;
     }
   ): Promise<ResolvedSegment[]> {
     try {
@@ -1343,6 +1346,7 @@ export function createRSCRouter<TEnv = any>(
             isPartial: errorContext?.isPartial,
             handledByBoundary: true,
             metadata: { notFound: true, message: notFoundInfo.message },
+            requestStartTime: errorContext?.requestStartTime,
           });
 
           console.log(
@@ -1385,6 +1389,7 @@ export function createRSCRouter<TEnv = any>(
         env: errorContext?.env,
         isPartial: errorContext?.isPartial,
         handledByBoundary: !!fallback,
+        requestStartTime: errorContext?.requestStartTime,
       });
 
       console.log(
@@ -1418,6 +1423,7 @@ export function createRSCRouter<TEnv = any>(
       routeKey?: string;
       env?: TEnv;
       isPartial?: boolean;
+      requestStartTime?: number;
     }
   ): Promise<SegmentRevalidationResult> {
     try {
@@ -1454,6 +1460,7 @@ export function createRSCRouter<TEnv = any>(
               isPartial: errorContext.isPartial,
               handledByBoundary: true,
               metadata: { notFound: true, message: notFoundInfo.message },
+              requestStartTime: errorContext.requestStartTime,
             });
           }
 
@@ -1503,6 +1510,7 @@ export function createRSCRouter<TEnv = any>(
           env: errorContext.env,
           isPartial: errorContext.isPartial,
           handledByBoundary: !!fallback,
+          requestStartTime: errorContext.requestStartTime,
         });
       }
 
@@ -2172,8 +2180,8 @@ export function createRSCRouter<TEnv = any>(
     const url = new URL(request.url);
     const pathname = url.pathname;
 
-    // Track request start time for duration in onError
-    requestStartTime = performance.now();
+    // Track request start time for duration in onError (local to this request)
+    const requestStartTime = performance.now();
 
     // Initialize metrics store for this request
     const metricsStore = getMetricsStore();
@@ -2280,7 +2288,7 @@ export function createRSCRouter<TEnv = any>(
                   handlerContext,
                   loaderPromises
                 ),
-              { env: context, isPartial: false }
+              { env: context, isPartial: false, requestStartTime }
             );
 
             segs.push(...resolvedSegments);
@@ -2322,6 +2330,7 @@ export function createRSCRouter<TEnv = any>(
         env: context,
         isPartial: false,
         handledByBoundary: false,
+        requestStartTime,
       });
 
       console.error((error as Error)?.stack || error);
@@ -2526,8 +2535,8 @@ export function createRSCRouter<TEnv = any>(
     const url = new URL(request.url);
     const pathname = url.pathname;
 
-    // Track request start time for duration in onError
-    requestStartTime = performance.now();
+    // Track request start time for duration in onError (local to this request)
+    const requestStartTime = performance.now();
 
     // Initialize metrics store for this request
     const metricsStore = getMetricsStore();
@@ -2780,7 +2789,7 @@ export function createRSCRouter<TEnv = any>(
                   stale
                 ),
               pathname,
-              { request, url, routeKey: matched.routeKey, env: context, isPartial: true }
+              { request, url, routeKey: matched.routeKey, env: context, isPartial: true, requestStartTime }
             );
 
             segs.push(...resolved.segments);
@@ -2894,6 +2903,7 @@ export function createRSCRouter<TEnv = any>(
         isPartial: true,
         handledByBoundary: false,
         actionId: actionContext?.actionId,
+        requestStartTime,
       });
 
       // Sanitize error for production security

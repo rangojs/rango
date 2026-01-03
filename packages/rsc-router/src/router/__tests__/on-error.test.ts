@@ -334,7 +334,7 @@ describe("wrapLoaderWithErrorHandling", () => {
     segmentType: ErrorInfo["segmentType"]
   ): ErrorInfo => ({
     message: error instanceof Error ? error.message : String(error),
-    digest: "test-digest",
+    name: error instanceof Error ? error.name : "Error",
     segmentId,
     segmentType,
   });
@@ -395,7 +395,7 @@ describe("wrapLoaderWithErrorHandling", () => {
         ok: false,
         error: {
           message: "Loader failed",
-          digest: "test-digest",
+          name: "Error",
           segmentId: "M1L0.FailingLoader",
           segmentType: "loader",
         },
@@ -446,7 +446,7 @@ describe("wrapLoaderWithErrorHandling", () => {
         ok: false,
         error: {
           message: "Handled error",
-          digest: "test-digest",
+          name: "Error",
           segmentId: "M1L0.HandledLoader",
           segmentType: "loader",
         },
@@ -498,12 +498,14 @@ describe("wrapLoaderWithErrorHandling", () => {
       expect(boundaryHandler).toHaveBeenCalledWith({
         error: {
           message: "Handler error",
-          digest: "test-digest",
+          name: "Error",
           segmentId: "M1L0.HandlerLoader",
           segmentType: "loader",
         },
       });
-      expect(result.fallback).toBe("Rendered Fallback");
+      if (!result.ok) {
+        expect(result.fallback).toBe("Rendered Fallback");
+      }
 
       consoleSpy.mockRestore();
     });
@@ -585,7 +587,9 @@ describe("wrapLoaderWithErrorHandling", () => {
       );
 
       expect(result.ok).toBe(false);
-      expect(result.error?.message).toBe("String error message");
+      if (!result.ok) {
+        expect(result.error?.message).toBe("String error message");
+      }
     });
 
     it("should handle object errors", async () => {
@@ -599,9 +603,9 @@ describe("wrapLoaderWithErrorHandling", () => {
         () => null,
         (error) => ({
           message: String(error),
-          digest: "digest",
+          name: "Error",
           segmentId: "test",
-          segmentType: "loader",
+          segmentType: "loader" as const,
         })
       );
 
@@ -619,14 +623,16 @@ describe("wrapLoaderWithErrorHandling", () => {
         () => null,
         (error) => ({
           message: String(error),
-          digest: "digest",
+          name: "Error",
           segmentId: "test",
-          segmentType: "loader",
+          segmentType: "loader" as const,
         })
       );
 
       expect(result.ok).toBe(false);
-      expect(result.error?.message).toBe("null");
+      if (!result.ok) {
+        expect(result.error?.message).toBe("null");
+      }
     });
   });
 });

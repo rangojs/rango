@@ -537,10 +537,14 @@ export function createRSCHandler<TEnv = unknown>(
           // Call onError callback if configured (for monitoring/alerting)
           if (router.onError) {
             try {
-              router.onError(err, {
-                source: "loader",
+              router.onError({
+                error: err,
+                phase: "loader",
+                request,
+                url,
                 pathname: url.pathname,
-                loaderId,
+                method: request.method,
+                loaderName: loaderId,
               });
             } catch (callbackError) {
               console.error("[RSC] onError callback failed:", callbackError);
