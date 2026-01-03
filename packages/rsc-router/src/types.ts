@@ -789,6 +789,11 @@ export interface MatchResult {
   matched: string[];
   diff: string[];
   /**
+   * Merged route params from all matched segments
+   * Available for use by the handler after route matching
+   */
+  params: Record<string, string>;
+  /**
    * Server-Timing header value (only present when debugPerformance is enabled)
    * Can be added to response headers for DevTools integration
    */
@@ -971,7 +976,7 @@ export type RouteMiddlewareFn<
  * });
  * ```
  */
-export type LoaderContext<TParams = Record<string, string | undefined>, TEnv = any> = {
+export type LoaderContext<TParams = Record<string, string | undefined>, TEnv = any, TBody = unknown> = {
   params: TParams;
   request: Request;
   searchParams: URLSearchParams;
@@ -986,6 +991,16 @@ export type LoaderContext<TParams = Record<string, string | undefined>, TEnv = a
    * Access another loader's data (returns promise since loaders run in parallel)
    */
   use: <T, TLoaderParams = any>(loader: LoaderDefinition<T, TLoaderParams>) => Promise<T>;
+  /**
+   * HTTP method (GET, POST, PUT, PATCH, DELETE)
+   * Available when loader is called via load({ method: "POST", ... })
+   */
+  method: string;
+  /**
+   * Request body for POST/PUT/PATCH/DELETE requests
+   * Available when loader is called via load({ method: "POST", body: {...} })
+   */
+  body: TBody | undefined;
 };
 
 /**

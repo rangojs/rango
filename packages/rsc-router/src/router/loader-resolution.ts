@@ -181,6 +181,9 @@ export function setupLoaderAccess<TEnv>(
         // Recursive call - will start dep loader if not already started
         return ctx.use(dep);
       },
+      // Default to GET for loaders called through route handlers
+      method: "GET",
+      body: undefined,
     };
 
     // Start loader execution with tracking

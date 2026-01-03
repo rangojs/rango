@@ -1,25 +1,47 @@
 /**
- * Request Context - AsyncLocalStorage for passing request-scoped data to server actions
+ * Request Context - AsyncLocalStorage for passing request-scoped data throughout rendering
  *
- * Server actions are invoked by the React runtime but execute within the RSC handler.
- * This context allows actions to access request-scoped data like platform bindings (env),
- * the original request, and middleware variables.
+ * This context is available throughout the entire request lifecycle:
+ * - Middleware execution
+ * - Route handlers and loaders
+ * - Server components during rendering
+ * - Error boundaries and streaming
+ *
+ * The shape matches HandlerContext as closely as possible, except:
+ * - No `params` (route-specific, determined after route matching)
+ * - No `use` (requires loader resolution system)
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
 /**
- * Request-scoped context available to server actions
+ * Request-scoped context available via getRequestContext()
+ *
+ * Similar to HandlerContext but available globally during request processing.
+ * Use this when you need access to env/request outside of route handlers.
  */
-export interface RequestContext<TEnv = unknown> {
+export interface RequestContext<TEnv = unknown, TParams = Record<string, string>> {
   /** Platform bindings (Cloudflare env, etc.) */
   env: TEnv;
   /** Original HTTP request */
   request: Request;
-  /** Parsed URL */
+  /** Parsed URL (system params like _rsc* are NOT filtered here) */
   url: URL;
-  /** Variables set by middleware */
-  variables: Record<string, any>;
+  /** URL pathname */
+  pathname: string;
+  /** URL search params (system params like _rsc* are NOT filtered here) */
+  searchParams: URLSearchParams;
+  /** Variables set by middleware (same as ctx.var) */
+  var: Record<string, any>;
+  /** Get a variable set by middleware */
+  get: <K extends string>(key: K) => any;
+  /** Set a variable (shared with middleware and handlers) */
+  set: <K extends string>(key: K, value: any) => void;
+  /**
+   * Route params (populated after route matching)
+   * Initially empty, then set to matched params
+   */
+  params: TParams;
 }
 
 // AsyncLocalStorage instance for request context
@@ -42,6 +64,17 @@ export function runWithRequestContext<TEnv, T>(
  */
 export function getRequestContext<TEnv = unknown>(): RequestContext<TEnv> | undefined {
   return requestContextStorage.getStore() as RequestContext<TEnv> | undefined;
+}
+
+/**
+ * Update params on the current request context
+ * Called after route matching to populate route params
+ */
+export function setRequestContextParams(params: Record<string, string>): void {
+  const ctx = requestContextStorage.getStore();
+  if (ctx) {
+    ctx.params = params;
+  }
 }
 
 /**

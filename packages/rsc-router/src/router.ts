@@ -2105,6 +2105,7 @@ export function createRSCRouter<TEnv = any>(
         segments: [],
         matched: [],
         diff: [],
+        params: matched.params,
         redirect: redirectUrl,
       };
     }
@@ -2235,6 +2236,7 @@ export function createRSCRouter<TEnv = any>(
         segments,
         matched: segmentIds,
         diff: segmentIds,
+        params: matched.params,
         serverTiming,
         routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
       };
@@ -2428,6 +2430,7 @@ export function createRSCRouter<TEnv = any>(
       segments: [errorSegment],
       matched: matchedIds,
       diff: [errorSegment.id],
+      params: matched.params,
     };
   }
 
@@ -2824,6 +2827,7 @@ export function createRSCRouter<TEnv = any>(
         segments: segmentsToRender,
         matched: allIds, // All segment IDs including intercepts
         diff: segmentsToRender.map((s) => s.id),
+        params: matched.params,
         serverTiming,
         // Include slots state - browser uses this to know which slots are active
         slots: Object.keys(slots).length > 0 ? slots : undefined,

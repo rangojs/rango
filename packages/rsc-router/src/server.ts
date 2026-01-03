@@ -54,6 +54,7 @@ export { registerLoaderById, setLoaderImports } from "./server/loader-registry.j
 export {
   getRequestContext,
   requireRequestContext,
+  setRequestContextParams,
   type RequestContext,
 } from "./server/request-context.js";
 

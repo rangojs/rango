@@ -145,7 +145,8 @@ export function createLoader<T>(
     const env = requestCtx?.env ?? {};
 
     // Merge variables from request context (app-level middleware) with loader-specific variables
-    const variables: Record<string, any> = { ...requestCtx?.variables };
+    // requestCtx.var is the shared variables object from the handler
+    const variables: Record<string, any> = { ...requestCtx?.var };
 
     // Execute middleware for auth checks (server actions can't return Response)
     // If middleware returns Response, we throw an error

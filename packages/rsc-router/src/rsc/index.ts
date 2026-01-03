@@ -11,7 +11,7 @@ import {
   executeLoaderAppMiddleware,
   type AppMiddlewareEntry,
 } from "../router/app-middleware.js";
-import { runWithRequestContext } from "../server/request-context.js";
+import { runWithRequestContext, setRequestContextParams } from "../server/request-context.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
 
@@ -157,14 +157,28 @@ export function createRSCHandler<TEnv = unknown>(
     // Shared variables between middleware and route handlers
     const variables: Record<string, any> = {};
 
+    // Build request context matching HandlerContext shape
+    // params starts empty, populated after route matching via setRequestContextParams
+    const requestContext = {
+      env,
+      request,
+      url,
+      pathname: url.pathname,
+      searchParams: url.searchParams,
+      var: variables,
+      get: <K extends string>(key: K) => variables[key],
+      set: <K extends string>(key: K, value: any) => { variables[key] = value; },
+      params: {} as Record<string, string>,
+    };
+
     // Wrap entire request handling in request context
-    // Makes env, request, url, variables available via getRequestContext() throughout:
+    // Makes context available via getRequestContext() throughout:
     // - Middleware execution
     // - Route handlers and loaders
     // - Server components during rendering
     // - Error boundaries
     // - Streaming
-    return runWithRequestContext({ env, request, url, variables }, async () => {
+    return runWithRequestContext(requestContext, async () => {
       // Core handler logic (wrapped by middleware)
       const coreHandler = async (): Promise<Response> => {
         return coreRequestHandler(request, env, url, variables);
@@ -305,6 +319,9 @@ export function createRSCHandler<TEnv = unknown>(
           const errorResult = await router.matchError(request, envWithHandleStore, error, "route");
 
           if (errorResult) {
+            // Update request context with matched params
+            setRequestContextParams(errorResult.params);
+
             const renderStart = performance.now();
             const root = renderSegments(errorResult.segments, {
               rootLayout: router.rootLayout,
@@ -362,6 +379,9 @@ export function createRSCHandler<TEnv = unknown>(
           // Fall back to full render
           const fullMatch = await router.match(request, envWithHandleStore);
 
+          // Update request context with matched params
+          setRequestContextParams(fullMatch.params);
+
           // Handle trailing slash redirect
           if (fullMatch.redirect) {
             return new Response(null, {
@@ -410,6 +430,9 @@ export function createRSCHandler<TEnv = unknown>(
           });
         }
 
+        // Update request context with matched params
+        setRequestContextParams(matchResult.params);
+
         // Return updated segments
         const renderStart = performance.now();
         renderSegments(matchResult.segments, {
@@ -452,12 +475,12 @@ export function createRSCHandler<TEnv = unknown>(
       }
 
       // ============================================================================
-      // LOADER FETCH EXECUTION (GET-based data fetching with RSC serialization)
+      // LOADER FETCH EXECUTION (data fetching with RSC serialization)
+      // Supports GET (params in query string) and POST/PUT/PATCH/DELETE (JSON body)
       // ============================================================================
       const isLoaderRequest = url.searchParams.has("_rsc_loader");
       if (isLoaderRequest) {
         const loaderId = url.searchParams.get("_rsc_loader");
-        const loaderParamsJson = url.searchParams.get("_rsc_loader_params");
 
         if (!loaderId) {
           return new Response("Missing _rsc_loader parameter", {
@@ -473,15 +496,36 @@ export function createRSCHandler<TEnv = unknown>(
           });
         }
 
-        // Parse params
+        // Parse params and body based on request method
         let loaderParams: Record<string, string> = {};
-        if (loaderParamsJson) {
+        let loaderBody: unknown = undefined;
+        const isBodyMethod = request.method !== "GET" && request.method !== "HEAD";
+
+        if (isBodyMethod) {
+          // POST/PUT/PATCH/DELETE - read from JSON body
           try {
-            loaderParams = JSON.parse(loaderParamsJson);
+            const contentType = request.headers.get("content-type") || "";
+            if (contentType.includes("application/json")) {
+              const jsonBody = await request.json() as { params?: Record<string, string>; body?: unknown };
+              loaderParams = jsonBody.params ?? {};
+              loaderBody = jsonBody.body;
+            }
           } catch {
-            return new Response("Invalid _rsc_loader_params JSON", {
+            return new Response("Invalid JSON body", {
               status: 400,
             });
+          }
+        } else {
+          // GET - read from query string
+          const loaderParamsJson = url.searchParams.get("_rsc_loader_params");
+          if (loaderParamsJson) {
+            try {
+              loaderParams = JSON.parse(loaderParamsJson);
+            } catch {
+              return new Response("Invalid _rsc_loader_params JSON", {
+                status: 400,
+              });
+            }
           }
         }
 
@@ -518,8 +562,15 @@ export function createRSCHandler<TEnv = unknown>(
                 envWithVariables
               );
 
+              // Extend context with method and body for POST/PUT/PATCH/DELETE
+              const extendedCtx: any = {
+                ...ctx,
+                method: request.method,
+                body: loaderBody,
+              };
+
               // Execute loader function
-              const result = await fn(ctx as any);
+              const result = await fn(extendedCtx);
 
               // Serialize result with RSC
               interface LoaderPayload {
@@ -589,6 +640,9 @@ export function createRSCHandler<TEnv = unknown>(
           // Fall back to full render
           const match = await router.match(request, envWithHandleStore);
 
+          // Update request context with matched params
+          setRequestContextParams(match.params);
+
           // Handle trailing slash redirect
           if (match.redirect) {
             return new Response(null, {
@@ -620,6 +674,9 @@ export function createRSCHandler<TEnv = unknown>(
             },
           };
         } else {
+          // Update request context with matched params
+          setRequestContextParams(result.params);
+
           serverTiming = result.serverTiming;
           payload = {
             root: null,
@@ -637,6 +694,9 @@ export function createRSCHandler<TEnv = unknown>(
       } else {
         // Full render (initial page load)
         const match = await router.match(request, envWithHandleStore);
+
+        // Update request context with matched params
+        setRequestContextParams(match.params);
 
         // Handle trailing slash redirect
         if (match.redirect) {
