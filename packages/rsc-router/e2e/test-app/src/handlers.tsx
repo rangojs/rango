@@ -59,7 +59,7 @@ import {
 } from "./components/HookTests.js";
 
 export default map<typeof testRoutes>(
-  ({ route, layout, intercept, loader, loading, when }) => [
+  ({ route, layout, intercept, loader, loading, when, middleware }) => [
     // Root layout with HTML structure
     layout(
       (ctx) => {
@@ -1370,6 +1370,79 @@ export default map<typeof testRoutes>(
         </div>
       );
     }),
+
+    // Route-level middleware test - middleware defined inside route() callback
+    route(
+      "middlewareTest.routeLevel",
+      (ctx) => {
+        // Read variable set by route-level middleware
+        const routeMiddlewareValue = ctx.get("routeMiddlewareApplied");
+        return (
+          <div data-testid="middleware-test-route-level">
+            <Link to="/middleware-test" data-testid="back-link">
+              ← Back to Middleware Tests
+            </Link>
+            <h1 data-testid="route-level-title">Route-Level Middleware Test</h1>
+            <p data-testid="route-level-description">
+              This route has middleware defined inside the route() callback.
+            </p>
+            <div data-testid="route-middleware-value">
+              {routeMiddlewareValue || "No middleware value"}
+            </div>
+          </div>
+        );
+      },
+      () => [
+        // Route-level middleware that sets a header and a variable
+        middleware(async (ctx, next) => {
+          ctx.set("routeMiddlewareApplied", "yes");
+          await next();
+          ctx.header("X-Route-Level-Middleware", "applied");
+        }),
+      ]
+    ),
+
+    // Route-level middleware with params test - verify ctx.params is available and typesafe
+    route(
+      "middlewareTest.routeLevelWithParams",
+      (ctx) => {
+        // Read variables set by route-level middleware (which read from ctx.params)
+        const middlewareRouteId = ctx.get("middlewareRouteId");
+        const paramsAvailableInMiddleware = ctx.get("paramsAvailableInMiddleware");
+        return (
+          <div data-testid="middleware-test-route-level-params">
+            <Link to="/middleware-test" data-testid="back-link">
+              ← Back to Middleware Tests
+            </Link>
+            <h1 data-testid="route-level-params-title">Route-Level Middleware with Params</h1>
+            <p data-testid="route-level-params-description">
+              Tests that ctx.params is available in route-level middleware.
+            </p>
+            <div data-testid="handler-route-id">
+              Handler routeId: {ctx.params.routeId}
+            </div>
+            <div data-testid="middleware-route-id">
+              Middleware routeId: {middlewareRouteId || "not set"}
+            </div>
+            <div data-testid="params-available">
+              Params available in middleware: {paramsAvailableInMiddleware || "no"}
+            </div>
+          </div>
+        );
+      },
+      () => [
+        // Route-level middleware that reads ctx.params
+        middleware(async (ctx, next) => {
+          // ctx.params should be typed with routeId from the route definition
+          const routeId = ctx.params.routeId;
+          ctx.set("middlewareRouteId", routeId);
+          ctx.set("paramsAvailableInMiddleware", routeId ? "yes" : "no");
+          await next();
+          // Also set header with param value for HTTP-level verification
+          ctx.header("X-Middleware-Route-Id", routeId);
+        }),
+      ]
+    ),
 
     // Route for testing ctx.use(loader) composition
     // Tests all combinations: fetchable/non-fetchable loaders using fetchable/non-fetchable dependencies

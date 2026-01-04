@@ -652,7 +652,9 @@ get res(): Response {
 
 ## 10. Recommendations
 
-### 10.1 Critical Fixes (BUGS) - ALL FIXED
+### 10.1 Critical Fixes (BUGS)
+
+**FIXED:**
 
 1. ~~**BUG: Intercept middleware cookies are silently dropped**~~
    **FIXED:** Cookies are now applied via `applyPendingCookies()` before returning early response.
@@ -665,6 +667,17 @@ get res(): Response {
 
 4. ~~**ISSUE: Non-Response return values are silently ignored**~~
    **FIXED:** Logs warning when middleware returns unexpected value type.
+
+**OPEN:**
+
+5. **BUG: Intercept middleware headers set after next() cause short-circuit**
+   When intercept middleware sets headers or cookies AFTER calling `next()`, `executeInterceptMiddleware()` returns the stubResponse because `hasCustomHeaders` is true (lines 649-656 in `middleware.ts`). The router then throws this response (line 1052 in `router.ts`), breaking the intercept flow.
+
+   **Root cause:** The function doesn't distinguish between:
+   - Short-circuit BEFORE `next()` (actual early response - should abort)
+   - Headers set AFTER `next()` (normal header setting - should merge into final response)
+
+   **Fix needed:** Track whether `next()` was called. If headers are set after `next()` completed, merge them into the final response instead of treating it as a short-circuit.
 
 ### 10.2 Code Quality Improvements
 
@@ -713,7 +726,10 @@ All unit tests implemented (75 tests in `middleware.test.ts`):
    - Error handling
    - Cookie/header handling
 
-### 10.4 E2E Test Actions (Pending Implementation)
+### 10.4 E2E Test Actions - MOSTLY DONE
+
+**Completed:** Route-level middleware tests with params, loader middleware tests.
+**Blocked:** Intercept middleware tests (bug #5 in 10.1).
 
 #### Test App Changes Needed
 
@@ -835,18 +851,19 @@ test.describe("middleware-features", () => {
 });
 ```
 
-#### Summary of Test Coverage Gaps
+#### Summary of Test Coverage
 
-| Feature | Current Coverage | Action Needed |
-|---------|-----------------|---------------|
-| App-level global middleware | ✅ Full | None |
-| App-level pattern middleware | ✅ Full | None |
-| Route-level middleware | ❌ None | Add route + test |
-| Fetchable loader middleware | ❌ None | Add UI for ProtectedLoader + test |
-| Server action middleware | ❌ None | Add form action test |
-| Partial render middleware | ❌ None | Add soft nav test |
-| Intercept middleware headers | ❌ None | Add intercept + test |
-| Intercept middleware cookies | ❌ None | Add cookie test (bug fixed) |
+| Feature | Current Coverage | Status |
+|---------|-----------------|--------|
+| App-level global middleware | ✅ Full | E2E tests in `app-middleware.test.ts` |
+| App-level pattern middleware | ✅ Full | E2E tests in `app-middleware.test.ts` |
+| Route-level middleware | ✅ Full | Tests for headers, variable sharing, and ctx.params access |
+| Route-level middleware with params | ✅ Full | Tests verify ctx.params is typesafe and available in middleware |
+| Fetchable loader middleware | ✅ Full | Tests for auth success, rejection, and invalid token |
+| Server action middleware | ⚠️ Partial | Throws error on cookie set (intended limitation) |
+| Partial render middleware | ✅ Full | Covered by soft navigation tests |
+| Intercept middleware headers | ❌ Blocked | Bug: headers after next() cause short-circuit (see 10.1) |
+| Intercept middleware cookies | ❌ Blocked | Bug: headers after next() cause short-circuit (see 10.1) |
 
 ### 10.5 Demo App Enhancements
 
@@ -872,6 +889,7 @@ test.describe("middleware-features", () => {
 | ~~Server action cookies dropped~~ | MEDIUM | `executeServerActionMiddleware()` | ~~Cookies set in server action middleware are silently ignored~~ Now throws clear error | **FIXED** |
 | ~~Intercept ctx.res unavailable~~ | MEDIUM | `executeInterceptMiddleware()` | ~~Cannot modify response headers in intercept middleware~~ | **FIXED** |
 | ~~Non-Response returns ignored~~ | LOW | `executeMiddleware()` | ~~User errors go undetected~~ Now logs warning | **FIXED** |
+| Intercept middleware short-circuit | HIGH | `executeInterceptMiddleware()` | Headers set after next() break intercept flow | **OPEN** |
 
 ### Architecture Improvements
 
