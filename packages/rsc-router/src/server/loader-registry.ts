@@ -7,7 +7,7 @@
 
 import type { LoaderFn } from "../types.js";
 import type { AppMiddlewareFn } from "../router/app-middleware.js";
-import { getFetchableLoader } from "../loader.js";
+import { getFetchableLoader } from "../loader.rsc.js";
 
 interface RegisteredLoader {
   fn: LoaderFn<any, any, any>;

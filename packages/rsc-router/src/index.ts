@@ -75,7 +75,7 @@ export type { RSCRouterOptions } from "./router.js";
 // Metrics types
 export type { PerformanceMetric, MetricsStore } from "./server/context.js";
 
-// Client-safe createLoader - only stores the name, function is ignored
+// Client-safe createLoader - only stores the $$id, function is not included
 // Use this when defining loaders that will be imported by client components
 export { createLoader } from "./loader.js";
 

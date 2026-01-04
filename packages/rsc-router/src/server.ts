@@ -50,13 +50,6 @@ export { Meta } from "./handles/meta.js";
 // Loader registry (for GET-based loader fetching)
 export { registerLoaderById, setLoaderImports } from "./server/loader-registry.js";
 
-// Request context (for accessing env/request in server actions)
-export {
-  getRequestContext,
-  requireRequestContext,
-  setRequestContextParams,
-  type RequestContext,
-} from "./server/request-context.js";
 
 // Meta types
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";

@@ -1081,9 +1081,8 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
  * const cart = useLoader(CartLoader);
  * ```
  */
-// Re-export createLoader from loader.ts to ensure consistent implementation
-// between server and client contexts
-export { createLoader } from "./loader.js";
+// Re-export createLoader from loader.rsc.ts for RSC/server context
+export { createLoader } from "./loader.rsc.js";
 
 /**
  * Create a soft redirect Response for middleware short-circuit

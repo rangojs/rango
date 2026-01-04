@@ -11,7 +11,12 @@ import {
   executeLoaderAppMiddleware,
   type AppMiddlewareEntry,
 } from "../router/app-middleware.js";
-import { runWithRequestContext, setRequestContextParams } from "../server/request-context.js";
+import {
+  runWithRequestContext,
+  setRequestContextParams,
+  getRequestContext,
+  requireRequestContext,
+} from "../server/request-context.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
 
@@ -792,3 +797,6 @@ export {
   type HandleStore,
   type HandleData,
 } from "../server/handle-store.js";
+
+// Re-export request context utilities for server-side access to env/request/params
+export { getRequestContext, requireRequestContext, setRequestContextParams };
