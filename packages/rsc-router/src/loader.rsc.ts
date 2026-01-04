@@ -16,7 +16,7 @@ import type {
   LoaderDefinition,
   LoaderFn,
 } from "./types.js";
-import type { AppMiddlewareFn } from "./router/app-middleware.js";
+import type { MiddlewareFn } from "./router/middleware.js";
 import { getRequestContext } from "./server/request-context.js";
 
 // Internal registry for fetchable loaders (server-side only)
@@ -32,7 +32,7 @@ import { getRequestContext } from "./server/request-context.js";
 // 3. Both to share the same source of truth (this registry)
 const fetchableLoaderRegistry = new Map<
   string,
-  { fn: LoaderFn<any, any, any>; middleware: AppMiddlewareFn[] }
+  { fn: LoaderFn<any, any, any>; middleware: MiddlewareFn[] }
 >();
 
 /**
@@ -42,7 +42,7 @@ const fetchableLoaderRegistry = new Map<
 function registerFetchableLoader(
   id: string,
   fn: LoaderFn<any, any, any>,
-  middleware: AppMiddlewareFn[]
+  middleware: MiddlewareFn[]
 ): void {
   fetchableLoaderRegistry.set(id, { fn, middleware });
 }
@@ -64,7 +64,7 @@ function registerFetchableLoader(
  */
 export function getFetchableLoader(
   id: string
-): { fn: LoaderFn<any, any, any>; middleware: AppMiddlewareFn[] } | undefined {
+): { fn: LoaderFn<any, any, any>; middleware: MiddlewareFn[] } | undefined {
   return fetchableLoaderRegistry.get(id);
 }
 
@@ -106,7 +106,7 @@ export function createLoader<T>(
   }
 
   // Fetchable loader - store fn in registry and return a serializable object
-  const middleware: AppMiddlewareFn[] =
+  const middleware: MiddlewareFn[] =
     fetchable === true ? [] : fetchable?.middleware || [];
 
   // Register the function in the internal registry by $$id (server-side only)
@@ -152,7 +152,7 @@ export function createLoader<T>(
     // If middleware returns Response, we throw an error
     if (registered.middleware.length > 0) {
       const { executeServerActionMiddleware } = await import(
-        "./router/app-middleware.js"
+        "./router/middleware.js"
       );
       await executeServerActionMiddleware(
         registered.middleware,

@@ -52,11 +52,6 @@ export interface RouterDependencies<TEnv> {
   findNearestNotFoundBoundary: (
     entry: EntryData | null
   ) => ReactNode | NotFoundBoundaryHandler | null;
-  executeMiddleware: (
-    middleware: any[],
-    ctx: HandlerContext<any, TEnv>,
-    entryId?: string
-  ) => Promise<Response | null>;
 }
 
 /**

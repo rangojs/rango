@@ -1,6 +1,6 @@
-import type { AppMiddlewareFn } from "rsc-router/server";
+import type { MiddlewareFn } from "rsc-router/server";
 
-export const loggerMiddleware: AppMiddlewareFn[] = [
+export const loggerMiddleware: MiddlewareFn[] = [
   (ctx, next) => {
     console.log(`[Shop Middleware] Logger: ${ctx.pathname}`);
     next();

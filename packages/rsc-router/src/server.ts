@@ -54,12 +54,12 @@ export { registerLoaderById, setLoaderImports } from "./server/loader-registry.j
 // Meta types
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 
-// App-level middleware types
+// Middleware types
 export type {
-  AppMiddlewareFn,
-  AppMiddlewareContext,
+  MiddlewareFn,
+  MiddlewareContext,
   CookieOptions,
-} from "./router/app-middleware.js";
+} from "./router/middleware.js";
 
 // Error classes and utilities
 export {
@@ -93,7 +93,6 @@ export type {
   GenericParams,
   RevalidateParams,
   ShouldRevalidateFn,
-  MiddlewareFn,
   RouteKeys,
   RouteHandler,
   RouteRevalidateFn,

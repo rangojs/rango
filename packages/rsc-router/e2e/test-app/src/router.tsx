@@ -1,4 +1,4 @@
-import { createRSCRouter, type RouterEnv, redirect, type AppMiddlewareFn } from "rsc-router/server";
+import { createRSCRouter, type RouterEnv, redirect, type MiddlewareFn } from "rsc-router/server";
 import { testRoutes } from "./routes.js";
 
 export type AppEnv = RouterEnv<{}, {}>;
@@ -12,7 +12,7 @@ declare global {
 /**
  * Global middleware - adds X-Global-Middleware header to all responses
  */
-const globalMiddleware: AppMiddlewareFn<AppEnv> = async (ctx, next) => {
+const globalMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
   const response = await next();
   response.headers.set("X-Global-Middleware", "applied");
   return response;
@@ -21,7 +21,7 @@ const globalMiddleware: AppMiddlewareFn<AppEnv> = async (ctx, next) => {
 /**
  * Timing middleware - measures request duration and adds X-Request-Duration header
  */
-const timingMiddleware: AppMiddlewareFn<AppEnv> = async (ctx, next) => {
+const timingMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
   const start = Date.now();
   await next();
   const duration = Date.now() - start;
@@ -32,7 +32,7 @@ const timingMiddleware: AppMiddlewareFn<AppEnv> = async (ctx, next) => {
  * Auth middleware - pattern-based, only applies to /middleware-test/protected/*
  * Checks for auth cookie, redirects to /middleware-test if not authenticated
  */
-const authMiddleware: AppMiddlewareFn<AppEnv> = async (ctx, next) => {
+const authMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
   const authToken = ctx.cookie("auth-token");
   if (!authToken) {
     // Set a header to indicate redirect happened (for test verification)
@@ -47,7 +47,7 @@ const authMiddleware: AppMiddlewareFn<AppEnv> = async (ctx, next) => {
  * Error handling middleware - catches errors and returns custom error response
  * Only applies to /middleware-test/error-handler/*
  */
-const errorMiddleware: AppMiddlewareFn<AppEnv> = async (ctx, next) => {
+const errorMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
   try {
     await next();
   } catch (error) {
@@ -65,7 +65,7 @@ const errorMiddleware: AppMiddlewareFn<AppEnv> = async (ctx, next) => {
  * Cookie middleware - sets a response cookie
  * Only applies to /middleware-test/cookies
  */
-const cookieMiddleware: AppMiddlewareFn<AppEnv> = async (ctx, next) => {
+const cookieMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
   // Read existing cookie
   const visitCount = parseInt(ctx.cookie("visit-count") || "0", 10);
 
@@ -85,7 +85,7 @@ const cookieMiddleware: AppMiddlewareFn<AppEnv> = async (ctx, next) => {
  * Params middleware - extracts params from pattern
  * Pattern: /middleware-test/params/:id
  */
-const paramsMiddleware: AppMiddlewareFn<AppEnv> = async (ctx, next) => {
+const paramsMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
   // ctx.params contains extracted route params
   ctx.set("middlewareParams", ctx.params);
   await next();
@@ -95,7 +95,7 @@ const paramsMiddleware: AppMiddlewareFn<AppEnv> = async (ctx, next) => {
 /**
  * Header shorthand middleware - uses ctx.header() shorthand
  */
-const headerShorthandMiddleware: AppMiddlewareFn<AppEnv> = async (ctx, next) => {
+const headerShorthandMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
   await next();
   ctx.header("X-Header-Shorthand", "works");
 };

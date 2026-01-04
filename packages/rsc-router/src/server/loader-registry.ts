@@ -6,12 +6,12 @@
  */
 
 import type { LoaderFn } from "../types.js";
-import type { AppMiddlewareFn } from "../router/app-middleware.js";
+import type { MiddlewareFn } from "../router/middleware.js";
 import { getFetchableLoader } from "../loader.rsc.js";
 
 interface RegisteredLoader {
   fn: LoaderFn<any, any, any>;
-  middleware: AppMiddlewareFn[];
+  middleware: MiddlewareFn[];
 }
 
 // Server-side cache - maps loader $$id to function and middleware
@@ -44,7 +44,7 @@ export function setLoaderImports(
 export function registerLoader(
   id: string,
   fn: LoaderFn<any, any, any>,
-  middleware: AppMiddlewareFn[] = []
+  middleware: MiddlewareFn[] = []
 ): void {
   if (loaderRegistry.has(id)) {
     // Already registered (can happen during HMR)

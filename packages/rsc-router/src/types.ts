@@ -2,7 +2,8 @@ import type { ReactNode } from "react";
 import type { AllUseItems } from "./route-types.js";
 import type { HandleStore } from "./server/handle-store.js";
 import type { Handle } from "./handle.js";
-import type { AppMiddlewareFn } from "./router/app-middleware.js";
+import type { MiddlewareFn } from "./router/middleware.js";
+export type { MiddlewareFn } from "./router/middleware.js";
 
 /**
  * Props for the Document component that wraps the entire application.
@@ -493,20 +494,7 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
  * ]
  * ```
  */
-/**
- * Middleware function signature for route-level middleware.
- * Uses the same signature as app-level middleware (AppMiddlewareFn) for consistency.
- *
- * - `await next()` returns the Response
- * - `ctx.res` available after next() for header modification
- * - Type-safe params from route pattern
- *
- * @deprecated Use AppMiddlewareFn from "rsc-router/server" instead
- */
-export type MiddlewareFn<TParams = GenericParams, TEnv = any> = (
-  ctx: import("./router/app-middleware.js").AppMiddlewareContext<TEnv, TParams>,
-  next: () => Promise<Response>
-) => Response | Promise<Response> | void | Promise<void>;
+// MiddlewareFn is imported from "./router/middleware.js" and re-exported
 
 /**
  * Extract all route keys from a route definition (includes flattened nested routes)
@@ -558,7 +546,7 @@ export type HandlersForRouteMap<T extends RouteDefinition, TEnv = any> = {
   [K in `$parallel.${"*"}.${string}`]?: Record<`@${string}`, Handler<GenericParams, TEnv>>;
 } & {
   // Middleware patterns: $middleware.{routeName}.{middlewareName}
-  [K in `$middleware.${RouteKeys<T> | '*'}.${string}`]?: MiddlewareFn<GenericParams, TEnv>[];
+  [K in `$middleware.${RouteKeys<T> | '*'}.${string}`]?: MiddlewareFn<TEnv, GenericParams>[];
 } & {
   // Route revalidate patterns: $revalidate.route.{routeName}.{revalidateName}
   [K in `$revalidate.route.${RouteKeys<T> | '*'}.${string}`]?: ShouldRevalidateFn<GenericParams, TEnv>;
@@ -816,7 +804,7 @@ export interface MatchResult {
    * wrapping the entire RSC response creation.
    */
   routeMiddleware?: Array<{
-    handler: import("./router/app-middleware.js").AppMiddlewareFn;
+    handler: import("./router/middleware.js").MiddlewareFn;
     params: Record<string, string>;
   }>;
 }
@@ -945,7 +933,7 @@ export type RouteMiddlewareFn<
   TRoutes extends RouteDefinition,
   K extends keyof TRoutes,
   TEnv = DefaultEnv
-> = MiddlewareFn<ExtractRouteParams<TRoutes, K & string>, TEnv>;
+> = MiddlewareFn<TEnv, ExtractRouteParams<TRoutes, K & string>>;
 
 // ============================================================================
 // Loader Types
@@ -1063,11 +1051,11 @@ export type LoaderFn<T, TParams = Record<string, string | undefined>, TEnv = any
 /**
  * Options for fetchable loaders
  *
- * Middleware uses the same AppMiddlewareFn signature as route/app middleware,
+ * Middleware uses the same MiddlewareFn signature as route/app middleware,
  * enabling reuse of the same middleware functions everywhere.
  */
 export type FetchableLoaderOptions = {
-  middleware?: AppMiddlewareFn[];
+  middleware?: MiddlewareFn[];
 };
 
 /**
@@ -1095,7 +1083,7 @@ export type LoaderActionContext = {
 };
 
 /**
- * @deprecated Use AppMiddlewareFn instead for fetchable loader middleware.
+ * @deprecated Use MiddlewareFn instead for fetchable loader middleware.
  * This type is kept for backwards compatibility but will be removed in a future version.
  *
  * Fetchable loaders now use the same middleware signature as routes,

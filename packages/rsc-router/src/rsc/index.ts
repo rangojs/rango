@@ -16,10 +16,10 @@ import { RouteNotFoundError } from "../errors.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
 import {
   matchMiddleware,
-  executeAppMiddleware,
-  executeLoaderAppMiddleware,
-  type AppMiddlewareEntry,
-} from "../router/app-middleware.js";
+  executeMiddleware,
+  executeLoaderMiddleware,
+  type MiddlewareEntry,
+} from "../router/middleware.js";
 import {
   runWithRequestContext,
   setRequestContextParams,
@@ -166,10 +166,10 @@ export function createRSCHandler<TEnv = unknown>(
   ): Promise<Response> {
     const url = new URL(request.url);
 
-    // Match app-level middleware
+    // Match global middleware
     const matchedMiddleware = matchMiddleware(
       url.pathname,
-      router.appMiddleware
+      router.middleware
     );
 
     // Shared variables between middleware and route handlers
@@ -206,7 +206,7 @@ export function createRSCHandler<TEnv = unknown>(
 
       // Execute middleware chain if any, otherwise call core handler directly
       if (matchedMiddleware.length > 0) {
-        return executeAppMiddleware(
+        return executeMiddleware(
           matchedMiddleware,
           request,
           env,
@@ -242,7 +242,7 @@ export function createRSCHandler<TEnv = unknown>(
       }));
 
       // Execute route middleware wrapping the actual request handling
-      return executeAppMiddleware(
+      return executeMiddleware(
         middlewareEntries,
         request,
         env,
@@ -567,7 +567,7 @@ export function createRSCHandler<TEnv = unknown>(
           const { fn, middleware } = registeredLoader;
 
           // Execute middleware wrapping the loader execution
-          // Middleware uses AppMiddlewareFn signature - same as route middleware
+          // Middleware uses MiddlewareFn signature - same as route middleware
           // Variables are shared between app-level middleware, loader middleware, and loader function
           //
           // Build env with middleware variables so createHandlerContext can access them
@@ -576,7 +576,7 @@ export function createRSCHandler<TEnv = unknown>(
             __middlewareVariables: variables,
           };
 
-          return await executeLoaderAppMiddleware(
+          return await executeLoaderMiddleware(
             middleware,
             request,
             env,

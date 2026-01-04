@@ -5,12 +5,12 @@ import {
   parseCookies,
   serializeCookie,
   matchMiddleware,
-  executeAppMiddleware,
-  type AppMiddlewareFn,
-  type AppMiddlewareEntry,
-} from "./app-middleware";
+  executeMiddleware,
+  type MiddlewareFn,
+  type MiddlewareEntry,
+} from "./middleware";
 
-describe("app-middleware", () => {
+describe("middleware", () => {
   describe("parsePattern", () => {
     it("should match all routes with *", () => {
       const { regex } = parsePattern("*");
@@ -137,7 +137,7 @@ describe("app-middleware", () => {
 
   describe("matchMiddleware", () => {
     it("should match global middleware (no pattern)", () => {
-      const entries: AppMiddlewareEntry<unknown>[] = [
+      const entries: MiddlewareEntry<unknown>[] = [
         {
           pattern: null,
           regex: null,
@@ -152,7 +152,7 @@ describe("app-middleware", () => {
 
     it("should match pattern-based middleware", () => {
       const { regex, paramNames } = parsePattern("/admin/*");
-      const entries: AppMiddlewareEntry<unknown>[] = [
+      const entries: MiddlewareEntry<unknown>[] = [
         {
           pattern: "/admin/*",
           regex,
@@ -168,7 +168,7 @@ describe("app-middleware", () => {
 
     it("should extract params when matching", () => {
       const { regex, paramNames } = parsePattern("/users/:id/*");
-      const entries: AppMiddlewareEntry<unknown>[] = [
+      const entries: MiddlewareEntry<unknown>[] = [
         {
           pattern: "/users/:id/*",
           regex,
@@ -184,7 +184,7 @@ describe("app-middleware", () => {
     });
 
     it("should return multiple matches in order", () => {
-      const entries: AppMiddlewareEntry<unknown>[] = [
+      const entries: MiddlewareEntry<unknown>[] = [
         {
           pattern: null,
           regex: null,
@@ -205,10 +205,10 @@ describe("app-middleware", () => {
     });
   });
 
-  describe("executeAppMiddleware", () => {
+  describe("executeMiddleware", () => {
     const createMockEntry = (
-      handler: AppMiddlewareFn<unknown>
-    ): { entry: AppMiddlewareEntry<unknown>; params: Record<string, string> } => ({
+      handler: MiddlewareFn<unknown>
+    ): { entry: MiddlewareEntry<unknown>; params: Record<string, string> } => ({
       entry: {
         pattern: null,
         regex: null,
@@ -220,13 +220,13 @@ describe("app-middleware", () => {
     });
 
     it("should execute single middleware and return response", async () => {
-      const middleware: AppMiddlewareFn<unknown> = async (ctx, next) => {
+      const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         const response = await next();
         response.headers.set("X-Test", "value");
         return response;
       };
 
-      const response = await executeAppMiddleware(
+      const response = await executeMiddleware(
         [createMockEntry(middleware)],
         new Request("http://localhost/test"),
         {},
@@ -241,19 +241,19 @@ describe("app-middleware", () => {
     it("should execute middleware in order", async () => {
       const order: number[] = [];
 
-      const mw1: AppMiddlewareFn<unknown> = async (ctx, next) => {
+      const mw1: MiddlewareFn<unknown> = async (ctx, next) => {
         order.push(1);
         await next();
         order.push(4);
       };
 
-      const mw2: AppMiddlewareFn<unknown> = async (ctx, next) => {
+      const mw2: MiddlewareFn<unknown> = async (ctx, next) => {
         order.push(2);
         await next();
         order.push(3);
       };
 
-      await executeAppMiddleware(
+      await executeMiddleware(
         [createMockEntry(mw1), createMockEntry(mw2)],
         new Request("http://localhost/test"),
         {},
@@ -265,13 +265,13 @@ describe("app-middleware", () => {
     });
 
     it("should allow ctx.res access after next()", async () => {
-      const middleware: AppMiddlewareFn<unknown> = async (ctx, next) => {
+      const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         await next();
         ctx.res.headers.set("X-Via-Ctx", "yes");
         // No return - forgiving API
       };
 
-      const response = await executeAppMiddleware(
+      const response = await executeMiddleware(
         [createMockEntry(middleware)],
         new Request("http://localhost/test"),
         {},
@@ -283,12 +283,12 @@ describe("app-middleware", () => {
     });
 
     it("should allow ctx.header() shorthand", async () => {
-      const middleware: AppMiddlewareFn<unknown> = async (ctx, next) => {
+      const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         await next();
         ctx.header("X-Shorthand", "works");
       };
 
-      const response = await executeAppMiddleware(
+      const response = await executeMiddleware(
         [createMockEntry(middleware)],
         new Request("http://localhost/test"),
         {},
@@ -302,11 +302,11 @@ describe("app-middleware", () => {
     it("should short-circuit on early Response return", async () => {
       const handler = vi.fn();
 
-      const middleware: AppMiddlewareFn<unknown> = async () => {
+      const middleware: MiddlewareFn<unknown> = async () => {
         return new Response("Blocked", { status: 403 });
       };
 
-      const response = await executeAppMiddleware(
+      const response = await executeMiddleware(
         [createMockEntry(middleware)],
         new Request("http://localhost/test"),
         {},
@@ -323,7 +323,7 @@ describe("app-middleware", () => {
     });
 
     it("should catch errors from handler", async () => {
-      const middleware: AppMiddlewareFn<unknown> = async (ctx, next) => {
+      const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         try {
           return await next();
         } catch (error) {
@@ -331,7 +331,7 @@ describe("app-middleware", () => {
         }
       };
 
-      const response = await executeAppMiddleware(
+      const response = await executeMiddleware(
         [createMockEntry(middleware)],
         new Request("http://localhost/test"),
         {},
@@ -348,12 +348,12 @@ describe("app-middleware", () => {
     it("should share variables with handler via ctx.set/get", async () => {
       const variables: Record<string, any> = {};
 
-      const middleware: AppMiddlewareFn<unknown> = async (ctx, next) => {
+      const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         ctx.set("user", { id: "123", name: "John" });
         await next();
       };
 
-      await executeAppMiddleware(
+      await executeMiddleware(
         [createMockEntry(middleware)],
         new Request("http://localhost/test"),
         {},
@@ -367,7 +367,7 @@ describe("app-middleware", () => {
     it("should read cookies from request", async () => {
       let sessionValue: string | undefined;
 
-      const middleware: AppMiddlewareFn<unknown> = async (ctx, next) => {
+      const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         sessionValue = ctx.cookie("session");
         await next();
       };
@@ -376,7 +376,7 @@ describe("app-middleware", () => {
         headers: { Cookie: "session=abc123" },
       });
 
-      await executeAppMiddleware(
+      await executeMiddleware(
         [createMockEntry(middleware)],
         request,
         {},
@@ -388,12 +388,12 @@ describe("app-middleware", () => {
     });
 
     it("should set cookies on response", async () => {
-      const middleware: AppMiddlewareFn<unknown> = async (ctx, next) => {
+      const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         ctx.setCookie("session", "xyz789", { httpOnly: true });
         await next();
       };
 
-      const response = await executeAppMiddleware(
+      const response = await executeMiddleware(
         [createMockEntry(middleware)],
         new Request("http://localhost/test"),
         {},
@@ -407,12 +407,12 @@ describe("app-middleware", () => {
     });
 
     it("should delete cookies", async () => {
-      const middleware: AppMiddlewareFn<unknown> = async (ctx, next) => {
+      const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         ctx.deleteCookie("session");
         await next();
       };
 
-      const response = await executeAppMiddleware(
+      const response = await executeMiddleware(
         [createMockEntry(middleware)],
         new Request("http://localhost/test"),
         {},
@@ -426,12 +426,12 @@ describe("app-middleware", () => {
     });
 
     it("should throw if middleware doesn't call next() or return", async () => {
-      const middleware: AppMiddlewareFn<unknown> = async () => {
+      const middleware: MiddlewareFn<unknown> = async () => {
         // Does nothing
       };
 
       await expect(
-        executeAppMiddleware(
+        executeMiddleware(
           [createMockEntry(middleware)],
           new Request("http://localhost/test"),
           {},
@@ -442,13 +442,13 @@ describe("app-middleware", () => {
     });
 
     it("should throw if ctx.res accessed before next()", async () => {
-      const middleware: AppMiddlewareFn<unknown> = async (ctx) => {
+      const middleware: MiddlewareFn<unknown> = async (ctx) => {
         // Try to access res before next()
         ctx.res.headers.set("X-Test", "value");
       };
 
       await expect(
-        executeAppMiddleware(
+        executeMiddleware(
           [createMockEntry(middleware)],
           new Request("http://localhost/test"),
           {},
@@ -461,12 +461,12 @@ describe("app-middleware", () => {
     it("should pass params to middleware context", async () => {
       let receivedParams: Record<string, string> = {};
 
-      const middleware: AppMiddlewareFn<unknown> = async (ctx, next) => {
+      const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         receivedParams = ctx.params;
         await next();
       };
 
-      await executeAppMiddleware(
+      await executeMiddleware(
         [
           {
             entry: {
@@ -488,12 +488,12 @@ describe("app-middleware", () => {
     });
 
     it("should allow middleware to replace response via ctx.res setter", async () => {
-      const middleware: AppMiddlewareFn<unknown> = async (ctx, next) => {
+      const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         await next();
         ctx.res = new Response("Replaced", { status: 201 });
       };
 
-      const response = await executeAppMiddleware(
+      const response = await executeMiddleware(
         [createMockEntry(middleware)],
         new Request("http://localhost/test"),
         {},
