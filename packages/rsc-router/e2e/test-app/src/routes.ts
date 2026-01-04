@@ -79,4 +79,6 @@ export const testRoutes = route({
   loaderComposition: "/loader-composition",
   // Route for testing inline actions (defined directly in RSC, not imported)
   inlineAction: "/inline-action",
+  // Route for testing progressive enhancement (no-JS form submissions)
+  progressiveEnhancement: "/progressive-enhancement",
 });

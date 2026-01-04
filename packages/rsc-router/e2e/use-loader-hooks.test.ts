@@ -753,9 +753,10 @@ test.describe("Form action support", () => {
     expect(formHtml).not.toContain("javascript:throw");
   });
 
-  // This test is expected to fail until the framework supports returning HTML
-  // instead of RSC payload for no-JS clients
-  test.fail(
+  // Progressive enhancement test: useActionState forms work without JavaScript.
+  // The server decodes the action using decodeAction(), executes it, then passes
+  // the form state to renderToReadableStream so useActionState hooks receive the result.
+  test(
     "form action works without JavaScript (progressive enhancement)",
     async ({ browser }) => {
       // Create a new context with JavaScript disabled
@@ -778,9 +779,7 @@ test.describe("Form action support", () => {
         // Wait for navigation to complete
         await page.waitForLoadState("networkidle");
 
-        // EXPECTED TO FAIL: Server returns RSC payload (text/x-component)
-        // instead of HTML, so without JS the result can't be displayed.
-        // When framework adds HTML fallback support, this test should pass.
+        // With progressive enhancement working, useActionState receives the result
         await expect(
           testId(page, "form-action-progressive-data")
         ).toBeVisible({ timeout: 5000 });
