@@ -652,9 +652,7 @@ get res(): Response {
 
 ## 10. Recommendations
 
-### 10.1 Critical Fixes (BUGS)
-
-**FIXED:**
+### 10.1 Critical Fixes (BUGS) - ALL FIXED
 
 1. ~~**BUG: Intercept middleware cookies are silently dropped**~~
    **FIXED:** Cookies are now applied via `applyPendingCookies()` before returning early response.
@@ -668,16 +666,8 @@ get res(): Response {
 4. ~~**ISSUE: Non-Response return values are silently ignored**~~
    **FIXED:** Logs warning when middleware returns unexpected value type.
 
-**OPEN:**
-
-5. **BUG: Intercept middleware headers set after next() cause short-circuit**
-   When intercept middleware sets headers or cookies AFTER calling `next()`, `executeInterceptMiddleware()` returns the stubResponse because `hasCustomHeaders` is true (lines 649-656 in `middleware.ts`). The router then throws this response (line 1052 in `router.ts`), breaking the intercept flow.
-
-   **Root cause:** The function doesn't distinguish between:
-   - Short-circuit BEFORE `next()` (actual early response - should abort)
-   - Headers set AFTER `next()` (normal header setting - should merge into final response)
-
-   **Fix needed:** Track whether `next()` was called. If headers are set after `next()` completed, merge them into the final response instead of treating it as a short-circuit.
+5. ~~**BUG: Intercept middleware headers set after next() cause short-circuit**~~
+   **FIXED:** Modified `executeInterceptMiddleware()` to accept a `stubResponse` parameter from the request context. Headers set after `next()` remain on the stubResponse and are merged into the final response by the caller. Only explicit short-circuits (middleware returning Response BEFORE `next()`) cause an abort.
 
 ### 10.2 Code Quality Improvements
 
@@ -726,10 +716,12 @@ All unit tests implemented (75 tests in `middleware.test.ts`):
    - Error handling
    - Cookie/header handling
 
-### 10.4 E2E Test Actions - MOSTLY DONE
+### 10.4 E2E Test Actions - DONE
 
-**Completed:** Route-level middleware tests with params, loader middleware tests.
-**Blocked:** Intercept middleware tests (bug #5 in 10.1).
+All middleware E2E tests implemented in `e2e/app-middleware.test.ts`:
+- Route-level middleware with params
+- Loader middleware auth scenarios
+- Intercept middleware headers and cookies
 
 #### Test App Changes Needed
 
@@ -862,8 +854,8 @@ test.describe("middleware-features", () => {
 | Fetchable loader middleware | ✅ Full | Tests for auth success, rejection, and invalid token |
 | Server action middleware | ⚠️ Partial | Throws error on cookie set (intended limitation) |
 | Partial render middleware | ✅ Full | Covered by soft navigation tests |
-| Intercept middleware headers | ❌ Blocked | Bug: headers after next() cause short-circuit (see 10.1) |
-| Intercept middleware cookies | ❌ Blocked | Bug: headers after next() cause short-circuit (see 10.1) |
+| Intercept middleware headers | ✅ Full | Tests verify headers set after next() are merged |
+| Intercept middleware cookies | ✅ Full | Tests verify cookies set after next() are applied |
 
 ### 10.5 Demo App Enhancements
 
@@ -889,7 +881,7 @@ test.describe("middleware-features", () => {
 | ~~Server action cookies dropped~~ | MEDIUM | `executeServerActionMiddleware()` | ~~Cookies set in server action middleware are silently ignored~~ Now throws clear error | **FIXED** |
 | ~~Intercept ctx.res unavailable~~ | MEDIUM | `executeInterceptMiddleware()` | ~~Cannot modify response headers in intercept middleware~~ | **FIXED** |
 | ~~Non-Response returns ignored~~ | LOW | `executeMiddleware()` | ~~User errors go undetected~~ Now logs warning | **FIXED** |
-| Intercept middleware short-circuit | HIGH | `executeInterceptMiddleware()` | Headers set after next() break intercept flow | **OPEN** |
+| ~~Intercept middleware short-circuit~~ | HIGH | `executeInterceptMiddleware()` | ~~Headers set after next() break intercept flow~~ | **FIXED** |
 
 ### Architecture Improvements
 

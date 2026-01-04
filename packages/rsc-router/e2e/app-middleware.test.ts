@@ -446,15 +446,7 @@ test.describe("route-level-middleware", () => {
   });
 });
 
-// Note: Intercept middleware tests are disabled due to a bug in the router.
-// When intercept middleware sets headers AFTER next(), executeInterceptMiddleware
-// returns the stubResponse (because hasCustomHeaders is true), which is then
-// thrown by the router as a short-circuit response, breaking the intercept flow.
-// See: src/router/middleware.ts lines 649-656 and src/router.ts line 1052
-// TODO: Fix executeInterceptMiddleware to distinguish between:
-//   1. Short-circuit before next() (actual early response)
-//   2. Headers set after next() (should merge into final response, not short-circuit)
-test.describe.skip("intercept-middleware", () => {
+test.describe("intercept-middleware", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",

@@ -1042,12 +1042,18 @@ export function createRSCRouter<TEnv = any>(
 
     // Step 1: Execute intercept middleware
     if (interceptEntry.middleware.length > 0) {
+      // Get stubResponse from request context for header/cookie collection
+      const requestCtx = getRequestContext();
+      if (!requestCtx?.res) {
+        throw new Error("Request context with stubResponse is required for intercept middleware");
+      }
       const middlewareResponse = await executeInterceptMiddleware(
         interceptEntry.middleware,
         context.request,
         context.env,
         params,
-        context.var as Record<string, any>
+        context.var as Record<string, any>,
+        requestCtx.res
       );
       if (middlewareResponse) throw middlewareResponse;
     }

@@ -397,6 +397,12 @@ export default map<typeof testRoutes>(
           () => [
             loader(SlowProductDetailLoader),
             loading(<SlowModalSkeleton />),
+            // Intercept-level middleware - sets header and cookie
+            middleware(async (ctx, next) => {
+              await next();
+              ctx.header("X-Intercept-Middleware", "applied");
+              ctx.setCookie("intercept-visited", "true", { path: "/" });
+            }),
           ]
         ),
 

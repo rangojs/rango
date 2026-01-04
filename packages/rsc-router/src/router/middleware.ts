@@ -556,23 +556,25 @@ export async function executeServerActionMiddleware<TEnv>(
 /**
  * Execute middleware for intercepts (simplified execution)
  *
- * Intercepts don't need full response wrapping. This function:
+ * Intercepts use a shared stubResponse from the request context. This function:
  * - Runs middleware in sequence with a simple next() chain
- * - Returns Response if any middleware short-circuits
- * - Returns null if all middleware calls next() without returning Response
+ * - Returns Response if any middleware short-circuits (returns Response or redirects BEFORE next())
+ * - Returns null if all middleware calls next() - headers set after next() remain on stubResponse
  *
  * @param middlewares - Array of middleware functions
  * @param request - Original request
  * @param env - Environment bindings
  * @param params - Route params
  * @param variables - Shared variables object
+ * @param stubResponse - Response from request context for collecting headers/cookies
  */
 export async function executeInterceptMiddleware<TEnv>(
   middlewares: MiddlewareFn<TEnv>[],
   request: Request,
   env: TEnv,
   params: Record<string, string>,
-  variables: Record<string, any>
+  variables: Record<string, any>,
+  stubResponse: Response
 ): Promise<Response | null> {
   if (middlewares.length === 0) {
     return null;
@@ -581,9 +583,7 @@ export async function executeInterceptMiddleware<TEnv>(
   let index = 0;
   let earlyResponse: Response | null = null;
 
-  // Create a stub response so ctx.res is available immediately
-  // Headers/cookies set on this stub will be used if middleware short-circuits
-  const stubResponse = new Response(null, { status: 200 });
+  // Use provided stubResponse - headers/cookies set here will be merged by the caller
   const responseHolder: ResponseHolder = { response: stubResponse };
 
   const next = async (): Promise<Response> => {
@@ -618,7 +618,7 @@ export async function executeInterceptMiddleware<TEnv>(
 
   await next();
 
-  // Return early response if middleware short-circuited
+  // Return early response if middleware short-circuited (returned Response BEFORE next())
   if (earlyResponse) {
     // Capture in const for TypeScript narrowing (earlyResponse is `let` which loses narrowing in callbacks)
     const response: Response = earlyResponse;
@@ -646,15 +646,8 @@ export async function executeInterceptMiddleware<TEnv>(
     return response;
   }
 
-  // Check if middleware set headers on the stub response
-  let hasCustomHeaders = false;
-  stubResponse.headers.forEach(() => { hasCustomHeaders = true; });
-
-  if (hasCustomHeaders) {
-    // Middleware added headers or cookies - treat as short-circuit
-    return stubResponse;
-  }
-
+  // All middleware completed without short-circuit
+  // Headers/cookies set on stubResponse will be merged into the final response by the caller
   return null;
 }
 

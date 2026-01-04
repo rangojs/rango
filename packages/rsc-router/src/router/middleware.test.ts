@@ -716,17 +716,20 @@ describe("middleware", () => {
 
   describe("executeInterceptMiddleware", () => {
     it("should return null for empty middleware array", async () => {
+      const stubResponse = new Response(null, { status: 200 });
       const result = await executeInterceptMiddleware(
         [],
         new Request("http://localhost/test"),
         {},
         {},
-        {}
+        {},
+        stubResponse
       );
       expect(result).toBeNull();
     });
 
     it("should return null when middleware calls next() without returning Response", async () => {
+      const stubResponse = new Response(null, { status: 200 });
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         await next();
       };
@@ -736,13 +739,15 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         { id: "123" },
-        {}
+        {},
+        stubResponse
       );
 
       expect(result).toBeNull();
     });
 
     it("should return Response when middleware short-circuits", async () => {
+      const stubResponse = new Response(null, { status: 200 });
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         return new Response("Blocked", { status: 403 });
       };
@@ -752,7 +757,8 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        {}
+        {},
+        stubResponse
       );
 
       expect(result).toBeInstanceOf(Response);
@@ -761,6 +767,7 @@ describe("middleware", () => {
     });
 
     it("should apply cookies to short-circuit Response", async () => {
+      const stubResponse = new Response(null, { status: 200 });
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         ctx.setCookie("session", "abc123", { path: "/" });
         return new Response("Redirecting", { status: 302 });
@@ -771,7 +778,8 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        {}
+        {},
+        stubResponse
       );
 
       expect(result).toBeInstanceOf(Response);
@@ -781,6 +789,7 @@ describe("middleware", () => {
     });
 
     it("should apply multiple cookies to short-circuit Response", async () => {
+      const stubResponse = new Response(null, { status: 200 });
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         ctx.setCookie("token", "xyz", { httpOnly: true });
         ctx.setCookie("preference", "dark");
@@ -792,7 +801,8 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        {}
+        {},
+        stubResponse
       );
 
       expect(result).toBeInstanceOf(Response);
@@ -803,6 +813,7 @@ describe("middleware", () => {
     });
 
     it("should share variables between middleware and allow setting new ones", async () => {
+      const stubResponse = new Response(null, { status: 200 });
       const variables: Record<string, any> = { existing: "value" };
       let capturedVars: Record<string, any> = {};
 
@@ -818,7 +829,8 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        variables
+        variables,
+        stubResponse
       );
 
       expect(capturedVars.existing).toBe("value");
@@ -827,6 +839,7 @@ describe("middleware", () => {
     });
 
     it("should provide params to middleware context", async () => {
+      const stubResponse = new Response(null, { status: 200 });
       let capturedParams: Record<string, string> = {};
 
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
@@ -839,13 +852,15 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         { id: "456", slug: "test-slug" },
-        {}
+        {},
+        stubResponse
       );
 
       expect(capturedParams).toEqual({ id: "456", slug: "test-slug" });
     });
 
     it("should execute multiple middleware in order", async () => {
+      const stubResponse = new Response(null, { status: 200 });
       const order: number[] = [];
 
       const mw1: MiddlewareFn<unknown> = async (ctx, next) => {
@@ -865,13 +880,15 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        {}
+        {},
+        stubResponse
       );
 
       expect(order).toEqual([1, 2, 3, 4]);
     });
 
     it("should stop execution when middleware returns Response", async () => {
+      const stubResponse = new Response(null, { status: 200 });
       const order: number[] = [];
 
       const mw1: MiddlewareFn<unknown> = async (ctx, next) => {
@@ -889,7 +906,8 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        {}
+        {},
+        stubResponse
       );
 
       expect(order).toEqual([1]);
@@ -897,6 +915,7 @@ describe("middleware", () => {
     });
 
     it("should allow ctx.res access after next() without throwing", async () => {
+      const stubResponse = new Response(null, { status: 200 });
       let resStatus: number | undefined;
 
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
@@ -910,14 +929,16 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        {}
+        {},
+        stubResponse
       );
 
       expect(resStatus).toBe(200);
       expect(result).toBeNull(); // No short-circuit, no modifications
     });
 
-    it("should short-circuit when middleware uses ctx.header() after next()", async () => {
+    it("should NOT short-circuit when middleware uses ctx.header() after next() - headers go on stubResponse", async () => {
+      const stubResponse = new Response(null, { status: 200 });
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         await next();
         ctx.header("X-Custom-Header", "custom-value");
@@ -928,14 +949,17 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        {}
+        {},
+        stubResponse
       );
 
-      expect(result).toBeInstanceOf(Response);
-      expect(result!.headers.get("X-Custom-Header")).toBe("custom-value");
+      // Should return null (no short-circuit) - headers are on stubResponse for caller to merge
+      expect(result).toBeNull();
+      expect(stubResponse.headers.get("X-Custom-Header")).toBe("custom-value");
     });
 
     it("should short-circuit when middleware replaces ctx.res after next()", async () => {
+      const stubResponse = new Response(null, { status: 200 });
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         await next();
         ctx.res = new Response("Custom body", { status: 201 });
@@ -946,7 +970,8 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        {}
+        {},
+        stubResponse
       );
 
       expect(result).toBeInstanceOf(Response);
@@ -954,7 +979,8 @@ describe("middleware", () => {
       expect(await result!.text()).toBe("Custom body");
     });
 
-    it("should apply cookies set after next() when headers are modified", async () => {
+    it("should NOT short-circuit when cookies set after next() - cookies go on stubResponse", async () => {
+      const stubResponse = new Response(null, { status: 200 });
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         await next();
         ctx.header("X-Modified", "true");
@@ -966,16 +992,19 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        {}
+        {},
+        stubResponse
       );
 
-      expect(result).toBeInstanceOf(Response);
-      expect(result!.headers.get("X-Modified")).toBe("true");
-      const cookies = result!.headers.get("set-cookie");
+      // Should return null (no short-circuit) - headers/cookies are on stubResponse
+      expect(result).toBeNull();
+      expect(stubResponse.headers.get("X-Modified")).toBe("true");
+      const cookies = stubResponse.headers.get("set-cookie");
       expect(cookies).toContain("after-next=cookie-value");
     });
 
-    it("should short-circuit when only cookies are set after next()", async () => {
+    it("should set cookies on stubResponse when only cookies are set after next()", async () => {
+      const stubResponse = new Response(null, { status: 200 });
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         await next();
         ctx.setCookie("only-cookie", "value123");
@@ -986,11 +1015,13 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        {}
+        {},
+        stubResponse
       );
 
-      expect(result).toBeInstanceOf(Response);
-      const cookies = result!.headers.get("set-cookie");
+      // Should return null (no short-circuit) - cookie is on stubResponse
+      expect(result).toBeNull();
+      const cookies = stubResponse.headers.get("set-cookie");
       expect(cookies).toContain("only-cookie=value123");
     });
   });
