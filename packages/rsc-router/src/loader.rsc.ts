@@ -118,7 +118,14 @@ export function createLoader<T>(
   // Create server action for form-based fetching
   // This action is serializable and can be passed to client components
   // The loaderId is captured in closure (it's a primitive string)
-  async function loaderAction(formData: FormData): Promise<Awaited<T>> {
+  //
+  // IMPORTANT: The signature must be (prevState, formData) for useActionState compatibility.
+  // When used with useActionState, React passes the previous state as the first argument.
+  // The prevState is ignored here since loaders are stateless data fetchers.
+  async function loaderAction(
+    _prevState: Awaited<T> | null,
+    formData: FormData
+  ): Promise<Awaited<T>> {
     "use server";
 
     // Look up the loader from registry by $$id

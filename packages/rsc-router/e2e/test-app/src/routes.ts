@@ -99,4 +99,6 @@ export const testRoutes = route({
     // Route-level middleware with params test - verify ctx.params is available in middleware
     routeLevelWithParams: "/middleware-test/route-level/:routeId",
   },
+  // Route for testing progressive enhancement (no-JS form submissions)
+  progressiveEnhancement: "/progressive-enhancement",
 });

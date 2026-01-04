@@ -1502,5 +1502,45 @@ export default map<typeof testRoutes>(
         );
       }
     ),
+
+    // Route for testing progressive enhancement (no-JS form submissions)
+    // When JS is disabled, form submissions should return full HTML, not RSC stream
+    route("progressiveEnhancement", async (ctx) => {
+      // Import the action dynamically to get the server function
+      const { submitNameAction, getLastSubmittedName } = await import("./actions.js");
+      const lastSubmitted = await getLastSubmittedName();
+
+      return (
+        <div data-testid="progressive-enhancement-page">
+          <Link to="/" data-testid="back-link">
+            ← Back to Home
+          </Link>
+          <h1 data-testid="page-title">Progressive Enhancement Test</h1>
+          <p data-testid="page-description">
+            This form should work without JavaScript enabled.
+          </p>
+
+          <form action={submitNameAction} method="post" data-testid="pe-form">
+            <label htmlFor="name">Name:</label>
+            <input
+              type="text"
+              id="name"
+              name="name"
+              defaultValue="test-name"
+              data-testid="pe-input"
+            />
+            <button type="submit" data-testid="pe-submit">
+              Submit
+            </button>
+          </form>
+
+          {lastSubmitted && (
+            <div data-testid="pe-result">
+              <p>Last submitted name: <span data-testid="pe-result-name">{lastSubmitted}</span></p>
+            </div>
+          )}
+        </div>
+      );
+    }),
   ]
 );

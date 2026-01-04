@@ -61,6 +61,8 @@ import {
   decodeReply,
   createTemporaryReferenceSet,
   loadServerAction,
+  decodeAction,
+  decodeFormState,
 } from "rsc-router/internal/deps/rsc";
 import { router } from "${routerPath}";
 import { createRSCHandler } from "rsc-router/rsc";
@@ -77,6 +79,8 @@ export default createRSCHandler({
     decodeReply,
     createTemporaryReferenceSet,
     loadServerAction,
+    decodeAction,
+    decodeFormState,
   },
   loadSSRModule: () =>
     import.meta.viteRsc.loadModule("ssr", "index"),

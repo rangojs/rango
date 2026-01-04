@@ -42,6 +42,11 @@ export interface RscPayload {
 }
 
 /**
+ * React form state type for useActionState progressive enhancement
+ */
+export type ReactFormState = unknown;
+
+/**
  * RSC dependencies from @vitejs/plugin-rsc/rsc
  */
 export interface RSCDependencies {
@@ -70,6 +75,34 @@ export interface RSCDependencies {
    * loadServerAction from @vitejs/plugin-rsc/rsc
    */
   loadServerAction: (actionId: string) => Promise<Function>;
+
+  /**
+   * decodeAction from @vitejs/plugin-rsc/rsc
+   * Decodes a FormData into a bound action function (for useActionState forms)
+   */
+  decodeAction: (body: FormData) => Promise<() => Promise<unknown>>;
+
+  /**
+   * decodeFormState from @vitejs/plugin-rsc/rsc
+   * Decodes the action result into a ReactFormState for useActionState progressive enhancement
+   */
+  decodeFormState: (
+    actionResult: unknown,
+    body: FormData
+  ) => Promise<ReactFormState | null>;
+}
+
+/**
+ * Options for SSR HTML rendering
+ */
+export interface SSRRenderOptions {
+  /**
+   * Form state for useActionState progressive enhancement.
+   * This is the result of decodeFormState() and should be passed to
+   * react-dom's renderToReadableStream to enable useActionState to
+   * receive the action result during SSR.
+   */
+  formState?: ReactFormState | null;
 }
 
 /**
@@ -77,7 +110,8 @@ export interface RSCDependencies {
  */
 export interface SSRModule {
   renderHTML: (
-    rscStream: ReadableStream<Uint8Array>
+    rscStream: ReadableStream<Uint8Array>,
+    options?: SSRRenderOptions
   ) => Promise<ReadableStream<Uint8Array>>;
 }
 
@@ -189,6 +223,8 @@ export function createRSCHandler<TEnv = unknown>(
     decodeReply,
     createTemporaryReferenceSet,
     loadServerAction,
+    decodeAction,
+    decodeFormState,
   } = deps;
 
   // Use provided loadSSRModule or default to vite RSC module loader
@@ -305,7 +341,154 @@ export function createRSCHandler<TEnv = unknown>(
 
     try {
       // ============================================================================
-      // SERVER ACTION EXECUTION
+      // PROGRESSIVE ENHANCEMENT: No-JS Form Submissions
+      // When JavaScript is disabled, React renders forms with hidden fields
+      // ($ACTION_REF_*, $ACTION_KEY) containing the action reference.
+      // We detect these and return HTML instead of RSC stream.
+      // Note: Forms can submit as either multipart/form-data or
+      // application/x-www-form-urlencoded (the default).
+      // ============================================================================
+      const contentType = request.headers.get("content-type") || "";
+      const isFormSubmission =
+        contentType.includes("multipart/form-data") ||
+        contentType.includes("application/x-www-form-urlencoded");
+
+      if (request.method === "POST" && !isAction && isFormSubmission) {
+        // Clone the request to read FormData without consuming it
+        const formData = await request.clone().formData();
+
+        // Look for React's progressive enhancement hidden fields.
+        // React adds different patterns depending on how the action is used:
+        //
+        // Pattern 1: Direct server action: action={myServerAction}
+        //    Hidden field: $ACTION_ID_<actionId> (ID in field name)
+        //
+        // Pattern 2: useActionState: const [state, action] = useActionState(serverAction, ...)
+        //    Hidden fields:
+        //    - $ACTION_REF_<n> (reference marker)
+        //    - $ACTION_<n>:0 (JSON with "id" field containing action ID)
+        //    - $ACTION_<n>:1, $ACTION_<n>:2 (bound state data)
+        //    - $ACTION_KEY (action key)
+        //
+        let isDirectAction = false;
+        let isUseActionState = false;
+        let directActionId: string | null = null;
+
+        // Use forEach since TypeScript may not have entries() in FormData type
+        formData.forEach((value, key) => {
+          if (key.startsWith("$ACTION_ID_")) {
+            // Pattern 1: Direct server action
+            isDirectAction = true;
+            directActionId = key.slice("$ACTION_ID_".length);
+          } else if (key.startsWith("$ACTION_REF_")) {
+            // Pattern 2: useActionState action (has reference marker)
+            isUseActionState = true;
+          }
+        });
+
+        if (isDirectAction || isUseActionState) {
+          // This is a no-JS form submission - execute action and return HTML
+          let actionResult: unknown = undefined;
+          let reactFormState: ReactFormState | null = null;
+
+          if (isUseActionState) {
+            // Pattern 2: useActionState - use decodeAction to get the bound action
+            // decodeAction returns a function that, when called, executes the action
+            // with the proper bound state arguments
+            try {
+              const boundAction = await decodeAction(formData);
+              actionResult = await boundAction();
+            } catch (error) {
+              console.error("[RSC] Progressive enhancement action error:", error);
+            }
+          } else if (isDirectAction && directActionId) {
+            // Pattern 1: Direct server action - load and execute manually
+            const temporaryReferences = createTemporaryReferenceSet();
+
+            // Decode action arguments from FormData
+            let args: unknown[] = [];
+            try {
+              args = await decodeReply(formData, { temporaryReferences });
+            } catch {
+              // If decoding fails, pass FormData as the argument
+              args = [formData];
+            }
+
+            try {
+              const loadedAction = await loadServerAction(directActionId);
+              actionResult = await loadedAction.apply(null, args);
+            } catch (error) {
+              console.error("[RSC] Progressive enhancement action error:", error);
+            }
+          }
+
+          // Decode the form state for useActionState progressive enhancement.
+          // This converts the action result into a ReactFormState that React's
+          // renderToReadableStream can use to initialize useActionState hooks.
+          try {
+            reactFormState = await decodeFormState(actionResult, formData);
+          } catch (error) {
+            console.error("[RSC] Failed to decode form state:", error);
+            // Continue without form state - useActionState won't receive the result
+          }
+
+          // Re-render the page and return HTML
+          // Create a GET request to the same URL for rendering
+          const renderRequest = new Request(url.toString(), {
+            method: "GET",
+            headers: new Headers({
+              accept: "text/html",
+            }),
+          });
+
+          // Match and render the route
+          const match = await router.match(renderRequest, env);
+
+          // Handle trailing slash redirect
+          if (match.redirect) {
+            return new Response(null, {
+              status: 308,
+              headers: { Location: match.redirect },
+            });
+          }
+
+          const root = renderSegments(match.segments, {
+            rootLayout: router.rootLayout,
+          });
+
+          payload = {
+            root,
+            metadata: {
+              pathname: url.pathname,
+              segments: match.segments,
+              matched: match.matched,
+              diff: match.diff,
+              isPartial: false,
+              rootLayout: router.rootLayout,
+              handles: handleStore.stream(),
+            },
+            // Pass the action result as formState for useActionState
+            formState: actionResult,
+          };
+
+          // Render to RSC stream, then to HTML
+          const rscStream = renderToReadableStream<RscPayload>(payload);
+          const ssrModule = await loadSSRModule();
+          // Pass the decoded form state to SSR for useActionState progressive enhancement
+          const htmlStream = await ssrModule.renderHTML(rscStream, {
+            formState: reactFormState,
+          });
+
+          return new Response(htmlStream, {
+            headers: {
+              "content-type": "text/html;charset=utf-8",
+            },
+          });
+        }
+      }
+
+      // ============================================================================
+      // SERVER ACTION EXECUTION (JavaScript-enabled client)
       // ============================================================================
       if (isAction && actionId) {
         const temporaryReferences = createTemporaryReferenceSet();

@@ -1076,9 +1076,12 @@ export type LoaderMiddlewareFn = (
 
 /**
  * Loader action function type - server action for form-based fetching
- * This is a server action that can be passed to form action prop
+ * This is a server action that can be passed to useActionState or form action prop.
+ *
+ * The signature (prevState, formData) is required for useActionState compatibility.
+ * When used with useActionState, React passes the previous state as the first argument.
  */
-export type LoaderAction<T> = (formData: FormData) => Promise<T>;
+export type LoaderAction<T> = (prevState: T | null, formData: FormData) => Promise<T>;
 
 export type LoaderDefinition<T = any, TParams = Record<string, string | undefined>> = {
   __brand: "loader";
