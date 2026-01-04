@@ -31,10 +31,10 @@ import type {
   NotFoundBoundaryHandler,
   NotFoundBoundaryFallbackProps,
   LoaderDataResult,
-  RouterInternalContext,
   TrailingSlashMode,
 } from "./types";
 import type { HandleStore } from "./server/handle-store.js";
+import { getRequestContext } from "./server/request-context.js";
 import type { AllUseItems } from "./route-types.js";
 import {
   EntryData,
@@ -96,6 +96,7 @@ import {
   matchMiddleware,
   executeMiddleware,
   executeInterceptMiddleware,
+  collectRouteMiddleware,
 } from "./router/middleware.js";
 
 /**
@@ -505,19 +506,14 @@ export function createRSCRouter<TEnv = any>(
   const findNearestNotFoundBoundary = (entry: EntryData | null) =>
     findNotFoundBoundary(entry, defaultNotFoundBoundary);
 
-  // Helper to get handleStore from context (if available)
-  const getHandleStore = (
-    context: HandlerContext<any, TEnv>
-  ): HandleStore | undefined => {
-    return (context.env as RouterInternalContext)?.__handleStore;
+  // Helper to get handleStore from request context
+  const getHandleStore = (): HandleStore | undefined => {
+    return getRequestContext()?._handleStore;
   };
 
   // Track a pending handler promise (non-blocking)
-  const trackHandler = <T>(
-    context: HandlerContext<any, TEnv>,
-    promise: Promise<T>
-  ): Promise<T> => {
-    const store = getHandleStore(context);
+  const trackHandler = <T>(promise: Promise<T>): Promise<T> => {
+    const store = getHandleStore();
     return store ? store.track(promise) : promise;
   };
 
@@ -830,7 +826,7 @@ export function createRSCRouter<TEnv = any>(
       if (entry.loading) {
         const result = entry.handler(context);
         component =
-          result instanceof Promise ? trackHandler(context, result) : result;
+          result instanceof Promise ? trackHandler(result) : result;
       } else {
         component = await entry.handler(context);
       }
@@ -1691,7 +1687,7 @@ export function createRSCRouter<TEnv = any>(
           const result = routeEntry.handler(context);
           return {
             content:
-              result instanceof Promise ? trackHandler(context, result) : result,
+              result instanceof Promise ? trackHandler(result) : result,
           };
         }
         console.log(
@@ -2136,41 +2132,14 @@ export function createRSCRouter<TEnv = any>(
     // Collect route-level middleware from entry tree (root to matched route)
     // These run with same onion-style execution as app-level middleware
     // Includes middleware from orphan layouts (inline layouts within routes)
-    const routeMiddleware: Array<{
-      handler: import("./router/middleware.js").MiddlewareFn;
-      params: Record<string, string>;
-    }> = [];
-
-    // Helper to collect middleware from an entry and its orphan layouts
-    const collectEntryMiddleware = (entry: EntryData) => {
-      // Collect entry's own middleware
-      if (entry.middleware && entry.middleware.length > 0) {
-        for (const mw of entry.middleware) {
-          routeMiddleware.push({
-            handler: mw as import("./router/middleware.js").MiddlewareFn,
-            params: matched.params,
-          });
-        }
-      }
-      // Collect middleware from orphan layouts (recursive)
-      if (entry.layout && entry.layout.length > 0) {
-        for (const orphan of entry.layout) {
-          collectEntryMiddleware(orphan);
-        }
-      }
-    };
-
-    for (const entry of traverseBack(manifestEntry)) {
-      collectEntryMiddleware(entry);
-    }
+    const routeMiddleware = collectRouteMiddleware(
+      traverseBack(manifestEntry),
+      matched.params
+    );
 
     // Extract bindings from context (if using RouterEnv pattern)
     // Use Bindings if present (Cloudflare Workers pattern), otherwise use context directly
-    // Preserve internal context (__handleStore) from outer context
-    const rawBindings = (context as any)?.Bindings ?? context;
-    const bindings = (context as RouterInternalContext)?.__handleStore
-      ? { ...rawBindings, __handleStore: (context as RouterInternalContext).__handleStore }
-      : rawBindings;
+    const bindings = (context as any)?.Bindings ?? context;
 
     const handlerContext = createHandlerContext(
       matched.params,
@@ -2556,41 +2525,14 @@ export function createRSCRouter<TEnv = any>(
     // Collect route-level middleware from entry tree (root to matched route)
     // These run with same onion-style execution as app-level middleware
     // Includes middleware from orphan layouts (inline layouts within routes)
-    const routeMiddleware: Array<{
-      handler: import("./router/middleware.js").MiddlewareFn;
-      params: Record<string, string>;
-    }> = [];
-
-    // Helper to collect middleware from an entry and its orphan layouts
-    const collectEntryMiddleware = (entry: EntryData) => {
-      // Collect entry's own middleware
-      if (entry.middleware && entry.middleware.length > 0) {
-        for (const mw of entry.middleware) {
-          routeMiddleware.push({
-            handler: mw as import("./router/middleware.js").MiddlewareFn,
-            params: matched.params,
-          });
-        }
-      }
-      // Collect middleware from orphan layouts (recursive)
-      if (entry.layout && entry.layout.length > 0) {
-        for (const orphan of entry.layout) {
-          collectEntryMiddleware(orphan);
-        }
-      }
-    };
-
-    for (const entry of traverseBack(manifestEntry)) {
-      collectEntryMiddleware(entry);
-    }
+    const routeMiddleware = collectRouteMiddleware(
+      traverseBack(manifestEntry),
+      matched.params
+    );
 
     // Extract bindings from context (if using RouterEnv pattern)
     // Use Bindings if present (Cloudflare Workers pattern), otherwise use context directly
-    // Preserve internal context (__handleStore) from outer context
-    const rawBindings = (context as any)?.Bindings ?? context;
-    const bindings = (context as RouterInternalContext)?.__handleStore
-      ? { ...rawBindings, __handleStore: (context as RouterInternalContext).__handleStore }
-      : rawBindings;
+    const bindings = (context as any)?.Bindings ?? context;
 
     const handlerContext = createHandlerContext(
       matched.params,
@@ -2888,33 +2830,10 @@ export function createRSCRouter<TEnv = any>(
 
     // Collect route-level middleware from entry tree
     // Includes middleware from orphan layouts (inline layouts within routes)
-    const routeMiddleware: Array<{
-      handler: import("./router/middleware.js").MiddlewareFn;
-      params: Record<string, string>;
-    }> = [];
-
-    // Helper to collect middleware from an entry and its orphan layouts
-    const collectEntryMiddleware = (entry: EntryData) => {
-      // Collect entry's own middleware
-      if (entry.middleware && entry.middleware.length > 0) {
-        for (const mw of entry.middleware) {
-          routeMiddleware.push({
-            handler: mw as import("./router/middleware.js").MiddlewareFn,
-            params: matched.params,
-          });
-        }
-      }
-      // Collect middleware from orphan layouts (recursive)
-      if (entry.layout && entry.layout.length > 0) {
-        for (const orphan of entry.layout) {
-          collectEntryMiddleware(orphan);
-        }
-      }
-    };
-
-    for (const entry of traverseBack(manifestEntry)) {
-      collectEntryMiddleware(entry);
-    }
+    const routeMiddleware = collectRouteMiddleware(
+      traverseBack(manifestEntry),
+      matched.params
+    );
 
     return {
       routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,

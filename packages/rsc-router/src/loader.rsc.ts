@@ -148,9 +148,9 @@ export function createLoader<T>(
     // requestCtx.var is the shared variables object from the handler
     const variables: Record<string, any> = { ...requestCtx?.var };
 
-    // Execute middleware for auth checks (server actions can't return Response)
-    // If middleware returns Response, we throw an error
-    if (registered.middleware.length > 0) {
+    // Execute middleware for auth checks, headers, cookies
+    // Headers/cookies set on ctx.res will be merged into the final response
+    if (registered.middleware.length > 0 && requestCtx?.res) {
       const { executeServerActionMiddleware } = await import(
         "./router/middleware.js"
       );
@@ -159,21 +159,21 @@ export function createLoader<T>(
         actionRequest,
         env,
         params,
-        variables
+        variables,
+        requestCtx.res
       );
     }
 
     // Build context using createHandlerContext for consistency with route handlers
-    // Pass variables in __middlewareVariables so they're properly shared
+    // Variables are now accessed from request context via getRequestContext()
     const { createHandlerContext } = await import("./router/handler-context.js");
-    const envWithVariables = { ...env, __middlewareVariables: variables };
     const baseCtx = createHandlerContext(
       params,
       actionRequest,
       actionUrl.searchParams,
       actionUrl.pathname,
       actionUrl,
-      envWithVariables
+      env
     );
 
     // Extend with server action specific properties

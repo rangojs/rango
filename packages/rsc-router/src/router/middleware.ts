@@ -51,13 +51,20 @@ export interface MiddlewareContext<
   params: TParams;
 
   /**
-   * Response object (available after `await next()`)
-   * Can be used to modify headers directly like Hono's `c.res`
+   * Response object - available immediately via stub, real response after `await next()`
+   *
+   * Headers set before `next()` are merged into the final response.
+   * Can be used to modify headers directly like Hono's `c.res`.
    *
    * @example
    * ```typescript
    * middleware(async (ctx, next) => {
+   *   // Set headers BEFORE next() - will be merged into final response
+   *   ctx.res.headers.set('X-Request-Id', generateId());
+   *
    *   await next();
+   *
+   *   // Set headers AFTER next() - applied directly
    *   ctx.res.headers.set('X-Custom', 'value');
    *   // No return needed!
    * });
@@ -87,8 +94,11 @@ export interface MiddlewareContext<
   set<K extends string>(key: K, value: any): void;
 
   /**
-   * Set a response header
-   * Shorthand for `ctx.res.headers.set()`
+   * Set a response header - can be called before or after `next()`
+   *
+   * When called before `next()`, headers are queued and merged into the final response.
+   * When called after `next()`, headers are set directly on the response.
+   * Shorthand for `ctx.res.headers.set()`.
    */
   header(name: string, value: string): void;
 }
@@ -250,7 +260,6 @@ export function createMiddlewareContext<TEnv>(
   env: TEnv,
   params: Record<string, string>,
   variables: Record<string, any>,
-  pendingCookies: string[],
   responseHolder: ResponseHolder
 ): MiddlewareContext<TEnv> {
   const url = new URL(request.url);
@@ -265,11 +274,11 @@ export function createMiddlewareContext<TEnv>(
     env,
     params,
 
-    // res getter - returns the current response (available after next())
+    // res getter - returns the stub or real response (always available)
     get res(): Response {
       if (!responseHolder.response) {
         throw new Error(
-          "ctx.res is not available until after await next() is called"
+          "ctx.res is not available - responseHolder was not initialized"
         );
       }
       return responseHolder.response;
@@ -295,14 +304,30 @@ export function createMiddlewareContext<TEnv>(
     },
 
     setCookie(name: string, value: string, options?: CookieOptions): void {
-      pendingCookies.push(serializeCookie(name, value, options));
+      if (!responseHolder.response) {
+        throw new Error(
+          "ctx.setCookie() is not available - responseHolder was not initialized"
+        );
+      }
+      responseHolder.response.headers.append(
+        "Set-Cookie",
+        serializeCookie(name, value, options)
+      );
     },
 
     deleteCookie(
       name: string,
       options?: Pick<CookieOptions, "domain" | "path">
     ): void {
-      pendingCookies.push(serializeCookie(name, "", { ...options, maxAge: 0 }));
+      if (!responseHolder.response) {
+        throw new Error(
+          "ctx.deleteCookie() is not available - responseHolder was not initialized"
+        );
+      }
+      responseHolder.response.headers.append(
+        "Set-Cookie",
+        serializeCookie(name, "", { ...options, maxAge: 0 })
+      );
     },
 
     get<K extends string>(key: K): any {
@@ -316,7 +341,7 @@ export function createMiddlewareContext<TEnv>(
     header(name: string, value: string): void {
       if (!responseHolder.response) {
         throw new Error(
-          "ctx.header() is not available until after await next() is called"
+          "ctx.header() is not available - responseHolder was not initialized"
         );
       }
       responseHolder.response.headers.set(name, value);
@@ -355,32 +380,6 @@ export function matchMiddleware<TEnv>(
 }
 
 /**
- * Apply pending cookies to a response
- * Returns new Response with Set-Cookie headers added
- */
-export function applyPendingCookies(
-  response: Response,
-  pendingCookies: string[]
-): Response {
-  if (pendingCookies.length === 0) {
-    return response;
-  }
-
-  // Clone response to make headers mutable
-  const newResponse = new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: new Headers(response.headers),
-  });
-
-  for (const cookie of pendingCookies) {
-    newResponse.headers.append("Set-Cookie", cookie);
-  }
-
-  return newResponse;
-}
-
-/**
  * Execute middleware chain
  *
  * Features:
@@ -401,22 +400,36 @@ export async function executeMiddleware<TEnv>(
   variables: Record<string, any>,
   finalHandler: () => Promise<Response>
 ): Promise<Response> {
-  const pendingCookies: string[] = [];
   let index = 0;
 
-  // Shared response holder - allows ctx.res to work across middleware
-  const responseHolder: ResponseHolder = { response: null };
+  // Create a stub response that's available immediately
+  // This allows middleware to set headers/cookies before calling next()
+  const stubResponse = new Response(null, { status: 200 });
+  const responseHolder: ResponseHolder = { response: stubResponse };
 
   const next = async (): Promise<Response> => {
     if (index >= middlewares.length) {
       // End of chain - call actual RSC handler
       const response = await finalHandler();
-      // Clone response to make headers mutable for middleware
+
+      // Merge headers set on stub into the real response
+      // Use append for Set-Cookie to preserve multiple cookies
+      const mergedHeaders = new Headers(response.headers);
+      stubResponse.headers.forEach((value, name) => {
+        if (name.toLowerCase() === "set-cookie") {
+          mergedHeaders.append(name, value);
+        } else {
+          mergedHeaders.set(name, value);
+        }
+      });
+
+      // Clone response with merged headers (mutable for post-next() modifications)
       responseHolder.response = new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
-        headers: new Headers(response.headers),
+        headers: mergedHeaders,
       });
+
       return responseHolder.response;
     }
 
@@ -426,7 +439,6 @@ export async function executeMiddleware<TEnv>(
       env,
       params,
       variables,
-      pendingCookies,
       responseHolder
     );
 
@@ -446,17 +458,24 @@ export async function executeMiddleware<TEnv>(
       return result;
     }
 
-    // If middleware called next() but didn't await it, wait for it now
+    // Warn about unexpected return values (non-Response, non-undefined)
+    // This catches common mistakes like returning strings or objects
+    if (result !== undefined) {
+      const fnName = entry.handler.name || "(anonymous)";
+      console.warn(
+        `[Middleware] "${fnName}" returned ${typeof result} instead of Response or undefined. ` +
+          `This return value will be ignored. Did you mean to return a Response?`
+      );
+    }
+
+    // If middleware called next(), await it and return the response
     if (nextPromise) {
       await nextPromise;
+      return responseHolder.response!;
     }
 
-    // Forgiving: middleware didn't return, use ctx.res (responseHolder)
-    if (responseHolder.response) {
-      return responseHolder.response;
-    }
-
-    // Middleware didn't call next() and didn't return - that's an error
+    // Middleware didn't call next() and didn't return a Response - that's an error
+    // (Note: responseHolder.response is the stub, but we require next() or explicit return)
     const fnName = entry.handler.name || "(anonymous)";
     throw new Error(
       `Middleware must call next() or return a Response. ` +
@@ -474,41 +493,36 @@ export async function executeMiddleware<TEnv>(
     throw new Error("No response generated by middleware chain");
   }
 
-  // Apply any cookies that were set during middleware execution
-  return applyPendingCookies(finalResponse, pendingCookies);
+  return finalResponse;
 }
 
 /**
- * Execute middleware for server actions (no Response available)
+ * Execute middleware for server actions
  *
- * Server actions can't return Response, so this function:
- * - Runs middleware for auth checks, variable setting, etc.
- * - Throws if middleware returns Response (can't return from server action)
- * - Provides limited ctx (no ctx.res access)
+ * Server actions can't return Response directly, but headers/cookies set
+ * on ctx.res (from getRequestContext().res) will be merged into the final response.
+ *
+ * - Runs middleware for auth checks, variable setting, headers, cookies
+ * - Throws if middleware returns Response (can't short-circuit server action)
  */
 export async function executeServerActionMiddleware<TEnv>(
   middlewares: MiddlewareFn<TEnv>[],
   request: Request,
   env: TEnv,
   params: Record<string, string>,
-  variables: Record<string, any>
+  variables: Record<string, any>,
+  stubResponse: Response
 ): Promise<void> {
   if (middlewares.length === 0) {
     return;
   }
 
-  const pendingCookies: string[] = [];
   let index = 0;
-
-  // No response holder - server actions can't return Response
-  const responseHolder: ResponseHolder = { response: null };
+  const responseHolder: ResponseHolder = { response: stubResponse };
 
   const next = async (): Promise<Response> => {
     if (index >= middlewares.length) {
-      // End of middleware chain - return a dummy response
-      // This response is never actually used, just needed for the type
-      responseHolder.response = new Response(null, { status: 200 });
-      return responseHolder.response;
+      return stubResponse;
     }
 
     const middleware = middlewares[index++];
@@ -517,14 +531,13 @@ export async function executeServerActionMiddleware<TEnv>(
       env,
       params,
       variables,
-      pendingCookies,
       responseHolder
     );
 
     const result = await middleware(ctx, next);
 
     // If middleware returned a Response, throw an error
-    // Server actions can't return Response
+    // Server actions can't short-circuit with a Response
     if (result instanceof Response) {
       throw new Error(
         `Loader middleware returned a Response (status: ${result.status}). ` +
@@ -533,11 +546,11 @@ export async function executeServerActionMiddleware<TEnv>(
       );
     }
 
-    // Return dummy response for type compatibility
-    return responseHolder.response || new Response(null, { status: 200 });
+    return stubResponse;
   };
 
   await next();
+  // Headers/cookies set on stubResponse will be merged by the caller
 }
 
 /**
@@ -565,17 +578,17 @@ export async function executeInterceptMiddleware<TEnv>(
     return null;
   }
 
-  const pendingCookies: string[] = [];
   let index = 0;
   let earlyResponse: Response | null = null;
 
-  // Dummy response holder - intercepts don't have a real response until handler runs
-  const responseHolder: ResponseHolder = { response: null };
+  // Create a stub response so ctx.res is available immediately
+  // Headers/cookies set on this stub will be used if middleware short-circuits
+  const stubResponse = new Response(null, { status: 200 });
+  const responseHolder: ResponseHolder = { response: stubResponse };
 
   const next = async (): Promise<Response> => {
     if (index >= middlewares.length || earlyResponse) {
-      // Return a dummy response - intercept middleware shouldn't need ctx.res
-      return new Response(null, { status: 200 });
+      return stubResponse;
     }
 
     const middleware = middlewares[index++];
@@ -584,7 +597,6 @@ export async function executeInterceptMiddleware<TEnv>(
       env,
       params,
       variables,
-      pendingCookies,
       responseHolder
     );
 
@@ -595,11 +607,55 @@ export async function executeInterceptMiddleware<TEnv>(
       return result;
     }
 
-    return new Response(null, { status: 200 });
+    // Check if middleware replaced ctx.res with a different response
+    if (responseHolder.response && responseHolder.response !== stubResponse) {
+      earlyResponse = responseHolder.response;
+      return earlyResponse;
+    }
+
+    return stubResponse;
   };
 
   await next();
-  return earlyResponse;
+
+  // Return early response if middleware short-circuited
+  if (earlyResponse) {
+    // Capture in const for TypeScript narrowing (earlyResponse is `let` which loses narrowing in callbacks)
+    const response: Response = earlyResponse;
+
+    // Merge any headers/cookies set on stub into the early response
+    let hasStubHeaders = false;
+    stubResponse.headers.forEach(() => { hasStubHeaders = true; });
+
+    if (hasStubHeaders) {
+      // Clone and merge headers from stub into early response
+      const mergedHeaders = new Headers(response.headers);
+      stubResponse.headers.forEach((value, name) => {
+        if (name.toLowerCase() === "set-cookie") {
+          mergedHeaders.append(name, value);
+        } else {
+          mergedHeaders.set(name, value);
+        }
+      });
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: mergedHeaders,
+      });
+    }
+    return response;
+  }
+
+  // Check if middleware set headers on the stub response
+  let hasCustomHeaders = false;
+  stubResponse.headers.forEach(() => { hasCustomHeaders = true; });
+
+  if (hasCustomHeaders) {
+    // Middleware added headers or cookies - treat as short-circuit
+    return stubResponse;
+  }
+
+  return null;
 }
 
 /**
@@ -639,4 +695,59 @@ export async function executeLoaderMiddleware<TEnv>(
     variables,
     finalHandler
   );
+}
+
+/**
+ * Entry type for middleware collection
+ * Matches the shape of EntryData used in router.ts
+ */
+export interface MiddlewareCollectableEntry {
+  middleware?: MiddlewareFn<any, any>[];
+  layout?: MiddlewareCollectableEntry[];
+}
+
+/**
+ * Collected route middleware with params
+ */
+export interface CollectedMiddleware {
+  handler: MiddlewareFn<any, any>;
+  params: Record<string, string>;
+}
+
+/**
+ * Collect route-level middleware from an entry tree
+ *
+ * Recursively collects middleware from entries and their orphan layouts.
+ * Used by match(), matchPartial(), and previewMatch() to gather route middleware.
+ *
+ * @param entries - Iterable of entries to collect middleware from (typically from traverseBack)
+ * @param params - Route params to attach to each middleware entry
+ * @returns Array of collected middleware with params
+ */
+export function collectRouteMiddleware(
+  entries: Iterable<MiddlewareCollectableEntry>,
+  params: Record<string, string>
+): CollectedMiddleware[] {
+  const result: CollectedMiddleware[] = [];
+
+  const collect = (entry: MiddlewareCollectableEntry): void => {
+    // Collect entry's own middleware
+    if (entry.middleware && entry.middleware.length > 0) {
+      for (const mw of entry.middleware) {
+        result.push({ handler: mw, params });
+      }
+    }
+    // Collect middleware from orphan layouts (recursive)
+    if (entry.layout && entry.layout.length > 0) {
+      for (const orphan of entry.layout) {
+        collect(orphan);
+      }
+    }
+  };
+
+  for (const entry of entries) {
+    collect(entry);
+  }
+
+  return result;
 }

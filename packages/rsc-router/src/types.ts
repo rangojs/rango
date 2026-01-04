@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 import type { AllUseItems } from "./route-types.js";
-import type { HandleStore } from "./server/handle-store.js";
 import type { Handle } from "./handle.js";
 import type { MiddlewareFn } from "./router/middleware.js";
 export type { MiddlewareFn } from "./router/middleware.js";
@@ -11,25 +10,6 @@ export type { MiddlewareFn } from "./router/middleware.js";
 export type DocumentProps = {
   children: ReactNode;
 };
-
-/**
- * Internal router context properties.
- * These are used internally by the RSC handler and router,
- * not exposed to user handlers.
- */
-export interface RouterInternalContext {
-  /**
-   * Handle store for tracking pending handler promises.
-   * Created by createRSCHandler and passed to router.match().
-   */
-  __handleStore?: HandleStore;
-
-  /**
-   * Shared variables between app-level middleware and route handlers.
-   * Set by middleware via ctx.set(), read by route handlers via ctx.get().
-   */
-  __middlewareVariables?: Record<string, any>;
-}
 
 /**
  * Global namespace for module augmentation

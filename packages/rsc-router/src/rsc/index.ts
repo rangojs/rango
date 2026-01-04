@@ -1,30 +1,21 @@
 /// <reference types="@vitejs/plugin-rsc/types" />
 import { renderSegments } from "../segment-system.js";
 import type { RSCRouter } from "../router.js";
-import type {
-  ResolvedSegment,
-  SlotState,
-  RouterInternalContext,
-  LoaderActionContext,
-} from "../types.js";
-import {
-  createHandleStore,
-  type HandleStore,
-  type HandleData,
-} from "../server/handle-store.js";
+import type { ResolvedSegment, SlotState } from "../types.js";
+import { type HandleData } from "../server/handle-store.js";
 import { RouteNotFoundError } from "../errors.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
 import {
   matchMiddleware,
   executeMiddleware,
   executeLoaderMiddleware,
-  type MiddlewareEntry,
 } from "../router/middleware.js";
 import {
   runWithRequestContext,
   setRequestContextParams,
   getRequestContext,
   requireRequestContext,
+  createRequestContext,
 } from "../server/request-context.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
@@ -141,6 +132,51 @@ export interface CreateRSCHandlerOptions<TEnv = unknown> {
  * });
  * ```
  */
+
+/**
+ * Check if a request body has content to decode
+ */
+function hasBodyContent(body: FormData | string): boolean {
+  if (body instanceof FormData) {
+    let hasContent = false;
+    body.forEach(() => {
+      hasContent = true;
+    });
+    return hasContent;
+  }
+  return typeof body === "string" && body.length > 0;
+}
+
+/**
+ * Create a Response with headers merged from the request context's stub response.
+ * This ensures headers/cookies set during middleware or handler execution are included.
+ */
+function createResponseWithMergedHeaders(
+  body: BodyInit | null,
+  init: ResponseInit
+): Response {
+  const ctx = getRequestContext();
+  if (!ctx) {
+    return new Response(body, init);
+  }
+
+  // Merge headers from stub response into the new response
+  const mergedHeaders = new Headers(init.headers);
+  ctx.res.headers.forEach((value, name) => {
+    if (name.toLowerCase() === "set-cookie") {
+      mergedHeaders.append(name, value);
+    } else if (!mergedHeaders.has(name)) {
+      // Only set if not already present in init.headers
+      mergedHeaders.set(name, value);
+    }
+  });
+
+  return new Response(body, {
+    ...init,
+    headers: mergedHeaders,
+  });
+}
+
 export function createRSCHandler<TEnv = unknown>(
   options: CreateRSCHandlerOptions<TEnv>
 ) {
@@ -175,21 +211,15 @@ export function createRSCHandler<TEnv = unknown>(
     // Shared variables between middleware and route handlers
     const variables: Record<string, any> = {};
 
-    // Build request context matching HandlerContext shape
+    // Create unified request context with all methods
+    // Includes: stub response, handle store, loader memoization, use(), cookies, headers
     // params starts empty, populated after route matching via setRequestContextParams
-    const requestContext = {
+    const requestContext = createRequestContext({
       env,
       request,
       url,
-      pathname: url.pathname,
-      searchParams: url.searchParams,
-      var: variables,
-      get: <K extends string>(key: K) => variables[key],
-      set: <K extends string>(key: K, value: any) => {
-        variables[key] = value;
-      },
-      params: {} as Record<string, string>,
-    };
+      variables,
+    });
 
     // Wrap entire request handling in request context
     // Makes context available via getRequestContext() throughout:
@@ -268,15 +298,8 @@ export function createRSCHandler<TEnv = unknown>(
     const actionId =
       request.headers.get("rsc-action") || url.searchParams.get("_rsc_action");
 
-    // Create handle store for tracking pending handlers
-    const handleStore = createHandleStore();
-
-    // Attach handle store and shared variables to env for router access
-    const envWithHandleStore = {
-      ...env,
-      __handleStore: handleStore,
-      __middlewareVariables: variables,
-    } as TEnv & RouterInternalContext;
+    // Get handle store from request context (created at start of request)
+    const handleStore = requireRequestContext()._handleStore;
 
     let payload: RscPayload;
 
@@ -301,18 +324,7 @@ export function createRSCHandler<TEnv = unknown>(
             actionFormData = body;
           }
 
-          // Check if body has content to decode
-          let hasContent = false;
-          if (body instanceof FormData) {
-            // Check if FormData has any entries
-            body.forEach(() => {
-              hasContent = true;
-            });
-          } else if (typeof body === "string" && body.length > 0) {
-            hasContent = true;
-          }
-
-          if (hasContent) {
+          if (hasBodyContent(body)) {
             args = await decodeReply(body, { temporaryReferences });
           }
         } catch (error) {
@@ -338,7 +350,7 @@ export function createRSCHandler<TEnv = unknown>(
           // Try to render error boundary
           const errorResult = await router.matchError(
             request,
-            envWithHandleStore,
+            env,
             error,
             "route"
           );
@@ -347,12 +359,7 @@ export function createRSCHandler<TEnv = unknown>(
             // Update request context with matched params
             setRequestContextParams(errorResult.params);
 
-            const renderStart = performance.now();
-            const root = renderSegments(errorResult.segments, {
-              rootLayout: router.rootLayout,
-            });
-            const renderDuration = performance.now() - renderStart;
-
+            // Note: root is null for error payloads, segments contain error boundary
             payload = {
               root: null,
               metadata: {
@@ -371,11 +378,10 @@ export function createRSCHandler<TEnv = unknown>(
               temporaryReferences,
             });
 
-            return new Response(rscStream, {
+            return createResponseWithMergedHeaders(rscStream, {
               status: actionStatus,
               headers: {
                 "content-type": "text/x-component;charset=utf-8",
-                "Server-Timing": `rendering;dur=${renderDuration.toFixed(2)}`,
               },
             });
           }
@@ -400,20 +406,20 @@ export function createRSCHandler<TEnv = unknown>(
 
         const matchResult = await router.matchPartial(
           request,
-          envWithHandleStore,
+          env,
           actionContext
         );
 
         if (!matchResult) {
           // Fall back to full render
-          const fullMatch = await router.match(request, envWithHandleStore);
+          const fullMatch = await router.match(request, env);
 
           // Update request context with matched params
           setRequestContextParams(fullMatch.params);
 
           // Handle trailing slash redirect
           if (fullMatch.redirect) {
-            return new Response(null, {
+            return createResponseWithMergedHeaders(null, {
               status: 308,
               headers: {
                 Location: fullMatch.redirect,
@@ -453,7 +459,7 @@ export function createRSCHandler<TEnv = unknown>(
             headers["Server-Timing"] = serverTiming;
           }
 
-          return new Response(rscStream, {
+          return createResponseWithMergedHeaders(rscStream, {
             status: actionStatus,
             headers,
           });
@@ -497,7 +503,7 @@ export function createRSCHandler<TEnv = unknown>(
           actionHeaders["Server-Timing"] = serverTiming;
         }
 
-        return new Response(rscStream, {
+        return createResponseWithMergedHeaders(rscStream, {
           status: actionStatus,
           headers: actionHeaders,
         });
@@ -512,7 +518,7 @@ export function createRSCHandler<TEnv = unknown>(
         const loaderId = url.searchParams.get("_rsc_loader");
 
         if (!loaderId) {
-          return new Response("Missing _rsc_loader parameter", {
+          return createResponseWithMergedHeaders("Missing _rsc_loader parameter", {
             status: 400,
           });
         }
@@ -520,7 +526,7 @@ export function createRSCHandler<TEnv = unknown>(
         // Look up loader lazily (imports on-demand if not already loaded)
         const registeredLoader = await getLoaderLazy(loaderId);
         if (!registeredLoader) {
-          return new Response(`Loader "${loaderId}" not found in registry`, {
+          return createResponseWithMergedHeaders(`Loader "${loaderId}" not found in registry`, {
             status: 404,
           });
         }
@@ -544,7 +550,7 @@ export function createRSCHandler<TEnv = unknown>(
               loaderBody = jsonBody.body;
             }
           } catch {
-            return new Response("Invalid JSON body", {
+            return createResponseWithMergedHeaders("Invalid JSON body", {
               status: 400,
             });
           }
@@ -555,7 +561,7 @@ export function createRSCHandler<TEnv = unknown>(
             try {
               loaderParams = JSON.parse(loaderParamsJson);
             } catch {
-              return new Response("Invalid _rsc_loader_params JSON", {
+              return createResponseWithMergedHeaders("Invalid _rsc_loader_params JSON", {
                 status: 400,
               });
             }
@@ -568,14 +574,6 @@ export function createRSCHandler<TEnv = unknown>(
 
           // Execute middleware wrapping the loader execution
           // Middleware uses MiddlewareFn signature - same as route middleware
-          // Variables are shared between app-level middleware, loader middleware, and loader function
-          //
-          // Build env with middleware variables so createHandlerContext can access them
-          const envWithVariables = {
-            ...env,
-            __middlewareVariables: variables,
-          };
-
           return await executeLoaderMiddleware(
             middleware,
             request,
@@ -583,28 +581,15 @@ export function createRSCHandler<TEnv = unknown>(
             loaderParams,
             variables,
             async () => {
-              // Use createHandlerContext to build proper context
-              // This ensures consistency with route handlers and proper variable sharing
-              const { createHandlerContext } =
-                await import("../router/handler-context.js");
-              const ctx = createHandlerContext(
-                loaderParams,
-                request,
-                url.searchParams,
-                url.pathname,
-                url,
-                envWithVariables
-              );
-
-              // Extend context with method and body for POST/PUT/PATCH/DELETE
-              const extendedCtx: any = {
+              // Use existing request context with loader-specific overrides
+              const ctx = requireRequestContext();
+              const loaderCtx: any = {
                 ...ctx,
-                method: request.method,
+                params: loaderParams,
                 body: loaderBody,
               };
 
-              // Execute loader function
-              const result = await fn(extendedCtx);
+              const result = await fn(loaderCtx);
 
               // Serialize result with RSC
               interface LoaderPayload {
@@ -614,7 +599,7 @@ export function createRSCHandler<TEnv = unknown>(
               const rscStream =
                 renderToReadableStream<LoaderPayload>(loaderPayload);
 
-              return new Response(rscStream, {
+              return createResponseWithMergedHeaders(rscStream, {
                 headers: {
                   "content-type": "text/x-component;charset=utf-8",
                 },
@@ -651,7 +636,7 @@ export function createRSCHandler<TEnv = unknown>(
           };
           const rscStream = renderToReadableStream(errorPayload);
 
-          return new Response(rscStream, {
+          return createResponseWithMergedHeaders(rscStream, {
             status: 500,
             headers: {
               "content-type": "text/x-component;charset=utf-8",
@@ -667,18 +652,18 @@ export function createRSCHandler<TEnv = unknown>(
 
       if (isPartial) {
         // Partial render (navigation)
-        const result = await router.matchPartial(request, envWithHandleStore);
+        const result = await router.matchPartial(request, env);
 
         if (!result) {
           // Fall back to full render
-          const match = await router.match(request, envWithHandleStore);
+          const match = await router.match(request, env);
 
           // Update request context with matched params
           setRequestContextParams(match.params);
 
           // Handle trailing slash redirect
           if (match.redirect) {
-            return new Response(null, {
+            return createResponseWithMergedHeaders(null, {
               status: 308,
               headers: {
                 Location: match.redirect,
@@ -726,14 +711,14 @@ export function createRSCHandler<TEnv = unknown>(
         }
       } else {
         // Full render (initial page load)
-        const match = await router.match(request, envWithHandleStore);
+        const match = await router.match(request, env);
 
         // Update request context with matched params
         setRequestContextParams(match.params);
 
         // Handle trailing slash redirect
         if (match.redirect) {
-          return new Response(null, {
+          return createResponseWithMergedHeaders(null, {
             status: 308,
             headers: {
               Location: match.redirect,
@@ -783,7 +768,7 @@ export function createRSCHandler<TEnv = unknown>(
         if (serverTiming) {
           rscHeaders["Server-Timing"] = serverTiming;
         }
-        return new Response(rscStream, {
+        return createResponseWithMergedHeaders(rscStream, {
           headers: rscHeaders,
         });
       }
@@ -799,7 +784,7 @@ export function createRSCHandler<TEnv = unknown>(
         htmlHeaders["Server-Timing"] = serverTiming;
       }
 
-      return new Response(htmlStream, {
+      return createResponseWithMergedHeaders(htmlStream, {
         headers: htmlHeaders,
       });
     } catch (error) {
@@ -810,7 +795,7 @@ export function createRSCHandler<TEnv = unknown>(
 
       // Return 404 for unmatched routes instead of 500
       if (error instanceof RouteNotFoundError) {
-        return new Response("Not Found", { status: 404 });
+        return createResponseWithMergedHeaders("Not Found", { status: 404 });
       }
 
       console.error(`[RSC] Error:`, error);
