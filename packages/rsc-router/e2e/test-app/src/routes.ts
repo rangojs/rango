@@ -79,6 +79,26 @@ export const testRoutes = route({
   loaderComposition: "/loader-composition",
   // Route for testing inline actions (defined directly in RSC, not imported)
   inlineAction: "/inline-action",
+  // Routes for testing app-level middleware
+  middlewareTest: {
+    // Index page for middleware tests
+    index: "/middleware-test",
+    // Protected route - requires auth cookie
+    protected: "/middleware-test/protected",
+    protectedDashboard: "/middleware-test/protected/dashboard",
+    // Error handling route - middleware catches errors
+    errorHandler: "/middleware-test/error-handler/trigger",
+    // Cookie test route - middleware sets/reads cookies
+    cookies: "/middleware-test/cookies",
+    // Params test route - middleware extracts :id param
+    params: "/middleware-test/params/:paramId",
+    // Shared variables test - middleware sets ctx.set(), handler reads
+    sharedVars: "/middleware-test/shared-vars",
+    // Route-level middleware test - middleware defined inside route()
+    routeLevel: "/middleware-test/route-level",
+    // Route-level middleware with params test - verify ctx.params is available in middleware
+    routeLevelWithParams: "/middleware-test/route-level/:routeId",
+  },
   // Route for testing progressive enhancement (no-JS form submissions)
   progressiveEnhancement: "/progressive-enhancement",
 });

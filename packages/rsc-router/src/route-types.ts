@@ -34,7 +34,7 @@ export type RouteItem = {
 export type ParallelItem = {
   name: string;
   type: "parallel";
-  uses?: AllUseItems[];
+  uses?: ParallelUseItem[];
   [ParallelBrand]: void;
 };
 export type InterceptItem = {
@@ -46,7 +46,7 @@ export type InterceptItem = {
 export type LoaderItem = {
   name: string;
   type: "loader";
-  uses?: AllUseItems[];
+  uses?: LoaderUseItem[];
   [LoaderBrand]: void;
 };
 export type MiddlewareItem = {
