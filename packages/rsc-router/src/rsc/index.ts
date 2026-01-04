@@ -1,8 +1,17 @@
 /// <reference types="@vitejs/plugin-rsc/types" />
 import { renderSegments } from "../segment-system.js";
 import type { RSCRouter } from "../router.js";
-import type { ResolvedSegment, SlotState, RouterInternalContext, LoaderActionContext } from "../types.js";
-import { createHandleStore, type HandleStore, type HandleData } from "../server/handle-store.js";
+import type {
+  ResolvedSegment,
+  SlotState,
+  RouterInternalContext,
+  LoaderActionContext,
+} from "../types.js";
+import {
+  createHandleStore,
+  type HandleStore,
+  type HandleData,
+} from "../server/handle-store.js";
 import { RouteNotFoundError } from "../errors.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
 import {
@@ -18,7 +27,6 @@ import {
   requireRequestContext,
 } from "../server/request-context.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
-
 
 /**
  * RSC payload sent to the client
@@ -77,7 +85,9 @@ export interface RSCDependencies {
  * SSR module interface for HTML rendering
  */
 export interface SSRModule {
-  renderHTML: (rscStream: ReadableStream<Uint8Array>) => Promise<ReadableStream<Uint8Array>>;
+  renderHTML: (
+    rscStream: ReadableStream<Uint8Array>
+  ) => Promise<ReadableStream<Uint8Array>>;
 }
 
 /**
@@ -157,7 +167,10 @@ export function createRSCHandler<TEnv = unknown>(
     const url = new URL(request.url);
 
     // Match app-level middleware
-    const matchedMiddleware = matchMiddleware(url.pathname, router.appMiddleware);
+    const matchedMiddleware = matchMiddleware(
+      url.pathname,
+      router.appMiddleware
+    );
 
     // Shared variables between middleware and route handlers
     const variables: Record<string, any> = {};
@@ -172,7 +185,9 @@ export function createRSCHandler<TEnv = unknown>(
       searchParams: url.searchParams,
       var: variables,
       get: <K extends string>(key: K) => variables[key],
-      set: <K extends string>(key: K, value: any) => { variables[key] = value; },
+      set: <K extends string>(key: K, value: any) => {
+        variables[key] = value;
+      },
       params: {} as Record<string, string>,
     };
 
@@ -321,7 +336,12 @@ export function createRSCHandler<TEnv = unknown>(
           actionStatus = 500;
 
           // Try to render error boundary
-          const errorResult = await router.matchError(request, envWithHandleStore, error, "route");
+          const errorResult = await router.matchError(
+            request,
+            envWithHandleStore,
+            error,
+            "route"
+          );
 
           if (errorResult) {
             // Update request context with matched params
@@ -378,7 +398,11 @@ export function createRSCHandler<TEnv = unknown>(
           formData: actionFormData,
         };
 
-        const matchResult = await router.matchPartial(request, envWithHandleStore, actionContext);
+        const matchResult = await router.matchPartial(
+          request,
+          envWithHandleStore,
+          actionContext
+        );
 
         if (!matchResult) {
           // Fall back to full render
@@ -504,14 +528,18 @@ export function createRSCHandler<TEnv = unknown>(
         // Parse params and body based on request method
         let loaderParams: Record<string, string> = {};
         let loaderBody: unknown = undefined;
-        const isBodyMethod = request.method !== "GET" && request.method !== "HEAD";
+        const isBodyMethod =
+          request.method !== "GET" && request.method !== "HEAD";
 
         if (isBodyMethod) {
           // POST/PUT/PATCH/DELETE - read from JSON body
           try {
             const contentType = request.headers.get("content-type") || "";
             if (contentType.includes("application/json")) {
-              const jsonBody = await request.json() as { params?: Record<string, string>; body?: unknown };
+              const jsonBody = (await request.json()) as {
+                params?: Record<string, string>;
+                body?: unknown;
+              };
               loaderParams = jsonBody.params ?? {};
               loaderBody = jsonBody.body;
             }
@@ -557,7 +585,8 @@ export function createRSCHandler<TEnv = unknown>(
             async () => {
               // Use createHandlerContext to build proper context
               // This ensures consistency with route handlers and proper variable sharing
-              const { createHandlerContext } = await import("../router/handler-context.js");
+              const { createHandlerContext } =
+                await import("../router/handler-context.js");
               const ctx = createHandlerContext(
                 loaderParams,
                 request,
@@ -582,13 +611,12 @@ export function createRSCHandler<TEnv = unknown>(
                 loaderResult: unknown;
               }
               const loaderPayload: LoaderPayload = { loaderResult: result };
-              const rscStream = renderToReadableStream<LoaderPayload>(loaderPayload);
+              const rscStream =
+                renderToReadableStream<LoaderPayload>(loaderPayload);
 
               return new Response(rscStream, {
                 headers: {
                   "content-type": "text/x-component;charset=utf-8",
-                  // Allow browser/CDN caching for GET requests
-                  "cache-control": "public, max-age=0, must-revalidate",
                 },
               });
             }

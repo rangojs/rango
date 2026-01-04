@@ -1,3 +1,4 @@
+/// <reference types="vite/types/importMeta.d.ts" />
 /**
  * App-Level Middleware Execution
  *
@@ -27,7 +28,10 @@ export interface CookieOptions {
  * @template TEnv - Environment type (bindings, variables)
  * @template TParams - URL params type (typed for route middleware, Record<string, string> for app middleware)
  */
-export interface AppMiddlewareContext<TEnv = any, TParams = Record<string, string>> {
+export interface AppMiddlewareContext<
+  TEnv = any,
+  TParams = Record<string, string>,
+> {
   /** Original request */
   request: Request;
 
@@ -68,7 +72,10 @@ export interface AppMiddlewareContext<TEnv = any, TParams = Record<string, strin
   setCookie(name: string, value: string, options?: CookieOptions): void;
 
   /** Delete a cookie */
-  deleteCookie(name: string, options?: Pick<CookieOptions, "domain" | "path">): void;
+  deleteCookie(
+    name: string,
+    options?: Pick<CookieOptions, "domain" | "path">
+  ): void;
 
   /** Get a context variable (shared with route handlers) */
   get<K extends string>(key: K): any;
@@ -186,7 +193,9 @@ export function extractParams(
 /**
  * Parse cookies from Cookie header
  */
-export function parseCookies(cookieHeader: string | null): Record<string, string> {
+export function parseCookies(
+  cookieHeader: string | null
+): Record<string, string> {
   if (!cookieHeader) return {};
 
   const cookies: Record<string, string> = {};
@@ -289,9 +298,7 @@ export function createAppMiddlewareContext<TEnv>(
       name: string,
       options?: Pick<CookieOptions, "domain" | "path">
     ): void {
-      pendingCookies.push(
-        serializeCookie(name, "", { ...options, maxAge: 0 })
-      );
+      pendingCookies.push(serializeCookie(name, "", { ...options, maxAge: 0 }));
     },
 
     get<K extends string>(key: K): any {
@@ -419,12 +426,25 @@ export async function executeAppMiddleware<TEnv>(
       responseHolder
     );
 
-    const result = await entry.handler(ctx, next);
+    // Track if next() was called and capture its Promise
+    // This handles the case where middleware calls next() synchronously without await
+    let nextPromise: Promise<Response> | null = null;
+    const wrappedNext = (): Promise<Response> => {
+      nextPromise = next();
+      return nextPromise;
+    };
+
+    const result = await entry.handler(ctx, wrappedNext);
 
     // Explicit return takes precedence
     if (result instanceof Response) {
       responseHolder.response = result;
       return result;
+    }
+
+    // If middleware called next() but didn't await it, wait for it now
+    if (nextPromise) {
+      await nextPromise;
     }
 
     // Forgiving: middleware didn't return, use ctx.res (responseHolder)
@@ -433,9 +453,12 @@ export async function executeAppMiddleware<TEnv>(
     }
 
     // Middleware didn't call next() and didn't return - that's an error
+    const fnName = entry.handler.name || "(anonymous)";
     throw new Error(
       `Middleware must call next() or return a Response. ` +
-        `Pattern: ${entry.pattern ?? "(all)"}`
+        `Function: ${fnName}, Pattern: ${entry.pattern ?? "(all)"}
+        Source: ${import.meta.env.DEV ? entry.handler.toString().slice(0, 200) : "(source hidden in production)"}`,
+      { cause: { url: request.url, fn: entry.handler } }
     );
   };
 
@@ -543,5 +566,11 @@ export async function executeLoaderAppMiddleware<TEnv>(
     params,
   }));
 
-  return executeAppMiddleware(middlewareEntries, request, env, variables, finalHandler);
+  return executeAppMiddleware(
+    middlewareEntries,
+    request,
+    env,
+    variables,
+    finalHandler
+  );
 }
