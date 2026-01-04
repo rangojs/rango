@@ -34,12 +34,18 @@ export interface AppVariables {
   user?: {
     id: string;
     name: string;
-    email: string;
+    email?: string;
   };
   permissions?: string[];
   requestId?: string;
   requestCount?: number;
   rateLimitRemaining?: number;
+  responseTime?: string;
+  enrichedUser?: {
+    id: string;
+    name: string;
+    role: string;
+  };
 }
 
 /**

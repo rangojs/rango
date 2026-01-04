@@ -593,18 +593,6 @@ export default map<typeof middlewareRoutes>(({ route, layout, middleware, loader
     console.log(`[Middleware Demo] Request ${requestId} completed in ${elapsed.toFixed(2)}ms`);
   }),
 
-  // Pattern-based middleware - runs for /dashboard* routes
-  middleware("/dashboard*", async (ctx, next) => {
-    const isAuth = ctx.searchParams.get("auth") === "true";
-    console.log(`[Auth Middleware] Checking auth for ${ctx.pathname}: ${isAuth}`);
-
-    if (isAuth) {
-      ctx.set("user", { id: "user-123", name: "Demo User" });
-    }
-
-    await next();
-  }),
-
   // Layout for the demo
   layout(<MiddlewareDemoLayout />, () => [
     // Index route
@@ -612,10 +600,23 @@ export default map<typeof middlewareRoutes>(({ route, layout, middleware, loader
       <MiddlewareIndexPage requestId={ctx.get("requestId")} />
     )),
 
-    // Dashboard - protected by pattern-based middleware
-    route("dashboard", (ctx) => (
-      <DashboardPage user={ctx.get("user")} />
-    )),
+    // Dashboard - protected by route-level middleware
+    route(
+      "dashboard",
+      (ctx) => <DashboardPage user={ctx.get("user")} />,
+      () => [
+        middleware(async (ctx, next) => {
+          const isAuth = ctx.searchParams.get("auth") === "true";
+          console.log(`[Auth Middleware] Checking auth for ${ctx.pathname}: ${isAuth}`);
+
+          if (isAuth) {
+            ctx.set("user", { id: "user-123", name: "Demo User" });
+          }
+
+          await next();
+        }),
+      ]
+    ),
 
     // Timed route with route-level middleware
     route(
@@ -645,7 +646,8 @@ export default map<typeof middlewareRoutes>(({ route, layout, middleware, loader
       () => [
         middleware(async (ctx, next) => {
           // Enrich user data from params
-          const userId = ctx.params.userId;
+          // Note: Route params available via ctx.params (typed as Record<string, string>)
+          const userId = ctx.params.userId as string;
           ctx.set("enrichedUser", {
             id: userId,
             name: `User ${userId}`,

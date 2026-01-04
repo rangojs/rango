@@ -1035,6 +1035,7 @@ export type LoaderFn<T, TParams = Record<string, string | undefined>, TEnv = any
  * enabling reuse of the same middleware functions everywhere.
  */
 export type FetchableLoaderOptions = {
+  fetchable?: true;
   middleware?: MiddlewareFn[];
 };
 

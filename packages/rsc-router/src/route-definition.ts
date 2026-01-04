@@ -284,7 +284,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * ```
    * @param fns - One or more middleware functions to execute in order
    */
-  middleware: (...fns: MiddlewareFn<any, TEnv>[]) => MiddlewareItem;
+  middleware: (...fns: MiddlewareFn<TEnv>[]) => MiddlewareItem;
   /**
    * Control when a segment should revalidate during navigation
    * ```typescript
