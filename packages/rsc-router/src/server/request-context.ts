@@ -17,6 +17,7 @@ import type { Handle } from "../handle.js";
 import { createHandleStore, type HandleStore } from "./handle-store.js";
 import { isHandle } from "../handle.js";
 import { track } from "./context.js";
+import type { SegmentCacheProvider } from "../cache/types.js";
 
 /**
  * Unified request context available via getRequestContext()
@@ -97,6 +98,23 @@ export interface RequestContext<
 
   /** @internal Handle store for tracking handle data across segments */
   _handleStore: HandleStore;
+
+  /** @internal Cache provider for segment caching (optional) */
+  _cacheProvider?: SegmentCacheProvider;
+
+  /**
+   * Schedule work to run after the response is sent.
+   * On Cloudflare Workers, uses ctx.waitUntil().
+   * On Node.js, runs as fire-and-forget.
+   *
+   * @example
+   * ```typescript
+   * ctx.waitUntil(async () => {
+   *   await cacheProvider.set(key, data);
+   * });
+   * ```
+   */
+  waitUntil(fn: () => Promise<void>): void;
 }
 
 // AsyncLocalStorage instance for request context
@@ -150,6 +168,14 @@ export function requireRequestContext<TEnv = unknown>(): RequestContext<TEnv> {
 }
 
 /**
+ * Cloudflare Workers ExecutionContext (subset we need)
+ */
+export interface ExecutionContext {
+  waitUntil(promise: Promise<any>): void;
+  passThroughOnException(): void;
+}
+
+/**
  * Options for creating a request context
  */
 export interface CreateRequestContextOptions<TEnv> {
@@ -157,6 +183,10 @@ export interface CreateRequestContextOptions<TEnv> {
   request: Request;
   url: URL;
   variables: Record<string, any>;
+  /** Optional cache provider for segment caching */
+  cacheProvider?: SegmentCacheProvider;
+  /** Optional Cloudflare execution context for waitUntil support */
+  executionContext?: ExecutionContext;
 }
 
 /**
@@ -170,7 +200,7 @@ export interface CreateRequestContextOptions<TEnv> {
 export function createRequestContext<TEnv>(
   options: CreateRequestContextOptions<TEnv>
 ): RequestContext<TEnv> {
-  const { env, request, url, variables } = options;
+  const { env, request, url, variables, cacheProvider, executionContext } = options;
   const cookieHeader = request.headers.get("Cookie");
   let parsedCookies: Record<string, string> | null = null;
 
@@ -239,6 +269,17 @@ export function createRequestContext<TEnv>(
     method: request.method,
 
     _handleStore: handleStore,
+    _cacheProvider: cacheProvider,
+
+    waitUntil(fn: () => Promise<void>): void {
+      if (executionContext?.waitUntil) {
+        // Cloudflare Workers: use native waitUntil
+        executionContext.waitUntil(fn());
+      } else {
+        // Node.js: fire-and-forget
+        fn().catch((err) => console.error("[waitUntil]", err));
+      }
+    },
   };
 
   // Now create use() with access to ctx

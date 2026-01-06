@@ -25,6 +25,7 @@ export type {
   SSRModule,
   LoadSSRModule,
   CreateRSCHandlerOptions,
+  HandlerCacheConfig,
 } from "./types.js";
 
 // Re-export HandleStore types for consumers who need custom handling
@@ -40,3 +41,14 @@ export {
   requireRequestContext,
   setRequestContextParams,
 } from "../server/request-context.js";
+
+// Re-export cache store types and implementations
+export type {
+  SegmentCacheStore,
+  CachedEntryData,
+  CachedEntryResult,
+  SegmentCacheProvider,
+  SegmentHandleData,
+} from "../cache/types.js";
+
+export { MemorySegmentCacheStore } from "../cache/memory-segment-store.js";

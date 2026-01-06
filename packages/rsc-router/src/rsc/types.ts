@@ -111,6 +111,18 @@ export interface SSRModule {
 export type LoadSSRModule = () => Promise<SSRModule>;
 
 /**
+ * Cache configuration for handler
+ */
+export interface HandlerCacheConfig {
+  /** Cache store implementation */
+  store: import("../cache/types.js").SegmentCacheStore;
+  /** Default TTL in seconds (default: 60) */
+  ttl?: number;
+  /** Enable/disable caching (default: true) */
+  enabled?: boolean;
+}
+
+/**
  * Options for creating an RSC handler
  */
 export interface CreateRSCHandlerOptions<TEnv = unknown> {
@@ -130,4 +142,30 @@ export interface CreateRSCHandlerOptions<TEnv = unknown> {
    * Defaults to: () => import.meta.viteRsc.loadModule("ssr", "index")
    */
   loadSSRModule?: LoadSSRModule;
+
+  /**
+   * Cache configuration for segment caching.
+   *
+   * Can be a static config object or a function that receives the env
+   * (useful for accessing Cloudflare bindings).
+   *
+   * If not provided, caching is disabled.
+   *
+   * @example Static config
+   * ```typescript
+   * cache: {
+   *   store: new MemorySegmentCacheStore(),
+   *   ttl: 60,
+   * }
+   * ```
+   *
+   * @example Dynamic config with env
+   * ```typescript
+   * cache: (env) => ({
+   *   store: new KVSegmentCacheStore(env.Bindings.MY_CACHE),
+   *   ttl: 60,
+   * })
+   * ```
+   */
+  cache?: HandlerCacheConfig | ((env: TEnv) => HandlerCacheConfig);
 }

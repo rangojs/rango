@@ -34,7 +34,7 @@ import type {
   TrailingSlashMode,
 } from "./types";
 import type { HandleStore } from "./server/handle-store.js";
-import { getRequestContext } from "./server/request-context.js";
+import { getRequestContext, requireRequestContext } from "./server/request-context.js";
 import type { AllUseItems } from "./route-types.js";
 import {
   EntryData,
@@ -511,6 +511,11 @@ export function createRSCRouter<TEnv = any>(
     return getRequestContext()?._handleStore;
   };
 
+  // Helper to get cache provider from request context
+  const getCacheProvider = () => {
+    return getRequestContext()?._cacheProvider;
+  };
+
   // Track a pending handler promise (non-blocking)
   const trackHandler = <T>(promise: Promise<T>): Promise<T> => {
     const store = getHandleStore();
@@ -537,6 +542,77 @@ export function createRSCRouter<TEnv = any>(
   // Wrapper for findMatch that uses routesEntries
   function findMatch(pathname: string) {
     return findRouteMatch(pathname, routesEntries);
+  }
+
+  /**
+   * Async iterator that wraps entry traversal with caching.
+   *
+   * For each entry:
+   * - Skips route entries when intercepting (yields [entry, null, true])
+   * - Checks cache (if enabled)
+   * - On HIT: restores handles and loader data, yields [entry, cachedResult, false]
+   * - On MISS: yields [entry, null, false]
+   *
+   * Cache provider and handle store are resolved from request context internally.
+   *
+   * @param entries - Entries to iterate (from traverseBack)
+   * @param params - Route params for cache key
+   * @param loaderPromises - Map to restore loader data into
+   * @param interceptResult - If present, route entries are skipped (intercept replaces them)
+   *
+   * @example
+   * ```typescript
+   * for await (const [entry, cachedSegments, skipped] of withCache(entries, params, loaderPromises, interceptResult)) {
+   *   if (skipped) {
+   *     matchedIds.push(entry.shortCode);
+   *     continue;
+   *   }
+   *   if (cachedSegments) {
+   *     segs.push(...cachedSegments);
+   *     continue;
+   *   }
+   *   // resolve entry...
+   * }
+   * ```
+   */
+  async function* withCache(
+    entries: Iterable<EntryData>,
+    params: Record<string, string>,
+    loaderPromises: Map<string, Promise<any>>,
+    interceptResult?: { intercept: InterceptEntry; entry: EntryData } | null
+  ): AsyncGenerator<[EntryData, ResolvedSegment[] | null, boolean]> {
+    const cacheProvider = getCacheProvider();
+
+    for (const entry of entries) {
+      // Skip route entries when intercepting - intercept replaces route handler
+      if (entry.type === "route" && interceptResult) {
+        yield [entry, null, true];
+        continue;
+      }
+
+      // No cache or disabled - yield miss
+      if (!cacheProvider?.enabled) {
+        yield [entry, null, false];
+        continue;
+      }
+
+      try {
+        // restore() handles cache get + handle replay + loader restore
+        const cachedSegments = await cacheProvider.restore(entry.id, params, loaderPromises);
+
+        if (cachedSegments) {
+          console.log(`[withCache] HIT: ${entry.id}`);
+          yield [entry, cachedSegments, false];
+        } else {
+          console.log(`[withCache] MISS: ${entry.id}`);
+          yield [entry, null, false];
+        }
+      } catch (error) {
+        // Cache error - log and yield as miss (TTL will clean up corrupted entries)
+        console.error(`[withCache] Error for ${entry.id}, falling back to fresh render:`, error);
+        yield [entry, null, false];
+      }
+    }
   }
 
   /**
@@ -2169,6 +2245,9 @@ export function createRSCRouter<TEnv = any>(
         Store.metrics = metricsStore;
       }
 
+      // Get cache provider for caching
+      const cacheProvider = getCacheProvider();
+
       // Collect all segments from stream (run within store context for metrics tracking)
       const segments: ResolvedSegment[] = await getContext().runWithStore(
         Store,
@@ -2176,8 +2255,20 @@ export function createRSCRouter<TEnv = any>(
         Store.parent,
         async () => {
           const segs: ResolvedSegment[] = [];
-          for (const entry of traverseBack(manifestEntry)) {
-            // Resolve entry into segments with error boundary handling
+
+          // Use withCache iterator for clean cache handling
+          for await (const [entry, cachedSegments, skipped] of withCache(traverseBack(manifestEntry), matched.params, loaderPromises)) {
+            if (skipped) {
+              // Entry was skipped (shouldn't happen in full match, only partial)
+              continue;
+            }
+
+            if (cachedSegments) {
+              segs.push(...cachedSegments);
+              continue; // Skip handler execution
+            }
+
+            // Cache miss - resolve entry with handler
             const resolvedSegments = await resolveWithErrorHandling(
               entry,
               matched.routeKey,
@@ -2195,6 +2286,9 @@ export function createRSCRouter<TEnv = any>(
             );
 
             segs.push(...resolvedSegments);
+
+            // Cache entry after handles settle (non-blocking)
+            cacheProvider?.cacheEntry(entry.id, resolvedSegments);
           }
           return segs;
         }
@@ -2642,6 +2736,9 @@ export function createRSCRouter<TEnv = any>(
       const slots: Record<string, import("./types.js").SlotState> = {};
       let interceptSegments: ResolvedSegment[] = [];
 
+      // Get cache provider for caching
+      const cacheProvider = getCacheProvider();
+
       // Collect segments with revalidation-aware rendering
       // When intercepting: skip route handler, only render layouts + intercept
       // When not intercepting: render everything normally
@@ -2652,13 +2749,16 @@ export function createRSCRouter<TEnv = any>(
         async () => {
           const segs: ResolvedSegment[] = [];
           const matchedIds: string[] = [];
-          for (const entry of traverseBack(manifestEntry)) {
+
+          // Use withCache iterator for clean cache handling
+          // Pass interceptResult to skip route entries when intercepting
+          for await (const [entry, cachedSegments, skipped] of withCache(traverseBack(manifestEntry), matched.params, loaderPromises, interceptResult)) {
             console.log(
               `[Router.matchPartial] Processing entry: ${entry.shortCode} (${entry.type})`
             );
-            // When intercepting, skip the route handler - intercept replaces it
-            const isRouteEntry = entry.type === "route";
-            if (isRouteEntry && interceptResult) {
+
+            // When intercepting, route handler is skipped by withCache
+            if (skipped) {
               console.log(
                 `[Router.matchPartial] Intercepting "${localRouteName}" - skipping route handler`
               );
@@ -2667,7 +2767,13 @@ export function createRSCRouter<TEnv = any>(
               continue;
             }
 
-            // Normal resolution for layouts and non-intercepted routes
+            if (cachedSegments) {
+              segs.push(...cachedSegments);
+              matchedIds.push(entry.shortCode);
+              continue; // Skip handler execution
+            }
+
+            // Cache miss - normal resolution for layouts and non-intercepted routes
             const resolved = await resolveWithRevalidationErrorHandling(
               entry,
               matched.params,
@@ -2691,6 +2797,9 @@ export function createRSCRouter<TEnv = any>(
 
             segs.push(...resolved.segments);
             matchedIds.push(...resolved.matchedIds);
+
+            // Cache entry after handles settle (non-blocking)
+            cacheProvider?.cacheEntry(entry.id, resolved.segments);
           }
           return { segments: segs, matchedIds };
         }
@@ -2700,35 +2809,51 @@ export function createRSCRouter<TEnv = any>(
 
       if (interceptResult) {
         const slotName = interceptResult.intercept.slotName;
+        const routeName = interceptResult.intercept.routeName;
         console.log(
           `[Router.matchPartial] Found intercept for "${localRouteName}" -> slot "${slotName}"`
         );
 
-        // Resolve intercept entry (middleware, loaders, handler)
-        // Pass revalidation context for stale cache revalidation
-        interceptSegments = await getContext().runWithStore(
-          Store,
-          Store.namespace || "#router",
-          Store.parent,
-          () =>
-            resolveInterceptEntry(
-              interceptResult.intercept,
-              interceptResult.entry,
-              matched.params,
-              handlerContext,
-              true, // belongsToRoute
-              {
-                clientSegmentIds: clientSegmentSet,
-                prevParams,
-                request,
-                prevUrl,
-                nextUrl: url,
-                routeKey: matched.routeKey,
-                actionContext,
-                stale,
-              }
-            )
-        );
+        // Cache key for intercept: parentEntry.id + slot + route
+        const interceptCacheKey = `${interceptResult.entry.id}.intercept.${slotName}.${routeName}`;
+
+        // Check cache for intercept (handles handle replay + loader restore)
+        const cachedIntercept = await cacheProvider?.restore(interceptCacheKey, matched.params, loaderPromises);
+
+        if (cachedIntercept) {
+          console.log(`[Router.matchPartial] Intercept cache HIT: ${interceptCacheKey}`);
+          interceptSegments = cachedIntercept;
+        } else {
+          console.log(`[Router.matchPartial] Intercept cache MISS: ${interceptCacheKey}`);
+          // Resolve intercept entry (middleware, loaders, handler)
+          // Pass revalidation context for stale cache revalidation
+          interceptSegments = await getContext().runWithStore(
+            Store,
+            Store.namespace || "#router",
+            Store.parent,
+            () =>
+              resolveInterceptEntry(
+                interceptResult.intercept,
+                interceptResult.entry,
+                matched.params,
+                handlerContext,
+                true, // belongsToRoute
+                {
+                  clientSegmentIds: clientSegmentSet,
+                  prevParams,
+                  request,
+                  prevUrl,
+                  nextUrl: url,
+                  routeKey: matched.routeKey,
+                  actionContext,
+                  stale,
+                }
+              )
+          );
+
+          // Queue intercept for caching (non-blocking)
+          cacheProvider?.cacheEntry(interceptCacheKey, interceptSegments);
+        }
 
         // Add to slots metadata - browser uses this to know which slots are active
         slots[slotName] = {

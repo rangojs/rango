@@ -22,6 +22,9 @@ import {
 } from "../server/request-context.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
+// Segment cache provider
+import { createSegmentCacheProvider } from "../cache/segment-cache.js";
+
 import type {
   RscPayload,
   ReactFormState,
@@ -86,14 +89,31 @@ export function createRSCHandler<TEnv = unknown>(
     // Shared variables between middleware and route handlers
     const variables: Record<string, any> = {};
 
+    // Resolve cache configuration
+    // Cache is disabled if: no config provided, explicitly disabled, or ?__no_cache query param
+    let cacheProvider = undefined;
+    if (options.cache && !url.searchParams.has("__no_cache")) {
+      const cacheConfig =
+        typeof options.cache === "function" ? options.cache(env) : options.cache;
+
+      if (cacheConfig.enabled !== false) {
+        cacheProvider = createSegmentCacheProvider({
+          store: cacheConfig.store,
+          enabled: true,
+          ttl: cacheConfig.ttl ?? 60,
+        });
+      }
+    }
+
     // Create unified request context with all methods
-    // Includes: stub response, handle store, loader memoization, use(), cookies, headers
+    // Includes: stub response, handle store, loader memoization, use(), cookies, headers, cache provider
     // params starts empty, populated after route matching via setRequestContextParams
     const requestContext = createRequestContext({
       env,
       request,
       url,
       variables,
+      cacheProvider,
     });
 
     // Wrap entire request handling in request context
@@ -163,6 +183,11 @@ export function createRSCHandler<TEnv = unknown>(
     url: URL,
     variables: Record<string, any>
   ): Promise<Response> {
+    // Early return for static file requests that don't need RSC handling
+    if (url.pathname === "/favicon.ico" || url.pathname === "/robots.txt") {
+      return new Response(null, { status: 404 });
+    }
+
     const isPartial = url.searchParams.has("_rsc_partial");
     const isAction =
       request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
@@ -734,6 +759,9 @@ export function createRSCHandler<TEnv = unknown>(
           headers: { Location: match.redirect },
         });
       }
+
+      // Caching is now handled in router.match() via cache provider in request context
+      // match.segments already contains cached or fresh segments as appropriate
 
       const renderStart = performance.now();
       const root = renderSegments(match.segments, {
