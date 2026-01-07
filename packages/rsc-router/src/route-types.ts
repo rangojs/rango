@@ -18,6 +18,7 @@ export declare const LoadingBrand: unique symbol;
 export declare const ErrorBoundaryBrand: unique symbol;
 export declare const NotFoundBoundaryBrand: unique symbol;
 export declare const WhenBrand: unique symbol;
+export declare const CacheBrand: unique symbol;
 
 export type LayoutItem = {
   name: string;
@@ -83,6 +84,12 @@ export type WhenItem = {
   type: "when";
   [WhenBrand]: void;
 };
+export type CacheItem = {
+  name: string;
+  type: "cache";
+  uses?: AllUseItems[];
+  [CacheBrand]: void;
+};
 
 /**
  * Union types for use() callbacks
@@ -97,7 +104,8 @@ export type AllUseItems =
   | LoaderItem
   | LoadingItem
   | ErrorBoundaryItem
-  | NotFoundBoundaryItem;
+  | NotFoundBoundaryItem
+  | CacheItem;
 export type LayoutUseItem =
   | LayoutItem
   | RouteItem
@@ -108,7 +116,8 @@ export type LayoutUseItem =
   | LoaderItem
   | LoadingItem
   | ErrorBoundaryItem
-  | NotFoundBoundaryItem;
+  | NotFoundBoundaryItem
+  | CacheItem;
 export type RouteUseItem =
   | LayoutItem
   | ParallelItem
@@ -118,7 +127,8 @@ export type RouteUseItem =
   | LoaderItem
   | LoadingItem
   | ErrorBoundaryItem
-  | NotFoundBoundaryItem;
+  | NotFoundBoundaryItem
+  | CacheItem;
 export type ParallelUseItem =
   | RevalidateItem
   | LoaderItem
@@ -135,4 +145,4 @@ export type InterceptUseItem =
   | LayoutItem
   | RouteItem
   | WhenItem;
-export type LoaderUseItem = RevalidateItem;
+export type LoaderUseItem = RevalidateItem | CacheItem;

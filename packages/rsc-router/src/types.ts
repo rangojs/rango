@@ -916,6 +916,139 @@ export type RouteMiddlewareFn<
 > = MiddlewareFn<TEnv, ExtractRouteParams<TRoutes, K & string>>;
 
 // ============================================================================
+// Cache Types
+// ============================================================================
+
+/**
+ * Context passed to cache condition/key/tags functions
+ *
+ * Available during cache evaluation before handler execution.
+ * Since this runs early in the request lifecycle, middleware variables
+ * may not be available yet.
+ */
+export type CacheContext = {
+  request: Request;
+  url: URL;
+  pathname: string;
+  params: Record<string, string>;
+  searchParams: URLSearchParams;
+};
+
+/**
+ * Cache configuration options for cache() DSL
+ *
+ * Controls how segments, layouts, and loaders are cached.
+ * Cache configuration inherits down the route tree unless overridden.
+ *
+ * @example
+ * ```typescript
+ * // Basic caching with TTL
+ * cache({ ttl: 60 }, () => [
+ *   layout(<BlogLayout />),
+ *   route("post/:slug"),
+ * ])
+ *
+ * // With stale-while-revalidate
+ * cache({ ttl: 60, swr: 300 }, () => [
+ *   route("product/:id"),
+ * ])
+ *
+ * // Conditional caching
+ * cache({
+ *   ttl: 300,
+ *   condition: (ctx) => !ctx.request.headers.get('x-preview'),
+ * }, () => [...])
+ *
+ * // Custom cache key
+ * cache({
+ *   ttl: 300,
+ *   key: (ctx) => `product-${ctx.params.id}-${ctx.searchParams.get('variant')}`,
+ * }, () => [...])
+ *
+ * // With tags for invalidation
+ * cache({
+ *   ttl: 300,
+ *   tags: (ctx) => [`product:${ctx.params.id}`, 'products'],
+ * }, () => [...])
+ * ```
+ */
+export interface CacheOptions {
+  /**
+   * Time-to-live in seconds.
+   * After this period, cached content is considered stale.
+   */
+  ttl: number;
+
+  /**
+   * Stale-while-revalidate window in seconds (after TTL).
+   * During this window, stale content is served immediately while
+   * fresh content is fetched in the background via waitUntil.
+   *
+   * @example
+   * // TTL: 60s, SWR: 300s
+   * // 0-60s: FRESH (serve from cache)
+   * // 60-360s: STALE (serve from cache, revalidate in background)
+   * // 360s+: EXPIRED (cache miss, fetch fresh)
+   */
+  swr?: number;
+
+  /**
+   * Conditional cache read function.
+   * Return false to skip cache for this request (always fetch fresh).
+   *
+   * @example
+   * ```typescript
+   * condition: (ctx) => {
+   *   // Skip cache for preview mode
+   *   if (ctx.request.headers.get('x-preview')) return false;
+   *   // Skip cache for authenticated users
+   *   if (ctx.request.headers.has('authorization')) return false;
+   *   return true;
+   * }
+   * ```
+   */
+  condition?: (ctx: CacheContext) => boolean;
+
+  /**
+   * Custom cache key function.
+   * By default, cache key is based on entry ID and route params.
+   * Use this to include additional factors like query params or headers.
+   *
+   * @example
+   * ```typescript
+   * key: (ctx) => `product-${ctx.params.id}-${ctx.searchParams.get('variant')}`
+   * ```
+   */
+  key?: (ctx: CacheContext) => string;
+
+  /**
+   * Tags for cache invalidation.
+   * Can be a static array or a function that returns tags.
+   *
+   * @example
+   * ```typescript
+   * // Static tags
+   * tags: ['products', 'catalog']
+   *
+   * // Dynamic tags
+   * tags: (ctx) => [`product:${ctx.params.id}`, 'products']
+   * ```
+   */
+  tags?: string[] | ((ctx: CacheContext) => string[]);
+}
+
+/**
+ * Cache entry configuration stored in EntryData.
+ * Represents the resolved cache config for a segment.
+ */
+export interface EntryCacheConfig {
+  /** Cache options (false means caching disabled for this entry) */
+  options: CacheOptions | false;
+  /** Whether this config was inherited from parent or explicitly set */
+  inherited: boolean;
+}
+
+// ============================================================================
 // Loader Types
 // ============================================================================
 

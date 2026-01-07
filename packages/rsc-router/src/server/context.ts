@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ReactNode } from "react";
-import type { ErrorBoundaryHandler, Handler, LoaderDefinition, MiddlewareFn, NotFoundBoundaryHandler, ShouldRevalidateFn } from "../types";
+import type { CacheOptions, ErrorBoundaryHandler, Handler, LoaderDefinition, MiddlewareFn, NotFoundBoundaryHandler, ShouldRevalidateFn } from "../types";
 import { invariant } from "../errors";
 
 // ============================================================================
@@ -29,12 +29,24 @@ export interface MetricsStore {
 // ============================================================================
 
 /**
+ * Cache configuration for an entry
+ * When set, this entry and its children will use this cache config
+ * unless overridden by a nested cache() call.
+ */
+export type EntryCacheConfig = {
+  /** Cache options (false means caching disabled for this entry) */
+  options: CacheOptions | false;
+};
+
+/**
  * Entry data structure for manifest
  */
 export type EntryPropCommon = {
   id: string;
   shortCode: string; // Short identifier for network efficiency (e.g., "L0", "P1", "R2")
   parent: EntryData | null;
+  /** Cache configuration for this entry (set by cache() DSL) */
+  cache?: EntryCacheConfig;
 };
 export type EntryPropDatas = {
   middleware: MiddlewareFn<any, any>[];
@@ -49,6 +61,8 @@ export type EntryPropDatas = {
 export type LoaderEntry = {
   loader: LoaderDefinition<any>;
   revalidate: ShouldRevalidateFn<any, any>[];
+  /** Cache config for this specific loader (loaders are NOT cached by default) */
+  cache?: EntryCacheConfig;
 };
 
 /**
@@ -145,6 +159,8 @@ interface HelperContext {
   metrics?: MetricsStore;
   /** True when rendering for SSR (document requests) */
   isSSR?: boolean;
+  /** Cache config inherited from parent cache() scope */
+  inheritedCache?: EntryCacheConfig;
 }
 export const RSCRouterContext: AsyncLocalStorage<HelperContext> =
   new AsyncLocalStorage<HelperContext>();
@@ -171,6 +187,11 @@ export const getContext = (): {
     parent: EntryData | null,
     callback: (...args: any[]) => T
   ) => T;
+  runWithCache: <T>(
+    cacheConfig: EntryCacheConfig,
+    callback: (...args: any[]) => T
+  ) => T;
+  getInheritedCache: () => EntryCacheConfig | undefined;
 } => {
   const context = RSCRouterContext;
 
@@ -256,6 +277,7 @@ export const getContext = (): {
           mountIndex: store.mountIndex,
           metrics: store.metrics,
           isSSR: store.isSSR,
+          inheritedCache: store.inheritedCache,
         },
         callback
       );
@@ -279,9 +301,31 @@ export const getContext = (): {
           mountIndex: store?.mountIndex,
           metrics: store?.metrics,
           isSSR: store?.isSSR,
+          inheritedCache: store?.inheritedCache,
         },
         callback
       );
+    },
+    runWithCache: <T>(
+      cacheConfig: EntryCacheConfig,
+      callback: (...args: any[]) => T
+    ): T => {
+      const store = context.getStore();
+      if (!store) {
+        throw new Error("runWithCache() must be called inside a context");
+      }
+      // Run callback with new cache config (overrides inherited)
+      return context.run(
+        {
+          ...store,
+          inheritedCache: cacheConfig,
+        },
+        callback
+      );
+    },
+    getInheritedCache: (): EntryCacheConfig | undefined => {
+      const store = context.getStore();
+      return store?.inheritedCache;
     },
   };
 };

@@ -45,7 +45,9 @@ import {
   track,
   MetricsStore,
   PerformanceMetric,
+  type EntryCacheConfig,
 } from "./server/context";
+import { CacheScope, createCacheScope } from "./cache/cache-scope.js";
 import { error } from "console";
 import {
   createHref,
@@ -511,10 +513,6 @@ export function createRSCRouter<TEnv = any>(
     return getRequestContext()?._handleStore;
   };
 
-  // Helper to get cache provider from request context
-  const getCacheProvider = () => {
-    return getRequestContext()?._cacheProvider;
-  };
 
   // Track a pending handler promise (non-blocking)
   const trackHandler = <T>(promise: Promise<T>): Promise<T> => {
@@ -576,43 +574,99 @@ export function createRSCRouter<TEnv = any>(
    * ```
    */
   async function* withCache(
-    entries: Iterable<EntryData>,
+    entries: Iterator<EntryData>,
     params: Record<string, string>,
     loaderPromises: Map<string, Promise<any>>,
-    interceptResult?: { intercept: InterceptEntry; entry: EntryData } | null
-  ): AsyncGenerator<[EntryData, ResolvedSegment[] | null, boolean]> {
-    const cacheProvider = getCacheProvider();
+    interceptResult?: { intercept: InterceptEntry; entry: EntryData } | null,
+    cacheScope: CacheScope | null = null
+  ): AsyncGenerator<[EntryData, ResolvedSegment[] | null, boolean, CacheScope | null]> {
+    let result = entries.next();
+    while (!result.done) {
+      const entry = result.value;
 
-    for (const entry of entries) {
+      // Check if entry has its own cache config - create new scope
+      if (entry.cache) {
+        const newScope = createCacheScope(entry.cache, cacheScope);
+        if (newScope !== cacheScope) {
+          console.log(`[withCache] New cache scope for ${entry.id}: ttl=${newScope?.ttl}`);
+          // Delegate to sub-iterator with new scope
+          // Re-yield this entry first, then continue with remaining entries
+          yield* withCacheFromEntry(entry, entries, params, loaderPromises, interceptResult, newScope);
+          return; // Sub-iterator handles everything from here
+        }
+      }
+
       // Skip route entries when intercepting - intercept replaces route handler
       if (entry.type === "route" && interceptResult) {
-        yield [entry, null, true];
+        yield [entry, null, true, cacheScope];
+        result = entries.next();
         continue;
       }
 
-      // No cache or disabled - yield miss
-      if (!cacheProvider?.enabled) {
-        yield [entry, null, false];
+      // No cache scope - caching is opt-in only via cache() DSL
+      if (!cacheScope || !cacheScope.enabled) {
+        yield [entry, null, false, cacheScope];
+        result = entries.next();
         continue;
       }
 
       try {
-        // restore() handles cache get + handle replay + loader restore
-        const cachedSegments = await cacheProvider.restore(entry.id, params, loaderPromises);
+        // Use scope's restore for cache lookup
+        const cachedSegments = await cacheScope.restore(entry.id, params, loaderPromises);
 
         if (cachedSegments) {
-          console.log(`[withCache] HIT: ${entry.id}`);
-          yield [entry, cachedSegments, false];
+          console.log(`[withCache] HIT: ${entry.id} (scope ttl=${cacheScope.ttl})`);
+          yield [entry, cachedSegments, false, cacheScope];
         } else {
-          console.log(`[withCache] MISS: ${entry.id}`);
-          yield [entry, null, false];
+          console.log(`[withCache] MISS: ${entry.id} (scope ttl=${cacheScope.ttl})`);
+          yield [entry, null, false, cacheScope];
         }
       } catch (error) {
         // Cache error - log and yield as miss (TTL will clean up corrupted entries)
         console.error(`[withCache] Error for ${entry.id}, falling back to fresh render:`, error);
-        yield [entry, null, false];
+        yield [entry, null, false, cacheScope];
+      }
+
+      result = entries.next();
+    }
+  }
+
+  /**
+   * Helper to yield an entry and continue with remaining entries in a new scope
+   */
+  async function* withCacheFromEntry(
+    firstEntry: EntryData,
+    remainingEntries: Iterator<EntryData>,
+    params: Record<string, string>,
+    loaderPromises: Map<string, Promise<any>>,
+    interceptResult: { intercept: InterceptEntry; entry: EntryData } | null | undefined,
+    cacheScope: CacheScope | null
+  ): AsyncGenerator<[EntryData, ResolvedSegment[] | null, boolean, CacheScope | null]> {
+    // Process first entry with new scope
+    if (firstEntry.type === "route" && interceptResult) {
+      yield [firstEntry, null, true, cacheScope];
+    } else if (!cacheScope || !cacheScope.enabled) {
+      // No cache scope - caching is opt-in only
+      yield [firstEntry, null, false, cacheScope];
+    } else {
+      try {
+        const cachedSegments = await cacheScope.restore(firstEntry.id, params, loaderPromises);
+
+        if (cachedSegments) {
+          console.log(`[withCache] HIT: ${firstEntry.id} (scope ttl=${cacheScope.ttl})`);
+          yield [firstEntry, cachedSegments, false, cacheScope];
+        } else {
+          console.log(`[withCache] MISS: ${firstEntry.id} (scope ttl=${cacheScope.ttl})`);
+          yield [firstEntry, null, false, cacheScope];
+        }
+      } catch (error) {
+        console.error(`[withCache] Error for ${firstEntry.id}, falling back to fresh render:`, error);
+        yield [firstEntry, null, false, cacheScope];
       }
     }
+
+    // Continue with remaining entries using yield *
+    yield* withCache(remainingEntries, params, loaderPromises, interceptResult, cacheScope);
   }
 
   /**
@@ -2245,9 +2299,6 @@ export function createRSCRouter<TEnv = any>(
         Store.metrics = metricsStore;
       }
 
-      // Get cache provider for caching
-      const cacheProvider = getCacheProvider();
-
       // Collect all segments from stream (run within store context for metrics tracking)
       const segments: ResolvedSegment[] = await getContext().runWithStore(
         Store,
@@ -2257,7 +2308,9 @@ export function createRSCRouter<TEnv = any>(
           const segs: ResolvedSegment[] = [];
 
           // Use withCache iterator for clean cache handling
-          for await (const [entry, cachedSegments, skipped] of withCache(traverseBack(manifestEntry), matched.params, loaderPromises)) {
+          // Convert generator to iterator for scope-based delegation
+          const entriesIterator = traverseBack(manifestEntry)[Symbol.iterator]();
+          for await (const [entry, cachedSegments, skipped, scope] of withCache(entriesIterator, matched.params, loaderPromises)) {
             if (skipped) {
               // Entry was skipped (shouldn't happen in full match, only partial)
               continue;
@@ -2288,7 +2341,10 @@ export function createRSCRouter<TEnv = any>(
             segs.push(...resolvedSegments);
 
             // Cache entry after handles settle (non-blocking)
-            cacheProvider?.cacheEntry(entry.id, resolvedSegments);
+            // Caching is opt-in: only happens when scope exists from cache() DSL
+            if (scope) {
+              scope.cacheEntry(entry.id, resolvedSegments);
+            }
           }
           return segs;
         }
@@ -2736,8 +2792,9 @@ export function createRSCRouter<TEnv = any>(
       const slots: Record<string, import("./types.js").SlotState> = {};
       let interceptSegments: ResolvedSegment[] = [];
 
-      // Get cache provider for caching
-      const cacheProvider = getCacheProvider();
+      // Track cache scope from withCache iterator for intercept caching
+      // Use a container to avoid TypeScript narrowing issues with closure mutations
+      const scopeRef: { current: CacheScope | null } = { current: null };
 
       // Collect segments with revalidation-aware rendering
       // When intercepting: skip route handler, only render layouts + intercept
@@ -2752,7 +2809,12 @@ export function createRSCRouter<TEnv = any>(
 
           // Use withCache iterator for clean cache handling
           // Pass interceptResult to skip route entries when intercepting
-          for await (const [entry, cachedSegments, skipped] of withCache(traverseBack(manifestEntry), matched.params, loaderPromises, interceptResult)) {
+          // Convert generator to iterator for scope-based delegation
+          const entriesIterator = traverseBack(manifestEntry)[Symbol.iterator]();
+          for await (const [entry, cachedSegments, skipped, scope] of withCache(entriesIterator, matched.params, loaderPromises, interceptResult)) {
+            // Track the scope for intercept caching
+            scopeRef.current = scope;
+
             console.log(
               `[Router.matchPartial] Processing entry: ${entry.shortCode} (${entry.type})`
             );
@@ -2799,7 +2861,10 @@ export function createRSCRouter<TEnv = any>(
             matchedIds.push(...resolved.matchedIds);
 
             // Cache entry after handles settle (non-blocking)
-            cacheProvider?.cacheEntry(entry.id, resolved.segments);
+            // Caching is opt-in: only happens when scope exists from cache() DSL
+            if (scope) {
+              scope.cacheEntry(entry.id, resolved.segments);
+            }
           }
           return { segments: segs, matchedIds };
         }
@@ -2817,8 +2882,10 @@ export function createRSCRouter<TEnv = any>(
         // Cache key for intercept: parentEntry.id + slot + route
         const interceptCacheKey = `${interceptResult.entry.id}.intercept.${slotName}.${routeName}`;
 
-        // Check cache for intercept (handles handle replay + loader restore)
-        const cachedIntercept = await cacheProvider?.restore(interceptCacheKey, matched.params, loaderPromises);
+        // Check cache for intercept using the inherited scope (if caching enabled)
+        const cachedIntercept = scopeRef.current?.enabled
+          ? await scopeRef.current.restore(interceptCacheKey, matched.params, loaderPromises)
+          : null;
 
         if (cachedIntercept) {
           console.log(`[Router.matchPartial] Intercept cache HIT: ${interceptCacheKey}`);
@@ -2851,8 +2918,8 @@ export function createRSCRouter<TEnv = any>(
               )
           );
 
-          // Queue intercept for caching (non-blocking)
-          cacheProvider?.cacheEntry(interceptCacheKey, interceptSegments);
+          // Queue intercept for caching (non-blocking) - uses inherited scope
+          scopeRef.current?.cacheEntry(interceptCacheKey, interceptSegments);
         }
 
         // Add to slots metadata - browser uses this to know which slots are active

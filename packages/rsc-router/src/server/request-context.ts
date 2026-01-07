@@ -17,7 +17,7 @@ import type { Handle } from "../handle.js";
 import { createHandleStore, type HandleStore } from "./handle-store.js";
 import { isHandle } from "../handle.js";
 import { track } from "./context.js";
-import type { SegmentCacheProvider } from "../cache/types.js";
+import type { SegmentCacheStore } from "../cache/types.js";
 
 /**
  * Unified request context available via getRequestContext()
@@ -99,8 +99,8 @@ export interface RequestContext<
   /** @internal Handle store for tracking handle data across segments */
   _handleStore: HandleStore;
 
-  /** @internal Cache provider for segment caching (optional) */
-  _cacheProvider?: SegmentCacheProvider;
+  /** @internal Cache store for segment caching (optional, used by CacheScope) */
+  _cacheStore?: SegmentCacheStore;
 
   /**
    * Schedule work to run after the response is sent.
@@ -110,7 +110,7 @@ export interface RequestContext<
    * @example
    * ```typescript
    * ctx.waitUntil(async () => {
-   *   await cacheProvider.set(key, data);
+   *   await cacheStore.set(key, data, ttl);
    * });
    * ```
    */
@@ -183,8 +183,8 @@ export interface CreateRequestContextOptions<TEnv> {
   request: Request;
   url: URL;
   variables: Record<string, any>;
-  /** Optional cache provider for segment caching */
-  cacheProvider?: SegmentCacheProvider;
+  /** Optional cache store for segment caching (used by CacheScope) */
+  cacheStore?: SegmentCacheStore;
   /** Optional Cloudflare execution context for waitUntil support */
   executionContext?: ExecutionContext;
 }
@@ -200,7 +200,7 @@ export interface CreateRequestContextOptions<TEnv> {
 export function createRequestContext<TEnv>(
   options: CreateRequestContextOptions<TEnv>
 ): RequestContext<TEnv> {
-  const { env, request, url, variables, cacheProvider, executionContext } = options;
+  const { env, request, url, variables, cacheStore, executionContext } = options;
   const cookieHeader = request.headers.get("Cookie");
   let parsedCookies: Record<string, string> | null = null;
 
@@ -269,7 +269,7 @@ export function createRequestContext<TEnv>(
     method: request.method,
 
     _handleStore: handleStore,
-    _cacheProvider: cacheProvider,
+    _cacheStore: cacheStore,
 
     waitUntil(fn: () => Promise<void>): void {
       if (executionContext?.waitUntil) {

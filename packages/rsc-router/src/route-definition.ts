@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type {
+  CacheOptions,
   DefaultEnv,
   ErrorBoundaryHandler,
   ExtractRouteParams,
@@ -37,6 +38,7 @@ import type {
   InterceptUseItem,
   LoaderUseItem,
   WhenItem,
+  CacheItem,
 } from "./route-types.js";
 // const __DEV__ = import.meta.MODE === "development";
 
@@ -156,6 +158,7 @@ export type {
   ParallelUseItem,
   InterceptUseItem,
   WhenItem,
+  CacheItem,
 } from "./route-types.js";
 
 // Re-export intercept selector types for use in handlers
@@ -413,6 +416,53 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * @param fn - Selector function receiving navigation context, returns boolean
    */
   when: (fn: InterceptWhenFn) => WhenItem;
+  /**
+   * Define cache configuration for segments
+   *
+   * Creates a cache boundary that applies to all children unless overridden.
+   * Cache config inherits down the route tree like middleware wrapping.
+   *
+   * Note: Loaders are NOT cached by default. Use cache() inside loader()
+   * to explicitly opt-in to loader caching.
+   *
+   * ```typescript
+   * // Cache all segments with 60s TTL
+   * cache({ ttl: 60 }, () => [
+   *   layout(<BlogLayout />),      // cached
+   *   route("post/:slug"),         // cached
+   * ])
+   *
+   * // With stale-while-revalidate
+   * cache({ ttl: 60, swr: 300 }, () => [
+   *   route("product/:id"),
+   * ])
+   *
+   * // Override for specific section
+   * cache({ ttl: 60 }, () => [
+   *   layout(<RootLayout />),
+   *   cache({ ttl: 300 }, () => [
+   *     route("static-page"),     // longer TTL
+   *   ]),
+   *   cache(false, () => [
+   *     route("admin"),           // not cached
+   *   ]),
+   * ])
+   *
+   * // Opt-in loader caching
+   * route("product/:id", ProductHandler, () => [
+   *   loader(ProductLoader),               // NOT cached (default)
+   *   loader(StaticMetadata, () => [
+   *     cache({ ttl: 3600 }),              // cached for 1 hour
+   *   ]),
+   * ])
+   * ```
+   * @param options - Cache options or false to disable caching
+   * @param children - Optional callback returning child segments
+   */
+  cache: (
+    options: CacheOptions | false,
+    children?: () => AllUseItems[]
+  ) => CacheItem;
 };
 
 const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
@@ -541,6 +591,47 @@ const when: RouteHelpers<any, any>["when"] = (fn) => {
   const name = `$${getContext().getNextIndex("when")}`;
   parent.when.push(fn);
   return { name, type: "when" } as WhenItem;
+};
+
+/**
+ * Cache helper - defines caching configuration for segments
+ *
+ * Creates a cache boundary that applies to all children unless overridden.
+ * When used without children, attaches cache config to the parent entry
+ * (e.g., for loader-specific caching).
+ */
+const cache: RouteHelpers<any, any>["cache"] = (options, children) => {
+  const store = getContext();
+  const ctx = store.getStore();
+  if (!ctx) throw new Error("cache() must be called inside map()");
+
+  const name = `$${store.getNextIndex("cache")}`;
+  const cacheConfig = { options };
+
+  // If no children, attach cache config to current parent (for loader caching)
+  if (!children) {
+    // Check if we're inside a loader() use() callback
+    const parent = ctx.parent as any;
+    if (parent && "cache" in parent) {
+      // Direct assignment to loader entry's cache field
+      parent.cache = cacheConfig;
+    } else if (parent) {
+      // Attach to parent entry (layout/route/parallel)
+      parent.cache = cacheConfig;
+    }
+    return { name, type: "cache" } as CacheItem;
+  }
+
+  // With children: run callback within a new cache scope
+  // Children will inherit this cache config unless they override it
+  const result = store.runWithCache(cacheConfig, children);
+
+  invariant(
+    Array.isArray(result) && result.every((item) => isValidUseItem(item)),
+    `cache() children callback must return an array of use items [${name}]`
+  );
+
+  return { name, type: "cache", uses: result } as CacheItem;
 };
 
 const middleware: RouteHelpers<any, any>["middleware"] = (...fn) => {
@@ -888,6 +979,7 @@ const isValidUseItem = (item: any): item is AllUseItems | undefined | null => {
         "errorBoundary",
         "notFoundBoundary",
         "when",
+        "cache",
       ].includes(item.type))
   );
 };
@@ -999,6 +1091,13 @@ const createWhenHelper = (): RouteHelpers<any, any>["when"] => {
 };
 
 /**
+ * Create cache helper for cache configuration
+ */
+const createCacheHelper = (): RouteHelpers<any, any>["cache"] => {
+  return cache;
+};
+
+/**
  * Type-safe handler definition helper
  *
  */
@@ -1024,6 +1123,7 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
       errorBoundary: createErrorBoundaryHelper<TEnv>(),
       notFoundBoundary: createNotFoundBoundaryHelper<TEnv>(),
       when: createWhenHelper(),
+      cache: createCacheHelper(),
     };
 
     return [layout(RootLayout, () => builder(helpers))].flat(3);
