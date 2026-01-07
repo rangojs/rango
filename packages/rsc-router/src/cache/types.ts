@@ -51,16 +51,19 @@ export interface SegmentCacheStore {
 
 /**
  * Serialized segment data stored in cache
+ * Note: loading is intentionally not cached - cached segments have resolved data
  */
 export interface SerializedSegmentData {
   /** RSC-encoded component string */
   encoded: string;
+  /** RSC-encoded layout string (if present) */
+  encodedLayout?: string;
   /** RSC-encoded loaderData (if present) */
   encodedLoaderData?: string;
   /** RSC-encoded loaderDataPromise (if present) */
   encodedLoaderDataPromise?: string;
-  /** Segment metadata (everything except component and loader data) */
-  metadata: Omit<ResolvedSegment, "component" | "loaderData" | "loaderDataPromise">;
+  /** Segment metadata (everything except component, layout, loading, and loader data) */
+  metadata: Omit<ResolvedSegment, "component" | "layout" | "loading" | "loaderData" | "loaderDataPromise">;
 }
 
 /**

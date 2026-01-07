@@ -29,6 +29,6 @@ export default createRSCHandler({
     ),
   cache: {
     store: cacheStore,
-    ttl: 60,
+    ttl: Infinity,
   },
 });

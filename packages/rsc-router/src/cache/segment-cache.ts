@@ -56,7 +56,9 @@ async function rscSerialize(value: unknown): Promise<string | undefined> {
 /**
  * RSC-deserialize a value
  */
-async function rscDeserialize<T>(encoded: string | undefined): Promise<T | undefined> {
+async function rscDeserialize<T>(
+  encoded: string | undefined
+): Promise<T | undefined> {
   if (!encoded) return undefined;
 
   const temporaryReferences = createTemporaryReferenceSet();
@@ -75,13 +77,27 @@ async function serializeSegments(
   for (const segment of segments) {
     const temporaryReferences = createTemporaryReferenceSet();
 
+    // Await component if it's a Promise (intercepts with loading keep component as Promise)
+    const componentResolved =
+      segment.component instanceof Promise
+        ? await segment.component
+        : segment.component;
+
     // Serialize the component to RSC stream
-    const stream = renderToReadableStream(segment.component, {
+    const stream = renderToReadableStream(componentResolved, {
       temporaryReferences,
     });
 
     // Convert stream to string
     const encoded = await streamToString(stream);
+
+    // RSC-serialize layout if present (ReactNode)
+    const encodedLayout = segment.layout
+      ? await rscSerialize(segment.layout)
+      : undefined;
+
+    // Note: loading is intentionally NOT cached - when restoring from cache,
+    // all data is already resolved so loading skeletons aren't needed
 
     // Await and RSC-serialize loaderData if present
     const loaderDataResolved =
@@ -95,10 +111,13 @@ async function serializeSegments(
       segment.loaderDataPromise instanceof Promise
         ? await segment.loaderDataPromise
         : segment.loaderDataPromise;
-    const encodedLoaderDataPromise = await rscSerialize(loaderDataPromiseResolved);
+    const encodedLoaderDataPromise = await rscSerialize(
+      loaderDataPromiseResolved
+    );
 
     serialized.push({
       encoded,
+      encodedLayout,
       encodedLoaderData,
       encodedLoaderDataPromise,
       metadata: {
@@ -137,13 +156,17 @@ async function deserializeSegments(
       temporaryReferences,
     });
 
-    // RSC-deserialize loaderData and loaderDataPromise
-    const loaderData = await rscDeserialize(item.encodedLoaderData);
-    const loaderDataPromise = await rscDeserialize(item.encodedLoaderDataPromise);
+    // RSC-deserialize layout, loaderData, loaderDataPromise in parallel
+    const [layout, loaderData, loaderDataPromise] = await Promise.all([
+      rscDeserialize(item.encodedLayout),
+      rscDeserialize(item.encodedLoaderData),
+      rscDeserialize(item.encodedLoaderDataPromise),
+    ]);
 
     segments.push({
       ...item.metadata,
       component,
+      layout,
       loaderData,
       loaderDataPromise,
     } as ResolvedSegment);
@@ -154,7 +177,9 @@ async function deserializeSegments(
 
 // Utility functions
 
-async function streamToString(stream: ReadableStream<Uint8Array>): Promise<string> {
+async function streamToString(
+  stream: ReadableStream<Uint8Array>
+): Promise<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let result = "";
@@ -223,7 +248,7 @@ export interface CreateSegmentCacheProviderOptions {
 export function createSegmentCacheProvider(
   options: CreateSegmentCacheProviderOptions
 ): SegmentCacheProvider {
-  const { store, enabled = true, ttl: defaultTtl = 60 } = options;
+  const { store, enabled = true, ttl: defaultTtl = Infinity } = options;
 
   // Internal get - not exposed on public interface
   async function get(
@@ -351,9 +376,10 @@ export function createSegmentCacheProvider(
           loaderPromises.set(seg.loaderId, Promise.resolve(seg.loaderData));
         }
         if (seg.loaderIds && seg.loaderDataPromise) {
-          const loaderData = seg.loaderDataPromise instanceof Promise
-            ? await seg.loaderDataPromise
-            : seg.loaderDataPromise;
+          const loaderData =
+            seg.loaderDataPromise instanceof Promise
+              ? await seg.loaderDataPromise
+              : seg.loaderDataPromise;
           if (Array.isArray(loaderData)) {
             seg.loaderIds.forEach((id: string, i: number) => {
               loaderPromises.set(id, Promise.resolve(loaderData[i]));
