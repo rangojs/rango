@@ -179,7 +179,7 @@ export default map<typeof shopRoutes>(
               when(({ from }) => !from.pathname.startsWith("/shop/products/")),
               layout(<ModalWrapper />),
               loading(<ProductModalContentSkeleton />),
-              loader(ProductLoader),
+              loader(ProductLoader, () => [cache()]),
               // Cart quantity loader - revalidates on cart actions
               loader(ProductCartLoader, () => [
                 revalidate(

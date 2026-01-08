@@ -17,7 +17,13 @@ import type {
   ShouldRevalidateFn,
   TrailingSlashMode,
 } from "./types.js";
-import { getContext, type EntryData, type InterceptEntry, type InterceptWhenFn, type InterceptSelectorContext } from "./server/context";
+import {
+  getContext,
+  type EntryData,
+  type InterceptEntry,
+  type InterceptWhenFn,
+  type InterceptSelectorContext,
+} from "./server/context";
 import { invariant } from "./errors";
 import RootLayout from "./server/root-layout";
 import type {
@@ -83,13 +89,22 @@ function isRouteConfig(value: unknown): value is RouteConfig {
 export function route<const T extends RouteDefinition>(
   input: T,
   options?: RouteDefinitionOptions
-): ResolvedRouteMap<T> & { __trailingSlash?: Record<string, TrailingSlashMode> } {
+): ResolvedRouteMap<T> & {
+  __trailingSlash?: Record<string, TrailingSlashMode>;
+} {
   const trailingSlash: Record<string, TrailingSlashMode> = {};
-  const routes = flattenRoutes(input as RouteDefinition, "", trailingSlash, options?.trailingSlash);
+  const routes = flattenRoutes(
+    input as RouteDefinition,
+    "",
+    trailingSlash,
+    options?.trailingSlash
+  );
 
   // Attach trailing slash config as a non-enumerable property
   // This keeps backwards compatibility while passing the config through
-  const result = routes as ResolvedRouteMap<T> & { __trailingSlash?: Record<string, TrailingSlashMode> };
+  const result = routes as ResolvedRouteMap<T> & {
+    __trailingSlash?: Record<string, TrailingSlashMode>;
+  };
   if (Object.keys(trailingSlash).length > 0) {
     Object.defineProperty(result, "__trailingSlash", {
       value: trailingSlash,
@@ -132,7 +147,12 @@ function flattenRoutes(
       }
     } else {
       // Nested routes - flatten recursively
-      const nested = flattenRoutes(value, `${fullKey}.`, trailingSlashConfig, defaultTrailingSlash);
+      const nested = flattenRoutes(
+        value,
+        `${fullKey}.`,
+        trailingSlashConfig,
+        defaultTrailingSlash
+      );
       Object.assign(flattened, nested);
     }
   }
@@ -162,7 +182,11 @@ export type {
 } from "./route-types.js";
 
 // Re-export intercept selector types for use in handlers
-export type { InterceptSelectorContext, InterceptSegmentsState, InterceptWhenFn } from "./server/context";
+export type {
+  InterceptSelectorContext,
+  InterceptSegmentsState,
+  InterceptWhenFn,
+} from "./server/context";
 
 /**
  * Route helpers provided by map()
@@ -474,8 +498,12 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * @param children - Optional callback returning child segments (when first arg is options)
    */
   cache: {
+    (): CacheItem;
     (children: () => AllUseItems[]): CacheItem;
-    (options: PartialCacheOptions | false, children?: () => AllUseItems[]): CacheItem;
+    (
+      options: PartialCacheOptions | false,
+      use?: () => AllUseItems[]
+    ): CacheItem;
   };
 };
 
@@ -602,7 +630,10 @@ const when: RouteHelpers<any, any>["when"] = (fn) => {
   // which should have a `when` array. If not present, we're not inside intercept()
   const parent = ctx.parent as any;
   if (!parent || !("when" in parent)) {
-    invariant(false, "when() can only be used inside intercept() use() callback");
+    invariant(
+      false,
+      "when() can only be used inside intercept() use() callback"
+    );
   }
 
   const name = `$${getContext().getNextIndex("when")}`;
@@ -617,23 +648,28 @@ const when: RouteHelpers<any, any>["when"] = (fn) => {
  * When used without children, attaches cache config to the parent entry
  * (e.g., for loader-specific caching).
  *
- * Supports two call signatures:
- * - cache(() => [...]) - uses app-level defaults
+ * Supports three call signatures:
+ * - cache() - no args, uses app-level defaults (for loader caching)
+ * - cache(() => [...]) - wraps children with app-level defaults
  * - cache({ ttl: 60 }, () => [...]) - with explicit options
  */
 const cache: RouteHelpers<any, any>["cache"] = (
-  optionsOrChildren: PartialCacheOptions | false | (() => AllUseItems[]),
+  optionsOrChildren?: PartialCacheOptions | false | (() => AllUseItems[]),
   maybeChildren?: () => AllUseItems[]
 ) => {
   const store = getContext();
   const ctx = store.getStore();
   if (!ctx) throw new Error("cache() must be called inside map()");
 
-  // Handle overloaded signature: cache(children) or cache(options, children)
+  // Handle overloaded signature: cache(), cache(children), or cache(options, children)
   let options: PartialCacheOptions | false;
   let children: (() => AllUseItems[]) | undefined;
 
-  if (typeof optionsOrChildren === "function") {
+  if (optionsOrChildren === undefined) {
+    // cache() - no args, use defaults
+    options = {};
+    children = undefined;
+  } else if (typeof optionsOrChildren === "function") {
     // cache(() => [...]) - use empty options (will use defaults)
     options = {};
     children = optionsOrChildren;
@@ -792,7 +828,7 @@ const intercept: RouteHelpers<any, any>["intercept"] = (
     errorBoundary: [],
     notFoundBoundary: [],
     loader: [],
-    when: [],  // Selector conditions for conditional interception
+    when: [], // Selector conditions for conditional interception
   };
 
   // Run use callback if provided to collect loaders, revalidate, middleware, etc.
@@ -811,8 +847,8 @@ const intercept: RouteHelpers<any, any>["intercept"] = (
       errorBoundary: entry.errorBoundary,
       notFoundBoundary: entry.notFoundBoundary,
       loader: entry.loader,
-      layout: capturedLayouts,  // Capture layout() calls
-      when: entry.when,  // Capture when() conditions
+      layout: capturedLayouts, // Capture layout() calls
+      when: entry.when, // Capture when() conditions
       // Use getter/setter to capture loading on the entry
       get loading() {
         return entry.loading;
@@ -831,7 +867,9 @@ const intercept: RouteHelpers<any, any>["intercept"] = (
     // Extract layout from captured layouts (use first one if multiple)
     // Layout inside intercept should always be ReactNode or Handler, not Record slots
     if (capturedLayouts.length > 0 && capturedLayouts[0].type === "layout") {
-      entry.layout = capturedLayouts[0].handler as ReactNode | Handler<any, any>;
+      entry.layout = capturedLayouts[0].handler as
+        | ReactNode
+        | Handler<any, any>;
     }
 
     invariant(
@@ -1019,7 +1057,9 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     } else {
       // Has parent - register as orphan layout
       invariant(
-        parent.type === "route" || parent.type === "layout" || parent.type === "cache",
+        parent.type === "route" ||
+          parent.type === "layout" ||
+          parent.type === "cache",
         `Orphan layouts can only be defined inside route or layout > check [${namespace}]`
       );
 
