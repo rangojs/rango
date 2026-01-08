@@ -373,6 +373,20 @@ export function createServerActionBridge(
             if (needsLoaderMerge(fromServer, fromCache)) {
               return mergeSegmentLoaders(fromServer, fromCache);
             }
+            // When server returns component: null for a layout segment, it means
+            // "this segment doesn't need re-rendering" - preserve the cached component
+            // to maintain the outlet chain and prevent React tree changes
+            const cached = currentSegmentMap.get(segId); // Re-fetch to avoid type narrowing issues
+            if (
+              fromServer.component === null &&
+              fromServer.type === "layout" &&
+              cached?.component != null
+            ) {
+              console.log(
+                `[Browser] Preserving cached component for layout ${segId} (server returned null)`
+              );
+              return { ...fromServer, component: cached.component };
+            }
             return fromServer;
           }
 

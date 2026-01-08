@@ -548,10 +548,10 @@ export function createRSCRouter<TEnv = any>(
    * Async iterator that wraps entry traversal with caching.
    *
    * For each entry:
-   * - Skips route entries when intercepting (yields [entry, null, true])
+   * - Skips route entries when intercepting (yields [entry, null, null, true])
    * - Checks cache (if enabled)
-   * - On HIT: restores handles and loader data, yields [entry, cachedResult, false]
-   * - On MISS: yields [entry, null, false]
+   * - On HIT: restores handles and loader data, yields [entry, segments, segmentIds, false]
+   * - On MISS: yields [entry, null, null, false]
    *
    * Cache provider and handle store are resolved from request context internally.
    *
@@ -562,13 +562,14 @@ export function createRSCRouter<TEnv = any>(
    *
    * @example
    * ```typescript
-   * for await (const [entry, cachedSegments, skipped] of withCache(entries, params, loaderPromises, interceptResult)) {
+   * for await (const [entry, cachedSegments, cachedIds, skipped] of withCache(entries, params, loaderPromises, interceptResult)) {
    *   if (skipped) {
    *     matchedIds.push(entry.shortCode);
    *     continue;
    *   }
    *   if (cachedSegments) {
    *     segs.push(...cachedSegments);
+   *     matchedIds.push(...cachedIds);
    *     continue;
    *   }
    *   // resolve entry...
@@ -580,37 +581,39 @@ export function createRSCRouter<TEnv = any>(
     params: Record<string, string>,
     loaderPromises: Map<string, Promise<any>>,
     interceptResult?: { intercept: InterceptEntry; entry: EntryData } | null
-  ): AsyncGenerator<[EntryData, ResolvedSegment[] | null, boolean]> {
+  ): AsyncGenerator<[EntryData, ResolvedSegment[] | null, string[] | null, boolean]> {
     const cacheProvider = getCacheProvider();
 
     for (const entry of entries) {
       // Skip route entries when intercepting - intercept replaces route handler
       if (entry.type === "route" && interceptResult) {
-        yield [entry, null, true];
+        yield [entry, null, null, true];
         continue;
       }
 
       // No cache or disabled - yield miss
       if (!cacheProvider?.enabled) {
-        yield [entry, null, false];
+        yield [entry, null, null, false];
         continue;
       }
 
       try {
         // restore() handles cache get + handle replay + loader restore
-        const cachedSegments = await cacheProvider.restore(entry.id, params, loaderPromises);
+        // Returns [segments, segmentIds] tuple or null
+        const cached = await cacheProvider.restore(entry.id, params, loaderPromises);
 
-        if (cachedSegments) {
+        if (cached) {
+          const [segments, segmentIds] = cached;
           console.log(`[withCache] HIT: ${entry.id}`);
-          yield [entry, cachedSegments, false];
+          yield [entry, segments, segmentIds, false];
         } else {
           console.log(`[withCache] MISS: ${entry.id}`);
-          yield [entry, null, false];
+          yield [entry, null, null, false];
         }
       } catch (error) {
         // Cache error - log and yield as miss (TTL will clean up corrupted entries)
         console.error(`[withCache] Error for ${entry.id}, falling back to fresh render:`, error);
-        yield [entry, null, false];
+        yield [entry, null, null, false];
       }
     }
   }
@@ -2257,7 +2260,8 @@ export function createRSCRouter<TEnv = any>(
           const segs: ResolvedSegment[] = [];
 
           // Use withCache iterator for clean cache handling
-          for await (const [entry, cachedSegments, skipped] of withCache(traverseBack(manifestEntry), matched.params, loaderPromises)) {
+          // Full SSR match doesn't need segment IDs (no matchedIds tracking)
+          for await (const [entry, cachedSegments, , skipped] of withCache(traverseBack(manifestEntry), matched.params, loaderPromises)) {
             if (skipped) {
               // Entry was skipped (shouldn't happen in full match, only partial)
               continue;
@@ -2752,7 +2756,7 @@ export function createRSCRouter<TEnv = any>(
 
           // Use withCache iterator for clean cache handling
           // Pass interceptResult to skip route entries when intercepting
-          for await (const [entry, cachedSegments, skipped] of withCache(traverseBack(manifestEntry), matched.params, loaderPromises, interceptResult)) {
+          for await (const [entry, cachedSegments, cachedIds, skipped] of withCache(traverseBack(manifestEntry), matched.params, loaderPromises, interceptResult)) {
             console.log(
               `[Router.matchPartial] Processing entry: ${entry.shortCode} (${entry.type})`
             );
@@ -2767,9 +2771,9 @@ export function createRSCRouter<TEnv = any>(
               continue;
             }
 
-            if (cachedSegments) {
+            if (cachedSegments && cachedIds) {
               segs.push(...cachedSegments);
-              matchedIds.push(entry.shortCode);
+              matchedIds.push(...cachedIds);
               continue; // Skip handler execution
             }
 
@@ -2818,11 +2822,13 @@ export function createRSCRouter<TEnv = any>(
         const interceptCacheKey = `${interceptResult.entry.id}.intercept.${slotName}.${routeName}`;
 
         // Check cache for intercept (handles handle replay + loader restore)
+        // restore() returns [segments, ids] tuple - we only need segments here
+        // (intercept IDs are computed from segments at the end)
         const cachedIntercept = await cacheProvider?.restore(interceptCacheKey, matched.params, loaderPromises);
 
         if (cachedIntercept) {
           console.log(`[Router.matchPartial] Intercept cache HIT: ${interceptCacheKey}`);
-          interceptSegments = cachedIntercept;
+          interceptSegments = cachedIntercept[0]; // Extract segments from tuple
         } else {
           console.log(`[Router.matchPartial] Intercept cache MISS: ${interceptCacheKey}`);
           // Resolve intercept entry (middleware, loaders, handler)

@@ -354,7 +354,7 @@ export function createSegmentCacheProvider(
       cacheKey: string,
       params: Record<string, string>,
       loaderPromises: Map<string, Promise<any>>
-    ): Promise<ResolvedSegment[] | null> {
+    ): Promise<[ResolvedSegment[], string[]] | null> {
       if (!enabled) return null;
 
       const cached = await get(cacheKey, params);
@@ -388,7 +388,9 @@ export function createSegmentCacheProvider(
         }
       }
 
-      return cached.segments;
+      // Return tuple of [segments, segmentIds]
+      const segmentIds = cached.segments.map(seg => seg.id);
+      return [cached.segments, segmentIds];
     },
   };
 }

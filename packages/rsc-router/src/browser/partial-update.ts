@@ -265,6 +265,19 @@ export function createPartialUpdater(
             ) {
               return mergeSegmentLoaders(fromServer, fromCache);
             }
+            // When server returns component: null for a layout segment, it means
+            // "this segment doesn't need re-rendering" - preserve the cached component
+            // to maintain the outlet chain and prevent React tree changes
+            if (
+              fromServer.component === null &&
+              fromServer.type === "layout" &&
+              fromCache?.component != null
+            ) {
+              console.log(
+                `[Browser] Preserving cached component for layout ${id} (server returned null)`
+              );
+              return { ...fromServer, component: fromCache.component };
+            }
             return fromServer;
           }
           // Fall back to current page's cached segments

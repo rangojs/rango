@@ -144,18 +144,18 @@ export interface SegmentCacheProvider {
    * Get cached segments and restore handles/loaders.
    *
    * Combines cache get with handle replay and loader data restoration.
-   * Returns segments if cache hit, null if miss or disabled.
+   * Returns tuple of [segments, segmentIds] if cache hit, null if miss or disabled.
    *
    * @param cacheKey - Cache key to look up
    * @param params - Route params for cache key generation
    * @param loaderPromises - Map to restore loader data into
-   * @returns Cached segments or null if miss
+   * @returns Tuple of [segments, segmentIds] or null if miss
    */
   restore(
     cacheKey: string,
     params: Record<string, string>,
     loaderPromises: Map<string, Promise<any>>
-  ): Promise<ResolvedSegment[] | null>;
+  ): Promise<[ResolvedSegment[], string[]] | null>;
 
   /**
    * Cache entry with automatic handle collection (non-blocking).
