@@ -10,9 +10,12 @@
 - **In-memory store** - `MemorySegmentCacheStore` with TTL, survives HMR via `globalThis`
 - **Cache bypass** - `?__no_cache` query param disables caching per-request
 - **Pluggable store API** - `SegmentCacheStore` interface with handler-level configuration
+- **Per-route cache configuration** - `cache({ ttl, swr, store })` DSL for route definitions
+- **Store-level defaults** - `MemorySegmentCacheStore({ defaults: { ttl, swr } })`
+- **Per-section stores** - `cache({ store })` for dedicated stores per route section
+- **Nested cache inheritance** - Child caches inherit parent's store if not explicit
 
 ### 🚧 Remaining
-- **Per-route cache configuration** - `cache({ ttl: 60 })` DSL for route definitions
 - **Production storage backends** - Cloudflare KV, Redis adapters
 - **Cache invalidation API** - Tag-based invalidation, manual purge
 - **Proactive caching** - Use `waitUntil` to cache sibling segments
@@ -292,21 +295,23 @@ interface CachedEntryData {
 ```typescript
 import { createRSCHandler, MemorySegmentCacheStore } from "rsc-router/rsc";
 
-// Static config
+// Store with defaults - TTL/SWR inherited by all cache() boundaries
+const cacheStore = new MemorySegmentCacheStore({
+  defaults: { ttl: 60, swr: 300 },
+});
+
 export default createRSCHandler({
   router,
-  cache: {
-    store: new MemorySegmentCacheStore(),
-    ttl: 60,
-  },
+  cache: { store: cacheStore },
 });
 
 // Dynamic config with env (for Cloudflare bindings)
 export default createRSCHandler({
   router,
   cache: (env) => ({
-    store: new KVSegmentCacheStore(env.Bindings.CACHE_KV),
-    ttl: 60,
+    store: new KVSegmentCacheStore(env.Bindings.CACHE_KV, {
+      defaults: { ttl: 60 },
+    }),
   }),
 });
 ```
@@ -581,17 +586,19 @@ cache({ ttl: 60 }, () => [
 ### API Signature
 
 ```typescript
-function cache(
-  options: CacheOptions | false,
-  children?: () => RouteChildren[]
-): RouteChild;
+// Both signatures supported:
+function cache(children: () => RouteChildren[]): RouteChild;
+function cache(options: CacheOptions | false, children?: () => RouteChildren[]): RouteChild;
 
 interface CacheOptions {
-  // Time-to-live in seconds
-  ttl: number;
+  // Time-to-live in seconds (optional if store has defaults)
+  ttl?: number;
 
   // Stale-while-revalidate window (seconds after TTL)
   swr?: number;
+
+  // Explicit store for this cache boundary (overrides app-level store)
+  store?: SegmentCacheStore;
 
   // Conditional cache read
   condition?: (ctx: CacheConditionContext) => boolean;
@@ -602,7 +609,77 @@ interface CacheOptions {
   // Tags for invalidation
   tags?: string[] | ((ctx: CacheTagContext) => string[]);
 }
+
+interface SegmentCacheStore {
+  // Store-level defaults inherited by cache() boundaries
+  readonly defaults?: { ttl?: number; swr?: number };
+
+  get(key: string): Promise<CachedEntryData | null>;
+  set(key: string, data: CachedEntryData, ttl: number): Promise<void>;
+  delete(key: string): Promise<boolean>;
+  clear?(): Promise<void>;
+}
 ```
+
+### Per-Section Cache Store
+
+Different sections can use different cache stores with their own defaults:
+
+```typescript
+// Checkout-specific store with shorter TTL
+const checkoutStore = new MemorySegmentCacheStore({
+  defaults: { ttl: 10 },  // 10s for checkout (data changes frequently)
+});
+
+// Main app store
+const appStore = new MemorySegmentCacheStore({
+  defaults: { ttl: 60 },  // 60s default
+});
+
+export default createRSCHandler({
+  router,
+  cache: { store: appStore },
+});
+
+// In route definition:
+cache(() => [                               // Uses appStore (ttl: 60)
+  layout(<ShopLayout />),
+  route("products/:id"),
+
+  cache({ store: checkoutStore }, () => [   // Uses checkoutStore (ttl: 10)
+    layout(<CheckoutLayout />),
+    route("checkout"),
+  ]),
+])
+```
+
+### Nested Cache Inheritance
+
+Nested `cache()` boundaries inherit store from parent if not explicitly specified:
+
+```typescript
+cache({ store: storeA }, () => [          // Uses storeA
+  layout(<Outer />),
+
+  cache(() => [                            // Inherits storeA from parent
+    route("nested"),
+  ]),
+
+  cache({ store: storeB }, () => [         // Uses storeB (explicit override)
+    route("other"),
+  ]),
+])
+```
+
+**Store resolution priority:**
+1. Explicit store in `cache({ store })` → use it
+2. Parent scope's store → inherit
+3. App-level store from handler config → fallback
+
+**TTL resolution priority:**
+1. Explicit TTL in `cache({ ttl })` → use it
+2. Resolved store's defaults → inherit
+3. Hardcoded fallback (60s)
 
 ### Conditional Caching
 
