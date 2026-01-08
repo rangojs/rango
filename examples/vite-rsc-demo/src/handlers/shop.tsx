@@ -238,7 +238,7 @@ export default map<typeof shopRoutes>(
             },
             () => [
               loading(<ProductDetailSkeleton />, true),
-              loader(ProductLoader, () => [revalidate(() => false)]),
+              loader(ProductLoader, () => [revalidate(() => false), cache()]),
               loader(RelatedProductsLoader, () => [revalidate(() => false)]),
               revalidate(productDetailRevalidation),
 
