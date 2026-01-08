@@ -993,6 +993,34 @@ export interface CacheOptions {
   swr?: number;
 
   /**
+   * Override the cache store for this boundary.
+   * When specified, this boundary and its children use this store
+   * instead of the app-level store from handler config.
+   *
+   * Useful for:
+   * - Different backends per route section (memory vs KV vs Redis)
+   * - Loader-specific caching strategies
+   * - Hot data in fast cache, cold data in larger/slower cache
+   *
+   * @example
+   * ```typescript
+   * const kvStore = new CloudflareKVStore(env.CACHE_KV);
+   * const memoryStore = new MemorySegmentCacheStore({ defaults: { ttl: 10 } });
+   *
+   * // Fast memory cache for hot data
+   * cache({ store: memoryStore }, () => [
+   *   route("dashboard"),
+   * ])
+   *
+   * // KV for larger, less frequently accessed data
+   * cache({ store: kvStore, ttl: 3600 }, () => [
+   *   route("archive/:year"),
+   * ])
+   * ```
+   */
+  store?: import("./cache/types.js").SegmentCacheStore;
+
+  /**
    * Conditional cache read function.
    * Return false to skip cache for this request (always fetch fresh).
    *

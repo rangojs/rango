@@ -422,14 +422,14 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * Creates a cache boundary that applies to all children unless overridden.
    * Cache config inherits down the route tree like middleware wrapping.
    *
-   * When ttl is not specified, uses app-level defaults from cache config.
-   * This allows omitting ttl when defaults are configured at the app level.
+   * When ttl is not specified, uses store defaults (explicit store first,
+   * then app-level store). When store is not specified, uses app-level store.
    *
    * Note: Loaders are NOT cached by default. Use cache() inside loader()
    * to explicitly opt-in to loader caching.
    *
    * ```typescript
-   * // Using app-level defaults (ttl inherited from config.cache.defaults)
+   * // Using app-level defaults (ttl inherited from store.defaults)
    * cache(() => [
    *   layout(<BlogLayout />),      // cached with default TTL
    *   route("post/:slug"),         // cached with default TTL
@@ -455,6 +455,11 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    *   cache(false, () => [
    *     route("admin"),           // not cached
    *   ]),
+   * ])
+   *
+   * // Use different store for specific routes
+   * cache({ store: kvStore, ttl: 3600 }, () => [
+   *   route("archive/:year"),     // uses KV store
    * ])
    *
    * // Opt-in loader caching

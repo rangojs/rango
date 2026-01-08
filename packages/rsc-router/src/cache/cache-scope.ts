@@ -211,18 +211,27 @@ async function deserializeSegments(
  * When withCache encounters an entry with cache config, it creates
  * a new CacheScope. The scope owns serialization, storage, and TTL.
  *
+ * Store resolution priority:
+ * 1. Explicit store in cache() options
+ * 2. App-level store from handler config
+ *
  * TTL resolution priority:
  * 1. Explicit value in cache() options
- * 2. App-level defaults from cache config
- * 3. Hardcoded fallback (60 seconds)
+ * 2. Explicit store's defaults (if store specified)
+ * 3. App-level store's defaults
+ * 4. Hardcoded fallback (60 seconds)
  */
 export class CacheScope {
   readonly config: PartialCacheOptions | false;
   readonly parent: CacheScope | null;
+  /** Explicit store from cache() options, if specified */
+  private readonly explicitStore: SegmentCacheStore | undefined;
 
   constructor(config: PartialCacheOptions | false, parent: CacheScope | null = null) {
     this.config = config;
     this.parent = parent;
+    // Extract and store explicit store reference
+    this.explicitStore = config !== false ? config.store : undefined;
   }
 
   /**
@@ -243,7 +252,7 @@ export class CacheScope {
       return this.config.ttl;
     }
 
-    // Fall back to store defaults
+    // Fall back to store defaults (explicit store first, then app-level)
     const store = this.getStore();
     if (store?.defaults?.ttl !== undefined) {
       return store.defaults.ttl;
@@ -270,9 +279,22 @@ export class CacheScope {
   }
 
   /**
-   * Get the cache store from request context
+   * Get the cache store - resolution priority:
+   * 1. Explicit store from cache() options
+   * 2. Parent scope's store (for nested cache boundaries)
+   * 3. App-level store from request context
    */
   private getStore(): SegmentCacheStore | null {
+    // Explicit store from cache() options takes precedence
+    if (this.explicitStore) {
+      return this.explicitStore;
+    }
+    // Check parent scope's store (inherit from outer cache boundary)
+    if (this.parent) {
+      const parentStore = this.parent.getStore();
+      if (parentStore) return parentStore;
+    }
+    // Fall back to app-level store from request context
     const ctx = getRequestContext();
     return ctx?._cacheStore ?? null;
   }
