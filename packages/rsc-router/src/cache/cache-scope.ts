@@ -281,18 +281,12 @@ export class CacheScope {
   /**
    * Get the cache store - resolution priority:
    * 1. Explicit store from cache() options
-   * 2. Parent scope's store (for nested cache boundaries)
-   * 3. App-level store from request context
+   * 2. App-level store from request context
    */
   private getStore(): SegmentCacheStore | null {
     // Explicit store from cache() options takes precedence
     if (this.explicitStore) {
       return this.explicitStore;
-    }
-    // Check parent scope's store (inherit from outer cache boundary)
-    if (this.parent) {
-      const parentStore = this.parent.getStore();
-      if (parentStore) return parentStore;
     }
     // Fall back to app-level store from request context
     const ctx = getRequestContext();

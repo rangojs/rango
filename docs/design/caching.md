@@ -13,7 +13,6 @@
 - **Per-route cache configuration** - `cache({ ttl, swr, store })` DSL for route definitions
 - **Store-level defaults** - `MemorySegmentCacheStore({ defaults: { ttl, swr } })`
 - **Per-section stores** - `cache({ store })` for dedicated stores per route section
-- **Nested cache inheritance** - Child caches inherit parent's store if not explicit
 
 ### 🚧 Remaining
 - **Production storage backends** - Cloudflare KV, Redis adapters
@@ -653,28 +652,9 @@ cache(() => [                               // Uses appStore (ttl: 60)
 ])
 ```
 
-### Nested Cache Inheritance
-
-Nested `cache()` boundaries inherit store from parent if not explicitly specified:
-
-```typescript
-cache({ store: storeA }, () => [          // Uses storeA
-  layout(<Outer />),
-
-  cache(() => [                            // Inherits storeA from parent
-    route("nested"),
-  ]),
-
-  cache({ store: storeB }, () => [         // Uses storeB (explicit override)
-    route("other"),
-  ]),
-])
-```
-
 **Store resolution priority:**
 1. Explicit store in `cache({ store })` → use it
-2. Parent scope's store → inherit
-3. App-level store from handler config → fallback
+2. App-level store from handler config → fallback
 
 **TTL resolution priority:**
 1. Explicit TTL in `cache({ ttl })` → use it
