@@ -555,7 +555,7 @@ export interface ErrorInfo {
   /** Segment ID where the error occurred */
   segmentId: string;
   /** Segment type where the error occurred */
-  segmentType: "layout" | "route" | "parallel" | "loader" | "middleware";
+  segmentType: "layout" | "route" | "parallel" | "loader" | "middleware" | "cache";
 }
 
 /**
@@ -643,7 +643,7 @@ export interface NotFoundInfo {
   /** Segment ID where notFound was thrown */
   segmentId: string;
   /** Segment type where notFound was thrown */
-  segmentType: "layout" | "route" | "parallel" | "loader" | "middleware";
+  segmentType: "layout" | "route" | "parallel" | "loader" | "middleware" | "cache";
   /** The pathname that triggered the not found */
   pathname?: string;
 }
@@ -1038,14 +1038,34 @@ export interface CacheOptions {
 }
 
 /**
+ * Partial cache options for cache() DSL.
+ *
+ * When `ttl` is not specified, it will use the default from cache config.
+ * This allows cache() calls to inherit app-level defaults:
+ *
+ * @example
+ * ```typescript
+ * // App-level default (in handler config)
+ * cache: { store: myStore, defaults: { ttl: 60 } }
+ *
+ * // Route-level (inherits ttl from defaults)
+ * cache(() => [
+ *   route("products"),
+ * ])
+ *
+ * // Override with explicit ttl
+ * cache({ ttl: 300 }, () => [...])
+ * ```
+ */
+export type PartialCacheOptions = Partial<CacheOptions>;
+
+/**
  * Cache entry configuration stored in EntryData.
  * Represents the resolved cache config for a segment.
  */
 export interface EntryCacheConfig {
-  /** Cache options (false means caching disabled for this entry) */
-  options: CacheOptions | false;
-  /** Whether this config was inherited from parent or explicitly set */
-  inherited: boolean;
+  /** Cache options (false means caching disabled for this entry) - ttl is optional, uses defaults */
+  options: PartialCacheOptions | false;
 }
 
 // ============================================================================

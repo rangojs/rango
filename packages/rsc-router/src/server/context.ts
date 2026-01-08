@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ReactNode } from "react";
-import type { CacheOptions, ErrorBoundaryHandler, Handler, LoaderDefinition, MiddlewareFn, NotFoundBoundaryHandler, ShouldRevalidateFn } from "../types";
+import type { PartialCacheOptions, ErrorBoundaryHandler, Handler, LoaderDefinition, MiddlewareFn, NotFoundBoundaryHandler, ShouldRevalidateFn } from "../types";
 import { invariant } from "../errors";
 
 // ============================================================================
@@ -34,8 +34,8 @@ export interface MetricsStore {
  * unless overridden by a nested cache() call.
  */
 export type EntryCacheConfig = {
-  /** Cache options (false means caching disabled for this entry) */
-  options: CacheOptions | false;
+  /** Cache options (false means caching disabled for this entry) - ttl is optional, uses defaults */
+  options: PartialCacheOptions | false;
 };
 
 /**
@@ -144,6 +144,14 @@ export type EntryData =
       loading?: ReactNode | false;
     } & EntryPropCommon &
       EntryPropDatas &
+      EntryPropSegments)
+  | ({
+      type: "cache";
+      /** Cache entries create cache boundaries and render like layouts (with Outlet) */
+      handler: ReactNode | Handler<any, any>;
+      loading?: ReactNode | false;
+    } & EntryPropCommon &
+      EntryPropDatas &
       EntryPropSegments);
 
 /**
@@ -159,8 +167,6 @@ interface HelperContext {
   metrics?: MetricsStore;
   /** True when rendering for SSR (document requests) */
   isSSR?: boolean;
-  /** Cache config inherited from parent cache() scope */
-  inheritedCache?: EntryCacheConfig;
 }
 export const RSCRouterContext: AsyncLocalStorage<HelperContext> =
   new AsyncLocalStorage<HelperContext>();
@@ -174,7 +180,7 @@ export const getContext = (): {
     type: (string & {}) | "layout" | "parallel" | "middleware" | "revalidate"
   ) => string;
   getShortCode: (
-    type: "layout" | "parallel" | "route" | "loader"
+    type: "layout" | "parallel" | "route" | "loader" | "cache"
   ) => string;
   run: <T>(
     namespace: string,
@@ -187,11 +193,6 @@ export const getContext = (): {
     parent: EntryData | null,
     callback: (...args: any[]) => T
   ) => T;
-  runWithCache: <T>(
-    cacheConfig: EntryCacheConfig,
-    callback: (...args: any[]) => T
-  ) => T;
-  getInheritedCache: () => EntryCacheConfig | undefined;
 } => {
   const context = RSCRouterContext;
 
@@ -237,12 +238,12 @@ export const getContext = (): {
       store.counters[type] = index + 1;
       return `$${type}.${index}`;
     },
-    getShortCode: (type: "layout" | "parallel" | "route" | "loader") => {
+    getShortCode: (type: "layout" | "parallel" | "route" | "loader" | "cache") => {
       const store = context.getStore();
       invariant(store, "No context RSCRouterContext available");
 
       const parent = store.parent;
-      const prefix = type === "layout" ? "L" : type === "parallel" ? "P" : type === "loader" ? "D" : "R";
+      const prefix = type === "layout" ? "L" : type === "parallel" ? "P" : type === "loader" ? "D" : type === "cache" ? "C" : "R";
       const mountPrefix = store.mountIndex !== undefined ? `M${store.mountIndex}` : "";
 
       if (!parent) {
@@ -277,7 +278,6 @@ export const getContext = (): {
           mountIndex: store.mountIndex,
           metrics: store.metrics,
           isSSR: store.isSSR,
-          inheritedCache: store.inheritedCache,
         },
         callback
       );
@@ -301,31 +301,9 @@ export const getContext = (): {
           mountIndex: store?.mountIndex,
           metrics: store?.metrics,
           isSSR: store?.isSSR,
-          inheritedCache: store?.inheritedCache,
         },
         callback
       );
-    },
-    runWithCache: <T>(
-      cacheConfig: EntryCacheConfig,
-      callback: (...args: any[]) => T
-    ): T => {
-      const store = context.getStore();
-      if (!store) {
-        throw new Error("runWithCache() must be called inside a context");
-      }
-      // Run callback with new cache config (overrides inherited)
-      return context.run(
-        {
-          ...store,
-          inheritedCache: cacheConfig,
-        },
-        callback
-      );
-    },
-    getInheritedCache: (): EntryCacheConfig | undefined => {
-      const store = context.getStore();
-      return store?.inheritedCache;
     },
   };
 };

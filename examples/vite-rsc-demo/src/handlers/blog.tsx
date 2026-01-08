@@ -14,8 +14,10 @@ import { Breadcrumbs } from "../handles/breadcrumbs.js";
  * Note: RootLayout is now used as the document component in router.tsx
  */
 export default map<typeof blogRoutes>(
-  ({ route, layout, middleware, revalidate, parallel, loader, loading }) => [
-    layout(
+  ({ route, layout, middleware, revalidate, parallel, loader, loading, cache }) => [
+    // Cache boundary for all blog routes - enables server-side caching
+    cache({ ttl: 60 }, () => [
+      layout(
       (ctx) => {
         // Push "Blog" breadcrumb for all blog routes
         const push = ctx.use(Breadcrumbs);
@@ -75,5 +77,6 @@ export default map<typeof blogRoutes>(
         ),
       ]
     ),
+  ]), // End cache boundary
   ]
 );

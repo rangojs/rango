@@ -9,8 +9,12 @@ import {
 import { router } from "./router.js";
 import { createRSCHandler, MemorySegmentCacheStore } from "rsc-router/rsc";
 
-// Create cache store (persists across HMR via globalThis)
-const cacheStore = new MemorySegmentCacheStore();
+// Create cache store with defaults (persists across HMR via globalThis)
+const cacheStore = new MemorySegmentCacheStore({
+  defaults: {
+    ttl: 60,  // Default TTL for all cache() boundaries
+  },
+});
 
 export default createRSCHandler({
   router,
@@ -29,6 +33,5 @@ export default createRSCHandler({
     ),
   cache: {
     store: cacheStore,
-    ttl: Infinity,
   },
 });

@@ -688,6 +688,10 @@ export function createRSCRouter<TEnv = any>(
 
     const shortCode = shortCodeOverride ?? entry.shortCode;
 
+    // Check if entry has loading property (cache entries don't)
+    const hasLoading = "loading" in entry && entry.loading !== undefined;
+    const loadingDisabled = hasLoading && entry.loading === false;
+
     // Trigger all loaders in parallel via ctx.use() (memoized, so safe to call multiple times)
     // Don't await - wrap promises with error handling for deferred client-side resolution
     return Promise.all(
@@ -702,7 +706,7 @@ export function createRSCRouter<TEnv = any>(
           params: ctx.params,
           loaderId: loader.$$id,
           loaderData: await wrapLoaderPromise(
-            entry.loading === false ? await ctx.use(loader) : ctx.use(loader),
+            loadingDisabled ? await ctx.use(loader) : ctx.use(loader),
             entry,
             segmentId,
             ctx.pathname
@@ -854,10 +858,10 @@ export function createRSCRouter<TEnv = any>(
   ): Promise<ResolvedSegment[]> {
     const segments: ResolvedSegment[] = [];
 
-    if (entry.type === "layout") {
-      // Layout execution order:
-      // 1. Layout Loader → 2. Layout Parallels (emit segments) → 3. Layout Handler (emit segment) → 4. Orphan Layouts
-      // Note: Layout middleware is now collected and executed at the top level (coreRequestHandler)
+    if (entry.type === "layout" || entry.type === "cache") {
+      // Layout/Cache execution order:
+      // 1. Loaders → 2. Parallels (emit segments) → 3. Handler (emit segment) → 4. Orphan Layouts
+      // Note: Middleware is now collected and executed at the top level (coreRequestHandler)
 
       // Step 1: Run layout loaders
       const loaderSegments = await resolveLoaders(
@@ -890,12 +894,12 @@ export function createRSCRouter<TEnv = any>(
       segments.push({
         id: entry.shortCode,
         namespace: entry.id,
-        type: "layout",
+        type: "layout", // Cache entries also emit "layout" type segments
         index: 0,
         component,
         loading: entry.loading === false ? null : entry.loading,
         params,
-        belongsToRoute: false, // Parent chain layouts don't belong to specific route
+        belongsToRoute: false, // Parent chain layouts/cache don't belong to specific route
         layoutName: entry.id,
       });
 
@@ -980,6 +984,7 @@ export function createRSCRouter<TEnv = any>(
 
   /**
    * Helper: Resolve orphan layout with its middlewares, loaders, and parallels
+   * Also handles cache entries in the layout array (structural boundaries)
    */
   async function resolveOrphanLayout(
     orphan: EntryData,
@@ -988,10 +993,10 @@ export function createRSCRouter<TEnv = any>(
     loaderPromises: Map<string, Promise<any>>,
     belongsToRoute: boolean
   ): Promise<ResolvedSegment[]> {
-    // Orphans must always be layouts
+    // Orphans must be layouts or cache entries
     invariant(
-      orphan.type === "layout",
-      `Expected orphan to be a layout, got: ${orphan.type}`
+      orphan.type === "layout" || orphan.type === "cache",
+      `Expected orphan to be a layout or cache, got: ${orphan.type}`
     );
 
     // Orphan Loader → Orphan Parallels → Orphan Handler
@@ -1744,11 +1749,11 @@ export function createRSCRouter<TEnv = any>(
   }
 
   /**
-   * Helper: Resolve entry handler (layout or route) with revalidation
-   * Extracted to reduce duplication between layout and route branches
+   * Helper: Resolve entry handler (layout, cache, or route) with revalidation
+   * Extracted to reduce duplication between layout, cache, and route branches
    */
   async function resolveEntryHandlerWithRevalidation(
-    entry: EntryData,
+    entry: Exclude<EntryData, { type: "parallel" }>,
     params: Record<string, string>,
     context: HandlerContext<any, TEnv>,
     belongsToRoute: boolean,
@@ -1774,12 +1779,12 @@ export function createRSCRouter<TEnv = any>(
         const dummySegment: ResolvedSegment = {
           id: entry.shortCode,
           namespace: entry.id,
-          type: entry.type as "layout" | "route",
+          type: entry.type === "cache" ? "layout" : entry.type as "layout" | "route",
           index: 0,
           component: null as any,
           params,
           belongsToRoute,
-          ...(entry.type === "layout" ? { layoutName: entry.id } : {}),
+          ...(entry.type === "layout" || entry.type === "cache" ? { layoutName: entry.id } : {}),
         };
 
         const shouldRevalidate = await evaluateRevalidation({
@@ -1806,7 +1811,7 @@ export function createRSCRouter<TEnv = any>(
       async () => {
         // Set current segment ID for handle data attribution
         context._currentSegmentId = entry.shortCode;
-        if (entry.type === "layout") {
+        if (entry.type === "layout" || entry.type === "cache") {
           return typeof entry.handler === "function"
             ? await entry.handler(context)
             : entry.handler;
@@ -1845,13 +1850,13 @@ export function createRSCRouter<TEnv = any>(
     const segment: ResolvedSegment = {
       id: entry.shortCode,
       namespace: entry.id,
-      type: entry.type as "layout" | "route",
+      type: entry.type === "cache" ? "layout" : entry.type as "layout" | "route",
       index: 0,
       component: resolvedComponent,
       loading: entry.loading === false ? null : entry.loading,
       params,
       belongsToRoute,
-      ...(entry.type === "layout" ? { layoutName: entry.id } : {}),
+      ...(entry.type === "layout" || entry.type === "cache" ? { layoutName: entry.id } : {}),
     };
 
     return { segment, matchedId };
@@ -1861,9 +1866,11 @@ export function createRSCRouter<TEnv = any>(
    * Resolve segments with revalidation awareness (for partial rendering)
    * Same as resolveSegment but conditionally executes handlers based on revalidation
    * Returns both segments to render AND all matched segment IDs (including skipped ones)
+   * Cache entries are handled like layouts (they emit segments)
+   * Parallel entries are handled separately via resolveParallelSegmentsWithRevalidation
    */
   async function resolveSegmentWithRevalidation(
-    entry: EntryData,
+    entry: Exclude<EntryData, { type: "parallel" }>,
     routeKey: string,
     params: Record<string, string>,
     context: HandlerContext<any, TEnv>,
@@ -1942,8 +1949,8 @@ export function createRSCRouter<TEnv = any>(
     segments.push(...parallelResult.segments);
     matchedIds.push(...parallelResult.matchedIds);
 
-    // Step 5: Process orphan layouts (for layouts, these come after parallels)
-    if (entry.type === "layout") {
+    // Step 5: Process orphan layouts (for layouts/cache, these come after parallels)
+    if (entry.type === "layout" || entry.type === "cache") {
       for (const orphan of entry.layout) {
         const orphanResult = await resolveOrphanLayoutWithRevalidation(
           orphan,
@@ -2011,8 +2018,8 @@ export function createRSCRouter<TEnv = any>(
     stale?: boolean
   ): Promise<SegmentRevalidationResult> {
     invariant(
-      orphan.type === "layout",
-      `Expected orphan to be a layout, got: ${orphan.type}`
+      orphan.type === "layout" || orphan.type === "cache",
+      `Expected orphan to be a layout or cache, got: ${orphan.type}`
     );
 
     const segments: ResolvedSegment[] = [];
@@ -2318,7 +2325,13 @@ export function createRSCRouter<TEnv = any>(
 
             if (cachedSegments) {
               segs.push(...cachedSegments);
-              continue; // Skip handler execution
+              // Loaders are always live (not cached) - resolve them fresh
+              // Set segment ID for handle data attribution
+              handlerContext._currentSegmentId = entry.shortCode;
+              const belongsToRoute = entry.type === "route";
+              const loaderSegments = await resolveLoaders(entry, handlerContext, belongsToRoute);
+              segs.push(...loaderSegments);
+              continue; // Skip full handler execution (structure was cached)
             }
 
             // Cache miss - resolve entry with handler
@@ -2444,7 +2457,7 @@ export function createRSCRouter<TEnv = any>(
         break;
       }
 
-      // Check orphan layouts for error boundaries
+      // Check orphan layouts/cache for error boundaries
       if (current.layout && current.layout.length > 0) {
         for (const orphan of current.layout) {
           if (orphan.errorBoundary && orphan.errorBoundary.length > 0) {
@@ -2832,16 +2845,37 @@ export function createRSCRouter<TEnv = any>(
             if (cachedSegments) {
               segs.push(...cachedSegments);
               matchedIds.push(entry.shortCode);
-              continue; // Skip handler execution
+              // Loaders are always live (not cached) - resolve them fresh with revalidation
+              handlerContext._currentSegmentId = entry.shortCode;
+              const belongsToRoute = entry.type === "route";
+              const loaderResult = await resolveLoadersWithRevalidation(
+                entry,
+                handlerContext,
+                belongsToRoute,
+                clientSegmentSet,
+                prevParams,
+                request,
+                prevUrl,
+                url,
+                matched.routeKey,
+                actionContext,
+                undefined, // shortCodeOverride
+                stale
+              );
+              segs.push(...loaderResult.segments);
+              matchedIds.push(...loaderResult.matchedIds);
+              continue; // Skip full handler execution (structure was cached)
             }
 
-            // Cache miss - normal resolution for layouts and non-intercepted routes
+            // Cache miss - normal resolution for layouts, cache entries, and non-intercepted routes
+            // Note: entries from traverseBack are layout/cache/route (never parallel)
+            const nonParallelEntry = entry as Exclude<EntryData, { type: "parallel" }>;
             const resolved = await resolveWithRevalidationErrorHandling(
-              entry,
+              nonParallelEntry,
               matched.params,
               () =>
                 resolveSegmentWithRevalidation(
-                  entry,
+                  nonParallelEntry,
                   matched.routeKey,
                   matched.params,
                   handlerContext,

@@ -7,7 +7,7 @@
 
 /// <reference types="@vitejs/plugin-rsc/types" />
 
-import type { CacheOptions } from "../types.js";
+import type { PartialCacheOptions } from "../types.js";
 import type { ResolvedSegment } from "../types.js";
 import type {
   SegmentCacheStore,
@@ -210,12 +210,17 @@ async function deserializeSegments(
  *
  * When withCache encounters an entry with cache config, it creates
  * a new CacheScope. The scope owns serialization, storage, and TTL.
+ *
+ * TTL resolution priority:
+ * 1. Explicit value in cache() options
+ * 2. App-level defaults from cache config
+ * 3. Hardcoded fallback (60 seconds)
  */
 export class CacheScope {
-  readonly config: CacheOptions | false;
+  readonly config: PartialCacheOptions | false;
   readonly parent: CacheScope | null;
 
-  constructor(config: CacheOptions | false, parent: CacheScope | null = null) {
+  constructor(config: PartialCacheOptions | false, parent: CacheScope | null = null) {
     this.config = config;
     this.parent = parent;
   }
@@ -228,19 +233,40 @@ export class CacheScope {
   }
 
   /**
-   * Get effective TTL (from config)
+   * Get effective TTL from config or store defaults
    */
   get ttl(): number {
     if (this.config === false) return 0;
-    return this.config.ttl;
+
+    // Explicit TTL in cache() options
+    if (this.config.ttl !== undefined) {
+      return this.config.ttl;
+    }
+
+    // Fall back to store defaults
+    const store = this.getStore();
+    if (store?.defaults?.ttl !== undefined) {
+      return store.defaults.ttl;
+    }
+
+    // Hardcoded fallback
+    return 60;
   }
 
   /**
-   * Get SWR window (stale-while-revalidate)
+   * Get SWR window from config or store defaults
    */
   get swr(): number | undefined {
     if (this.config === false) return undefined;
-    return this.config.swr;
+
+    // Explicit SWR in cache() options
+    if (this.config.swr !== undefined) {
+      return this.config.swr;
+    }
+
+    // Fall back to store defaults
+    const store = this.getStore();
+    return store?.defaults?.swr;
   }
 
   /**
@@ -288,28 +314,18 @@ export class CacheScope {
         }
       }
 
-      // Restore loader data to loaderPromises for useLoader() support
+      // Note: Loader segments are not cached by default (always live)
+      // If a loader was explicitly cached, restore its data to loaderPromises
       for (const seg of segments) {
-        if (seg.loaderId && seg.loaderData !== undefined) {
+        if (seg.type === "loader" && seg.loaderId && seg.loaderData !== undefined) {
           loaderPromises.set(seg.loaderId, Promise.resolve(seg.loaderData));
-        }
-        if (seg.loaderIds && seg.loaderDataPromise) {
-          const loaderData =
-            seg.loaderDataPromise instanceof Promise
-              ? await seg.loaderDataPromise
-              : seg.loaderDataPromise;
-          if (Array.isArray(loaderData)) {
-            seg.loaderIds.forEach((id: string, i: number) => {
-              loaderPromises.set(id, Promise.resolve(loaderData[i]));
-            });
-          }
         }
       }
 
       const segmentTypes = segments.map((s) =>
         s.type === "parallel" ? s.slot : s.type
       );
-      console.log(`[CacheScope] HIT: ${key} (${segmentTypes.join(", ")})`);
+      console.log(`[CacheScope] HIT: ${key} (${segmentTypes.join(", ")}) [loaders resolved fresh]`);
 
       return segments;
     } catch (error) {
@@ -320,6 +336,7 @@ export class CacheScope {
 
   /**
    * Cache segments for an entry (non-blocking via waitUntil)
+   * Note: Loader segments are excluded - they're always live (fetched fresh)
    */
   cacheEntry(cacheKey: string, segments: ResolvedSegment[]): void {
     if (!this.enabled || segments.length === 0) return;
@@ -332,28 +349,33 @@ export class CacheScope {
 
     if (!handleStore || !requestCtx) return;
 
+    // Exclude loader segments - loaders are always live (not cached by default)
+    // Loaders can opt-in to caching with explicit cache() config
+    const nonLoaderSegments = segments.filter((s) => s.type !== "loader");
+    if (nonLoaderSegments.length === 0) return;
+
     const ttl = this.ttl;
-    const params = segments[0]?.params;
+    const params = nonLoaderSegments[0]?.params;
     const key = getCacheKey(cacheKey, params);
 
     requestCtx.waitUntil(async () => {
       await handleStore.settled;
 
-      // Only cache if ALL segments have actual components (not null)
-      const hasAllComponents = segments.every(
-        (s) => s.component !== null || s.type === "loader"
+      // Only cache if ALL non-loader segments have actual components (not null)
+      const hasAllComponents = nonLoaderSegments.every(
+        (s) => s.component !== null
       );
       if (!hasAllComponents) return;
 
-      // Collect handle data for all segments
+      // Collect handle data for non-loader segments only
       const handles: Record<string, SegmentHandleData> = {};
-      for (const seg of segments) {
+      for (const seg of nonLoaderSegments) {
         handles[seg.id] = handleStore.getDataForSegment(seg.id);
       }
 
       try {
-        // Serialize segments
-        const serializedSegments = await serializeSegments(segments);
+        // Serialize non-loader segments only
+        const serializedSegments = await serializeSegments(nonLoaderSegments);
 
         const data: CachedEntryData = {
           segments: serializedSegments,
@@ -363,10 +385,10 @@ export class CacheScope {
 
         await store.set(key, data, ttl);
 
-        const segmentTypes = segments.map((s) =>
+        const segmentTypes = nonLoaderSegments.map((s) =>
           s.type === "parallel" ? s.slot : s.type
         );
-        console.log(`[CacheScope] Cached: ${key} (${segmentTypes.join(", ")}) ttl=${ttl}s`);
+        console.log(`[CacheScope] Cached: ${key} (${segmentTypes.join(", ")}) ttl=${ttl}s [loaders excluded]`);
       } catch (error) {
         console.error(`[CacheScope] Failed to cache ${key}:`, error);
       }
@@ -378,7 +400,7 @@ export class CacheScope {
  * Create a cache scope from entry's cache config
  */
 export function createCacheScope(
-  config: { options: CacheOptions | false } | undefined,
+  config: { options: PartialCacheOptions | false } | undefined,
   parent: CacheScope | null = null
 ): CacheScope | null {
   if (!config) return parent; // No config, inherit parent

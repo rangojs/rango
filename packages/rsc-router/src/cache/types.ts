@@ -24,6 +24,12 @@ import type { ResolvedSegment } from "../types.js";
  */
 export interface SegmentCacheStore {
   /**
+   * Default cache options for this store.
+   * Used by cache() boundaries when ttl/swr are not explicitly specified.
+   */
+  readonly defaults?: CacheDefaults;
+
+  /**
    * Get cached entry data by key
    * @returns Raw cached data or null if not found/expired
    */
@@ -83,13 +89,22 @@ export interface CachedEntryData {
 // ============================================================================
 
 /**
+ * Default cache options applied to all cache() boundaries.
+ * Individual cache() calls can override any of these values.
+ */
+export interface CacheDefaults {
+  /** Default time-to-live in seconds */
+  ttl?: number;
+  /** Default stale-while-revalidate window in seconds */
+  swr?: number;
+}
+
+/**
  * Cache configuration for RSC handler
  */
 export interface CacheConfig {
-  /** Cache store implementation */
+  /** Cache store implementation (includes defaults) */
   store: SegmentCacheStore;
-  /** Default TTL in seconds (default: 60) */
-  ttl?: number;
   /** Enable/disable caching (default: true) */
   enabled?: boolean;
 }

@@ -5,9 +5,28 @@
  * Uses globalThis to survive HMR in development.
  */
 
-import type { SegmentCacheStore, CachedEntryData } from "./types.js";
+import type { SegmentCacheStore, CachedEntryData, CacheDefaults } from "./types.js";
 
 const CACHE_GLOBAL_KEY = "__rsc_router_segment_cache_store__";
+
+/**
+ * Options for MemorySegmentCacheStore
+ */
+export interface MemorySegmentCacheStoreOptions {
+  /**
+   * Default cache options for cache() boundaries.
+   * When cache() is called without explicit ttl/swr,
+   * these defaults are used.
+   *
+   * @example
+   * ```typescript
+   * const store = new MemorySegmentCacheStore({
+   *   defaults: { ttl: 60, swr: 300 }
+   * });
+   * ```
+   */
+  defaults?: CacheDefaults;
+}
 
 /**
  * In-memory segment cache store.
@@ -18,22 +37,30 @@ const CACHE_GLOBAL_KEY = "__rsc_router_segment_cache_store__";
  *
  * @example
  * ```typescript
+ * // Basic usage
  * const store = new MemorySegmentCacheStore();
+ *
+ * // With defaults for cache() boundaries
+ * const store = new MemorySegmentCacheStore({
+ *   defaults: { ttl: 60 }
+ * });
  *
  * createRSCHandler({
  *   router,
- *   cache: { store, ttl: 60 }
+ *   cache: { store }
  * })
  * ```
  */
 export class MemorySegmentCacheStore implements SegmentCacheStore {
   private cache: Map<string, CachedEntryData>;
+  readonly defaults?: CacheDefaults;
 
-  constructor() {
+  constructor(options?: MemorySegmentCacheStoreOptions) {
     // Use globalThis to survive HMR in development
     this.cache =
       (globalThis as any)[CACHE_GLOBAL_KEY] ??
       ((globalThis as any)[CACHE_GLOBAL_KEY] = new Map<string, CachedEntryData>());
+    this.defaults = options?.defaults;
   }
 
   async get(key: string): Promise<CachedEntryData | null> {

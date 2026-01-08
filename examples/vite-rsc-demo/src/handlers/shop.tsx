@@ -97,51 +97,54 @@ export default map<typeof shopRoutes>(
     loading,
     intercept,
     when,
+    cache,
   }) => [
-    //#region Global Layout & Middleware
-    // Orphan layouts for testing
-    layout(DummyLayout, () => [revalidate(() => false)]),
-    layout(DummyLayout, () => [revalidate(() => false)]),
+    // Cache boundary wraps all shop routes - uses app-level defaults (ttl: 60)
+    cache(() => [
+      //#region Global Layout & Middleware
+      // Orphan layouts for testing
+      layout(DummyLayout, () => [revalidate(() => false)]),
+      layout(DummyLayout, () => [revalidate(() => false)]),
 
-    revalidate(globalRevalidation),
+      revalidate(globalRevalidation),
 
-    // Global loaders - available throughout the shop
-    // UserLoader: current user data for header, account, etc.
-    loader(UserLoader),
-    // CartLoader: cart data for header badge, cart page, checkout
-    // Revalidates when cart actions are performed
-    loader(CartLoader, () => [
-      // Match actions from shop.actions.ts that contain "Cart" in export name
-      // Full actionId format: "src/handlers/shop/actions/shop.actions.ts#addToCart"
-      revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
-    ]),
-    // CategoriesLoader: product categories for navigation
-    loader(CategoriesLoader),
-    // FeaturedProductsLoader: demonstrates streaming with Promise
-    // Returns { content: Promise<Product[]> } that streams to client
-    loader(FeaturedProductsLoader),
+      // Global middleware
+      middleware(...loggerMiddleware),
+      middleware(...mockAuthMiddleware),
 
-    // Global middleware
-    middleware(...loggerMiddleware),
-    middleware(...mockAuthMiddleware),
-    //#endregion
+      // Global loaders - available throughout the shop (attached to cache boundary)
+      // UserLoader: current user data for header, account, etc.
+      loader(UserLoader),
+      // CartLoader: cart data for header badge, cart page, checkout
+      // Revalidates when cart actions are performed
+      loader(CartLoader, () => [
+        // Match actions from shop.actions.ts that contain "Cart" in export name
+        // Full actionId format: "src/handlers/shop/actions/shop.actions.ts#addToCart"
+        revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
+      ]),
+      // CategoriesLoader: product categories for navigation
+      loader(CategoriesLoader),
+      // FeaturedProductsLoader: demonstrates streaming with Promise
+      // Returns { content: Promise<Product[]> } that streams to client
+      loader(FeaturedProductsLoader),
+      //#endregion
 
-    //#region Shop Routes
-    // Shop layout wraps shop routes
-    layout(
-      (ctx) => {
-        // Push "Shop" breadcrumb for all shop routes
-        const push = ctx.use(Breadcrumbs);
-        push({ label: "Shop", href: "/shop" });
-        return (
-          <>
-            <ParallelOutlet name="@promoBanner" />
-            <ShopLayout />
-          </>
-        );
-      },
-      () => [
-        parallel({
+      //#region Shop Routes
+      // Shop layout wraps shop routes
+      layout(
+        (ctx) => {
+          // Push "Shop" breadcrumb for all shop routes
+          const push = ctx.use(Breadcrumbs);
+          push({ label: "Shop", href: "/shop" });
+          return (
+            <>
+              <ParallelOutlet name="@promoBanner" />
+              <ShopLayout />
+            </>
+          );
+        },
+        () => [
+          parallel({
           "@promoBanner": () => (
             <div
               style={{
@@ -315,6 +318,7 @@ export default map<typeof shopRoutes>(
       ]),
     ]),
     //#endregion
+  ]), // End cache boundary
   ]
 );
 //#endregion
