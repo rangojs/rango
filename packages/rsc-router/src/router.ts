@@ -34,6 +34,7 @@ import type {
   TrailingSlashMode,
 } from "./types";
 import type { HandleStore } from "./server/handle-store.js";
+import type { SegmentCacheStore } from "./cache/types.js";
 import {
   getRequestContext,
   requireRequestContext,
@@ -114,7 +115,7 @@ export interface RootLayoutProps {
 /**
  * Router configuration options
  */
-export interface RSCRouterOptions {
+export interface RSCRouterOptions<TEnv = any> {
   /**
    * Enable performance metrics collection
    * When enabled, metrics are output to console and available via Server-Timing header
@@ -204,6 +205,39 @@ export interface RSCRouterOptions {
       loaderId?: string;
     }
   ) => void;
+
+  /**
+   * Cache store for segment caching.
+   *
+   * When provided, enables route-level caching via cache() boundaries.
+   * The store handles persistence (memory, KV, Redis, etc.).
+   *
+   * Can be a static config or a function receiving env for runtime bindings.
+   * Can be overridden in createRSCHandler.
+   *
+   * @example Static config
+   * ```typescript
+   * import { MemorySegmentCacheStore } from "rsc-router/rsc";
+   *
+   * const router = createRSCRouter({
+   *   cache: {
+   *     store: new MemorySegmentCacheStore({ defaults: { ttl: 60 } }),
+   *   },
+   * });
+   * ```
+   *
+   * @example Dynamic config with env
+   * ```typescript
+   * const router = createRSCRouter<AppEnv>({
+   *   cache: (env) => ({
+   *     store: new KVSegmentCacheStore(env.Bindings.MY_CACHE),
+   *   }),
+   * });
+   * ```
+   */
+  cache?:
+    | { store: SegmentCacheStore; enabled?: boolean }
+    | ((env: TEnv) => { store: SegmentCacheStore; enabled?: boolean });
 }
 
 /**
@@ -336,7 +370,12 @@ export interface RSCRouter<
    * Error callback for monitoring/alerting
    * Called when errors occur in loaders, actions, or routes
    */
-  readonly onError?: RSCRouterOptions["onError"];
+  readonly onError?: RSCRouterOptions<TEnv>["onError"];
+
+  /**
+   * Cache configuration (for internal use by RSC handler)
+   */
+  readonly cache?: RSCRouterOptions<TEnv>["cache"];
 
   /**
    * App-level middleware entries (for internal use by RSC handler)
@@ -419,7 +458,7 @@ export interface RSCRouter<
  * ```
  */
 export function createRSCRouter<TEnv = any>(
-  options: RSCRouterOptions = {}
+  options: RSCRouterOptions<TEnv> = {}
 ): RSCRouter<TEnv, {}> {
   const {
     debugPerformance = false,
@@ -427,6 +466,7 @@ export function createRSCRouter<TEnv = any>(
     defaultErrorBoundary,
     defaultNotFoundBoundary,
     onError,
+    cache,
   } = options;
 
   // Validate document is a function (component)
@@ -3313,6 +3353,9 @@ export function createRSCRouter<TEnv = any>(
 
     // Expose onError callback for error handling
     onError,
+
+    // Expose cache configuration for RSC handler
+    cache,
 
     // Expose global middleware for RSC handler
     middleware: globalMiddleware,
