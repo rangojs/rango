@@ -10,9 +10,11 @@
 - **In-memory store** - `MemorySegmentCacheStore` with TTL, survives HMR via `globalThis`
 - **Cache bypass** - `?__no_cache` query param disables caching per-request
 - **Pluggable store API** - `SegmentCacheStore` interface with handler-level configuration
+- **Per-route cache configuration** - `cache({ ttl, swr, store })` DSL for route definitions
+- **Store-level defaults** - `MemorySegmentCacheStore({ defaults: { ttl, swr } })`
+- **Per-section stores** - `cache({ store })` for dedicated stores per route section
 
 ### 🚧 Remaining
-- **Per-route cache configuration** - `cache({ ttl: 60 })` DSL for route definitions
 - **Production storage backends** - Cloudflare KV, Redis adapters
 - **Cache invalidation API** - Tag-based invalidation, manual purge
 - **Proactive caching** - Use `waitUntil` to cache sibling segments
@@ -292,21 +294,23 @@ interface CachedEntryData {
 ```typescript
 import { createRSCHandler, MemorySegmentCacheStore } from "rsc-router/rsc";
 
-// Static config
+// Store with defaults - TTL/SWR inherited by all cache() boundaries
+const cacheStore = new MemorySegmentCacheStore({
+  defaults: { ttl: 60, swr: 300 },
+});
+
 export default createRSCHandler({
   router,
-  cache: {
-    store: new MemorySegmentCacheStore(),
-    ttl: 60,
-  },
+  cache: { store: cacheStore },
 });
 
 // Dynamic config with env (for Cloudflare bindings)
 export default createRSCHandler({
   router,
   cache: (env) => ({
-    store: new KVSegmentCacheStore(env.Bindings.CACHE_KV),
-    ttl: 60,
+    store: new KVSegmentCacheStore(env.Bindings.CACHE_KV, {
+      defaults: { ttl: 60 },
+    }),
   }),
 });
 ```
@@ -394,6 +398,312 @@ On cache HIT:
 3. Use cached segment component
 4. handleStore.stream() emits replayed data to client
 ```
+
+## Stale-While-Revalidate (SWR)
+
+### Design Goals
+
+1. **Immediate response** - Always serve cached content instantly (fresh or stale)
+2. **Background revalidation** - Use `waitUntil` to refresh stale content
+3. **No user waits** - Stale content is better than waiting for fresh
+
+### Cache States
+
+```
+TTL: 60s, SWR: 300s
+
+Time:     0s -------- 60s ----------- 360s --------->
+State:    |  FRESH   |    STALE      |  EXPIRED    |
+Action:   |  serve   | serve+reval   |  miss       |
+```
+
+### Data Structures
+
+```typescript
+interface CachedEntryData {
+  segments: SerializedSegmentData[];
+  handles: Record<string, SegmentHandleData>;
+  createdAt: number;        // When cached
+  staleAt: number;          // TTL boundary (serve but trigger revalidation)
+  expiresAt: number;        // Hard expiration (cache miss)
+  // For background revalidation
+  revalidationContext: {
+    entryId: string;
+    routeKey: string;
+    params: Record<string, string>;
+  };
+}
+```
+
+### Background Revalidation Strategy
+
+**Challenge**: Re-rendering segments requires full context (router, request, handlers).
+
+**Solution**: Store minimal revalidation context, use synthetic internal request.
+
+```typescript
+// On stale cache hit
+async function handleStaleCacheHit(
+  cached: CachedEntryData,
+  requestCtx: RequestContext
+) {
+  // 1. Serve stale immediately
+  const segments = await deserializeSegments(cached.segments);
+
+  // 2. Trigger background revalidation (non-blocking)
+  if (!isRevalidating(cached.revalidationContext.entryId)) {
+    requestCtx.waitUntil(async () => {
+      await revalidateEntry(cached.revalidationContext);
+    });
+  }
+
+  return segments;
+}
+
+async function revalidateEntry(ctx: RevalidationContext) {
+  markRevalidating(ctx.entryId);
+  try {
+    // Re-resolve segment with fresh data
+    const freshSegments = await resolveSegmentFresh(ctx);
+    await cacheSegments(ctx.entryId, freshSegments);
+  } finally {
+    clearRevalidating(ctx.entryId);
+  }
+}
+```
+
+### Thundering Herd Prevention
+
+In-memory Set to track active revalidations:
+
+```typescript
+const revalidatingKeys = new Set<string>();
+
+function isRevalidating(key: string): boolean {
+  return revalidatingKeys.has(key);
+}
+
+function markRevalidating(key: string): void {
+  revalidatingKeys.add(key);
+}
+
+function clearRevalidating(key: string): void {
+  revalidatingKeys.delete(key);
+}
+```
+
+For distributed systems, consider Redis-based locking.
+
+---
+
+## Loader Caching Policy
+
+### Design Principle: Loaders NOT Cached by Default
+
+Loaders fetch dynamic data and should run fresh by default. Only the component structure (layouts, routes) is cached.
+
+**Rationale:**
+- Loader data is often user-specific or time-sensitive
+- Caching loaders requires explicit opt-in for safety
+- Matches mental model: "cache the shell, fetch fresh data"
+
+### How It Works
+
+```typescript
+cache({ ttl: 60 }, () => [
+  layout(<BlogLayout />),      // ✅ Cached (component)
+
+  route("post/:slug", () => [
+    loader(PostLoader),        // ❌ NOT cached (runs fresh)
+    loader(ViewCount),         // ❌ NOT cached (runs fresh)
+  ]),
+])
+```
+
+### Opt-In Loader Caching
+
+Use `cache()` wrapper to explicitly cache loader results:
+
+```typescript
+route("post/:slug", () => [
+  // Fresh loader (default)
+  loader(PostLoader),
+
+  // Cached loader (explicit opt-in)
+  loader(StaticMetadata, () => [
+    cache({ ttl: 3600 }),      // ✅ Cached for 1 hour
+  ]),
+
+  // Short-lived cache with SWR
+  loader(ViewCount, () => [
+    cache({ ttl: 10, swr: 60 }),
+  ]),
+])
+```
+
+### Implementation Notes
+
+When serving cached segments:
+1. Deserialize cached component tree
+2. Run loaders fresh (unless loader has its own cache())
+3. Inject fresh loader data into cached component structure
+
+This requires separating:
+- **Segment cache**: Component structure, layouts, handles
+- **Loader cache**: Individual loader results (opt-in)
+
+---
+
+## cache() DSL Design
+
+### Middleware-Style Wrapping
+
+`cache()` works like middleware - wraps content, applies to everything inside unless overridden.
+
+```typescript
+// Outer cache applies to all nested segments
+cache({ ttl: 60 }, () => [
+  layout(<RootLayout />),           // ttl: 60
+
+  route("blog", () => [
+    layout(<BlogLayout />),         // ttl: 60 (inherited)
+    route("post/:slug"),            // ttl: 60 (inherited)
+  ]),
+
+  // Override for specific section
+  cache({ ttl: 300 }, () => [
+    route("static-page"),           // ttl: 300 (overridden)
+  ]),
+
+  // Opt out of caching
+  cache(false, () => [
+    route("admin"),                 // ❌ Not cached
+  ]),
+])
+```
+
+### API Signature
+
+```typescript
+// Both signatures supported:
+function cache(children: () => RouteChildren[]): RouteChild;
+function cache(options: CacheOptions | false, children?: () => RouteChildren[]): RouteChild;
+
+interface CacheOptions {
+  // Time-to-live in seconds (optional if store has defaults)
+  ttl?: number;
+
+  // Stale-while-revalidate window (seconds after TTL)
+  swr?: number;
+
+  // Explicit store for this cache boundary (overrides app-level store)
+  store?: SegmentCacheStore;
+
+  // Conditional cache read
+  condition?: (ctx: CacheConditionContext) => boolean;
+
+  // Custom cache key
+  key?: (ctx: CacheKeyContext) => string;
+
+  // Tags for invalidation
+  tags?: string[] | ((ctx: CacheTagContext) => string[]);
+}
+
+interface SegmentCacheStore {
+  // Store-level defaults inherited by cache() boundaries
+  readonly defaults?: { ttl?: number; swr?: number };
+
+  get(key: string): Promise<CachedEntryData | null>;
+  set(key: string, data: CachedEntryData, ttl: number): Promise<void>;
+  delete(key: string): Promise<boolean>;
+  clear?(): Promise<void>;
+}
+```
+
+### Per-Section Cache Store
+
+Different sections can use different cache stores with their own defaults:
+
+```typescript
+// Checkout-specific store with shorter TTL
+const checkoutStore = new MemorySegmentCacheStore({
+  defaults: { ttl: 10 },  // 10s for checkout (data changes frequently)
+});
+
+// Main app store
+const appStore = new MemorySegmentCacheStore({
+  defaults: { ttl: 60 },  // 60s default
+});
+
+export default createRSCHandler({
+  router,
+  cache: { store: appStore },
+});
+
+// In route definition:
+cache(() => [                               // Uses appStore (ttl: 60)
+  layout(<ShopLayout />),
+  route("products/:id"),
+
+  cache({ store: checkoutStore }, () => [   // Uses checkoutStore (ttl: 10)
+    layout(<CheckoutLayout />),
+    route("checkout"),
+  ]),
+])
+```
+
+**Store resolution priority:**
+1. Explicit store in `cache({ store })` → use it
+2. App-level store from handler config → fallback
+
+**TTL resolution priority:**
+1. Explicit TTL in `cache({ ttl })` → use it
+2. Resolved store's defaults → inherit
+3. Hardcoded fallback (60s)
+
+### Conditional Caching
+
+```typescript
+cache({
+  ttl: 300,
+  // Skip cache for preview mode or authenticated users
+  condition: (ctx) => {
+    if (ctx.request.headers.get('x-preview')) return false;
+    if (ctx.cookies.get('session')) return false;
+    return true;
+  },
+}, () => [
+  route("product/:id"),
+])
+```
+
+### Cache Key Customization
+
+```typescript
+cache({
+  ttl: 300,
+  // Include query params in cache key
+  key: (ctx) => `product-${ctx.params.id}-${ctx.searchParams.get('variant')}`,
+}, () => [
+  route("product/:id"),
+])
+```
+
+### Tags for Invalidation
+
+```typescript
+cache({
+  ttl: 300,
+  tags: (ctx) => [`product:${ctx.params.id}`, 'products', 'catalog'],
+}, () => [
+  route("product/:id"),
+])
+
+// Later, in a server action:
+await invalidateCache({ tags: ['products'] });
+```
+
+---
 
 ## Open Problems
 

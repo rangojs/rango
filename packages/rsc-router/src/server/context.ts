@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ReactNode } from "react";
-import type { ErrorBoundaryHandler, Handler, LoaderDefinition, MiddlewareFn, NotFoundBoundaryHandler, ShouldRevalidateFn } from "../types";
+import type { PartialCacheOptions, ErrorBoundaryHandler, Handler, LoaderDefinition, MiddlewareFn, NotFoundBoundaryHandler, ShouldRevalidateFn } from "../types";
 import { invariant } from "../errors";
 
 // ============================================================================
@@ -29,12 +29,24 @@ export interface MetricsStore {
 // ============================================================================
 
 /**
+ * Cache configuration for an entry
+ * When set, this entry and its children will use this cache config
+ * unless overridden by a nested cache() call.
+ */
+export type EntryCacheConfig = {
+  /** Cache options (false means caching disabled for this entry) - ttl is optional, uses defaults */
+  options: PartialCacheOptions | false;
+};
+
+/**
  * Entry data structure for manifest
  */
 export type EntryPropCommon = {
   id: string;
   shortCode: string; // Short identifier for network efficiency (e.g., "L0", "P1", "R2")
   parent: EntryData | null;
+  /** Cache configuration for this entry (set by cache() DSL) */
+  cache?: EntryCacheConfig;
 };
 export type EntryPropDatas = {
   middleware: MiddlewareFn<any, any>[];
@@ -49,6 +61,8 @@ export type EntryPropDatas = {
 export type LoaderEntry = {
   loader: LoaderDefinition<any>;
   revalidate: ShouldRevalidateFn<any, any>[];
+  /** Cache config for this specific loader (loaders are NOT cached by default) */
+  cache?: EntryCacheConfig;
 };
 
 /**
@@ -130,6 +144,14 @@ export type EntryData =
       loading?: ReactNode | false;
     } & EntryPropCommon &
       EntryPropDatas &
+      EntryPropSegments)
+  | ({
+      type: "cache";
+      /** Cache entries create cache boundaries and render like layouts (with Outlet) */
+      handler: ReactNode | Handler<any, any>;
+      loading?: ReactNode | false;
+    } & EntryPropCommon &
+      EntryPropDatas &
       EntryPropSegments);
 
 /**
@@ -158,7 +180,7 @@ export const getContext = (): {
     type: (string & {}) | "layout" | "parallel" | "middleware" | "revalidate"
   ) => string;
   getShortCode: (
-    type: "layout" | "parallel" | "route" | "loader"
+    type: "layout" | "parallel" | "route" | "loader" | "cache"
   ) => string;
   run: <T>(
     namespace: string,
@@ -216,12 +238,12 @@ export const getContext = (): {
       store.counters[type] = index + 1;
       return `$${type}.${index}`;
     },
-    getShortCode: (type: "layout" | "parallel" | "route" | "loader") => {
+    getShortCode: (type: "layout" | "parallel" | "route" | "loader" | "cache") => {
       const store = context.getStore();
       invariant(store, "No context RSCRouterContext available");
 
       const parent = store.parent;
-      const prefix = type === "layout" ? "L" : type === "parallel" ? "P" : type === "loader" ? "D" : "R";
+      const prefix = type === "layout" ? "L" : type === "parallel" ? "P" : type === "loader" ? "D" : type === "cache" ? "C" : "R";
       const mountPrefix = store.mountIndex !== undefined ? `M${store.mountIndex}` : "";
 
       if (!parent) {

@@ -24,6 +24,12 @@ import type { ResolvedSegment } from "../types.js";
  */
 export interface SegmentCacheStore {
   /**
+   * Default cache options for this store.
+   * Used by cache() boundaries when ttl/swr are not explicitly specified.
+   */
+  readonly defaults?: CacheDefaults;
+
+  /**
    * Get cached entry data by key
    * @returns Raw cached data or null if not found/expired
    */
@@ -51,13 +57,15 @@ export interface SegmentCacheStore {
 
 /**
  * Serialized segment data stored in cache
- * Note: loading is intentionally not cached - cached segments have resolved data
+ * Note: loading is preserved to ensure consistent tree structure between cached and fresh renders
  */
 export interface SerializedSegmentData {
   /** RSC-encoded component string */
   encoded: string;
   /** RSC-encoded layout string (if present) */
   encodedLayout?: string;
+  /** RSC-encoded loading skeleton string (if present), or "null" for explicit null */
+  encodedLoading?: string;
   /** RSC-encoded loaderData (if present) */
   encodedLoaderData?: string;
   /** RSC-encoded loaderDataPromise (if present) */
@@ -83,13 +91,22 @@ export interface CachedEntryData {
 // ============================================================================
 
 /**
+ * Default cache options applied to all cache() boundaries.
+ * Individual cache() calls can override any of these values.
+ */
+export interface CacheDefaults {
+  /** Default time-to-live in seconds */
+  ttl?: number;
+  /** Default stale-while-revalidate window in seconds */
+  swr?: number;
+}
+
+/**
  * Cache configuration for RSC handler
  */
 export interface CacheConfig {
-  /** Cache store implementation */
+  /** Cache store implementation (includes defaults) */
   store: SegmentCacheStore;
-  /** Default TTL in seconds (default: 60) */
-  ttl?: number;
   /** Enable/disable caching (default: true) */
   enabled?: boolean;
 }

@@ -29,8 +29,3 @@ export type {
 } from "./types.js";
 
 export { MemorySegmentCacheStore } from "./memory-segment-store.js";
-
-export {
-  createSegmentCacheProvider,
-  type CreateSegmentCacheProviderOptions,
-} from "./segment-cache.js";

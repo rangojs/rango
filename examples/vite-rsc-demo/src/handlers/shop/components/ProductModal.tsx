@@ -158,7 +158,6 @@ export function ProductModalContent() {
   const { data: product } = useLoader(ProductLoader);
   const { data: recommendations } = useLoader(ModalRecommendationsLoader);
   const { data: productCart } = useLoader(ProductCartLoader);
-  console.log("ProductModalContent loader", { productCart });
 
   // Optimistic quantity state - updates immediately before server confirms
   const [optimisticQuantity, setOptimisticQuantity] = useOptimistic(
