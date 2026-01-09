@@ -180,12 +180,10 @@ export default map<typeof shopRoutes>(
               layout(<ModalWrapper />),
               loading(<ProductModalContentSkeleton />),
               loader(ProductLoader, () => [cache()]),
-              // Cart quantity loader - revalidates on cart actions
+              // Cart quantity loader - always revalidate to show current cart state
+              // Cart state can change any time (via actions in other tabs, etc.)
               loader(ProductCartLoader, () => [
-                revalidate(
-                  ({ actionId, stale }) =>
-                    stale || actionId?.includes("Cart") === true
-                ),
+                revalidate(() => true),
               ]),
               // Recommendations loader - revalidates on cart actions to demonstrate streaming
               loader(ModalRecommendationsLoader, () => [

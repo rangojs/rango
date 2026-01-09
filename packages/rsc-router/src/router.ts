@@ -3074,7 +3074,10 @@ export function createRSCRouter<TEnv = any>(
 
           // Queue intercept for caching (non-blocking) - uses inherited scope
           // Skip cache writes during actions to prevent stale data being cached
-          if (!isAction) {
+          // Also skip caching when intercept has loaders - loaders should always run fresh
+          // (the intercept segment's loaderDataPromise would otherwise return stale data)
+          const hasLoaders = interceptResult.intercept.loader.length > 0;
+          if (!isAction && !hasLoaders) {
             scopeRef.current?.cacheEntry(interceptCacheKey, interceptSegments);
           }
         }
