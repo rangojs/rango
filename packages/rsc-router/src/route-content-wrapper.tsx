@@ -14,15 +14,21 @@ import { isLoaderDataResult } from "./types.js";
  * When content is a pending promise, React suspends and shows the nearest
  * Suspense fallback. When content is already resolved, it renders immediately
  * without suspension.
+ *
+ * @param segmentId - Stable ID from segment, used for consistent keys across renders
  */
 export function RouteContentWrapper({
   content,
   fallback,
+  segmentId,
 }: {
   content: Promise<ReactNode>;
   fallback?: ReactNode;
+  segmentId?: string;
 }): ReactNode {
-  const id = useId();
+  // Use server-provided segmentId for stable keys, fall back to useId for backwards compat
+  const generatedId = useId();
+  const id = segmentId || generatedId;
   if (!content) {
     // Already resolved
     return content as ReactNode;

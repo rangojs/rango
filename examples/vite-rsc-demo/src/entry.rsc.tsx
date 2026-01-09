@@ -12,7 +12,7 @@ import { createRSCHandler, MemorySegmentCacheStore } from "rsc-router/rsc";
 // Create cache store with defaults (persists across HMR via globalThis)
 const cacheStore = new MemorySegmentCacheStore({
   defaults: {
-    ttl: 60,  // Default TTL for all cache() boundaries
+    ttl: 600000, // Default TTL for all cache() boundaries
   },
 });
 

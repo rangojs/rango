@@ -57,13 +57,15 @@ export interface SegmentCacheStore {
 
 /**
  * Serialized segment data stored in cache
- * Note: loading is intentionally not cached - cached segments have resolved data
+ * Note: loading is preserved to ensure consistent tree structure between cached and fresh renders
  */
 export interface SerializedSegmentData {
   /** RSC-encoded component string */
   encoded: string;
   /** RSC-encoded layout string (if present) */
   encodedLayout?: string;
+  /** RSC-encoded loading skeleton string (if present), or "null" for explicit null */
+  encodedLoading?: string;
   /** RSC-encoded loaderData (if present) */
   encodedLoaderData?: string;
   /** RSC-encoded loaderDataPromise (if present) */

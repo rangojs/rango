@@ -28,15 +28,22 @@ import { createFromReadableStream } from "@vitejs/plugin-rsc/rsc";
 
 /**
  * Generate cache key for an entry with params
+ * Includes request type prefix (doc/partial) since they produce different segment sets
  */
 function getCacheKey(entryId: string, params?: Record<string, string>): string {
+  const ctx = getRequestContext();
+  const isPartial = ctx?.url.searchParams.has("_rsc_partial") ?? false;
+  const prefix = isPartial ? "partial" : "doc";
+
   const paramStr = params
     ? Object.entries(params)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([k, v]) => `${k}=${v}`)
         .join("&")
     : "";
-  return paramStr ? `${entryId}:${paramStr}` : entryId;
+
+  const baseKey = paramStr ? `${entryId}:${paramStr}` : entryId;
+  return `${prefix}:${baseKey}`;
 }
 
 async function streamToString(
@@ -197,16 +204,11 @@ async function deserializeSegments(
     ]);
 
     // Deserialize loading - "null" string means explicit null
-    const loading =
-      item.encodedLoading === "null"
-        ? null
-        : item.encodedLoading
-          ? await rscDeserialize(item.encodedLoading)
-          : undefined;
+    const loading = item.encodedLoading === "null" ? null : undefined;
 
     segments.push({
       ...item.metadata,
-      component,
+      component: await component,
       layout,
       loading,
       loaderData,

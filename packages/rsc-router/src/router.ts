@@ -34,7 +34,10 @@ import type {
   TrailingSlashMode,
 } from "./types";
 import type { HandleStore } from "./server/handle-store.js";
-import { getRequestContext, requireRequestContext } from "./server/request-context.js";
+import {
+  getRequestContext,
+  requireRequestContext,
+} from "./server/request-context.js";
 import type { AllUseItems } from "./route-types.js";
 import {
   EntryData,
@@ -459,7 +462,9 @@ export function createRSCRouter<TEnv = any>(
       // Pattern + middleware
       pattern = patternOrMiddleware;
       if (!middleware) {
-        throw new Error("Middleware function required when pattern is provided");
+        throw new Error(
+          "Middleware function required when pattern is provided"
+        );
       }
       handler = middleware;
     } else {
@@ -471,7 +476,8 @@ export function createRSCRouter<TEnv = any>(
     let fullPattern = pattern;
     if (mountPrefix && pattern) {
       // e.g., mountPrefix="/blog", pattern="/admin/*" → "/blog/admin/*"
-      fullPattern = pattern === "*" ? `${mountPrefix}/*` : `${mountPrefix}${pattern}`;
+      fullPattern =
+        pattern === "*" ? `${mountPrefix}/*` : `${mountPrefix}${pattern}`;
     } else if (mountPrefix && !pattern) {
       // Mount-scoped middleware without pattern applies to all of mount
       fullPattern = `${mountPrefix}/*`;
@@ -512,7 +518,6 @@ export function createRSCRouter<TEnv = any>(
   const getHandleStore = (): HandleStore | undefined => {
     return getRequestContext()?._handleStore;
   };
-
 
   // Track a pending handler promise (non-blocking)
   const trackHandler = <T>(promise: Promise<T>): Promise<T> => {
@@ -578,8 +583,11 @@ export function createRSCRouter<TEnv = any>(
     params: Record<string, string>,
     loaderPromises: Map<string, Promise<any>>,
     interceptResult?: { intercept: InterceptEntry; entry: EntryData } | null,
-    cacheScope: CacheScope | null = null
-  ): AsyncGenerator<[EntryData, ResolvedSegment[] | null, boolean, CacheScope | null]> {
+    cacheScope: CacheScope | null = null,
+    skipCache: boolean = false
+  ): AsyncGenerator<
+    [EntryData, ResolvedSegment[] | null, boolean, CacheScope | null]
+  > {
     let result = entries.next();
     while (!result.done) {
       const entry = result.value;
@@ -588,10 +596,20 @@ export function createRSCRouter<TEnv = any>(
       if (entry.cache) {
         const newScope = createCacheScope(entry.cache, cacheScope);
         if (newScope !== cacheScope) {
-          console.log(`[withCache] New cache scope for ${entry.id}: ttl=${newScope?.ttl}`);
+          console.log(
+            `[withCache] New cache scope for ${entry.id}: ttl=${newScope?.ttl}`
+          );
           // Delegate to sub-iterator with new scope
           // Re-yield this entry first, then continue with remaining entries
-          yield* withCacheFromEntry(entry, entries, params, loaderPromises, interceptResult, newScope);
+          yield* withCacheFromEntry(
+            entry,
+            entries,
+            params,
+            loaderPromises,
+            interceptResult,
+            newScope,
+            skipCache
+          );
           return; // Sub-iterator handles everything from here
         }
       }
@@ -599,6 +617,13 @@ export function createRSCRouter<TEnv = any>(
       // Skip route entries when intercepting - intercept replaces route handler
       if (entry.type === "route" && interceptResult) {
         yield [entry, null, true, cacheScope];
+        result = entries.next();
+        continue;
+      }
+
+      // Skip cache during actions to ensure fresh loader data
+      if (skipCache) {
+        yield [entry, null, false, cacheScope];
         result = entries.next();
         continue;
       }
@@ -612,18 +637,29 @@ export function createRSCRouter<TEnv = any>(
 
       try {
         // Use scope's restore for cache lookup
-        const cachedSegments = await cacheScope.restore(entry.id, params, loaderPromises);
+        const cachedSegments = await cacheScope.restore(
+          entry.id,
+          params,
+          loaderPromises
+        );
 
         if (cachedSegments) {
-          console.log(`[withCache] HIT: ${entry.id} (scope ttl=${cacheScope.ttl})`);
+          console.log(
+            `[withCache] HIT: ${entry.id} (scope ttl=${cacheScope.ttl})`
+          );
           yield [entry, cachedSegments, false, cacheScope];
         } else {
-          console.log(`[withCache] MISS: ${entry.id} (scope ttl=${cacheScope.ttl})`);
+          console.log(
+            `[withCache] MISS: ${entry.id} (scope ttl=${cacheScope.ttl})`
+          );
           yield [entry, null, false, cacheScope];
         }
       } catch (error) {
         // Cache error - log and yield as miss (TTL will clean up corrupted entries)
-        console.error(`[withCache] Error for ${entry.id}, falling back to fresh render:`, error);
+        console.error(
+          `[withCache] Error for ${entry.id}, falling back to fresh render:`,
+          error
+        );
         yield [entry, null, false, cacheScope];
       }
 
@@ -639,34 +675,61 @@ export function createRSCRouter<TEnv = any>(
     remainingEntries: Iterator<EntryData>,
     params: Record<string, string>,
     loaderPromises: Map<string, Promise<any>>,
-    interceptResult: { intercept: InterceptEntry; entry: EntryData } | null | undefined,
-    cacheScope: CacheScope | null
-  ): AsyncGenerator<[EntryData, ResolvedSegment[] | null, boolean, CacheScope | null]> {
+    interceptResult:
+      | { intercept: InterceptEntry; entry: EntryData }
+      | null
+      | undefined,
+    cacheScope: CacheScope | null,
+    skipCache: boolean = false
+  ): AsyncGenerator<
+    [EntryData, ResolvedSegment[] | null, boolean, CacheScope | null]
+  > {
     // Process first entry with new scope
     if (firstEntry.type === "route" && interceptResult) {
       yield [firstEntry, null, true, cacheScope];
+    } else if (skipCache) {
+      // Skip cache during actions
+      yield [firstEntry, null, false, cacheScope];
     } else if (!cacheScope || !cacheScope.enabled) {
       // No cache scope - caching is opt-in only
       yield [firstEntry, null, false, cacheScope];
     } else {
       try {
-        const cachedSegments = await cacheScope.restore(firstEntry.id, params, loaderPromises);
+        const cachedSegments = await cacheScope.restore(
+          firstEntry.id,
+          params,
+          loaderPromises
+        );
 
         if (cachedSegments) {
-          console.log(`[withCache] HIT: ${firstEntry.id} (scope ttl=${cacheScope.ttl})`);
+          console.log(
+            `[withCache] HIT: ${firstEntry.id} (scope ttl=${cacheScope.ttl})`
+          );
           yield [firstEntry, cachedSegments, false, cacheScope];
         } else {
-          console.log(`[withCache] MISS: ${firstEntry.id} (scope ttl=${cacheScope.ttl})`);
+          console.log(
+            `[withCache] MISS: ${firstEntry.id} (scope ttl=${cacheScope.ttl})`
+          );
           yield [firstEntry, null, false, cacheScope];
         }
       } catch (error) {
-        console.error(`[withCache] Error for ${firstEntry.id}, falling back to fresh render:`, error);
+        console.error(
+          `[withCache] Error for ${firstEntry.id}, falling back to fresh render:`,
+          error
+        );
         yield [firstEntry, null, false, cacheScope];
       }
     }
 
     // Continue with remaining entries using yield *
-    yield* withCache(remainingEntries, params, loaderPromises, interceptResult, cacheScope);
+    yield* withCache(
+      remainingEntries,
+      params,
+      loaderPromises,
+      interceptResult,
+      cacheScope,
+      skipCache
+    );
   }
 
   /**
@@ -959,8 +1022,7 @@ export function createRSCRouter<TEnv = any>(
       let component: ReactNode | Promise<ReactNode>;
       if (entry.loading) {
         const result = entry.handler(context);
-        component =
-          result instanceof Promise ? trackHandler(result) : result;
+        component = result instanceof Promise ? trackHandler(result) : result;
       } else {
         component = await entry.handler(context);
       }
@@ -1180,7 +1242,9 @@ export function createRSCRouter<TEnv = any>(
       // Get stubResponse from request context for header/cookie collection
       const requestCtx = getRequestContext();
       if (!requestCtx?.res) {
-        throw new Error("Request context with stubResponse is required for intercept middleware");
+        throw new Error(
+          "Request context with stubResponse is required for intercept middleware"
+        );
       }
       const middlewareResponse = await executeInterceptMiddleware(
         interceptEntry.middleware,
@@ -1647,7 +1711,11 @@ export function createRSCRouter<TEnv = any>(
         // - This is a route-scoped parallel (belongsToRoute=true) that should appear
         // Intercepts (like @modal) are handled separately via resolveInterceptEntry.
         const isFullRefetch = clientSegmentIds.size === 0;
-        if (isFullRefetch || clientSegmentIds.has(parallelId) || belongsToRoute) {
+        if (
+          isFullRefetch ||
+          clientSegmentIds.has(parallelId) ||
+          belongsToRoute
+        ) {
           matchedIds.push(parallelId);
         }
 
@@ -1779,12 +1847,17 @@ export function createRSCRouter<TEnv = any>(
         const dummySegment: ResolvedSegment = {
           id: entry.shortCode,
           namespace: entry.id,
-          type: entry.type === "cache" ? "layout" : entry.type as "layout" | "route",
+          type:
+            entry.type === "cache"
+              ? "layout"
+              : (entry.type as "layout" | "route"),
           index: 0,
           component: null as any,
           params,
           belongsToRoute,
-          ...(entry.type === "layout" || entry.type === "cache" ? { layoutName: entry.id } : {}),
+          ...(entry.type === "layout" || entry.type === "cache"
+            ? { layoutName: entry.id }
+            : {}),
         };
 
         const shouldRevalidate = await evaluateRevalidation({
@@ -1827,13 +1900,15 @@ export function createRSCRouter<TEnv = any>(
           // NOT awaited - keeps promise pending, but track for completion
           const result = routeEntry.handler(context);
           return {
-            content:
-              result instanceof Promise ? trackHandler(result) : result,
+            content: result instanceof Promise ? trackHandler(result) : result,
           };
         }
         console.log(
-          `[Router] Resolving action route with resolved promise: ${entry.id}`
+          `[Router] Resolving action route with awaited value: ${entry.id}`
         );
+        // For actions: await handler and return value directly (not wrapped in Promise)
+        // This ensures component instanceof Promise is false in segment-system,
+        // avoiding RouteContentWrapper/Suspense and maintaining consistent tree structure
         return {
           content: Promise.resolve(await routeEntry.handler(context)),
         };
@@ -1850,13 +1925,16 @@ export function createRSCRouter<TEnv = any>(
     const segment: ResolvedSegment = {
       id: entry.shortCode,
       namespace: entry.id,
-      type: entry.type === "cache" ? "layout" : entry.type as "layout" | "route",
+      type:
+        entry.type === "cache" ? "layout" : (entry.type as "layout" | "route"),
       index: 0,
       component: resolvedComponent,
       loading: entry.loading === false ? null : entry.loading,
       params,
       belongsToRoute,
-      ...(entry.type === "layout" || entry.type === "cache" ? { layoutName: entry.id } : {}),
+      ...(entry.type === "layout" || entry.type === "cache"
+        ? { layoutName: entry.id }
+        : {}),
     };
 
     return { segment, matchedId };
@@ -2316,8 +2394,13 @@ export function createRSCRouter<TEnv = any>(
 
           // Use withCache iterator for clean cache handling
           // Convert generator to iterator for scope-based delegation
-          const entriesIterator = traverseBack(manifestEntry)[Symbol.iterator]();
-          for await (const [entry, cachedSegments, skipped, scope] of withCache(entriesIterator, matched.params, loaderPromises)) {
+          const entriesIterator =
+            traverseBack(manifestEntry)[Symbol.iterator]();
+          for await (const [entry, cachedSegments, skipped, scope] of withCache(
+            entriesIterator,
+            matched.params,
+            loaderPromises
+          )) {
             if (skipped) {
               // Entry was skipped (shouldn't happen in full match, only partial)
               continue;
@@ -2329,7 +2412,11 @@ export function createRSCRouter<TEnv = any>(
               // Set segment ID for handle data attribution
               handlerContext._currentSegmentId = entry.shortCode;
               const belongsToRoute = entry.type === "route";
-              const loaderSegments = await resolveLoaders(entry, handlerContext, belongsToRoute);
+              const loaderSegments = await resolveLoaders(
+                entry,
+                handlerContext,
+                belongsToRoute
+              );
               segs.push(...loaderSegments);
               continue; // Skip full handler execution (structure was cached)
             }
@@ -2378,7 +2465,8 @@ export function createRSCRouter<TEnv = any>(
         diff: segmentIds,
         params: matched.params,
         serverTiming,
-        routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
+        routeMiddleware:
+          routeMiddleware.length > 0 ? routeMiddleware : undefined,
       };
     } catch (error) {
       // Check if middleware/handler short-circuited with Response
@@ -2764,8 +2852,8 @@ export function createRSCRouter<TEnv = any>(
       // Note: context is TEnv (platform bindings like Cloudflare env)
       // Filter segment IDs to only include routes and layouts (exclude parallels and loaders)
       const filteredSegmentIds = clientSegmentIds.filter((id) => {
-        if (id.includes(".@")) return false;  // Exclude parallels
-        if (/D\d+\./.test(id)) return false;  // Exclude loaders
+        if (id.includes(".@")) return false; // Exclude parallels
+        if (/D\d+\./.test(id)) return false; // Exclude loaders
         return true;
       });
       const interceptSelectorContext: InterceptSelectorContext = {
@@ -2796,9 +2884,19 @@ export function createRSCRouter<TEnv = any>(
       const interceptResult =
         isSameRouteNavigation || skipInterceptForAction
           ? null
-          : findInterceptForRoute(matched.routeKey, manifestEntry.parent, interceptSelectorContext, isAction) ||
+          : findInterceptForRoute(
+              matched.routeKey,
+              manifestEntry.parent,
+              interceptSelectorContext,
+              isAction
+            ) ||
             (localRouteName !== matched.routeKey
-              ? findInterceptForRoute(localRouteName, manifestEntry.parent, interceptSelectorContext, isAction)
+              ? findInterceptForRoute(
+                  localRouteName,
+                  manifestEntry.parent,
+                  interceptSelectorContext,
+                  isAction
+                )
               : null);
 
       // Build slots state - intercepts render in named slots
@@ -2823,8 +2921,16 @@ export function createRSCRouter<TEnv = any>(
           // Use withCache iterator for clean cache handling
           // Pass interceptResult to skip route entries when intercepting
           // Convert generator to iterator for scope-based delegation
-          const entriesIterator = traverseBack(manifestEntry)[Symbol.iterator]();
-          for await (const [entry, cachedSegments, skipped, scope] of withCache(entriesIterator, matched.params, loaderPromises, interceptResult)) {
+          const entriesIterator =
+            traverseBack(manifestEntry)[Symbol.iterator]();
+          for await (const [entry, cachedSegments, skipped, scope] of withCache(
+            entriesIterator,
+            matched.params,
+            loaderPromises,
+            interceptResult,
+            null,
+            isAction
+          )) {
             // Track the scope for intercept caching
             scopeRef.current = scope;
 
@@ -2843,6 +2949,8 @@ export function createRSCRouter<TEnv = any>(
             }
 
             if (cachedSegments) {
+              console.log("cachedSegments", cachedSegments);
+
               segs.push(...cachedSegments);
               matchedIds.push(entry.shortCode);
               // Loaders are always live (not cached) - resolve them fresh with revalidation
@@ -2869,7 +2977,10 @@ export function createRSCRouter<TEnv = any>(
 
             // Cache miss - normal resolution for layouts, cache entries, and non-intercepted routes
             // Note: entries from traverseBack are layout/cache/route (never parallel)
-            const nonParallelEntry = entry as Exclude<EntryData, { type: "parallel" }>;
+            const nonParallelEntry = entry as Exclude<
+              EntryData,
+              { type: "parallel" }
+            >;
             const resolved = await resolveWithRevalidationErrorHandling(
               nonParallelEntry,
               matched.params,
@@ -2896,7 +3007,8 @@ export function createRSCRouter<TEnv = any>(
 
             // Cache entry after handles settle (non-blocking)
             // Caching is opt-in: only happens when scope exists from cache() DSL
-            if (scope) {
+            // Skip cache writes during actions to prevent stale data being cached
+            if (scope && !isAction) {
               scope.cacheEntry(entry.id, resolved.segments);
             }
           }
@@ -2918,14 +3030,22 @@ export function createRSCRouter<TEnv = any>(
 
         // Check cache for intercept using the inherited scope (if caching enabled)
         const cachedIntercept = scopeRef.current?.enabled
-          ? await scopeRef.current.restore(interceptCacheKey, matched.params, loaderPromises)
+          ? await scopeRef.current.restore(
+              interceptCacheKey,
+              matched.params,
+              loaderPromises
+            )
           : null;
 
         if (cachedIntercept) {
-          console.log(`[Router.matchPartial] Intercept cache HIT: ${interceptCacheKey}`);
+          console.log(
+            `[Router.matchPartial] Intercept cache HIT: ${interceptCacheKey}`
+          );
           interceptSegments = cachedIntercept;
         } else {
-          console.log(`[Router.matchPartial] Intercept cache MISS: ${interceptCacheKey}`);
+          console.log(
+            `[Router.matchPartial] Intercept cache MISS: ${interceptCacheKey}`
+          );
           // Resolve intercept entry (middleware, loaders, handler)
           // Pass revalidation context for stale cache revalidation
           interceptSegments = await getContext().runWithStore(
@@ -2953,7 +3073,10 @@ export function createRSCRouter<TEnv = any>(
           );
 
           // Queue intercept for caching (non-blocking) - uses inherited scope
-          scopeRef.current?.cacheEntry(interceptCacheKey, interceptSegments);
+          // Skip cache writes during actions to prevent stale data being cached
+          if (!isAction) {
+            scopeRef.current?.cacheEntry(interceptCacheKey, interceptSegments);
+          }
         }
 
         // Add to slots metadata - browser uses this to know which slots are active
@@ -3007,7 +3130,8 @@ export function createRSCRouter<TEnv = any>(
         serverTiming,
         // Include slots state - browser uses this to know which slots are active
         slots: Object.keys(slots).length > 0 ? slots : undefined,
-        routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
+        routeMiddleware:
+          routeMiddleware.length > 0 ? routeMiddleware : undefined,
       };
     } catch (error) {
       // Check if middleware/handler short-circuited with Response
@@ -3102,7 +3226,9 @@ export function createRSCRouter<TEnv = any>(
     registerRouteMap(mergedRouteMap);
 
     // Extract trailing slash config if present (attached by route())
-    const trailingSlashConfig = (routes as any).__trailingSlash as Record<string, TrailingSlashMode> | undefined;
+    const trailingSlashConfig = (routes as any).__trailingSlash as
+      | Record<string, TrailingSlashMode>
+      | undefined;
 
     // Create builder object so .use() can return it
     const builder: RouteBuilder<RouteDefinition, TEnv, TNewRoutes> = {

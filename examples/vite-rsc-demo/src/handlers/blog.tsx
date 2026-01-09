@@ -14,69 +14,79 @@ import { Breadcrumbs } from "../handles/breadcrumbs.js";
  * Note: RootLayout is now used as the document component in router.tsx
  */
 export default map<typeof blogRoutes>(
-  ({ route, layout, middleware, revalidate, parallel, loader, loading, cache }) => [
+  ({
+    route,
+    layout,
+    middleware,
+    revalidate,
+    parallel,
+    loader,
+    loading,
+    cache,
+  }) => [
     // Cache boundary for all blog routes - enables server-side caching
-    cache({ ttl: 60 }, () => [
+    cache({ ttl: 600000000 }, () => [
       layout(
-      (ctx) => {
-        // Push "Blog" breadcrumb for all blog routes
-        const push = ctx.use(Breadcrumbs);
-        push({ label: "Blog", href: "/blog" });
-        return <BlogLayout />;
-      },
-      () => [
-        middleware(...loggerMiddleware),
+        (ctx) => {
+          // Push "Blog" breadcrumb for all blog routes
+          const push = ctx.use(Breadcrumbs);
+          push({ label: "Blog", href: "/blog" });
+          return <BlogLayout />;
+        },
+        () => [
+          middleware(...loggerMiddleware),
 
-        parallel(
-          {
-            "@sidebar": async (ctx) => {
-              const data = await ctx.use(BlogSidebarLoader);
-              return <BlogSidebar data={data} />;
+          parallel(
+            {
+              "@sidebar": async (ctx) => {
+                const data = await ctx.use(BlogSidebarLoader);
+                return <BlogSidebar data={data} />;
+              },
             },
-          },
-          () => [
-            loader(BlogSidebarLoader),
-            revalidate(
-              ({ actionId }) => actionId?.includes("sidebar") ?? false
-            ),
-            loading(<BlogSidebarSkeleton />),
-          ]
-        ),
-
-        route("index", IndexRoute),
-
-        route(
-          "post",
-          (ctx) => {
-            // Push post title breadcrumb
-            const push = ctx.use(Breadcrumbs);
-            const title = ctx.params.slug
-              .split("-")
-              .map((w: string) => w[0].toUpperCase() + w.slice(1))
-              .join(" ");
-            push({
-              label: title,
-              href: `/blog/${ctx.params.slug}`,
-              content: new Promise((res) =>
-                setTimeout(
-                  () =>
-                    res(
-                      <>
-                        Content for "{title}": {new Date().toLocaleDateString()}
-                      </>
-                    ),
-                  3000
-                )
+            () => [
+              loader(BlogSidebarLoader),
+              revalidate(
+                ({ actionId }) => actionId?.includes("sidebar") ?? false
               ),
-            });
+              loading(<BlogSidebarSkeleton />),
+            ]
+          ),
 
-            // Render the original PostRoute
-            return PostRoute(ctx);
-          },
-          () => [revalidate(postRevalidation)]
-        ),
-      ]
-    ),
-  ]), // End cache boundary
+          route("index", IndexRoute),
+
+          route(
+            "post",
+            (ctx) => {
+              // Push post title breadcrumb
+              const push = ctx.use(Breadcrumbs);
+              const title = ctx.params.slug
+                .split("-")
+                .map((w: string) => w[0].toUpperCase() + w.slice(1))
+                .join(" ");
+              push({
+                label: title,
+                href: `/blog/${ctx.params.slug}`,
+                content: new Promise((res) =>
+                  setTimeout(
+                    () =>
+                      res(
+                        <>
+                          Content for "{title}":{" "}
+                          {new Date().toLocaleDateString()}
+                        </>
+                      ),
+                    3000
+                  )
+                ),
+              });
+
+              // Render the original PostRoute
+              return PostRoute(ctx);
+            },
+            () => [revalidate(postRevalidation)]
+          ),
+        ]
+      ),
+    ]), // End cache boundary
   ]
 );

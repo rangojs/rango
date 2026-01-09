@@ -16,7 +16,10 @@ import {
   type LoaderFn,
   type ResolvedSegment,
 } from "./types";
-import { RouteContentWrapper, LoaderBoundary } from "./route-content-wrapper.js";
+import {
+  RouteContentWrapper,
+  LoaderBoundary,
+} from "./route-content-wrapper.js";
 
 /**
  * Outlet component - renders child content in layouts
@@ -502,10 +505,16 @@ export {
 } from "./browser/react/use-navigation.js";
 
 // Action state tracking hook
-export { useAction, type ServerActionFunction } from "./browser/react/use-action.js";
+export {
+  useAction,
+  type ServerActionFunction,
+} from "./browser/react/use-action.js";
 
 // Segments state hook
-export { useSegments, type SegmentsState } from "./browser/react/use-segments.js";
+export {
+  useSegments,
+  type SegmentsState,
+} from "./browser/react/use-segments.js";
 
 // Client cache controls hook
 export {
@@ -528,7 +537,10 @@ export {
 } from "./browser/react/Link.js";
 
 // Link status hook
-export { useLinkStatus, type LinkStatus } from "./browser/react/use-link-status.js";
+export {
+  useLinkStatus,
+  type LinkStatus,
+} from "./browser/react/use-link-status.js";
 
 // Scroll restoration
 export {

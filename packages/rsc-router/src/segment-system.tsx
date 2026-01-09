@@ -193,7 +193,6 @@ export async function renderSegments(
                 ? resolvedComponent
                 : Promise.resolve(resolvedComponent),
             fallback: loading,
-            segmentId: id, // Pass stable ID for consistent keys across cached/fresh renders
           })
         : resolvedComponent;
 

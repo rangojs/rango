@@ -472,6 +472,7 @@ export function createRSCHandler<TEnv = unknown>(
       const renderStart = performance.now();
       const root = renderSegments(fullMatch.segments, {
         rootLayout: router.rootLayout,
+        isAction: true,
       });
       const renderDuration = performance.now() - renderStart;
       const serverTiming = fullMatch.serverTiming
@@ -511,7 +512,7 @@ export function createRSCHandler<TEnv = unknown>(
     setRequestContextParams(matchResult.params);
 
     const renderStart = performance.now();
-    renderSegments(matchResult.segments, { rootLayout: router.rootLayout });
+    renderSegments(matchResult.segments, { rootLayout: router.rootLayout, isAction: true });
     const renderDuration = performance.now() - renderStart;
     const serverTiming = matchResult.serverTiming
       ? `${matchResult.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
