@@ -29,10 +29,7 @@ import { createFromReadableStream } from "@vitejs/plugin-rsc/rsc";
 /**
  * Generate cache key for an entry with params
  */
-function getCacheKey(
-  entryId: string,
-  params?: Record<string, string>
-): string {
+function getCacheKey(entryId: string, params?: Record<string, string>): string {
   const paramStr = params
     ? Object.entries(params)
         .sort(([a], [b]) => a.localeCompare(b))
@@ -125,6 +122,15 @@ async function serializeSegments(
       ? await rscSerialize(segment.layout)
       : undefined;
 
+    // RSC-serialize loading if present (ReactNode) - preserves tree structure
+    // Use "null" string to distinguish explicit null from undefined
+    const encodedLoading =
+      segment.loading !== undefined
+        ? segment.loading === null
+          ? "null"
+          : await rscSerialize(segment.loading)
+        : undefined;
+
     // Await and RSC-serialize loaderData if present
     const loaderDataResolved =
       segment.loaderData instanceof Promise
@@ -144,6 +150,7 @@ async function serializeSegments(
     serialized.push({
       encoded,
       encodedLayout,
+      encodedLoading,
       encodedLoaderData,
       encodedLoaderDataPromise,
       metadata: {
@@ -189,10 +196,19 @@ async function deserializeSegments(
       rscDeserialize(item.encodedLoaderDataPromise),
     ]);
 
+    // Deserialize loading - "null" string means explicit null
+    const loading =
+      item.encodedLoading === "null"
+        ? null
+        : item.encodedLoading
+          ? await rscDeserialize(item.encodedLoading)
+          : undefined;
+
     segments.push({
       ...item.metadata,
       component,
       layout,
+      loading,
       loaderData,
       loaderDataPromise,
     } as ResolvedSegment);
@@ -227,7 +243,10 @@ export class CacheScope {
   /** Explicit store from cache() options, if specified */
   private readonly explicitStore: SegmentCacheStore | undefined;
 
-  constructor(config: PartialCacheOptions | false, parent: CacheScope | null = null) {
+  constructor(
+    config: PartialCacheOptions | false,
+    parent: CacheScope | null = null
+  ) {
     this.config = config;
     this.parent = parent;
     // Extract and store explicit store reference
@@ -333,7 +352,11 @@ export class CacheScope {
       // Note: Loader segments are not cached by default (always live)
       // If a loader was explicitly cached, restore its data to loaderPromises
       for (const seg of segments) {
-        if (seg.type === "loader" && seg.loaderId && seg.loaderData !== undefined) {
+        if (
+          seg.type === "loader" &&
+          seg.loaderId &&
+          seg.loaderData !== undefined
+        ) {
           loaderPromises.set(seg.loaderId, Promise.resolve(seg.loaderData));
         }
       }
@@ -341,8 +364,9 @@ export class CacheScope {
       const segmentTypes = segments.map((s) =>
         s.type === "parallel" ? s.slot : s.type
       );
-      console.log(`[CacheScope] HIT: ${key} (${segmentTypes.join(", ")}) [loaders resolved fresh]`);
-
+      console.log(
+        `[CacheScope] HIT: ${key} (${segmentTypes.join(", ")}) [loaders resolved fresh]`
+      );
       return segments;
     } catch (error) {
       console.error(`[CacheScope] Failed to restore ${key}:`, error);
@@ -404,7 +428,9 @@ export class CacheScope {
         const segmentTypes = nonLoaderSegments.map((s) =>
           s.type === "parallel" ? s.slot : s.type
         );
-        console.log(`[CacheScope] Cached: ${key} (${segmentTypes.join(", ")}) ttl=${ttl}s [loaders excluded]`);
+        console.log(
+          `[CacheScope] Cached: ${key} (${segmentTypes.join(", ")}) ttl=${ttl}s [loaders excluded]`
+        );
       } catch (error) {
         console.error(`[CacheScope] Failed to cache ${key}:`, error);
       }

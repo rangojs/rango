@@ -129,6 +129,7 @@ export async function renderSegments(
   options?: RenderSegmentsOptions
 ): Promise<ReactNode> {
   const {
+    isAction,
     interceptSegments,
     forceAwait,
     rootLayout: RootLayout,
@@ -139,8 +140,6 @@ export async function renderSegments(
   // Render content segments as siblings
   let content: ReactNode = null;
   for (const node of tree) {
-    console.log("node > ", node);
-
     invariant(
       node.segment.type === "layout" ||
         node.segment.type === "route" ||
@@ -177,54 +176,53 @@ export async function renderSegments(
     );
 
     // Determine the component content (with or without Suspense wrapper)
+    // Wrap when loading skeleton defined OR component is Promise (needs Suspense)
+    // During actions, await component Promise to prevent Suspense from triggering
+    // This keeps existing content visible instead of showing loading skeleton
+    let resolvedComponent = component;
+    if (isAction && component instanceof Promise) {
+      resolvedComponent = await component;
+    }
+
     let nodeContent: ReactNode =
-      loading || loading === null || component instanceof Promise
+      loading || loading === null || resolvedComponent instanceof Promise
         ? createElement(RouteContentWrapper, {
             key: `suspense-loading-${id}`,
             content:
-              component instanceof Promise
-                ? component
-                : Promise.resolve(component),
+              resolvedComponent instanceof Promise
+                ? resolvedComponent
+                : Promise.resolve(resolvedComponent),
             fallback: loading,
+            segmentId: id, // Pass stable ID for consistent keys across cached/fresh renders
           })
-        : component;
+        : resolvedComponent;
 
     // Common props for OutletProvider
     const outletContent: ReactNode =
       node.segment.type === "layout" ? content : null;
 
-    // No loaders - create OutletProvider directly
-    if (loaderEntries.length === 0) {
-      content = createElement(OutletProvider, {
-        key,
-        content: outletContent,
-        segment: node.segment,
-        parallel: node.parallel,
-        children: nodeContent,
-      });
-      continue;
-    }
-
-    // Has loaders - prepare loader data
+    // Prepare loader data if there are loaders
     const loaderIds = loaderEntries.map((loader) => loader.loaderId!);
-    const loaderDataPromise = Promise.all(
-      loaderEntries.map((loader) =>
-        loader.loaderData instanceof Promise
-          ? loader.loaderData
-          : Promise.resolve(loader.loaderData)
-      )
-    );
+    const loaderDataPromise =
+      loaderEntries.length > 0
+        ? Promise.all(
+            loaderEntries.map((loader) =>
+              loader.loaderData instanceof Promise
+                ? loader.loaderData
+                : Promise.resolve(loader.loaderData)
+            )
+          )
+        : Promise.resolve([]);
 
-    // Use LoaderBoundary for streaming when loading skeleton is defined
-    // If forceAwait was set, promises are pre-resolved so LoaderBoundary won't suspend
-    // false means we have a loading skeleton but it it's explicitly disabled for ssr
-    // undefined means we dont have a loading skeleton
+    // Use LoaderBoundary when loading is defined to maintain consistent tree structure
+    // This ensures cached segments (which may not have loader segments) have the same
+    // tree structure as fresh segments, preventing React remounts
+    // If forceAwait or isAction is set, pre-resolve promises so LoaderBoundary won't suspend
     if (loading !== undefined) {
       content = createElement(LoaderBoundary, {
         key: `loader-boundary-${key}`,
-        loaderDataPromise: forceAwait
-          ? await loaderDataPromise
-          : loaderDataPromise,
+        loaderDataPromise:
+          forceAwait || isAction ? await loaderDataPromise : loaderDataPromise,
         loaderIds,
         fallback: loading,
         outletKey: key,
@@ -236,7 +234,20 @@ export async function renderSegments(
       continue;
     }
 
-    // No loading skeleton - await loaders and render directly
+    // No loading skeleton defined - use OutletProvider directly
+    if (loaderEntries.length === 0) {
+      // No loaders, no loading - simple OutletProvider
+      content = createElement(OutletProvider, {
+        key,
+        content: outletContent,
+        segment: node.segment,
+        parallel: node.parallel,
+        children: nodeContent,
+      });
+      continue;
+    }
+
+    // Has loaders but no loading skeleton - await loaders and render directly
     const resolvedData = await loaderDataPromise;
     const { loaderData, errorFallback } = resolveLoaderData(
       resolvedData,
