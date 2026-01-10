@@ -179,6 +179,216 @@ export default createRSCHandler({
 });
 ```
 
+## waitUntil Integration
+
+The `RequestContext` already provides `waitUntil()` for background work:
+
+```typescript
+// In request-context.ts
+waitUntil(fn: () => Promise<void>): void {
+  if (executionContext?.waitUntil) {
+    // Cloudflare Workers: use native waitUntil
+    executionContext.waitUntil(fn());
+  } else {
+    // Node.js: fire-and-forget
+    fn().catch((err) => console.error("[waitUntil]", err));
+  }
+}
+```
+
+### How Cache Uses waitUntil
+
+`CacheScope.cacheEntry()` already uses `waitUntil` for non-blocking cache writes:
+
+```typescript
+// In cache-scope.ts
+cacheEntry(cacheKey: string, segments: ResolvedSegment[]): void {
+  // ...
+  requestCtx.waitUntil(async () => {
+    await handleStore.settled;
+    const serialized = await serializeSegments(segments);
+    await store.set(key, data, ttl);
+  });
+}
+```
+
+The CF store itself doesn't need direct `waitUntil` access - it's handled at the `CacheScope` level.
+
+### KV Async Writes (Phase 2)
+
+For Phase 2 with KV persistence, we have two options:
+
+**Option A: Store receives waitUntil (more complex)**
+```typescript
+interface CFCacheStoreOptions {
+  kv?: KVNamespace;
+  waitUntil?: (fn: () => Promise<void>) => void;
+}
+```
+
+**Option B: KV writes inline, caller uses waitUntil (simpler)**
+```typescript
+// CacheScope already wraps set() in waitUntil
+// Store just does both writes synchronously
+async set(key: string, data: CachedEntryData, ttl: number): Promise<void> {
+  await this.edgeCache.put(request, response);
+  if (this.kv) {
+    await this.kv.put(key, JSON.stringify(data), { expirationTtl: ttl });
+  }
+}
+```
+
+**Recommendation**: Option B - keep the store simple. The `CacheScope` already handles `waitUntil`, so KV writes happen in the background naturally.
+
+---
+
+## Stale-While-Revalidate (SWR)
+
+SWR allows serving stale cached content immediately while refreshing in the background.
+
+### Cache States
+
+```
+TTL: 60s, SWR: 300s
+
+Time:     0s -------- 60s ----------- 360s --------->
+State:    |  FRESH   |    STALE      |  EXPIRED    |
+Action:   |  serve   | serve+reval   |  miss       |
+```
+
+### Data Structure Changes
+
+```typescript
+interface CachedEntryData {
+  segments: SerializedSegmentData[];
+  handles: Record<string, SegmentHandleData>;
+  // Timing
+  createdAt: number;    // When cached
+  staleAt: number;      // TTL boundary (after this, trigger revalidation)
+  expiresAt: number;    // Hard expiration (cache miss)
+}
+```
+
+### Store Get Returns Freshness Status
+
+The store needs to indicate if data is stale:
+
+```typescript
+interface CacheGetResult {
+  data: CachedEntryData;
+  stale: boolean;  // true if past staleAt but before expiresAt
+}
+
+async get(key: string): Promise<CacheGetResult | null> {
+  const response = await cache.match(request);
+  if (!response) return null;
+
+  const data = await response.json();
+  const now = Date.now();
+
+  // Hard expired - treat as miss
+  if (now > data.expiresAt) {
+    return null;
+  }
+
+  // Return data with staleness indicator
+  return {
+    data,
+    stale: now > data.staleAt,
+  };
+}
+```
+
+### CacheScope Handles Revalidation
+
+When `CacheScope.restore()` gets stale data:
+
+```typescript
+async restore(entryId: string, params: Record<string, string>): Promise<ResolvedSegment[] | null> {
+  const result = await store.get(key);
+  if (!result) return null;
+
+  // Serve stale data immediately
+  const segments = await deserializeSegments(result.data.segments);
+
+  // Trigger background revalidation if stale
+  if (result.stale) {
+    requestCtx.waitUntil(async () => {
+      await this.revalidateEntry(entryId, params);
+    });
+  }
+
+  return segments;
+}
+```
+
+### Revalidation Implementation
+
+Background revalidation needs to:
+1. Re-resolve the segments fresh (run handlers/loaders)
+2. Cache the new result
+
+**Challenge**: Revalidation needs router context to re-render segments.
+
+**Solution**: Store revalidation context with cached data:
+
+```typescript
+interface CachedEntryData {
+  // ... existing fields ...
+  revalidationContext: {
+    entryId: string;
+    routeKey: string;
+    params: Record<string, string>;
+    url: string;  // Original request URL for context
+  };
+}
+```
+
+The revalidation function creates a synthetic request and re-runs matching:
+
+```typescript
+async revalidateEntry(context: RevalidationContext): Promise<void> {
+  // Prevent thundering herd
+  if (isRevalidating(context.entryId)) return;
+  markRevalidating(context.entryId);
+
+  try {
+    // Create synthetic request for re-resolution
+    const request = new Request(context.url);
+
+    // Re-resolve segments (implementation TBD - needs router access)
+    const freshSegments = await router.resolveEntry(context.entryId, context.params, request);
+
+    // Cache fresh result
+    await this.cacheEntry(context.entryId, freshSegments);
+  } finally {
+    clearRevalidating(context.entryId);
+  }
+}
+```
+
+### Thundering Herd Prevention
+
+Use in-memory Set to track active revalidations:
+
+```typescript
+const revalidatingKeys = new Set<string>();
+
+function isRevalidating(key: string): boolean {
+  return revalidatingKeys.has(key);
+}
+
+function markRevalidating(key: string): void {
+  revalidatingKeys.add(key);
+  // Auto-clear after timeout (prevent stuck entries)
+  setTimeout(() => revalidatingKeys.delete(key), 30000);
+}
+```
+
+**Note**: This is per-datacenter. Multiple CF edge locations may revalidate simultaneously. For true global coordination, use KV or Durable Objects (future optimization).
+
+---
+
 ## Considerations
 
 ### Cache Eviction
@@ -254,12 +464,26 @@ packages/rsc-router/src/cache/
 - [ ] Integration tests with Miniflare
 - [ ] Documentation and examples
 
+### Phase 1.5: SWR Support
+- [ ] Update `CachedEntryData` with `createdAt`, `staleAt` fields
+- [ ] Update store interface to return staleness indicator
+- [ ] Implement `CacheScope` background revalidation trigger
+- [ ] Add revalidation context to cached data
+- [ ] Implement `revalidateEntry()` with router integration
+- [ ] Thundering herd prevention (in-memory Set)
+- [ ] Tests for SWR behavior (stale serving, background refresh)
+
 ### Phase 2: KV Sub-store
 - [ ] Design KV schema and key structure
 - [ ] Implement layered read (Edge Cache -> KV)
-- [ ] Implement async write to KV via waitUntil
+- [ ] Implement async write to KV (inline, wrapped by waitUntil at CacheScope)
 - [ ] Handle KV-specific TTL configuration
 - [ ] Tests for layered caching behavior
+
+### Phase 3: Advanced (Future)
+- [ ] Global revalidation coordination via KV/Durable Objects
+- [ ] Cache tags for bulk invalidation
+- [ ] Proactive sibling segment caching
 
 ## References
 
