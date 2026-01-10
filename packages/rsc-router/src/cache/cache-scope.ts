@@ -317,6 +317,7 @@ export class CacheScope {
   /**
    * Restore cached segments for an entry
    * Returns null if cache miss or caching disabled
+   * Triggers background revalidation if entry is stale (SWR)
    */
   async restore(
     entryId: string,
@@ -331,11 +332,29 @@ export class CacheScope {
     const key = getCacheKey(entryId, params);
 
     try {
-      const cached = await store.get(key);
+      const result = await store.get(key);
 
-      if (!cached) {
+      if (!result) {
         console.log(`[CacheScope] MISS: ${key}`);
         return null;
+      }
+
+      const { data: cached, stale } = result;
+
+      // If stale, trigger background revalidation (SWR)
+      if (stale) {
+        const requestCtx = getRequestContext();
+        if (requestCtx) {
+          // Mark as revalidating to prevent thundering herd
+          store.markRevalidating?.(key);
+
+          // Schedule background revalidation
+          requestCtx.waitUntil(async () => {
+            // TODO: Implement actual revalidation by re-resolving entry
+            // For now, just log - revalidation needs router context
+            console.log(`[CacheScope] STALE: ${key} - background revalidation triggered`);
+          });
+        }
       }
 
       // Deserialize segments
@@ -367,7 +386,7 @@ export class CacheScope {
         s.type === "parallel" ? s.slot : s.type
       );
       console.log(
-        `[CacheScope] HIT: ${key} (${segmentTypes.join(", ")}) [loaders resolved fresh]`
+        `[CacheScope] ${stale ? 'STALE' : 'HIT'}: ${key} (${segmentTypes.join(", ")}) [loaders resolved fresh]`
       );
       return segments;
     } catch (error) {

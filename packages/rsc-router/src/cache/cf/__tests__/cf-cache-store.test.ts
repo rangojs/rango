@@ -3,6 +3,7 @@ import {
   CFCacheStore,
   CACHE_STALE_AT_HEADER,
   CACHE_STATUS_HEADER,
+  MAX_REVALIDATION_INTERVAL,
 } from "../cf-cache-store";
 import type { CachedEntryData } from "../../types";
 
@@ -115,7 +116,9 @@ describe("CFCacheStore", () => {
       await store.set("test-key", data, 60);
       const result = await store.get("test-key");
 
-      expect(result).toEqual(data);
+      expect(result).not.toBeNull();
+      expect(result!.data).toEqual(data);
+      expect(result!.stale).toBe(false);
     });
 
     it("should set Cache-Control header with TTL", async () => {
@@ -191,7 +194,7 @@ describe("CFCacheStore", () => {
     });
   });
 
-  describe("getWithMeta", () => {
+  describe("staleness detection", () => {
     it("should return stale=false for fresh entries", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
@@ -203,11 +206,11 @@ describe("CFCacheStore", () => {
       // Still fresh
       vi.advanceTimersByTime(30 * 1000);
 
-      const result = await store.getWithMeta("test-key");
+      const result = await store.get("test-key");
       expect(result?.stale).toBe(false);
     });
 
-    it("should return stale=true for stale entries", async () => {
+    it("should return stale=true for entries past TTL", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const store = new CFCacheStore();
@@ -218,72 +221,32 @@ describe("CFCacheStore", () => {
       // Past TTL but within SWR window
       vi.advanceTimersByTime(120 * 1000);
 
-      const result = await store.getWithMeta("test-key");
+      const result = await store.get("test-key");
       expect(result?.stale).toBe(true);
     });
-  });
 
-  describe("shouldRevalidate", () => {
-    it("should return true for stale response", async () => {
+    it("should return stale=false when already REVALIDATING with low age", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const store = new CFCacheStore();
-      const staleAt = Date.now() - 1000; // Already stale
+      const data = createTestData();
 
-      const response = new Response("{}", {
-        headers: {
-          [CACHE_STALE_AT_HEADER]: String(staleAt),
-          [CACHE_STATUS_HEADER]: "HIT",
-        },
-      });
+      // Store entry that's already stale
+      await store.set("test-key", data, 60, 300);
 
-      expect(store.shouldRevalidate(response)).toBe(true);
-    });
+      // Make it stale
+      vi.advanceTimersByTime(120 * 1000);
 
-    it("should return false for fresh response", async () => {
-      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+      // First get should mark as stale
+      const result1 = await store.get("test-key");
+      expect(result1?.stale).toBe(true);
 
-      const store = new CFCacheStore();
-      const staleAt = Date.now() + 60000; // Still fresh
+      // Mark as revalidating
+      await store.markRevalidating("test-key");
 
-      const response = new Response("{}", {
-        headers: {
-          [CACHE_STALE_AT_HEADER]: String(staleAt),
-          [CACHE_STATUS_HEADER]: "HIT",
-        },
-      });
-
-      expect(store.shouldRevalidate(response)).toBe(false);
-    });
-
-    it("should return false for REVALIDATING response with low age", async () => {
-      const store = new CFCacheStore();
-      const staleAt = Date.now() - 1000; // Stale
-
-      const response = new Response("{}", {
-        headers: {
-          [CACHE_STALE_AT_HEADER]: String(staleAt),
-          [CACHE_STATUS_HEADER]: "REVALIDATING",
-          age: "5", // Only 5 seconds old
-        },
-      });
-
-      expect(store.shouldRevalidate(response)).toBe(false);
-    });
-
-    it("should return true for REVALIDATING response with high age", async () => {
-      const store = new CFCacheStore();
-      const staleAt = Date.now() - 1000; // Stale
-
-      const response = new Response("{}", {
-        headers: {
-          [CACHE_STALE_AT_HEADER]: String(staleAt),
-          [CACHE_STATUS_HEADER]: "REVALIDATING",
-          age: "60", // Old revalidation
-        },
-      });
-
-      expect(store.shouldRevalidate(response)).toBe(true);
+      // Second get should not mark as stale (already revalidating)
+      const result2 = await store.get("test-key");
+      expect(result2?.stale).toBe(false);
     });
   });
 
@@ -294,10 +257,7 @@ describe("CFCacheStore", () => {
 
       await store.set("test-key", data, 60);
 
-      const result = await store.getWithMeta("test-key");
-      expect(result).not.toBeNull();
-
-      await store.markRevalidating("test-key", result!.response);
+      await store.markRevalidating("test-key");
 
       const cache = await mockCaches.open("rsc-segments");
       const request = new Request("https://rsc-cache.internal.com/test-key");
@@ -306,6 +266,15 @@ describe("CFCacheStore", () => {
       expect(updatedResponse?.headers.get(CACHE_STATUS_HEADER)).toBe(
         "REVALIDATING"
       );
+    });
+
+    it("should not throw for non-existent entries", async () => {
+      const store = new CFCacheStore();
+
+      // Should not throw
+      await expect(
+        store.markRevalidating("non-existent-key")
+      ).resolves.not.toThrow();
     });
   });
 
@@ -339,7 +308,8 @@ describe("CFCacheStore", () => {
       await store.set(key, data, 60);
 
       const result = await store.get(key);
-      expect(result).toEqual(data);
+      expect(result).not.toBeNull();
+      expect(result!.data).toEqual(data);
     });
   });
 });

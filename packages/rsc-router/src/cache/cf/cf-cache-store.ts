@@ -2,7 +2,7 @@
  * Cloudflare Edge Cache Store
  *
  * Production cache store using Cloudflare's Cache API.
- * Uses response headers for staleness tracking (no JSON parsing needed).
+ * Uses response headers for staleness tracking (no JSON parsing needed for stale check).
  *
  * Features:
  * - Extended TTL for SWR window (max-age = ttl + swr)
@@ -14,6 +14,7 @@ import type {
   SegmentCacheStore,
   CachedEntryData,
   CacheDefaults,
+  CacheGetResult,
 } from "../types.js";
 
 // ============================================================================
@@ -46,13 +47,6 @@ export interface CFCacheStoreOptions {
 
 export type CacheStatus = "HIT" | "REVALIDATING";
 
-export interface CacheGetResult {
-  data: CachedEntryData;
-  stale: boolean;
-  /** Response object for body tee-ing when marking REVALIDATING */
-  response: Response;
-}
-
 // ============================================================================
 // CFCacheStore Implementation
 // ============================================================================
@@ -71,18 +65,9 @@ export class CFCacheStore implements SegmentCacheStore {
 
   /**
    * Get cached entry data by key
-   * Returns null if not found or hard-expired
+   * Returns { data, stale } or null if not found/hard-expired
    */
-  async get(key: string): Promise<CachedEntryData | null> {
-    const result = await this.getWithMeta(key);
-    return result?.data ?? null;
-  }
-
-  /**
-   * Get cached entry with staleness metadata
-   * Used internally for SWR logic
-   */
-  async getWithMeta(key: string): Promise<CacheGetResult | null> {
+  async get(key: string): Promise<CacheGetResult | null> {
     try {
       const cache = await caches.open(this.namespace);
       const request = this.keyToRequest(key);
@@ -92,15 +77,23 @@ export class CFCacheStore implements SegmentCacheStore {
         return null;
       }
 
+      // Check if already revalidating - if so, don't mark as stale again
+      const status = response.headers.get(CACHE_STATUS_HEADER);
+      const age = Number(response.headers.get("age") ?? "0");
+      const isRevalidating = status === "REVALIDATING" && age < MAX_REVALIDATION_INTERVAL;
+
       // Check staleness from header (fast, no JSON parse needed)
       const staleAtStr = response.headers.get(CACHE_STALE_AT_HEADER);
       const staleAt = staleAtStr ? Number(staleAtStr) : 0;
-      const stale = Date.now() > staleAt;
+      const isPastStaleTime = Date.now() > staleAt;
+
+      // Stale = past stale time AND not already being revalidated
+      const stale = isPastStaleTime && !isRevalidating;
 
       // Parse JSON body for actual data
-      const data = (await response.clone().json()) as CachedEntryData;
+      const data = (await response.json()) as CachedEntryData;
 
-      return { data, stale, response };
+      return { data, stale };
     } catch (error) {
       // Log but don't throw - treat as cache miss
       console.error("[CFCacheStore] get failed:", error);
@@ -109,55 +102,34 @@ export class CFCacheStore implements SegmentCacheStore {
   }
 
   /**
-   * Check if entry should be revalidated
-   * Returns false if already revalidating (thundering herd prevention)
-   */
-  shouldRevalidate(response: Response): boolean {
-    const status = response.headers.get(CACHE_STATUS_HEADER);
-    const age = Number(response.headers.get("age") ?? "0");
-
-    // Already revalidating and recent - skip
-    if (status === "REVALIDATING" && age < MAX_REVALIDATION_INTERVAL) {
-      return false;
-    }
-
-    // Check if stale
-    const staleAtStr = response.headers.get(CACHE_STALE_AT_HEADER);
-    const staleAt = staleAtStr ? Number(staleAtStr) : 0;
-    return Date.now() > staleAt;
-  }
-
-  /**
    * Mark entry as REVALIDATING to prevent thundering herd
-   * Returns cloned body stream for reading data
+   * Fetches current entry and updates its status header
    */
-  async markRevalidating(key: string, response: Response): Promise<Response> {
+  async markRevalidating(key: string): Promise<void> {
     try {
-      const [b1, b2] = response.body!.tee();
       const cache = await caches.open(this.namespace);
+      const request = this.keyToRequest(key);
+      const response = await cache.match(request);
+
+      if (!response) {
+        return; // Entry no longer exists
+      }
 
       // Clone headers and update status
       const headers = new Headers(response.headers);
       headers.set(CACHE_STATUS_HEADER, "REVALIDATING");
 
-      // Update cache with REVALIDATING status
+      // Re-read body and store with updated status
+      const body = await response.text();
       await cache.put(
-        this.keyToRequest(key),
-        new Response(b1, {
+        request,
+        new Response(body, {
           status: response.status,
           headers,
         })
       );
-
-      // Return new response with b2 for reading
-      return new Response(b2, {
-        status: response.status,
-        headers: response.headers,
-      });
     } catch (error) {
       console.error("[CFCacheStore] markRevalidating failed:", error);
-      // Return original response on error
-      return response;
     }
   }
 

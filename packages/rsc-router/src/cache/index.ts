@@ -22,6 +22,7 @@ export type {
   SegmentCacheProvider,
   CachedEntryData,
   CachedEntryResult,
+  CacheGetResult,
   SerializedSegmentData,
   SegmentHandleData,
   CacheConfig,
@@ -34,7 +35,6 @@ export { MemorySegmentCacheStore } from "./memory-segment-store.js";
 export {
   CFCacheStore,
   type CFCacheStoreOptions,
-  type CacheGetResult,
   CACHE_STALE_AT_HEADER,
   CACHE_STATUS_HEADER,
 } from "./cf/index.js";

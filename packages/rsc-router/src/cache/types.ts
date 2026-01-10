@@ -16,6 +16,16 @@ import type { ResolvedSegment } from "../types.js";
 // ============================================================================
 
 /**
+ * Result from cache get() including data and staleness status
+ */
+export interface CacheGetResult {
+  /** The cached entry data */
+  data: CachedEntryData;
+  /** Whether the entry is stale (past TTL but within SWR window) */
+  stale: boolean;
+}
+
+/**
  * Low-level segment cache store interface.
  *
  * Implementations handle the actual storage (memory, KV, Redis, etc.).
@@ -31,9 +41,9 @@ export interface SegmentCacheStore {
 
   /**
    * Get cached entry data by key
-   * @returns Raw cached data or null if not found/expired
+   * @returns Cache result with data and staleness, or null if not found/expired
    */
-  get(key: string): Promise<CachedEntryData | null>;
+  get(key: string): Promise<CacheGetResult | null>;
 
   /**
    * Store entry data with TTL
@@ -54,6 +64,12 @@ export interface SegmentCacheStore {
    * Clear all cached entries (optional, for testing)
    */
   clear?(): Promise<void>;
+
+  /**
+   * Mark entry as currently revalidating (optional, for thundering herd prevention)
+   * Stores use this to prevent multiple simultaneous revalidations.
+   */
+  markRevalidating?(key: string): Promise<void>;
 }
 
 /**

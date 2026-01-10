@@ -5,7 +5,7 @@
  * Uses globalThis to survive HMR in development.
  */
 
-import type { SegmentCacheStore, CachedEntryData, CacheDefaults } from "./types.js";
+import type { SegmentCacheStore, CachedEntryData, CacheDefaults, CacheGetResult } from "./types.js";
 
 const CACHE_GLOBAL_KEY = "__rsc_router_segment_cache_store__";
 
@@ -63,7 +63,7 @@ export class MemorySegmentCacheStore implements SegmentCacheStore {
     this.defaults = options?.defaults;
   }
 
-  async get(key: string): Promise<CachedEntryData | null> {
+  async get(key: string): Promise<CacheGetResult | null> {
     const cached = this.cache.get(key);
 
     if (!cached) {
@@ -76,7 +76,8 @@ export class MemorySegmentCacheStore implements SegmentCacheStore {
       return null;
     }
 
-    return cached;
+    // Memory store doesn't support SWR - always return stale: false
+    return { data: cached, stale: false };
   }
 
   async set(key: string, data: CachedEntryData, ttl: number, _swr?: number): Promise<void> {
