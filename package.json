@@ -26,7 +26,10 @@
     "build": "turbo run build",
     "preview": "turbo run preview",
     "lint": "turbo run lint",
-    "type-check": "turbo run type-check"
+    "type-check": "turbo run type-check",
+    "test": "pnpm test:unit && pnpm test:e2e",
+    "test:unit": "pnpm --filter rsc-router test:unit && pnpm --filter host-router test",
+    "test:e2e": "pnpm --filter rsc-router test && pnpm --filter host-router test:e2e && pnpm --filter vite-rsc-demo test && pnpm --filter cloudflare-basic test:e2e"
   },
   "devDependencies": {
     "prettier": "^3.7.3",
