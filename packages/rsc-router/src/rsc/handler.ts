@@ -88,11 +88,13 @@ export function createRSCHandler<TEnv = unknown>(
     const variables: Record<string, any> = {};
 
     // Resolve cache store configuration
-    // Store is provided only if: config provided, enabled, and no ?__no_cache query param
+    // Priority: options.cache (handler override) > router.cache (router default)
+    // Store is enabled only if: config provided, enabled, and no ?__no_cache query param
     let cacheStore = undefined;
-    if (options.cache && !url.searchParams.has("__no_cache")) {
+    const cacheOption = options.cache ?? router.cache;
+    if (cacheOption && !url.searchParams.has("__no_cache")) {
       const cacheConfig =
-        typeof options.cache === "function" ? options.cache(env) : options.cache;
+        typeof cacheOption === "function" ? cacheOption(env) : cacheOption;
 
       if (cacheConfig.enabled !== false) {
         cacheStore = cacheConfig.store;

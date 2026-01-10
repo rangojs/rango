@@ -7,15 +7,9 @@ import {
   decodeFormState,
 } from "rsc-router/internal/deps/rsc";
 import { router } from "./router.js";
-import { createRSCHandler, MemorySegmentCacheStore } from "rsc-router/rsc";
+import { createRSCHandler } from "rsc-router/rsc";
 
-// Create cache store with defaults (persists across HMR via globalThis)
-const cacheStore = new MemorySegmentCacheStore({
-  defaults: {
-    ttl: 600000, // Default TTL for all cache() boundaries
-  },
-});
-
+// Cache is configured on the router (see router.tsx)
 export default createRSCHandler({
   router,
   deps: {
@@ -31,7 +25,4 @@ export default createRSCHandler({
       "ssr",
       "index"
     ),
-  cache: {
-    store: cacheStore,
-  },
 });
