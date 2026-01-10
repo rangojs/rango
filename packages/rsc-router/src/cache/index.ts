@@ -29,3 +29,12 @@ export type {
 } from "./types.js";
 
 export { MemorySegmentCacheStore } from "./memory-segment-store.js";
+
+// Cloudflare cache store
+export {
+  CFCacheStore,
+  type CFCacheStoreOptions,
+  type CacheGetResult,
+  CACHE_STALE_AT_HEADER,
+  CACHE_STATUS_HEADER,
+} from "./cf/index.js";

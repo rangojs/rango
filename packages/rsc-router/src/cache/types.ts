@@ -40,8 +40,9 @@ export interface SegmentCacheStore {
    * @param key - Cache key
    * @param data - Serialized entry data
    * @param ttl - Time-to-live in seconds
+   * @param swr - Optional stale-while-revalidate window in seconds
    */
-  set(key: string, data: CachedEntryData, ttl: number): Promise<void>;
+  set(key: string, data: CachedEntryData, ttl: number, swr?: number): Promise<void>;
 
   /**
    * Delete a cached entry

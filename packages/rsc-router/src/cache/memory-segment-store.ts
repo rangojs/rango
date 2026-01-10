@@ -79,8 +79,9 @@ export class MemorySegmentCacheStore implements SegmentCacheStore {
     return cached;
   }
 
-  async set(key: string, data: CachedEntryData, ttl: number): Promise<void> {
-    // Update expiresAt based on TTL
+  async set(key: string, data: CachedEntryData, ttl: number, _swr?: number): Promise<void> {
+    // Note: Memory store doesn't implement SWR - entries just expire at TTL
+    // For SWR support, use CFCacheStore or similar distributed cache
     const entry: CachedEntryData = {
       ...data,
       expiresAt: Date.now() + ttl * 1000,

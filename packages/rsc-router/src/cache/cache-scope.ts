@@ -425,7 +425,7 @@ export class CacheScope {
           expiresAt: Date.now() + ttl * 1000,
         };
 
-        await store.set(key, data, ttl);
+        await store.set(key, data, ttl, this.swr);
 
         const segmentTypes = nonLoaderSegments.map((s) =>
           s.type === "parallel" ? s.slot : s.type

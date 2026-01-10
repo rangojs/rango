@@ -52,3 +52,4 @@ export type {
 } from "../cache/types.js";
 
 export { MemorySegmentCacheStore } from "../cache/memory-segment-store.js";
+export { CFCacheStore, type CFCacheStoreOptions } from "../cache/cf/index.js";
