@@ -256,46 +256,75 @@ State:    |  FRESH   |    STALE      |  EXPIRED    |
 Action:   |  serve   | serve+reval   |  miss       |
 ```
 
-### Data Structure Changes
+### Key Insight: Use Headers, Not JSON Parsing
+
+Reference implementation (`cache/cf/cache.ts`) uses response headers for staleness:
+- `x-edge-cache-stale-at`: Timestamp when entry becomes stale
+- `x-edge-cache-status`: HIT | MISS | REVALIDATING
+
+**Benefits:**
+- No JSON parsing needed to check staleness
+- Can check headers before reading body
+- Matches CF Cache API patterns
+
+### Extended Cache TTL
+
+Store response with extended TTL covering SWR window:
 
 ```typescript
-interface CachedEntryData {
-  segments: SerializedSegmentData[];
-  handles: Record<string, SegmentHandleData>;
-  // Timing
-  createdAt: number;    // When cached
-  staleAt: number;      // TTL boundary (after this, trigger revalidation)
-  expiresAt: number;    // Hard expiration (cache miss)
-}
+// TTL: 60s, SWR: 300s
+// Cache-Control uses: ttl + swr = 360s
+// staleAt header tracks: ttl = 60s
+
+const headers = {
+  'Cache-Control': `public, max-age=${ttl + swr}`,
+  'x-edge-cache-stale-at': String(Date.now() + ttl * 1000),
+  'x-edge-cache-status': 'HIT',
+};
 ```
 
-### Store Get Returns Freshness Status
+CF Cache keeps entry for full 360s, but we know it's stale after 60s.
 
-The store needs to indicate if data is stale:
+### Store Implementation
 
 ```typescript
+const CACHE_STALE_AT_HEADER = "x-edge-cache-stale-at";
+const CACHE_STATUS_HEADER = "x-edge-cache-status";
+
 interface CacheGetResult {
   data: CachedEntryData;
-  stale: boolean;  // true if past staleAt but before expiresAt
+  stale: boolean;
 }
 
 async get(key: string): Promise<CacheGetResult | null> {
-  const response = await cache.match(request);
+  const cache = await caches.open(this.namespace);
+  const response = await cache.match(this.keyToRequest(key));
   if (!response) return null;
 
-  const data = await response.json();
-  const now = Date.now();
+  // Check staleness from header (no JSON parse needed)
+  const staleAt = Number(response.headers.get(CACHE_STALE_AT_HEADER));
+  const stale = Date.now() > staleAt;
 
-  // Hard expired - treat as miss
-  if (now > data.expiresAt) {
-    return null;
-  }
+  // Parse body for actual data
+  const data = await response.json() as CachedEntryData;
 
-  // Return data with staleness indicator
-  return {
-    data,
-    stale: now > data.staleAt,
-  };
+  return { data, stale };
+}
+
+async set(key: string, data: CachedEntryData, ttl: number, swr?: number): Promise<void> {
+  const cache = await caches.open(this.namespace);
+  const totalTtl = ttl + (swr ?? 0);
+
+  const response = new Response(JSON.stringify(data), {
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': `public, max-age=${totalTtl}`,
+      [CACHE_STALE_AT_HEADER]: String(Date.now() + ttl * 1000),
+      [CACHE_STATUS_HEADER]: 'HIT',
+    },
+  });
+
+  await cache.put(this.keyToRequest(key), response);
 }
 ```
 
@@ -369,23 +398,114 @@ async revalidateEntry(context: RevalidationContext): Promise<void> {
 
 ### Thundering Herd Prevention
 
-Use in-memory Set to track active revalidations:
+Reference implementation uses a clever approach: **store REVALIDATING status in the cache itself**.
 
 ```typescript
-const revalidatingKeys = new Set<string>();
+const shouldRevalidate = (response: Response): boolean => {
+  const status = response.headers.get(CACHE_STATUS_HEADER);
+  const age = Number(response.headers.get("age") ?? "0");
 
-function isRevalidating(key: string): boolean {
-  return revalidatingKeys.has(key);
-}
+  // Already revalidating and recent - skip
+  if (status === "REVALIDATING" && age < MAX_REVALIDATION_INTERVAL) {
+    return false;
+  }
 
-function markRevalidating(key: string): void {
-  revalidatingKeys.add(key);
-  // Auto-clear after timeout (prevent stuck entries)
-  setTimeout(() => revalidatingKeys.delete(key), 30000);
+  // Check if stale
+  const staleAt = Number(response.headers.get(CACHE_STALE_AT_HEADER));
+  return Date.now() > staleAt;
+};
+
+// Before triggering revalidation, mark entry as REVALIDATING
+async markRevalidating(key: string, response: Response): Promise<void> {
+  const [b1, b2] = response.body!.tee();
+  const cache = await caches.open(this.namespace);
+
+  // Update cache with REVALIDATING status
+  await cache.put(
+    this.keyToRequest(key),
+    new Response(b1, {
+      headers: {
+        ...Object.fromEntries(response.headers),
+        [CACHE_STATUS_HEADER]: "REVALIDATING",
+      },
+    })
+  );
+
+  // Return b2 for reading data
+  return b2;
 }
 ```
 
-**Note**: This is per-datacenter. Multiple CF edge locations may revalidate simultaneously. For true global coordination, use KV or Durable Objects (future optimization).
+**How it works:**
+1. First request sees stale entry → marks it REVALIDATING → triggers background refresh
+2. Subsequent requests see REVALIDATING status → skip revalidation, serve stale
+3. Background refresh completes → updates cache with fresh data + HIT status
+
+**Benefits:**
+- Works across all workers in same datacenter (shared edge cache)
+- No separate in-memory state needed
+- Self-healing: if revalidation fails, age eventually exceeds threshold
+
+**Note**: Multiple CF datacenters may still revalidate simultaneously (edge cache is per-DC). For true global coordination, use KV or Durable Objects (Phase 3).
+
+---
+
+## Cache Tags (Phase 3)
+
+Reference implementation supports cache tags for bulk invalidation.
+
+### Headers
+
+```typescript
+const CACHE_TAGS_HEADER = "Cache-Tag";
+const MAX_CACHE_TAGS = 30;
+const MAX_CACHE_TAG_LENGTH_HEADER = 10000; // 10kb max
+```
+
+### Storing Tags
+
+```typescript
+const tagsHeader = sanitizeCacheTags([
+  hostname,           // e.g., "mydomain.com"
+  "document",         // content type
+  ...defaultTags,     // e.g., ["products", "catalog"]
+  ...contentTags,     // e.g., ["product:123"]
+]).join(",");
+
+const response = new Response(body, {
+  headers: {
+    [CACHE_TAGS_HEADER]: tagsHeader,
+  },
+});
+```
+
+### Integration with Cloudflare Cache Purge API
+
+```typescript
+// Purge by tag via CF API
+await fetch(`https://api.cloudflare.com/client/v4/zones/${zoneId}/purge_cache`, {
+  method: 'POST',
+  headers: { 'Authorization': `Bearer ${apiToken}` },
+  body: JSON.stringify({ tags: ['product:123'] }),
+});
+```
+
+### RSC Router Integration (Future)
+
+```typescript
+cache({
+  ttl: 300,
+  tags: (ctx) => [`product:${ctx.params.id}`, 'products'],
+}, () => [
+  route("product/:id"),
+])
+
+// Server action
+async function updateProduct(id: string) {
+  await db.products.update(id, data);
+  await invalidateTags([`product:${id}`]);
+}
+```
 
 ---
 
