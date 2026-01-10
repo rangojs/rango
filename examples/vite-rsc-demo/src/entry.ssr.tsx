@@ -1,5 +1,7 @@
-import { createFromReadableStream } from "rsc-router/internal/deps/ssr";
-import { renderToReadableStream } from "react-dom/server.edge";
+import {
+  createFromReadableStream,
+  renderToReadableStream,
+} from "rsc-router/internal/deps/ssr";
 import { injectRSCPayload } from "rsc-router/internal/deps/html-stream-server";
 import { createSSRHandler } from "rsc-router/ssr";
 

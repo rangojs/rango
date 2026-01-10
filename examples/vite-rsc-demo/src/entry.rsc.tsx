@@ -1,6 +1,8 @@
 import {
   renderToReadableStream,
   decodeReply,
+  decodeAction,
+  decodeFormState,
   createTemporaryReferenceSet,
   loadServerAction,
 } from "rsc-router/internal/deps/rsc";
@@ -12,6 +14,8 @@ export default createRSCHandler({
   deps: {
     renderToReadableStream,
     decodeReply,
+    decodeAction,
+    decodeFormState,
     createTemporaryReferenceSet,
     loadServerAction,
   },

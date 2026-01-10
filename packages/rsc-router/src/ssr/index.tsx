@@ -1,15 +1,8 @@
 import React from "react";
+import type { RenderToReadableStreamOptions } from "react-dom/server";
 import { initHandleDataSync } from "../browser/react/use-handle.js";
 import { initSegmentsSync } from "../browser/react/use-segments.js";
 import type { HandleData } from "../browser/types.js";
-
-/**
- * Options for renderToReadableStream from react-dom/server
- */
-interface RenderToReadableStreamOptions {
-  bootstrapScriptContent?: string;
-  formState?: unknown;
-}
 
 /**
  * Options for the renderHTML function
