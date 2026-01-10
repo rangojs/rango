@@ -1,58 +1,15 @@
+import type { ComponentType } from "react";
+import { type ReactNode } from "react";
+import { CacheScope, createCacheScope } from "./cache/cache-scope.js";
+import type { SegmentCacheStore } from "./cache/types.js";
+import { DefaultDocument } from "./components/DefaultDocument.js";
+import { DefaultErrorFallback } from "./default-error-boundary.js";
 import {
-  Suspense,
-  createElement,
-  isValidElement,
-  cloneElement,
-  type ReactNode,
-  type ReactElement,
-} from "react";
-import {
-  invariant,
-  RouteNotFoundError,
   DataNotFoundError,
+  RouteNotFoundError,
+  invariant,
   sanitizeError,
 } from "./errors";
-import type { ComponentType } from "react";
-import type {
-  RouteDefinition,
-  ResolvedRouteMap,
-  HandlersForRouteMap,
-  HandlerContext,
-  ResolvedSegment,
-  MatchResult,
-  RouteEntry,
-  Handler,
-  LoaderDefinition,
-  LoaderContext,
-  ErrorInfo,
-  ErrorBoundaryHandler,
-  ErrorBoundaryFallbackProps,
-  NotFoundInfo,
-  NotFoundBoundaryHandler,
-  NotFoundBoundaryFallbackProps,
-  LoaderDataResult,
-  TrailingSlashMode,
-} from "./types";
-import type { HandleStore } from "./server/handle-store.js";
-import type { SegmentCacheStore } from "./cache/types.js";
-import {
-  getRequestContext,
-  requireRequestContext,
-} from "./server/request-context.js";
-import type { AllUseItems } from "./route-types.js";
-import {
-  EntryData,
-  LoaderEntry,
-  InterceptEntry,
-  InterceptSelectorContext,
-  getContext,
-  track,
-  MetricsStore,
-  PerformanceMetric,
-  type EntryCacheConfig,
-} from "./server/context";
-import { CacheScope, createCacheScope } from "./cache/cache-scope.js";
-import { error } from "console";
 import {
   createHref,
   type HrefFunction,
@@ -60,50 +17,63 @@ import {
   type SanitizePrefix,
 } from "./href.js";
 import { registerRouteMap } from "./route-map-builder.js";
-import { DefaultErrorFallback } from "./default-error-boundary.js";
-import { DefaultDocument } from "./components/DefaultDocument.js";
+import type { AllUseItems } from "./route-types.js";
+import {
+  EntryData,
+  InterceptEntry,
+  InterceptSelectorContext,
+  LoaderEntry,
+  getContext,
+} from "./server/context";
+import type { HandleStore } from "./server/handle-store.js";
+import { getRequestContext } from "./server/request-context.js";
+import type {
+  ErrorBoundaryHandler,
+  ErrorInfo,
+  HandlerContext,
+  LoaderDataResult,
+  MatchResult,
+  NotFoundBoundaryHandler,
+  ResolvedRouteMap,
+  ResolvedSegment,
+  RouteDefinition,
+  RouteEntry,
+  TrailingSlashMode,
+} from "./types";
 
 // Extracted router utilities
 import {
-  createMetricsStore,
-  logMetrics,
-  generateServerTiming,
-} from "./router/metrics.js";
-import {
-  findNearestErrorBoundary as findErrorBoundary,
-  findNearestNotFoundBoundary as findNotFoundBoundary,
   createErrorInfo,
   createErrorSegment,
   createNotFoundInfo,
   createNotFoundSegment,
+  findNearestErrorBoundary as findErrorBoundary,
+  findNearestNotFoundBoundary as findNotFoundBoundary,
 } from "./router/error-handling.js";
 import { createHandlerContext } from "./router/handler-context.js";
 import {
-  compilePattern,
+  revalidate,
+  setupLoaderAccess,
+  wrapLoaderWithErrorHandling,
+} from "./router/loader-resolution.js";
+import { loadManifest } from "./router/manifest.js";
+import {
+  createMetricsStore,
+  generateServerTiming,
+  logMetrics,
+} from "./router/metrics.js";
+import {
+  collectRouteMiddleware,
+  executeInterceptMiddleware,
+  parsePattern,
+  type MiddlewareEntry,
+  type MiddlewareFn,
+} from "./router/middleware.js";
+import {
   findMatch as findRouteMatch,
   traverseBack,
 } from "./router/pattern-matching.js";
-import {
-  wrapLoaderWithErrorHandling,
-  setupLoaderAccess,
-  revalidate,
-} from "./router/loader-resolution.js";
 import { evaluateRevalidation } from "./router/revalidation.js";
-import { loadManifest } from "./router/manifest.js";
-import type {
-  LoaderRevalidationResult,
-  SegmentRevalidationResult,
-  ActionContext,
-} from "./router/types.js";
-import {
-  type MiddlewareFn,
-  type MiddlewareEntry,
-  parsePattern,
-  matchMiddleware,
-  executeMiddleware,
-  executeInterceptMiddleware,
-  collectRouteMiddleware,
-} from "./router/middleware.js";
 
 /**
  * Props passed to the root layout component
