@@ -1,5 +1,29 @@
 import test, { type Page, type Locator, expect } from "@playwright/test";
 
+/**
+ * Clear the shopping cart by clicking the clear cart button if it exists.
+ * This is useful for test isolation to ensure cart starts empty.
+ */
+export async function clearCart(page: Page, shopUrl: string) {
+  await page.goto(shopUrl);
+  await waitForHydration(page);
+
+  const clearButton = page.locator('[data-testid="clear-cart"]');
+  if (await clearButton.isVisible({ timeout: 1000 }).catch(() => false)) {
+    await clearButton.click();
+    // Wait for revalidation to complete
+    await page.waitForTimeout(1000);
+    // Verify cart is cleared
+    await expect(page.locator('a[href="/shop/cart"]')).toContainText("(0)", { timeout: 5000 });
+  }
+
+  // Ensure we're on the shop index page (not cart page from accidental navigation)
+  if (!page.url().endsWith("/shop")) {
+    await page.goto(shopUrl);
+    await waitForHydration(page);
+  }
+}
+
 export const testNoJs = test.extend({
   javaScriptEnabled: ({}, use) => use(false),
 });
