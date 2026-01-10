@@ -125,7 +125,7 @@ describe("CFCacheStore", () => {
       await store.set("test-key", data, 60);
 
       const cache = await mockCaches.open("rsc-segments");
-      const request = new Request("https://cache.internal/test-key");
+      const request = new Request("https://rsc-cache.internal.com/test-key");
       const response = await cache.match(request);
 
       expect(response?.headers.get("Cache-Control")).toBe("public, max-age=60");
@@ -138,7 +138,7 @@ describe("CFCacheStore", () => {
       await store.set("test-key", data, 60, 300);
 
       const cache = await mockCaches.open("rsc-segments");
-      const request = new Request("https://cache.internal/test-key");
+      const request = new Request("https://rsc-cache.internal.com/test-key");
       const response = await cache.match(request);
 
       expect(response?.headers.get("Cache-Control")).toBe("public, max-age=360");
@@ -151,7 +151,7 @@ describe("CFCacheStore", () => {
       await store.set("test-key", data, 60);
 
       const cache = await mockCaches.open("rsc-segments");
-      const request = new Request("https://cache.internal/test-key");
+      const request = new Request("https://rsc-cache.internal.com/test-key");
       const response = await cache.match(request);
 
       expect(response?.headers.get("Cache-Control")).toBe("public, max-age=180");
@@ -168,7 +168,7 @@ describe("CFCacheStore", () => {
       await store.set("test-key", data, 60);
 
       const cache = await mockCaches.open("rsc-segments");
-      const request = new Request("https://cache.internal/test-key");
+      const request = new Request("https://rsc-cache.internal.com/test-key");
       const response = await cache.match(request);
 
       const staleAt = Number(response?.headers.get(CACHE_STALE_AT_HEADER));
@@ -184,7 +184,7 @@ describe("CFCacheStore", () => {
       await store.set("test-key", data, 60);
 
       const cache = await mockCaches.open("rsc-segments");
-      const request = new Request("https://cache.internal/test-key");
+      const request = new Request("https://rsc-cache.internal.com/test-key");
       const response = await cache.match(request);
 
       expect(response?.headers.get(CACHE_STATUS_HEADER)).toBe("HIT");
@@ -300,7 +300,7 @@ describe("CFCacheStore", () => {
       await store.markRevalidating("test-key", result!.response);
 
       const cache = await mockCaches.open("rsc-segments");
-      const request = new Request("https://cache.internal/test-key");
+      const request = new Request("https://rsc-cache.internal.com/test-key");
       const updatedResponse = await cache.match(request);
 
       expect(updatedResponse?.headers.get(CACHE_STATUS_HEADER)).toBe(

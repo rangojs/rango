@@ -37,7 +37,7 @@ export interface CFCacheStoreOptions {
   /** Cache namespace (default: 'rsc-segments') */
   namespace?: string;
 
-  /** Base URL for cache keys (default: 'https://cache.internal/') */
+  /** Base URL for cache keys (default: 'https://rsc-cache.internal.com/') */
   baseUrl?: string;
 
   /** Default cache options */
@@ -65,7 +65,7 @@ export class CFCacheStore implements SegmentCacheStore {
 
   constructor(options: CFCacheStoreOptions = {}) {
     this.namespace = options.namespace ?? "rsc-segments";
-    this.baseUrl = options.baseUrl ?? "https://cache.internal/";
+    this.baseUrl = options.baseUrl ?? "https://rsc-cache.internal.com/";
     this.defaults = options.defaults;
   }
 
