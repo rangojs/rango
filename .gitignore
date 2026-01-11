@@ -1,6 +1,7 @@
 node_modules
 dist
 .turbo
+.wrangler
 playwright-report
 test-results
 

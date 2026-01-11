@@ -19,3 +19,9 @@ export const counterRoutes = route({
 export const featuresRoutes = route({
   detail: "/features/:slug",
 });
+
+// Blog routes: /blog and /blog/:slug (demonstrates CF cache with SWR)
+export const blogRoutes = route({
+  index: "/blog",
+  post: "/blog/:slug",
+});
