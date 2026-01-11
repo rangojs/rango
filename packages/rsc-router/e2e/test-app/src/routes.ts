@@ -101,4 +101,19 @@ export const testRoutes = route({
   },
   // Route for testing progressive enhancement (no-JS form submissions)
   progressiveEnhancement: "/progressive-enhancement",
+  // Routes for testing cache behavior
+  cacheTest: {
+    // Route with non-cached loader (default)
+    nonCachedLoader: "/cache-test/non-cached-loader",
+    // Route with cached loader (opt-in)
+    cachedLoader: "/cache-test/cached-loader",
+    // Index for intercept testing (links to detail)
+    interceptIndex: "/cache-test/intercept",
+    // Detail route for intercept testing (can be intercepted)
+    interceptDetail: "/cache-test/intercept/:itemId",
+    // Index for useLoader intercept testing
+    useLoaderIndex: "/cache-test/useloader",
+    // Detail route for useLoader intercept testing (non-cached)
+    useLoaderDetail: "/cache-test/useloader/:itemId",
+  },
 });
