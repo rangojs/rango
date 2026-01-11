@@ -2929,16 +2929,21 @@ export function createRSCRouter<TEnv = any>(
         }
       }
 
+      // Determine if this is an intercept navigation (uses different cache key)
+      const isIntercept = !!interceptResult;
+
       // Single cache lookup for entire route (skip during actions)
       const cacheResult =
         cacheScope?.enabled && !isAction
-          ? await cacheScope.lookupRoute(pathname, matched.params)
+          ? await cacheScope.lookupRoute(pathname, matched.params, isIntercept)
           : null;
 
       let result: { segments: ResolvedSegment[]; matchedIds: string[] };
+      let cacheHit = false;
 
       if (cacheResult) {
-        // Cache HIT - use cached non-loader segments
+        cacheHit = true;
+        // Cache HIT - use cached non-loader segments (includes intercept segments if intercept cache)
         const cachedSegments = cacheResult.segments;
         const cachedMatchedIds = cacheResult.segments.map((s) => s.id);
 
@@ -2992,10 +2997,35 @@ export function createRSCRouter<TEnv = any>(
                 localRouteName,
                 pathname
               );
+
+              // For intercept revalidation, also resolve fresh intercept segments
+              let freshInterceptSegments: ResolvedSegment[] = [];
+              if (interceptResult) {
+                freshInterceptSegments = await resolveInterceptEntry(
+                  interceptResult.intercept,
+                  interceptResult.entry,
+                  matched.params,
+                  handlerContext,
+                  true,
+                  {
+                    clientSegmentIds: clientSegmentSet,
+                    prevParams,
+                    request,
+                    prevUrl,
+                    nextUrl: url,
+                    routeKey: matched.routeKey,
+                    actionContext,
+                    stale: false,
+                  }
+                );
+              }
+
+              const allFreshSegments = [...freshResult.segments, ...freshInterceptSegments];
               revalidateScope.cacheRoute(
                 pathname,
                 matched.params,
-                freshResult.segments
+                allFreshSegments,
+                isIntercept
               );
               console.log(
                 `[Router.matchPartial] Revalidation complete: ${pathname}`
@@ -3034,15 +3064,75 @@ export function createRSCRouter<TEnv = any>(
           }
         );
 
+        // For intercept navigations, resolve intercept segments before caching
+        // so the cache includes everything needed for this intercept navigation
+        if (interceptResult) {
+          const slotName = interceptResult.intercept.slotName;
+          console.log(
+            `[Router.matchPartial] Found intercept for "${localRouteName}" -> slot "${slotName}"`
+          );
+
+          // Resolve intercept entry (middleware, loaders, handler)
+          interceptSegments = await getContext().runWithStore(
+            Store,
+            Store.namespace || "#router",
+            Store.parent,
+            () =>
+              resolveInterceptEntry(
+                interceptResult.intercept,
+                interceptResult.entry,
+                matched.params,
+                handlerContext,
+                true, // belongsToRoute
+                {
+                  clientSegmentIds: clientSegmentSet,
+                  prevParams,
+                  request,
+                  prevUrl,
+                  nextUrl: url,
+                  routeKey: matched.routeKey,
+                  actionContext,
+                  stale,
+                }
+              )
+          );
+
+          // Add to slots metadata - browser uses this to know which slots are active
+          slots[slotName] = {
+            active: true,
+            segments: interceptSegments,
+          };
+        }
+
         // Cache for next request (non-blocking, skip during actions)
+        // Include intercept segments so cache hit serves complete response
         if (cacheScope?.enabled && !isAction) {
-          cacheScope.cacheRoute(pathname, matched.params, result.segments);
+          const allSegmentsToCache = [...result.segments, ...interceptSegments];
+          cacheScope.cacheRoute(pathname, matched.params, allSegmentsToCache, isIntercept);
         }
       }
 
       const { segments, matchedIds: allMatchedIds } = result;
 
-      if (interceptResult) {
+      // Resolve intercept for cache hits (cache doesn't include intercept segments for non-intercept keys)
+      // Skip if: (1) no intercept, (2) already resolved in miss path, (3) cache hit with intercept key (segments include intercept)
+      const skipInterceptResolution = !interceptResult || interceptSegments.length > 0 || (cacheHit && isIntercept);
+
+      // For cache hit with intercept, extract intercept segments from cached data for slots metadata
+      if (interceptResult && cacheHit && isIntercept) {
+        const slotName = interceptResult.intercept.slotName;
+        // Find intercept segments from cached segments (they have namespace starting with "intercept:")
+        interceptSegments = segments.filter((s) => s.namespace?.startsWith("intercept:"));
+        slots[slotName] = {
+          active: true,
+          segments: interceptSegments,
+        };
+        console.log(
+          `[Router.matchPartial] Cache HIT for intercept "${localRouteName}" -> slot "${slotName}"`
+        );
+      }
+
+      if (interceptResult && !skipInterceptResolution) {
         const slotName = interceptResult.intercept.slotName;
         console.log(
           `[Router.matchPartial] Found intercept for "${localRouteName}" -> slot "${slotName}"`

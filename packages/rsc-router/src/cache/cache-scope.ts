@@ -29,15 +29,21 @@ import { createFromReadableStream } from "@vitejs/plugin-rsc/rsc";
 /**
  * Generate cache key for a route request
  * Single cache entry per route - uses pathname as the key
- * Includes request type prefix (doc/partial) since they produce different segment sets
+ * Includes request type prefix since they produce different segment sets:
+ * - doc: document requests (full page load)
+ * - partial: navigation requests (client-side navigation)
+ * - intercept: intercept navigation (modal/overlay routes)
  */
 function getRouteCacheKey(
   pathname: string,
-  params?: Record<string, string>
+  params?: Record<string, string>,
+  isIntercept?: boolean
 ): string {
   const ctx = getRequestContext();
   const isPartial = ctx?.url.searchParams.has("_rsc_partial") ?? false;
-  const prefix = isPartial ? "partial" : "doc";
+
+  // Intercept navigations get their own cache namespace
+  const prefix = isIntercept ? "intercept" : isPartial ? "partial" : "doc";
 
   const paramStr = params
     ? Object.entries(params)
@@ -324,17 +330,19 @@ export class CacheScope {
    *
    * @param pathname - URL pathname for cache key generation
    * @param params - Route params for cache key generation
+   * @param isIntercept - Whether this is an intercept navigation (uses different cache key)
    */
   async lookupRoute(
     pathname: string,
-    params: Record<string, string>
+    params: Record<string, string>,
+    isIntercept?: boolean
   ): Promise<{ segments: ResolvedSegment[]; shouldRevalidate: boolean } | null> {
     if (!this.enabled) return null;
 
     const store = this.getStore();
     if (!store) return null;
 
-    const key = getRouteCacheKey(pathname, params);
+    const key = getRouteCacheKey(pathname, params, isIntercept);
 
     try {
       const result = await store.get(key);
@@ -381,11 +389,13 @@ export class CacheScope {
    * @param pathname - URL pathname for cache key generation
    * @param params - Route params for cache key generation
    * @param segments - All resolved segments to cache
+   * @param isIntercept - Whether this is an intercept navigation (uses different cache key)
    */
   cacheRoute(
     pathname: string,
     params: Record<string, string>,
-    segments: ResolvedSegment[]
+    segments: ResolvedSegment[],
+    isIntercept?: boolean
   ): void {
     if (!this.enabled || segments.length === 0) return;
 
@@ -403,7 +413,7 @@ export class CacheScope {
     if (nonLoaderSegments.length === 0) return;
 
     const ttl = this.ttl;
-    const key = getRouteCacheKey(pathname, params);
+    const key = getRouteCacheKey(pathname, params, isIntercept);
 
     // Check if this is a partial request (navigation) vs document request
     const isPartial = requestCtx.url.searchParams.has("_rsc_partial");
