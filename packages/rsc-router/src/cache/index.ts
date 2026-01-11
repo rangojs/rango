@@ -38,3 +38,6 @@ export {
   CACHE_STALE_AT_HEADER,
   CACHE_STATUS_HEADER,
 } from "./cf/index.js";
+
+// Cache scope
+export { CacheScope, createCacheScope } from "./cache-scope.js";

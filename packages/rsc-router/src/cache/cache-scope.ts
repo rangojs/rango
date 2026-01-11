@@ -27,10 +27,14 @@ import { createFromReadableStream } from "@vitejs/plugin-rsc/rsc";
 // ============================================================================
 
 /**
- * Generate cache key for an entry with params
+ * Generate cache key for a route request
+ * Single cache entry per route - uses pathname as the key
  * Includes request type prefix (doc/partial) since they produce different segment sets
  */
-function getCacheKey(entryId: string, params?: Record<string, string>): string {
+function getRouteCacheKey(
+  pathname: string,
+  params?: Record<string, string>
+): string {
   const ctx = getRequestContext();
   const isPartial = ctx?.url.searchParams.has("_rsc_partial") ?? false;
   const prefix = isPartial ? "partial" : "doc";
@@ -42,7 +46,7 @@ function getCacheKey(entryId: string, params?: Record<string, string>): string {
         .join("&")
     : "";
 
-  const baseKey = paramStr ? `${entryId}:${paramStr}` : entryId;
+  const baseKey = paramStr ? `${pathname}:${paramStr}` : pathname;
   return `${prefix}:${baseKey}`;
 }
 
@@ -315,21 +319,22 @@ export class CacheScope {
   }
 
   /**
-   * Restore cached segments for an entry
-   * Returns null if cache miss or caching disabled
-   * Triggers background revalidation if entry is stale (SWR)
+   * Lookup cached segments for a route (single cache entry per request).
+   * Returns { segments, shouldRevalidate } or null if cache miss.
+   *
+   * @param pathname - URL pathname for cache key generation
+   * @param params - Route params for cache key generation
    */
-  async restore(
-    entryId: string,
-    params: Record<string, string>,
-    loaderPromises: Map<string, Promise<any>>
-  ): Promise<ResolvedSegment[] | null> {
+  async lookupRoute(
+    pathname: string,
+    params: Record<string, string>
+  ): Promise<{ segments: ResolvedSegment[]; shouldRevalidate: boolean } | null> {
     if (!this.enabled) return null;
 
     const store = this.getStore();
     if (!store) return null;
 
-    const key = getCacheKey(entryId, params);
+    const key = getRouteCacheKey(pathname, params);
 
     try {
       const result = await store.get(key);
@@ -339,23 +344,7 @@ export class CacheScope {
         return null;
       }
 
-      const { data: cached, stale } = result;
-
-      // If stale, trigger background revalidation (SWR)
-      if (stale) {
-        const requestCtx = getRequestContext();
-        if (requestCtx) {
-          // Mark as revalidating to prevent thundering herd
-          store.markRevalidating?.(key);
-
-          // Schedule background revalidation
-          requestCtx.waitUntil(async () => {
-            // TODO: Implement actual revalidation by re-resolving entry
-            // For now, just log - revalidation needs router context
-            console.log(`[CacheScope] STALE: ${key} - background revalidation triggered`);
-          });
-        }
-      }
+      const { data: cached, shouldRevalidate } = result;
 
       // Deserialize segments
       const segments = await deserializeSegments(cached.segments);
@@ -370,36 +359,34 @@ export class CacheScope {
         }
       }
 
-      // Note: Loader segments are not cached by default (always live)
-      // If a loader was explicitly cached, restore its data to loaderPromises
-      for (const seg of segments) {
-        if (
-          seg.type === "loader" &&
-          seg.loaderId &&
-          seg.loaderData !== undefined
-        ) {
-          loaderPromises.set(seg.loaderId, Promise.resolve(seg.loaderData));
-        }
-      }
-
       const segmentTypes = segments.map((s) =>
         s.type === "parallel" ? s.slot : s.type
       );
       console.log(
-        `[CacheScope] ${stale ? 'STALE' : 'HIT'}: ${key} (${segmentTypes.join(", ")}) [loaders resolved fresh]`
+        `[CacheScope] ${shouldRevalidate ? "STALE" : "HIT"}: ${key} (${segmentTypes.join(", ")})`
       );
-      return segments;
+
+      return { segments, shouldRevalidate };
     } catch (error) {
-      console.error(`[CacheScope] Failed to restore ${key}:`, error);
+      console.error(`[CacheScope] Failed to lookup ${key}:`, error);
       return null;
     }
   }
 
   /**
-   * Cache segments for an entry (non-blocking via waitUntil)
-   * Note: Loader segments are excluded - they're always live (fetched fresh)
+   * Cache all segments for a route (non-blocking via waitUntil)
+   * Single cache entry per route request.
+   * Loaders are excluded - they're always fresh unless they have their own cache() config.
+   *
+   * @param pathname - URL pathname for cache key generation
+   * @param params - Route params for cache key generation
+   * @param segments - All resolved segments to cache
    */
-  cacheEntry(cacheKey: string, segments: ResolvedSegment[]): void {
+  cacheRoute(
+    pathname: string,
+    params: Record<string, string>,
+    segments: ResolvedSegment[]
+  ): void {
     if (!this.enabled || segments.length === 0) return;
 
     const store = this.getStore();
@@ -410,14 +397,13 @@ export class CacheScope {
 
     if (!handleStore || !requestCtx) return;
 
-    // Exclude loader segments - loaders are always live (not cached by default)
-    // Loaders can opt-in to caching with explicit cache() config
+    // Exclude loader segments - loaders are always fresh by default
+    // Loaders can opt-in to caching with their own cache() config
     const nonLoaderSegments = segments.filter((s) => s.type !== "loader");
     if (nonLoaderSegments.length === 0) return;
 
     const ttl = this.ttl;
-    const params = nonLoaderSegments[0]?.params;
-    const key = getCacheKey(cacheKey, params);
+    const key = getRouteCacheKey(pathname, params);
 
     requestCtx.waitUntil(async () => {
       await handleStore.settled;

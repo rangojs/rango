@@ -76,8 +76,8 @@ export class MemorySegmentCacheStore implements SegmentCacheStore {
       return null;
     }
 
-    // Memory store doesn't support SWR - always return stale: false
-    return { data: cached, stale: false };
+    // Memory store doesn't support SWR - never triggers revalidation
+    return { data: cached, shouldRevalidate: false };
   }
 
   async set(key: string, data: CachedEntryData, ttl: number, _swr?: number): Promise<void> {

@@ -2,12 +2,13 @@
  * Cloudflare Edge Cache Store
  *
  * Production cache store using Cloudflare's Cache API.
- * Uses response headers for staleness tracking (no JSON parsing needed for stale check).
+ * Handles SWR atomically - get() checks staleness and marks REVALIDATING in one operation.
  *
  * Features:
  * - Extended TTL for SWR window (max-age = ttl + swr)
  * - Staleness via x-edge-cache-stale-at header
- * - REVALIDATING status for thundering herd prevention
+ * - Atomic REVALIDATING status for thundering herd prevention
+ * - Non-blocking writes via waitUntil
  */
 
 import type {
@@ -43,6 +44,12 @@ export interface CFCacheStoreOptions {
 
   /** Default cache options */
   defaults?: CacheDefaults;
+
+  /**
+   * waitUntil function from request's ExecutionContext.
+   * Used for non-blocking cache writes.
+   */
+  waitUntil?: (fn: () => Promise<void>) => void;
 }
 
 export type CacheStatus = "HIT" | "REVALIDATING";
@@ -56,16 +63,24 @@ export class CFCacheStore implements SegmentCacheStore {
 
   private readonly namespace: string;
   private readonly baseUrl: string;
+  private readonly waitUntil?: (fn: () => Promise<void>) => void;
 
   constructor(options: CFCacheStoreOptions = {}) {
     this.namespace = options.namespace ?? "rsc-segments";
     this.baseUrl = options.baseUrl ?? "https://rsc-cache.internal.com/";
     this.defaults = options.defaults;
+    this.waitUntil = options.waitUntil;
   }
 
   /**
-   * Get cached entry data by key
-   * Returns { data, stale } or null if not found/hard-expired
+   * Get cached entry data by key.
+   *
+   * Handles SWR atomically:
+   * - If stale and not already revalidating, marks as REVALIDATING and returns shouldRevalidate: true
+   * - If already REVALIDATING (and recent), returns shouldRevalidate: false
+   * - If fresh, returns shouldRevalidate: false
+   *
+   * The atomic mark prevents thundering herd - only first request triggers revalidation.
    */
   async get(key: string): Promise<CacheGetResult | null> {
     try {
@@ -77,64 +92,43 @@ export class CFCacheStore implements SegmentCacheStore {
         return null;
       }
 
-      // Check if already revalidating - if so, don't mark as stale again
+      // Read status headers
       const status = response.headers.get(CACHE_STATUS_HEADER);
       const age = Number(response.headers.get("age") ?? "0");
+      const staleAt = Number(response.headers.get(CACHE_STALE_AT_HEADER) ?? "0");
+
+      const isStale = staleAt > 0 && Date.now() > staleAt;
       const isRevalidating = status === "REVALIDATING" && age < MAX_REVALIDATION_INTERVAL;
 
-      // Check staleness from header (fast, no JSON parse needed)
-      const staleAtStr = response.headers.get(CACHE_STALE_AT_HEADER);
-      const staleAt = staleAtStr ? Number(staleAtStr) : 0;
-      const isPastStaleTime = Date.now() > staleAt;
+      // Case 1: Fresh or already being revalidated - just return data
+      if (!isStale || isRevalidating) {
+        const data = (await response.json()) as CachedEntryData;
+        return { data, shouldRevalidate: false };
+      }
 
-      // Stale = past stale time AND not already being revalidated
-      const stale = isPastStaleTime && !isRevalidating;
+      // Case 2: Stale and needs revalidation - atomically mark REVALIDATING
+      const [b1, b2] = response.body!.tee();
 
-      // Parse JSON body for actual data
-      const data = (await response.json()) as CachedEntryData;
+      const headers = new Headers(response.headers);
+      headers.set(CACHE_STATUS_HEADER, "REVALIDATING");
 
-      return { data, stale };
+      // Blocking write - must complete before returning to prevent race
+      await cache.put(
+        request,
+        new Response(b1, { status: response.status, headers })
+      );
+
+      const data = (await new Response(b2).json()) as CachedEntryData;
+      return { data, shouldRevalidate: true };
     } catch (error) {
-      // Log but don't throw - treat as cache miss
       console.error("[CFCacheStore] get failed:", error);
       return null;
     }
   }
 
   /**
-   * Mark entry as REVALIDATING to prevent thundering herd
-   * Fetches current entry and updates its status header
-   */
-  async markRevalidating(key: string): Promise<void> {
-    try {
-      const cache = await caches.open(this.namespace);
-      const request = this.keyToRequest(key);
-      const response = await cache.match(request);
-
-      if (!response) {
-        return; // Entry no longer exists
-      }
-
-      // Clone headers and update status
-      const headers = new Headers(response.headers);
-      headers.set(CACHE_STATUS_HEADER, "REVALIDATING");
-
-      // Re-read body and store with updated status
-      const body = await response.text();
-      await cache.put(
-        request,
-        new Response(body, {
-          status: response.status,
-          headers,
-        })
-      );
-    } catch (error) {
-      console.error("[CFCacheStore] markRevalidating failed:", error);
-    }
-  }
-
-  /**
-   * Store entry data with TTL and optional SWR window
+   * Store entry data with TTL and optional SWR window.
+   * Uses waitUntil for non-blocking write when available.
    */
   async set(
     key: string,
@@ -147,7 +141,8 @@ export class CFCacheStore implements SegmentCacheStore {
       const request = this.keyToRequest(key);
 
       // Extended TTL covers SWR window
-      const totalTtl = ttl + (swr ?? this.defaults?.swr ?? 0);
+      const swrWindow = swr ?? this.defaults?.swr ?? 0;
+      const totalTtl = ttl + swrWindow;
       const staleAt = Date.now() + ttl * 1000;
 
       const response = new Response(JSON.stringify(data), {
@@ -159,9 +154,18 @@ export class CFCacheStore implements SegmentCacheStore {
         },
       });
 
-      await cache.put(request, response);
+      const putPromise = cache.put(request, response);
+
+      if (this.waitUntil) {
+        // Non-blocking write
+        this.waitUntil(async () => {
+          await putPromise;
+        });
+      } else {
+        // Blocking fallback
+        await putPromise;
+      }
     } catch (error) {
-      // Log but don't throw - cache write failure shouldn't fail request
       console.error("[CFCacheStore] set failed:", error);
     }
   }
@@ -183,7 +187,6 @@ export class CFCacheStore implements SegmentCacheStore {
    * Convert string key to Request object for CF Cache API
    */
   private keyToRequest(key: string): Request {
-    // URL-encode the key to handle special characters
     const encodedKey = encodeURIComponent(key);
     return new Request(`${this.baseUrl}${encodedKey}`, {
       method: "GET",

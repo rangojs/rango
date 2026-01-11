@@ -3,7 +3,6 @@ import {
   CFCacheStore,
   CACHE_STALE_AT_HEADER,
   CACHE_STATUS_HEADER,
-  MAX_REVALIDATION_INTERVAL,
 } from "../cf-cache-store";
 import type { CachedEntryData } from "../../types";
 
@@ -100,6 +99,12 @@ describe("CFCacheStore", () => {
       });
       expect(store.defaults).toEqual({ ttl: 120, swr: 600 });
     });
+
+    it("should accept waitUntil function", () => {
+      const waitUntil = vi.fn();
+      const store = new CFCacheStore({ waitUntil });
+      expect(store).toBeDefined();
+    });
   });
 
   describe("get/set", () => {
@@ -118,7 +123,7 @@ describe("CFCacheStore", () => {
 
       expect(result).not.toBeNull();
       expect(result!.data).toEqual(data);
-      expect(result!.stale).toBe(false);
+      expect(result!.shouldRevalidate).toBe(false);
     });
 
     it("should set Cache-Control header with TTL", async () => {
@@ -159,6 +164,25 @@ describe("CFCacheStore", () => {
 
       expect(response?.headers.get("Cache-Control")).toBe("public, max-age=180");
     });
+
+    it("should use waitUntil for non-blocking writes when provided", async () => {
+      const waitUntil = vi.fn();
+      const store = new CFCacheStore({ waitUntil });
+      const data = createTestData();
+
+      await store.set("test-key", data, 60);
+
+      expect(waitUntil).toHaveBeenCalledTimes(1);
+      expect(waitUntil).toHaveBeenCalledWith(expect.any(Function));
+
+      // Execute the waitUntil callback
+      const callback = waitUntil.mock.calls[0][0];
+      await callback();
+
+      // Now the entry should be in cache
+      const result = await store.get("test-key");
+      expect(result).not.toBeNull();
+    });
   });
 
   describe("staleness headers", () => {
@@ -194,8 +218,8 @@ describe("CFCacheStore", () => {
     });
   });
 
-  describe("staleness detection", () => {
-    it("should return stale=false for fresh entries", async () => {
+  describe("staleness detection and atomic revalidation", () => {
+    it("should return shouldRevalidate=false for fresh entries", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const store = new CFCacheStore();
@@ -207,10 +231,10 @@ describe("CFCacheStore", () => {
       vi.advanceTimersByTime(30 * 1000);
 
       const result = await store.get("test-key");
-      expect(result?.stale).toBe(false);
+      expect(result?.shouldRevalidate).toBe(false);
     });
 
-    it("should return stale=true for entries past TTL", async () => {
+    it("should return shouldRevalidate=true and atomically mark REVALIDATING for stale entries", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const store = new CFCacheStore();
@@ -221,60 +245,66 @@ describe("CFCacheStore", () => {
       // Past TTL but within SWR window
       vi.advanceTimersByTime(120 * 1000);
 
+      // First get should return shouldRevalidate=true and mark as REVALIDATING
       const result = await store.get("test-key");
-      expect(result?.stale).toBe(true);
+      expect(result?.shouldRevalidate).toBe(true);
+
+      // Verify the entry is now marked as REVALIDATING
+      const cache = await mockCaches.open("rsc-segments");
+      const request = new Request(
+        "https://rsc-cache.internal.com/" + encodeURIComponent("test-key")
+      );
+      const response = await cache.match(request);
+      expect(response?.headers.get(CACHE_STATUS_HEADER)).toBe("REVALIDATING");
     });
 
-    it("should return stale=false when already REVALIDATING with low age", async () => {
+    it("should return shouldRevalidate=false when already REVALIDATING", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
       const store = new CFCacheStore();
       const data = createTestData();
 
-      // Store entry that's already stale
       await store.set("test-key", data, 60, 300);
 
       // Make it stale
       vi.advanceTimersByTime(120 * 1000);
 
-      // First get should mark as stale
+      // First get - atomically marks as REVALIDATING
       const result1 = await store.get("test-key");
-      expect(result1?.stale).toBe(true);
+      expect(result1?.shouldRevalidate).toBe(true);
 
-      // Mark as revalidating
-      await store.markRevalidating("test-key");
-
-      // Second get should not mark as stale (already revalidating)
+      // Second get - already REVALIDATING, should not trigger again
       const result2 = await store.get("test-key");
-      expect(result2?.stale).toBe(false);
+      expect(result2?.shouldRevalidate).toBe(false);
     });
-  });
 
-  describe("markRevalidating", () => {
-    it("should update cache entry with REVALIDATING status", async () => {
+    it("should prevent thundering herd with sequential requests", async () => {
+      // Note: Real thundering herd prevention relies on CF Cache API's atomic semantics.
+      // This test verifies sequential requests work correctly - first triggers revalidation,
+      // subsequent ones see REVALIDATING status and don't trigger again.
+      vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
       const store = new CFCacheStore();
       const data = createTestData();
 
-      await store.set("test-key", data, 60);
+      await store.set("test-key", data, 60, 300);
 
-      await store.markRevalidating("test-key");
+      // Make it stale
+      vi.advanceTimersByTime(120 * 1000);
 
-      const cache = await mockCaches.open("rsc-segments");
-      const request = new Request("https://rsc-cache.internal.com/test-key");
-      const updatedResponse = await cache.match(request);
+      // Sequential requests - first triggers revalidation
+      const result1 = await store.get("test-key");
+      expect(result1?.shouldRevalidate).toBe(true);
+      expect(result1?.data).toBeDefined();
 
-      expect(updatedResponse?.headers.get(CACHE_STATUS_HEADER)).toBe(
-        "REVALIDATING"
-      );
-    });
+      // Subsequent requests see REVALIDATING status
+      const result2 = await store.get("test-key");
+      expect(result2?.shouldRevalidate).toBe(false);
+      expect(result2?.data).toBeDefined();
 
-    it("should not throw for non-existent entries", async () => {
-      const store = new CFCacheStore();
-
-      // Should not throw
-      await expect(
-        store.markRevalidating("non-existent-key")
-      ).resolves.not.toThrow();
+      const result3 = await store.get("test-key");
+      expect(result3?.shouldRevalidate).toBe(false);
+      expect(result3?.data).toBeDefined();
     });
   });
 

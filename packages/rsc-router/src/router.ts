@@ -52,7 +52,6 @@ import {
   type EntryCacheConfig,
 } from "./server/context";
 import { CacheScope, createCacheScope } from "./cache/cache-scope.js";
-import { error } from "console";
 import {
   createHref,
   type HrefFunction,
@@ -585,191 +584,6 @@ export function createRSCRouter<TEnv = any>(
   // Wrapper for findMatch that uses routesEntries
   function findMatch(pathname: string) {
     return findRouteMatch(pathname, routesEntries);
-  }
-
-  /**
-   * Async iterator that wraps entry traversal with caching.
-   *
-   * For each entry:
-   * - Skips route entries when intercepting (yields [entry, null, true])
-   * - Checks cache (if enabled)
-   * - On HIT: restores handles and loader data, yields [entry, cachedResult, false]
-   * - On MISS: yields [entry, null, false]
-   *
-   * Cache provider and handle store are resolved from request context internally.
-   *
-   * @param entries - Entries to iterate (from traverseBack)
-   * @param params - Route params for cache key
-   * @param loaderPromises - Map to restore loader data into
-   * @param interceptResult - If present, route entries are skipped (intercept replaces them)
-   *
-   * @example
-   * ```typescript
-   * for await (const [entry, cachedSegments, skipped] of withCache(entries, params, loaderPromises, interceptResult)) {
-   *   if (skipped) {
-   *     matchedIds.push(entry.shortCode);
-   *     continue;
-   *   }
-   *   if (cachedSegments) {
-   *     segs.push(...cachedSegments);
-   *     continue;
-   *   }
-   *   // resolve entry...
-   * }
-   * ```
-   */
-  async function* withCache(
-    entries: Iterator<EntryData>,
-    params: Record<string, string>,
-    loaderPromises: Map<string, Promise<any>>,
-    interceptResult?: { intercept: InterceptEntry; entry: EntryData } | null,
-    cacheScope: CacheScope | null = null,
-    skipCache: boolean = false
-  ): AsyncGenerator<
-    [EntryData, ResolvedSegment[] | null, boolean, CacheScope | null]
-  > {
-    let result = entries.next();
-    while (!result.done) {
-      const entry = result.value;
-
-      // Check if entry has its own cache config - create new scope
-      if (entry.cache) {
-        const newScope = createCacheScope(entry.cache, cacheScope);
-        if (newScope !== cacheScope) {
-          console.log(
-            `[withCache] New cache scope for ${entry.id}: ttl=${newScope?.ttl}`
-          );
-          // Delegate to sub-iterator with new scope
-          // Re-yield this entry first, then continue with remaining entries
-          yield* withCacheFromEntry(
-            entry,
-            entries,
-            params,
-            loaderPromises,
-            interceptResult,
-            newScope,
-            skipCache
-          );
-          return; // Sub-iterator handles everything from here
-        }
-      }
-
-      // Skip route entries when intercepting - intercept replaces route handler
-      if (entry.type === "route" && interceptResult) {
-        yield [entry, null, true, cacheScope];
-        result = entries.next();
-        continue;
-      }
-
-      // Skip cache during actions to ensure fresh loader data
-      if (skipCache) {
-        yield [entry, null, false, cacheScope];
-        result = entries.next();
-        continue;
-      }
-
-      // No cache scope - caching is opt-in only via cache() DSL
-      if (!cacheScope || !cacheScope.enabled) {
-        yield [entry, null, false, cacheScope];
-        result = entries.next();
-        continue;
-      }
-
-      try {
-        // Use scope's restore for cache lookup
-        const cachedSegments = await cacheScope.restore(
-          entry.id,
-          params,
-          loaderPromises
-        );
-
-        if (cachedSegments) {
-          console.log(
-            `[withCache] HIT: ${entry.id} (scope ttl=${cacheScope.ttl})`
-          );
-          yield [entry, cachedSegments, false, cacheScope];
-        } else {
-          console.log(
-            `[withCache] MISS: ${entry.id} (scope ttl=${cacheScope.ttl})`
-          );
-          yield [entry, null, false, cacheScope];
-        }
-      } catch (error) {
-        // Cache error - log and yield as miss (TTL will clean up corrupted entries)
-        console.error(
-          `[withCache] Error for ${entry.id}, falling back to fresh render:`,
-          error
-        );
-        yield [entry, null, false, cacheScope];
-      }
-
-      result = entries.next();
-    }
-  }
-
-  /**
-   * Helper to yield an entry and continue with remaining entries in a new scope
-   */
-  async function* withCacheFromEntry(
-    firstEntry: EntryData,
-    remainingEntries: Iterator<EntryData>,
-    params: Record<string, string>,
-    loaderPromises: Map<string, Promise<any>>,
-    interceptResult:
-      | { intercept: InterceptEntry; entry: EntryData }
-      | null
-      | undefined,
-    cacheScope: CacheScope | null,
-    skipCache: boolean = false
-  ): AsyncGenerator<
-    [EntryData, ResolvedSegment[] | null, boolean, CacheScope | null]
-  > {
-    // Process first entry with new scope
-    if (firstEntry.type === "route" && interceptResult) {
-      yield [firstEntry, null, true, cacheScope];
-    } else if (skipCache) {
-      // Skip cache during actions
-      yield [firstEntry, null, false, cacheScope];
-    } else if (!cacheScope || !cacheScope.enabled) {
-      // No cache scope - caching is opt-in only
-      yield [firstEntry, null, false, cacheScope];
-    } else {
-      try {
-        const cachedSegments = await cacheScope.restore(
-          firstEntry.id,
-          params,
-          loaderPromises
-        );
-
-        if (cachedSegments) {
-          console.log(
-            `[withCache] HIT: ${firstEntry.id} (scope ttl=${cacheScope.ttl})`
-          );
-          yield [firstEntry, cachedSegments, false, cacheScope];
-        } else {
-          console.log(
-            `[withCache] MISS: ${firstEntry.id} (scope ttl=${cacheScope.ttl})`
-          );
-          yield [firstEntry, null, false, cacheScope];
-        }
-      } catch (error) {
-        console.error(
-          `[withCache] Error for ${firstEntry.id}, falling back to fresh render:`,
-          error
-        );
-        yield [firstEntry, null, false, cacheScope];
-      }
-    }
-
-    // Continue with remaining entries using yield *
-    yield* withCache(
-      remainingEntries,
-      params,
-      loaderPromises,
-      interceptResult,
-      cacheScope,
-      skipCache
-    );
   }
 
   /**
@@ -1603,6 +1417,156 @@ export function createRSCRouter<TEnv = any>(
   }
 
   /**
+   * Resolve all segments for a route (used for single-cache-per-request pattern)
+   * Loops through all entries and resolves them with error handling
+   */
+  async function resolveAllSegments(
+    entries: EntryData[],
+    routeKey: string,
+    params: Record<string, string>,
+    context: HandlerContext<any, TEnv>,
+    loaderPromises: Map<string, Promise<any>>
+  ): Promise<ResolvedSegment[]> {
+    const allSegments: ResolvedSegment[] = [];
+
+    for (const entry of entries) {
+      const resolvedSegments = await resolveWithErrorHandling(
+        entry,
+        routeKey,
+        params,
+        context,
+        loaderPromises,
+        () =>
+          resolveSegment(entry, routeKey, params, context, loaderPromises)
+      );
+      allSegments.push(...resolvedSegments);
+    }
+
+    return allSegments;
+  }
+
+  /**
+   * Resolve only loader segments for all entries (used when serving cached non-loader segments)
+   * Loaders are always fresh by default, so we resolve them even on cache hit
+   */
+  async function resolveLoadersOnly(
+    entries: EntryData[],
+    context: HandlerContext<any, TEnv>
+  ): Promise<ResolvedSegment[]> {
+    const loaderSegments: ResolvedSegment[] = [];
+
+    for (const entry of entries) {
+      const belongsToRoute = entry.type === "route";
+      const segments = await resolveLoaders(entry, context, belongsToRoute);
+      loaderSegments.push(...segments);
+    }
+
+    return loaderSegments;
+  }
+
+  /**
+   * Resolve only loader segments for all entries with revalidation logic (for matchPartial cache hit)
+   * Loaders are always fresh by default, so we resolve them even on cache hit
+   */
+  async function resolveLoadersOnlyWithRevalidation(
+    entries: EntryData[],
+    context: HandlerContext<any, TEnv>,
+    clientSegmentIds: Set<string>,
+    prevParams: Record<string, string>,
+    request: Request,
+    prevUrl: URL,
+    nextUrl: URL,
+    routeKey: string,
+    actionContext?: ActionContext
+  ): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
+    const allLoaderSegments: ResolvedSegment[] = [];
+    const allMatchedIds: string[] = [];
+
+    for (const entry of entries) {
+      const belongsToRoute = entry.type === "route";
+      const { segments, matchedIds } = await resolveLoadersWithRevalidation(
+        entry,
+        context,
+        belongsToRoute,
+        clientSegmentIds,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey,
+        actionContext
+      );
+      allLoaderSegments.push(...segments);
+      allMatchedIds.push(...matchedIds);
+    }
+
+    return { segments: allLoaderSegments, matchedIds: allMatchedIds };
+  }
+
+  /**
+   * Resolve all segments for a route with revalidation logic (for matchPartial)
+   * Used for single-cache-per-request pattern in partial/navigation requests
+   */
+  async function resolveAllSegmentsWithRevalidation(
+    entries: EntryData[],
+    routeKey: string,
+    params: Record<string, string>,
+    context: HandlerContext<any, TEnv>,
+    clientSegmentSet: Set<string>,
+    prevParams: Record<string, string>,
+    request: Request,
+    prevUrl: URL,
+    nextUrl: URL,
+    loaderPromises: Map<string, Promise<any>>,
+    actionContext: ActionContext | undefined,
+    interceptResult: { intercept: InterceptEntry; entry: EntryData } | null,
+    localRouteName: string,
+    pathname: string
+  ): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
+    const allSegments: ResolvedSegment[] = [];
+    const matchedIds: string[] = [];
+
+    for (const entry of entries) {
+      // When intercepting, skip route entries - intercept replaces route handler
+      if (entry.type === "route" && interceptResult) {
+        console.log(
+          `[Router.matchPartial] Intercepting "${localRouteName}" - skipping route handler`
+        );
+        matchedIds.push(entry.shortCode);
+        continue;
+      }
+
+      // Resolve entry with revalidation logic
+      const nonParallelEntry = entry as Exclude<EntryData, { type: "parallel" }>;
+      const resolved = await resolveWithRevalidationErrorHandling(
+        nonParallelEntry,
+        params,
+        () =>
+          resolveSegmentWithRevalidation(
+            nonParallelEntry,
+            routeKey,
+            params,
+            context,
+            clientSegmentSet,
+            prevParams,
+            request,
+            prevUrl,
+            nextUrl,
+            loaderPromises,
+            actionContext,
+            false // stale = false for fresh resolution
+          ),
+        pathname
+      );
+
+      allSegments.push(...resolved.segments);
+      matchedIds.push(...resolved.matchedIds);
+    }
+
+    return { segments: allSegments, matchedIds };
+  }
+
+  /**
    * Wrapper for segment resolution with revalidation that adds error boundary handling
    * Similar to resolveWithErrorHandling but returns SegmentRevalidationResult
    */
@@ -2424,71 +2388,82 @@ export function createRSCRouter<TEnv = any>(
         Store.metrics = metricsStore;
       }
 
-      // Collect all segments from stream (run within store context for metrics tracking)
-      const segments: ResolvedSegment[] = await getContext().runWithStore(
-        Store,
-        Store.namespace || "#router",
-        Store.parent,
-        async () => {
-          const segs: ResolvedSegment[] = [];
+      // Collect entries from manifest (root to route)
+      const entries = [...traverseBack(manifestEntry)];
 
-          // Use withCache iterator for clean cache handling
-          // Convert generator to iterator for scope-based delegation
-          const entriesIterator =
-            traverseBack(manifestEntry)[Symbol.iterator]();
-          for await (const [entry, cachedSegments, skipped, scope] of withCache(
-            entriesIterator,
-            matched.params,
-            loaderPromises
-          )) {
-            if (skipped) {
-              // Entry was skipped (shouldn't happen in full match, only partial)
-              continue;
-            }
+      // Find first cache scope (determines TTL/SWR for this route)
+      let cacheScope: CacheScope | null = null;
+      for (const entry of entries) {
+        if (entry.cache) {
+          cacheScope = createCacheScope(entry.cache, cacheScope);
+        }
+      }
 
-            if (cachedSegments) {
-              segs.push(...cachedSegments);
-              // Loaders are always live (not cached) - resolve them fresh
-              // Set segment ID for handle data attribution
-              handlerContext._currentSegmentId = entry.shortCode;
-              const belongsToRoute = entry.type === "route";
-              const loaderSegments = await resolveLoaders(
-                entry,
+      // Single cache lookup for entire route
+      const cacheResult = cacheScope?.enabled
+        ? await cacheScope.lookupRoute(pathname, matched.params)
+        : null;
+
+      let segments: ResolvedSegment[];
+
+      if (cacheResult) {
+        // Cache HIT - use cached non-loader segments
+        const cachedSegments = cacheResult.segments;
+
+        // Resolve loaders fresh (loaders are NOT cached by default)
+        const loaderSegments = await getContext().runWithStore(
+          Store,
+          Store.namespace || "#router",
+          Store.parent,
+          () => resolveLoadersOnly(entries, handlerContext)
+        );
+
+        // Combine: cached segments + fresh loaders
+        segments = [...cachedSegments, ...loaderSegments];
+
+        // Trigger background revalidation if stale (SWR)
+        if (cacheResult.shouldRevalidate && cacheScope) {
+          const requestCtx = getRequestContext();
+          const revalidateScope = cacheScope;
+          requestCtx?.waitUntil(async () => {
+            console.log(`[Router.match] Revalidating stale route: ${pathname}`);
+            try {
+              const freshSegments = await resolveAllSegments(
+                entries,
+                matched.routeKey,
+                matched.params,
                 handlerContext,
-                belongsToRoute
+                loaderPromises
               );
-              segs.push(...loaderSegments);
-              continue; // Skip full handler execution (structure was cached)
+              revalidateScope.cacheRoute(pathname, matched.params, freshSegments);
+              console.log(`[Router.match] Revalidation complete: ${pathname}`);
+            } catch (error) {
+              console.error(`[Router.match] Revalidation failed:`, error);
             }
-
-            // Cache miss - resolve entry with handler
-            const resolvedSegments = await resolveWithErrorHandling(
-              entry,
+          });
+        }
+      } else {
+        // Cache MISS - resolve all segments
+        segments = await getContext().runWithStore(
+          Store,
+          Store.namespace || "#router",
+          Store.parent,
+          async () => {
+            return resolveAllSegments(
+              entries,
               matched.routeKey,
               matched.params,
               handlerContext,
-              loaderPromises,
-              () =>
-                resolveSegment(
-                  entry,
-                  matched.routeKey,
-                  matched.params,
-                  handlerContext,
-                  loaderPromises
-                )
+              loaderPromises
             );
-
-            segs.push(...resolvedSegments);
-
-            // Cache entry after handles settle (non-blocking)
-            // Caching is opt-in: only happens when scope exists from cache() DSL
-            if (scope) {
-              scope.cacheEntry(entry.id, resolvedSegments);
-            }
           }
-          return segs;
+        );
+
+        // Cache for next request (non-blocking)
+        if (cacheScope?.enabled) {
+          cacheScope.cacheRoute(pathname, matched.params, segments);
         }
-      );
+      }
 
       const segmentIds = segments.map((s) => s.id);
 
@@ -2943,184 +2918,160 @@ export function createRSCRouter<TEnv = any>(
       const slots: Record<string, import("./types.js").SlotState> = {};
       let interceptSegments: ResolvedSegment[] = [];
 
-      // Track cache scope from withCache iterator for intercept caching
-      // Use a container to avoid TypeScript narrowing issues with closure mutations
-      const scopeRef: { current: CacheScope | null } = { current: null };
+      // Collect entries from manifest (root to route)
+      const entries = [...traverseBack(manifestEntry)];
 
-      // Collect segments with revalidation-aware rendering
-      // When intercepting: skip route handler, only render layouts + intercept
-      // When not intercepting: render everything normally
-      const result = await getContext().runWithStore(
-        Store,
-        Store.namespace || "#router",
-        Store.parent,
-        async () => {
-          const segs: ResolvedSegment[] = [];
-          const matchedIds: string[] = [];
+      // Find first cache scope (determines TTL/SWR for this route)
+      let cacheScope: CacheScope | null = null;
+      for (const entry of entries) {
+        if (entry.cache) {
+          cacheScope = createCacheScope(entry.cache, cacheScope);
+        }
+      }
 
-          // Use withCache iterator for clean cache handling
-          // Pass interceptResult to skip route entries when intercepting
-          // Convert generator to iterator for scope-based delegation
-          const entriesIterator =
-            traverseBack(manifestEntry)[Symbol.iterator]();
-          for await (const [entry, cachedSegments, skipped, scope] of withCache(
-            entriesIterator,
-            matched.params,
-            loaderPromises,
-            interceptResult,
-            null,
-            isAction
-          )) {
-            // Track the scope for intercept caching
-            scopeRef.current = scope;
+      // Single cache lookup for entire route (skip during actions)
+      const cacheResult =
+        cacheScope?.enabled && !isAction
+          ? await cacheScope.lookupRoute(pathname, matched.params)
+          : null;
 
+      let result: { segments: ResolvedSegment[]; matchedIds: string[] };
+
+      if (cacheResult) {
+        // Cache HIT - use cached non-loader segments
+        const cachedSegments = cacheResult.segments;
+        const cachedMatchedIds = cacheResult.segments.map((s) => s.id);
+
+        // Resolve loaders fresh with revalidation logic (loaders are NOT cached by default)
+        const loaderResult = await getContext().runWithStore(
+          Store,
+          Store.namespace || "#router",
+          Store.parent,
+          () =>
+            resolveLoadersOnlyWithRevalidation(
+              entries,
+              handlerContext,
+              clientSegmentSet,
+              prevParams,
+              request,
+              prevUrl,
+              url,
+              matched.routeKey,
+              actionContext
+            )
+        );
+
+        // Combine: cached segments + fresh loaders
+        result = {
+          segments: [...cachedSegments, ...loaderResult.segments],
+          matchedIds: [...cachedMatchedIds, ...loaderResult.matchedIds],
+        };
+
+        // Trigger background revalidation if stale (SWR)
+        if (cacheResult.shouldRevalidate && cacheScope) {
+          const requestCtx = getRequestContext();
+          const revalidateScope = cacheScope;
+          requestCtx?.waitUntil(async () => {
             console.log(
-              `[Router.matchPartial] Processing entry: ${entry.shortCode} (${entry.type})`
+              `[Router.matchPartial] Revalidating stale route: ${pathname}`
             );
-
-            // When intercepting, route handler is skipped by withCache
-            if (skipped) {
-              console.log(
-                `[Router.matchPartial] Intercepting "${localRouteName}" - skipping route handler`
-              );
-              // Still include route ID in matched for client-side cache tracking
-              matchedIds.push(entry.shortCode);
-              continue;
-            }
-
-            if (cachedSegments) {
-              console.log("cachedSegments", cachedSegments);
-
-              segs.push(...cachedSegments);
-              matchedIds.push(entry.shortCode);
-              // Loaders are always live (not cached) - resolve them fresh with revalidation
-              handlerContext._currentSegmentId = entry.shortCode;
-              const belongsToRoute = entry.type === "route";
-              const loaderResult = await resolveLoadersWithRevalidation(
-                entry,
+            try {
+              const freshResult = await resolveAllSegmentsWithRevalidation(
+                entries,
+                matched.routeKey,
+                matched.params,
                 handlerContext,
-                belongsToRoute,
                 clientSegmentSet,
                 prevParams,
                 request,
                 prevUrl,
                 url,
-                matched.routeKey,
+                loaderPromises,
                 actionContext,
-                undefined, // shortCodeOverride
-                stale
+                interceptResult,
+                localRouteName,
+                pathname
               );
-              segs.push(...loaderResult.segments);
-              matchedIds.push(...loaderResult.matchedIds);
-              continue; // Skip full handler execution (structure was cached)
+              revalidateScope.cacheRoute(
+                pathname,
+                matched.params,
+                freshResult.segments
+              );
+              console.log(
+                `[Router.matchPartial] Revalidation complete: ${pathname}`
+              );
+            } catch (error) {
+              console.error(
+                `[Router.matchPartial] Revalidation failed:`,
+                error
+              );
             }
-
-            // Cache miss - normal resolution for layouts, cache entries, and non-intercepted routes
-            // Note: entries from traverseBack are layout/cache/route (never parallel)
-            const nonParallelEntry = entry as Exclude<
-              EntryData,
-              { type: "parallel" }
-            >;
-            const resolved = await resolveWithRevalidationErrorHandling(
-              nonParallelEntry,
+          });
+        }
+      } else {
+        // Cache MISS or action - resolve all segments with revalidation logic
+        result = await getContext().runWithStore(
+          Store,
+          Store.namespace || "#router",
+          Store.parent,
+          async () => {
+            return resolveAllSegmentsWithRevalidation(
+              entries,
+              matched.routeKey,
               matched.params,
-              () =>
-                resolveSegmentWithRevalidation(
-                  nonParallelEntry,
-                  matched.routeKey,
-                  matched.params,
-                  handlerContext,
-                  clientSegmentSet,
-                  prevParams,
-                  request,
-                  prevUrl,
-                  url,
-                  loaderPromises,
-                  actionContext,
-                  stale
-                ),
+              handlerContext,
+              clientSegmentSet,
+              prevParams,
+              request,
+              prevUrl,
+              url,
+              loaderPromises,
+              actionContext,
+              interceptResult,
+              localRouteName,
               pathname
             );
-
-            segs.push(...resolved.segments);
-            matchedIds.push(...resolved.matchedIds);
-
-            // Cache entry after handles settle (non-blocking)
-            // Caching is opt-in: only happens when scope exists from cache() DSL
-            // Skip cache writes during actions to prevent stale data being cached
-            if (scope && !isAction) {
-              scope.cacheEntry(entry.id, resolved.segments);
-            }
           }
-          return { segments: segs, matchedIds };
+        );
+
+        // Cache for next request (non-blocking, skip during actions)
+        if (cacheScope?.enabled && !isAction) {
+          cacheScope.cacheRoute(pathname, matched.params, result.segments);
         }
-      );
+      }
 
       const { segments, matchedIds: allMatchedIds } = result;
 
       if (interceptResult) {
         const slotName = interceptResult.intercept.slotName;
-        const routeName = interceptResult.intercept.routeName;
         console.log(
           `[Router.matchPartial] Found intercept for "${localRouteName}" -> slot "${slotName}"`
         );
 
-        // Cache key for intercept: parentEntry.id + slot + route
-        const interceptCacheKey = `${interceptResult.entry.id}.intercept.${slotName}.${routeName}`;
-
-        // Check cache for intercept using the inherited scope (if caching enabled)
-        const cachedIntercept = scopeRef.current?.enabled
-          ? await scopeRef.current.restore(
-              interceptCacheKey,
+        // Resolve intercept entry (middleware, loaders, handler)
+        interceptSegments = await getContext().runWithStore(
+          Store,
+          Store.namespace || "#router",
+          Store.parent,
+          () =>
+            resolveInterceptEntry(
+              interceptResult.intercept,
+              interceptResult.entry,
               matched.params,
-              loaderPromises
+              handlerContext,
+              true, // belongsToRoute
+              {
+                clientSegmentIds: clientSegmentSet,
+                prevParams,
+                request,
+                prevUrl,
+                nextUrl: url,
+                routeKey: matched.routeKey,
+                actionContext,
+                stale,
+              }
             )
-          : null;
-
-        if (cachedIntercept) {
-          console.log(
-            `[Router.matchPartial] Intercept cache HIT: ${interceptCacheKey}`
-          );
-          interceptSegments = cachedIntercept;
-        } else {
-          console.log(
-            `[Router.matchPartial] Intercept cache MISS: ${interceptCacheKey}`
-          );
-          // Resolve intercept entry (middleware, loaders, handler)
-          // Pass revalidation context for stale cache revalidation
-          interceptSegments = await getContext().runWithStore(
-            Store,
-            Store.namespace || "#router",
-            Store.parent,
-            () =>
-              resolveInterceptEntry(
-                interceptResult.intercept,
-                interceptResult.entry,
-                matched.params,
-                handlerContext,
-                true, // belongsToRoute
-                {
-                  clientSegmentIds: clientSegmentSet,
-                  prevParams,
-                  request,
-                  prevUrl,
-                  nextUrl: url,
-                  routeKey: matched.routeKey,
-                  actionContext,
-                  stale,
-                }
-              )
-          );
-
-          // Queue intercept for caching (non-blocking) - uses inherited scope
-          // Skip cache writes during actions to prevent stale data being cached
-          // Also skip caching when intercept has loaders - loaders should always run fresh
-          // (the intercept segment's loaderDataPromise would otherwise return stale data)
-          const hasLoaders = interceptResult.intercept.loader.length > 0;
-          if (!isAction && !hasLoaders) {
-            scopeRef.current?.cacheEntry(interceptCacheKey, interceptSegments);
-          }
-        }
+        );
 
         // Add to slots metadata - browser uses this to know which slots are active
         slots[slotName] = {

@@ -16,13 +16,17 @@ import type { ResolvedSegment } from "../types.js";
 // ============================================================================
 
 /**
- * Result from cache get() including data and staleness status
+ * Result from cache get() including data and revalidation status
  */
 export interface CacheGetResult {
   /** The cached entry data */
   data: CachedEntryData;
-  /** Whether the entry is stale (past TTL but within SWR window) */
-  stale: boolean;
+  /**
+   * Whether the caller should trigger background revalidation.
+   * True when entry is stale AND not already being revalidated.
+   * The store atomically marks the entry as REVALIDATING when returning true.
+   */
+  shouldRevalidate: boolean;
 }
 
 /**
@@ -64,12 +68,6 @@ export interface SegmentCacheStore {
    * Clear all cached entries (optional, for testing)
    */
   clear?(): Promise<void>;
-
-  /**
-   * Mark entry as currently revalidating (optional, for thundering herd prevention)
-   * Stores use this to prevent multiple simultaneous revalidations.
-   */
-  markRevalidating?(key: string): Promise<void>;
 }
 
 /**
