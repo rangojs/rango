@@ -179,6 +179,81 @@ export default createRSCHandler({
 });
 ```
 
+## Route-Level Caching Architecture
+
+### Single Cache Per Request
+
+The cache uses a **single cache entry per route** pattern rather than per-segment caching:
+
+- One cache lookup per route request
+- Cache key is based on pathname (not entry ID)
+- Document and partial requests are cached separately
+
+### Cache Key Structure
+
+```typescript
+function getRouteCacheKey(pathname: string, params?: Record<string, string>): string {
+  // Prefix distinguishes request type
+  const prefix = isPartial ? "partial" : "doc";
+
+  // Sort params for consistent keys
+  const paramStr = params
+    ? Object.entries(params)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => `${k}=${v}`)
+        .join("&")
+    : "";
+
+  const baseKey = paramStr ? `${pathname}:${paramStr}` : pathname;
+  return `${prefix}:${baseKey}`;
+}
+
+// Examples:
+// Document request to /products/123 → "doc:/products/123"
+// Partial request to /products/123  → "partial:/products/123"
+// With params: "doc:/products:id=123&category=electronics"
+```
+
+### Loader Caching Behavior
+
+**Loaders are NOT cached by default**, even when under a parent `cache()` boundary:
+
+```typescript
+// Layout with cache - loaders are still fresh on each request
+cache({ ttl: 60 }, () => [
+  layout(<AppLayout />),
+  loader(fetchUser),  // Always fresh - NOT cached
+])
+
+// Loader can opt-in to caching with its own cache() config
+loader(fetchProducts, () => [
+  cache({ ttl: 300 })  // This loader IS cached
+])
+```
+
+**Rationale:**
+- Loaders often contain user-specific or time-sensitive data
+- Caching loaders by default could serve stale data unexpectedly
+- Explicit opt-in gives developers control over loader caching
+
+### Partial Request Caching
+
+For navigation (partial) requests:
+
+- Segments with `component: null` are expected (client already has them)
+- These are cached normally - the cache stores what was resolved
+- On cache hit, loaders are resolved fresh with revalidation logic
+
+```typescript
+// In matchPartial cache hit:
+const cachedSegments = cacheResult.segments;  // May have null components
+const loaderResult = await resolveLoadersOnlyWithRevalidation(entries, ...);
+result = {
+  segments: [...cachedSegments, ...loaderResult.segments],
+  matchedIds: [...cachedMatchedIds, ...loaderResult.matchedIds],
+};
+```
+
 ## waitUntil Integration
 
 The `RequestContext` already provides `waitUntil()` for background work:
@@ -198,16 +273,26 @@ waitUntil(fn: () => Promise<void>): void {
 
 ### How Cache Uses waitUntil
 
-`CacheScope.cacheEntry()` already uses `waitUntil` for non-blocking cache writes:
+`CacheScope.cacheRoute()` uses `waitUntil` for non-blocking cache writes:
 
 ```typescript
 // In cache-scope.ts
-cacheEntry(cacheKey: string, segments: ResolvedSegment[]): void {
-  // ...
+cacheRoute(pathname: string, params: Record<string, string>, segments: ResolvedSegment[]): void {
+  // Loaders are NOT cached by default
+  const nonLoaderSegments = segments.filter((s) => s.type !== "loader");
+
   requestCtx.waitUntil(async () => {
     await handleStore.settled;
-    const serialized = await serializeSegments(segments);
-    await store.set(key, data, ttl);
+
+    // For document requests: only cache if all segments have components
+    // For partial requests: null components are expected
+    if (!isPartial) {
+      const hasAllComponents = nonLoaderSegments.every((s) => s.component !== null);
+      if (!hasAllComponents) return;
+    }
+
+    const serialized = await serializeSegments(nonLoaderSegments);
+    await store.set(key, data, ttl, swr);
   });
 }
 ```
@@ -293,7 +378,7 @@ const CACHE_STATUS_HEADER = "x-edge-cache-status";
 
 interface CacheGetResult {
   data: CachedEntryData;
-  stale: boolean;
+  shouldRevalidate: boolean;  // true if entry is stale and needs background refresh
 }
 
 async get(key: string): Promise<CacheGetResult | null> {
@@ -303,12 +388,12 @@ async get(key: string): Promise<CacheGetResult | null> {
 
   // Check staleness from header (no JSON parse needed)
   const staleAt = Number(response.headers.get(CACHE_STALE_AT_HEADER));
-  const stale = Date.now() > staleAt;
+  const shouldRevalidate = Date.now() > staleAt;
 
   // Parse body for actual data
   const data = await response.json() as CachedEntryData;
 
-  return { data, stale };
+  return { data, shouldRevalidate };
 }
 
 async set(key: string, data: CachedEntryData, ttl: number, swr?: number): Promise<void> {
@@ -330,71 +415,94 @@ async set(key: string, data: CachedEntryData, ttl: number, swr?: number): Promis
 
 ### CacheScope Handles Revalidation
 
-When `CacheScope.restore()` gets stale data:
+The `CacheScope` uses route-level caching with `lookupRoute()` and `cacheRoute()` methods:
 
 ```typescript
-async restore(entryId: string, params: Record<string, string>): Promise<ResolvedSegment[] | null> {
+// Single cache lookup for entire route
+async lookupRoute(
+  pathname: string,
+  params: Record<string, string>
+): Promise<{ segments: ResolvedSegment[]; shouldRevalidate: boolean } | null> {
   const result = await store.get(key);
   if (!result) return null;
 
-  // Serve stale data immediately
+  // Deserialize and replay handles
   const segments = await deserializeSegments(result.data.segments);
+  handleStore.replaySegmentData(cached.handles);
 
-  // Trigger background revalidation if stale
-  if (result.stale) {
+  return { segments, shouldRevalidate: result.shouldRevalidate };
+}
+
+// Cache route segments (excludes loaders by default)
+cacheRoute(
+  pathname: string,
+  params: Record<string, string>,
+  segments: ResolvedSegment[]
+): void {
+  // Loaders are NOT cached by default - they're always fresh
+  const nonLoaderSegments = segments.filter((s) => s.type !== "loader");
+
+  requestCtx.waitUntil(async () => {
+    await handleStore.settled;
+    const serialized = await serializeSegments(nonLoaderSegments);
+    await store.set(key, data, ttl, swr);
+  });
+}
+```
+
+The router then handles revalidation at the route level:
+
+```typescript
+// In router.match()
+const cacheResult = await cacheScope.lookupRoute(pathname, params);
+
+if (cacheResult) {
+  // Use cached non-loader segments
+  const cachedSegments = cacheResult.segments;
+
+  // Resolve loaders fresh (loaders are NOT cached by default)
+  const loaderSegments = await resolveLoadersOnly(entries, context);
+
+  segments = [...cachedSegments, ...loaderSegments];
+
+  // Trigger background revalidation if stale (SWR)
+  if (cacheResult.shouldRevalidate) {
     requestCtx.waitUntil(async () => {
-      await this.revalidateEntry(entryId, params);
+      const freshSegments = await resolveAllSegments(entries, ...);
+      cacheScope.cacheRoute(pathname, params, freshSegments);
     });
   }
-
-  return segments;
 }
 ```
 
 ### Revalidation Implementation
 
-Background revalidation needs to:
-1. Re-resolve the segments fresh (run handlers/loaders)
-2. Cache the new result
-
-**Challenge**: Revalidation needs router context to re-render segments.
-
-**Solution**: Store revalidation context with cached data:
+Background revalidation is handled at the router level using `waitUntil`:
 
 ```typescript
-interface CachedEntryData {
-  // ... existing fields ...
-  revalidationContext: {
-    entryId: string;
-    routeKey: string;
-    params: Record<string, string>;
-    url: string;  // Original request URL for context
-  };
+// In router.match() on cache hit
+if (cacheResult.shouldRevalidate && cacheScope) {
+  requestCtx.waitUntil(async () => {
+    console.log(`[Router.match] Revalidating stale route: ${pathname}`);
+    try {
+      // Re-resolve all segments fresh
+      const freshSegments = await resolveAllSegments(
+        entries,
+        matched.routeKey,
+        matched.params,
+        handlerContext,
+        loaderPromises
+      );
+      // Cache the fresh result
+      cacheScope.cacheRoute(pathname, matched.params, freshSegments);
+    } catch (error) {
+      console.error(`[Router.match] Revalidation failed:`, error);
+    }
+  });
 }
 ```
 
-The revalidation function creates a synthetic request and re-runs matching:
-
-```typescript
-async revalidateEntry(context: RevalidationContext): Promise<void> {
-  // Prevent thundering herd
-  if (isRevalidating(context.entryId)) return;
-  markRevalidating(context.entryId);
-
-  try {
-    // Create synthetic request for re-resolution
-    const request = new Request(context.url);
-
-    // Re-resolve segments (implementation TBD - needs router access)
-    const freshSegments = await router.resolveEntry(context.entryId, context.params, request);
-
-    // Cache fresh result
-    await this.cacheEntry(context.entryId, freshSegments);
-  } finally {
-    clearRevalidating(context.entryId);
-  }
-}
-```
+The router already has all the context needed for revalidation - no need to store extra context in cached data.
 
 ### Thundering Herd Prevention
 
@@ -567,31 +675,36 @@ Cloudflare Cache API limits:
 
 ```
 packages/rsc-router/src/cache/
-├── cf-cache-store.ts      # CFCacheStore implementation
-├── cf-kv-store.ts         # KV sub-store (Phase 2)
-└── index.ts               # Re-export CF stores
+├── cache-scope.ts         # CacheScope with lookupRoute/cacheRoute
+├── types.ts               # SegmentCacheStore, CacheGetResult interfaces
+├── memory-segment-store.ts # In-memory store for development
+├── cf/
+│   ├── cf-cache-store.ts  # CFCacheStore implementation
+│   ├── index.ts           # Re-export CF stores
+│   └── __tests__/         # CF store tests
+└── index.ts               # Re-export all cache modules
 ```
 
 ## Tasks
 
 ### Phase 1: Edge Cache Store
-- [ ] Implement `CFCacheStore` class
-- [ ] Key-to-Request conversion with proper URL encoding
-- [ ] Data-to-Response serialization with Cache-Control headers
-- [ ] Response-to-Data deserialization with expiration check
-- [ ] Error handling (cache failures = cache miss)
-- [ ] Unit tests with mocked `caches` global
+- [x] Implement `CFCacheStore` class
+- [x] Key-to-Request conversion with proper URL encoding
+- [x] Data-to-Response serialization with Cache-Control headers
+- [x] Response-to-Data deserialization with expiration check
+- [x] Error handling (cache failures = cache miss)
+- [x] Unit tests with mocked `caches` global
 - [ ] Integration tests with Miniflare
-- [ ] Documentation and examples
+- [x] Documentation and examples
 
 ### Phase 1.5: SWR Support
-- [ ] Update `CachedEntryData` with `createdAt`, `staleAt` fields
-- [ ] Update store interface to return staleness indicator
-- [ ] Implement `CacheScope` background revalidation trigger
-- [ ] Add revalidation context to cached data
-- [ ] Implement `revalidateEntry()` with router integration
-- [ ] Thundering herd prevention (in-memory Set)
-- [ ] Tests for SWR behavior (stale serving, background refresh)
+- [x] Update store interface to return `shouldRevalidate` indicator
+- [x] Implement `CacheScope` background revalidation trigger
+- [x] Route-level caching with `lookupRoute()` and `cacheRoute()`
+- [x] Loaders excluded from cache by default (opt-in with own `cache()`)
+- [x] Partial request caching with null component support
+- [x] Thundering herd prevention via cache status headers
+- [x] Tests for SWR behavior (stale serving, background refresh)
 
 ### Phase 2: KV Sub-store
 - [ ] Design KV schema and key structure

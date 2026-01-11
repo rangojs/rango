@@ -405,14 +405,20 @@ export class CacheScope {
     const ttl = this.ttl;
     const key = getRouteCacheKey(pathname, params);
 
+    // Check if this is a partial request (navigation) vs document request
+    const isPartial = requestCtx.url.searchParams.has("_rsc_partial");
+
     requestCtx.waitUntil(async () => {
       await handleStore.settled;
 
-      // Only cache if ALL non-loader segments have actual components (not null)
-      const hasAllComponents = nonLoaderSegments.every(
-        (s) => s.component !== null
-      );
-      if (!hasAllComponents) return;
+      // For document requests: only cache if ALL segments have components (complete render)
+      // For partial requests: null components are expected (client already has them)
+      if (!isPartial) {
+        const hasAllComponents = nonLoaderSegments.every(
+          (s) => s.component !== null
+        );
+        if (!hasAllComponents) return;
+      }
 
       // Collect handle data for non-loader segments only
       const handles: Record<string, SegmentHandleData> = {};
