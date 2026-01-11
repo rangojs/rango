@@ -17,9 +17,8 @@ export default {
     }
 
     // Create CF cache store with waitUntil for non-blocking writes
-    // This enables SWR (stale-while-revalidate) at the edge
+    // Uses caches.default by default, SWR enabled at the edge
     const cacheStore = new CFCacheStore({
-      namespace: "rsc-blog-cache",
       defaults: { ttl: 60, swr: 300 },
       waitUntil: (fn) => ctx.waitUntil(fn()),
     });

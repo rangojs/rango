@@ -36,7 +36,10 @@ export const MAX_REVALIDATION_INTERVAL = 30;
 // ============================================================================
 
 export interface CFCacheStoreOptions {
-  /** Cache namespace (default: 'rsc-segments') */
+  /**
+   * Cache namespace. If not provided, uses caches.default (recommended).
+   * Only set this if you need isolated cache storage.
+   */
   namespace?: string;
 
   /** Base URL for cache keys (default: 'https://rsc-cache.internal.com/') */
@@ -61,15 +64,25 @@ export type CacheStatus = "HIT" | "REVALIDATING";
 export class CFCacheStore implements SegmentCacheStore {
   readonly defaults?: CacheDefaults;
 
-  private readonly namespace: string;
+  private readonly namespace?: string;
   private readonly baseUrl: string;
   private readonly waitUntil?: (fn: () => Promise<void>) => void;
 
   constructor(options: CFCacheStoreOptions = {}) {
-    this.namespace = options.namespace ?? "rsc-segments";
+    this.namespace = options.namespace;
     this.baseUrl = options.baseUrl ?? "https://rsc-cache.internal.com/";
     this.defaults = options.defaults;
     this.waitUntil = options.waitUntil;
+  }
+
+  /**
+   * Get the cache instance - uses caches.default unless namespace is specified
+   */
+  private getCache(): Cache | Promise<Cache> {
+    if (this.namespace) {
+      return caches.open(this.namespace);
+    }
+    return caches.default;
   }
 
   /**
@@ -84,7 +97,7 @@ export class CFCacheStore implements SegmentCacheStore {
    */
   async get(key: string): Promise<CacheGetResult | null> {
     try {
-      const cache = await caches.open(this.namespace);
+      const cache = await this.getCache();
       const request = this.keyToRequest(key);
       const response = await cache.match(request);
 
@@ -137,7 +150,7 @@ export class CFCacheStore implements SegmentCacheStore {
     swr?: number
   ): Promise<void> {
     try {
-      const cache = await caches.open(this.namespace);
+      const cache = await this.getCache();
       const request = this.keyToRequest(key);
 
       // Extended TTL covers SWR window
@@ -175,7 +188,7 @@ export class CFCacheStore implements SegmentCacheStore {
    */
   async delete(key: string): Promise<boolean> {
     try {
-      const cache = await caches.open(this.namespace);
+      const cache = await this.getCache();
       return await cache.delete(this.keyToRequest(key));
     } catch (error) {
       console.error("[CFCacheStore] delete failed:", error);

@@ -32,6 +32,7 @@ class MockCache {
 
 class MockCaches {
   private caches = new Map<string, MockCache>();
+  private _default = new MockCache();
 
   async open(name: string): Promise<MockCache> {
     if (!this.caches.has(name)) {
@@ -41,10 +42,11 @@ class MockCaches {
   }
 
   get default(): MockCache {
-    return this.open("default") as unknown as MockCache;
+    return this._default;
   }
 
   clear(): void {
+    this._default.clear();
     this.caches.forEach((cache) => cache.clear());
     this.caches.clear();
   }
@@ -132,7 +134,8 @@ describe("CFCacheStore", () => {
 
       await store.set("test-key", data, 60);
 
-      const cache = await mockCaches.open("rsc-segments");
+      // Uses caches.default by default
+      const cache = mockCaches.default;
       const request = new Request("https://rsc-cache.internal.com/test-key");
       const response = await cache.match(request);
 
@@ -145,7 +148,7 @@ describe("CFCacheStore", () => {
 
       await store.set("test-key", data, 60, 300);
 
-      const cache = await mockCaches.open("rsc-segments");
+      const cache = mockCaches.default;
       const request = new Request("https://rsc-cache.internal.com/test-key");
       const response = await cache.match(request);
 
@@ -158,11 +161,24 @@ describe("CFCacheStore", () => {
 
       await store.set("test-key", data, 60);
 
-      const cache = await mockCaches.open("rsc-segments");
+      const cache = mockCaches.default;
       const request = new Request("https://rsc-cache.internal.com/test-key");
       const response = await cache.match(request);
 
       expect(response?.headers.get("Cache-Control")).toBe("public, max-age=180");
+    });
+
+    it("should use named cache when namespace is provided", async () => {
+      const store = new CFCacheStore({ namespace: "custom-cache" });
+      const data = createTestData();
+
+      await store.set("test-key", data, 60);
+
+      const cache = await mockCaches.open("custom-cache");
+      const request = new Request("https://rsc-cache.internal.com/test-key");
+      const response = await cache.match(request);
+
+      expect(response?.headers.get("Cache-Control")).toBe("public, max-age=60");
     });
 
     it("should use waitUntil for non-blocking writes when provided", async () => {
@@ -194,7 +210,7 @@ describe("CFCacheStore", () => {
 
       await store.set("test-key", data, 60);
 
-      const cache = await mockCaches.open("rsc-segments");
+      const cache = mockCaches.default;
       const request = new Request("https://rsc-cache.internal.com/test-key");
       const response = await cache.match(request);
 
@@ -210,7 +226,7 @@ describe("CFCacheStore", () => {
 
       await store.set("test-key", data, 60);
 
-      const cache = await mockCaches.open("rsc-segments");
+      const cache = mockCaches.default;
       const request = new Request("https://rsc-cache.internal.com/test-key");
       const response = await cache.match(request);
 
@@ -250,7 +266,7 @@ describe("CFCacheStore", () => {
       expect(result?.shouldRevalidate).toBe(true);
 
       // Verify the entry is now marked as REVALIDATING
-      const cache = await mockCaches.open("rsc-segments");
+      const cache = mockCaches.default;
       const request = new Request(
         "https://rsc-cache.internal.com/" + encodeURIComponent("test-key")
       );
