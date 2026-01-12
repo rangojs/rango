@@ -181,3 +181,88 @@ test.describe("blog with CF cache", () => {
     );
   });
 });
+
+test.describe("proactive-caching", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "dev",
+  });
+
+  test("proactive caching triggers when navigating within cached layout", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Step 1: Document request to item-a
+    const beforeFirstVisit = f.proc().stdout();
+    await page.goto(f.url("/proactive-cache/item-a"));
+    await waitForHydration(page);
+    const afterFirstVisit = f.proc().stdout();
+    const firstVisitLogs = afterFirstVisit.slice(beforeFirstVisit.length);
+
+    // Verify layout and content rendered
+    await expect(testId(page, "proactive-cache-layout")).toBeVisible();
+    await expect(testId(page, "proactive-item-a-page")).toBeVisible();
+
+    // Should have cache interaction (MISS on fresh cache, HIT on warmed cache)
+    expect(firstVisitLogs).toContain("[CacheScope]");
+
+    // Step 2: Partial navigation to item-b (within same layout)
+    // This triggers proactive caching because layout has null component
+    // (unless doc entry already exists from previous run, in which case it skips)
+    const beforePartialNav = f.proc().stdout();
+    await testId(page, "proactive-nav-b").click();
+    await expect(testId(page, "proactive-item-b-page")).toBeVisible();
+
+    // Give proactive caching time to complete in background
+    await page.waitForTimeout(500);
+
+    const afterPartialNav = f.proc().stdout();
+    const partialNavLogs = afterPartialNav.slice(beforePartialNav.length);
+
+    // Check for valid cache interaction during partial navigation:
+    // - "Proactive caching" = we rendered null segments in background
+    // - "HIT: partial:" = partial cache hit, served from cache (already has complete segments)
+    // Both are valid outcomes depending on cache state
+    const proactiveTriggered = partialNavLogs.includes("Proactive caching");
+    const partialCacheHit = partialNavLogs.includes("HIT: partial:");
+    expect(proactiveTriggered || partialCacheHit).toBe(true);
+  });
+
+  test("layout renders correctly after proactive caching", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    // Step 1: Document request to index (populates cache)
+    await page.goto(f.url("/proactive-cache"));
+    await waitForHydration(page);
+    await expect(testId(page, "proactive-cache-layout")).toBeVisible();
+    await expect(testId(page, "proactive-index-page")).toBeVisible();
+
+    // Step 2: Partial nav to item-a (triggers proactive caching for layout)
+    await testId(page, "proactive-nav-a").click();
+    await expect(testId(page, "proactive-item-a-page")).toBeVisible();
+
+    // Wait for proactive caching to complete
+    await page.waitForTimeout(500);
+
+    // Step 3: Navigate to home (outside cached layout)
+    await testId(page, "proactive-back-home").click();
+    await waitForHydration(page);
+
+    // Step 4: Hard navigate to item-a
+    // Should use cached layout from proactive caching (not broken null components)
+    await page.goto(f.url("/proactive-cache/item-a"));
+    await waitForHydration(page);
+
+    // Layout should be visible and functional
+    await expect(testId(page, "proactive-cache-layout")).toBeVisible();
+    await expect(testId(page, "proactive-layout-title")).toHaveText(
+      "Proactive Cache Layout"
+    );
+    await expect(testId(page, "proactive-item-a-page")).toBeVisible();
+
+    // Navigation within layout should work
+    await testId(page, "proactive-nav-b").click();
+    await expect(testId(page, "proactive-item-b-page")).toBeVisible();
+  });
+});

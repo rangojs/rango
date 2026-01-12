@@ -27,6 +27,23 @@ import { createFromReadableStream } from "@vitejs/plugin-rsc/rsc";
 // ============================================================================
 
 /**
+ * Generate cache key base from pathname and params
+ */
+function getCacheKeyBase(
+  pathname: string,
+  params?: Record<string, string>
+): string {
+  const paramStr = params
+    ? Object.entries(params)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => `${k}=${v}`)
+        .join("&")
+    : "";
+
+  return paramStr ? `${pathname}:${paramStr}` : pathname;
+}
+
+/**
  * Generate cache key for a route request
  * Single cache entry per route - uses pathname as the key
  * Includes request type prefix since they produce different segment sets:
@@ -45,15 +62,7 @@ function getRouteCacheKey(
   // Intercept navigations get their own cache namespace
   const prefix = isIntercept ? "intercept" : isPartial ? "partial" : "doc";
 
-  const paramStr = params
-    ? Object.entries(params)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, v]) => `${k}=${v}`)
-        .join("&")
-    : "";
-
-  const baseKey = paramStr ? `${pathname}:${paramStr}` : pathname;
-  return `${prefix}:${baseKey}`;
+  return `${prefix}:${getCacheKeyBase(pathname, params)}`;
 }
 
 async function streamToString(
@@ -214,6 +223,9 @@ async function deserializeSegments(
     ]);
 
     // Deserialize loading - "null" string means explicit null
+    // NOTE: We intentionally don't deserialize actual loading skeletons here.
+    // Cached content should render immediately without showing loading states.
+    // We only preserve the "null" marker to maintain tree structure consistency.
     const loading = item.encodedLoading === "null" ? null : undefined;
 
     segments.push({

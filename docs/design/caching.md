@@ -17,7 +17,7 @@
 ### 🚧 Remaining
 - **Production storage backends** - Cloudflare KV, Redis adapters
 - **Cache invalidation API** - Tag-based invalidation, manual purge
-- **Proactive caching** - Use `waitUntil` to cache sibling segments
+- **Proactive caching** - Render null-component segments in background for complete cache entries
 - **RSC stream caching** - Cache serialized stream directly (avoid deserialize/reserialize)
 
 ### Performance (Dev)
@@ -213,25 +213,56 @@ Allows same loader data to be reused across different segments/routes.
 
 ## Proactive Caching (waitUntil)
 
-When a segment is requested, proactively cache sibling segments within the same `cache()` boundary:
+When a partial request results in some cached segments having `component: null` (because the client already has them), proactively render those segments in the background and cache the complete set.
+
+**The Problem:**
 
 ```
-Request for /blog/1 (from /blog/2)
+Client A: /blog/1 → /blog/2 (partial)
+  - Server renders only route segment (client has BlogLayout)
+  - Cache stores partial:/blog/2 with null BlogLayout component
 
-Client needs: [post/1] (already has BlogLayout)
-
-1. Respond: post/1
-
-2. waitUntil:
-   - BlogLayout already cached ✓
-   - post/1 cached ✓
-   - Proactively render & cache: list, sidebar
-     (siblings in same cache() boundary)
+Client B: /shop → /blog/2 (partial)
+  - Cache HIT on partial:/blog/2
+  - But BlogLayout component is null!
+  - Client B doesn't have BlogLayout → broken render
 ```
 
-Future navigation from `/shop` → `/blog/list`:
-- `BlogLayout` → HIT
-- `list` → HIT (proactively cached)
+**The Solution:**
+
+```
+Client A: /blog/1 → /blog/2 (partial)
+
+1. Respond immediately:
+   - Route segment (what client needs)
+   - BlogLayout = null (client has it)
+
+2. waitUntil (background):
+   - Identify segments with null components within cache() boundary
+   - Render those segments fresh (BlogLayout handler)
+   - Cache complete segment set: [BlogLayout ✓, route ✓]
+
+Client B: /shop → /blog/2 (partial)
+  - Cache HIT on partial:/blog/2
+  - BlogLayout component is present ✓
+  - Complete render works
+```
+
+**Scope:**
+
+Proactive caching only applies to segments within a `cache()` boundary:
+
+```typescript
+layout(<RootLayout />),  // NOT cached - always fresh
+
+cache({ ttl: 60 }, () => [
+  layout(<BlogLayout />),        // Proactive caching applies
+  parallel({ "@sidebar": ... }), // Proactive caching applies
+  route("post/:id", ...),        // Proactive caching applies
+]),
+```
+
+Segments outside cache boundaries are not affected - they render fresh on every request.
 
 ## Partial Request Handling
 
@@ -761,3 +792,86 @@ Key implementation details:
 - Handle data keyed by segment ID for proper replay
 - `?__no_cache` query param disables caching per-request
 - Uses `globalThis` for in-memory cache to survive HMR in dev
+
+---
+
+## Implementation Review Notes
+
+### Status Summary (Jan 2026)
+
+| Area | Status | Notes |
+|------|--------|-------|
+| Cache key generation | ✅ Good | Clear prefix strategy (doc/partial/intercept) |
+| Serialization | ✅ Good | RSC serialize/deserialize works correctly |
+| Proactive caching | ✅ Good | Background rendering of null-component segments |
+| SWR handling | ✅ Good | CFCacheStore handles atomicity for thundering herd |
+| Revalidation | ✅ Good | Soft/hard decision pattern is solid |
+| Handle data replay | ✅ Good | Breadcrumbs/meta properly cached and replayed |
+
+### Known Issues & Considerations
+
+#### 1. Proactive Caching Cache Key Prefix (Resolved)
+
+**Design Decision**: Proactive caching writes to `partial:` key, which is correct.
+
+**Rationale:**
+- Document requests always render ALL segments (no null components possible)
+- Only partial requests can have null components (client already has some segments)
+- Proactive caching exists to ensure future partial requests get complete segments
+- Therefore, proactive caching should populate `partial:` entries, not `doc:` entries
+
+**Simplification Applied:**
+Removed the `hasCompleteDocEntry()` cache lookup check. The runtime `hasNullComponents` check is sufficient:
+- If cache already has complete segments → cache HIT → `hasNullComponents` is false → no proactive caching
+- If segments have nulls → proactive caching triggers
+
+The cache lookup was only useful for a minor race condition (concurrent requests). Not worth the complexity.
+
+#### 2. Loading Skeleton Not Deserialized (Intentional)
+
+In `cache-scope.ts:237`, loading skeletons are intentionally NOT deserialized from cache:
+
+```typescript
+// We only preserve the "null" marker to maintain tree structure consistency.
+const loading = item.encodedLoading === "null" ? null : undefined;
+```
+
+**Rationale**: Cached content should render immediately without showing loading states. The loading skeleton is only useful during initial render when data is being fetched.
+
+#### 3. Race Condition in Proactive Caching (Accepted)
+
+Concurrent partial requests with null components could both trigger proactive caching for the same route.
+
+**Impact**: Minor - just causes extra background work, no correctness issues. Both will write the same complete segments.
+
+**Decision**: Accepted as-is. Adding locks (in-memory or distributed) adds complexity not worth the minor optimization.
+
+#### 4. Intercept Route Cache Namespace
+
+When `isIntercept` is true, cache operations use the `intercept:` prefix. Intercept requests have their own cache namespace separate from `doc:` and `partial:`.
+
+**Note**: Proactive caching for intercept routes follows the same pattern - it populates the appropriate intercept cache entry when null components are detected.
+
+#### 5. MemorySegmentCacheStore SWR Limitation
+
+The in-memory store doesn't support SWR - it always returns `shouldRevalidate: false`:
+
+```typescript
+// Memory store doesn't support SWR - never triggers revalidation
+return { data: cached, shouldRevalidate: false };
+```
+
+**Impact**: Tests using memory store won't exercise SWR revalidation paths. Use `CFCacheStore` in production for full SWR support.
+
+#### 6. Request Object Capture in Proactive Caching
+
+The proactive caching closure captures the original `request` object. If the request body was consumed or if the original context has large objects, they'll be retained until proactive caching completes.
+
+**Recommendation**: Consider capturing only the minimal data needed (URL, headers) rather than the full request object.
+
+### Console Logging
+
+The caching system has extensive `console.log` statements for debugging. Consider:
+- Adding a debug flag to control verbosity
+- Using structured logging for production
+- Log levels (debug/info/warn/error)

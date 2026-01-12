@@ -116,4 +116,10 @@ export const testRoutes = route({
     // Detail route for useLoader intercept testing (non-cached)
     useLoaderDetail: "/cache-test/useloader/:itemId",
   },
+  // Routes for testing proactive caching (cached layout with multiple routes)
+  proactiveCache: {
+    index: "/proactive-cache",
+    itemA: "/proactive-cache/item-a",
+    itemB: "/proactive-cache/item-b",
+  },
 });

@@ -202,6 +202,82 @@ export function setupLoaderAccess<TEnv>(
 }
 
 /**
+ * Set up ctx.use() for proactive caching (silent mode).
+ * Handles are silently ignored (no push to HandleStore).
+ * Loaders work normally but with fresh memoization.
+ *
+ * This prevents duplicate handle data (breadcrumbs, meta) from being
+ * pushed to the response stream during background proactive caching.
+ */
+export function setupLoaderAccessSilent<TEnv>(
+  ctx: HandlerContext<any, TEnv>,
+  loaderPromises: Map<string, Promise<any>>
+): void {
+  ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
+    // Handle case: return a no-op push function
+    if (isHandle(item)) {
+      // Silent mode - return a function that does nothing
+      return (_dataOrFn: unknown) => {
+        // Intentionally empty - don't push handle data during proactive caching
+      };
+    }
+
+    // Loader case: same as setupLoaderAccess
+    const loader = item as LoaderDefinition<any, any>;
+
+    // Return cached promise if already started
+    if (loaderPromises.has(loader.$$id)) {
+      return loaderPromises.get(loader.$$id);
+    }
+
+    // Get loader function
+    let loaderFn = loader.fn;
+    if (!loaderFn) {
+      const fetchable = getFetchableLoader(loader.$$id);
+      if (fetchable) {
+        loaderFn = fetchable.fn;
+      }
+    }
+
+    if (!loaderFn) {
+      throw new Error(
+        `Loader "${loader.$$id}" has no function. This usually means the loader was defined without "use server" and the function was not included in the build.`
+      );
+    }
+
+    // Create loader context with recursive use() support
+    const loaderCtx: LoaderContext<Record<string, string | undefined>, TEnv> = {
+      params: ctx.params,
+      request: ctx.request,
+      searchParams: ctx.searchParams,
+      pathname: ctx.pathname,
+      url: ctx.url,
+      env: ctx.env,
+      var: ctx.var,
+      get: ctx.get,
+      use: <TDep, TDepParams = any>(
+        dep: LoaderDefinition<TDep, TDepParams>
+      ): Promise<TDep> => {
+        return ctx.use(dep);
+      },
+      method: "GET",
+      body: undefined,
+    };
+
+    // Start loader execution with tracking
+    const doneLoader = track(`loader:${loader.$$id}`);
+    const promise = Promise.resolve(
+      loaderFn(loaderCtx as LoaderContext<any, TEnv>)
+    ).finally(() => {
+      doneLoader();
+    });
+
+    loaderPromises.set(loader.$$id, promise);
+    return promise;
+  }) as typeof ctx.use;
+}
+
+/**
  * Conditional execution based on revalidation
  * Evaluates revalidation logic lazily, then executes appropriate callback
  *

@@ -25,3 +25,11 @@ export const blogRoutes = route({
   index: "/blog",
   post: "/blog/:slug",
 });
+
+// Proactive cache test routes: /proactive-cache/*
+// Layout is INSIDE cache boundary to test proactive caching behavior
+export const proactiveCacheRoutes = route({
+  index: "/proactive-cache",
+  itemA: "/proactive-cache/item-a",
+  itemB: "/proactive-cache/item-b",
+});

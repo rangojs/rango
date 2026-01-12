@@ -85,6 +85,7 @@ import {
 import {
   wrapLoaderWithErrorHandling,
   setupLoaderAccess,
+  setupLoaderAccessSilent,
   revalidate,
 } from "./router/loader-resolution.js";
 import { evaluateRevalidation } from "./router/revalidation.js";
@@ -3108,7 +3109,115 @@ export function createRSCRouter<TEnv = any>(
         // Include intercept segments so cache hit serves complete response
         if (cacheScope?.enabled && !isAction) {
           const allSegmentsToCache = [...result.segments, ...interceptSegments];
-          cacheScope.cacheRoute(pathname, matched.params, allSegmentsToCache, isIntercept);
+
+          // Check if any non-loader segments have null components
+          // This happens when client already had those segments (partial navigation)
+          const hasNullComponents = allSegmentsToCache.some(
+            (s) => s.component === null && s.type !== "loader"
+          );
+
+          if (hasNullComponents) {
+            // Proactive caching: render all segments fresh in background
+            // This ensures cache has complete components for future requests
+            // from different origins that need all segments
+            const requestCtx = getRequestContext();
+            const proactiveCacheScope = cacheScope;
+
+            // Capture values needed for background execution
+            const capturedEntries = entries;
+            const capturedRouteKey = matched.routeKey;
+            const capturedParams = matched.params;
+            const capturedInterceptResult = interceptResult;
+
+            requestCtx?.waitUntil(async () => {
+              console.log(
+                `[Router.matchPartial] Proactive caching: ${pathname} (rendering null-component segments)`
+              );
+              try {
+                // Create FRESH context for proactive caching
+                // This prevents handle data (breadcrumbs, meta) from being
+                // pushed to the main response's HandleStore
+                const proactiveHandlerContext = createHandlerContext(
+                  capturedParams,
+                  request,
+                  url.searchParams,
+                  pathname,
+                  url,
+                  bindings
+                );
+                const proactiveLoaderPromises = new Map<string, Promise<any>>();
+
+                // Set up loader access that ignores handle pushes
+                // This avoids polluting the response stream with duplicate handle data
+                setupLoaderAccessSilent(
+                  proactiveHandlerContext,
+                  proactiveLoaderPromises
+                );
+
+                // Re-resolve ALL segments without revalidation (like document request)
+                // This renders segments the client already had
+                const freshSegments = await getContext().runWithStore(
+                  Store,
+                  Store.namespace || "#router",
+                  Store.parent,
+                  () =>
+                    resolveAllSegments(
+                      capturedEntries,
+                      capturedRouteKey,
+                      capturedParams,
+                      proactiveHandlerContext,
+                      proactiveLoaderPromises
+                    )
+                );
+
+                // Also resolve intercept segments fresh if applicable
+                let freshInterceptSegments: ResolvedSegment[] = [];
+                if (capturedInterceptResult) {
+                  freshInterceptSegments = await getContext().runWithStore(
+                    Store,
+                    Store.namespace || "#router",
+                    Store.parent,
+                    () =>
+                      resolveInterceptEntry(
+                        capturedInterceptResult.intercept,
+                        capturedInterceptResult.entry,
+                        capturedParams,
+                        proactiveHandlerContext,
+                        true // belongsToRoute
+                        // No revalidationContext = render fresh
+                      )
+                  );
+                }
+
+                const completeSegments = [
+                  ...freshSegments,
+                  ...freshInterceptSegments,
+                ];
+                proactiveCacheScope.cacheRoute(
+                  pathname,
+                  capturedParams,
+                  completeSegments,
+                  isIntercept
+                );
+                console.log(
+                  `[Router.matchPartial] Proactive caching complete: ${pathname}`
+                );
+              } catch (error) {
+                console.error(
+                  `[Router.matchPartial] Proactive caching failed:`,
+                  error
+                );
+              }
+            });
+          } else {
+            // All segments have components - cache directly
+            cacheScope.cacheRoute(
+              pathname,
+              matched.params,
+              allSegmentsToCache,
+              isIntercept
+            );
+          }
         }
       }
 
