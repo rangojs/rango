@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError, goBack, testId } from "./helper";
+import { waitForHydration, expectNoPageError, goBack, testId, clearCart } from "./helper";
 
 /**
  * Shop intercept route tests - background preservation during action revalidation
@@ -328,8 +328,8 @@ test.describe("shop-actions", () => {
     const productSlug = "running-shoes";
     const productLink = `a[href="/shop/product/${productSlug}"]`;
 
-    await page.goto(f.url("/shop"));
-    await waitForHydration(page);
+    // Clear cart first to ensure test isolation
+    await clearCart(page, f.url("/shop"));
 
     // Step 1: Open modal and add to cart
     await page.locator(productLink).first().click();
@@ -337,18 +337,13 @@ test.describe("shop-actions", () => {
       timeout: 5000,
     });
 
-    // Wait for modal content to load - check if already in cart or needs adding
+    // Wait for modal content to load
     const addToCartButton = page.locator("button").filter({ hasText: "Add to Cart" }).first();
     const quantityDisplay = page.locator('[data-testid="cart-quantity"]');
 
-    // Check if item is already in cart (from a previous test run)
-    const alreadyInCart = await quantityDisplay.isVisible({ timeout: 2000 }).catch(() => false);
-
-    if (!alreadyInCart) {
-      // Add to cart
-      await expect(addToCartButton).toBeVisible({ timeout: 10000 });
-      await addToCartButton.click();
-    }
+    // Cart was cleared, so we need to add to cart
+    await expect(addToCartButton).toBeVisible({ timeout: 10000 });
+    await addToCartButton.click();
 
     // Wait for quantity controls to appear
     await expect(quantityDisplay).toBeVisible({ timeout: 10000 });
@@ -365,10 +360,13 @@ test.describe("shop-actions", () => {
     await expect(page.locator("text=Intercepted")).not.toBeVisible();
     await expect(page.locator("text=All Products")).toBeVisible();
 
+    // Ensure page is stable before clicking again
+    await waitForHydration(page);
+
     // Step 3: Re-open the same product modal
     await page.locator(productLink).first().click();
     await expect(page.locator("text=Intercepted")).toBeVisible({
-      timeout: 5000,
+      timeout: 10000,
     });
 
     // Step 4: should show quantity controls (not "Add to Cart" button)
@@ -400,8 +398,8 @@ test.describe("shop-actions", () => {
   test("should correctly handle rapid increment clicks after add to cart", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop"));
-    await waitForHydration(page);
+    // Clear cart first to ensure test isolation
+    await clearCart(page, f.url("/shop"));
 
     // Open modal - use a different product to avoid state collision
     await page
