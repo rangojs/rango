@@ -1455,8 +1455,18 @@ The 770 lines of `matchPartial` won't become 77 lines. But they can become **770
 | `router/intercept.ts` | shouldLookupIntercept() - pure function for intercept decision |
 | `router/cache-revalidation.ts` | applyCacheRevalidation() - applies revalidation to cached segments |
 | `router/cache-handlers.ts` | CacheHandlerParams, handleCacheHit() - extracted cache hit logic |
+| `router/resolution-context.ts` | buildResolutionContext(), getRevalidationParams(), getInterceptParams() |
 | `router/segment-pipeline.ts` | Async generator middleware model prototype |
 | `router/revalidation.ts` | evaluateRevalidation() - already well-extracted |
+
+## Unit Tests
+
+| File | Tests | Coverage |
+|------|-------|----------|
+| `router/__tests__/intercept.test.ts` | 15 | shouldLookupIntercept, clientHasInterceptSegments |
+| `router/__tests__/cache-revalidation.test.ts` | 7 | applyCacheRevalidation |
+| `router/__tests__/resolution-context.test.ts` | 12 | buildResolutionContext, getRevalidationParams, getInterceptParams |
+| `router/__tests__/pattern-matching.test.ts` | 52 | findMatch, traverseBack (existing) |
 
 ---
 
