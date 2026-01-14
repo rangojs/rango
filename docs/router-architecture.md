@@ -1356,24 +1356,123 @@ This preserves the **branching nature** while making each branch comprehensible.
 
 ### 5. Keep Promise Semantics Explicit
 
-Document and preserve the await/promise dance:
+The router uses strategic async/await patterns to enable streaming and Suspense:
+
+#### ResolvedSegment Promise Fields
 
 ```typescript
-interface SegmentResult {
-  // Immediately available
+interface ResolvedSegment {
+  // Always immediate - available for client diffing
   id: string;
-  type: SegmentType;
+  type: "layout" | "route" | "parallel" | "loader" | "error" | "notFound";
+  namespace: string;
+  index: number;
+  params?: Record<string, string>;
+  slot?: string;
+  loading?: ReactNode;
 
-  // May be promise (for streaming)
+  // May be Promise for streaming
   component: ReactNode | Promise<ReactNode>;
 
-  // Always promise (for suspense)
-  loaderDataPromise?: Promise<LoaderData>;
-
-  // Metadata (immediate)
-  loading?: ReactNode;
-  namespace?: string;
+  // May be Promise for Suspense
+  loaderDataPromise?: Promise<any[]> | any[];
+  loaderIds?: string[];
 }
+```
+
+#### When `component` is a Promise
+
+`component` becomes a `Promise<ReactNode>` when using async route handlers with streaming enabled:
+
+```typescript
+// In resolveSegment()
+if (needsStreaming) {
+  // DO NOT await - return the promise directly for RSC streaming
+  segment.component = entry.handler(handlerContext);
+} else {
+  // Await for non-streaming (actions, error recovery)
+  segment.component = await entry.handler(handlerContext);
+}
+```
+
+**Streaming decision points:**
+- Full match (`match()`): Always streams - `needsStreaming = true`
+- Partial match (`matchPartial()`): Streams unless it's a server action
+- Error matching: Never streams - `needsStreaming = false`
+
+#### When `loaderDataPromise` is a Promise
+
+Loader data is collected into a promise for client-side Suspense:
+
+```typescript
+// In resolveLoaders()
+const loaderPromises = loaderEntries.map(e => executeLoader(e, ctx));
+
+if (needsStreaming) {
+  // Return promise directly - client suspends until resolved
+  segment.loaderDataPromise = Promise.all(loaderPromises);
+} else {
+  // Await for SSR - data available immediately
+  segment.loaderDataPromise = await Promise.all(loaderPromises);
+}
+```
+
+**Client behavior:**
+- Client receives segment with `loaderDataPromise`
+- `useLoaderData()` throws the promise for Suspense
+- `loading` component (if defined) renders during suspension
+- Once resolved, data component renders
+
+#### Background Operations (waitUntil)
+
+The router schedules background work that outlives the response:
+
+**SWR Background Revalidation:**
+```typescript
+// On cache hit with shouldRevalidate=true
+if (cacheResult.shouldRevalidate && cacheScope) {
+  requestCtx?.waitUntil(async () => {
+    // Create fresh handleStore to avoid polluting response stream
+    requestCtx._handleStore = createHandleStore();
+
+    // Re-resolve all segments with fresh data
+    const freshResult = await resolveAllSegmentsWithRevalidation(...);
+
+    // Update cache with fresh segments
+    await cacheStore.set(cacheKey, freshResult.segments, { ttl, swr });
+  });
+}
+```
+
+**Proactive Caching:**
+```typescript
+// On cache miss with proactive caching enabled
+if (shouldCache && !cacheHit) {
+  requestCtx?.waitUntil(async () => {
+    // Render segments with null-component for missing client segments
+    // This populates the cache for subsequent navigations
+    const cacheableSegments = prepareForCache(segments, clientSegmentSet);
+    await cacheStore.set(cacheKey, cacheableSegments, { ttl, swr });
+  });
+}
+```
+
+#### Important: Value Capture for Background Work
+
+Background `waitUntil` callbacks must capture values from the context before they're garbage collected:
+
+```typescript
+// Capture from resolutionCtx BEFORE waitUntil
+const capturedPathname = resolutionCtx.pathname;
+const capturedUrl = resolutionCtx.url;
+const capturedBindings = resolutionCtx.bindings;
+
+requestCtx?.waitUntil(async () => {
+  // Use captured values - resolutionCtx may be out of scope
+  console.log(`Revalidating: ${capturedPathname}`);
+  const newCtx = createHandlerContext(capturedUrl, capturedBindings);
+  // ...
+});
 ```
 
 ---
@@ -1508,7 +1607,7 @@ for await (const segment of segmentPipeline(ctx)) {
 2. [x] Bundle parameters into ResolutionContext usage
 3. [ ] Create test coverage for matchPartial edge cases
 4. [ ] Consider async generator model for streaming scenarios
-5. [ ] Document promise semantics explicitly
+5. [x] Document promise semantics explicitly (section 5 above)
 
 ---
 
