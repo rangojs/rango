@@ -1606,8 +1606,33 @@ for await (const segment of segmentPipeline(ctx)) {
 1. [x] Integrate cache handlers into router.ts (medium risk)
 2. [x] Bundle parameters into ResolutionContext usage
 3. [ ] Create test coverage for matchPartial edge cases
-4. [ ] Consider async generator model for streaming scenarios
+4. [x] Consider async generator model for streaming scenarios (see assessment below)
 5. [x] Document promise semantics explicitly (section 5 above)
+
+### Async Generator Assessment
+
+The `segment-pipeline.ts` prototype demonstrates async generators for segment resolution.
+
+**Current state:**
+- Prototype implements composable middleware: logging, caching, revalidation, intercept
+- Pattern enables streaming (yield segments as ready) and better testability
+- Documentation covers 7+ middleware patterns with examples
+
+**Recommendation: Defer adoption**
+
+Reasons to defer:
+1. Current router structure is now cleaner after extracting `handleCacheHit/Miss/Intercept`
+2. The `ResolutionContext` pattern already bundles parameters cleanly
+3. Generator indirection adds cognitive load without proportional benefit
+4. RSC already streams via `Promise<ReactNode>` - additional streaming layer may be redundant
+5. Current `waitUntil` pattern handles background work (SWR, proactive caching)
+
+When to reconsider:
+- If we need to process segments incrementally (e.g., early flush)
+- If middleware count grows significantly
+- If testing complexity increases despite current structure
+
+The prototype remains as reference architecture for future needs.
 
 ---
 
