@@ -496,6 +496,52 @@ test.describe("blog-breadcrumbs (preview)", () => {
     expect(crumbs?.match(/Blog/g)?.length, "V4P2: Blog count").toBe(1);
     expect(crumbs?.match(/Understanding/g)?.length, "V4P2: Post title count").toBe(1);
   });
+
+  test("should not update breadcrumbs from cancelled navigation on quick popstate", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    const breadcrumbs = testId(page, "breadcrumbs");
+
+    // Start at home page
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    let crumbs = await breadcrumbs.textContent();
+    console.log(`Initial (home): "${crumbs}"`);
+    expect(crumbs).toBe("Home");
+
+    // Click on Server Actions feature link
+    const navPromise = testId(page, "feature-link-server-actions").click();
+
+    // Wait for RSC response to start arriving - the handles may start streaming
+    // This gives time for the response to arrive and handles to start processing
+    await page.waitForTimeout(150);
+
+    // Go back while handles may still be streaming
+    // This is the race condition: popstate fires but handles continue updating
+    await page.goBack();
+
+    // Verify we're back on home page first
+    await expect(testId(page, "home-page")).toBeVisible();
+
+    // Wait for the navigation promise to settle (may reject due to abort)
+    await navPromise.catch(() => {});
+
+    // IMPORTANT: Wait long enough for the cancelled navigation's RSC payload to fully resolve
+    // The bug is that even after popstate, the handles from the cancelled navigation
+    // continue to stream and update the breadcrumbs
+    await page.waitForTimeout(1000);
+
+    // The key assertion: breadcrumbs should show "Home" only,
+    // not "Home / Server Actions" from the cancelled navigation
+    crumbs = await breadcrumbs.textContent();
+    console.log(`After quick back: "${crumbs}"`);
+    expect(crumbs, "Breadcrumbs should only show Home").toBe("Home");
+    expect(crumbs?.includes("Server Actions"), "Should not include Server Actions from cancelled nav").toBe(false);
+    expect(crumbs?.includes("Features"), "Should not include Features from cancelled nav").toBe(false);
+  });
 });
 
 /**

@@ -109,6 +109,10 @@ export function createServerActionBridge(
       "_rsc_segments",
       segmentState.currentSegmentIds.join(",")
     );
+    // Add version param for version mismatch detection
+    if (version) {
+      url.searchParams.set("_rsc_v", version);
+    }
 
     // Encode arguments
     const encodedBody = await deps.encodeReply(args, { temporaryReferences });
@@ -148,6 +152,15 @@ export function createServerActionBridge(
       },
       body: encodedBody,
     }).then(async (response) => {
+      // Check for version mismatch - server wants us to reload
+      const reloadUrl = response.headers.get("X-RSC-Reload");
+      if (reloadUrl) {
+        console.log(`[Browser] Version mismatch on action - reloading: ${reloadUrl}`);
+        window.location.href = reloadUrl;
+        // Return a never-resolving promise to prevent further processing
+        return new Promise<Response>(() => {});
+      }
+
       // Start streaming immediately when response arrives
       if (!handle.signal.aborted) {
         streamingToken = handle.startStreaming();

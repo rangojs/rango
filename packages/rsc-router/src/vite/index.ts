@@ -23,8 +23,8 @@ export { exposeLocationStateId } from "./expose-location-state-id.ts";
 // Virtual module type declarations
 declare module "rsc-router:version" {
   /**
-   * Version string that changes on each server restart in dev mode.
-   * Use this to invalidate cached RSC payloads when code changes.
+   * Version string that changes on server restart (dev) or at build time (production).
+   * Used for cache invalidation and deployment mismatch detection.
    */
   export const VERSION: string;
 }
@@ -287,13 +287,25 @@ function getManualChunks(id: string): string | undefined {
 
 /**
  * Plugin providing rsc-router:version virtual module.
- * Exports CACHE_VERSION that changes on each server restart in dev mode.
- * In production, the version is set at build time and stays constant.
+ * Exports VERSION that changes when RSC modules change (dev) or at build time (production).
+ *
+ * The version is used for:
+ * 1. Cache invalidation - CFCacheStore uses VERSION to invalidate stale cache
+ * 2. Version mismatch detection - client sends version, server reloads on mismatch
+ *
+ * In dev mode, the version updates when:
+ * - Server starts (initial version)
+ * - RSC modules change via HMR (triggers version module invalidation)
+ *
+ * Client-only HMR changes don't update the version since they don't affect
+ * server-rendered content or cached RSC payloads.
  */
 function createVersionPlugin(): Plugin {
   // Generate version at plugin creation time (build/server start)
   const buildVersion = String(Date.now());
+  let currentVersion = buildVersion;
   let isDev = false;
+  let server: any = null;
 
   return {
     name: "rsc-router:version",
@@ -301,6 +313,10 @@ function createVersionPlugin(): Plugin {
 
     configResolved(config) {
       isDev = config.command === "serve";
+    },
+
+    configureServer(devServer) {
+      server = devServer;
     },
 
     resolveId(id) {
@@ -312,12 +328,39 @@ function createVersionPlugin(): Plugin {
 
     load(id) {
       if (id === "\0" + VIRTUAL_IDS.version) {
-        // In dev mode, generate new version each time module is loaded (HMR)
-        // In production, use the build-time version
-        const version = isDev ? String(Date.now()) : buildVersion;
-        return getVirtualVersionContent(version);
+        return getVirtualVersionContent(currentVersion);
       }
       return null;
+    },
+
+    // Track RSC module changes and update version
+    hotUpdate(ctx) {
+      if (!isDev) return;
+
+      // Check if this is an RSC environment update (not client/ssr)
+      // RSC modules affect server-rendered content and cached payloads
+      const isRscModule = ctx.environment?.name === "rsc";
+
+      if (isRscModule && ctx.modules.length > 0) {
+        // Update version when RSC modules change
+        currentVersion = String(Date.now());
+        console.log(
+          `[rsc-router] RSC module changed, version updated: ${currentVersion}`
+        );
+
+        // Invalidate the version module so it gets reloaded with new version
+        if (server) {
+          const rscEnv = server.environments?.rsc;
+          if (rscEnv?.moduleGraph) {
+            const versionMod = rscEnv.moduleGraph.getModuleById(
+              "\0" + VIRTUAL_IDS.version
+            );
+            if (versionMod) {
+              rscEnv.moduleGraph.invalidateModule(versionMod);
+            }
+          }
+        }
+      }
     },
   };
 }

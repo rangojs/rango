@@ -28,8 +28,9 @@ import type { HandleData } from "../types.js";
  *
  * This handles:
  * 1. Consuming the async generator and calling setHandleData on each yield
- * 2. Cleaning up stale data when generator yields nothing
- * 3. Updating the cache after processing completes (if still on same page)
+ * 2. Stopping early if user navigates away (historyKey changes)
+ * 3. Cleaning up stale data when generator yields nothing
+ * 4. Updating the cache after processing completes (if still on same page)
  */
 async function processHandles(
   handlesGenerator: AsyncGenerator<HandleData>,
@@ -45,8 +46,23 @@ async function processHandles(
 
   let yieldCount = 0;
   for await (const handleData of handlesGenerator) {
+    // Check if user navigated away before each update.
+    // This prevents handle data from cancelled navigations polluting
+    // the current route's breadcrumbs (e.g., quick popstate after clicking a link).
+    if (historyKey !== store.getHistoryKey()) {
+      console.log(
+        "[NavigationProvider] Stopping handle processing - user navigated away"
+      );
+      return;
+    }
+
     yieldCount++;
     eventController.setHandleData(handleData, matched, isPartial);
+  }
+
+  // Check again before final updates
+  if (historyKey !== store.getHistoryKey()) {
+    return;
   }
 
   // For partial updates where the generator yielded nothing (cached handlers),
