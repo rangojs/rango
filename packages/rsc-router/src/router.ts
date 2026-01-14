@@ -71,6 +71,8 @@ import {
   type MiddlewareEntry,
   type MiddlewareFn,
 } from "./router/middleware.js";
+import { shouldLookupIntercept } from "./router/intercept.js";
+import { applyCacheRevalidation } from "./router/cache-revalidation.js";
 import {
   findMatch as findRouteMatch,
   traverseBack,
@@ -3035,33 +3037,28 @@ export function createRSCRouter<TEnv = any>(
 
       // Walk up from route's parent to find intercept (parent layouts can intercept child routes)
       // Try both full route key and local name for flexible matching
-      // Skip intercept lookup entirely if navigating within the same route
-      //
-      // For ACTIONS: also skip if client doesn't have any intercept segments (like @modal).
-      // This means they're on the detail page, not the intercepted view.
-      // Without this check, actions on detail page would incorrectly render intercepts.
-      // For NAVIGATION: always look for intercepts (client might be navigating to open one).
-      const clientHasInterceptSegments = [...clientSegmentSet].some((id) =>
-        id.includes(".@")
-      );
-      const skipInterceptForAction = isAction && !clientHasInterceptSegments;
-      const interceptResult =
-        isSameRouteNavigation || skipInterceptForAction
-          ? null
-          : findInterceptForRoute(
-              matched.routeKey,
-              manifestEntry.parent,
-              interceptSelectorContext,
-              isAction
-            ) ||
-            (localRouteName !== matched.routeKey
-              ? findInterceptForRoute(
-                  localRouteName,
-                  manifestEntry.parent,
-                  interceptSelectorContext,
-                  isAction
-                )
-              : null);
+      const shouldLookup = shouldLookupIntercept({
+        isSameRouteNavigation,
+        isAction,
+        clientSegmentSet,
+      });
+
+      const interceptResult = shouldLookup
+        ? findInterceptForRoute(
+            matched.routeKey,
+            manifestEntry.parent,
+            interceptSelectorContext,
+            isAction
+          ) ||
+          (localRouteName !== matched.routeKey
+            ? findInterceptForRoute(
+                localRouteName,
+                manifestEntry.parent,
+                interceptSelectorContext,
+                isAction
+              )
+            : null)
+        : null;
 
       // When leaving intercept (isSameRouteNavigation), force route segment to render
       // The client has the route segment ID from the intercept navigation (added to matchedIds
@@ -3110,43 +3107,18 @@ export function createRSCRouter<TEnv = any>(
         // Apply revalidation to cached segments - set component=null for segments
         // client already has and doesn't need to update (matches non-cached behavior)
         const entryRevalidateMap = buildEntryRevalidateMap(entries);
-        for (const segment of cachedSegments) {
-          // Skip segments client doesn't have - they need their component
-          if (!clientSegmentSet.has(segment.id)) continue;
-
-          // Skip intercept segments - they're handled separately
-          if (segment.namespace?.startsWith("intercept:")) continue;
-
-          // Look up revalidation rules for this segment
-          const entryInfo = entryRevalidateMap.get(segment.id);
-          if (!entryInfo || entryInfo.revalidate.length === 0) {
-            // No revalidation rules, use default behavior (skip if client has)
-            segment.component = null;
-            segment.loading = undefined;
-            continue;
-          }
-
-          const shouldRevalidate = await evaluateRevalidation({
-            segment,
-            prevParams,
-            getPrevSegment: null,
-            request,
-            prevUrl,
-            nextUrl: url,
-            revalidations: entryInfo.revalidate.map((fn, i) => ({
-              name: `revalidate${i}`,
-              fn,
-            })),
-            routeKey: matched.routeKey,
-            context: handlerContext,
-            actionContext,
-          });
-
-          if (!shouldRevalidate) {
-            segment.component = null; // Client has it, no revalidation needed
-            segment.loading = undefined; // Clear loading to prevent Suspense
-          }
-        }
+        await applyCacheRevalidation({
+          cachedSegments,
+          clientSegmentSet,
+          entryRevalidateMap,
+          prevParams,
+          request,
+          prevUrl,
+          nextUrl: url,
+          routeKey: matched.routeKey,
+          handlerContext,
+          actionContext,
+        });
 
         // Resolve loaders fresh with revalidation logic (loaders are NOT cached by default)
         const loaderResult = await getContext().runWithStore(

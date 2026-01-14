@@ -5,7 +5,7 @@
  */
 
 import type { ReactNode } from "react";
-import type { EntryData } from "../server/context";
+import type { EntryData, InterceptEntry, MetricsStore } from "../server/context";
 import type {
   ResolvedSegment,
   HandlerContext,
@@ -94,3 +94,147 @@ type LdJsonObject = { [Key in string]: LdJsonValue } & {
 type LdJsonArray = LdJsonValue[] | readonly LdJsonValue[];
 type LdJsonPrimitive = string | number | boolean | null;
 type LdJsonValue = LdJsonPrimitive | LdJsonObject | LdJsonArray;
+
+/**
+ * Route match result from findMatch()
+ */
+export interface RouteMatch {
+  entry: any; // RouteEntry from pattern-matching
+  routeKey: string;
+  params: Record<string, string>;
+  redirectTo?: string;
+}
+
+/**
+ * Intercept match result from findInterceptForRoute()
+ */
+export interface InterceptResult {
+  intercept: InterceptEntry;
+  entry: EntryData;
+}
+
+/**
+ * Resolution context for partial matching
+ *
+ * Bundles all parameters needed during segment resolution to reduce
+ * parameter passing between functions. This is the shared state that
+ * flows through matchPartial and its helpers.
+ */
+export interface ResolutionContext<TEnv = any> {
+  // Request information
+  /** The original request */
+  request: Request;
+  /** Parsed URL from request */
+  url: URL;
+  /** URL pathname */
+  pathname: string;
+  /** Previous URL (from header or referer) */
+  prevUrl: URL;
+  /** Raw previous URL string from header */
+  previousUrlRaw: string;
+  /** Intercept source URL for maintaining intercept context during actions */
+  interceptSourceUrl: string | null;
+  /** Whether this is a stale cache revalidation request */
+  stale: boolean;
+
+  // Route matching results
+  /** Current route match result */
+  matched: RouteMatch;
+  /** Previous route match result (may be null) */
+  prevMatch: RouteMatch | null;
+  /** Match for intercept context (differs from prevMatch during action from intercepted modal) */
+  interceptContextMatch: RouteMatch | null;
+  /** Loaded manifest entry for the matched route */
+  manifestEntry: EntryData;
+  /** Entries from root to matched route (from traverseBack) */
+  entries: EntryData[];
+
+  // Client state
+  /** Segment IDs the client currently has */
+  clientSegmentIds: string[];
+  /** Set version for O(1) lookup */
+  clientSegmentSet: Set<string>;
+  /** Previous route params for revalidation comparison */
+  prevParams: Record<string, string>;
+
+  // Platform context
+  /** Platform bindings (Cloudflare env, etc.) */
+  bindings: TEnv;
+  /** Handler context with request utilities */
+  handlerContext: HandlerContext<any, TEnv>;
+  /** Action context if this is an action request */
+  actionContext?: ActionContext;
+
+  // Shared mutable state
+  /** Loader promises for parallel execution and ctx.use() */
+  loaderPromises: Map<string, Promise<any>>;
+  /** Metrics store for performance tracking */
+  metricsStore: MetricsStore | null;
+
+  // Computed values
+  /** Whether this is an action request */
+  isAction: boolean;
+  /** Local route name (last segment of routeKey) */
+  localRouteName: string;
+  /** Whether navigating within the same route (e.g., product/a -> product/b) */
+  isSameRouteNavigation: boolean;
+}
+
+/**
+ * Options for building a ResolutionContext
+ * These are the raw inputs before processing
+ */
+export interface BuildResolutionContextOptions<TEnv = any> {
+  request: Request;
+  context: TEnv;
+  actionContext?: ActionContext;
+  findMatch: (pathname: string) => RouteMatch | null;
+  loadManifest: (
+    entry: any,
+    routeKey: string,
+    pathname: string,
+    metricsStore: MetricsStore | null,
+    isSSR: boolean
+  ) => Promise<EntryData>;
+  traverseBack: (entry: EntryData) => Iterable<EntryData>;
+  createHandlerContext: (
+    params: Record<string, string>,
+    request: Request,
+    searchParams: URLSearchParams,
+    pathname: string,
+    url: URL,
+    bindings: TEnv
+  ) => HandlerContext<any, TEnv>;
+  getMetricsStore: () => MetricsStore | null;
+}
+
+/**
+ * Result from segment resolution (cache hit or miss paths)
+ */
+export interface SegmentResolutionResult {
+  segments: ResolvedSegment[];
+  matchedIds: string[];
+}
+
+/**
+ * Slot state for intercept rendering
+ */
+export interface SlotState {
+  active: boolean;
+  segments: ResolvedSegment[];
+}
+
+/**
+ * Combined result before finalization
+ * Used to pass data between cache hit/miss handlers and finalization
+ */
+export interface PartialMatchIntermediateResult {
+  /** Resolved segments (from cache or fresh resolution) */
+  result: SegmentResolutionResult;
+  /** Intercept segments if intercept is active */
+  interceptSegments: ResolvedSegment[];
+  /** Slot states for active intercepts */
+  slots: Record<string, SlotState>;
+  /** Whether this was a cache hit */
+  cacheHit: boolean;
+}
