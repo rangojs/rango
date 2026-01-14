@@ -3055,6 +3055,17 @@ export function createRSCRouter<TEnv = any>(
                 )
               : null);
 
+      // When leaving intercept (isSameRouteNavigation), force route segment to render
+      // The client has the route segment ID from the intercept navigation (added to matchedIds
+      // even though route handler was skipped), but needs the actual component now.
+      // Remove route segment ID from clientSegmentSet so revalidation doesn't skip it.
+      if (isSameRouteNavigation && manifestEntry.type === "route") {
+        console.log(
+          `[Router.matchPartial] Leaving intercept - forcing route segment render: ${manifestEntry.shortCode}`
+        );
+        clientSegmentSet.delete(manifestEntry.shortCode);
+      }
+
       // Build slots state - intercepts render in named slots
       const slots: Record<string, import("./types.js").SlotState> = {};
       let interceptSegments: ResolvedSegment[] = [];
