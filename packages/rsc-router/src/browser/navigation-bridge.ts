@@ -444,6 +444,8 @@ export { createNavigationTransaction };
  */
 export interface NavigationBridgeConfigWithController extends NavigationBridgeConfig {
   eventController: EventController;
+  /** RSC version from initial payload metadata */
+  version?: string;
 }
 
 /**
@@ -462,7 +464,7 @@ export interface NavigationBridgeConfigWithController extends NavigationBridgeCo
 export function createNavigationBridge(
   config: NavigationBridgeConfigWithController
 ): NavigationBridge {
-  const { store, client, eventController, onUpdate, renderSegments } = config;
+  const { store, client, eventController, onUpdate, renderSegments, version } = config;
 
   // Create shared partial updater
   const fetchPartialUpdate = createPartialUpdater({
@@ -470,6 +472,7 @@ export function createNavigationBridge(
     client,
     onUpdate,
     renderSegments,
+    version,
   });
 
   return {

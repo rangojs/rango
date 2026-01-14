@@ -25,6 +25,8 @@ export interface PartialUpdateConfig {
     segments: ResolvedSegment[],
     options?: RenderSegmentsOptions
   ) => Promise<ReactNode> | ReactNode;
+  /** RSC version received from server (from initial payload metadata) */
+  version?: string;
 }
 
 /**
@@ -91,7 +93,7 @@ export type PartialUpdater = (
 export function createPartialUpdater(
   config: PartialUpdateConfig
 ): PartialUpdater {
-  const { store, client, onUpdate, renderSegments } = config;
+  const { store, client, onUpdate, renderSegments, version } = config;
 
   /**
    * Build a lookup map from current page's cached segments
@@ -172,6 +174,7 @@ export function createPartialUpdater(
         segmentIds: segments,
         previousUrl,
         staleRevalidation,
+        version,
       });
     console.log("payload.metadata", payload.metadata);
 

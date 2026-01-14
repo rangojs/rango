@@ -95,4 +95,13 @@ export const VIRTUAL_IDS = {
   browser: "virtual:rsc-router/entry.browser.js",
   ssr: "virtual:rsc-router/entry.ssr.js",
   rsc: "virtual:rsc-router/entry.rsc.js",
+  version: "rsc-router:version",
 } as const;
+
+/**
+ * Virtual module content for version.
+ * Exports VERSION that changes on each server restart in dev mode.
+ */
+export function getVirtualVersionContent(version: string): string {
+  return `export const VERSION = ${JSON.stringify(version)};`;
+}

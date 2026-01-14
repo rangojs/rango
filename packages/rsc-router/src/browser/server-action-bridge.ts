@@ -42,6 +42,8 @@ function normalizeActionId(actionId: string): string {
 export interface ServerActionBridgeConfigWithController
   extends ServerActionBridgeConfig {
   eventController: EventController;
+  /** RSC version from initial payload metadata */
+  version?: string;
 }
 
 /**
@@ -60,7 +62,7 @@ export interface ServerActionBridgeConfigWithController
 export function createServerActionBridge(
   config: ServerActionBridgeConfigWithController
 ): ServerActionBridge {
-  const { store, client, eventController, deps, onUpdate, renderSegments } =
+  const { store, client, eventController, deps, onUpdate, renderSegments, version } =
     config;
 
   let isRegistered = false;
@@ -70,6 +72,7 @@ export function createServerActionBridge(
     client,
     onUpdate,
     renderSegments,
+    version,
   });
 
   /**

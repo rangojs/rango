@@ -26,6 +26,8 @@ export interface RscPayload {
     rootLayout?: React.ComponentType<{ children: React.ReactNode }>;
     /** Handle data accumulated across route segments (async generator that yields on each push) */
     handles?: AsyncGenerator<HandleData, void, unknown>;
+    /** RSC version string for cache invalidation */
+    version?: string;
   };
   returnValue?: { ok: boolean; data: unknown };
   formState?: unknown;
@@ -168,4 +170,22 @@ export interface CreateRSCHandlerOptions<TEnv = unknown> {
    * ```
    */
   cache?: HandlerCacheConfig | ((env: TEnv) => HandlerCacheConfig);
+
+  /**
+   * RSC version string included in metadata.
+   * The browser sends this back on partial requests to detect version mismatches.
+   *
+   * Use with `rsc-router:version` virtual module for automatic invalidation.
+   *
+   * @example
+   * ```typescript
+   * import { VERSION } from "rsc-router:version";
+   *
+   * export default createRSCHandler({
+   *   router,
+   *   version: VERSION,
+   * });
+   * ```
+   */
+  version?: string;
 }

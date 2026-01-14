@@ -10,6 +10,7 @@ import {
   VIRTUAL_ENTRY_BROWSER,
   VIRTUAL_ENTRY_SSR,
   getVirtualEntryRSC,
+  getVirtualVersionContent,
   VIRTUAL_IDS,
 } from "./virtual-entries.ts";
 
@@ -18,6 +19,15 @@ export { exposeActionId } from "./expose-action-id.ts";
 export { exposeLoaderId } from "./expose-loader-id.ts";
 export { exposeHandleId } from "./expose-handle-id.ts";
 export { exposeLocationStateId } from "./expose-location-state-id.ts";
+
+// Virtual module type declarations
+declare module "rsc-router:version" {
+  /**
+   * Version string that changes on each server restart in dev mode.
+   * Use this to invalidate cached RSC payloads when code changes.
+   */
+  export const VERSION: string;
+}
 
 /**
  * Default entry file paths (relative to project root)
@@ -276,6 +286,43 @@ function getManualChunks(id: string): string | undefined {
 }
 
 /**
+ * Plugin providing rsc-router:version virtual module.
+ * Exports CACHE_VERSION that changes on each server restart in dev mode.
+ * In production, the version is set at build time and stays constant.
+ */
+function createVersionPlugin(): Plugin {
+  // Generate version at plugin creation time (build/server start)
+  const buildVersion = String(Date.now());
+  let isDev = false;
+
+  return {
+    name: "rsc-router:version",
+    enforce: "pre",
+
+    configResolved(config) {
+      isDev = config.command === "serve";
+    },
+
+    resolveId(id) {
+      if (id === VIRTUAL_IDS.version) {
+        return "\0" + id;
+      }
+      return null;
+    },
+
+    load(id) {
+      if (id === "\0" + VIRTUAL_IDS.version) {
+        // In dev mode, generate new version each time module is loaded (HMR)
+        // In production, use the build-time version
+        const version = isDev ? String(Date.now()) : buildVersion;
+        return getVirtualVersionContent(version);
+      }
+      return null;
+    },
+  };
+}
+
+/**
  * Vite plugin for rsc-router.
  *
  * Includes @vitejs/plugin-rsc and all necessary transforms for the router
@@ -501,6 +548,9 @@ export async function rscRouter(
 
   // Always add exposeLocationStateId for auto-generated location state keys
   plugins.push(exposeLocationStateId());
+
+  // Add version virtual module plugin for cache invalidation
+  plugins.push(createVersionPlugin());
 
   return plugins;
 }

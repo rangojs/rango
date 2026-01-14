@@ -53,6 +53,25 @@ export interface CFCacheStoreOptions {
    * Used for non-blocking cache writes.
    */
   waitUntil?: (fn: () => Promise<void>) => void;
+
+  /**
+   * Cache version string. When this changes, all cached entries are effectively
+   * invalidated (new keys won't match old entries).
+   *
+   * Use this to prevent stale RSC payloads after code changes.
+   * The recommended approach is to use the `rsc-router:version` virtual module
+   * which automatically changes on server restart in dev mode.
+   *
+   * @example
+   * ```typescript
+   * import { VERSION } from "rsc-router:version";
+   *
+   * const cacheStore = new CFCacheStore({
+   *   version: VERSION,
+   * });
+   * ```
+   */
+  version?: string;
 }
 
 export type CacheStatus = "HIT" | "REVALIDATING";
@@ -67,12 +86,14 @@ export class CFCacheStore implements SegmentCacheStore {
   private readonly namespace?: string;
   private readonly baseUrl: string;
   private readonly waitUntil?: (fn: () => Promise<void>) => void;
+  private readonly version?: string;
 
   constructor(options: CFCacheStoreOptions = {}) {
     this.namespace = options.namespace;
     this.baseUrl = options.baseUrl ?? "https://rsc-cache.internal.com/";
     this.defaults = options.defaults;
     this.waitUntil = options.waitUntil;
+    this.version = options.version;
   }
 
   /**
@@ -197,11 +218,14 @@ export class CFCacheStore implements SegmentCacheStore {
   }
 
   /**
-   * Convert string key to Request object for CF Cache API
+   * Convert string key to Request object for CF Cache API.
+   * Includes version in URL if specified (for cache invalidation on code changes).
    */
   private keyToRequest(key: string): Request {
     const encodedKey = encodeURIComponent(key);
-    return new Request(`${this.baseUrl}${encodedKey}`, {
+    // Include version in URL path to invalidate cache when version changes
+    const versionPath = this.version ? `v/${this.version}/` : "";
+    return new Request(`${this.baseUrl}${versionPath}${encodedKey}`, {
       method: "GET",
     });
   }
