@@ -74,6 +74,10 @@ import {
 import { shouldLookupIntercept } from "./router/intercept.js";
 import { applyCacheRevalidation } from "./router/cache-revalidation.js";
 import {
+  buildResolutionContext,
+  getInterceptParams,
+} from "./router/resolution-context.js";
+import {
   findMatch as findRouteMatch,
   traverseBack,
 } from "./router/pattern-matching.js";
@@ -3078,6 +3082,28 @@ export function createRSCRouter<TEnv = any>(
       // Collect entries from manifest (root to route)
       const entries = [...traverseBack(manifestEntry)];
 
+      // Build resolution context - bundles all parameters for helper functions
+      const resolutionCtx = buildResolutionContext({
+        request,
+        url,
+        prevUrl,
+        previousUrlRaw: previousUrl,
+        interceptSourceUrl,
+        stale,
+        matched,
+        prevMatch,
+        interceptContextMatch,
+        manifestEntry,
+        entries,
+        clientSegmentIds,
+        prevParams,
+        bindings,
+        handlerContext,
+        actionContext,
+        loaderPromises,
+        metricsStore: metricsStore ?? null,
+      });
+
       // Find first cache scope (determines TTL/SWR for this route)
       let cacheScope: CacheScope | null = null;
       for (const entry of entries) {
@@ -3106,18 +3132,18 @@ export function createRSCRouter<TEnv = any>(
 
         // Apply revalidation to cached segments - set component=null for segments
         // client already has and doesn't need to update (matches non-cached behavior)
-        const entryRevalidateMap = buildEntryRevalidateMap(entries);
+        const entryRevalidateMap = buildEntryRevalidateMap(resolutionCtx.entries);
         await applyCacheRevalidation({
           cachedSegments,
-          clientSegmentSet,
+          clientSegmentSet: resolutionCtx.clientSegmentSet,
           entryRevalidateMap,
-          prevParams,
-          request,
-          prevUrl,
-          nextUrl: url,
-          routeKey: matched.routeKey,
-          handlerContext,
-          actionContext,
+          prevParams: resolutionCtx.prevParams,
+          request: resolutionCtx.request,
+          prevUrl: resolutionCtx.prevUrl,
+          nextUrl: resolutionCtx.url,
+          routeKey: resolutionCtx.matched.routeKey,
+          handlerContext: resolutionCtx.handlerContext,
+          actionContext: resolutionCtx.actionContext,
         });
 
         // Resolve loaders fresh with revalidation logic (loaders are NOT cached by default)
@@ -3127,15 +3153,15 @@ export function createRSCRouter<TEnv = any>(
           Store.parent,
           () =>
             resolveLoadersOnlyWithRevalidation(
-              entries,
-              handlerContext,
-              clientSegmentSet,
-              prevParams,
-              request,
-              prevUrl,
-              url,
-              matched.routeKey,
-              actionContext
+              resolutionCtx.entries,
+              resolutionCtx.handlerContext,
+              resolutionCtx.clientSegmentSet,
+              resolutionCtx.prevParams,
+              resolutionCtx.request,
+              resolutionCtx.prevUrl,
+              resolutionCtx.url,
+              resolutionCtx.matched.routeKey,
+              resolutionCtx.actionContext
             )
         );
 
@@ -3149,9 +3175,26 @@ export function createRSCRouter<TEnv = any>(
         if (cacheResult.shouldRevalidate && cacheScope) {
           const requestCtx = getRequestContext();
           const revalidateScope = cacheScope;
+
+          // Capture values needed for background execution
+          const capturedEntries = resolutionCtx.entries;
+          const capturedRouteKey = resolutionCtx.matched.routeKey;
+          const capturedParams = resolutionCtx.matched.params;
+          const capturedHandlerContext = resolutionCtx.handlerContext;
+          const capturedClientSegmentSet = resolutionCtx.clientSegmentSet;
+          const capturedPrevParams = resolutionCtx.prevParams;
+          const capturedRequest = resolutionCtx.request;
+          const capturedPrevUrl = resolutionCtx.prevUrl;
+          const capturedUrl = resolutionCtx.url;
+          const capturedLoaderPromises = resolutionCtx.loaderPromises;
+          const capturedActionContext = resolutionCtx.actionContext;
+          const capturedLocalRouteName = resolutionCtx.localRouteName;
+          const capturedPathname = resolutionCtx.pathname;
+          const capturedInterceptResult = interceptResult;
+
           requestCtx?.waitUntil(async () => {
             console.log(
-              `[Router.matchPartial] Revalidating stale route: ${pathname}`
+              `[Router.matchPartial] Revalidating stale route: ${capturedPathname}`
             );
             try {
               // IMPORTANT: Create a fresh handleStore for background revalidation
@@ -3161,39 +3204,39 @@ export function createRSCRouter<TEnv = any>(
               }
 
               const freshResult = await resolveAllSegmentsWithRevalidation(
-                entries,
-                matched.routeKey,
-                matched.params,
-                handlerContext,
-                clientSegmentSet,
-                prevParams,
-                request,
-                prevUrl,
-                url,
-                loaderPromises,
-                actionContext,
-                interceptResult,
-                localRouteName,
-                pathname
+                capturedEntries,
+                capturedRouteKey,
+                capturedParams,
+                capturedHandlerContext,
+                capturedClientSegmentSet,
+                capturedPrevParams,
+                capturedRequest,
+                capturedPrevUrl,
+                capturedUrl,
+                capturedLoaderPromises,
+                capturedActionContext,
+                capturedInterceptResult,
+                capturedLocalRouteName,
+                capturedPathname
               );
 
               // For intercept revalidation, also resolve fresh intercept segments
               let freshInterceptSegments: ResolvedSegment[] = [];
-              if (interceptResult) {
+              if (capturedInterceptResult) {
                 freshInterceptSegments = await resolveInterceptEntry(
-                  interceptResult.intercept,
-                  interceptResult.entry,
-                  matched.params,
-                  handlerContext,
+                  capturedInterceptResult.intercept,
+                  capturedInterceptResult.entry,
+                  capturedParams,
+                  capturedHandlerContext,
                   true,
                   {
-                    clientSegmentIds: clientSegmentSet,
-                    prevParams,
-                    request,
-                    prevUrl,
-                    nextUrl: url,
-                    routeKey: matched.routeKey,
-                    actionContext,
+                    clientSegmentIds: capturedClientSegmentSet,
+                    prevParams: capturedPrevParams,
+                    request: capturedRequest,
+                    prevUrl: capturedPrevUrl,
+                    nextUrl: capturedUrl,
+                    routeKey: capturedRouteKey,
+                    actionContext: capturedActionContext,
                     stale: false,
                   }
                 );
@@ -3204,13 +3247,13 @@ export function createRSCRouter<TEnv = any>(
                 ...freshInterceptSegments,
               ];
               revalidateScope.cacheRoute(
-                pathname,
-                matched.params,
+                capturedPathname,
+                capturedParams,
                 allFreshSegments,
                 isIntercept
               );
               console.log(
-                `[Router.matchPartial] Revalidation complete: ${pathname}`
+                `[Router.matchPartial] Revalidation complete: ${capturedPathname}`
               );
             } catch (error) {
               console.error(
@@ -3228,20 +3271,20 @@ export function createRSCRouter<TEnv = any>(
           Store.parent,
           async () => {
             return resolveAllSegmentsWithRevalidation(
-              entries,
-              matched.routeKey,
-              matched.params,
-              handlerContext,
-              clientSegmentSet,
-              prevParams,
-              request,
-              prevUrl,
-              url,
-              loaderPromises,
-              actionContext,
+              resolutionCtx.entries,
+              resolutionCtx.matched.routeKey,
+              resolutionCtx.matched.params,
+              resolutionCtx.handlerContext,
+              resolutionCtx.clientSegmentSet,
+              resolutionCtx.prevParams,
+              resolutionCtx.request,
+              resolutionCtx.prevUrl,
+              resolutionCtx.url,
+              resolutionCtx.loaderPromises,
+              resolutionCtx.actionContext,
               interceptResult,
-              localRouteName,
-              pathname
+              resolutionCtx.localRouteName,
+              resolutionCtx.pathname
             );
           }
         );
@@ -3251,7 +3294,7 @@ export function createRSCRouter<TEnv = any>(
         if (interceptResult) {
           const slotName = interceptResult.intercept.slotName;
           console.log(
-            `[Router.matchPartial] Found intercept for "${localRouteName}" -> slot "${slotName}"`
+            `[Router.matchPartial] Found intercept for "${resolutionCtx.localRouteName}" -> slot "${slotName}"`
           );
 
           // Resolve intercept entry (middleware, loaders, handler)
@@ -3263,19 +3306,10 @@ export function createRSCRouter<TEnv = any>(
               resolveInterceptEntry(
                 interceptResult.intercept,
                 interceptResult.entry,
-                matched.params,
-                handlerContext,
+                resolutionCtx.matched.params,
+                resolutionCtx.handlerContext,
                 true, // belongsToRoute
-                {
-                  clientSegmentIds: clientSegmentSet,
-                  prevParams,
-                  request,
-                  prevUrl,
-                  nextUrl: url,
-                  routeKey: matched.routeKey,
-                  actionContext,
-                  stale,
-                }
+                getInterceptParams(resolutionCtx)
               )
           );
 
@@ -3288,7 +3322,7 @@ export function createRSCRouter<TEnv = any>(
 
         // Cache for next request (non-blocking, skip during actions)
         // Include intercept segments so cache hit serves complete response
-        if (cacheScope?.enabled && !isAction) {
+        if (cacheScope?.enabled && !resolutionCtx.isAction) {
           const allSegmentsToCache = [...result.segments, ...interceptSegments];
 
           // Check if any non-loader segments have null components
@@ -3305,14 +3339,18 @@ export function createRSCRouter<TEnv = any>(
             const proactiveCacheScope = cacheScope;
 
             // Capture values needed for background execution
-            const capturedEntries = entries;
-            const capturedRouteKey = matched.routeKey;
-            const capturedParams = matched.params;
+            const capturedEntries = resolutionCtx.entries;
+            const capturedRouteKey = resolutionCtx.matched.routeKey;
+            const capturedParams = resolutionCtx.matched.params;
             const capturedInterceptResult = interceptResult;
+            const capturedPathname = resolutionCtx.pathname;
+            const capturedRequest = resolutionCtx.request;
+            const capturedUrl = resolutionCtx.url;
+            const capturedBindings = resolutionCtx.bindings;
 
             requestCtx?.waitUntil(async () => {
               console.log(
-                `[Router.matchPartial] Proactive caching: ${pathname} (rendering null-component segments)`
+                `[Router.matchPartial] Proactive caching: ${capturedPathname} (rendering null-component segments)`
               );
               try {
                 // Create FRESH context for proactive caching
@@ -3320,11 +3358,11 @@ export function createRSCRouter<TEnv = any>(
                 // pushed to the main response's HandleStore
                 const proactiveHandlerContext = createHandlerContext(
                   capturedParams,
-                  request,
-                  url.searchParams,
-                  pathname,
-                  url,
-                  bindings
+                  capturedRequest,
+                  capturedUrl.searchParams,
+                  capturedPathname,
+                  capturedUrl,
+                  capturedBindings
                 );
                 const proactiveLoaderPromises = new Map<string, Promise<any>>();
 
@@ -3375,13 +3413,13 @@ export function createRSCRouter<TEnv = any>(
                   ...freshInterceptSegments,
                 ];
                 proactiveCacheScope.cacheRoute(
-                  pathname,
+                  capturedPathname,
                   capturedParams,
                   completeSegments,
                   isIntercept
                 );
                 console.log(
-                  `[Router.matchPartial] Proactive caching complete: ${pathname}`
+                  `[Router.matchPartial] Proactive caching complete: ${capturedPathname}`
                 );
               } catch (error) {
                 console.error(
@@ -3393,8 +3431,8 @@ export function createRSCRouter<TEnv = any>(
           } else {
             // All segments have components - cache directly
             cacheScope.cacheRoute(
-              pathname,
-              matched.params,
+              resolutionCtx.pathname,
+              resolutionCtx.matched.params,
               allSegmentsToCache,
               isIntercept
             );
@@ -3430,19 +3468,10 @@ export function createRSCRouter<TEnv = any>(
             resolveInterceptLoadersOnly(
               interceptResult.intercept,
               interceptResult.entry,
-              matched.params,
-              handlerContext,
+              resolutionCtx.matched.params,
+              resolutionCtx.handlerContext,
               true, // belongsToRoute
-              {
-                clientSegmentIds: clientSegmentSet,
-                prevParams,
-                request,
-                prevUrl,
-                nextUrl: url,
-                routeKey: matched.routeKey,
-                actionContext,
-                stale,
-              }
+              getInterceptParams(resolutionCtx)
             )
         );
 
@@ -3457,12 +3486,12 @@ export function createRSCRouter<TEnv = any>(
               freshLoaderResult.loaderDataPromise;
             interceptMainSegment.loaderIds = freshLoaderResult.loaderIds;
             console.log(
-              `[Router.matchPartial] Cache HIT + fresh loaders for intercept "${localRouteName}" -> slot "${slotName}"`
+              `[Router.matchPartial] Cache HIT + fresh loaders for intercept "${resolutionCtx.localRouteName}" -> slot "${slotName}"`
             );
           }
         } else {
           console.log(
-            `[Router.matchPartial] Cache HIT for intercept "${localRouteName}" -> slot "${slotName}" (no loader revalidation)`
+            `[Router.matchPartial] Cache HIT for intercept "${resolutionCtx.localRouteName}" -> slot "${slotName}" (no loader revalidation)`
           );
         }
 
@@ -3475,7 +3504,7 @@ export function createRSCRouter<TEnv = any>(
       if (interceptResult && !skipInterceptResolution) {
         const slotName = interceptResult.intercept.slotName;
         console.log(
-          `[Router.matchPartial] Found intercept for "${localRouteName}" -> slot "${slotName}"`
+          `[Router.matchPartial] Found intercept for "${resolutionCtx.localRouteName}" -> slot "${slotName}"`
         );
 
         // Resolve intercept entry (middleware, loaders, handler)
@@ -3487,19 +3516,10 @@ export function createRSCRouter<TEnv = any>(
             resolveInterceptEntry(
               interceptResult.intercept,
               interceptResult.entry,
-              matched.params,
-              handlerContext,
+              resolutionCtx.matched.params,
+              resolutionCtx.handlerContext,
               true, // belongsToRoute
-              {
-                clientSegmentIds: clientSegmentSet,
-                prevParams,
-                request,
-                prevUrl,
-                nextUrl: url,
-                routeKey: matched.routeKey,
-                actionContext,
-                stale,
-              }
+              getInterceptParams(resolutionCtx)
             )
         );
 
@@ -3518,8 +3538,8 @@ export function createRSCRouter<TEnv = any>(
       // If client sent empty segments (HMR recovery), use segment IDs from allSegments
       // (not allMatchedIds which may include unrendered route segments)
       const allIds = interceptResult
-        ? clientSegmentIds.length > 0
-          ? [...clientSegmentIds, ...interceptSegments.map((s) => s.id)]
+        ? resolutionCtx.clientSegmentIds.length > 0
+          ? [...resolutionCtx.clientSegmentIds, ...interceptSegments.map((s) => s.id)]
           : allSegments.map((s) => s.id) // Use actual segments, not matchedIds
         : [...allMatchedIds, ...interceptSegments.map((s) => s.id)];
 
@@ -3541,16 +3561,16 @@ export function createRSCRouter<TEnv = any>(
 
       // Output metrics if enabled
       let serverTiming: string | undefined;
-      if (metricsStore) {
-        logMetrics(request.method, pathname, metricsStore);
-        serverTiming = generateServerTiming(metricsStore);
+      if (resolutionCtx.metricsStore) {
+        logMetrics(resolutionCtx.request.method, resolutionCtx.pathname, resolutionCtx.metricsStore);
+        serverTiming = generateServerTiming(resolutionCtx.metricsStore);
       }
 
       return {
         segments: segmentsToRender,
         matched: allIds, // All segment IDs including intercepts
         diff: segmentsToRender.map((s) => s.id),
-        params: matched.params,
+        params: resolutionCtx.matched.params,
         serverTiming,
         // Include slots state - browser uses this to know which slots are active
         slots: Object.keys(slots).length > 0 ? slots : undefined,
