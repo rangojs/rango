@@ -1640,4 +1640,13 @@ Integrated `buildResolutionContext()` throughout `matchPartial`:
 - Background `waitUntil` callbacks capture values from `resolutionCtx` for safe async access
 - Metrics logging and return values use `resolutionCtx.*`
 
-**Test Results:** All 86 unit tests pass, all cache/revalidation/navigation e2e tests pass.
+**Test Results:** All unit tests pass, all cache/revalidation/navigation e2e tests pass.
+
+### Completed: Promise Semantics Documentation
+
+Added comprehensive documentation for the router's async/await patterns (section 5 above):
+- ResolvedSegment promise fields (`component`, `loaderDataPromise`)
+- When `component` is a Promise (streaming scenarios)
+- When `loaderDataPromise` is used (Suspense behavior)
+- Background operations (`waitUntil` for SWR and proactive caching)
+- Value capture requirements for background callbacks
