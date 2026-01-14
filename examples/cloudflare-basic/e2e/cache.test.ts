@@ -242,6 +242,263 @@ test.describe("proactive-cache (dev)", () => {
 });
 
 /**
+ * Blog breadcrumb tests - validates breadcrumbs don't duplicate with caching
+ * This is a regression test for cached segments re-pushing handle data
+ */
+test.describe("blog-breadcrumbs (preview)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test("should have correct breadcrumbs on blog index", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "blog-index")).toBeVisible();
+
+    // Verify exact breadcrumbs: Home / Blog
+    const breadcrumbs = testId(page, "breadcrumbs");
+    await expect(breadcrumbs).toBeVisible();
+
+    // Check breadcrumb links/text
+    await expect(breadcrumbs.locator("a, span").filter({ hasText: "Home" })).toHaveCount(1);
+    await expect(breadcrumbs.locator("a, span").filter({ hasText: "Blog" })).toHaveCount(1);
+
+    // Verify the exact text content (no duplicates)
+    const breadcrumbText = await breadcrumbs.textContent();
+    console.log(`Breadcrumbs on /blog: "${breadcrumbText}"`);
+
+    // Should be exactly "Home / Blog" (with separators)
+    expect(breadcrumbText?.match(/Home/g)?.length).toBe(1);
+    expect(breadcrumbText?.match(/Blog/g)?.length).toBe(1);
+  });
+
+  test("should have correct breadcrumbs on blog post", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog/getting-started-with-rsc"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "blog-post-detail")).toBeVisible();
+
+    // Verify exact breadcrumbs: Home / Blog / Post Title
+    const breadcrumbs = testId(page, "breadcrumbs");
+    await expect(breadcrumbs).toBeVisible();
+
+    const breadcrumbText = await breadcrumbs.textContent();
+    console.log(`Breadcrumbs on post: "${breadcrumbText}"`);
+
+    // Should have exactly one of each
+    expect(breadcrumbText?.match(/Home/g)?.length).toBe(1);
+    expect(breadcrumbText?.match(/Blog/g)?.length).toBe(1);
+    expect(breadcrumbText?.match(/Getting Started/g)?.length).toBe(1);
+  });
+
+  test("should maintain correct breadcrumbs after hard refresh on cached page", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    // First visit to blog post (populates cache)
+    await page.goto(f.url("/blog/getting-started-with-rsc"));
+    await waitForHydration(page);
+    await expect(testId(page, "blog-post-detail")).toBeVisible();
+
+    const breadcrumbs = testId(page, "breadcrumbs");
+    const initialBreadcrumbs = await breadcrumbs.textContent();
+    console.log(`Initial breadcrumbs: "${initialBreadcrumbs}"`);
+
+    // Hard refresh (should serve from cache)
+    await page.reload();
+    await waitForHydration(page);
+    await expect(testId(page, "blog-post-detail")).toBeVisible();
+
+    const afterRefreshBreadcrumbs = await breadcrumbs.textContent();
+    console.log(`After refresh breadcrumbs: "${afterRefreshBreadcrumbs}"`);
+
+    // Breadcrumbs should be identical, not duplicated
+    expect(afterRefreshBreadcrumbs?.match(/Home/g)?.length).toBe(1);
+    expect(afterRefreshBreadcrumbs?.match(/Blog/g)?.length).toBe(1);
+    expect(afterRefreshBreadcrumbs?.match(/Getting Started/g)?.length).toBe(1);
+  });
+
+  test("should maintain correct breadcrumbs after navigating away and back", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    // Start at blog post
+    await page.goto(f.url("/blog/getting-started-with-rsc"));
+    await waitForHydration(page);
+    await expect(testId(page, "blog-post-detail")).toBeVisible();
+
+    const breadcrumbs = testId(page, "breadcrumbs");
+
+    // Navigate to home
+    await testId(page, "nav-home").click();
+    await expect(testId(page, "home-page")).toBeVisible();
+
+    // Navigate back to blog post (may use cache)
+    await page.goto(f.url("/blog/getting-started-with-rsc"));
+    await waitForHydration(page);
+    await expect(testId(page, "blog-post-detail")).toBeVisible();
+
+    const afterNavBreadcrumbs = await breadcrumbs.textContent();
+    console.log(`After nav breadcrumbs: "${afterNavBreadcrumbs}"`);
+
+    // Breadcrumbs should NOT be duplicated
+    expect(afterNavBreadcrumbs?.match(/Home/g)?.length).toBe(1);
+    expect(afterNavBreadcrumbs?.match(/Blog/g)?.length).toBe(1);
+    expect(afterNavBreadcrumbs?.match(/Getting Started/g)?.length).toBe(1);
+  });
+
+  test("should maintain correct breadcrumbs during repeated soft navigation", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog"));
+    await waitForHydration(page);
+
+    const breadcrumbs = testId(page, "breadcrumbs");
+
+    // Navigate to different blog posts 3 times
+    for (let i = 1; i <= 3; i++) {
+      console.log(`\n=== Iteration ${i} ===`);
+
+      // Go to post
+      await testId(page, "blog-link-getting-started-with-rsc").click();
+      await expect(testId(page, "blog-post-detail")).toBeVisible();
+
+      let crumbs = await breadcrumbs.textContent();
+      console.log(`On post: "${crumbs}"`);
+      expect(crumbs?.match(/Home/g)?.length, `Iteration ${i}: Home count on post`).toBe(1);
+      expect(crumbs?.match(/Blog/g)?.length, `Iteration ${i}: Blog count on post`).toBe(1);
+
+      // Go back to blog index
+      await page.goBack();
+      await expect(testId(page, "blog-index")).toBeVisible();
+
+      crumbs = await breadcrumbs.textContent();
+      console.log(`On index: "${crumbs}"`);
+      expect(crumbs?.match(/Home/g)?.length, `Iteration ${i}: Home count on index`).toBe(1);
+      expect(crumbs?.match(/Blog/g)?.length, `Iteration ${i}: Blog count on index`).toBe(1);
+    }
+  });
+
+  test("should maintain correct breadcrumbs when navigating blog -> home -> about -> blog", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    const breadcrumbs = testId(page, "breadcrumbs");
+
+    // Start at blog post
+    await page.goto(f.url("/blog/understanding-caching-strategies"));
+    await waitForHydration(page);
+    await expect(testId(page, "blog-post-detail")).toBeVisible();
+
+    let crumbs = await breadcrumbs.textContent();
+    console.log(`Initial on post: "${crumbs}"`);
+    expect(crumbs?.match(/Home/g)?.length).toBe(1);
+    expect(crumbs?.match(/Blog/g)?.length).toBe(1);
+
+    // Navigate to Home
+    await testId(page, "nav-home").click();
+    await expect(testId(page, "home-page")).toBeVisible();
+    crumbs = await breadcrumbs.textContent();
+    console.log(`On home: "${crumbs}"`);
+
+    // Navigate to About
+    await testId(page, "nav-about").click();
+    await expect(testId(page, "about-page")).toBeVisible();
+    crumbs = await breadcrumbs.textContent();
+    console.log(`On about: "${crumbs}"`);
+
+    // Navigate to Blog
+    await testId(page, "nav-blog").click();
+    await expect(testId(page, "blog-index")).toBeVisible();
+    crumbs = await breadcrumbs.textContent();
+    console.log(`On blog index: "${crumbs}"`);
+    expect(crumbs?.match(/Home/g)?.length, "Home count after nav").toBe(1);
+    expect(crumbs?.match(/Blog/g)?.length, "Blog count after nav").toBe(1);
+
+    // Navigate to a specific post
+    await testId(page, "blog-link-understanding-caching-strategies").click();
+    await expect(testId(page, "blog-post-detail")).toBeVisible();
+    crumbs = await breadcrumbs.textContent();
+    console.log(`Back on post: "${crumbs}"`);
+    expect(crumbs?.match(/Home/g)?.length, "Home count on post").toBe(1);
+    expect(crumbs?.match(/Blog/g)?.length, "Blog count on post").toBe(1);
+    expect(crumbs?.match(/Understanding/g)?.length, "Post title count").toBe(1);
+  });
+
+  test("should maintain correct breadcrumbs with extensive cross-section navigation", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    const breadcrumbs = testId(page, "breadcrumbs");
+
+    // This test simulates the user's reported bug: visiting blog posts multiple times
+    // with visits to other pages in between, all in a single session
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Visit blog post #1
+    await testId(page, "nav-blog").click();
+    await expect(testId(page, "blog-index")).toBeVisible();
+    await testId(page, "blog-link-getting-started-with-rsc").click();
+    await expect(testId(page, "blog-post-detail")).toBeVisible();
+
+    let crumbs = await breadcrumbs.textContent();
+    console.log(`Visit 1 - Post 1: "${crumbs}"`);
+    expect(crumbs?.match(/Home/g)?.length, "V1P1: Home count").toBe(1);
+    expect(crumbs?.match(/Blog/g)?.length, "V1P1: Blog count").toBe(1);
+
+    // Go to home
+    await testId(page, "nav-home").click();
+    await expect(testId(page, "home-page")).toBeVisible();
+
+    // Visit different blog post
+    await testId(page, "nav-blog").click();
+    await expect(testId(page, "blog-index")).toBeVisible();
+    await testId(page, "blog-link-understanding-caching-strategies").click();
+    await expect(testId(page, "blog-post-detail")).toBeVisible();
+
+    crumbs = await breadcrumbs.textContent();
+    console.log(`Visit 2 - Post 2: "${crumbs}"`);
+    expect(crumbs?.match(/Home/g)?.length, "V2P2: Home count").toBe(1);
+    expect(crumbs?.match(/Blog/g)?.length, "V2P2: Blog count").toBe(1);
+
+    // Go to about
+    await testId(page, "nav-about").click();
+    await expect(testId(page, "about-page")).toBeVisible();
+
+    // Visit first blog post again (may hit cache)
+    await testId(page, "nav-blog").click();
+    await expect(testId(page, "blog-index")).toBeVisible();
+    await testId(page, "blog-link-getting-started-with-rsc").click();
+    await expect(testId(page, "blog-post-detail")).toBeVisible();
+
+    crumbs = await breadcrumbs.textContent();
+    console.log(`Visit 3 - Post 1 again: "${crumbs}"`);
+    expect(crumbs?.match(/Home/g)?.length, "V3P1: Home count").toBe(1);
+    expect(crumbs?.match(/Blog/g)?.length, "V3P1: Blog count").toBe(1);
+
+    // Go to counter
+    await testId(page, "nav-counter").click();
+    await expect(testId(page, "counter-page")).toBeVisible();
+
+    // Visit second blog post again (may hit cache)
+    await testId(page, "nav-blog").click();
+    await expect(testId(page, "blog-index")).toBeVisible();
+    await testId(page, "blog-link-understanding-caching-strategies").click();
+    await expect(testId(page, "blog-post-detail")).toBeVisible();
+
+    crumbs = await breadcrumbs.textContent();
+    console.log(`Visit 4 - Post 2 again: "${crumbs}"`);
+    expect(crumbs?.match(/Home/g)?.length, "V4P2: Home count").toBe(1);
+    expect(crumbs?.match(/Blog/g)?.length, "V4P2: Blog count").toBe(1);
+    expect(crumbs?.match(/Understanding/g)?.length, "V4P2: Post title count").toBe(1);
+  });
+});
+
+/**
  * Proactive cache test route tests (preview mode)
  */
 test.describe("proactive-cache (preview)", () => {

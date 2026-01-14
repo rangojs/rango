@@ -25,7 +25,7 @@ import {
   LoaderEntry,
   getContext,
 } from "./server/context";
-import type { HandleStore } from "./server/handle-store.js";
+import { createHandleStore, type HandleStore } from "./server/handle-store.js";
 import { getRequestContext } from "./server/request-context.js";
 import type {
   ErrorBoundaryHandler,
@@ -2565,6 +2565,14 @@ export function createRSCRouter<TEnv = any>(
           requestCtx?.waitUntil(async () => {
             console.log(`[Router.match] Revalidating stale route: ${pathname}`);
             try {
+              // IMPORTANT: Create a fresh handleStore for background revalidation
+              // to avoid polluting the current response's handle stream.
+              // The original response streams handles from the cached/replayed data,
+              // while the background work generates fresh handles for the new cache entry.
+              if (requestCtx) {
+                requestCtx._handleStore = createHandleStore();
+              }
+
               const freshSegments = await resolveAllSegments(
                 entries,
                 matched.routeKey,
@@ -3174,6 +3182,12 @@ export function createRSCRouter<TEnv = any>(
               `[Router.matchPartial] Revalidating stale route: ${pathname}`
             );
             try {
+              // IMPORTANT: Create a fresh handleStore for background revalidation
+              // to avoid polluting the current response's handle stream.
+              if (requestCtx) {
+                requestCtx._handleStore = createHandleStore();
+              }
+
               const freshResult = await resolveAllSegmentsWithRevalidation(
                 entries,
                 matched.routeKey,
