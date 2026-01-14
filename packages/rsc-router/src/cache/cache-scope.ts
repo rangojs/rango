@@ -216,23 +216,19 @@ async function deserializeSegments(
     });
 
     // RSC-deserialize layout, loaderData, loaderDataPromise in parallel
-    const [layout, loaderData, loaderDataPromise] = await Promise.all([
-      rscDeserialize(item.encodedLayout),
-      rscDeserialize(item.encodedLoaderData),
-      rscDeserialize(item.encodedLoaderDataPromise),
-    ]);
-
-    // Deserialize loading - "null" string means explicit null
-    // NOTE: We intentionally don't deserialize actual loading skeletons here.
-    // Cached content should render immediately without showing loading states.
-    // We only preserve the "null" marker to maintain tree structure consistency.
-    const loading = item.encodedLoading === "null" ? null : undefined;
+    const [layout, loaderData, loaderDataPromise, loadingData] =
+      await Promise.all([
+        rscDeserialize(item.encodedLayout),
+        rscDeserialize(item.encodedLoaderData),
+        rscDeserialize(item.encodedLoaderDataPromise),
+        rscDeserialize(item.encodedLoading),
+      ]);
 
     segments.push({
       ...item.metadata,
       component: await component,
       layout,
-      loading,
+      loading: loadingData,
       loaderData,
       loaderDataPromise,
     } as ResolvedSegment);
@@ -348,7 +344,10 @@ export class CacheScope {
     pathname: string,
     params: Record<string, string>,
     isIntercept?: boolean
-  ): Promise<{ segments: ResolvedSegment[]; shouldRevalidate: boolean } | null> {
+  ): Promise<{
+    segments: ResolvedSegment[];
+    shouldRevalidate: boolean;
+  } | null> {
     if (!this.enabled) return null;
 
     const store = this.getStore();

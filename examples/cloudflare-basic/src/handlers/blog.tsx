@@ -194,7 +194,10 @@ export default map<typeof blogRoutes>(
               return <BlogSidebar data={data} />;
             },
           },
-          () => [loader(BlogSidebarLoader), loading(<SidebarSkeleton />)]
+          () => [
+            loader(BlogSidebarLoader, () => [cache()]),
+            loading(<SidebarSkeleton />),
+          ]
         ),
 
         // Cache boundary for route content (not sidebar - loaders stay fresh)
@@ -290,90 +293,90 @@ export default map<typeof blogRoutes>(
             // Read post directly - static data gets cached with RSC output
             const post = getBlogPost(ctx.params.slug);
 
-              if (!post) {
-                notFound();
-              }
+            if (!post) {
+              notFound();
+            }
 
-              const meta = ctx.use(Meta);
-              meta({ title: `${post.title} - Blog - RSC Router` });
-              meta({ name: "description", content: post.excerpt });
+            const meta = ctx.use(Meta);
+            meta({ title: `${post.title} - Blog - RSC Router` });
+            meta({ name: "description", content: post.excerpt });
 
-              // Only push post title (Home/Blog already pushed by layout)
-              const breadcrumb = ctx.use(Breadcrumbs);
-              breadcrumb({ label: post.title, href: `/blog/${post.slug}` });
+            // Only push post title (Home/Blog already pushed by layout)
+            const breadcrumb = ctx.use(Breadcrumbs);
+            breadcrumb({ label: post.title, href: `/blog/${post.slug}` });
 
-              return (
-                <article data-testid="blog-post-detail">
-                  <nav
-                    style={{
-                      marginBottom: "1rem",
-                      paddingBottom: "0.5rem",
-                      borderBottom: "1px solid #eee",
-                    }}
+            return (
+              <article data-testid="blog-post-detail">
+                <nav
+                  style={{
+                    marginBottom: "1rem",
+                    paddingBottom: "0.5rem",
+                    borderBottom: "1px solid #eee",
+                  }}
+                >
+                  <Link
+                    to="/blog"
+                    style={{ color: "#0070f3", textDecoration: "none" }}
                   >
-                    <Link
-                      to="/blog"
-                      style={{ color: "#0070f3", textDecoration: "none" }}
-                    >
-                      &larr; Back to Blog
-                    </Link>
-                  </nav>
+                    &larr; Back to Blog
+                  </Link>
+                </nav>
 
-                  <header style={{ marginBottom: "2rem" }}>
-                    <h1 data-testid="post-title">{post.title}</h1>
-                    <p style={{ color: "#666", fontSize: "0.875rem" }}>
-                      By <span data-testid="post-author">{post.author}</span> on{" "}
-                      <span data-testid="post-date">{post.publishedAt}</span>
-                    </p>
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: "0.5rem",
-                        marginTop: "0.5rem",
-                      }}
-                    >
-                      {post.tags.map((tag) => (
-                        <span
-                          key={tag}
-                          style={{
-                            fontSize: "0.75rem",
-                            padding: "0.25rem 0.5rem",
-                            background: "#f0f0f0",
-                            borderRadius: "4px",
-                          }}
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  </header>
-
+                <header style={{ marginBottom: "2rem" }}>
+                  <h1 data-testid="post-title">{post.title}</h1>
+                  <p style={{ color: "#666", fontSize: "0.875rem" }}>
+                    By <span data-testid="post-author">{post.author}</span> on{" "}
+                    <span data-testid="post-date">{post.publishedAt}</span>
+                  </p>
                   <div
-                    data-testid="post-content"
                     style={{
-                      lineHeight: 1.7,
-                      whiteSpace: "pre-wrap",
+                      display: "flex",
+                      gap: "0.5rem",
+                      marginTop: "0.5rem",
                     }}
                   >
-                    {post.content}
+                    {post.tags.map((tag) => (
+                      <span
+                        key={tag}
+                        style={{
+                          fontSize: "0.75rem",
+                          padding: "0.25rem 0.5rem",
+                          background: "#f0f0f0",
+                          borderRadius: "4px",
+                        }}
+                      >
+                        {tag}
+                      </span>
+                    ))}
                   </div>
+                </header>
 
-                  <footer
-                    data-testid="cache-info"
-                    style={{
-                      marginTop: "3rem",
-                      paddingTop: "1rem",
-                      borderTop: "1px solid #eee",
-                      fontSize: "0.875rem",
-                      color: "#999",
-                    }}
-                  >
-                    This page is cached at the edge with TTL=60s, SWR=300s.
-                    <br />
-                    Rendered at: {new Date().toISOString()}
-                  </footer>
-                </article>
-              );
+                <div
+                  data-testid="post-content"
+                  style={{
+                    lineHeight: 1.7,
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {post.content}
+                </div>
+
+                <footer
+                  data-testid="cache-info"
+                  style={{
+                    marginTop: "3rem",
+                    paddingTop: "1rem",
+                    borderTop: "1px solid #eee",
+                    fontSize: "0.875rem",
+                    color: "#999",
+                  }}
+                >
+                  This page is cached at the edge with TTL=60s, SWR=300s.
+                  <br />
+                  Rendered at: {new Date().toISOString()}
+                </footer>
+              </article>
+            );
           }),
         ]), // End cache
       ] // End layout children

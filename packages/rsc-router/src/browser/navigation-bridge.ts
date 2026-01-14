@@ -13,7 +13,9 @@ import {
 /**
  * Check if state is from typed LocationStateEntry[] (has __rsc_ls_ keys)
  */
-function isTypedLocationState(state: unknown): state is Record<string, unknown> {
+function isTypedLocationState(
+  state: unknown
+): state is Record<string, unknown> {
   if (state === null || typeof state !== "object") return false;
   return Object.keys(state).some((key) => key.startsWith("__rsc_ls_"));
 }
@@ -23,7 +25,11 @@ function isTypedLocationState(state: unknown): state is Record<string, unknown> 
  */
 function resolveNavigationState(state: unknown): unknown {
   // Check if it's an array of LocationStateEntry
-  if (Array.isArray(state) && state.length > 0 && isLocationStateEntry(state[0])) {
+  if (
+    Array.isArray(state) &&
+    state.length > 0 &&
+    isLocationStateEntry(state[0])
+  ) {
     return resolveLocationStateEntries(state);
   }
   // Return as-is for legacy formats
@@ -473,9 +479,10 @@ export function createNavigationBridge(
      */
     async navigate(url: string, options?: NavigateOptions): Promise<void> {
       // Resolve LocationStateEntry[] to flat object if needed
-      const resolvedState = options?.state !== undefined
-        ? resolveNavigationState(options.state)
-        : undefined;
+      const resolvedState =
+        options?.state !== undefined
+          ? resolveNavigationState(options.state)
+          : undefined;
 
       // Only abort pending requests when navigating to a different route
       // Same-route navigation (e.g., /todos -> /todos) should not cancel in-flight actions
@@ -545,14 +552,18 @@ export function createNavigationBridge(
           hasUsableCache ? cachedSegments!.map((s) => s.id) : undefined,
           false,
           tx.handle.signal,
-          tx.with({ url, replace: options?.replace, scroll: options?.scroll, state: resolvedState }),
+          tx.with({
+            url,
+            replace: options?.replace,
+            scroll: options?.scroll,
+            state: resolvedState,
+          }),
           // Pass cached segments (merged with current page's fresh segments for shared IDs)
           // so the segment map is consistent with what we tell the server we have.
           // Server decides what needs revalidation based on route matching and custom functions.
           // No need for staleRevalidation flag - we're sending the freshest segments we have.
           hasUsableCache ? { targetCacheSegments: cachedSegments } : undefined
         );
-        tx;
       } catch (error) {
         // Ignore AbortError - navigation was cancelled by a newer navigation
         if (error instanceof DOMException && error.name === "AbortError") {

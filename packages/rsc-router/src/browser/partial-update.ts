@@ -173,6 +173,7 @@ export function createPartialUpdater(
         previousUrl,
         staleRevalidation,
       });
+    console.log("payload.metadata", payload.metadata);
 
     const streamComplete = rawStreamComplete.then(() => {
       streamingToken.end();
@@ -284,6 +285,12 @@ export function createPartialUpdater(
           const fromCache = currentSegmentMap.get(id);
           if (!fromCache) {
             console.warn(`[Browser] Missing segment: ${id}`);
+            return fromCache;
+          }
+          // Clear loading for cached segments to prevent suspense - server decided
+          // this segment doesn't need re-rendering, so show content as-is
+          if (fromCache.loading !== undefined) {
+            return { ...fromCache, loading: undefined };
           }
           return fromCache;
         })

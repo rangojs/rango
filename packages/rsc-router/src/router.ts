@@ -38,6 +38,7 @@ import type {
   ResolvedSegment,
   RouteDefinition,
   RouteEntry,
+  ShouldRevalidateFn,
   TrailingSlashMode,
 } from "./types";
 
@@ -1228,6 +1229,127 @@ export function createRSCRouter<TEnv = any>(
   }
 
   /**
+   * Helper: Resolve only the loaders for a cached intercept segment.
+   * Used on intercept cache hit to get fresh loader data while keeping cached component/layout.
+   * Returns the fresh loaderDataPromise and loaderIds, or null if no loaders need resolution.
+   */
+  async function resolveInterceptLoadersOnly(
+    interceptEntry: InterceptEntry,
+    parentEntry: EntryData,
+    params: Record<string, string>,
+    context: HandlerContext<any, TEnv>,
+    belongsToRoute: boolean = true,
+    revalidationContext: {
+      clientSegmentIds: Set<string>;
+      prevParams: Record<string, string>;
+      request: Request;
+      prevUrl: URL;
+      nextUrl: URL;
+      routeKey: string;
+      actionContext?: {
+        actionId?: string;
+        actionUrl?: URL;
+        actionResult?: any;
+        formData?: FormData;
+      };
+      stale?: boolean;
+    }
+  ): Promise<{
+    loaderDataPromise: Promise<any[]> | any[];
+    loaderIds: string[];
+  } | null> {
+    if (interceptEntry.loader.length === 0) {
+      return null;
+    }
+
+    const loaderPromises: Promise<any>[] = [];
+    const loaderIds: string[] = [];
+
+    const {
+      clientSegmentIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      routeKey,
+      actionContext,
+      stale,
+    } = revalidationContext;
+
+    for (let i = 0; i < interceptEntry.loader.length; i++) {
+      const { loader, revalidate: loaderRevalidateFns } =
+        interceptEntry.loader[i];
+      const segmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}D${i}.${loader.$$id}`;
+
+      // Check if client has the parent intercept segment (loaders are embedded, not separate segments)
+      const interceptSegmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}`;
+      if (clientSegmentIds.has(interceptSegmentId)) {
+        // Create dummy segment for evaluation
+        const dummySegment: ResolvedSegment = {
+          id: segmentId,
+          namespace: `intercept:${interceptEntry.routeName}`,
+          type: "loader",
+          index: i,
+          component: null,
+          params,
+          loaderId: loader.$$id,
+          belongsToRoute,
+        };
+
+        const shouldRevalidate = await evaluateRevalidation({
+          segment: dummySegment,
+          prevParams,
+          getPrevSegment: null,
+          request,
+          prevUrl,
+          nextUrl,
+          revalidations: loaderRevalidateFns.map((fn, j) => ({
+            name: `intercept-loader-revalidate${j}`,
+            fn,
+          })),
+          routeKey,
+          context,
+          actionContext,
+          stale,
+        });
+
+        if (!shouldRevalidate) {
+          console.log(
+            `[Router] Intercept loader ${loader.$$id} skipped (cache hit, revalidation=false)`
+          );
+          continue;
+        }
+        console.log(
+          `[Router] Intercept loader ${loader.$$id} revalidating on cache hit (stale=${stale})`
+        );
+      }
+
+      loaderIds.push(loader.$$id);
+      loaderPromises.push(
+        wrapLoaderPromise(
+          context.use(loader),
+          parentEntry,
+          segmentId,
+          context.pathname
+        )
+      );
+    }
+
+    if (loaderPromises.length === 0) {
+      return null;
+    }
+
+    // If intercept has loading skeleton, keep as Promise for streaming
+    // Otherwise await immediately
+    const loaderDataPromise =
+      interceptEntry.loading !== undefined
+        ? Promise.all(loaderPromises)
+        : await Promise.all(loaderPromises);
+
+    return { loaderDataPromise, loaderIds };
+  }
+
+  /**
    * Helper: Resolve parallel EntryData with its loaders and slot handlers
    * Parallels now have their own loaders, revalidate functions, and loading components
    *
@@ -1408,8 +1530,7 @@ export function createRSCRouter<TEnv = any>(
         params,
         context,
         loaderPromises,
-        () =>
-          resolveSegment(entry, routeKey, params, context, loaderPromises)
+        () => resolveSegment(entry, routeKey, params, context, loaderPromises)
       );
       allSegments.push(...resolvedSegments);
     }
@@ -1476,6 +1597,47 @@ export function createRSCRouter<TEnv = any>(
   }
 
   /**
+   * Build a map of segment shortCode → entry with revalidate functions
+   * Used to look up revalidation rules for cached segments
+   */
+  function buildEntryRevalidateMap(
+    entries: EntryData[]
+  ): Map<string, { entry: EntryData; revalidate: ShouldRevalidateFn<any, any>[] }> {
+    const map = new Map<string, { entry: EntryData; revalidate: ShouldRevalidateFn<any, any>[] }>();
+
+    function processEntry(entry: EntryData, parentShortCode?: string) {
+      // Map main entry
+      map.set(entry.shortCode, { entry, revalidate: entry.revalidate });
+
+      // Process nested parallels - they use parallelEntry.shortCode.slotName as ID
+      if (entry.type !== "parallel") {
+        for (const parallelEntry of entry.parallel) {
+          if (parallelEntry.type === "parallel") {
+            // Parallel handlers are Record<slotName, handler>
+            const slots = Object.keys(parallelEntry.handler) as `@${string}`[];
+            for (const slot of slots) {
+              // Segment ID uses parallelEntry.shortCode, not parent entry.shortCode
+              const parallelId = `${parallelEntry.shortCode}.${slot}`;
+              map.set(parallelId, { entry: parallelEntry, revalidate: parallelEntry.revalidate });
+            }
+          }
+        }
+      }
+
+      // Recursively process nested layouts
+      for (const layoutEntry of entry.layout) {
+        processEntry(layoutEntry);
+      }
+    }
+
+    for (const entry of entries) {
+      processEntry(entry);
+    }
+
+    return map;
+  }
+
+  /**
    * Resolve all segments for a route with revalidation logic (for matchPartial)
    * Used for single-cache-per-request pattern in partial/navigation requests
    */
@@ -1509,7 +1671,10 @@ export function createRSCRouter<TEnv = any>(
       }
 
       // Resolve entry with revalidation logic
-      const nonParallelEntry = entry as Exclude<EntryData, { type: "parallel" }>;
+      const nonParallelEntry = entry as Exclude<
+        EntryData,
+        { type: "parallel" }
+      >;
       const resolved = await resolveWithRevalidationErrorHandling(
         nonParallelEntry,
         params,
@@ -2407,7 +2572,11 @@ export function createRSCRouter<TEnv = any>(
                 handlerContext,
                 loaderPromises
               );
-              revalidateScope.cacheRoute(pathname, matched.params, freshSegments);
+              revalidateScope.cacheRoute(
+                pathname,
+                matched.params,
+                freshSegments
+              );
               console.log(`[Router.match] Revalidation complete: ${pathname}`);
             } catch (error) {
               console.error(`[Router.match] Revalidation failed:`, error);
@@ -2919,6 +3088,47 @@ export function createRSCRouter<TEnv = any>(
         const cachedSegments = cacheResult.segments;
         const cachedMatchedIds = cacheResult.segments.map((s) => s.id);
 
+        // Apply revalidation to cached segments - set component=null for segments
+        // client already has and doesn't need to update (matches non-cached behavior)
+        const entryRevalidateMap = buildEntryRevalidateMap(entries);
+        for (const segment of cachedSegments) {
+          // Skip segments client doesn't have - they need their component
+          if (!clientSegmentSet.has(segment.id)) continue;
+
+          // Skip intercept segments - they're handled separately
+          if (segment.namespace?.startsWith("intercept:")) continue;
+
+          // Look up revalidation rules for this segment
+          const entryInfo = entryRevalidateMap.get(segment.id);
+          if (!entryInfo || entryInfo.revalidate.length === 0) {
+            // No revalidation rules, use default behavior (skip if client has)
+            segment.component = null;
+            segment.loading = undefined;
+            continue;
+          }
+
+          const shouldRevalidate = await evaluateRevalidation({
+            segment,
+            prevParams,
+            getPrevSegment: null,
+            request,
+            prevUrl,
+            nextUrl: url,
+            revalidations: entryInfo.revalidate.map((fn, i) => ({
+              name: `revalidate${i}`,
+              fn,
+            })),
+            routeKey: matched.routeKey,
+            context: handlerContext,
+            actionContext,
+          });
+
+          if (!shouldRevalidate) {
+            segment.component = null; // Client has it, no revalidation needed
+            segment.loading = undefined; // Clear loading to prevent Suspense
+          }
+        }
+
         // Resolve loaders fresh with revalidation logic (loaders are NOT cached by default)
         const loaderResult = await getContext().runWithStore(
           Store,
@@ -2992,7 +3202,10 @@ export function createRSCRouter<TEnv = any>(
                 );
               }
 
-              const allFreshSegments = [...freshResult.segments, ...freshInterceptSegments];
+              const allFreshSegments = [
+                ...freshResult.segments,
+                ...freshInterceptSegments,
+              ];
               revalidateScope.cacheRoute(
                 pathname,
                 matched.params,
@@ -3196,20 +3409,70 @@ export function createRSCRouter<TEnv = any>(
 
       // Resolve intercept for cache hits (cache doesn't include intercept segments for non-intercept keys)
       // Skip if: (1) no intercept, (2) already resolved in miss path, (3) cache hit with intercept key (segments include intercept)
-      const skipInterceptResolution = !interceptResult || interceptSegments.length > 0 || (cacheHit && isIntercept);
+      const skipInterceptResolution =
+        !interceptResult ||
+        interceptSegments.length > 0 ||
+        (cacheHit && isIntercept);
 
       // For cache hit with intercept, extract intercept segments from cached data for slots metadata
+      // BUT re-resolve loaders to get fresh data (cached components + fresh loaders)
       if (interceptResult && cacheHit && isIntercept) {
         const slotName = interceptResult.intercept.slotName;
         // Find intercept segments from cached segments (they have namespace starting with "intercept:")
-        interceptSegments = segments.filter((s) => s.namespace?.startsWith("intercept:"));
+        interceptSegments = segments.filter((s) =>
+          s.namespace?.startsWith("intercept:")
+        );
+
+        // Re-resolve intercept loaders for fresh data on cache hit
+        // This keeps cached component/layout but fetches fresh loader data
+        const freshLoaderResult = await getContext().runWithStore(
+          Store,
+          Store.namespace || "#router",
+          Store.parent,
+          () =>
+            resolveInterceptLoadersOnly(
+              interceptResult.intercept,
+              interceptResult.entry,
+              matched.params,
+              handlerContext,
+              true, // belongsToRoute
+              {
+                clientSegmentIds: clientSegmentSet,
+                prevParams,
+                request,
+                prevUrl,
+                nextUrl: url,
+                routeKey: matched.routeKey,
+                actionContext,
+                stale,
+              }
+            )
+        );
+
+        // Update intercept segment's loaderDataPromise with fresh data if loaders were resolved
+        if (freshLoaderResult) {
+          // Find the main intercept segment (type="parallel" with slot property) and update its loader data
+          const interceptMainSegment = interceptSegments.find(
+            (s) => s.type === "parallel" && s.slot
+          );
+          if (interceptMainSegment) {
+            interceptMainSegment.loaderDataPromise =
+              freshLoaderResult.loaderDataPromise;
+            interceptMainSegment.loaderIds = freshLoaderResult.loaderIds;
+            console.log(
+              `[Router.matchPartial] Cache HIT + fresh loaders for intercept "${localRouteName}" -> slot "${slotName}"`
+            );
+          }
+        } else {
+          console.log(
+            `[Router.matchPartial] Cache HIT for intercept "${localRouteName}" -> slot "${slotName}" (no loader revalidation)`
+          );
+        }
+
         slots[slotName] = {
           active: true,
           segments: interceptSegments,
         };
-        console.log(
-          `[Router.matchPartial] Cache HIT for intercept "${localRouteName}" -> slot "${slotName}"`
-        );
       }
 
       if (interceptResult && !skipInterceptResolution) {
