@@ -1504,7 +1504,26 @@ for await (const segment of segmentPipeline(ctx)) {
 ## Next Steps
 
 1. [ ] Integrate cache handlers into router.ts (medium risk)
-2. [ ] Bundle parameters into ResolutionContext usage
+2. [x] Bundle parameters into ResolutionContext usage
 3. [ ] Create test coverage for matchPartial edge cases
 4. [ ] Consider async generator model for streaming scenarios
 5. [ ] Document promise semantics explicitly
+
+---
+
+## Recent Progress (2024-01)
+
+### Completed: ResolutionContext Integration
+
+Integrated `buildResolutionContext()` throughout `matchPartial`:
+- Created `resolutionCtx` after entries collection (line ~3085)
+- Updated all major function calls to use context values:
+  - `applyCacheRevalidation()` - uses `resolutionCtx.*`
+  - `resolveLoadersOnlyWithRevalidation()` - uses `resolutionCtx.*`
+  - `resolveAllSegmentsWithRevalidation()` (cache miss) - uses `resolutionCtx.*`
+  - `resolveInterceptEntry()` - uses `getInterceptParams(resolutionCtx)`
+  - `resolveInterceptLoadersOnly()` - uses `getInterceptParams(resolutionCtx)`
+- Background `waitUntil` callbacks capture values from `resolutionCtx` for safe async access
+- Metrics logging and return values use `resolutionCtx.*`
+
+**Test Results:** All 86 unit tests pass, all cache/revalidation/navigation e2e tests pass.
