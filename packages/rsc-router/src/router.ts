@@ -72,7 +72,12 @@ import {
   type MiddlewareFn,
 } from "./router/middleware.js";
 import { shouldLookupIntercept } from "./router/intercept.js";
-import { applyCacheRevalidation } from "./router/cache-revalidation.js";
+import {
+  handleCacheHit,
+  handleCacheMiss,
+  handleCacheHitIntercept,
+  type CacheHandlerDeps,
+} from "./router/cache-handlers.js";
 import {
   buildResolutionContext,
   getInterceptParams,
@@ -3112,6 +3117,17 @@ export function createRSCRouter<TEnv = any>(
         }
       }
 
+      // Build cache handler dependencies (functions from router closure)
+      const cacheHandlerDeps: CacheHandlerDeps = {
+        Store,
+        getContext,
+        buildEntryRevalidateMap,
+        resolveLoadersOnlyWithRevalidation,
+        resolveAllSegmentsWithRevalidation,
+        resolveInterceptEntry,
+        resolveInterceptLoadersOnly,
+      };
+
       // Determine if this is an intercept navigation (uses different cache key)
       const isIntercept = !!interceptResult;
 
@@ -3126,50 +3142,8 @@ export function createRSCRouter<TEnv = any>(
 
       if (cacheResult) {
         cacheHit = true;
-        // Cache HIT - use cached non-loader segments (includes intercept segments if intercept cache)
-        const cachedSegments = cacheResult.segments;
-        const cachedMatchedIds = cacheResult.segments.map((s) => s.id);
-
-        // Apply revalidation to cached segments - set component=null for segments
-        // client already has and doesn't need to update (matches non-cached behavior)
-        const entryRevalidateMap = buildEntryRevalidateMap(resolutionCtx.entries);
-        await applyCacheRevalidation({
-          cachedSegments,
-          clientSegmentSet: resolutionCtx.clientSegmentSet,
-          entryRevalidateMap,
-          prevParams: resolutionCtx.prevParams,
-          request: resolutionCtx.request,
-          prevUrl: resolutionCtx.prevUrl,
-          nextUrl: resolutionCtx.url,
-          routeKey: resolutionCtx.matched.routeKey,
-          handlerContext: resolutionCtx.handlerContext,
-          actionContext: resolutionCtx.actionContext,
-        });
-
-        // Resolve loaders fresh with revalidation logic (loaders are NOT cached by default)
-        const loaderResult = await getContext().runWithStore(
-          Store,
-          Store.namespace || "#router",
-          Store.parent,
-          () =>
-            resolveLoadersOnlyWithRevalidation(
-              resolutionCtx.entries,
-              resolutionCtx.handlerContext,
-              resolutionCtx.clientSegmentSet,
-              resolutionCtx.prevParams,
-              resolutionCtx.request,
-              resolutionCtx.prevUrl,
-              resolutionCtx.url,
-              resolutionCtx.matched.routeKey,
-              resolutionCtx.actionContext
-            )
-        );
-
-        // Combine: cached segments + fresh loaders
-        result = {
-          segments: [...cachedSegments, ...loaderResult.segments],
-          matchedIds: [...cachedMatchedIds, ...loaderResult.matchedIds],
-        };
+        // Cache HIT - use extracted handler
+        result = await handleCacheHit(resolutionCtx, cacheHandlerDeps, cacheResult);
 
         // Trigger background revalidation if stale (SWR)
         if (cacheResult.shouldRevalidate && cacheScope) {
@@ -3264,61 +3238,15 @@ export function createRSCRouter<TEnv = any>(
           });
         }
       } else {
-        // Cache MISS or action - resolve all segments with revalidation logic
-        result = await getContext().runWithStore(
-          Store,
-          Store.namespace || "#router",
-          Store.parent,
-          async () => {
-            return resolveAllSegmentsWithRevalidation(
-              resolutionCtx.entries,
-              resolutionCtx.matched.routeKey,
-              resolutionCtx.matched.params,
-              resolutionCtx.handlerContext,
-              resolutionCtx.clientSegmentSet,
-              resolutionCtx.prevParams,
-              resolutionCtx.request,
-              resolutionCtx.prevUrl,
-              resolutionCtx.url,
-              resolutionCtx.loaderPromises,
-              resolutionCtx.actionContext,
-              interceptResult,
-              resolutionCtx.localRouteName,
-              resolutionCtx.pathname
-            );
-          }
+        // Cache MISS or action - use extracted handler
+        const cacheMissResult = await handleCacheMiss(
+          resolutionCtx,
+          cacheHandlerDeps,
+          interceptResult,
+          slots
         );
-
-        // For intercept navigations, resolve intercept segments before caching
-        // so the cache includes everything needed for this intercept navigation
-        if (interceptResult) {
-          const slotName = interceptResult.intercept.slotName;
-          console.log(
-            `[Router.matchPartial] Found intercept for "${resolutionCtx.localRouteName}" -> slot "${slotName}"`
-          );
-
-          // Resolve intercept entry (middleware, loaders, handler)
-          interceptSegments = await getContext().runWithStore(
-            Store,
-            Store.namespace || "#router",
-            Store.parent,
-            () =>
-              resolveInterceptEntry(
-                interceptResult.intercept,
-                interceptResult.entry,
-                resolutionCtx.matched.params,
-                resolutionCtx.handlerContext,
-                true, // belongsToRoute
-                getInterceptParams(resolutionCtx)
-              )
-          );
-
-          // Add to slots metadata - browser uses this to know which slots are active
-          slots[slotName] = {
-            active: true,
-            segments: interceptSegments,
-          };
-        }
+        result = cacheMissResult;
+        interceptSegments = cacheMissResult.interceptSegments;
 
         // Cache for next request (non-blocking, skip during actions)
         // Include intercept segments so cache hit serves complete response
@@ -3452,53 +3380,13 @@ export function createRSCRouter<TEnv = any>(
       // For cache hit with intercept, extract intercept segments from cached data for slots metadata
       // BUT re-resolve loaders to get fresh data (cached components + fresh loaders)
       if (interceptResult && cacheHit && isIntercept) {
-        const slotName = interceptResult.intercept.slotName;
-        // Find intercept segments from cached segments (they have namespace starting with "intercept:")
-        interceptSegments = segments.filter((s) =>
-          s.namespace?.startsWith("intercept:")
+        interceptSegments = await handleCacheHitIntercept(
+          resolutionCtx,
+          cacheHandlerDeps,
+          interceptResult,
+          segments,
+          slots
         );
-
-        // Re-resolve intercept loaders for fresh data on cache hit
-        // This keeps cached component/layout but fetches fresh loader data
-        const freshLoaderResult = await getContext().runWithStore(
-          Store,
-          Store.namespace || "#router",
-          Store.parent,
-          () =>
-            resolveInterceptLoadersOnly(
-              interceptResult.intercept,
-              interceptResult.entry,
-              resolutionCtx.matched.params,
-              resolutionCtx.handlerContext,
-              true, // belongsToRoute
-              getInterceptParams(resolutionCtx)
-            )
-        );
-
-        // Update intercept segment's loaderDataPromise with fresh data if loaders were resolved
-        if (freshLoaderResult) {
-          // Find the main intercept segment (type="parallel" with slot property) and update its loader data
-          const interceptMainSegment = interceptSegments.find(
-            (s) => s.type === "parallel" && s.slot
-          );
-          if (interceptMainSegment) {
-            interceptMainSegment.loaderDataPromise =
-              freshLoaderResult.loaderDataPromise;
-            interceptMainSegment.loaderIds = freshLoaderResult.loaderIds;
-            console.log(
-              `[Router.matchPartial] Cache HIT + fresh loaders for intercept "${resolutionCtx.localRouteName}" -> slot "${slotName}"`
-            );
-          }
-        } else {
-          console.log(
-            `[Router.matchPartial] Cache HIT for intercept "${resolutionCtx.localRouteName}" -> slot "${slotName}" (no loader revalidation)`
-          );
-        }
-
-        slots[slotName] = {
-          active: true,
-          segments: interceptSegments,
-        };
       }
 
       if (interceptResult && !skipInterceptResolution) {

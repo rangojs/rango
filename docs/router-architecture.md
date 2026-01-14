@@ -1454,7 +1454,7 @@ The 770 lines of `matchPartial` won't become 77 lines. But they can become **770
 | `router/types.ts` | ResolutionContext, RouteMatch, InterceptResult, ActionContext, SlotState, SegmentResolutionResult |
 | `router/intercept.ts` | shouldLookupIntercept() - pure function for intercept decision |
 | `router/cache-revalidation.ts` | applyCacheRevalidation() - applies revalidation to cached segments |
-| `router/cache-handlers.ts` | CacheHandlerParams, handleCacheHit() - extracted cache hit logic |
+| `router/cache-handlers.ts` | handleCacheHit(), handleCacheMiss(), handleCacheHitIntercept() - cache path handlers |
 | `router/resolution-context.ts` | buildResolutionContext(), getRevalidationParams(), getInterceptParams() |
 | `router/segment-pipeline.ts` | Async generator middleware model prototype |
 | `router/revalidation.ts` | evaluateRevalidation() - already well-extracted |
@@ -1503,7 +1503,7 @@ for await (const segment of segmentPipeline(ctx)) {
 
 ## Next Steps
 
-1. [ ] Integrate cache handlers into router.ts (medium risk)
+1. [x] Integrate cache handlers into router.ts (medium risk)
 2. [x] Bundle parameters into ResolutionContext usage
 3. [ ] Create test coverage for matchPartial edge cases
 4. [ ] Consider async generator model for streaming scenarios
@@ -1512,6 +1512,20 @@ for await (const segment of segmentPipeline(ctx)) {
 ---
 
 ## Recent Progress (2024-01)
+
+### Completed: Cache Handlers Extraction
+
+Extracted cache hit and miss logic from `matchPartial` into separate functions:
+- `handleCacheHit(ctx, deps, cacheResult)` - handles cached segment revalidation + fresh loaders
+- `handleCacheMiss(ctx, deps, interceptResult, slots)` - handles full segment resolution
+- `handleCacheHitIntercept(ctx, deps, interceptResult, segments, slots)` - handles intercept on cache hit
+
+The `CacheHandlerDeps` interface provides router closure functions to the handlers:
+- `Store`, `getContext`, `buildEntryRevalidateMap`
+- Resolution functions: `resolveLoadersOnlyWithRevalidation`, `resolveAllSegmentsWithRevalidation`
+- Intercept functions: `resolveInterceptEntry`, `resolveInterceptLoadersOnly`
+
+This reduces `matchPartial` complexity while keeping SWR/proactive caching logic inline (requires `waitUntil`).
 
 ### Completed: ResolutionContext Integration
 

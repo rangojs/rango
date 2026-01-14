@@ -7,79 +7,84 @@
  * - Cache miss: Resolve all segments from scratch
  */
 
-import type { ResolvedSegment, HandlerContext, ShouldRevalidateFn } from "../types";
-import type { EntryData, InterceptEntry, MetricsStore } from "../server/context";
+import type { ResolvedSegment, SlotState } from "../types";
+import type { EntryData } from "../server/context";
 import type {
-  ActionContext,
   InterceptResult,
   SegmentResolutionResult,
-  SlotState,
+  ResolutionContext,
 } from "./types";
 import type { EntryRevalidateMap } from "./cache-revalidation";
 import { applyCacheRevalidation } from "./cache-revalidation.js";
+import { getInterceptParams } from "./resolution-context.js";
 
 /**
- * Parameters shared between cache hit and cache miss handlers
+ * Dependencies needed by cache handlers
+ * These are functions defined in the router closure
  */
-export interface CacheHandlerParams<TEnv = any> {
-  // Route info
-  entries: EntryData[];
-  matched: { routeKey: string; params: Record<string, string> };
-  localRouteName: string;
-  pathname: string;
-
-  // Request context
-  request: Request;
-  url: URL;
-  prevUrl: URL;
-  stale: boolean;
-
-  // Client state
-  clientSegmentSet: Set<string>;
-  prevParams: Record<string, string>;
-
-  // Handler context
-  handlerContext: HandlerContext<any, TEnv>;
-  actionContext?: ActionContext;
-  bindings: TEnv;
-
-  // Intercept info
-  interceptResult: InterceptResult | null;
-
-  // Store for running with context
+export interface CacheHandlerDeps {
   Store: any;
-
-  // Helper functions (passed from router)
   getContext: () => any;
   buildEntryRevalidateMap: (entries: EntryData[]) => EntryRevalidateMap;
-  resolveLoadersOnlyWithRevalidation: (...args: any[]) => Promise<SegmentResolutionResult>;
-  resolveAllSegmentsWithRevalidation: (...args: any[]) => Promise<SegmentResolutionResult>;
-  resolveInterceptEntry: (...args: any[]) => Promise<ResolvedSegment[]>;
-  resolveInterceptLoadersOnly: (...args: any[]) => Promise<any>;
-  loaderPromises: Map<string, Promise<any>>;
-
-  // Metrics
-  metricsStore: MetricsStore | null;
+  resolveLoadersOnlyWithRevalidation: (
+    entries: EntryData[],
+    handlerContext: any,
+    clientSegmentSet: Set<string>,
+    prevParams: Record<string, string>,
+    request: Request,
+    prevUrl: URL,
+    url: URL,
+    routeKey: string,
+    actionContext?: any
+  ) => Promise<SegmentResolutionResult>;
+  resolveAllSegmentsWithRevalidation: (
+    entries: EntryData[],
+    routeKey: string,
+    params: Record<string, string>,
+    handlerContext: any,
+    clientSegmentSet: Set<string>,
+    prevParams: Record<string, string>,
+    request: Request,
+    prevUrl: URL,
+    url: URL,
+    loaderPromises: Map<string, Promise<any>>,
+    actionContext: any,
+    interceptResult: InterceptResult | null,
+    localRouteName: string,
+    pathname: string
+  ) => Promise<SegmentResolutionResult>;
+  resolveInterceptEntry: (
+    intercept: any,
+    entry: any,
+    params: Record<string, string>,
+    handlerContext: any,
+    belongsToRoute: boolean,
+    revalidationContext?: any
+  ) => Promise<ResolvedSegment[]>;
+  resolveInterceptLoadersOnly: (
+    intercept: any,
+    entry: any,
+    params: Record<string, string>,
+    handlerContext: any,
+    belongsToRoute: boolean,
+    revalidationContext?: any
+  ) => Promise<any>;
 }
 
 /**
- * Cache hit result with segments and metadata
+ * Cache result from lookup
  */
-export interface CacheHitResult {
+export interface CacheResult {
   segments: ResolvedSegment[];
-  matchedIds: string[];
-  interceptSegments: ResolvedSegment[];
-  slots: Record<string, SlotState>;
+  shouldRevalidate: boolean;
 }
 
 /**
- * Cache miss result with segments and metadata
+ * Result from cache hit/miss handlers
  */
-export interface CacheMissResult {
+export interface CacheHandlerResult {
   segments: ResolvedSegment[];
   matchedIds: string[];
-  interceptSegments: ResolvedSegment[];
-  slots: Record<string, SlotState>;
 }
 
 /**
@@ -87,147 +92,227 @@ export interface CacheMissResult {
  *
  * Uses cached non-loader segments and resolves loaders fresh.
  * Applies revalidation to cached segments to skip unchanged ones.
+ * Does NOT handle SWR background revalidation - that's done by the caller.
  *
- * @param params - Common handler parameters
+ * @param ctx - Resolution context with all request/route info
+ * @param deps - Router closure dependencies
  * @param cacheResult - Cache lookup result with segments
- * @returns Resolved segments and intercept data
+ * @returns Resolved segments and matched IDs
  */
 export async function handleCacheHit<TEnv>(
-  params: CacheHandlerParams<TEnv>,
-  cacheResult: { segments: ResolvedSegment[]; shouldRevalidate: boolean }
-): Promise<CacheHitResult> {
+  ctx: ResolutionContext<TEnv>,
+  deps: CacheHandlerDeps,
+  cacheResult: CacheResult
+): Promise<CacheHandlerResult> {
   const {
-    entries,
-    matched,
-    localRouteName,
-    pathname,
-    request,
-    url,
-    prevUrl,
-    stale,
-    clientSegmentSet,
-    prevParams,
-    handlerContext,
-    actionContext,
     Store,
     getContext,
     buildEntryRevalidateMap,
     resolveLoadersOnlyWithRevalidation,
-    resolveInterceptLoadersOnly,
-    interceptResult,
-  } = params;
+  } = deps;
 
   // Cache HIT - use cached non-loader segments
   const cachedSegments = cacheResult.segments;
   const cachedMatchedIds = cacheResult.segments.map((s) => s.id);
 
-  // Apply revalidation to cached segments
-  const entryRevalidateMap = buildEntryRevalidateMap(entries);
+  // Apply revalidation to cached segments - set component=null for segments
+  // client already has and doesn't need to update
+  const entryRevalidateMap = buildEntryRevalidateMap(ctx.entries);
   await applyCacheRevalidation({
     cachedSegments,
-    clientSegmentSet,
+    clientSegmentSet: ctx.clientSegmentSet,
     entryRevalidateMap,
-    prevParams,
-    request,
-    prevUrl,
-    nextUrl: url,
-    routeKey: matched.routeKey,
-    handlerContext,
-    actionContext,
+    prevParams: ctx.prevParams,
+    request: ctx.request,
+    prevUrl: ctx.prevUrl,
+    nextUrl: ctx.url,
+    routeKey: ctx.matched.routeKey,
+    handlerContext: ctx.handlerContext,
+    actionContext: ctx.actionContext,
   });
 
-  // Resolve loaders fresh with revalidation logic
+  // Resolve loaders fresh with revalidation logic (loaders are NOT cached)
   const loaderResult = await getContext().runWithStore(
     Store,
     Store.namespace || "#router",
     Store.parent,
     () =>
       resolveLoadersOnlyWithRevalidation(
-        entries,
-        handlerContext,
-        clientSegmentSet,
-        prevParams,
-        request,
-        prevUrl,
-        url,
-        matched.routeKey,
-        actionContext
+        ctx.entries,
+        ctx.handlerContext,
+        ctx.clientSegmentSet,
+        ctx.prevParams,
+        ctx.request,
+        ctx.prevUrl,
+        ctx.url,
+        ctx.matched.routeKey,
+        ctx.actionContext
       )
   );
 
   // Combine cached segments + fresh loaders
-  const segments = [...cachedSegments, ...loaderResult.segments];
-  const matchedIds = [...cachedMatchedIds, ...loaderResult.matchedIds];
+  return {
+    segments: [...cachedSegments, ...loaderResult.segments],
+    matchedIds: [...cachedMatchedIds, ...loaderResult.matchedIds],
+  };
+}
 
-  // Handle intercepts for cache hit
-  const slots: Record<string, SlotState> = {};
+/**
+ * Handle cache miss path in matchPartial
+ *
+ * Resolves all segments from scratch with revalidation logic.
+ * Also resolves intercept segments if intercepting.
+ *
+ * @param ctx - Resolution context with all request/route info
+ * @param deps - Router closure dependencies
+ * @param interceptResult - Intercept detection result (if any)
+ * @param slots - Slots object to populate with intercept data
+ * @returns Resolved segments, matched IDs, and intercept segments
+ */
+export async function handleCacheMiss<TEnv>(
+  ctx: ResolutionContext<TEnv>,
+  deps: CacheHandlerDeps,
+  interceptResult: InterceptResult | null,
+  slots: Record<string, SlotState>
+): Promise<CacheHandlerResult & { interceptSegments: ResolvedSegment[] }> {
+  const {
+    Store,
+    getContext,
+    resolveAllSegmentsWithRevalidation,
+    resolveInterceptEntry,
+  } = deps;
+
+  // Resolve all segments with revalidation logic
+  const result = await getContext().runWithStore(
+    Store,
+    Store.namespace || "#router",
+    Store.parent,
+    async () => {
+      return resolveAllSegmentsWithRevalidation(
+        ctx.entries,
+        ctx.matched.routeKey,
+        ctx.matched.params,
+        ctx.handlerContext,
+        ctx.clientSegmentSet,
+        ctx.prevParams,
+        ctx.request,
+        ctx.prevUrl,
+        ctx.url,
+        ctx.loaderPromises,
+        ctx.actionContext,
+        interceptResult,
+        ctx.localRouteName,
+        ctx.pathname
+      );
+    }
+  );
+
   let interceptSegments: ResolvedSegment[] = [];
 
+  // For intercept navigations, resolve intercept segments
   if (interceptResult) {
     const slotName = interceptResult.intercept.slotName;
-
-    // Check if we have cached intercept segments
-    const cachedInterceptSegments = cachedSegments.filter(
-      (s) => s.namespace?.startsWith("intercept:")
+    console.log(
+      `[Router.handleCacheMiss] Found intercept for "${ctx.localRouteName}" -> slot "${slotName}"`
     );
 
-    if (cachedInterceptSegments.length > 0) {
-      interceptSegments = cachedInterceptSegments;
+    // Resolve intercept entry (middleware, loaders, handler)
+    interceptSegments = await getContext().runWithStore(
+      Store,
+      Store.namespace || "#router",
+      Store.parent,
+      () =>
+        resolveInterceptEntry(
+          interceptResult.intercept,
+          interceptResult.entry,
+          ctx.matched.params,
+          ctx.handlerContext,
+          true, // belongsToRoute
+          getInterceptParams(ctx)
+        )
+    );
 
-      // Resolve fresh loaders for intercept if needed
-      const freshLoaderResult = await getContext().runWithStore(
-        Store,
-        Store.namespace || "#router",
-        Store.parent,
-        () =>
-          resolveInterceptLoadersOnly(
-            interceptResult.intercept,
-            interceptResult.entry,
-            matched.params,
-            handlerContext,
-            true,
-            {
-              clientSegmentIds: clientSegmentSet,
-              prevParams,
-              request,
-              prevUrl,
-              nextUrl: url,
-              routeKey: matched.routeKey,
-              actionContext,
-              stale,
-            }
-          )
-      );
-
-      // Update intercept segment's loaderDataPromise
-      if (freshLoaderResult) {
-        const interceptMainSegment = interceptSegments.find(
-          (s) => s.type === "parallel" && s.slot
-        );
-        if (interceptMainSegment) {
-          interceptMainSegment.loaderDataPromise = freshLoaderResult.loaderDataPromise;
-          interceptMainSegment.loaderIds = freshLoaderResult.loaderIds;
-          console.log(
-            `[Router.matchPartial] Cache HIT + fresh loaders for intercept "${localRouteName}" -> slot "${slotName}"`
-          );
-        }
-      } else {
-        console.log(
-          `[Router.matchPartial] Cache HIT for intercept "${localRouteName}" -> slot "${slotName}" (no loader revalidation)`
-        );
-      }
-
-      slots[slotName] = {
-        active: true,
-        segments: interceptSegments,
-      };
-    }
+    // Add to slots metadata
+    slots[slotName] = {
+      active: true,
+      segments: interceptSegments,
+    };
   }
 
   return {
-    segments,
-    matchedIds,
+    segments: result.segments,
+    matchedIds: result.matchedIds,
     interceptSegments,
-    slots,
   };
+}
+
+/**
+ * Handle intercept resolution for cache hits
+ *
+ * For cache hits with intercept, extracts intercept segments from cached data
+ * and re-resolves loaders to get fresh data.
+ *
+ * @param ctx - Resolution context
+ * @param deps - Router closure dependencies
+ * @param interceptResult - Intercept detection result
+ * @param cachedSegments - All cached segments
+ * @param slots - Slots object to populate
+ * @returns Intercept segments
+ */
+export async function handleCacheHitIntercept<TEnv>(
+  ctx: ResolutionContext<TEnv>,
+  deps: CacheHandlerDeps,
+  interceptResult: InterceptResult,
+  cachedSegments: ResolvedSegment[],
+  slots: Record<string, SlotState>
+): Promise<ResolvedSegment[]> {
+  const { Store, getContext, resolveInterceptLoadersOnly } = deps;
+
+  const slotName = interceptResult.intercept.slotName;
+
+  // Find intercept segments from cached segments (have namespace starting with "intercept:")
+  const interceptSegments = cachedSegments.filter((s) =>
+    s.namespace?.startsWith("intercept:")
+  );
+
+  // Re-resolve intercept loaders for fresh data on cache hit
+  const freshLoaderResult = await getContext().runWithStore(
+    Store,
+    Store.namespace || "#router",
+    Store.parent,
+    () =>
+      resolveInterceptLoadersOnly(
+        interceptResult.intercept,
+        interceptResult.entry,
+        ctx.matched.params,
+        ctx.handlerContext,
+        true, // belongsToRoute
+        getInterceptParams(ctx)
+      )
+  );
+
+  // Update intercept segment's loaderDataPromise with fresh data
+  if (freshLoaderResult) {
+    const interceptMainSegment = interceptSegments.find(
+      (s) => s.type === "parallel" && s.slot
+    );
+    if (interceptMainSegment) {
+      interceptMainSegment.loaderDataPromise = freshLoaderResult.loaderDataPromise;
+      interceptMainSegment.loaderIds = freshLoaderResult.loaderIds;
+      console.log(
+        `[Router.handleCacheHitIntercept] Cache HIT + fresh loaders for intercept "${ctx.localRouteName}" -> slot "${slotName}"`
+      );
+    }
+  } else {
+    console.log(
+      `[Router.handleCacheHitIntercept] Cache HIT for intercept "${ctx.localRouteName}" -> slot "${slotName}" (no loader revalidation)`
+    );
+  }
+
+  slots[slotName] = {
+    active: true,
+    segments: interceptSegments,
+  };
+
+  return interceptSegments;
 }
