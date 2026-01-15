@@ -343,7 +343,7 @@
 
 ### Step 18: Create PR
 **Date:** 2026-01-15
-**PR Link:** (see below)
+**PR Link:** https://github.com/ivogt/vite-rsc/pull/87
 **Confidence Level:** 9/10
 
 **Summary of All Improvements:**
