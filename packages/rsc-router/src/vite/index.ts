@@ -366,6 +366,93 @@ function createVersionPlugin(): Plugin {
 }
 
 /**
+ * Plugin that auto-injects VERSION into custom entry.rsc files.
+ * If a custom entry.rsc file uses createRSCHandler but doesn't pass version,
+ * this transform adds the import and property automatically.
+ */
+function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
+  let projectRoot = "";
+  let resolvedEntryPath = "";
+
+  return {
+    name: "rsc-router:version-injector",
+    enforce: "pre",
+
+    configResolved(config) {
+      projectRoot = config.root;
+      resolvedEntryPath = resolve(projectRoot, rscEntryPath);
+    },
+
+    transform(code, id) {
+      // Only transform the RSC entry file
+      const normalizedId = Vite.normalizePath(id);
+      const normalizedEntry = Vite.normalizePath(resolvedEntryPath);
+
+      if (normalizedId !== normalizedEntry) {
+        return null;
+      }
+
+      // Check if file uses createRSCHandler
+      if (!code.includes("createRSCHandler")) {
+        return null;
+      }
+
+      // Check if VERSION is already imported
+      if (code.includes("rsc-router:version")) {
+        return null;
+      }
+
+      // Check if version property is already being passed
+      // Look for version: in the createRSCHandler call
+      const handlerCallMatch = code.match(/createRSCHandler\s*\(\s*\{/);
+      if (!handlerCallMatch) {
+        return null;
+      }
+
+      // Add VERSION import after the last import statement
+      const lastImportIndex = code.lastIndexOf("import ");
+      if (lastImportIndex === -1) {
+        return null;
+      }
+
+      // Find the end of the last import statement
+      const afterLastImport = code.indexOf("\n", lastImportIndex);
+      if (afterLastImport === -1) {
+        return null;
+      }
+
+      // Find next line that's not an import continuation
+      let insertIndex = afterLastImport + 1;
+      while (
+        insertIndex < code.length &&
+        (code.slice(insertIndex).match(/^\s*(from|import)\s/) ||
+          code[insertIndex] === "\n")
+      ) {
+        const nextNewline = code.indexOf("\n", insertIndex);
+        if (nextNewline === -1) break;
+        insertIndex = nextNewline + 1;
+      }
+
+      // Insert VERSION import
+      const versionImport = `import { VERSION } from "rsc-router:version";\n`;
+      let newCode = code.slice(0, insertIndex) + versionImport + code.slice(insertIndex);
+
+      // Add version: VERSION to createRSCHandler call
+      // Find createRSCHandler({ and add version: VERSION right after the opening brace
+      newCode = newCode.replace(
+        /createRSCHandler\s*\(\s*\{/,
+        "createRSCHandler({\n  version: VERSION,"
+      );
+
+      return {
+        code: newCode,
+        map: null,
+      };
+    },
+  };
+}
+
+/**
  * Vite plugin for rsc-router.
  *
  * Includes @vitejs/plugin-rsc and all necessary transforms for the router
@@ -396,6 +483,9 @@ export async function rscRouter(
   const enableExposeActionId = options.exposeActionId ?? true;
 
   const plugins: PluginOption[] = [];
+
+  // Track RSC entry path for version injection
+  let rscEntryPath: string | null = null;
 
   if (preset === "cloudflare") {
     // Cloudflare preset: configure entries for cloudflare worker setup
@@ -502,6 +592,9 @@ export async function rscRouter(
         rsc: userEntries.rsc ?? DEFAULT_ENTRY_PATHS.rsc,
       };
 
+      // Track RSC entry for version injection
+      rscEntryPath = entryPaths.rsc;
+
       // Use process.cwd() as initial root - will be updated in config hook
       let projectRoot = process.cwd();
 
@@ -594,6 +687,11 @@ export async function rscRouter(
 
   // Add version virtual module plugin for cache invalidation
   plugins.push(createVersionPlugin());
+
+  // Add version injector for custom entry.rsc files
+  if (rscEntryPath) {
+    plugins.push(createVersionInjectorPlugin(rscEntryPath));
+  }
 
   return plugins;
 }
