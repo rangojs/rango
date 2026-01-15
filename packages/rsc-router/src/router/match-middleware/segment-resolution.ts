@@ -115,29 +115,21 @@ export function withSegmentResolution<TEnv>(
       return;
     }
 
-    const {
-      getContext: getServerContext,
-      resolveAllSegmentsWithRevalidation,
-      resolveAllSegments,
-    } = getRouterContext<TEnv>();
+    const { resolveAllSegmentsWithRevalidation, resolveAllSegments } =
+      getRouterContext<TEnv>();
 
     const Store = ctx.Store;
 
     if (ctx.isFullMatch) {
       // Full match (document request) - simple resolution without revalidation
-      const segments = await getServerContext().runWithStore(
-        Store,
-        Store.namespace || "#router",
-        Store.parent,
-        async () => {
-          return resolveAllSegments(
-            ctx.entries,
-            ctx.routeKey,
-            ctx.matched.params,
-            ctx.handlerContext,
-            ctx.loaderPromises
-          );
-        }
+      const segments = await Store.run(() =>
+        resolveAllSegments(
+          ctx.entries,
+          ctx.routeKey,
+          ctx.matched.params,
+          ctx.handlerContext,
+          ctx.loaderPromises
+        )
       );
 
       // Update state with resolved segments
@@ -150,28 +142,23 @@ export function withSegmentResolution<TEnv>(
       }
     } else {
       // Partial match (navigation) - resolution with revalidation logic
-      const result = await getServerContext().runWithStore(
-        Store,
-        Store.namespace || "#router",
-        Store.parent,
-        async () => {
-          return resolveAllSegmentsWithRevalidation(
-            ctx.entries,
-            ctx.routeKey,
-            ctx.matched.params,
-            ctx.handlerContext,
-            ctx.clientSegmentSet,
-            ctx.prevParams,
-            ctx.request,
-            ctx.prevUrl,
-            ctx.url,
-            ctx.loaderPromises,
-            ctx.actionContext,
-            ctx.interceptResult,
-            ctx.localRouteName,
-            ctx.pathname
-          );
-        }
+      const result = await Store.run(() =>
+        resolveAllSegmentsWithRevalidation(
+          ctx.entries,
+          ctx.routeKey,
+          ctx.matched.params,
+          ctx.handlerContext,
+          ctx.clientSegmentSet,
+          ctx.prevParams,
+          ctx.request,
+          ctx.prevUrl,
+          ctx.url,
+          ctx.loaderPromises,
+          ctx.actionContext,
+          ctx.interceptResult,
+          ctx.localRouteName,
+          ctx.pathname
+        )
       );
 
       // Update state with resolved segments

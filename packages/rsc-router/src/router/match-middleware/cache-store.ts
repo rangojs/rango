@@ -132,7 +132,6 @@ export function withCacheStore<TEnv>(
     }
 
     const {
-      getContext: getServerContext,
       createHandlerContext,
       setupLoaderAccessSilent,
       resolveAllSegments,
@@ -177,36 +176,28 @@ export function withCacheStore<TEnv>(
 
           // Re-resolve ALL segments without revalidation
           const Store = ctx.Store;
-          const freshSegments = await getServerContext().runWithStore(
-            Store,
-            Store.namespace || "#router",
-            Store.parent,
-            () =>
-              resolveAllSegments(
-                ctx.entries,
-                ctx.routeKey,
-                ctx.matched.params,
-                proactiveHandlerContext,
-                proactiveLoaderPromises
-              )
+          const freshSegments = await Store.run(() =>
+            resolveAllSegments(
+              ctx.entries,
+              ctx.routeKey,
+              ctx.matched.params,
+              proactiveHandlerContext,
+              proactiveLoaderPromises
+            )
           );
 
           // Also resolve intercept segments fresh if applicable
           let freshInterceptSegments: ResolvedSegment[] = [];
           if (ctx.interceptResult) {
-            freshInterceptSegments = await getServerContext().runWithStore(
-              Store,
-              Store.namespace || "#router",
-              Store.parent,
-              () =>
-                resolveInterceptEntry(
-                  ctx.interceptResult!.intercept,
-                  ctx.interceptResult!.entry,
-                  ctx.matched.params,
-                  proactiveHandlerContext,
-                  true // belongsToRoute
-                  // No revalidationContext = render fresh
-                )
+            freshInterceptSegments = await Store.run(() =>
+              resolveInterceptEntry(
+                ctx.interceptResult!.intercept,
+                ctx.interceptResult!.entry,
+                ctx.matched.params,
+                proactiveHandlerContext,
+                true // belongsToRoute
+                // No revalidationContext = render fresh
+              )
             );
           }
 

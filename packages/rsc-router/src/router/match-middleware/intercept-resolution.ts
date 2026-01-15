@@ -153,10 +153,7 @@ export function withInterceptResolution<TEnv>(
     }
 
     // Resolve intercept segments
-    const {
-      getContext: getServerContext,
-      resolveInterceptEntry,
-    } = getRouterContext<TEnv>();
+    const { resolveInterceptEntry } = getRouterContext<TEnv>();
 
     const slotName = ctx.interceptResult!.intercept.slotName;
     console.log(
@@ -165,28 +162,24 @@ export function withInterceptResolution<TEnv>(
 
     // Resolve intercept entry (middleware, loaders, handler)
     const Store = ctx.Store;
-    const interceptSegments = await getServerContext().runWithStore(
-      Store,
-      Store.namespace || "#router",
-      Store.parent,
-      () =>
-        resolveInterceptEntry(
-          ctx.interceptResult!.intercept,
-          ctx.interceptResult!.entry,
-          ctx.matched.params,
-          ctx.handlerContext,
-          true, // belongsToRoute
-          {
-            clientSegmentIds: ctx.clientSegmentSet,
-            prevParams: ctx.prevParams,
-            request: ctx.request,
-            prevUrl: ctx.prevUrl,
-            nextUrl: ctx.url,
-            routeKey: ctx.routeKey,
-            actionContext: ctx.actionContext,
-            stale: ctx.stale,
-          }
-        )
+    const interceptSegments = await Store.run(() =>
+      resolveInterceptEntry(
+        ctx.interceptResult!.intercept,
+        ctx.interceptResult!.entry,
+        ctx.matched.params,
+        ctx.handlerContext,
+        true, // belongsToRoute
+        {
+          clientSegmentIds: ctx.clientSegmentSet,
+          prevParams: ctx.prevParams,
+          request: ctx.request,
+          prevUrl: ctx.prevUrl,
+          nextUrl: ctx.url,
+          routeKey: ctx.routeKey,
+          actionContext: ctx.actionContext,
+          stale: ctx.stale,
+        }
+      )
     );
 
     // Update state
@@ -215,10 +208,7 @@ async function handleCacheHitIntercept<TEnv>(
 ): Promise<void> {
   if (!ctx.interceptResult) return;
 
-  const {
-    getContext: getServerContext,
-    resolveInterceptLoadersOnly,
-  } = getRouterContext<TEnv>();
+  const { resolveInterceptLoadersOnly } = getRouterContext<TEnv>();
 
   const slotName = ctx.interceptResult.intercept.slotName;
 
@@ -232,28 +222,24 @@ async function handleCacheHitIntercept<TEnv>(
   // This keeps cached component/layout but fetches fresh loader data
   if (resolveInterceptLoadersOnly) {
     const Store = ctx.Store;
-    const freshLoaderResult = await getServerContext().runWithStore(
-      Store,
-      Store.namespace || "#router",
-      Store.parent,
-      () =>
-        resolveInterceptLoadersOnly(
-          ctx.interceptResult!.intercept,
-          ctx.interceptResult!.entry,
-          ctx.matched.params,
-          ctx.handlerContext,
-          true, // belongsToRoute
-          {
-            clientSegmentIds: ctx.clientSegmentSet,
-            prevParams: ctx.prevParams,
-            request: ctx.request,
-            prevUrl: ctx.prevUrl,
-            nextUrl: ctx.url,
-            routeKey: ctx.routeKey,
-            actionContext: ctx.actionContext,
-            stale: ctx.stale,
-          }
-        )
+    const freshLoaderResult = await Store.run(() =>
+      resolveInterceptLoadersOnly(
+        ctx.interceptResult!.intercept,
+        ctx.interceptResult!.entry,
+        ctx.matched.params,
+        ctx.handlerContext,
+        true, // belongsToRoute
+        {
+          clientSegmentIds: ctx.clientSegmentSet,
+          prevParams: ctx.prevParams,
+          request: ctx.request,
+          prevUrl: ctx.prevUrl,
+          nextUrl: ctx.url,
+          routeKey: ctx.routeKey,
+          actionContext: ctx.actionContext,
+          stale: ctx.stale,
+        }
+      )
     );
 
     // Update intercept segment's loaderDataPromise with fresh data

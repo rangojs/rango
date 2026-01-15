@@ -2760,6 +2760,14 @@ export function createRSCRouter<TEnv = any>(
 
     // Get store for metrics context
     const Store = getContext().getOrCreateStore(matched.routeKey);
+    // Add run helper for cleaner middleware code
+    Store.run = <T>(fn: () => T | Promise<T>) =>
+      getContext().runWithStore(
+        Store,
+        Store.namespace || "#router",
+        Store.parent,
+        fn
+      );
     if (metricsStore) {
       Store.metrics = metricsStore;
     }
@@ -2937,6 +2945,14 @@ export function createRSCRouter<TEnv = any>(
 
     // Get store for metrics context
     const Store = getContext().getOrCreateStore(matched.routeKey);
+    // Add run helper for cleaner middleware code
+    Store.run = <T>(fn: () => T | Promise<T>) =>
+      getContext().runWithStore(
+        Store,
+        Store.namespace || "#router",
+        Store.parent,
+        fn
+      );
     if (metricsStore) {
       Store.metrics = metricsStore;
     }

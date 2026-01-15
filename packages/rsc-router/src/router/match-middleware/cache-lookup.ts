@@ -125,7 +125,6 @@ export function withCacheLookup<TEnv>(
       buildEntryRevalidateMap,
       resolveLoadersOnlyWithRevalidation,
       resolveLoadersOnly,
-      getContext: getServerContext,
     } = getRouterContext<TEnv>();
 
     // Skip cache during actions
@@ -213,11 +212,8 @@ export function withCacheLookup<TEnv>(
     if (ctx.isFullMatch) {
       // Full match (document request) - simple loader resolution without revalidation
       if (resolveLoadersOnly) {
-        const loaderSegments = await getServerContext().runWithStore(
-          Store,
-          Store.namespace || "#router",
-          Store.parent,
-          () => resolveLoadersOnly(ctx.entries, ctx.handlerContext)
+        const loaderSegments = await Store.run(() =>
+          resolveLoadersOnly(ctx.entries, ctx.handlerContext)
         );
 
         // Update state - full match doesn't track matchedIds separately
@@ -233,22 +229,18 @@ export function withCacheLookup<TEnv>(
     } else {
       // Partial match (navigation) - loader resolution with revalidation
       if (resolveLoadersOnlyWithRevalidation) {
-        const loaderResult = await getServerContext().runWithStore(
-          Store,
-          Store.namespace || "#router",
-          Store.parent,
-          () =>
-            resolveLoadersOnlyWithRevalidation(
-              ctx.entries,
-              ctx.handlerContext,
-              ctx.clientSegmentSet,
-              ctx.prevParams,
-              ctx.request,
-              ctx.prevUrl,
-              ctx.url,
-              ctx.routeKey,
-              ctx.actionContext
-            )
+        const loaderResult = await Store.run(() =>
+          resolveLoadersOnlyWithRevalidation(
+            ctx.entries,
+            ctx.handlerContext,
+            ctx.clientSegmentSet,
+            ctx.prevParams,
+            ctx.request,
+            ctx.prevUrl,
+            ctx.url,
+            ctx.routeKey,
+            ctx.actionContext
+          )
         );
 
         // Update state with fresh loader matchedIds
