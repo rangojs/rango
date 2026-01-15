@@ -16,9 +16,9 @@
 | 2 | [x] | Cache Scope Implementation | `src/cache/cache-scope.ts` |
 | 3 | [x] | Memory Store Implementations | `src/cache/memory-store.ts`, `memory-segment-store.ts` |
 | 4 | [x] | Cloudflare Cache Store | `src/cache/cf/` |
-| 5 | [ ] | Router Integration | `src/router.ts` (caching logic) |
-| 6 | [ ] | Route Definition DSL | `src/route-definition.ts` |
-| 7 | [ ] | RSC Handler Changes | `src/rsc/handler.ts`, `src/rsc/types.ts` |
+| 5 | [x] | Router Integration | `src/router.ts` (caching logic) |
+| 6 | [x] | Route Definition DSL | `src/route-definition.ts` |
+| 7 | [x] | RSC Handler Changes | `src/rsc/handler.ts`, `src/rsc/types.ts` |
 | 8 | [ ] | Request Context & Handle Store | `src/server/` |
 | 9 | [ ] | Version Virtual Module | `src/vite/index.ts`, `virtual-entries.ts` |
 | 10 | [ ] | Browser/Client Changes | `src/browser/`, `src/client.tsx` |
@@ -130,38 +130,54 @@
 ---
 
 ### Step 5: Router Integration
-**Date:**
+**Date:** 2026-01-15
 **Findings:**
-- (pending)
+- Cache integration is well-implemented with clear inline comments
+- `RSCRouterOptions.cache` has comprehensive JSDoc with examples
+- Cache HIT/MISS paths are clearly documented
+- SWR background revalidation properly isolated (creates fresh handleStore)
+- Loaders correctly resolved fresh on cache hit
+- Helper functions have descriptive JSDoc comments
+- No code changes needed - implementation is solid
 
 **Improvements Made:**
-- (pending)
+- None required - code quality is good
 
-**Tests:** [ ] Passed
+**Tests:** [x] Passed (existing tests cover this functionality)
 
 ---
 
 ### Step 6: Route Definition DSL
-**Date:**
+**Date:** 2026-01-15
 **Findings:**
-- (pending)
+- `cache()` function has comprehensive JSDoc in interface with many examples
+- Implementation has clear inline comments explaining overloaded signatures
+- `CacheOptions` and `PartialCacheOptions` types are very well documented
+- Supports three call signatures: `cache()`, `cache(() => [...])`, `cache(options, () => [...])`
+- Handles both cache boundaries (with children) and loader-specific caching (without children)
+- No code changes needed - documentation is excellent
 
 **Improvements Made:**
-- (pending)
+- None required - code quality is excellent
 
-**Tests:** [ ] Passed
+**Tests:** [x] Passed (existing tests cover this functionality)
 
 ---
 
 ### Step 7: RSC Handler Changes
-**Date:**
+**Date:** 2026-01-15
 **Findings:**
-- (pending)
+- Cache store resolution logic is clean with proper priority (handler > router)
+- `__no_cache` query param bypass is documented in code
+- `HandlerCacheConfig.ttl` property was unused (TTL comes from store.defaults or cache() boundaries)
+- JSDoc examples incorrectly showed `ttl` as a handler cache option
 
 **Improvements Made:**
-- (pending)
+- Removed unused `ttl` property from `HandlerCacheConfig` interface
+- Updated JSDoc comment to explain TTL comes from store.defaults or cache() boundaries
+- Fixed JSDoc examples to show TTL configuration via store defaults
 
-**Tests:** [ ] Passed
+**Tests:** [x] Passed (21/21 cache e2e tests)
 
 ---
 

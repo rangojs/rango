@@ -113,13 +113,12 @@ export interface SSRModule {
 export type LoadSSRModule = () => Promise<SSRModule>;
 
 /**
- * Cache configuration for handler
+ * Cache configuration for handler.
+ * TTL is configured via store.defaults or cache() boundaries.
  */
 export interface HandlerCacheConfig {
   /** Cache store implementation */
   store: import("../cache/types.js").SegmentCacheStore;
-  /** Default TTL in seconds (default: 60) */
-  ttl?: number;
   /** Enable/disable caching (default: true) */
   enabled?: boolean;
 }
@@ -151,21 +150,20 @@ export interface CreateRSCHandlerOptions<TEnv = unknown> {
    * Can be a static config object or a function that receives the env
    * (useful for accessing Cloudflare bindings).
    *
-   * If not provided, caching is disabled.
+   * If not provided, caching is disabled. TTL is configured via store.defaults
+   * or cache() boundaries in the route definition.
    *
    * @example Static config
    * ```typescript
    * cache: {
-   *   store: new MemorySegmentCacheStore(),
-   *   ttl: 60,
+   *   store: new MemorySegmentCacheStore({ defaults: { ttl: 60 } }),
    * }
    * ```
    *
    * @example Dynamic config with env
    * ```typescript
    * cache: (env) => ({
-   *   store: new KVSegmentCacheStore(env.Bindings.MY_CACHE),
-   *   ttl: 60,
+   *   store: new KVSegmentCacheStore(env.Bindings.MY_CACHE, { defaults: { ttl: 60 } }),
    * })
    * ```
    */
