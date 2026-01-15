@@ -302,7 +302,7 @@ function getManualChunks(id: string): string | undefined {
  */
 function createVersionPlugin(): Plugin {
   // Generate version at plugin creation time (build/server start)
-  const buildVersion = String(Date.now());
+  const buildVersion = Date.now().toString(16);
   let currentVersion = buildVersion;
   let isDev = false;
   let server: any = null;
@@ -343,7 +343,7 @@ function createVersionPlugin(): Plugin {
 
       if (isRscModule && ctx.modules.length > 0) {
         // Update version when RSC modules change
-        currentVersion = String(Date.now());
+        currentVersion = Date.now().toString(16);
         console.log(
           `[rsc-router] RSC module changed, version updated: ${currentVersion}`
         );
