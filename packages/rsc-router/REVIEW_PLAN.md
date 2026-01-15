@@ -15,7 +15,7 @@
 | 1 | [x] | Cache Types & Interfaces | `src/cache/types.ts`, `src/cache/index.ts` |
 | 2 | [x] | Cache Scope Implementation | `src/cache/cache-scope.ts` |
 | 3 | [x] | Memory Store Implementations | `src/cache/memory-store.ts`, `memory-segment-store.ts` |
-| 4 | [ ] | Cloudflare Cache Store | `src/cache/cf/` |
+| 4 | [x] | Cloudflare Cache Store | `src/cache/cf/` |
 | 5 | [ ] | Router Integration | `src/router.ts` (caching logic) |
 | 6 | [ ] | Route Definition DSL | `src/route-definition.ts` |
 | 7 | [ ] | RSC Handler Changes | `src/rsc/handler.ts`, `src/rsc/types.ts` |
@@ -112,14 +112,20 @@
 ---
 
 ### Step 4: Cloudflare Cache Store
-**Date:**
+**Date:** 2026-01-15
 **Findings:**
-- (pending)
+- `CacheStatus` type and `MAX_REVALIDATION_INTERVAL` are internal (not used outside cf directory)
+- Private methods `getCache()` and `keyToRequest()` missing @internal tags
+- `cf/index.ts` missing descriptive comments for exports
+- Well-tested with comprehensive unit tests covering SWR, staleness, thundering herd prevention
 
 **Improvements Made:**
-- (pending)
+- Added @internal JSDoc tags to `CacheStatus` type and `MAX_REVALIDATION_INTERVAL` constant
+- Added @internal tags to private methods `getCache()` and `keyToRequest()`
+- Enhanced `MAX_REVALIDATION_INTERVAL` JSDoc with explanation
+- Reorganized cf/index.ts exports with descriptive comments separating public API from internal exports
 
-**Tests:** [ ] Passed
+**Tests:** [x] Passed (19/19 unit tests, 21/21 cache e2e tests)
 
 ---
 
