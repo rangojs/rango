@@ -57,7 +57,7 @@ import { hasBodyContent, createResponseWithMergedHeaders } from "./helpers.js";
 export function createRSCHandler<TEnv = unknown>(
   options: CreateRSCHandlerOptions<TEnv>
 ) {
-  const { router } = options;
+  const { router, version } = options;
 
   // Use provided deps or default to @vitejs/plugin-rsc/rsc exports
   const deps = options.deps ?? rscDeps;
@@ -189,6 +189,39 @@ export function createRSCHandler<TEnv = unknown>(
       request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
     const actionId =
       request.headers.get("rsc-action") || url.searchParams.get("_rsc_action");
+
+    // Version mismatch detection - client may have stale code after HMR/deployment
+    // If versions don't match, tell the client to reload
+    const clientVersion = url.searchParams.get("_rsc_v");
+    if (version && clientVersion && clientVersion !== version) {
+      console.log(
+        `[RSC] Version mismatch: client=${clientVersion}, server=${version}. Forcing reload.`
+      );
+
+      // Clean URL by removing RSC params
+      const cleanUrl = new URL(url);
+      cleanUrl.searchParams.delete("_rsc_partial");
+      cleanUrl.searchParams.delete("_rsc_segments");
+      cleanUrl.searchParams.delete("_rsc_v");
+      cleanUrl.searchParams.delete("_rsc_stale");
+      cleanUrl.searchParams.delete("_rsc_action");
+      cleanUrl.searchParams.delete("_rsc_prev");
+
+      // For actions, reload current page (referer)
+      // For navigation, load the target URL
+      const reloadUrl = isAction
+        ? request.headers.get("referer") || cleanUrl.toString()
+        : cleanUrl.toString();
+
+      // Return special response that tells client to reload
+      return createResponseWithMergedHeaders(null, {
+        status: 200,
+        headers: {
+          "X-RSC-Reload": reloadUrl,
+          "content-type": "text/x-component;charset=utf-8",
+        },
+      });
+    }
 
     // Get handle store from request context (created at start of request)
     const handleStore = requireRequestContext()._handleStore;
@@ -351,6 +384,7 @@ export function createRSCHandler<TEnv = unknown>(
         isPartial: false,
         rootLayout: router.rootLayout,
         handles: handleStore.stream(),
+        version,
       },
       formState: actionResult,
     };
@@ -430,6 +464,7 @@ export function createRSCHandler<TEnv = unknown>(
             diff: errorResult.diff,
             isError: true,
             handles: handleStore.stream(),
+            version,
           },
           returnValue,
         };
@@ -489,6 +524,7 @@ export function createRSCHandler<TEnv = unknown>(
           matched: fullMatch.matched,
           diff: fullMatch.diff,
           handles: handleStore.stream(),
+          version,
         },
         returnValue,
       };
@@ -530,6 +566,7 @@ export function createRSCHandler<TEnv = unknown>(
         diff: matchResult.diff,
         slots: matchResult.slots,
         handles: handleStore.stream(),
+        version,
       },
       returnValue,
     };
@@ -726,6 +763,7 @@ export function createRSCHandler<TEnv = unknown>(
             diff: match.diff,
             isPartial: false,
             handles: handleStore.stream(),
+            version,
           },
         };
       } else {
@@ -742,6 +780,7 @@ export function createRSCHandler<TEnv = unknown>(
             isPartial: true,
             slots: result.slots,
             handles: handleStore.stream(),
+            version,
           },
         };
       }
@@ -779,6 +818,7 @@ export function createRSCHandler<TEnv = unknown>(
           isPartial: false,
           rootLayout: router.rootLayout,
           handles: handleStore.stream(),
+          version,
         },
       };
     }

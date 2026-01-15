@@ -119,6 +119,23 @@ export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
       );
     }
 
+    // No layout but has loaders - wrap content with LoaderBoundary for useLoader context
+    // This is common for intercept routes that use useLoader without a custom layout
+    if (segment.loaderDataPromise && segment.loaderIds) {
+      return (
+        <LoaderBoundary
+          loaderDataPromise={segment.loaderDataPromise}
+          loaderIds={segment.loaderIds}
+          fallback={segment.loading}
+          outletKey={segment.id + "-loader"}
+          outletContent={null}
+          segment={segment}
+        >
+          {content}
+        </LoaderBoundary>
+      );
+    }
+
     return content;
   }
 
@@ -212,6 +229,23 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
       <OutletProvider content={content} segment={segment}>
         {segment.layout}
       </OutletProvider>
+    );
+  }
+
+  // No layout but has loaders - wrap content with LoaderBoundary for useLoader context
+  // This is common for intercept routes that use useLoader without a custom layout
+  if (segment.loaderDataPromise && segment.loaderIds) {
+    return (
+      <LoaderBoundary
+        loaderDataPromise={segment.loaderDataPromise}
+        loaderIds={segment.loaderIds}
+        fallback={segment.loading}
+        outletKey={segment.id + "-loader"}
+        outletContent={null}
+        segment={segment}
+      >
+        {content}
+      </LoaderBoundary>
     );
   }
 

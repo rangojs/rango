@@ -23,18 +23,25 @@ import {
 import { createFromReadableStream } from "@vitejs/plugin-rsc/rsc";
 
 // ============================================================================
-// Serialization Utilities
+// Constants
+// ============================================================================
+
+/** Default TTL when no explicit value or store defaults are configured */
+const DEFAULT_TTL_SECONDS = 60;
+
+// ============================================================================
+// Serialization Utilities (internal)
 // ============================================================================
 
 /**
- * Generate cache key for an entry with params
- * Includes request type prefix (doc/partial) since they produce different segment sets
+ * Generate cache key base from pathname and params.
+ * Params are sorted alphabetically for consistent key generation.
+ * @internal
  */
-function getCacheKey(entryId: string, params?: Record<string, string>): string {
-  const ctx = getRequestContext();
-  const isPartial = ctx?.url.searchParams.has("_rsc_partial") ?? false;
-  const prefix = isPartial ? "partial" : "doc";
-
+function getCacheKeyBase(
+  pathname: string,
+  params?: Record<string, string>
+): string {
   const paramStr = params
     ? Object.entries(params)
         .sort(([a], [b]) => a.localeCompare(b))
@@ -42,10 +49,36 @@ function getCacheKey(entryId: string, params?: Record<string, string>): string {
         .join("&")
     : "";
 
-  const baseKey = paramStr ? `${entryId}:${paramStr}` : entryId;
-  return `${prefix}:${baseKey}`;
+  return paramStr ? `${pathname}:${paramStr}` : pathname;
 }
 
+/**
+ * Generate cache key for a route request.
+ * Single cache entry per route - uses pathname as the key.
+ * Includes request type prefix since they produce different segment sets:
+ * - doc: document requests (full page load)
+ * - partial: navigation requests (client-side navigation)
+ * - intercept: intercept navigation (modal/overlay routes)
+ * @internal
+ */
+function getRouteCacheKey(
+  pathname: string,
+  params?: Record<string, string>,
+  isIntercept?: boolean
+): string {
+  const ctx = getRequestContext();
+  const isPartial = ctx?.url.searchParams.has("_rsc_partial") ?? false;
+
+  // Intercept navigations get their own cache namespace
+  const prefix = isIntercept ? "intercept" : isPartial ? "partial" : "doc";
+
+  return `${prefix}:${getCacheKeyBase(pathname, params)}`;
+}
+
+/**
+ * Convert a ReadableStream to a string.
+ * @internal
+ */
 async function streamToString(
   stream: ReadableStream<Uint8Array>
 ): Promise<string> {
@@ -63,6 +96,10 @@ async function streamToString(
   return result;
 }
 
+/**
+ * Convert a string to a ReadableStream.
+ * @internal
+ */
 function stringToStream(str: string): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const uint8 = encoder.encode(str);
@@ -76,7 +113,9 @@ function stringToStream(str: string): ReadableStream<Uint8Array> {
 }
 
 /**
- * RSC-serialize a value (loaderData, etc.)
+ * RSC-serialize a value using React Server Components stream.
+ * Used for serializing loaderData, layout, loading components etc.
+ * @internal
  */
 async function rscSerialize(value: unknown): Promise<string | undefined> {
   if (value === undefined || value === null) return undefined;
@@ -87,7 +126,8 @@ async function rscSerialize(value: unknown): Promise<string | undefined> {
 }
 
 /**
- * RSC-deserialize a value
+ * RSC-deserialize a value from a stored string.
+ * @internal
  */
 async function rscDeserialize<T>(
   encoded: string | undefined
@@ -100,7 +140,10 @@ async function rscDeserialize<T>(
 }
 
 /**
- * Serialize segments for storage
+ * Serialize segments for storage.
+ * Each segment's component, layout, loading, and loaderData are RSC-serialized.
+ * Metadata is preserved as-is.
+ * @internal
  */
 async function serializeSegments(
   segments: ResolvedSegment[]
@@ -180,7 +223,9 @@ async function serializeSegments(
 }
 
 /**
- * Deserialize segments from storage
+ * Deserialize segments from storage.
+ * Reconstructs ResolvedSegment objects from RSC-serialized data.
+ * @internal
  */
 async function deserializeSegments(
   data: SerializedSegmentData[]
@@ -197,20 +242,19 @@ async function deserializeSegments(
     });
 
     // RSC-deserialize layout, loaderData, loaderDataPromise in parallel
-    const [layout, loaderData, loaderDataPromise] = await Promise.all([
-      rscDeserialize(item.encodedLayout),
-      rscDeserialize(item.encodedLoaderData),
-      rscDeserialize(item.encodedLoaderDataPromise),
-    ]);
-
-    // Deserialize loading - "null" string means explicit null
-    const loading = item.encodedLoading === "null" ? null : undefined;
+    const [layout, loaderData, loaderDataPromise, loadingData] =
+      await Promise.all([
+        rscDeserialize(item.encodedLayout),
+        rscDeserialize(item.encodedLoaderData),
+        rscDeserialize(item.encodedLoaderDataPromise),
+        rscDeserialize(item.encodedLoading),
+      ]);
 
     segments.push({
       ...item.metadata,
       component: await component,
       layout,
-      loading,
+      loading: loadingData,
       loaderData,
       loaderDataPromise,
     } as ResolvedSegment);
@@ -280,7 +324,7 @@ export class CacheScope {
     }
 
     // Hardcoded fallback
-    return 60;
+    return DEFAULT_TTL_SECONDS;
   }
 
   /**
@@ -315,28 +359,37 @@ export class CacheScope {
   }
 
   /**
-   * Restore cached segments for an entry
-   * Returns null if cache miss or caching disabled
+   * Lookup cached segments for a route (single cache entry per request).
+   * Returns { segments, shouldRevalidate } or null if cache miss.
+   *
+   * @param pathname - URL pathname for cache key generation
+   * @param params - Route params for cache key generation
+   * @param isIntercept - Whether this is an intercept navigation (uses different cache key)
    */
-  async restore(
-    entryId: string,
+  async lookupRoute(
+    pathname: string,
     params: Record<string, string>,
-    loaderPromises: Map<string, Promise<any>>
-  ): Promise<ResolvedSegment[] | null> {
+    isIntercept?: boolean
+  ): Promise<{
+    segments: ResolvedSegment[];
+    shouldRevalidate: boolean;
+  } | null> {
     if (!this.enabled) return null;
 
     const store = this.getStore();
     if (!store) return null;
 
-    const key = getCacheKey(entryId, params);
+    const key = getRouteCacheKey(pathname, params, isIntercept);
 
     try {
-      const cached = await store.get(key);
+      const result = await store.get(key);
 
-      if (!cached) {
+      if (!result) {
         console.log(`[CacheScope] MISS: ${key}`);
         return null;
       }
+
+      const { data: cached, shouldRevalidate } = result;
 
       // Deserialize segments
       const segments = await deserializeSegments(cached.segments);
@@ -351,36 +404,36 @@ export class CacheScope {
         }
       }
 
-      // Note: Loader segments are not cached by default (always live)
-      // If a loader was explicitly cached, restore its data to loaderPromises
-      for (const seg of segments) {
-        if (
-          seg.type === "loader" &&
-          seg.loaderId &&
-          seg.loaderData !== undefined
-        ) {
-          loaderPromises.set(seg.loaderId, Promise.resolve(seg.loaderData));
-        }
-      }
-
       const segmentTypes = segments.map((s) =>
         s.type === "parallel" ? s.slot : s.type
       );
       console.log(
-        `[CacheScope] HIT: ${key} (${segmentTypes.join(", ")}) [loaders resolved fresh]`
+        `[CacheScope] ${shouldRevalidate ? "STALE" : "HIT"}: ${key} (${segmentTypes.join(", ")})`
       );
-      return segments;
+
+      return { segments, shouldRevalidate };
     } catch (error) {
-      console.error(`[CacheScope] Failed to restore ${key}:`, error);
+      console.error(`[CacheScope] Failed to lookup ${key}:`, error);
       return null;
     }
   }
 
   /**
-   * Cache segments for an entry (non-blocking via waitUntil)
-   * Note: Loader segments are excluded - they're always live (fetched fresh)
+   * Cache all segments for a route (non-blocking via waitUntil)
+   * Single cache entry per route request.
+   * Loaders are excluded - they're always fresh unless they have their own cache() config.
+   *
+   * @param pathname - URL pathname for cache key generation
+   * @param params - Route params for cache key generation
+   * @param segments - All resolved segments to cache
+   * @param isIntercept - Whether this is an intercept navigation (uses different cache key)
    */
-  cacheEntry(cacheKey: string, segments: ResolvedSegment[]): void {
+  cacheRoute(
+    pathname: string,
+    params: Record<string, string>,
+    segments: ResolvedSegment[],
+    isIntercept?: boolean
+  ): void {
     if (!this.enabled || segments.length === 0) return;
 
     const store = this.getStore();
@@ -391,23 +444,28 @@ export class CacheScope {
 
     if (!handleStore || !requestCtx) return;
 
-    // Exclude loader segments - loaders are always live (not cached by default)
-    // Loaders can opt-in to caching with explicit cache() config
+    // Exclude loader segments - loaders are always fresh by default
+    // Loaders can opt-in to caching with their own cache() config
     const nonLoaderSegments = segments.filter((s) => s.type !== "loader");
     if (nonLoaderSegments.length === 0) return;
 
     const ttl = this.ttl;
-    const params = nonLoaderSegments[0]?.params;
-    const key = getCacheKey(cacheKey, params);
+    const key = getRouteCacheKey(pathname, params, isIntercept);
+
+    // Check if this is a partial request (navigation) vs document request
+    const isPartial = requestCtx.url.searchParams.has("_rsc_partial");
 
     requestCtx.waitUntil(async () => {
       await handleStore.settled;
 
-      // Only cache if ALL non-loader segments have actual components (not null)
-      const hasAllComponents = nonLoaderSegments.every(
-        (s) => s.component !== null
-      );
-      if (!hasAllComponents) return;
+      // For document requests: only cache if ALL segments have components (complete render)
+      // For partial requests: null components are expected (client already has them)
+      if (!isPartial) {
+        const hasAllComponents = nonLoaderSegments.every(
+          (s) => s.component !== null
+        );
+        if (!hasAllComponents) return;
+      }
 
       // Collect handle data for non-loader segments only
       const handles: Record<string, SegmentHandleData> = {};
@@ -425,7 +483,7 @@ export class CacheScope {
           expiresAt: Date.now() + ttl * 1000,
         };
 
-        await store.set(key, data, ttl);
+        await store.set(key, data, ttl, this.swr);
 
         const segmentTypes = nonLoaderSegments.map((s) =>
           s.type === "parallel" ? s.slot : s.type

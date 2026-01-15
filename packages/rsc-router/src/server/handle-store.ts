@@ -15,6 +15,7 @@ export type HandleData = Record<string, Record<string, unknown[]>>;
 
 /**
  * Deep clone handle data to create a snapshot.
+ * @internal
  */
 function cloneHandleData(data: HandleData): HandleData {
   const clone: HandleData = {};
@@ -193,9 +194,9 @@ export function createHandleStore(): HandleStore {
         }
       }
 
-      // Final yield if there's data that hasn't been yielded
+      // Final yield only if there are pending emissions that weren't yielded
       // (handles that pushed after our last yield but before completion)
-      if (Object.keys(data).length > 0) {
+      if (pendingEmissions.length > 0) {
         yield cloneHandleData(data);
       }
     },

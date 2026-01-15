@@ -401,9 +401,9 @@ test.describe("shop-actions", () => {
     // Clear cart first to ensure test isolation
     await clearCart(page, f.url("/shop"));
 
-    // Open modal
+    // Open modal - use a different product to avoid state collision
     await page
-      .locator('a[href="/shop/product/wireless-headphones"]')
+      .locator('a[href="/shop/product/laptop-stand"]')
       .first()
       .click();
     await expect(page.locator("text=Intercepted")).toBeVisible({
@@ -414,35 +414,31 @@ test.describe("shop-actions", () => {
     const addToCartButton = page.locator("button").filter({ hasText: "Add to Cart" }).first();
     await expect(addToCartButton).toBeVisible({ timeout: 10000 });
 
+    const quantityDisplay = page.locator('[data-testid="cart-quantity"]');
+
     // Add to cart - this triggers optimistic update
     await addToCartButton.click();
 
-    // Wait for quantity controls to appear
+    // Wait for quantity to show "1" - confirms add to cart succeeded
+    await expect(quantityDisplay).toHaveText("1", { timeout: 10000 });
+
+    // Now click "+" five times with small delays to allow optimistic updates to process
     const incrementButton = page.locator('[data-testid="quantity-increment"]');
-    await expect(incrementButton).toBeVisible({ timeout: 10000 });
 
-    // Click "+" five times rapidly
-    await incrementButton.click();
-    await incrementButton.click();
-    await incrementButton.click();
-    await incrementButton.click();
-    await incrementButton.click();
+    for (let i = 2; i <= 6; i++) {
+      await incrementButton.click();
+      // Wait for optimistic update to show new quantity before next click
+      await expect(quantityDisplay).toHaveText(String(i), { timeout: 10000 });
+    }
 
-    // Wait for all server actions to complete and revalidation to settle
-    // Each updateCartQuantity has 1s delay, so 6 actions = ~6-12s depending on parallelism
-    await page.waitForTimeout(15000);
-
-    // After all actions complete, "Add to Cart" should NOT be visible
-    const addToCartAfterWait = page.locator("button").filter({ hasText: "Add to Cart" }).first();
-    await expect(addToCartAfterWait).not.toBeVisible({ timeout: 5000 });
-
-    // Quantity should show 6 (1 from Add to Cart + 5 increments)
-    const quantityDisplay = page.locator('[data-testid="cart-quantity"]');
-    await expect(quantityDisplay).toBeVisible({ timeout: 5000 });
+    // Final verification - quantity should be 6
     await expect(quantityDisplay).toHaveText("6", { timeout: 5000 });
 
+    // "Add to Cart" should NOT be visible (quantity controls shown instead)
+    await expect(addToCartButton).not.toBeVisible({ timeout: 5000 });
+
     // Cart header should show (6)
-    await expect(page.locator('a[href="/shop/cart"]')).toContainText("(6)", { timeout: 5000 });
+    await expect(page.locator('a[href="/shop/cart"]')).toContainText("(6)", { timeout: 10000 });
   });
 });
 

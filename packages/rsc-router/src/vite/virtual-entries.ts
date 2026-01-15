@@ -66,6 +66,7 @@ import {
 } from "rsc-router/internal/deps/rsc";
 import { router } from "${routerPath}";
 import { createRSCHandler } from "rsc-router/rsc";
+import { VERSION } from "rsc-router:version";
 
 // Import loader manifest to ensure all fetchable loaders are registered at startup
 // This is critical for serverless/multi-process deployments where the loader module
@@ -74,6 +75,7 @@ import "virtual:rsc-router/loader-manifest";
 
 export default createRSCHandler({
   router,
+  version: VERSION,
   deps: {
     renderToReadableStream,
     decodeReply,
@@ -95,4 +97,13 @@ export const VIRTUAL_IDS = {
   browser: "virtual:rsc-router/entry.browser.js",
   ssr: "virtual:rsc-router/entry.ssr.js",
   rsc: "virtual:rsc-router/entry.rsc.js",
+  version: "rsc-router:version",
 } as const;
+
+/**
+ * Virtual module content for version.
+ * Exports VERSION - a timestamp that changes on server restart (dev) or at build time (production).
+ */
+export function getVirtualVersionContent(version: string): string {
+  return `export const VERSION = ${JSON.stringify(version)};`;
+}

@@ -625,7 +625,9 @@ export async function executeInterceptMiddleware<TEnv>(
 
     // Merge any headers/cookies set on stub into the early response
     let hasStubHeaders = false;
-    stubResponse.headers.forEach(() => { hasStubHeaders = true; });
+    stubResponse.headers.forEach(() => {
+      hasStubHeaders = true;
+    });
 
     if (hasStubHeaders) {
       // Clone and merge headers from stub into early response

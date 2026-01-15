@@ -5,7 +5,7 @@
  * Uses globalThis to survive HMR in development.
  */
 
-import type { SegmentCacheStore, CachedEntryData, CacheDefaults } from "./types.js";
+import type { SegmentCacheStore, CachedEntryData, CacheDefaults, CacheGetResult } from "./types.js";
 
 const CACHE_GLOBAL_KEY = "__rsc_router_segment_cache_store__";
 
@@ -63,7 +63,7 @@ export class MemorySegmentCacheStore implements SegmentCacheStore {
     this.defaults = options?.defaults;
   }
 
-  async get(key: string): Promise<CachedEntryData | null> {
+  async get(key: string): Promise<CacheGetResult | null> {
     const cached = this.cache.get(key);
 
     if (!cached) {
@@ -76,11 +76,13 @@ export class MemorySegmentCacheStore implements SegmentCacheStore {
       return null;
     }
 
-    return cached;
+    // Memory store doesn't support SWR - never triggers revalidation
+    return { data: cached, shouldRevalidate: false };
   }
 
-  async set(key: string, data: CachedEntryData, ttl: number): Promise<void> {
-    // Update expiresAt based on TTL
+  async set(key: string, data: CachedEntryData, ttl: number, _swr?: number): Promise<void> {
+    // Note: Memory store doesn't implement SWR - entries just expire at TTL
+    // For SWR support, use CFCacheStore or similar distributed cache
     const entry: CachedEntryData = {
       ...data,
       expiresAt: Date.now() + ttl * 1000,
@@ -97,12 +99,29 @@ export class MemorySegmentCacheStore implements SegmentCacheStore {
   }
 
   /**
-   * Get cache statistics (for debugging)
+   * Get cache statistics for debugging purposes.
+   * @internal
    */
   getStats(): { size: number; keys: string[] } {
     return {
       size: this.cache.size,
       keys: Array.from(this.cache.keys()),
     };
+  }
+
+  /**
+   * Reset the global cache state.
+   * Useful for test isolation - call this in beforeEach to ensure
+   * tests don't share cache state via globalThis.
+   *
+   * @example
+   * ```typescript
+   * beforeEach(() => {
+   *   MemorySegmentCacheStore.resetGlobalCache();
+   * });
+   * ```
+   */
+  static resetGlobalCache(): void {
+    delete (globalThis as any)[CACHE_GLOBAL_KEY];
   }
 }

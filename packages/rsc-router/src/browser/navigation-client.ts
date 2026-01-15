@@ -52,6 +52,7 @@ export function createNavigationClient(
         signal,
         staleRevalidation,
         interceptSourceUrl,
+        version,
       } = options;
 
       console.log(`\n[Browser] >>> NAVIGATION`);
@@ -68,6 +69,9 @@ export function createNavigationClient(
       fetchUrl.searchParams.set("_rsc_segments", segmentIds.join(","));
       if (staleRevalidation) {
         fetchUrl.searchParams.set("_rsc_stale", "true");
+      }
+      if (version) {
+        fetchUrl.searchParams.set("_rsc_v", version);
       }
 
       console.log(`[Browser] Fetching: ${fetchUrl.pathname}${fetchUrl.search}`);
@@ -88,6 +92,15 @@ export function createNavigationClient(
         },
         signal,
       }).then((response) => {
+        // Check for version mismatch - server wants us to reload
+        const reloadUrl = response.headers.get("X-RSC-Reload");
+        if (reloadUrl) {
+          console.log(`[Browser] Version mismatch - reloading: ${reloadUrl}`);
+          window.location.href = reloadUrl;
+          // Return a never-resolving promise to prevent further processing
+          return new Promise<Response>(() => {});
+        }
+
         if (!response.body) {
           // No body means stream is already complete
           resolveStreamComplete();

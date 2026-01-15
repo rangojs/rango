@@ -3,6 +3,9 @@
  *
  * Simple implementation for development and testing.
  * Not suitable for production (no persistence, single-instance only).
+ *
+ * @internal This is reserved for future extensibility.
+ * For segment caching, use MemorySegmentCacheStore instead.
  */
 
 import type {
@@ -13,6 +16,17 @@ import type {
   CacheMetadata,
   CacheValueType,
 } from "./types.js";
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+/** Default TTL when no explicit value is provided */
+const DEFAULT_TTL_SECONDS = 60;
+
+// ============================================================================
+// Types
+// ============================================================================
 
 interface StoredEntry {
   /** Stored value (streams/responses converted to ArrayBuffer) */
@@ -53,7 +67,7 @@ export class MemoryCacheStore implements CacheStore {
     value: T,
     options?: CachePutOptions
   ): Promise<void> {
-    const ttl = options?.ttl ?? 60; // default 60s
+    const ttl = options?.ttl ?? DEFAULT_TTL_SECONDS;
     const expiresAt = Date.now() + ttl * 1000;
 
     // Detect value type and convert for storage
@@ -175,11 +189,15 @@ export class MemoryCacheStore implements CacheStore {
       case "stream":
         return arrayBufferToStream(value as ArrayBuffer);
 
-      case "response":
-        return new Response(value as ArrayBuffer, {
-          status: metadata.responseStatus ?? 200,
+      case "response": {
+        const status = metadata.responseStatus ?? 200;
+        // Status codes 204 (No Content) and 304 (Not Modified) cannot have a body
+        const isNullBodyStatus = status === 204 || status === 304;
+        return new Response(isNullBodyStatus ? null : (value as ArrayBuffer), {
+          status,
           headers: metadata.responseHeaders,
         });
+      }
 
       case "arraybuffer":
       case "string":
@@ -191,7 +209,8 @@ export class MemoryCacheStore implements CacheStore {
 }
 
 /**
- * Convert a ReadableStream to ArrayBuffer
+ * Convert a ReadableStream to ArrayBuffer.
+ * @internal
  */
 async function streamToArrayBuffer(
   stream: ReadableStream<Uint8Array>
@@ -219,7 +238,8 @@ async function streamToArrayBuffer(
 }
 
 /**
- * Convert an ArrayBuffer to a ReadableStream
+ * Convert an ArrayBuffer to a ReadableStream.
+ * @internal
  */
 function arrayBufferToStream(buffer: ArrayBuffer): ReadableStream<Uint8Array> {
   const uint8 = new Uint8Array(buffer);

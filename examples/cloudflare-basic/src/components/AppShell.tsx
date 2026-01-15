@@ -13,7 +13,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           dangerouslySetInnerHTML={{
             __html: `
               * { box-sizing: border-box; margin: 0; padding: 0; }
-              body { font-family: system-ui, sans-serif; line-height: 1.6; padding: 2rem; max-width: 800px; margin: 0 auto; }
+              body { font-family: system-ui, sans-serif; line-height: 1.6; padding: 2rem; max-width: 1100px; margin: 0 auto; }
               nav { margin-bottom: 2rem; padding-bottom: 1rem; border-bottom: 1px solid #eee; }
               nav a { margin-right: 1rem; color: #0070f3; text-decoration: none; }
               nav a:hover { text-decoration: underline; }
@@ -30,6 +30,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Link to={href("/")} data-testid="nav-home">Home</Link>
           <Link to={href("/about")} data-testid="nav-about">About</Link>
           <Link to={href("/counter")} data-testid="nav-counter">Counter</Link>
+          <Link to={href("/blog")} data-testid="nav-blog">Blog</Link>
         </nav>
         <BreadcrumbNav />
         {children}

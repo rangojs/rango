@@ -1,5 +1,5 @@
 import { createRSCRouter } from "rsc-router/server";
-import { homeRoutes, aboutRoutes, counterRoutes, featuresRoutes } from "./routes.js";
+import { homeRoutes, aboutRoutes, counterRoutes, featuresRoutes, blogRoutes, proactiveCacheRoutes } from "./routes.js";
 import { AppShell } from "./components/AppShell.js";
 import type { AppEnv } from "./env.js";
 
@@ -22,7 +22,13 @@ router
   .map(() => import("./handlers/counter.js"))
 
   .routes(featuresRoutes)
-  .map(() => import("./handlers/features.js"));
+  .map(() => import("./handlers/features.js"))
+
+  .routes(blogRoutes)
+  .map(() => import("./handlers/blog.js"))
+
+  .routes(proactiveCacheRoutes)
+  .map(() => import("./handlers/proactive-cache.js"));
 
 type AppRoutes = typeof router.routeMap;
 

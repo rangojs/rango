@@ -43,6 +43,11 @@ export interface RscMetadata {
   handles?: AsyncGenerator<HandleData, void, unknown>;
   /** Cached handle data (for back/forward navigation from cache) */
   cachedHandleData?: HandleData;
+  /**
+   * RSC version string from the server.
+   * Used to detect version mismatches after HMR/deployment.
+   */
+  version?: string;
 }
 
 /**
@@ -350,6 +355,8 @@ export interface FetchPartialOptions {
   /** If true, this is a stale cache revalidation request - server should force revalidators */
   staleRevalidation?: boolean;
   interceptSourceUrl?: string;
+  /** RSC version for cache invalidation detection */
+  version?: string;
 }
 
 /**
