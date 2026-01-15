@@ -20,7 +20,7 @@
 | 6 | [x] | Route Definition DSL | `src/route-definition.ts` |
 | 7 | [x] | RSC Handler Changes | `src/rsc/handler.ts`, `src/rsc/types.ts` |
 | 8 | [x] | Request Context & Handle Store | `src/server/` |
-| 9 | [ ] | Version Virtual Module | `src/vite/index.ts`, `virtual-entries.ts` |
+| 9 | [x] | Version Virtual Module | `src/vite/index.ts`, `virtual-entries.ts` |
 | 10 | [ ] | Browser/Client Changes | `src/browser/`, `src/client.tsx` |
 | 11 | [ ] | E2E Tests | `e2e/cache.test.ts`, `bundle-analysis.test.ts` |
 
@@ -197,14 +197,17 @@
 ---
 
 ### Step 9: Version Virtual Module
-**Date:**
+**Date:** 2026-01-15
 **Findings:**
-- (pending)
+- `createVersionPlugin()` has comprehensive JSDoc explaining purpose and behavior
+- `createVersionInjectorPlugin()` auto-injects VERSION into custom entry files
+- Both internal helper functions missing @internal tags
+- Version uses hex format (toString(16)) for shorter cache key prefix
 
 **Improvements Made:**
-- (pending)
+- Added @internal tags to `createVersionPlugin()` and `createVersionInjectorPlugin()`
 
-**Tests:** [ ] Passed
+**Tests:** [x] Passed (existing tests cover this functionality)
 
 ---
 

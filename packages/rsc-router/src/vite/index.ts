@@ -299,6 +299,7 @@ function getManualChunks(id: string): string | undefined {
  *
  * Client-only HMR changes don't update the version since they don't affect
  * server-rendered content or cached RSC payloads.
+ * @internal
  */
 function createVersionPlugin(): Plugin {
   // Generate version at plugin creation time (build/server start)
@@ -369,6 +370,7 @@ function createVersionPlugin(): Plugin {
  * Plugin that auto-injects VERSION into custom entry.rsc files.
  * If a custom entry.rsc file uses createRSCHandler but doesn't pass version,
  * this transform adds the import and property automatically.
+ * @internal
  */
 function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
   let projectRoot = "";
