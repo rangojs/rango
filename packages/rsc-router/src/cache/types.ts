@@ -173,6 +173,9 @@ export interface CachedEntryResult {
  *
  * Used by router to check/store segment cache during matching.
  * Accessed via request context - if not present, caching is disabled.
+ *
+ * @internal Not currently implemented - CacheScope is used directly.
+ * Reserved for future extensibility.
  */
 export interface SegmentCacheProvider {
   /** Whether caching is enabled for this request */

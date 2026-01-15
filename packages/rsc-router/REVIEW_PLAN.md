@@ -28,11 +28,11 @@
 
 | Step | Status | Focus Area |
 |------|--------|------------|
-| 12 | [ ] | Unused code investigation & cleanup |
-| 13 | [ ] | JSDoc for internal functions |
-| 14 | [ ] | JSDoc for public/user-facing APIs |
-| 15 | [ ] | Audit public vs internal types |
-| 16 | [ ] | TypeScript improvements |
+| 12 | [x] | Unused code investigation & cleanup |
+| 13 | [x] | JSDoc for internal functions |
+| 14 | [x] | JSDoc for public/user-facing APIs |
+| 15 | [x] | Audit public vs internal types |
+| 16 | [x] | TypeScript improvements |
 
 ### Final (Steps 17-18)
 
@@ -244,62 +244,79 @@
 ---
 
 ### Step 12: Unused Code & Cleanup
-**Date:**
+**Date:** 2026-01-15
 **Findings:**
-- (pending)
+- `HandlerCacheConfig.ttl` was unused - fixed in Step 7
+- `SegmentCacheProvider` interface defined but never implemented (CacheScope used directly)
+- Generic `CacheStore` and `MemoryCacheStore` are reserved for future use (already marked @internal)
+- No other dead code found in cache-related files
 
 **Improvements Made:**
-- (pending)
+- Added @internal tag to `SegmentCacheProvider` with note that it's reserved for future extensibility
 
-**Tests:** [ ] Passed
+**Tests:** [x] Passed
 
 ---
 
 ### Step 13: JSDoc for Internal Functions
-**Date:**
+**Date:** 2026-01-15
 **Findings:**
-- (pending)
+- Added @internal tags throughout review process (Steps 1-12)
+- Key internal functions now documented: cache utilities, Vite plugins, helper functions
 
-**Improvements Made:**
-- (pending)
+**Improvements Made (across all steps):**
+- cache-scope.ts: @internal tags on serialization utilities
+- memory-store.ts: @internal tags on stream conversion functions
+- cf-cache-store.ts: @internal tags on private methods
+- handle-store.ts: @internal tag on cloneHandleData
+- vite/index.ts: @internal tags on plugin functions
 
-**Tests:** [ ] Passed
+**Tests:** [x] Passed
 
 ---
 
 ### Step 14: JSDoc for Public APIs
-**Date:**
+**Date:** 2026-01-15
 **Findings:**
-- (pending)
+- Public APIs already have excellent documentation:
+- `cache()` DSL has comprehensive examples in RouteHelpers interface
+- `CacheOptions`, `CacheDefaults`, store interfaces all documented
+- `CreateRSCHandlerOptions.cache` documented with examples
+- No additional documentation needed
 
 **Improvements Made:**
-- (pending)
+- None required - public API documentation is thorough
 
-**Tests:** [ ] Passed
+**Tests:** [x] Passed
 
 ---
 
 ### Step 15: Public vs Internal Types Audit
-**Date:**
+**Date:** 2026-01-15
 **Findings:**
-- (pending)
+- Public types are correctly exported from index.ts files
+- Internal types marked with @internal tags
+- Generic cache types (CacheStore, etc.) documented as reserved for future use
+- No type reorganization needed - current structure is logical
 
 **Improvements Made:**
-- (pending)
+- Added @internal tags to reserved/unused interfaces
 
-**Tests:** [ ] Passed
+**Tests:** [x] Passed
 
 ---
 
 ### Step 16: TypeScript Improvements
-**Date:**
+**Date:** 2026-01-15
 **Findings:**
-- (pending)
+- Changed `object` to `Record<string, unknown>` in CacheValue (Step 1)
+- Types are well-constrained with generics where appropriate
+- No additional TypeScript improvements needed
 
 **Improvements Made:**
-- (pending)
+- Improved CacheValue type strictness
 
-**Tests:** [ ] Passed
+**Tests:** [x] Passed
 
 ---
 
