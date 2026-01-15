@@ -12,7 +12,7 @@
 
 | Step | Status | Focus Area | Files |
 |------|--------|------------|-------|
-| 1 | [ ] | Cache Types & Interfaces | `src/cache/types.ts`, `src/cache/index.ts` |
+| 1 | [x] | Cache Types & Interfaces | `src/cache/types.ts`, `src/cache/index.ts` |
 | 2 | [ ] | Cache Scope Implementation | `src/cache/cache-scope.ts` |
 | 3 | [ ] | Memory Store Implementations | `src/cache/memory-store.ts`, `memory-segment-store.ts` |
 | 4 | [ ] | Cloudflare Cache Store | `src/cache/cf/` |
@@ -57,14 +57,23 @@
 ## Review Changelog
 
 ### Step 1: Cache Types & Interfaces
-**Date:**
+**Date:** 2026-01-15
 **Findings:**
-- (pending)
+- Deprecated type `CachedSegmentResult` was not used anywhere - removed
+- Generic cache types (`CacheStore`, `CacheEntry`, `CacheValue`, etc.) are for future extensibility but currently unused
+- Changed `object` to `Record<string, unknown>` in `CacheValue` for stricter typing
+- Missing JSDoc on `CacheDefaults` interface
+- Missing documentation about which types are internal vs user-facing
 
 **Improvements Made:**
-- (pending)
+- Removed deprecated `CachedSegmentResult` interface
+- Added `@internal` JSDoc tags to generic cache types reserved for future use
+- Added section comment explaining generic cache types purpose
+- Improved `CacheDefaults` JSDoc with example
+- Added descriptive comments to `index.ts` exports
+- Changed `object` to `Record<string, unknown>` for type safety
 
-**Tests:** [ ] Passed
+**Tests:** [ ] Pending
 
 ---
 
