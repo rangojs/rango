@@ -1,0 +1,281 @@
+# PR Review Plan: Caching with CF Store
+
+**Branch:** `review/caching-cf-store` → `research/caching-cf-store`
+**Status:** In Progress
+**Started:** 2026-01-15
+
+---
+
+## Review Steps
+
+### Core Implementation Review (Steps 1-11)
+
+| Step | Status | Focus Area | Files |
+|------|--------|------------|-------|
+| 1 | [ ] | Cache Types & Interfaces | `src/cache/types.ts`, `src/cache/index.ts` |
+| 2 | [ ] | Cache Scope Implementation | `src/cache/cache-scope.ts` |
+| 3 | [ ] | Memory Store Implementations | `src/cache/memory-store.ts`, `memory-segment-store.ts` |
+| 4 | [ ] | Cloudflare Cache Store | `src/cache/cf/` |
+| 5 | [ ] | Router Integration | `src/router.ts` (caching logic) |
+| 6 | [ ] | Route Definition DSL | `src/route-definition.ts` |
+| 7 | [ ] | RSC Handler Changes | `src/rsc/handler.ts`, `src/rsc/types.ts` |
+| 8 | [ ] | Request Context & Handle Store | `src/server/` |
+| 9 | [ ] | Version Virtual Module | `src/vite/index.ts`, `virtual-entries.ts` |
+| 10 | [ ] | Browser/Client Changes | `src/browser/`, `src/client.tsx` |
+| 11 | [ ] | E2E Tests | `e2e/cache.test.ts`, `bundle-analysis.test.ts` |
+
+### Code Quality & Cleanup (Steps 12-16)
+
+| Step | Status | Focus Area |
+|------|--------|------------|
+| 12 | [ ] | Unused code investigation & cleanup |
+| 13 | [ ] | JSDoc for internal functions |
+| 14 | [ ] | JSDoc for public/user-facing APIs |
+| 15 | [ ] | Audit public vs internal types |
+| 16 | [ ] | TypeScript improvements |
+
+### Final (Steps 17-18)
+
+| Step | Status | Focus Area |
+|------|--------|------------|
+| 17 | [ ] | Final e2e test run & cleanup |
+| 18 | [ ] | Create PR with improvements summary |
+
+---
+
+## Process for Each Step
+
+1. Read and analyze the code
+2. Identify issues (bugs, style, performance, docs)
+3. Create review changelog entry below
+4. Make improvements/fixes
+5. Run all e2e tests: `pnpm exec playwright test`
+6. Commit and push if tests pass
+
+---
+
+## Review Changelog
+
+### Step 1: Cache Types & Interfaces
+**Date:**
+**Findings:**
+- (pending)
+
+**Improvements Made:**
+- (pending)
+
+**Tests:** [ ] Passed
+
+---
+
+### Step 2: Cache Scope Implementation
+**Date:**
+**Findings:**
+- (pending)
+
+**Improvements Made:**
+- (pending)
+
+**Tests:** [ ] Passed
+
+---
+
+### Step 3: Memory Store Implementations
+**Date:**
+**Findings:**
+- (pending)
+
+**Improvements Made:**
+- (pending)
+
+**Tests:** [ ] Passed
+
+---
+
+### Step 4: Cloudflare Cache Store
+**Date:**
+**Findings:**
+- (pending)
+
+**Improvements Made:**
+- (pending)
+
+**Tests:** [ ] Passed
+
+---
+
+### Step 5: Router Integration
+**Date:**
+**Findings:**
+- (pending)
+
+**Improvements Made:**
+- (pending)
+
+**Tests:** [ ] Passed
+
+---
+
+### Step 6: Route Definition DSL
+**Date:**
+**Findings:**
+- (pending)
+
+**Improvements Made:**
+- (pending)
+
+**Tests:** [ ] Passed
+
+---
+
+### Step 7: RSC Handler Changes
+**Date:**
+**Findings:**
+- (pending)
+
+**Improvements Made:**
+- (pending)
+
+**Tests:** [ ] Passed
+
+---
+
+### Step 8: Request Context & Handle Store
+**Date:**
+**Findings:**
+- (pending)
+
+**Improvements Made:**
+- (pending)
+
+**Tests:** [ ] Passed
+
+---
+
+### Step 9: Version Virtual Module
+**Date:**
+**Findings:**
+- (pending)
+
+**Improvements Made:**
+- (pending)
+
+**Tests:** [ ] Passed
+
+---
+
+### Step 10: Browser/Client Changes
+**Date:**
+**Findings:**
+- (pending)
+
+**Improvements Made:**
+- (pending)
+
+**Tests:** [ ] Passed
+
+---
+
+### Step 11: E2E Tests
+**Date:**
+**Findings:**
+- (pending)
+
+**Improvements Made:**
+- (pending)
+
+**Tests:** [ ] Passed
+
+---
+
+### Step 12: Unused Code & Cleanup
+**Date:**
+**Findings:**
+- (pending)
+
+**Improvements Made:**
+- (pending)
+
+**Tests:** [ ] Passed
+
+---
+
+### Step 13: JSDoc for Internal Functions
+**Date:**
+**Findings:**
+- (pending)
+
+**Improvements Made:**
+- (pending)
+
+**Tests:** [ ] Passed
+
+---
+
+### Step 14: JSDoc for Public APIs
+**Date:**
+**Findings:**
+- (pending)
+
+**Improvements Made:**
+- (pending)
+
+**Tests:** [ ] Passed
+
+---
+
+### Step 15: Public vs Internal Types Audit
+**Date:**
+**Findings:**
+- (pending)
+
+**Improvements Made:**
+- (pending)
+
+**Tests:** [ ] Passed
+
+---
+
+### Step 16: TypeScript Improvements
+**Date:**
+**Findings:**
+- (pending)
+
+**Improvements Made:**
+- (pending)
+
+**Tests:** [ ] Passed
+
+---
+
+### Step 17: Final E2E Test Run
+**Date:**
+**Test Results:**
+- Total tests:
+- Passed:
+- Failed:
+
+**Final Cleanup:**
+- (pending)
+
+---
+
+### Step 18: Create PR
+**Date:**
+**PR Link:**
+**Confidence Level:** /10
+
+**Summary of All Improvements:**
+- (to be filled after all steps complete)
+
+---
+
+## Files Changed in This Review
+
+(to be updated as we progress)
+
+---
+
+## Commits Made
+
+(to be updated as we progress)
