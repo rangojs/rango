@@ -1,8 +1,90 @@
 /**
  * Segment Resolution Middleware
  *
- * Resolves all segments with revalidation logic when cache misses.
- * Only runs if state.cacheHit === false.
+ * Resolves route segments when cache misses. Skips if cache hit.
+ *
+ * FLOW DIAGRAM
+ * ============
+ *
+ *   source (from cache-lookup)
+ *         |
+ *         v
+ *   +---------------------------+
+ *   | Iterate source first!    |  <-- CRITICAL: Must drain source
+ *   | yield* source            |      to let cache-lookup run
+ *   +---------------------------+
+ *         |
+ *         v
+ *   +---------------------+
+ *   | state.cacheHit?     |──yes──> return (cache already yielded)
+ *   +---------------------+
+ *         | no
+ *         v
+ *   +---------------------+
+ *   | isFullMatch?        |
+ *   +---------------------+
+ *         |
+ *   +-----+-----+
+ *   |           |
+ *  yes          no
+ *   |           |
+ *   v           v
+ * resolveAll  resolveAllWithRevalidation
+ * Segments    Segments
+ *   |           |
+ *   |           | (compares with prev state)
+ *   |           | (handles null components)
+ *   |           |
+ *   +-----------+
+ *         |
+ *         v
+ *   +---------------------------+
+ *   | Update state:             |
+ *   |  - state.segments         |
+ *   |  - state.matchedIds       |
+ *   +---------------------------+
+ *         |
+ *         v
+ *   yield all resolved segments
+ *         |
+ *         v
+ *      next middleware
+ *
+ *
+ * RESOLUTION MODES
+ * ================
+ *
+ * Full Match (document request):
+ *   - Uses resolveAllSegments()
+ *   - No revalidation logic (nothing to compare against)
+ *   - Simple resolution of all route entries
+ *
+ * Partial Match (navigation):
+ *   - Uses resolveAllSegmentsWithRevalidation()
+ *   - Compares current vs previous params/URL
+ *   - Sets component = null for segments client already has
+ *   - Respects custom revalidation rules
+ *
+ *
+ * CRITICAL: SOURCE ITERATION
+ * ==========================
+ *
+ * The middleware MUST iterate the source generator before checking cacheHit:
+ *
+ *   for await (const segment of source) { yield segment; }
+ *
+ * This is because:
+ *   1. Generator middleware are lazy (don't execute until iterated)
+ *   2. cache-lookup sets state.cacheHit during iteration
+ *   3. Without draining source first, cache-lookup never runs
+ *
+ * Incorrect pattern:
+ *   if (!state.cacheHit) { ... }  // cacheHit still false!
+ *   yield* source;                // Too late, already resolved
+ *
+ * Correct pattern:
+ *   yield* source;                // Let cache-lookup set cacheHit
+ *   if (state.cacheHit) return;   // Now we can check
  */
 import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";

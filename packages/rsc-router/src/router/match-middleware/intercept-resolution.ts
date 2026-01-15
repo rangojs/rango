@@ -1,8 +1,105 @@
 /**
  * Intercept Resolution Middleware
  *
- * Resolves intercept segments if ctx.interceptResult exists.
- * Yields intercept segments after main segments.
+ * Resolves intercept (modal slot) segments for soft navigation.
+ * Yields intercept segments after main route segments.
+ *
+ * FLOW DIAGRAM
+ * ============
+ *
+ *   source (from segment-resolution)
+ *         |
+ *         v
+ *   +---------------------------+
+ *   | Collect + yield source   |  Pass through main segments
+ *   | segments[]               |
+ *   +---------------------------+
+ *         |
+ *         v
+ *   +---------------------+
+ *   | isFullMatch?        |──yes──> return (no intercepts on doc requests)
+ *   +---------------------+
+ *         | no
+ *         v
+ *   +---------------------+
+ *   | Has interceptResult |──no───> return
+ *   | AND not cached?     |
+ *   +---------------------+
+ *         | yes
+ *         v
+ *   +----------------------+    +----------------------------+
+ *   | Fresh intercept?     |yes>| resolveInterceptEntry()    |
+ *   | (!cacheHit or        |    | - middleware, loaders, UI  |
+ *   |  no intercept segs)  |    +----------------------------+
+ *   +----------------------+              |
+ *         | no                            v
+ *         v                    yield intercept segments
+ *   +----------------------------+        |
+ *   | Cache hit with intercept   |        |
+ *   | handleCacheHitIntercept()  |        |
+ *   | - Extract from cache       |        |
+ *   | - Re-resolve loaders only  |        |
+ *   +----------------------------+        |
+ *         |                               |
+ *         +-------------------------------+
+ *         |
+ *         v
+ *   +---------------------------+
+ *   | Update state:             |
+ *   |  - interceptSegments      |
+ *   |  - slots[slotName]        |
+ *   +---------------------------+
+ *         |
+ *         v
+ *      next middleware
+ *
+ *
+ * INTERCEPT SCENARIOS
+ * ===================
+ *
+ * 1. Fresh intercept (no cache):
+ *    - Full resolution of intercept entry
+ *    - Resolves middleware, loaders, and component
+ *    - Yields all intercept segments
+ *
+ * 2. Cache hit with intercept:
+ *    - Extracts intercept segments from cached data
+ *    - Re-resolves ONLY loaders for fresh data
+ *    - Keeps cached component/layout
+ *
+ * 3. No intercept:
+ *    - Passes through unchanged
+ *    - No intercept segments yielded
+ *
+ *
+ * WHAT ARE INTERCEPTS?
+ * ====================
+ *
+ * Intercepts enable "soft navigation" patterns like modals:
+ *
+ *   1. User clicks a link (e.g., /photos/123)
+ *   2. Instead of full navigation, content renders in a modal slot
+ *   3. Background page remains visible and interactive
+ *   4. Hard navigation (direct URL) shows full page
+ *
+ * Configuration:
+ *   intercept("@modal", "photos", <PhotoModal />, () => [...])
+ *
+ * The intercept resolves to segments that render in the named slot
+ * instead of replacing the main content.
+ *
+ *
+ * SLOT STRUCTURE
+ * ==============
+ *
+ * state.slots[slotName] = {
+ *   active: true,
+ *   segments: [...intercept segments]
+ * }
+ *
+ * The client uses this to:
+ *   1. Keep current page segments
+ *   2. Render intercept segments in named <Outlet name="@modal" />
  */
 import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";

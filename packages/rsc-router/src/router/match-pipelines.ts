@@ -1,7 +1,104 @@
 /**
  * Match Pipelines
  *
- * Composes middleware into pipelines for match operations.
+ * Composes async generator middleware into pipelines for route matching.
+ * The pipeline transforms navigation requests into resolved UI segments.
+ *
+ * PIPELINE ARCHITECTURE OVERVIEW
+ * ==============================
+ *
+ * The router uses a pipeline of async generator middleware to process requests.
+ * Each middleware can:
+ *   1. Produce segments (yield)
+ *   2. Transform segments from upstream
+ *   3. Observe segments without modifying them
+ *   4. Trigger side effects (caching, background revalidation)
+ *
+ * REQUEST FLOW DIAGRAM
+ * ====================
+ *
+ *   Navigation Request
+ *         |
+ *         v
+ *   +------------------+
+ *   | Create Context   |  MatchContext: routes, params, client state
+ *   +------------------+
+ *         |
+ *         v
+ *   +------------------+
+ *   | Select Pipeline  |  Full (document) vs Partial (navigation)
+ *   +------------------+
+ *         |
+ *         v
+ *   ==================== PIPELINE EXECUTION ====================
+ *   |                                                          |
+ *   |  empty() ─────> [1] ─────> [2] ─────> [3] ─────> [4] ───>|───> segments
+ *   |    |            |          |          |          |       |
+ *   |    |    cache   |  segment |intercept | cache   | bg     |
+ *   |    |   lookup   | resolve  | resolve  | store   | reval  |
+ *   |                                                          |
+ *   ============================================================
+ *         |
+ *         v
+ *   +------------------+
+ *   | Collect Result   |  Filter segments, build MatchResult
+ *   +------------------+
+ *         |
+ *         v
+ *   RSC Stream Response
+ *
+ *
+ * MIDDLEWARE EXECUTION ORDER
+ * ==========================
+ *
+ * Middleware compose in reverse order (rightmost = innermost, runs first):
+ *
+ *   compose(A, B, C)(source)  =>  source -> C -> B -> A -> output
+ *
+ * For the partial match pipeline:
+ *
+ *   compose(
+ *     withBackgroundRevalidation,  // [5] Outermost - triggers SWR
+ *     withCacheStore,              // [4] Stores segments in cache
+ *     withInterceptResolution,     // [3] Resolves intercept segments
+ *     withSegmentResolution,       // [2] Resolves on cache miss
+ *     withCacheLookup              // [1] Innermost - checks cache first
+ *   )
+ *
+ * Execution flow for cache MISS:
+ *
+ *   empty() yields nothing
+ *     -> [1] cache-lookup: no cache, passes through
+ *     -> [2] segment-resolution: resolves segments, yields them
+ *     -> [3] intercept-resolution: resolves intercepts, yields them
+ *     -> [4] cache-store: observes all, stores in cache
+ *     -> [5] bg-revalidation: no-op (wasn't stale)
+ *     -> output: all segments
+ *
+ * Execution flow for cache HIT (stale):
+ *
+ *   empty() yields nothing
+ *     -> [1] cache-lookup: HIT! yields cached segments + fresh loaders
+ *     -> [2] segment-resolution: sees cacheHit=true, skips
+ *     -> [3] intercept-resolution: extracts intercepts from cache
+ *     -> [4] cache-store: sees cacheHit=true, skips
+ *     -> [5] bg-revalidation: triggers waitUntil() to revalidate
+ *     -> output: cached segments + fresh loader data
+ *
+ *
+ * TWO PIPELINE VARIANTS
+ * =====================
+ *
+ * 1. createMatchPipeline (Full Match)
+ *    - Used for document requests (initial page load)
+ *    - No revalidation logic (no previous state to compare)
+ *    - Simpler segment resolution
+ *
+ * 2. createMatchPartialPipeline (Partial Match)
+ *    - Used for client-side navigation
+ *    - Includes revalidation for SWR
+ *    - Compares with previous params/URL
+ *    - Supports intercepts (soft navigation modals)
  */
 import type { ResolvedSegment } from "../types.js";
 import type { MatchContext, MatchPipelineState } from "./match-context.js";

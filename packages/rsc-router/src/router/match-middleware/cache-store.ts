@@ -2,7 +2,101 @@
  * Cache Store Middleware
  *
  * Stores resolved segments in cache for future requests.
- * Handles proactive caching when segments have null components.
+ * Implements proactive caching for partial navigation scenarios.
+ *
+ * FLOW DIAGRAM
+ * ============
+ *
+ *   source (from intercept-resolution)
+ *         |
+ *         v
+ *   +---------------------------+
+ *   | Collect + yield all      |  Observer pattern: pass through
+ *   | allSegments[]            |
+ *   +---------------------------+
+ *         |
+ *         v
+ *   +---------------------+
+ *   | Should skip cache?  |
+ *   | - !cacheScope       |──yes──> return
+ *   | - isAction          |
+ *   | - cacheHit          |
+ *   +---------------------+
+ *         | no
+ *         v
+ *   +-------------------------------+
+ *   | Any null components?          |
+ *   | (client already has segment)  |
+ *   +-------------------------------+
+ *         |
+ *   +-----+-----+
+ *   |           |
+ *  yes          no
+ *   |           |
+ *   v           v
+ * PROACTIVE   DIRECT
+ * CACHE       CACHE
+ *   |           |
+ *   v           v
+ * waitUntil()  cacheRoute()
+ * re-render    immediately
+ * fresh        |
+ *   |           |
+ *   +-----------+
+ *         |
+ *         v
+ *      next middleware
+ *
+ *
+ * CACHING STRATEGIES
+ * ==================
+ *
+ * 1. Direct Cache (all components present):
+ *    - Immediate cacheRoute() call
+ *    - All segments have valid components
+ *    - Used for fresh full-page renders
+ *
+ * 2. Proactive Cache (null components present):
+ *    - Background re-render via waitUntil()
+ *    - Creates fresh context to avoid polluting response
+ *    - Re-resolves ALL segments without revalidation
+ *    - Ensures cache has complete components for future requests
+ *
+ *
+ * WHY PROACTIVE CACHING?
+ * ======================
+ *
+ * During partial navigation, some segments have null components:
+ *
+ *   Request: /products/123 -> /products/456
+ *   Segments: [ProductLayout(null), ProductPage(component)]
+ *
+ * The null means "client already has this, don't re-send."
+ * But if we cache these null components, future document requests
+ * would fail (no component to render).
+ *
+ * Solution: Background re-render all segments fresh, then cache.
+ * This ensures the cache always has complete, renderable segments.
+ *
+ *
+ * PROACTIVE CACHE FLOW
+ * ====================
+ *
+ *   1. Current request returns (fast, with nulls)
+ *   2. waitUntil() triggers background work
+ *   3. Create fresh handler context (silent, no stream pollution)
+ *   4. Re-resolve all entries without revalidation logic
+ *   5. Also resolve intercept segments if applicable
+ *   6. Store complete segments in cache
+ *
+ *
+ * SKIP CONDITIONS
+ * ===============
+ *
+ * Caching is skipped when:
+ *   - Cache scope disabled (no caching configured)
+ *   - This is an action request (mutations shouldn't cache)
+ *   - Cache was already hit (no need to re-cache same data)
  */
 import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";

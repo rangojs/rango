@@ -1,16 +1,93 @@
 /**
  * Cache Lookup Middleware
  *
- * Checks cache for segments before resolution.
- * If cache hit:
- * - Applies revalidation to determine which segments need re-rendering
- * - Resolves loaders fresh (loaders are NOT cached)
- * - Sets state.cacheHit = true
- * - Sets state.shouldRevalidate if SWR needed
- * - Yields cached segments + fresh loaders
+ * First middleware in the pipeline. Checks cache before segment resolution.
  *
- * If cache miss:
- * - Passes through to next middleware (segment resolution)
+ * FLOW DIAGRAM
+ * ============
+ *
+ *   source (empty)
+ *         |
+ *         v
+ *   +---------------------+
+ *   | Is action request?  |──yes──> yield* source (pass through)
+ *   +---------------------+
+ *         | no
+ *         v
+ *   +---------------------+
+ *   | Cache enabled?      |──no───> yield* source (pass through)
+ *   +---------------------+
+ *         | yes
+ *         v
+ *   +---------------------+
+ *   | Lookup cache        |
+ *   | (pathname, params)  |
+ *   +---------------------+
+ *         |
+ *   +-----+-----+
+ *   |           |
+ *  miss        hit
+ *   |           |
+ *   v           v
+ * yield*    Set state.cacheHit = true
+ * source    Set state.shouldRevalidate
+ *   |           |
+ *   |           v
+ *   |    +---------------------------+
+ *   |    | For each cached segment:  |
+ *   |    |  - Apply revalidation     |
+ *   |    |  - Set component = null   |
+ *   |    |    if client has it       |
+ *   |    +---------------------------+
+ *   |           |
+ *   |           v
+ *   |    +---------------------------+
+ *   |    | Resolve fresh loaders     |  <-- Loaders are NEVER cached
+ *   |    | (always fresh data)       |
+ *   |    +---------------------------+
+ *   |           |
+ *   |           v
+ *   |    yield cached segments
+ *   |    yield fresh loader segments
+ *   |           |
+ *   +-----------+
+ *         |
+ *         v
+ *      next middleware
+ *
+ *
+ * CACHE BEHAVIOR
+ * ==============
+ *
+ * Cache HIT:
+ *   - state.cacheHit = true signals downstream middleware to skip
+ *   - Cached segments have their components nullified if client already has them
+ *   - Loaders are always re-resolved for fresh data
+ *   - state.shouldRevalidate triggers background SWR if cache was stale
+ *
+ * Cache MISS:
+ *   - Passes through to segment-resolution middleware
+ *   - No segments yielded from this middleware
+ *
+ * Loaders:
+ *   - NEVER cached by design
+ *   - Always resolved fresh on every request
+ *   - Ensures data freshness even with cached UI components
+ *
+ *
+ * REVALIDATION RULES
+ * ==================
+ *
+ * Each cached segment is evaluated against its revalidation rules:
+ *
+ *   1. No rules defined -> use default (skip if client has segment)
+ *   2. Rules return false -> skip re-render (nullify component)
+ *   3. Rules return true -> re-render (keep component)
+ *
+ * Revalidation context includes:
+ *   - Previous/next URL and params
+ *   - Request object
+ *   - Action context (if POST)
  */
 import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";

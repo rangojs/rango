@@ -2,7 +2,112 @@
  * Match Context for Router Pipeline
  *
  * Encapsulates all state needed by the match pipeline middleware.
- * Created once at the start of matchPartial() and passed through the pipeline.
+ * Created once at the start of match()/matchPartial() and passed through the pipeline.
+ *
+ * DATA FLOW ARCHITECTURE
+ * ======================
+ *
+ * The router uses two complementary data structures:
+ *
+ *   MatchContext (ctx)        - Immutable request state
+ *   MatchPipelineState (state) - Mutable pipeline state
+ *
+ *
+ *   Request
+ *      |
+ *      v
+ *   +-------------------+
+ *   | Create Context    |  ctx = immutable snapshot of request
+ *   +-------------------+
+ *      |
+ *      v
+ *   +-------------------+
+ *   | Create State      |  state = mutable accumulator
+ *   +-------------------+
+ *      |
+ *      +---> [Pipeline Middleware]
+ *      |           |
+ *      |     ctx: read-only
+ *      |     state: read/write
+ *      |           |
+ *      +<----------+
+ *      |
+ *      v
+ *   +-------------------+
+ *   | Build Result      |  Merge ctx + state into MatchResult
+ *   +-------------------+
+ *
+ *
+ * MATCHCONTEXT FIELDS
+ * ===================
+ *
+ * Request Info:
+ *   - request, url, pathname: The incoming HTTP request
+ *
+ * Environment:
+ *   - env, bindings: Server environment (Cloudflare bindings, etc.)
+ *
+ * Client State (from RSC request headers):
+ *   - clientSegmentIds: Segments the client currently has
+ *   - clientSegmentSet: Set version for O(1) lookup
+ *   - stale: Whether client considers its cache stale
+ *
+ * Navigation State:
+ *   - prevUrl, prevParams, prevMatch: Previous navigation for comparison
+ *
+ * Current Match:
+ *   - matched: Route match result (params, route key)
+ *   - manifestEntry: Resolved manifest data
+ *   - entries: All route entries (layouts, loaders, etc.)
+ *   - routeKey, localRouteName: Route identifiers
+ *
+ * Handler Context:
+ *   - handlerContext: Context passed to loaders
+ *   - loaderPromises: Memoized loader promises
+ *
+ * Intercepts:
+ *   - interceptResult: Detected intercept (if soft navigation)
+ *   - interceptSelectorContext: Context for intercept matching
+ *
+ * Cache:
+ *   - cacheScope: Cache configuration and methods
+ *   - isIntercept: Whether this is an intercept request
+ *
+ * Flags:
+ *   - isAction: POST/mutation request
+ *   - isFullMatch: Document request vs navigation
+ *
+ *
+ * MATCHPIPELINESTATE FIELDS
+ * =========================
+ *
+ * State flags (set by middleware, read by others):
+ *   - cacheHit: Cache lookup succeeded
+ *   - shouldRevalidate: SWR revalidation needed
+ *
+ * Segment accumulation:
+ *   - segments: Resolved segments from pipeline
+ *   - matchedIds: All segment IDs in match order
+ *   - cachedSegments: Segments from cache (if hit)
+ *
+ * Intercept data:
+ *   - interceptSegments: Segments for modal slots
+ *   - slots: Named slot data for client
+ *
+ *
+ * IMMUTABILITY CONTRACT
+ * =====================
+ *
+ * MatchContext is treated as immutable after creation.
+ * Middleware should NEVER modify ctx properties.
+ *
+ * MatchPipelineState is explicitly mutable.
+ * Middleware communicate by setting state flags.
+ *
+ * This separation ensures:
+ *   - Request data is consistent across all middleware
+ *   - Pipeline state changes are explicit and trackable
+ *   - No hidden side effects in request handling
  */
 import type { CacheScope } from "../cache/cache-scope.js";
 import type {

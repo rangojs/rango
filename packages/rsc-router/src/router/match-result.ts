@@ -2,6 +2,109 @@
  * Match Result Collection
  *
  * Collects segments from the pipeline and builds the final MatchResult.
+ * This is the final stage of the match pipeline.
+ *
+ * COLLECTION FLOW
+ * ===============
+ *
+ *   Pipeline Generator
+ *         |
+ *         v
+ *   +---------------------------+
+ *   | collectSegments()        |  Drain async generator
+ *   | for await...push         |
+ *   +---------------------------+
+ *         |
+ *         v
+ *   +---------------------------+
+ *   | buildMatchResult()       |  Transform to MatchResult
+ *   +---------------------------+
+ *         |
+ *         |
+ *   +-----+-----+
+ *   |           |
+ * Full       Partial
+ * Match      Match
+ *   |           |
+ *   v           v
+ * All segs   Filter:
+ * rendered   - null components out
+ *            - keep loaders
+ *            - handle intercepts
+ *   |           |
+ *   +-----------+
+ *         |
+ *         v
+ *   MatchResult {
+ *     segments,    // Segments to render
+ *     matched,     // All segment IDs
+ *     diff,        // Changed segment IDs
+ *     params,      // Route params
+ *     slots,       // Intercept slot data
+ *     serverTiming // Performance metrics
+ *   }
+ *
+ *
+ * FULL VS PARTIAL MATCH
+ * =====================
+ *
+ * Full Match (document request):
+ *   - All segments are rendered
+ *   - allIds = all segment IDs
+ *   - No filtering needed
+ *
+ * Partial Match (navigation):
+ *   - Filter out null components (client already has them)
+ *   - BUT keep loader segments (they carry data)
+ *   - Handle intercepts specially (preserve client page + add modal)
+ *
+ *
+ * SEGMENT FILTERING RULES
+ * =======================
+ *
+ * For partial match, segments are filtered:
+ *
+ *   Keep if:
+ *     - component !== null (needs rendering)
+ *     - type === "loader" (carries data even with null component)
+ *
+ *   Skip if:
+ *     - component === null AND type !== "loader"
+ *     - (Client already has this segment's UI)
+ *
+ *
+ * INTERCEPT HANDLING
+ * ==================
+ *
+ * When intercepting (modal over current page):
+ *
+ *   allIds = client segments + intercept segments
+ *
+ * This tells the client:
+ *   1. Keep your current segments
+ *   2. Add these intercept segments to the modal slot
+ *
+ * The page stays visible, modal renders on top.
+ *
+ *
+ * MATCHRESULT STRUCTURE
+ * =====================
+ *
+ * {
+ *   segments: ResolvedSegment[]  // Segments to serialize and render
+ *   matched: string[]            // All segment IDs for this route
+ *   diff: string[]               // Which segments changed (for client diffing)
+ *   params: Record<string,string> // Route parameters
+ *   slots?: Record<string, {...}> // Named slot data for intercepts
+ *   serverTiming?: string         // Server-Timing header value
+ *   routeMiddleware?: [...]       // Route middleware results
+ * }
+ *
+ * The client uses this to:
+ *   1. Render segments[] to the UI tree
+ *   2. Update internal state with matched[]
+ *   3. Diff against previous state with diff[]
+ *   4. Render slot content if slots present
  */
 import type { MatchResult, ResolvedSegment } from "../types.js";
 import type { MatchContext, MatchPipelineState } from "./match-context.js";
@@ -55,16 +158,18 @@ export function buildMatchResult<TEnv>(
     );
   }
 
-  console.log(
-    `${logPrefix} All segments:`,
-    allSegments
-      .map((s) => `${s.id}(${s.type}, component=${s.component !== null})`)
-      .join(", ")
-  );
-  console.log(
-    `${logPrefix} Segments to render:`,
-    segmentsToRender.map((s) => s.id).join(", ")
-  );
+  if (process.env.NODE_ENV === "development") {
+    console.log(
+      `${logPrefix} All segments:`,
+      allSegments
+        .map((s) => `${s.id}(${s.type}, component=${s.component !== null})`)
+        .join(", ")
+    );
+    console.log(
+      `${logPrefix} Segments to render:`,
+      segmentsToRender.map((s) => s.id).join(", ")
+    );
+  }
 
   // Output metrics if enabled
   let serverTiming: string | undefined;
