@@ -19,7 +19,7 @@
 | 5 | [x] | Router Integration | `src/router.ts` (caching logic) |
 | 6 | [x] | Route Definition DSL | `src/route-definition.ts` |
 | 7 | [x] | RSC Handler Changes | `src/rsc/handler.ts`, `src/rsc/types.ts` |
-| 8 | [ ] | Request Context & Handle Store | `src/server/` |
+| 8 | [x] | Request Context & Handle Store | `src/server/` |
 | 9 | [ ] | Version Virtual Module | `src/vite/index.ts`, `virtual-entries.ts` |
 | 10 | [ ] | Browser/Client Changes | `src/browser/`, `src/client.tsx` |
 | 11 | [ ] | E2E Tests | `e2e/cache.test.ts`, `bundle-analysis.test.ts` |
@@ -182,14 +182,17 @@
 ---
 
 ### Step 8: Request Context & Handle Store
-**Date:**
+**Date:** 2026-01-15
 **Findings:**
-- (pending)
+- `request-context.ts`: Internal properties (`_handleStore`, `_cacheStore`) already have @internal tags
+- `handle-store.ts`: Well-documented interface with examples, `cloneHandleData` helper missing @internal tag
+- `context.ts`: Cache-related types (`EntryCacheConfig`, `LoaderEntry.cache`) properly documented
+- Handle store stream implementation is solid with proper completion handling
 
 **Improvements Made:**
-- (pending)
+- Added @internal tag to `cloneHandleData` helper function in handle-store.ts
 
-**Tests:** [ ] Passed
+**Tests:** [x] Passed (existing tests cover this functionality)
 
 ---
 

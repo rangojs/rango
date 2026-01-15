@@ -15,6 +15,7 @@ export type HandleData = Record<string, Record<string, unknown[]>>;
 
 /**
  * Deep clone handle data to create a snapshot.
+ * @internal
  */
 function cloneHandleData(data: HandleData): HandleData {
   const clone: HandleData = {};
