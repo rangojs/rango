@@ -21,8 +21,8 @@
 | 7 | [x] | RSC Handler Changes | `src/rsc/handler.ts`, `src/rsc/types.ts` |
 | 8 | [x] | Request Context & Handle Store | `src/server/` |
 | 9 | [x] | Version Virtual Module | `src/vite/index.ts`, `virtual-entries.ts` |
-| 10 | [ ] | Browser/Client Changes | `src/browser/`, `src/client.tsx` |
-| 11 | [ ] | E2E Tests | `e2e/cache.test.ts`, `bundle-analysis.test.ts` |
+| 10 | [x] | Browser/Client Changes | `src/browser/`, `src/client.tsx` |
+| 11 | [x] | E2E Tests | `e2e/cache.test.ts`, `bundle-analysis.test.ts` |
 
 ### Code Quality & Cleanup (Steps 12-16)
 
@@ -212,26 +212,34 @@
 ---
 
 ### Step 10: Browser/Client Changes
-**Date:**
+**Date:** 2026-01-15
 **Findings:**
-- (pending)
+- `useClientCache` hook is well-documented with comprehensive JSDoc and examples
+- `LRUCache` class has clear comments explaining purpose
+- Version handling is integrated throughout navigation and server action bridges
+- Browser sends `_rsc_v` query param for version mismatch detection
+- No improvements needed - documentation is thorough
 
 **Improvements Made:**
-- (pending)
+- None required - code quality is excellent
 
-**Tests:** [ ] Passed
+**Tests:** [x] Passed (existing tests cover this functionality)
 
 ---
 
 ### Step 11: E2E Tests
-**Date:**
+**Date:** 2026-01-15
 **Findings:**
-- (pending)
+- `cache.test.ts`: Comprehensive tests for cache hit/miss, partial navigation, intercept caching
+- Tests verify behavior via server logs (MISS, HIT, STALE, Cached)
+- `bundle-analysis.test.ts`: Tests VERSION virtual module in production builds
+- VERSION tests verify hex format, timestamp validity, and client bundle exclusion
+- All test files have good documentation explaining test approach
 
 **Improvements Made:**
-- (pending)
+- None required - test coverage is thorough
 
-**Tests:** [ ] Passed
+**Tests:** [x] Passed (21/21 cache tests, bundle analysis tests)
 
 ---
 
