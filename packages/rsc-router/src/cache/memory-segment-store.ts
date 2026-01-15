@@ -99,7 +99,8 @@ export class MemorySegmentCacheStore implements SegmentCacheStore {
   }
 
   /**
-   * Get cache statistics (for debugging)
+   * Get cache statistics for debugging purposes.
+   * @internal
    */
   getStats(): { size: number; keys: string[] } {
     return {

@@ -14,7 +14,7 @@
 |------|--------|------------|-------|
 | 1 | [x] | Cache Types & Interfaces | `src/cache/types.ts`, `src/cache/index.ts` |
 | 2 | [x] | Cache Scope Implementation | `src/cache/cache-scope.ts` |
-| 3 | [ ] | Memory Store Implementations | `src/cache/memory-store.ts`, `memory-segment-store.ts` |
+| 3 | [x] | Memory Store Implementations | `src/cache/memory-store.ts`, `memory-segment-store.ts` |
 | 4 | [ ] | Cloudflare Cache Store | `src/cache/cf/` |
 | 5 | [ ] | Router Integration | `src/router.ts` (caching logic) |
 | 6 | [ ] | Route Definition DSL | `src/route-definition.ts` |
@@ -90,19 +90,24 @@
 - Added descriptive JSDoc comments to serialization functions
 - Added section header for constants
 
-**Tests:** [ ] Pending
+**Tests:** [x] Passed (21/21 cache tests)
 
 ---
 
 ### Step 3: Memory Store Implementations
-**Date:**
+**Date:** 2026-01-15
 **Findings:**
-- (pending)
+- `memory-store.ts`: Magic number 60 (TTL default) should use named constant
+- `memory-store.ts`: Missing @internal tags on utility functions
+- `memory-segment-store.ts`: `getStats()` method missing @internal tag (debugging method, not public API)
+- `memory-segment-store.ts`: Well documented with JSDoc and usage examples (no changes needed)
 
 **Improvements Made:**
-- (pending)
+- Added `DEFAULT_TTL_SECONDS` constant with section header in memory-store.ts
+- Added @internal JSDoc tags to `streamToArrayBuffer` and `arrayBufferToStream` utility functions
+- Added @internal tag to `getStats()` debugging method in memory-segment-store.ts
 
-**Tests:** [ ] Passed
+**Tests:** [x] Passed (21/21 cache tests)
 
 ---
 
