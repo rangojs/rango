@@ -39,7 +39,7 @@
 | Step | Status | Focus Area |
 |------|--------|------------|
 | 17 | [x] | Final e2e test run & cleanup |
-| 18 | [ ] | Create PR with improvements summary |
+| 18 | [x] | Create PR with improvements summary |
 
 ---
 
@@ -342,21 +342,58 @@
 ---
 
 ### Step 18: Create PR
-**Date:**
-**PR Link:**
-**Confidence Level:** /10
+**Date:** 2026-01-15
+**PR Link:** (see below)
+**Confidence Level:** 9/10
 
 **Summary of All Improvements:**
-- (to be filled after all steps complete)
+
+1. **Type Safety**
+   - Removed deprecated `CachedSegmentResult` interface
+   - Changed `object` to `Record<string, unknown>` in `CacheValue`
+   - Removed unused `ttl` property from `HandlerCacheConfig`
+
+2. **Documentation**
+   - Added `@internal` JSDoc tags to all internal utility functions and reserved types
+   - Added `DEFAULT_TTL_SECONDS` constants with descriptive comments
+   - Enhanced JSDoc with section headers in cache files
+   - Fixed JSDoc examples in handler cache configuration
+
+3. **Code Organization**
+   - Reorganized cf/index.ts exports with descriptive comments
+   - Clearly separated public API from internal exports
+
+4. **Reserved Types Marked**
+   - `CacheStore`, `MemoryCacheStore` - generic store interface for future extensibility
+   - `SegmentCacheProvider` - interface reserved for future use
+   - `CacheStatus`, `MAX_REVALIDATION_INTERVAL` - internal CF cache constants
 
 ---
 
 ## Files Changed in This Review
 
-(to be updated as we progress)
+- `src/cache/types.ts` - Improved types, removed deprecated interface
+- `src/cache/index.ts` - Added descriptive export comments
+- `src/cache/cache-scope.ts` - Added constants and @internal tags
+- `src/cache/memory-store.ts` - Added constants, section headers, @internal tags
+- `src/cache/memory-segment-store.ts` - Added @internal tag to debug method
+- `src/cache/cf/cf-cache-store.ts` - Added @internal tags to private methods and constants
+- `src/cache/cf/index.ts` - Reorganized exports with documentation
+- `src/rsc/types.ts` - Removed unused ttl, fixed JSDoc examples
+- `src/server/handle-store.ts` - Added @internal tag
+- `src/vite/index.ts` - Added @internal tags to plugin functions
 
 ---
 
 ## Commits Made
 
-(to be updated as we progress)
+1. `review(cache): improve cache types and remove deprecated interface`
+2. `review(cache): add constants and improve cache-scope documentation`
+3. `review(cache): improve memory store documentation and constants`
+4. `review(cache): improve CF cache store documentation`
+5. `review(cache): cleanup RSC handler cache types`
+6. `review(cache): add internal tag to handle store helper`
+7. `review(cache): add internal tags to version plugins`
+8. `review(cache): update review plan with completed core implementation review`
+9. `review(cache): mark SegmentCacheProvider as internal`
+10. `review(cache): complete review plan steps 13-17`
