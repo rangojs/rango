@@ -13,7 +13,7 @@
 | Step | Status | Focus Area | Files |
 |------|--------|------------|-------|
 | 1 | [x] | Cache Types & Interfaces | `src/cache/types.ts`, `src/cache/index.ts` |
-| 2 | [ ] | Cache Scope Implementation | `src/cache/cache-scope.ts` |
+| 2 | [x] | Cache Scope Implementation | `src/cache/cache-scope.ts` |
 | 3 | [ ] | Memory Store Implementations | `src/cache/memory-store.ts`, `memory-segment-store.ts` |
 | 4 | [ ] | Cloudflare Cache Store | `src/cache/cf/` |
 | 5 | [ ] | Router Integration | `src/router.ts` (caching logic) |
@@ -73,19 +73,24 @@
 - Added descriptive comments to `index.ts` exports
 - Changed `object` to `Record<string, unknown>` for type safety
 
-**Tests:** [ ] Pending
+**Tests:** [x] Passed (292/293 - 1 pre-existing flaky test)
 
 ---
 
 ### Step 2: Cache Scope Implementation
-**Date:**
+**Date:** 2026-01-15
 **Findings:**
-- (pending)
+- Magic number (60 seconds TTL) should be a named constant
+- Internal utility functions missing @internal JSDoc tags
+- Missing JSDoc descriptions on serialization utility functions
 
 **Improvements Made:**
-- (pending)
+- Added `DEFAULT_TTL_SECONDS` constant for fallback TTL value
+- Added @internal JSDoc tags to all utility functions
+- Added descriptive JSDoc comments to serialization functions
+- Added section header for constants
 
-**Tests:** [ ] Passed
+**Tests:** [ ] Pending
 
 ---
 
