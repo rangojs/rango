@@ -23,11 +23,20 @@ import {
 import { createFromReadableStream } from "@vitejs/plugin-rsc/rsc";
 
 // ============================================================================
-// Serialization Utilities
+// Constants
+// ============================================================================
+
+/** Default TTL when no explicit value or store defaults are configured */
+const DEFAULT_TTL_SECONDS = 60;
+
+// ============================================================================
+// Serialization Utilities (internal)
 // ============================================================================
 
 /**
- * Generate cache key base from pathname and params
+ * Generate cache key base from pathname and params.
+ * Params are sorted alphabetically for consistent key generation.
+ * @internal
  */
 function getCacheKeyBase(
   pathname: string,
@@ -44,12 +53,13 @@ function getCacheKeyBase(
 }
 
 /**
- * Generate cache key for a route request
- * Single cache entry per route - uses pathname as the key
+ * Generate cache key for a route request.
+ * Single cache entry per route - uses pathname as the key.
  * Includes request type prefix since they produce different segment sets:
  * - doc: document requests (full page load)
  * - partial: navigation requests (client-side navigation)
  * - intercept: intercept navigation (modal/overlay routes)
+ * @internal
  */
 function getRouteCacheKey(
   pathname: string,
@@ -65,6 +75,10 @@ function getRouteCacheKey(
   return `${prefix}:${getCacheKeyBase(pathname, params)}`;
 }
 
+/**
+ * Convert a ReadableStream to a string.
+ * @internal
+ */
 async function streamToString(
   stream: ReadableStream<Uint8Array>
 ): Promise<string> {
@@ -82,6 +96,10 @@ async function streamToString(
   return result;
 }
 
+/**
+ * Convert a string to a ReadableStream.
+ * @internal
+ */
 function stringToStream(str: string): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const uint8 = encoder.encode(str);
@@ -95,7 +113,9 @@ function stringToStream(str: string): ReadableStream<Uint8Array> {
 }
 
 /**
- * RSC-serialize a value (loaderData, etc.)
+ * RSC-serialize a value using React Server Components stream.
+ * Used for serializing loaderData, layout, loading components etc.
+ * @internal
  */
 async function rscSerialize(value: unknown): Promise<string | undefined> {
   if (value === undefined || value === null) return undefined;
@@ -106,7 +126,8 @@ async function rscSerialize(value: unknown): Promise<string | undefined> {
 }
 
 /**
- * RSC-deserialize a value
+ * RSC-deserialize a value from a stored string.
+ * @internal
  */
 async function rscDeserialize<T>(
   encoded: string | undefined
@@ -119,7 +140,10 @@ async function rscDeserialize<T>(
 }
 
 /**
- * Serialize segments for storage
+ * Serialize segments for storage.
+ * Each segment's component, layout, loading, and loaderData are RSC-serialized.
+ * Metadata is preserved as-is.
+ * @internal
  */
 async function serializeSegments(
   segments: ResolvedSegment[]
@@ -199,7 +223,9 @@ async function serializeSegments(
 }
 
 /**
- * Deserialize segments from storage
+ * Deserialize segments from storage.
+ * Reconstructs ResolvedSegment objects from RSC-serialized data.
+ * @internal
  */
 async function deserializeSegments(
   data: SerializedSegmentData[]
@@ -298,7 +324,7 @@ export class CacheScope {
     }
 
     // Hardcoded fallback
-    return 60;
+    return DEFAULT_TTL_SECONDS;
   }
 
   /**

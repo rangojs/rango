@@ -28,7 +28,11 @@ export const CACHE_STALE_AT_HEADER = "x-edge-cache-stale-at";
 /** Header storing cache status: HIT | REVALIDATING */
 export const CACHE_STATUS_HEADER = "x-edge-cache-status";
 
-/** Maximum age in seconds for REVALIDATING status before allowing new revalidation */
+/**
+ * Maximum age in seconds for REVALIDATING status before allowing new revalidation.
+ * After this period, a stale entry in REVALIDATING status will trigger revalidation again.
+ * @internal
+ */
 export const MAX_REVALIDATION_INTERVAL = 30;
 
 // ============================================================================
@@ -74,6 +78,10 @@ export interface CFCacheStoreOptions {
   version?: string;
 }
 
+/**
+ * Cache status values for the x-edge-cache-status header.
+ * @internal
+ */
 export type CacheStatus = "HIT" | "REVALIDATING";
 
 // ============================================================================
@@ -97,7 +105,8 @@ export class CFCacheStore implements SegmentCacheStore {
   }
 
   /**
-   * Get the cache instance - uses caches.default unless namespace is specified
+   * Get the cache instance - uses caches.default unless namespace is specified.
+   * @internal
    */
   private getCache(): Cache | Promise<Cache> {
     if (this.namespace) {
@@ -220,6 +229,7 @@ export class CFCacheStore implements SegmentCacheStore {
   /**
    * Convert string key to Request object for CF Cache API.
    * Includes version in URL if specified (for cache invalidation on code changes).
+   * @internal
    */
   private keyToRequest(key: string): Request {
     const encodedKey = encodeURIComponent(key);

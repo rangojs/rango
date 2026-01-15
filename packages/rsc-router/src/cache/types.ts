@@ -108,11 +108,24 @@ export interface CachedEntryData {
 /**
  * Default cache options applied to all cache() boundaries.
  * Individual cache() calls can override any of these values.
+ *
+ * @example
+ * ```ts
+ * const store = new CFCacheStore({
+ *   defaults: { ttl: 60, swr: 300 }
+ * });
+ * ```
  */
 export interface CacheDefaults {
-  /** Default time-to-live in seconds */
+  /**
+   * Default time-to-live in seconds.
+   * After TTL expires, cached entry is considered stale.
+   */
   ttl?: number;
-  /** Default stale-while-revalidate window in seconds */
+  /**
+   * Default stale-while-revalidate window in seconds.
+   * During SWR window, stale content is served while revalidating in background.
+   */
   swr?: number;
 }
 
@@ -154,19 +167,15 @@ export interface CachedEntryResult {
   handles: Record<string, SegmentHandleData>;
 }
 
-/**
- * @deprecated Use CachedEntryResult instead
- */
-export interface CachedSegmentResult {
-  segment: ResolvedSegment;
-  handles: SegmentHandleData;
-}
 
 /**
  * Segment cache provider interface
  *
  * Used by router to check/store segment cache during matching.
  * Accessed via request context - if not present, caching is disabled.
+ *
+ * @internal Not currently implemented - CacheScope is used directly.
+ * Reserved for future extensibility.
  */
 export interface SegmentCacheProvider {
   /** Whether caching is enabled for this request */
@@ -201,18 +210,28 @@ export interface SegmentCacheProvider {
   cacheEntry(cacheKey: string, segments: ResolvedSegment[]): void;
 }
 
+// ============================================================================
+// Generic Cache Store (for future extensibility)
+// ============================================================================
+// These types support a general-purpose cache interface that can be used
+// for caching arbitrary values (responses, streams, objects). Currently,
+// the segment caching system uses SegmentCacheStore directly, but these
+// types enable future use cases like response caching or data caching.
+
 /**
- * Supported cache value types
+ * Supported cache value types for the generic CacheStore interface.
+ * @internal Reserved for future extensibility
  */
 export type CacheValue =
   | ReadableStream<Uint8Array>
   | Response
   | ArrayBuffer
   | string
-  | object; // JSON-serializable
+  | Record<string, unknown>; // JSON-serializable object
 
 /**
- * Cache entry returned by match()
+ * Cache entry returned by match().
+ * @internal Reserved for future extensibility
  */
 export interface CacheEntry<T = CacheValue> {
   /** The cached value */
@@ -222,7 +241,8 @@ export interface CacheEntry<T = CacheValue> {
 }
 
 /**
- * Original value type for reconstruction
+ * Original value type for reconstruction.
+ * @internal Reserved for future extensibility
  */
 export type CacheValueType =
   | "stream"
@@ -232,7 +252,8 @@ export type CacheValueType =
   | "object";
 
 /**
- * Metadata associated with a cache entry
+ * Metadata associated with a cache entry.
+ * @internal Reserved for future extensibility
  */
 export interface CacheMetadata {
   /** Timestamp when entry expires (ms since epoch) */
@@ -250,7 +271,8 @@ export interface CacheMetadata {
 }
 
 /**
- * Options for put()
+ * Options for put().
+ * @internal Reserved for future extensibility
  */
 export interface CachePutOptions {
   /** Time-to-live in seconds */
@@ -260,25 +282,29 @@ export interface CachePutOptions {
 }
 
 /**
- * Cache store interface
+ * Generic cache store interface for arbitrary value types.
+ *
+ * This interface is designed for future extensibility to support caching
+ * responses, streams, and other values. Currently, segment caching uses
+ * the SegmentCacheStore interface directly.
  *
  * Implementations must handle:
  * - Stream values (clone before storing, streams can only be read once)
  * - Promise values (await before storing)
  * - Expiration/TTL
+ *
+ * @internal Reserved for future extensibility
  */
 export interface CacheStore {
   /**
-   * Retrieve a cached entry by key
-   *
+   * Retrieve a cached entry by key.
    * @param key - Cache key
    * @returns The cached entry or undefined if not found/expired
    */
   match<T = CacheValue>(key: string): Promise<CacheEntry<T> | undefined>;
 
   /**
-   * Store a value in the cache
-   *
+   * Store a value in the cache.
    * @param key - Cache key
    * @param value - Value to cache (stream, response, string, object, etc.)
    * @param options - TTL, metadata, etc.
@@ -290,8 +316,7 @@ export interface CacheStore {
   ): Promise<void>;
 
   /**
-   * Delete a cached entry
-   *
+   * Delete a cached entry.
    * @param key - Cache key
    * @returns true if entry was deleted, false if not found
    */
