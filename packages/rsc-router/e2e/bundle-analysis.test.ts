@@ -17,6 +17,7 @@ import { x } from "tinyexec";
 const TEST_APP_ROOT = join(import.meta.dirname, "test-app");
 const CLIENT_ASSETS_DIR = join(TEST_APP_ROOT, "dist/client/assets");
 const RSC_ASSETS_DIR = join(TEST_APP_ROOT, "dist/rsc/assets");
+const RSC_INDEX = join(TEST_APP_ROOT, "dist/rsc/index.js");
 
 test.describe("bundle-analysis", () => {
   test.beforeAll(async () => {
@@ -139,6 +140,57 @@ test.describe("bundle-analysis", () => {
       // UI elements from client components should be present
       expect(clientBundle).toContain("Add to Cart");
       expect(clientBundle).toContain("Trigger Revalidation");
+    });
+  });
+
+  test.describe("version-virtual-module", () => {
+    function getRscIndexContent(): string {
+      return readFileSync(RSC_INDEX, "utf-8");
+    }
+
+    test("VERSION should be in RSC bundle as hex string", async () => {
+      const rscIndex = getRscIndexContent();
+
+      // VERSION should be defined as const VERSION = "hexstring"
+      expect(rscIndex).toMatch(/const VERSION\s*=\s*["'][0-9a-f]+["']/i);
+    });
+
+    test("VERSION should be a valid hex timestamp", async () => {
+      const rscIndex = getRscIndexContent();
+
+      // Extract VERSION value from const declaration
+      const versionMatch = rscIndex.match(/const VERSION\s*=\s*["']([0-9a-f]+)["']/i);
+      expect(versionMatch).toBeTruthy();
+
+      const version = versionMatch![1];
+
+      // Should be a valid hex number
+      expect(/^[0-9a-f]+$/i.test(version)).toBe(true);
+
+      // Should be reasonable length (11-12 chars for current timestamps)
+      expect(version.length).toBeGreaterThanOrEqual(10);
+      expect(version.length).toBeLessThanOrEqual(13);
+
+      // Should convert to a reasonable timestamp (after 2020, before 2100)
+      const timestamp = parseInt(version, 16);
+      const minTimestamp = new Date("2020-01-01").getTime();
+      const maxTimestamp = new Date("2100-01-01").getTime();
+      expect(timestamp).toBeGreaterThan(minTimestamp);
+      expect(timestamp).toBeLessThan(maxTimestamp);
+    });
+
+    test("VERSION should NOT be in client bundle", async () => {
+      const clientBundle = getClientBundleContent();
+      const rscIndex = getRscIndexContent();
+
+      // Extract the actual VERSION from RSC bundle
+      const versionMatch = rscIndex.match(/const VERSION\s*=\s*["']([0-9a-f]+)["']/i);
+      expect(versionMatch).toBeTruthy();
+
+      const version = versionMatch![1];
+
+      // The specific version string should not appear in client bundle
+      expect(clientBundle).not.toContain(version);
     });
   });
 });
