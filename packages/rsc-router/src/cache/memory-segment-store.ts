@@ -108,4 +108,20 @@ export class MemorySegmentCacheStore implements SegmentCacheStore {
       keys: Array.from(this.cache.keys()),
     };
   }
+
+  /**
+   * Reset the global cache state.
+   * Useful for test isolation - call this in beforeEach to ensure
+   * tests don't share cache state via globalThis.
+   *
+   * @example
+   * ```typescript
+   * beforeEach(() => {
+   *   MemorySegmentCacheStore.resetGlobalCache();
+   * });
+   * ```
+   */
+  static resetGlobalCache(): void {
+    delete (globalThis as any)[CACHE_GLOBAL_KEY];
+  }
 }

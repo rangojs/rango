@@ -76,6 +76,18 @@ import {
   traverseBack,
 } from "./router/pattern-matching.js";
 import { evaluateRevalidation } from "./router/revalidation.js";
+import {
+  type RouterContext,
+  runWithRouterContext,
+} from "./router/router-context.js";
+import {
+  type ActionContext,
+  type MatchContext,
+  type MatchPipelineState,
+  createPipelineState,
+} from "./router/match-context.js";
+import { createMatchPartialPipeline } from "./router/match-pipelines.js";
+import { collectMatchResult } from "./router/match-result.js";
 
 /**
  * Props passed to the root layout component
@@ -2427,225 +2439,64 @@ export function createRSCRouter<TEnv = any>(
   }
 
   /**
-   * Match request and return segments
-   * Uses generator-based stream for efficient segment building
+   * Match request and return segments (document/SSR requests)
+   *
+   * Uses generator middleware pipeline for clean separation of concerns:
+   * - cache-lookup: Check cache first
+   * - segment-resolution: Resolve segments on cache miss
+   * - cache-store: Store results in cache
+   * - background-revalidation: SWR revalidation
    */
-  async function match(request: Request, context: TEnv): Promise<MatchResult> {
-    const url = new URL(request.url);
-    const pathname = url.pathname;
+  async function match(request: Request, env: TEnv): Promise<MatchResult> {
+    // Build RouterContext with all closure functions needed by middleware
+    const routerCtx: RouterContext<TEnv> = {
+      findMatch,
+      loadManifest,
+      traverseBack,
+      createHandlerContext,
+      setupLoaderAccess,
+      setupLoaderAccessSilent,
+      getContext,
+      getMetricsStore,
+      createCacheScope,
+      findInterceptForRoute,
+      resolveAllSegmentsWithRevalidation,
+      resolveInterceptEntry,
+      evaluateRevalidation,
+      getRequestContext,
+      resolveAllSegments,
+      createHandleStore,
+      buildEntryRevalidateMap,
+      resolveLoadersOnlyWithRevalidation,
+      resolveInterceptLoadersOnly,
+      resolveLoadersOnly,
+    };
 
-    // Initialize metrics store for this request
-    const metricsStore = getMetricsStore();
+    return runWithRouterContext(routerCtx, async () => {
+      const result = await createMatchContextForFull(request, env);
 
-    // Track route matching (direct recording since ALS context not yet available)
-    const routeMatchStart = metricsStore ? performance.now() : 0;
-    const matched = findMatch(pathname);
-    if (metricsStore) {
-      const duration = performance.now() - routeMatchStart;
-      metricsStore.metrics.push({
-        label: "route-matching",
-        duration,
-        startTime: routeMatchStart - metricsStore.requestStart,
-      });
-    }
-
-    if (!matched) {
-      throw new RouteNotFoundError(`No route matched for ${pathname}`, {
-        cause: {
-          pathname,
-          method: request.method,
-        },
-      });
-    }
-
-    // Handle trailing slash redirect (pattern defines canonical form)
-    if (matched.redirectTo) {
-      const redirectUrl = matched.redirectTo + url.search;
-      return {
-        segments: [],
-        matched: [],
-        diff: [],
-        params: matched.params,
-        redirect: redirectUrl,
-      };
-    }
-
-    // Load manifest with AsyncLocalStorage context and validation
-    // Pass metrics store to be included in context
-    // Track manifest loading (direct recording since ALS context not yet available)
-    // isSSR=true for document requests so loading() with skipSSR can disable itself
-    const manifestStart = metricsStore ? performance.now() : 0;
-    const manifestEntry = await loadManifest(
-      matched.entry,
-      matched.routeKey,
-      pathname,
-      metricsStore,
-      true // isSSR
-    );
-    if (metricsStore) {
-      const duration = performance.now() - manifestStart;
-      metricsStore.metrics.push({
-        label: "manifest-loading",
-        duration,
-        startTime: manifestStart - metricsStore.requestStart,
-      });
-    }
-
-    // Collect route-level middleware from entry tree (root to matched route)
-    // These run with same onion-style execution as app-level middleware
-    // Includes middleware from orphan layouts (inline layouts within routes)
-    const routeMiddleware = collectRouteMiddleware(
-      traverseBack(manifestEntry),
-      matched.params
-    );
-
-    // Extract bindings from context (if using RouterEnv pattern)
-    // Use Bindings if present (Cloudflare Workers pattern), otherwise use context directly
-    const bindings = (context as any)?.Bindings ?? context;
-
-    const handlerContext = createHandlerContext(
-      matched.params,
-      request,
-      url.searchParams,
-      pathname,
-      url,
-      bindings
-    );
-
-    try {
-      // Create request-scoped loader promises map for parallel execution
-      const loaderPromises = new Map<string, Promise<any>>();
-
-      // Set up ctx.use() to access loader data
-      setupLoaderAccess(handlerContext, loaderPromises);
-
-      // Get the store for running segment resolution within metrics context
-      const Store = getContext().getOrCreateStore(matched.routeKey);
-      if (metricsStore) {
-        Store.metrics = metricsStore;
+      // Handle redirect case
+      if ("type" in result && result.type === "redirect") {
+        return {
+          segments: [],
+          matched: [],
+          diff: [],
+          params: {},
+          redirect: result.redirectUrl,
+        };
       }
 
-      // Collect entries from manifest (root to route)
-      const entries = [...traverseBack(manifestEntry)];
+      const ctx = result as MatchContext<TEnv>;
 
-      // Find first cache scope (determines TTL/SWR for this route)
-      let cacheScope: CacheScope | null = null;
-      for (const entry of entries) {
-        if (entry.cache) {
-          cacheScope = createCacheScope(entry.cache, cacheScope);
-        }
+      try {
+        const state = createPipelineState();
+        const pipeline = createMatchPartialPipeline(ctx, state);
+        return await collectMatchResult(pipeline, ctx, state);
+      } catch (error) {
+        if (error instanceof Response) throw error;
+        throw sanitizeError(error);
       }
-
-      // Single cache lookup for entire route
-      const cacheResult = cacheScope?.enabled
-        ? await cacheScope.lookupRoute(pathname, matched.params)
-        : null;
-
-      let segments: ResolvedSegment[];
-
-      if (cacheResult) {
-        // Cache HIT - use cached non-loader segments
-        const cachedSegments = cacheResult.segments;
-
-        // Resolve loaders fresh (loaders are NOT cached by default)
-        const loaderSegments = await getContext().runWithStore(
-          Store,
-          Store.namespace || "#router",
-          Store.parent,
-          () => resolveLoadersOnly(entries, handlerContext)
-        );
-
-        // Combine: cached segments + fresh loaders
-        segments = [...cachedSegments, ...loaderSegments];
-
-        // Trigger background revalidation if stale (SWR)
-        if (cacheResult.shouldRevalidate && cacheScope) {
-          const requestCtx = getRequestContext();
-          const revalidateScope = cacheScope;
-          requestCtx?.waitUntil(async () => {
-            console.log(`[Router.match] Revalidating stale route: ${pathname}`);
-            try {
-              // IMPORTANT: Create a fresh handleStore for background revalidation
-              // to avoid polluting the current response's handle stream.
-              // The original response streams handles from the cached/replayed data,
-              // while the background work generates fresh handles for the new cache entry.
-              if (requestCtx) {
-                requestCtx._handleStore = createHandleStore();
-              }
-
-              const freshSegments = await resolveAllSegments(
-                entries,
-                matched.routeKey,
-                matched.params,
-                handlerContext,
-                loaderPromises
-              );
-              revalidateScope.cacheRoute(
-                pathname,
-                matched.params,
-                freshSegments
-              );
-              console.log(`[Router.match] Revalidation complete: ${pathname}`);
-            } catch (error) {
-              console.error(`[Router.match] Revalidation failed:`, error);
-            }
-          });
-        }
-      } else {
-        // Cache MISS - resolve all segments
-        segments = await getContext().runWithStore(
-          Store,
-          Store.namespace || "#router",
-          Store.parent,
-          async () => {
-            return resolveAllSegments(
-              entries,
-              matched.routeKey,
-              matched.params,
-              handlerContext,
-              loaderPromises
-            );
-          }
-        );
-
-        // Cache for next request (non-blocking)
-        if (cacheScope?.enabled) {
-          cacheScope.cacheRoute(pathname, matched.params, segments);
-        }
-      }
-
-      const segmentIds = segments.map((s) => s.id);
-
-      // Output metrics if enabled
-      let serverTiming: string | undefined;
-      if (metricsStore) {
-        logMetrics(request.method, pathname, metricsStore);
-        serverTiming = generateServerTiming(metricsStore);
-      }
-
-      return {
-        segments,
-        matched: segmentIds,
-        diff: segmentIds,
-        params: matched.params,
-        serverTiming,
-        routeMiddleware:
-          routeMiddleware.length > 0 ? routeMiddleware : undefined,
-      };
-    } catch (error) {
-      // Check if middleware/handler short-circuited with Response
-      if (error instanceof Response) {
-        console.log(
-          `[Router.match] Response short-circuit - returning directly`
-        );
-        throw error; // Propagate to top-level handler (entry.rsc.tsx)
-      }
-      console.error((error as Error)?.stack || error);
-
-      // Sanitize error for production security
-      console.error(`[Router.match] Error during match:`, error);
-      throw sanitizeError(error);
-    }
+    });
   }
 
   /**
@@ -2827,19 +2678,165 @@ export function createRSCRouter<TEnv = any>(
   }
 
   /**
-   * Match partial request with revalidation
-   * Optimized with lazy evaluation - only builds previous segments if needed
+   * Create match context for full requests (document/SSR)
+   * Simpler than partial - no revalidation, intercepts, or client state tracking
+   *
+   * @returns MatchContext with isFullMatch: true
+   * @throws RouteNotFoundError if no route matches
    */
-  async function matchPartial(
+  async function createMatchContextForFull(
     request: Request,
-    context: TEnv,
-    actionContext?: {
-      actionId?: string;
-      actionUrl?: URL;
-      actionResult?: any;
-      formData?: FormData;
+    env: TEnv
+  ): Promise<MatchContext<TEnv> | { type: "redirect"; redirectUrl: string }> {
+    const url = new URL(request.url);
+    const pathname = url.pathname;
+
+    // Initialize metrics store for this request
+    const metricsStore = getMetricsStore();
+
+    // Track route matching
+    const routeMatchStart = metricsStore ? performance.now() : 0;
+    const matched = findMatch(pathname);
+    if (metricsStore) {
+      metricsStore.metrics.push({
+        label: "route-matching",
+        duration: performance.now() - routeMatchStart,
+        startTime: routeMatchStart - metricsStore.requestStart,
+      });
     }
-  ): Promise<MatchResult | null> {
+
+    if (!matched) {
+      throw new RouteNotFoundError(`No route matched for ${pathname}`, {
+        cause: { pathname, method: request.method },
+      });
+    }
+
+    // Handle trailing slash redirect (pattern defines canonical form)
+    if (matched.redirectTo) {
+      return {
+        type: "redirect",
+        redirectUrl: matched.redirectTo + url.search,
+      };
+    }
+
+    // Load manifest with isSSR=true for document requests
+    const manifestStart = metricsStore ? performance.now() : 0;
+    const manifestEntry = await loadManifest(
+      matched.entry,
+      matched.routeKey,
+      pathname,
+      metricsStore,
+      true // isSSR
+    );
+    if (metricsStore) {
+      metricsStore.metrics.push({
+        label: "manifest-loading",
+        duration: performance.now() - manifestStart,
+        startTime: manifestStart - metricsStore.requestStart,
+      });
+    }
+
+    // Collect route-level middleware
+    const routeMiddleware = collectRouteMiddleware(
+      traverseBack(manifestEntry),
+      matched.params
+    );
+
+    // Extract bindings from context
+    const bindings = (env as any)?.Bindings ?? env;
+
+    const handlerContext = createHandlerContext(
+      matched.params,
+      request,
+      url.searchParams,
+      pathname,
+      url,
+      bindings
+    );
+
+    // Create request-scoped loader promises map
+    const loaderPromises = new Map<string, Promise<any>>();
+    setupLoaderAccess(handlerContext, loaderPromises);
+
+    // Get store for metrics context
+    const Store = getContext().getOrCreateStore(matched.routeKey);
+    // Add run helper for cleaner middleware code
+    Store.run = <T>(fn: () => T | Promise<T>) =>
+      getContext().runWithStore(
+        Store,
+        Store.namespace || "#router",
+        Store.parent,
+        fn
+      );
+    if (metricsStore) {
+      Store.metrics = metricsStore;
+    }
+
+    // Collect entries and build cache scope
+    const entries = [...traverseBack(manifestEntry)];
+    let cacheScope: CacheScope | null = null;
+    for (const entry of entries) {
+      if (entry.cache) {
+        cacheScope = createCacheScope(entry.cache, cacheScope);
+      }
+    }
+
+    // Full match context - no intercepts, no client state, no revalidation
+    return {
+      request,
+      url,
+      pathname,
+      env,
+      bindings,
+      clientSegmentIds: [],
+      clientSegmentSet: new Set(),
+      stale: false,
+      prevUrl: url, // Same as current for full match
+      prevParams: {},
+      prevMatch: null,
+      matched,
+      manifestEntry,
+      entries,
+      routeKey: matched.routeKey,
+      localRouteName: matched.routeKey.includes(".")
+        ? matched.routeKey.split(".").pop()!
+        : matched.routeKey,
+      handlerContext,
+      loaderPromises,
+      metricsStore,
+      Store,
+      interceptContextMatch: null,
+      interceptSelectorContext: {
+        from: url,
+        to: url,
+        params: matched.params,
+        request,
+        env,
+        segments: { path: [], ids: [] },
+      },
+      isSameRouteNavigation: false,
+      interceptResult: null,
+      cacheScope,
+      isIntercept: false,
+      actionContext: undefined,
+      isAction: false,
+      routeMiddleware,
+      isFullMatch: true,
+    };
+  }
+
+  /**
+   * Create match context for partial requests (navigation/actions)
+   * Extracts all setup logic from matchPartial into a reusable context builder
+   *
+   * @returns MatchContext if setup successful, null if should fall back to full render
+   * @throws RouteNotFoundError if no route matches
+   */
+  async function createMatchContextForPartial(
+    request: Request,
+    env: TEnv,
+    actionContext?: ActionContext
+  ): Promise<MatchContext<TEnv> | null> {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
@@ -2847,75 +2844,54 @@ export function createRSCRouter<TEnv = any>(
     const metricsStore = getMetricsStore();
 
     // Extract client state from query params and header
-    // Filter out empty strings - "".split(",") returns [""] not []
     const clientSegmentIds =
       url.searchParams.get("_rsc_segments")?.split(",").filter(Boolean) || [];
-    // Check if this is a stale cache revalidation request
     const stale = url.searchParams.get("_rsc_stale") === "true";
-    // Use custom header first, fallback to standard Referer for prefetch scenarios
     const previousUrl =
       request.headers.get("X-RSC-Router-Client-Path") ||
       request.headers.get("Referer");
-    // Intercept source URL - tracks where an intercept was triggered from
-    // Used during action revalidation to maintain intercept context
     const interceptSourceUrl = request.headers.get(
       "X-RSC-Router-Intercept-Source"
     );
 
     if (!previousUrl) {
-      // No previous URL - fall back to full render
-      return null;
+      return null; // Fall back to full render
     }
 
     const prevUrl = new URL(previousUrl, url.origin);
-    // For intercept determination, use intercept source URL if available
-    // This allows actions in intercepted modals to maintain intercept context
     const interceptContextUrl = interceptSourceUrl
       ? new URL(interceptSourceUrl, url.origin)
       : prevUrl;
 
-    // Track route matching (direct recording since ALS context not yet available)
+    // Track route matching
     const routeMatchStart = metricsStore ? performance.now() : 0;
     const prevMatch = findMatch(prevUrl.pathname);
     const prevParams = prevMatch?.params || {};
-    // Match intercept context URL for determining intercept activation
-    // This is different from prevMatch when action fires from intercepted modal
     const interceptContextMatch = interceptSourceUrl
       ? findMatch(interceptContextUrl.pathname)
       : prevMatch;
 
-    // Match current route
     const matched = findMatch(pathname);
 
     if (metricsStore) {
-      const duration = performance.now() - routeMatchStart;
       metricsStore.metrics.push({
         label: "route-matching",
-        duration,
+        duration: performance.now() - routeMatchStart,
         startTime: routeMatchStart - metricsStore.requestStart,
       });
     }
 
     if (!matched) {
       throw new RouteNotFoundError(`No route matched for ${pathname}`, {
-        cause: {
-          pathname,
-          method: request.method,
-          previousUrl,
-        },
+        cause: { pathname, method: request.method, previousUrl },
       });
     }
 
-    // If trailing slash redirect is needed, fall back to full match which handles redirects
     if (matched.redirectTo) {
-      return null;
+      return null; // Fall back to full match for redirects
     }
 
-    // Check if routes are from different route groups (different matchers)
-    // When navigating between route groups (e.g., /about → /blog), segment IDs
-    // have completely different prefixes (M2 vs M1). The client cannot merge
-    // segments from different groups, so fall back to full render.
-    // Compare the route entry (handler group), not the individual routeKey (which varies within a group)
+    // Check if routes are from different route groups
     if (prevMatch && prevMatch.entry !== matched.entry) {
       console.log(
         `[Router.matchPartial] Route group changed: ${prevMatch.routeKey} → ${matched.routeKey}, falling back to full render`
@@ -2923,38 +2899,31 @@ export function createRSCRouter<TEnv = any>(
       return null;
     }
 
-    // Load manifest with AsyncLocalStorage context and validation
-    // Track manifest loading (direct recording since ALS context not yet available)
-    // isSSR=false for partial requests (navigation/actions)
+    // Load manifest
     const manifestStart = metricsStore ? performance.now() : 0;
     const manifestEntry = await loadManifest(
       matched.entry,
       matched.routeKey,
       pathname,
       metricsStore,
-      false // isSSR
+      false
     );
     if (metricsStore) {
-      const duration = performance.now() - manifestStart;
       metricsStore.metrics.push({
         label: "manifest-loading",
-        duration,
+        duration: performance.now() - manifestStart,
         startTime: manifestStart - metricsStore.requestStart,
       });
     }
 
-    // Collect route-level middleware from entry tree (root to matched route)
-    // These run with same onion-style execution as app-level middleware
-    // Includes middleware from orphan layouts (inline layouts within routes)
+    // Collect route middleware
     const routeMiddleware = collectRouteMiddleware(
       traverseBack(manifestEntry),
       matched.params
     );
 
-    // Extract bindings from context (if using RouterEnv pattern)
-    // Use Bindings if present (Cloudflare Workers pattern), otherwise use context directly
-    const bindings = (context as any)?.Bindings ?? context;
-
+    // Create handler context
+    const bindings = (env as any)?.Bindings ?? env;
     const handlerContext = createHandlerContext(
       matched.params,
       request,
@@ -2970,634 +2939,193 @@ export function createRSCRouter<TEnv = any>(
       Array.from(clientSegmentSet)
     );
 
-    try {
-      // Create request-scoped loader promises map for parallel execution
-      const loaderPromises = new Map<string, Promise<any>>();
+    // Set up loader promises
+    const loaderPromises = new Map<string, Promise<any>>();
+    setupLoaderAccess(handlerContext, loaderPromises);
 
-      // Set up ctx.use() to access loader data
-      setupLoaderAccess(handlerContext, loaderPromises);
-
-      // Get the store for running segment resolution within metrics context
-      const Store = getContext().getOrCreateStore(matched.routeKey);
-      if (metricsStore) {
-        Store.metrics = metricsStore;
-      }
-
-      // Check for intercepting routes FIRST
-      // Intercepts activate during soft navigation and REPLACE the route handler
-      // They render in named slots (@modal, @sidebar, etc.) while layouts stay
-      //
-      // IMPORTANT: Don't intercept when navigating within the same route type
-      // (e.g., product/a -> product/b). Intercepts only activate when navigating
-      // TO the route FROM a different route.
-      //
-      // For action revalidation from intercepted modals, use interceptContextMatch
-      // which reflects the source URL (e.g., /shop) rather than the current URL
-      // (e.g., /shop/product/headphones). This maintains intercept context.
-      const isSameRouteNavigation =
-        interceptContextMatch &&
-        interceptContextMatch.routeKey === matched.routeKey;
-
-      // Debug logging for intercept context
-      if (interceptSourceUrl) {
-        console.log(`[Router.matchPartial] Intercept context detected:`);
-        console.log(`  - Current URL: ${pathname}`);
-        console.log(`  - Intercept source: ${interceptSourceUrl}`);
-        console.log(`  - Context match: ${interceptContextMatch?.routeKey}`);
-        console.log(`  - Current route: ${matched.routeKey}`);
-        console.log(`  - Same route navigation: ${isSameRouteNavigation}`);
-      }
-
-      const localRouteName = matched.routeKey.includes(".")
-        ? matched.routeKey.split(".").pop()!
-        : matched.routeKey;
-
-      // Build selector context for evaluating when() conditions on intercepts
-      // Note: context is TEnv (platform bindings like Cloudflare env)
-      // Filter segment IDs to only include routes and layouts (exclude parallels and loaders)
-      const filteredSegmentIds = clientSegmentIds.filter((id) => {
-        if (id.includes(".@")) return false; // Exclude parallels
-        if (/D\d+\./.test(id)) return false; // Exclude loaders
-        return true;
-      });
-      const interceptSelectorContext: InterceptSelectorContext = {
-        from: prevUrl,
-        to: url,
-        params: matched.params,
-        request,
-        env: context,
-        segments: {
-          path: prevUrl.pathname.split("/").filter(Boolean),
-          ids: filteredSegmentIds,
-        },
-      };
-      const isAction = !!actionContext;
-
-      // Walk up from route's parent to find intercept (parent layouts can intercept child routes)
-      // Try both full route key and local name for flexible matching
-      // Skip intercept lookup entirely if navigating within the same route
-      //
-      // For ACTIONS: also skip if client doesn't have any intercept segments (like @modal).
-      // This means they're on the detail page, not the intercepted view.
-      // Without this check, actions on detail page would incorrectly render intercepts.
-      // For NAVIGATION: always look for intercepts (client might be navigating to open one).
-      const clientHasInterceptSegments = [...clientSegmentSet].some((id) =>
-        id.includes(".@")
+    // Get store for metrics context
+    const Store = getContext().getOrCreateStore(matched.routeKey);
+    // Add run helper for cleaner middleware code
+    Store.run = <T>(fn: () => T | Promise<T>) =>
+      getContext().runWithStore(
+        Store,
+        Store.namespace || "#router",
+        Store.parent,
+        fn
       );
-      const skipInterceptForAction = isAction && !clientHasInterceptSegments;
-      const interceptResult =
-        isSameRouteNavigation || skipInterceptForAction
-          ? null
-          : findInterceptForRoute(
-              matched.routeKey,
-              manifestEntry.parent,
-              interceptSelectorContext,
-              isAction
-            ) ||
-            (localRouteName !== matched.routeKey
-              ? findInterceptForRoute(
-                  localRouteName,
-                  manifestEntry.parent,
-                  interceptSelectorContext,
-                  isAction
-                )
-              : null);
-
-      // When leaving intercept (isSameRouteNavigation), force route segment to render
-      // The client has the route segment ID from the intercept navigation (added to matchedIds
-      // even though route handler was skipped), but needs the actual component now.
-      // Remove route segment ID from clientSegmentSet so revalidation doesn't skip it.
-      if (isSameRouteNavigation && manifestEntry.type === "route") {
-        console.log(
-          `[Router.matchPartial] Leaving intercept - forcing route segment render: ${manifestEntry.shortCode}`
-        );
-        clientSegmentSet.delete(manifestEntry.shortCode);
-      }
-
-      // Build slots state - intercepts render in named slots
-      const slots: Record<string, import("./types.js").SlotState> = {};
-      let interceptSegments: ResolvedSegment[] = [];
-
-      // Collect entries from manifest (root to route)
-      const entries = [...traverseBack(manifestEntry)];
-
-      // Find first cache scope (determines TTL/SWR for this route)
-      let cacheScope: CacheScope | null = null;
-      for (const entry of entries) {
-        if (entry.cache) {
-          cacheScope = createCacheScope(entry.cache, cacheScope);
-        }
-      }
-
-      // Determine if this is an intercept navigation (uses different cache key)
-      const isIntercept = !!interceptResult;
-
-      // Single cache lookup for entire route (skip during actions)
-      const cacheResult =
-        cacheScope?.enabled && !isAction
-          ? await cacheScope.lookupRoute(pathname, matched.params, isIntercept)
-          : null;
-
-      let result: { segments: ResolvedSegment[]; matchedIds: string[] };
-      let cacheHit = false;
-
-      if (cacheResult) {
-        cacheHit = true;
-        // Cache HIT - use cached non-loader segments (includes intercept segments if intercept cache)
-        const cachedSegments = cacheResult.segments;
-        const cachedMatchedIds = cacheResult.segments.map((s) => s.id);
-
-        // Apply revalidation to cached segments - set component=null for segments
-        // client already has and doesn't need to update (matches non-cached behavior)
-        const entryRevalidateMap = buildEntryRevalidateMap(entries);
-        for (const segment of cachedSegments) {
-          // Skip segments client doesn't have - they need their component
-          if (!clientSegmentSet.has(segment.id)) continue;
-
-          // Skip intercept segments - they're handled separately
-          if (segment.namespace?.startsWith("intercept:")) continue;
-
-          // Look up revalidation rules for this segment
-          const entryInfo = entryRevalidateMap.get(segment.id);
-          if (!entryInfo || entryInfo.revalidate.length === 0) {
-            // No revalidation rules, use default behavior (skip if client has)
-            segment.component = null;
-            segment.loading = undefined;
-            continue;
-          }
-
-          const shouldRevalidate = await evaluateRevalidation({
-            segment,
-            prevParams,
-            getPrevSegment: null,
-            request,
-            prevUrl,
-            nextUrl: url,
-            revalidations: entryInfo.revalidate.map((fn, i) => ({
-              name: `revalidate${i}`,
-              fn,
-            })),
-            routeKey: matched.routeKey,
-            context: handlerContext,
-            actionContext,
-          });
-
-          if (!shouldRevalidate) {
-            segment.component = null; // Client has it, no revalidation needed
-            segment.loading = undefined; // Clear loading to prevent Suspense
-          }
-        }
-
-        // Resolve loaders fresh with revalidation logic (loaders are NOT cached by default)
-        const loaderResult = await getContext().runWithStore(
-          Store,
-          Store.namespace || "#router",
-          Store.parent,
-          () =>
-            resolveLoadersOnlyWithRevalidation(
-              entries,
-              handlerContext,
-              clientSegmentSet,
-              prevParams,
-              request,
-              prevUrl,
-              url,
-              matched.routeKey,
-              actionContext
-            )
-        );
-
-        // Combine: cached segments + fresh loaders
-        result = {
-          segments: [...cachedSegments, ...loaderResult.segments],
-          matchedIds: [...cachedMatchedIds, ...loaderResult.matchedIds],
-        };
-
-        // Trigger background revalidation if stale (SWR)
-        if (cacheResult.shouldRevalidate && cacheScope) {
-          const requestCtx = getRequestContext();
-          const revalidateScope = cacheScope;
-          requestCtx?.waitUntil(async () => {
-            console.log(
-              `[Router.matchPartial] Revalidating stale route: ${pathname}`
-            );
-            try {
-              // IMPORTANT: Create a fresh handleStore for background revalidation
-              // to avoid polluting the current response's handle stream.
-              if (requestCtx) {
-                requestCtx._handleStore = createHandleStore();
-              }
-
-              const freshResult = await resolveAllSegmentsWithRevalidation(
-                entries,
-                matched.routeKey,
-                matched.params,
-                handlerContext,
-                clientSegmentSet,
-                prevParams,
-                request,
-                prevUrl,
-                url,
-                loaderPromises,
-                actionContext,
-                interceptResult,
-                localRouteName,
-                pathname
-              );
-
-              // For intercept revalidation, also resolve fresh intercept segments
-              let freshInterceptSegments: ResolvedSegment[] = [];
-              if (interceptResult) {
-                freshInterceptSegments = await resolveInterceptEntry(
-                  interceptResult.intercept,
-                  interceptResult.entry,
-                  matched.params,
-                  handlerContext,
-                  true,
-                  {
-                    clientSegmentIds: clientSegmentSet,
-                    prevParams,
-                    request,
-                    prevUrl,
-                    nextUrl: url,
-                    routeKey: matched.routeKey,
-                    actionContext,
-                    stale: false,
-                  }
-                );
-              }
-
-              const allFreshSegments = [
-                ...freshResult.segments,
-                ...freshInterceptSegments,
-              ];
-              revalidateScope.cacheRoute(
-                pathname,
-                matched.params,
-                allFreshSegments,
-                isIntercept
-              );
-              console.log(
-                `[Router.matchPartial] Revalidation complete: ${pathname}`
-              );
-            } catch (error) {
-              console.error(
-                `[Router.matchPartial] Revalidation failed:`,
-                error
-              );
-            }
-          });
-        }
-      } else {
-        // Cache MISS or action - resolve all segments with revalidation logic
-        result = await getContext().runWithStore(
-          Store,
-          Store.namespace || "#router",
-          Store.parent,
-          async () => {
-            return resolveAllSegmentsWithRevalidation(
-              entries,
-              matched.routeKey,
-              matched.params,
-              handlerContext,
-              clientSegmentSet,
-              prevParams,
-              request,
-              prevUrl,
-              url,
-              loaderPromises,
-              actionContext,
-              interceptResult,
-              localRouteName,
-              pathname
-            );
-          }
-        );
-
-        // For intercept navigations, resolve intercept segments before caching
-        // so the cache includes everything needed for this intercept navigation
-        if (interceptResult) {
-          const slotName = interceptResult.intercept.slotName;
-          console.log(
-            `[Router.matchPartial] Found intercept for "${localRouteName}" -> slot "${slotName}"`
-          );
-
-          // Resolve intercept entry (middleware, loaders, handler)
-          interceptSegments = await getContext().runWithStore(
-            Store,
-            Store.namespace || "#router",
-            Store.parent,
-            () =>
-              resolveInterceptEntry(
-                interceptResult.intercept,
-                interceptResult.entry,
-                matched.params,
-                handlerContext,
-                true, // belongsToRoute
-                {
-                  clientSegmentIds: clientSegmentSet,
-                  prevParams,
-                  request,
-                  prevUrl,
-                  nextUrl: url,
-                  routeKey: matched.routeKey,
-                  actionContext,
-                  stale,
-                }
-              )
-          );
-
-          // Add to slots metadata - browser uses this to know which slots are active
-          slots[slotName] = {
-            active: true,
-            segments: interceptSegments,
-          };
-        }
-
-        // Cache for next request (non-blocking, skip during actions)
-        // Include intercept segments so cache hit serves complete response
-        if (cacheScope?.enabled && !isAction) {
-          const allSegmentsToCache = [...result.segments, ...interceptSegments];
-
-          // Check if any non-loader segments have null components
-          // This happens when client already had those segments (partial navigation)
-          const hasNullComponents = allSegmentsToCache.some(
-            (s) => s.component === null && s.type !== "loader"
-          );
-
-          if (hasNullComponents) {
-            // Proactive caching: render all segments fresh in background
-            // This ensures cache has complete components for future requests
-            // from different origins that need all segments
-            const requestCtx = getRequestContext();
-            const proactiveCacheScope = cacheScope;
-
-            // Capture values needed for background execution
-            const capturedEntries = entries;
-            const capturedRouteKey = matched.routeKey;
-            const capturedParams = matched.params;
-            const capturedInterceptResult = interceptResult;
-
-            requestCtx?.waitUntil(async () => {
-              console.log(
-                `[Router.matchPartial] Proactive caching: ${pathname} (rendering null-component segments)`
-              );
-              try {
-                // Create FRESH context for proactive caching
-                // This prevents handle data (breadcrumbs, meta) from being
-                // pushed to the main response's HandleStore
-                const proactiveHandlerContext = createHandlerContext(
-                  capturedParams,
-                  request,
-                  url.searchParams,
-                  pathname,
-                  url,
-                  bindings
-                );
-                const proactiveLoaderPromises = new Map<string, Promise<any>>();
-
-                // Set up loader access that ignores handle pushes
-                // This avoids polluting the response stream with duplicate handle data
-                setupLoaderAccessSilent(
-                  proactiveHandlerContext,
-                  proactiveLoaderPromises
-                );
-
-                // Re-resolve ALL segments without revalidation (like document request)
-                // This renders segments the client already had
-                const freshSegments = await getContext().runWithStore(
-                  Store,
-                  Store.namespace || "#router",
-                  Store.parent,
-                  () =>
-                    resolveAllSegments(
-                      capturedEntries,
-                      capturedRouteKey,
-                      capturedParams,
-                      proactiveHandlerContext,
-                      proactiveLoaderPromises
-                    )
-                );
-
-                // Also resolve intercept segments fresh if applicable
-                let freshInterceptSegments: ResolvedSegment[] = [];
-                if (capturedInterceptResult) {
-                  freshInterceptSegments = await getContext().runWithStore(
-                    Store,
-                    Store.namespace || "#router",
-                    Store.parent,
-                    () =>
-                      resolveInterceptEntry(
-                        capturedInterceptResult.intercept,
-                        capturedInterceptResult.entry,
-                        capturedParams,
-                        proactiveHandlerContext,
-                        true // belongsToRoute
-                        // No revalidationContext = render fresh
-                      )
-                  );
-                }
-
-                const completeSegments = [
-                  ...freshSegments,
-                  ...freshInterceptSegments,
-                ];
-                proactiveCacheScope.cacheRoute(
-                  pathname,
-                  capturedParams,
-                  completeSegments,
-                  isIntercept
-                );
-                console.log(
-                  `[Router.matchPartial] Proactive caching complete: ${pathname}`
-                );
-              } catch (error) {
-                console.error(
-                  `[Router.matchPartial] Proactive caching failed:`,
-                  error
-                );
-              }
-            });
-          } else {
-            // All segments have components - cache directly
-            cacheScope.cacheRoute(
-              pathname,
-              matched.params,
-              allSegmentsToCache,
-              isIntercept
-            );
-          }
-        }
-      }
-
-      const { segments, matchedIds: allMatchedIds } = result;
-
-      // Resolve intercept for cache hits (cache doesn't include intercept segments for non-intercept keys)
-      // Skip if: (1) no intercept, (2) already resolved in miss path, (3) cache hit with intercept key (segments include intercept)
-      const skipInterceptResolution =
-        !interceptResult ||
-        interceptSegments.length > 0 ||
-        (cacheHit && isIntercept);
-
-      // For cache hit with intercept, extract intercept segments from cached data for slots metadata
-      // BUT re-resolve loaders to get fresh data (cached components + fresh loaders)
-      if (interceptResult && cacheHit && isIntercept) {
-        const slotName = interceptResult.intercept.slotName;
-        // Find intercept segments from cached segments (they have namespace starting with "intercept:")
-        interceptSegments = segments.filter((s) =>
-          s.namespace?.startsWith("intercept:")
-        );
-
-        // Re-resolve intercept loaders for fresh data on cache hit
-        // This keeps cached component/layout but fetches fresh loader data
-        const freshLoaderResult = await getContext().runWithStore(
-          Store,
-          Store.namespace || "#router",
-          Store.parent,
-          () =>
-            resolveInterceptLoadersOnly(
-              interceptResult.intercept,
-              interceptResult.entry,
-              matched.params,
-              handlerContext,
-              true, // belongsToRoute
-              {
-                clientSegmentIds: clientSegmentSet,
-                prevParams,
-                request,
-                prevUrl,
-                nextUrl: url,
-                routeKey: matched.routeKey,
-                actionContext,
-                stale,
-              }
-            )
-        );
-
-        // Update intercept segment's loaderDataPromise with fresh data if loaders were resolved
-        if (freshLoaderResult) {
-          // Find the main intercept segment (type="parallel" with slot property) and update its loader data
-          const interceptMainSegment = interceptSegments.find(
-            (s) => s.type === "parallel" && s.slot
-          );
-          if (interceptMainSegment) {
-            interceptMainSegment.loaderDataPromise =
-              freshLoaderResult.loaderDataPromise;
-            interceptMainSegment.loaderIds = freshLoaderResult.loaderIds;
-            console.log(
-              `[Router.matchPartial] Cache HIT + fresh loaders for intercept "${localRouteName}" -> slot "${slotName}"`
-            );
-          }
-        } else {
-          console.log(
-            `[Router.matchPartial] Cache HIT for intercept "${localRouteName}" -> slot "${slotName}" (no loader revalidation)`
-          );
-        }
-
-        slots[slotName] = {
-          active: true,
-          segments: interceptSegments,
-        };
-      }
-
-      if (interceptResult && !skipInterceptResolution) {
-        const slotName = interceptResult.intercept.slotName;
-        console.log(
-          `[Router.matchPartial] Found intercept for "${localRouteName}" -> slot "${slotName}"`
-        );
-
-        // Resolve intercept entry (middleware, loaders, handler)
-        interceptSegments = await getContext().runWithStore(
-          Store,
-          Store.namespace || "#router",
-          Store.parent,
-          () =>
-            resolveInterceptEntry(
-              interceptResult.intercept,
-              interceptResult.entry,
-              matched.params,
-              handlerContext,
-              true, // belongsToRoute
-              {
-                clientSegmentIds: clientSegmentSet,
-                prevParams,
-                request,
-                prevUrl,
-                nextUrl: url,
-                routeKey: matched.routeKey,
-                actionContext,
-                stale,
-              }
-            )
-        );
-
-        // Add to slots metadata - browser uses this to know which slots are active
-        slots[slotName] = {
-          active: true,
-          segments: interceptSegments,
-        };
-      }
-
-      // Combine main segments with intercept segments
-      const allSegments = [...segments, ...interceptSegments];
-
-      // When intercepting, tell browser to keep its current segments + add modal
-      // This prevents the browser from discarding the current page content
-      // If client sent empty segments (HMR recovery), use segment IDs from allSegments
-      // (not allMatchedIds which may include unrendered route segments)
-      const allIds = interceptResult
-        ? clientSegmentIds.length > 0
-          ? [...clientSegmentIds, ...interceptSegments.map((s) => s.id)]
-          : allSegments.map((s) => s.id) // Use actual segments, not matchedIds
-        : [...allMatchedIds, ...interceptSegments.map((s) => s.id)];
-
-      // Filter out segments with null components (client already has them)
-      // BUT always include loader segments - they carry data even with null component
-      const segmentsToRender = allSegments.filter(
-        (s) => s.component !== null || s.type === "loader"
-      );
-      console.log(
-        `[Router.matchPartial] All segments:`,
-        allSegments
-          .map((s) => `${s.id}(${s.type}, component=${s.component !== null})`)
-          .join(", ")
-      );
-      console.log(
-        `[Router.matchPartial] Segments to render:`,
-        segmentsToRender.map((s) => s.id).join(", ")
-      );
-
-      // Output metrics if enabled
-      let serverTiming: string | undefined;
-      if (metricsStore) {
-        logMetrics(request.method, pathname, metricsStore);
-        serverTiming = generateServerTiming(metricsStore);
-      }
-
-      return {
-        segments: segmentsToRender,
-        matched: allIds, // All segment IDs including intercepts
-        diff: segmentsToRender.map((s) => s.id),
-        params: matched.params,
-        serverTiming,
-        // Include slots state - browser uses this to know which slots are active
-        slots: Object.keys(slots).length > 0 ? slots : undefined,
-        routeMiddleware:
-          routeMiddleware.length > 0 ? routeMiddleware : undefined,
-      };
-    } catch (error) {
-      // Check if middleware/handler short-circuited with Response
-      if (error instanceof Response) {
-        console.log(
-          `[Router.matchPartial] Response short-circuit - returning directly`
-        );
-        throw error;
-      }
-
-      // Sanitize error for production security
-      console.error(`[Router.matchPartial] Error during matchPartial:`, error);
-      throw sanitizeError(error);
+    if (metricsStore) {
+      Store.metrics = metricsStore;
     }
+
+    // Intercept detection
+    const isSameRouteNavigation = !!(
+      interceptContextMatch &&
+      interceptContextMatch.routeKey === matched.routeKey
+    );
+
+    if (interceptSourceUrl) {
+      console.log(`[Router.matchPartial] Intercept context detected:`);
+      console.log(`  - Current URL: ${pathname}`);
+      console.log(`  - Intercept source: ${interceptSourceUrl}`);
+      console.log(`  - Context match: ${interceptContextMatch?.routeKey}`);
+      console.log(`  - Current route: ${matched.routeKey}`);
+      console.log(`  - Same route navigation: ${isSameRouteNavigation}`);
+    }
+
+    const localRouteName = matched.routeKey.includes(".")
+      ? matched.routeKey.split(".").pop()!
+      : matched.routeKey;
+
+    // Build intercept selector context
+    const filteredSegmentIds = clientSegmentIds.filter((id) => {
+      if (id.includes(".@")) return false;
+      if (/D\d+\./.test(id)) return false;
+      return true;
+    });
+    const interceptSelectorContext: InterceptSelectorContext = {
+      from: prevUrl,
+      to: url,
+      params: matched.params,
+      request,
+      env,
+      segments: {
+        path: prevUrl.pathname.split("/").filter(Boolean),
+        ids: filteredSegmentIds,
+      },
+    };
+    const isAction = !!actionContext;
+
+    // Find intercept
+    const clientHasInterceptSegments = [...clientSegmentSet].some((id) =>
+      id.includes(".@")
+    );
+    const skipInterceptForAction = isAction && !clientHasInterceptSegments;
+    const interceptResult =
+      isSameRouteNavigation || skipInterceptForAction
+        ? null
+        : findInterceptForRoute(
+            matched.routeKey,
+            manifestEntry.parent,
+            interceptSelectorContext,
+            isAction
+          ) ||
+          (localRouteName !== matched.routeKey
+            ? findInterceptForRoute(
+                localRouteName,
+                manifestEntry.parent,
+                interceptSelectorContext,
+                isAction
+              )
+            : null);
+
+    // When leaving intercept, force route segment to render
+    if (isSameRouteNavigation && manifestEntry.type === "route") {
+      console.log(
+        `[Router.matchPartial] Leaving intercept - forcing route segment render: ${manifestEntry.shortCode}`
+      );
+      clientSegmentSet.delete(manifestEntry.shortCode);
+    }
+
+    // Collect entries and build cache scope
+    const entries = [...traverseBack(manifestEntry)];
+    let cacheScope: CacheScope | null = null;
+    for (const entry of entries) {
+      if (entry.cache) {
+        cacheScope = createCacheScope(entry.cache, cacheScope);
+      }
+    }
+
+    const isIntercept = !!interceptResult;
+
+    return {
+      request,
+      url,
+      pathname,
+      env,
+      bindings,
+      clientSegmentIds,
+      clientSegmentSet,
+      stale,
+      prevUrl,
+      prevParams,
+      prevMatch,
+      matched,
+      manifestEntry,
+      entries,
+      routeKey: matched.routeKey,
+      localRouteName,
+      handlerContext,
+      loaderPromises,
+      metricsStore,
+      Store,
+      interceptContextMatch,
+      interceptSelectorContext,
+      isSameRouteNavigation,
+      interceptResult,
+      cacheScope,
+      isIntercept,
+      actionContext,
+      isAction,
+      routeMiddleware,
+      isFullMatch: false,
+    };
+  }
+
+  /**
+   * Match partial request with revalidation
+   *
+   * Uses generator middleware pipeline for clean separation of concerns:
+   * - cache-lookup: Check cache first
+   * - segment-resolution: Resolve segments on cache miss
+   * - intercept-resolution: Handle intercept routes
+   * - cache-store: Store results in cache
+   * - background-revalidation: SWR revalidation
+   */
+  async function matchPartial(
+    request: Request,
+    context: TEnv,
+    actionContext?: ActionContext
+  ): Promise<MatchResult | null> {
+    // Build RouterContext with all closure functions needed by middleware
+    const routerCtx: RouterContext<TEnv> = {
+      findMatch,
+      loadManifest,
+      traverseBack,
+      createHandlerContext,
+      setupLoaderAccess,
+      setupLoaderAccessSilent,
+      getContext,
+      getMetricsStore,
+      createCacheScope,
+      findInterceptForRoute,
+      resolveAllSegmentsWithRevalidation,
+      resolveInterceptEntry,
+      evaluateRevalidation,
+      getRequestContext,
+      resolveAllSegments,
+      createHandleStore,
+      buildEntryRevalidateMap,
+      resolveLoadersOnlyWithRevalidation,
+      resolveInterceptLoadersOnly,
+    };
+
+    return runWithRouterContext(routerCtx, async () => {
+      const ctx = await createMatchContextForPartial(
+        request,
+        context,
+        actionContext
+      );
+      if (!ctx) return null;
+
+      try {
+        const state = createPipelineState();
+        const pipeline = createMatchPartialPipeline(ctx, state);
+        return await collectMatchResult(pipeline, ctx, state);
+      } catch (error) {
+        if (error instanceof Response) throw error;
+        throw sanitizeError(error);
+      }
+    });
   }
 
   /**

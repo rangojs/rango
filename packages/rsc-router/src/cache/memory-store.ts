@@ -189,11 +189,15 @@ export class MemoryCacheStore implements CacheStore {
       case "stream":
         return arrayBufferToStream(value as ArrayBuffer);
 
-      case "response":
-        return new Response(value as ArrayBuffer, {
-          status: metadata.responseStatus ?? 200,
+      case "response": {
+        const status = metadata.responseStatus ?? 200;
+        // Status codes 204 (No Content) and 304 (Not Modified) cannot have a body
+        const isNullBodyStatus = status === 204 || status === 304;
+        return new Response(isNullBodyStatus ? null : (value as ArrayBuffer), {
+          status,
           headers: metadata.responseHeaders,
         });
+      }
 
       case "arraybuffer":
       case "string":
