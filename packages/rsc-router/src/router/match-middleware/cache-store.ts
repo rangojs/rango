@@ -99,6 +99,7 @@
  *   - Cache was already hit (no need to re-cache same data)
  */
 import type { ResolvedSegment } from "../../types.js";
+import { getRequestContext } from "../../server/request-context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
@@ -136,11 +137,23 @@ export function withCacheStore<TEnv>(
       setupLoaderAccessSilent,
       resolveAllSegments,
       resolveInterceptEntry,
-      getRequestContext,
     } = getRouterContext<TEnv>();
 
     // Combine main segments with intercept segments
     const allSegmentsToCache = [...allSegments, ...state.interceptSegments];
+
+    // Check if any segments are error or notFound type - these should never be cached
+    // Error/notFound boundaries render successfully (200 status) but we don't want to cache them
+    const hasErrorOrNotFound = allSegmentsToCache.some(
+      (s) => s.type === "error" || s.type === "notFound"
+    );
+
+    if (hasErrorOrNotFound) {
+      console.log(
+        `[CacheStore] Skipping cache: contains error/notFound segment for ${ctx.pathname}`
+      );
+      return;
+    }
 
     // Check if any non-loader segments have null components
     // This happens when client already had those segments (partial navigation)
@@ -148,81 +161,97 @@ export function withCacheStore<TEnv>(
       (s) => s.component === null && s.type !== "loader"
     );
 
-    if (hasNullComponents) {
-      // Proactive caching: render all segments fresh in background
-      // This ensures cache has complete components for future requests
-      const requestCtx = getRequestContext();
-      const cacheScope = ctx.cacheScope;
+    const requestCtx = getRequestContext();
+    if (!requestCtx) return;
 
-      requestCtx?.waitUntil(async () => {
+    const cacheScope = ctx.cacheScope;
+
+    // Register onResponse callback to cache only on 200 status
+    requestCtx.onResponse((response) => {
+      // Only cache successful responses
+      if (response.status !== 200) {
         console.log(
-          `[Router.matchPartial] Proactive caching: ${ctx.pathname} (rendering null-component segments)`
+          `[CacheStore] Skipping cache: non-200 status ${response.status} for ${ctx.pathname}`
         );
-        try {
-          // Create fresh context for proactive caching
-          // This prevents handle data from polluting the response stream
-          const proactiveHandlerContext = createHandlerContext(
-            ctx.matched.params,
-            ctx.request,
-            ctx.url.searchParams,
-            ctx.pathname,
-            ctx.url,
-            ctx.bindings
+        return response;
+      }
+
+      if (hasNullComponents) {
+        // Proactive caching: render all segments fresh in background
+        // This ensures cache has complete components for future requests
+        requestCtx.waitUntil(async () => {
+          console.log(
+            `[Router.matchPartial] Proactive caching: ${ctx.pathname} (rendering null-component segments)`
           );
-          const proactiveLoaderPromises = new Map<string, Promise<any>>();
-
-          // Set up loader access that ignores handle pushes
-          setupLoaderAccessSilent(proactiveHandlerContext, proactiveLoaderPromises);
-
-          // Re-resolve ALL segments without revalidation
-          const Store = ctx.Store;
-          const freshSegments = await Store.run(() =>
-            resolveAllSegments(
-              ctx.entries,
-              ctx.routeKey,
+          try {
+            // Create fresh context for proactive caching
+            // This prevents handle data from polluting the response stream
+            const proactiveHandlerContext = createHandlerContext(
               ctx.matched.params,
-              proactiveHandlerContext,
-              proactiveLoaderPromises
-            )
-          );
+              ctx.request,
+              ctx.url.searchParams,
+              ctx.pathname,
+              ctx.url,
+              ctx.bindings
+            );
+            const proactiveLoaderPromises = new Map<string, Promise<any>>();
 
-          // Also resolve intercept segments fresh if applicable
-          let freshInterceptSegments: ResolvedSegment[] = [];
-          if (ctx.interceptResult) {
-            freshInterceptSegments = await Store.run(() =>
-              resolveInterceptEntry(
-                ctx.interceptResult!.intercept,
-                ctx.interceptResult!.entry,
+            // Set up loader access that ignores handle pushes
+            setupLoaderAccessSilent(proactiveHandlerContext, proactiveLoaderPromises);
+
+            // Re-resolve ALL segments without revalidation
+            const Store = ctx.Store;
+            const freshSegments = await Store.run(() =>
+              resolveAllSegments(
+                ctx.entries,
+                ctx.routeKey,
                 ctx.matched.params,
                 proactiveHandlerContext,
-                true // belongsToRoute
-                // No revalidationContext = render fresh
+                proactiveLoaderPromises
               )
             );
-          }
 
-          const completeSegments = [...freshSegments, ...freshInterceptSegments];
-          cacheScope.cacheRoute(
-            ctx.pathname,
-            ctx.matched.params,
-            completeSegments,
-            ctx.isIntercept
-          );
-          console.log(
-            `[Router.matchPartial] Proactive caching complete: ${ctx.pathname}`
-          );
-        } catch (error) {
-          console.error(`[Router.matchPartial] Proactive caching failed:`, error);
-        }
-      });
-    } else {
-      // All segments have components - cache directly
-      ctx.cacheScope.cacheRoute(
-        ctx.pathname,
-        ctx.matched.params,
-        allSegmentsToCache,
-        ctx.isIntercept
-      );
-    }
+            // Also resolve intercept segments fresh if applicable
+            let freshInterceptSegments: ResolvedSegment[] = [];
+            if (ctx.interceptResult) {
+              freshInterceptSegments = await Store.run(() =>
+                resolveInterceptEntry(
+                  ctx.interceptResult!.intercept,
+                  ctx.interceptResult!.entry,
+                  ctx.matched.params,
+                  proactiveHandlerContext,
+                  true // belongsToRoute
+                  // No revalidationContext = render fresh
+                )
+              );
+            }
+
+            const completeSegments = [...freshSegments, ...freshInterceptSegments];
+            cacheScope.cacheRoute(
+              ctx.pathname,
+              ctx.matched.params,
+              completeSegments,
+              ctx.isIntercept
+            );
+            console.log(
+              `[Router.matchPartial] Proactive caching complete: ${ctx.pathname}`
+            );
+          } catch (error) {
+            console.error(`[Router.matchPartial] Proactive caching failed:`, error);
+          }
+        });
+      } else {
+        // All segments have components - cache directly
+        // cacheRoute handles its own waitUntil internally
+        cacheScope.cacheRoute(
+          ctx.pathname,
+          ctx.matched.params,
+          allSegmentsToCache,
+          ctx.isIntercept
+        );
+      }
+
+      return response;
+    });
   };
 }

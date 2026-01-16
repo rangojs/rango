@@ -115,6 +115,28 @@ export interface RequestContext<
    * ```
    */
   waitUntil(fn: () => Promise<void>): void;
+
+  /**
+   * Register a callback to run when the response is created.
+   * Callbacks are sync and receive the response. They can:
+   * - Inspect response status/headers
+   * - Return a modified response
+   * - Schedule async work via waitUntil
+   *
+   * @example
+   * ```typescript
+   * ctx.onResponse((res) => {
+   *   if (res.status === 200) {
+   *     ctx.waitUntil(async () => await cacheIt());
+   *   }
+   *   return res;
+   * });
+   * ```
+   */
+  onResponse(callback: (response: Response) => Response): void;
+
+  /** @internal Registered onResponse callbacks */
+  _onResponseCallbacks: Array<(response: Response) => Response>;
 }
 
 // AsyncLocalStorage instance for request context
@@ -279,6 +301,12 @@ export function createRequestContext<TEnv>(
         // Node.js: fire-and-forget
         fn().catch((err) => console.error("[waitUntil]", err));
       }
+    },
+
+    _onResponseCallbacks: [],
+
+    onResponse(callback: (response: Response) => Response): void {
+      this._onResponseCallbacks.push(callback);
     },
   };
 

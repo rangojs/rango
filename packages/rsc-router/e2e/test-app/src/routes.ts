@@ -122,4 +122,12 @@ export const testRoutes = route({
     itemA: "/proactive-cache/item-a",
     itemB: "/proactive-cache/item-b",
   },
+  // Routes for testing cache status behavior (only cache 200 responses)
+  cacheStatus: {
+    success: "/cache-status/success",
+    notFound: "/cache-status/not-found",
+    serverError: "/cache-status/server-error",
+    redirect: "/cache-status/redirect",
+    redirectTarget: "/cache-status/redirect-target",
+  },
 });

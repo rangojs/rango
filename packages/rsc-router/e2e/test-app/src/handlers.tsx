@@ -1,4 +1,4 @@
-import { map, Meta } from "rsc-router/server";
+import { map, Meta, redirect, notFound } from "rsc-router/server";
 import { Outlet, Link } from "rsc-router/client";
 import type { testRoutes } from "./routes.js";
 import { SlowProductLocationState } from "./location-states.js";
@@ -1804,6 +1804,50 @@ export default map<typeof testRoutes>(
           )),
         ]
       ),
+    ]),
+
+    // =====================================================
+    // CACHE STATUS TEST ROUTES
+    // Tests that only 200 responses are cached
+    // All routes wrapped in cache() to enable caching behavior
+    // =====================================================
+    cache({ ttl: 600 }, () => [
+      // Success route (200) - should be cached
+      route("cacheStatus.success", () => (
+        <div data-testid="cache-status-success-page">
+          <Link to="/" data-testid="back-link">← Back to Home</Link>
+          <h1 data-testid="cache-status-success-title">Cache Status: Success (200)</h1>
+          <p data-testid="cache-status-success-rendered">
+            Rendered at: {new Date().toISOString()}
+          </p>
+        </div>
+      )),
+
+      // Not Found route (404) - should NOT be cached
+      route("cacheStatus.notFound", () => {
+        notFound("This resource does not exist");
+      }),
+
+      // Server Error route (500) - should NOT be cached
+      route("cacheStatus.serverError", () => {
+        throw new Error("Intentional server error for cache status testing");
+      }),
+
+      // Redirect route (308) - should NOT be cached
+      route("cacheStatus.redirect", () => {
+        return redirect("/cache-status/redirect-target", 308);
+      }),
+
+      // Redirect target route (200) - should be cached
+      route("cacheStatus.redirectTarget", () => (
+        <div data-testid="cache-status-redirect-target-page">
+          <Link to="/" data-testid="back-link">← Back to Home</Link>
+          <h1 data-testid="cache-status-redirect-target-title">Cache Status: Redirect Target (200)</h1>
+          <p data-testid="cache-status-redirect-target-rendered">
+            Rendered at: {new Date().toISOString()}
+          </p>
+        </div>
+      )),
     ]),
   ]
 );
