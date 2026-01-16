@@ -45,8 +45,13 @@ export function createResponseWithMergedHeaders(
     }
   });
 
+  // Use ctx.res.status if it was set (e.g., 404 for notFound, 500 for error)
+  // Otherwise use the status from init
+  const status = ctx.res.status !== 200 ? ctx.res.status : init.status;
+
   let response = new Response(body, {
     ...init,
+    status,
     headers: mergedHeaders,
   });
 

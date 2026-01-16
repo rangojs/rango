@@ -142,19 +142,6 @@ export function withCacheStore<TEnv>(
     // Combine main segments with intercept segments
     const allSegmentsToCache = [...allSegments, ...state.interceptSegments];
 
-    // Check if any segments are error or notFound type - these should never be cached
-    // Error/notFound boundaries render successfully (200 status) but we don't want to cache them
-    const hasErrorOrNotFound = allSegmentsToCache.some(
-      (s) => s.type === "error" || s.type === "notFound"
-    );
-
-    if (hasErrorOrNotFound) {
-      console.log(
-        `[CacheStore] Skipping cache: contains error/notFound segment for ${ctx.pathname}`
-      );
-      return;
-    }
-
     // Check if any non-loader segments have null components
     // This happens when client already had those segments (partial navigation)
     const hasNullComponents = allSegmentsToCache.some(
@@ -166,7 +153,8 @@ export function withCacheStore<TEnv>(
 
     const cacheScope = ctx.cacheScope;
 
-    // Register onResponse callback to cache only on 200 status
+    // Register onResponse callback to skip caching for non-200 responses
+    // Note: error/notFound status codes are set elsewhere (not caching-specific)
     requestCtx.onResponse((response) => {
       // Only cache successful responses
       if (response.status !== 200) {
