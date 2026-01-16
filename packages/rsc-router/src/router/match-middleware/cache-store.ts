@@ -21,6 +21,7 @@
  *   | - !cacheScope       |──yes──> return
  *   | - isAction          |
  *   | - cacheHit          |
+ *   | - method !== GET    |
  *   +---------------------+
  *         | no
  *         v
@@ -97,6 +98,7 @@
  *   - Cache scope disabled (no caching configured)
  *   - This is an action request (mutations shouldn't cache)
  *   - Cache was already hit (no need to re-cache same data)
+ *   - Non-GET request (only GET requests are cacheable)
  */
 import type { ResolvedSegment } from "../../types.js";
 import { getRequestContext } from "../../server/request-context.js";
@@ -128,7 +130,8 @@ export function withCacheStore<TEnv>(
     // 1. Cache miss but cache scope is disabled
     // 2. This is an action (actions don't cache)
     // 3. Cache was already hit (no need to re-cache)
-    if (!ctx.cacheScope?.enabled || ctx.isAction || state.cacheHit) {
+    // 4. Non-GET request (only cache GET requests)
+    if (!ctx.cacheScope?.enabled || ctx.isAction || state.cacheHit || ctx.request.method !== "GET") {
       return;
     }
 
