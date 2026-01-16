@@ -21,6 +21,7 @@
  *   | - !cacheScope       |──yes──> return
  *   | - isAction          |
  *   | - cacheHit          |
+ *   | - method !== GET    |
  *   +---------------------+
  *         | no
  *         v
@@ -97,6 +98,7 @@
  *   - Cache scope disabled (no caching configured)
  *   - This is an action request (mutations shouldn't cache)
  *   - Cache was already hit (no need to re-cache same data)
+ *   - Non-GET request (only GET requests are cacheable)
  */
 import type { ResolvedSegment } from "../../types.js";
 import { getRequestContext } from "../../server/request-context.js";
@@ -128,7 +130,8 @@ export function withCacheStore<TEnv>(
     // 1. Cache miss but cache scope is disabled
     // 2. This is an action (actions don't cache)
     // 3. Cache was already hit (no need to re-cache)
-    if (!ctx.cacheScope?.enabled || ctx.isAction || state.cacheHit) {
+    // 4. Non-GET request (only cache GET requests)
+    if (!ctx.cacheScope?.enabled || ctx.isAction || state.cacheHit || ctx.request.method !== "GET") {
       return;
     }
 
@@ -142,19 +145,6 @@ export function withCacheStore<TEnv>(
     // Combine main segments with intercept segments
     const allSegmentsToCache = [...allSegments, ...state.interceptSegments];
 
-    // Check if any segments are error or notFound type - these should never be cached
-    // Error/notFound boundaries render successfully (200 status) but we don't want to cache them
-    const hasErrorOrNotFound = allSegmentsToCache.some(
-      (s) => s.type === "error" || s.type === "notFound"
-    );
-
-    if (hasErrorOrNotFound) {
-      console.log(
-        `[CacheStore] Skipping cache: contains error/notFound segment for ${ctx.pathname}`
-      );
-      return;
-    }
-
     // Check if any non-loader segments have null components
     // This happens when client already had those segments (partial navigation)
     const hasNullComponents = allSegmentsToCache.some(
@@ -166,7 +156,8 @@ export function withCacheStore<TEnv>(
 
     const cacheScope = ctx.cacheScope;
 
-    // Register onResponse callback to cache only on 200 status
+    // Register onResponse callback to skip caching for non-200 responses
+    // Note: error/notFound status codes are set elsewhere (not caching-specific)
     requestCtx.onResponse((response) => {
       // Only cache successful responses
       if (response.status !== 200) {

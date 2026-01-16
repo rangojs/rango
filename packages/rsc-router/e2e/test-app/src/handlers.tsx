@@ -63,7 +63,7 @@ import {
 } from "./components/HookTests.js";
 
 export default map<typeof testRoutes>(
-  ({ route, layout, intercept, loader, loading, when, middleware, cache }) => [
+  ({ route, layout, intercept, loader, loading, when, middleware, cache, notFoundBoundary }) => [
     // Root layout with HTML structure
     layout(
       (ctx) => {
@@ -1812,6 +1812,15 @@ export default map<typeof testRoutes>(
     // All routes wrapped in cache() to enable caching behavior
     // =====================================================
     cache({ ttl: 600 }, () => [
+      // Not found boundary to catch notFound() calls and return 404
+      notFoundBoundary(({ notFound: info }) => (
+        <div data-testid="cache-status-not-found-page">
+          <Link to="/" data-testid="back-link">← Back to Home</Link>
+          <h1 data-testid="cache-status-not-found-title">Not Found (404)</h1>
+          <p data-testid="cache-status-not-found-message">{info.message}</p>
+        </div>
+      )),
+
       // Success route (200) - should be cached
       route("cacheStatus.success", () => (
         <div data-testid="cache-status-success-page">

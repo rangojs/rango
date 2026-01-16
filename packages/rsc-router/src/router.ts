@@ -1482,6 +1482,12 @@ export function createRSCRouter<TEnv = any>(
             notFoundInfo.message
           );
 
+          // Set response status to 404 for notFound
+          const reqCtx = getRequestContext();
+          if (reqCtx) {
+            reqCtx.res = new Response(null, { status: 404, headers: reqCtx.res.headers });
+          }
+
           // Create and return notFound segment
           const notFoundSegment = createNotFoundSegment(
             notFoundInfo,
@@ -1510,6 +1516,14 @@ export function createRSCRouter<TEnv = any>(
         `[Router] Error caught by ${fallback ? "error boundary" : "default fallback"} in ${entry.shortCode}:`,
         errorInfo.message
       );
+
+      // Set response status to 500 for error
+      {
+        const reqCtx = getRequestContext();
+        if (reqCtx) {
+          reqCtx.res = new Response(null, { status: 500, headers: reqCtx.res.headers });
+        }
+      }
 
       // Create and return error segment
       const errorSegment = createErrorSegment(
@@ -1751,6 +1765,12 @@ export function createRSCRouter<TEnv = any>(
             notFoundInfo.message
           );
 
+          // Set response status to 404 for notFound
+          const reqCtx = getRequestContext();
+          if (reqCtx) {
+            reqCtx.res = new Response(null, { status: 404, headers: reqCtx.res.headers });
+          }
+
           // Create notFound segment
           const notFoundSegment = createNotFoundSegment(
             notFoundInfo,
@@ -1784,6 +1804,14 @@ export function createRSCRouter<TEnv = any>(
         `[Router] Error caught by ${fallback ? "error boundary" : "default fallback"} in ${entry.shortCode}:`,
         errorInfo.message
       );
+
+      // Set response status to 500 for error
+      {
+        const reqCtx = getRequestContext();
+        if (reqCtx) {
+          reqCtx.res = new Response(null, { status: 500, headers: reqCtx.res.headers });
+        }
+      }
 
       // Create error segment
       const errorSegment = createErrorSegment(
@@ -2643,6 +2671,12 @@ export function createRSCRouter<TEnv = any>(
         const loaderId = item.loaderEntries[i].loader?.$$id || "unknown";
         matchedIds.push(`${item.shortCode}D${i}.${loaderId}`);
       }
+    }
+
+    // Set response status to 500 for error
+    const reqCtx = getRequestContext();
+    if (reqCtx) {
+      reqCtx.res = new Response(null, { status: 500, headers: reqCtx.res.headers });
     }
 
     // Create the error segment using user's fallback or default
