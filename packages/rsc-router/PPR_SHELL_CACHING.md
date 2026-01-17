@@ -1,5 +1,31 @@
 # PPR Shell Caching Implementation
 
+## Implementation Progress
+
+### Step 1: Shell cache GET/200 checks
+- [x] Add `request.method === "GET"` check
+- [x] Add `response.status === 200` check via `onResponse`
+- **Status**: ✅ Complete
+
+**Changes made:**
+- `src/rsc/handler.ts:879` - Added `request.method === "GET"` to shell caching condition
+- `src/rsc/handler.ts:998-1003` - Added status check in `onResponse` callback, skips caching for non-200
+
+### Step 2: Dev warning for loader/loading mismatch
+- [ ] Collect segments with loader() but no loading()
+- [ ] Collect segments with loader({ ssr: false })
+- [ ] Single consolidated warning per request
+- **Status**: Not started
+
+### Step 3: Loader-only optimization
+- [ ] Couple shell cache key with segment cache key
+- [ ] Double lookup (shell + segment)
+- [ ] Loader-only render path on double HIT
+- [ ] Coupled caching on MISS
+- **Status**: Not started
+
+---
+
 ## Overview
 
 PPR (Partial Pre-Rendering) Shell Caching separates the HTML shell from RSC data to achieve instant TTFB on cache hits while always serving fresh data.

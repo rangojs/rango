@@ -876,7 +876,8 @@ export function createRSCHandler<TEnv = unknown>(
     const noShellCache = url.searchParams.has("__no_suspense_cache");
 
     // Shell caching: cache HTML shell, inject fresh RSC on each request
-    if (shellConfig?.enabled && !isPartial && ssrModule.renderShell && ssrModule.injectRSCPayload) {
+    // Only cache GET requests (consistent with segment caching)
+    if (shellConfig?.enabled && !isPartial && request.method === "GET" && ssrModule.renderShell && ssrModule.injectRSCPayload) {
       // Get or create shell cache store
       const store = shellConfig.store ?? getDefaultShellStore(shellConfig);
 
@@ -995,6 +996,12 @@ export function createRSCHandler<TEnv = unknown>(
       const swr = shellConfig.defaults?.swr ?? store.defaults?.swr ?? 0;
 
       ctx.onResponse((res) => {
+        // Only cache successful responses (consistent with segment caching)
+        if (res.status !== 200) {
+          console.log(`[ShellCache] Skipping cache: non-200 status ${res.status} for ${cacheKey}`);
+          return res;
+        }
+
         ctx.waitUntil(async () => {
           const bytes = await captureHtmlBytes(shellForCache);
           const entry: ShellCacheEntry = {
