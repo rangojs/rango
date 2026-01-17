@@ -27,8 +27,20 @@ import type {
   RscPayload,
   ReactFormState,
   CreateRSCHandlerOptions,
+  PPRShellConfig,
 } from "./types.js";
 import { hasBodyContent, createResponseWithMergedHeaders } from "./helpers.js";
+import {
+  resolveShellCacheKey,
+  type ShellCacheContext,
+  type ShellCacheStore,
+  type ShellCacheEntry,
+} from "../cache/shell-cache-store.js";
+import { MemoryShellCacheStore } from "../cache/memory-shell-store.js";
+import { captureHtmlBytes, streamFromBytes } from "../ssr/shell-cache.js";
+
+// Default in-memory shell cache store (used when no store is provided)
+let defaultShellStore: ShellCacheStore | undefined;
 
 /**
  * Create an RSC request handler.
@@ -101,6 +113,13 @@ export function createRSCHandler<TEnv = unknown>(
       }
     }
 
+    // Resolve shell caching configuration
+    let shellConfig: PPRShellConfig | undefined;
+    if (options.shell) {
+      shellConfig =
+        typeof options.shell === "function" ? options.shell(env) : options.shell;
+    }
+
     // Create unified request context with all methods
     // Includes: stub response, handle store, loader memoization, use(), cookies, headers, cache store
     // params starts empty, populated after route matching via setRequestContextParams
@@ -122,7 +141,7 @@ export function createRSCHandler<TEnv = unknown>(
     return runWithRequestContext(requestContext, async () => {
       // Core handler logic (wrapped by middleware)
       const coreHandler = async (): Promise<Response> => {
-        return coreRequestHandler(request, env, url, variables);
+        return coreRequestHandler(request, env, url, variables, shellConfig);
       };
 
       // Execute middleware chain if any, otherwise call core handler directly
@@ -145,7 +164,8 @@ export function createRSCHandler<TEnv = unknown>(
     request: Request,
     env: TEnv,
     url: URL,
-    variables: Record<string, any>
+    variables: Record<string, any>,
+    shellConfig: PPRShellConfig | undefined
   ): Promise<Response> {
     // First, check for route-level middleware
     const preview = await router.previewMatch(request, env);
@@ -164,12 +184,12 @@ export function createRSCHandler<TEnv = unknown>(
 
       // Execute route middleware wrapping the actual request handling
       return executeMiddleware(middlewareEntries, request, env, variables, () =>
-        coreRequestHandlerInner(request, env, url, variables)
+        coreRequestHandlerInner(request, env, url, variables, shellConfig)
       );
     }
 
     // No route middleware, proceed directly
-    return coreRequestHandlerInner(request, env, url, variables);
+    return coreRequestHandlerInner(request, env, url, variables, shellConfig);
   }
 
   // Inner request handler (actual RSC logic, wrapped by route middleware if any)
@@ -177,7 +197,8 @@ export function createRSCHandler<TEnv = unknown>(
     request: Request,
     env: TEnv,
     url: URL,
-    variables: Record<string, any>
+    variables: Record<string, any>,
+    shellConfig: PPRShellConfig | undefined
   ): Promise<Response> {
     // Early return for static file requests that don't need RSC handling
     if (url.pathname === "/favicon.ico" || url.pathname === "/robots.txt") {
@@ -259,7 +280,7 @@ export function createRSCHandler<TEnv = unknown>(
       // ============================================================================
       // REGULAR RSC RENDERING (Navigation)
       // ============================================================================
-      return handleRscRendering(request, env, url, isPartial, handleStore);
+      return handleRscRendering(request, env, url, isPartial, handleStore, shellConfig, variables);
     } catch (error) {
       // Check if middleware/handler returned Response
       if (error instanceof Response) {
@@ -724,7 +745,9 @@ export function createRSCHandler<TEnv = unknown>(
     env: TEnv,
     url: URL,
     isPartial: boolean,
-    handleStore: ReturnType<typeof requireRequestContext>["_handleStore"]
+    handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+    shellConfig: PPRShellConfig | undefined,
+    variables: Record<string, any>
   ): Promise<Response> {
     let payload: RscPayload;
     let serverTiming: string | undefined;
@@ -847,6 +870,165 @@ export function createRSCHandler<TEnv = unknown>(
 
     // Delegate to SSR for HTML response
     const ssrModule = await loadSSRModule();
+
+    // Debug params
+    const shellOnly = url.searchParams.has("__shell_only");
+    const noShellCache = url.searchParams.has("__no_suspense_cache");
+
+    // Shell caching: cache HTML shell, inject fresh RSC on each request
+    if (shellConfig?.enabled && !isPartial && ssrModule.renderShell && ssrModule.injectRSCPayload) {
+      // Get or create shell cache store
+      const store = shellConfig.store ?? getDefaultShellStore(shellConfig);
+
+      // Build shell cache context for key generation
+      const ctx = requireRequestContext();
+      const shellCacheContext: ShellCacheContext = {
+        request,
+        url,
+        pathname: url.pathname,
+        version: version || "v0",
+        params: ctx.params,
+        variables,
+      };
+
+      // Check if caching should be active for this request
+      // Defaults to true if shouldCache is not provided
+      const shouldCache = shellConfig.shouldCache?.(shellCacheContext) ?? true;
+
+      // Skip shell caching if shouldCache returns false
+      if (!shouldCache) {
+        // Fall through to normal SSR
+        const htmlStream = await ssrModule.renderHTML(rscStream);
+        const htmlHeaders: Record<string, string> = {
+          "content-type": "text/html;charset=utf-8",
+        };
+        if (serverTiming) {
+          htmlHeaders["Server-Timing"] = serverTiming;
+        }
+        if (version) {
+          htmlHeaders["x-rsc-version"] = version;
+        }
+        return createResponseWithMergedHeaders(htmlStream, {
+          headers: htmlHeaders,
+        });
+      }
+
+      // Resolve cache key using priority order
+      const cacheKey = resolveShellCacheKey(
+        shellCacheContext,
+        store,
+        shellConfig.cacheKey
+      );
+
+      // Check cache (unless bypassed)
+      const cached = noShellCache ? null : await store.get(cacheKey);
+
+      if (cached) {
+        // Cache HIT: stream cached HTML, pipe through injectRSCPayload
+        const cacheStatus = cached.status === "stale" ? "stale" : "hit";
+        console.log(`[ShellCache] ${cacheStatus.toUpperCase()}: ${cacheKey}`);
+
+        // Calculate cache age
+        const cacheAge = Math.floor((Date.now() - cached.entry.createdAt) / 1000);
+
+        // If shell_only mode, return just the cached shell without RSC
+        if (shellOnly) {
+          const cachedHtmlStream = streamFromBytes(cached.entry.html);
+          return createResponseWithMergedHeaders(cachedHtmlStream, {
+            headers: {
+              "content-type": "text/html;charset=utf-8",
+              "x-suspense-cache": cacheStatus,
+              "x-suspense-cache-age": String(cacheAge),
+              "x-suspense-cache-key": cacheKey,
+            },
+          });
+        }
+
+        const cachedHtmlStream = streamFromBytes(cached.entry.html);
+        const responseStream = cachedHtmlStream.pipeThrough(
+          ssrModule.injectRSCPayload(rscStream)
+        );
+
+        const htmlHeaders: Record<string, string> = {
+          "content-type": "text/html;charset=utf-8",
+          "x-suspense-cache": cacheStatus,
+          "x-suspense-cache-age": String(cacheAge),
+        };
+        if (serverTiming) {
+          htmlHeaders["Server-Timing"] = serverTiming;
+        }
+        if (version) {
+          htmlHeaders["x-rsc-version"] = version;
+        }
+
+        return createResponseWithMergedHeaders(responseStream, {
+          headers: htmlHeaders,
+        });
+      }
+
+      // Cache MISS: render shell, cache it, pipe through injectRSCPayload
+      console.log(`[ShellCache] MISS: ${cacheKey}`);
+
+      // Tee RSC stream: one for shell rendering, one for RSC injection
+      const [rscForShell, rscForInjection] = rscStream.tee();
+
+      // Render shell (HTML without RSC injection)
+      const shellStream = await ssrModule.renderShell(rscForShell);
+
+      // If shell_only mode, return shell without RSC and without caching
+      if (shellOnly) {
+        return createResponseWithMergedHeaders(shellStream, {
+          headers: {
+            "content-type": "text/html;charset=utf-8",
+            "x-suspense-cache": "miss",
+            "x-suspense-cache-key": cacheKey,
+          },
+        });
+      }
+
+      // Tee shell stream: one for caching, one for response
+      const [shellForCache, shellForResponse] = shellStream.tee();
+
+      // Schedule caching via onResponse (called when response is created)
+      // Resolve TTL/SWR from config or store defaults
+      const ttl = shellConfig.defaults?.ttl ?? store.defaults?.ttl ?? 60;
+      const swr = shellConfig.defaults?.swr ?? store.defaults?.swr ?? 0;
+
+      ctx.onResponse((res) => {
+        ctx.waitUntil(async () => {
+          const bytes = await captureHtmlBytes(shellForCache);
+          const entry: ShellCacheEntry = {
+            html: bytes,
+            createdAt: Date.now(),
+          };
+          await store.set(cacheKey, entry, ttl, swr);
+          console.log(`[ShellCache] Cached ${bytes.length} bytes for ${cacheKey} (ttl=${ttl}s, swr=${swr}s)`);
+        });
+        return res;
+      });
+
+      // Pipe shell through injectRSCPayload
+      const responseStream = shellForResponse.pipeThrough(
+        ssrModule.injectRSCPayload(rscForInjection)
+      );
+
+      const htmlHeaders: Record<string, string> = {
+        "content-type": "text/html;charset=utf-8",
+        "x-suspense-cache": "miss",
+      };
+      if (serverTiming) {
+        htmlHeaders["Server-Timing"] = serverTiming;
+      }
+      if (version) {
+        htmlHeaders["x-rsc-version"] = version;
+      }
+
+      return createResponseWithMergedHeaders(responseStream, {
+        headers: htmlHeaders,
+      });
+    }
+
+    // Standard SSR rendering (no shell caching)
     const htmlStream = await ssrModule.renderHTML(rscStream);
 
     const htmlHeaders: Record<string, string> = {
@@ -860,4 +1042,20 @@ export function createRSCHandler<TEnv = unknown>(
       headers: htmlHeaders,
     });
   }
+}
+
+/**
+ * Get or create the default shell cache store.
+ * Uses MemoryShellCacheStore with config defaults.
+ */
+function getDefaultShellStore(config: PPRShellConfig): ShellCacheStore {
+  if (!defaultShellStore) {
+    defaultShellStore = new MemoryShellCacheStore({
+      defaults: {
+        ttl: config.defaults?.ttl ?? 60,
+        swr: config.defaults?.swr ?? 0,
+      },
+    });
+  }
+  return defaultShellStore;
 }

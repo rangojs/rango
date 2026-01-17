@@ -100,7 +100,38 @@ async function consumeAsyncGenerator(
  * });
  * ```
  */
-export function createSSRHandler(deps: SSRDependencies) {
+/**
+ * Return type for createSSRHandler
+ */
+export interface SSRHandlerResult {
+  /**
+   * Render RSC stream to HTML stream with RSC payload injection.
+   * Full SSR flow for regular requests.
+   */
+  renderHTML: (
+    rscStream: ReadableStream<Uint8Array>,
+    options?: SSRRenderOptions
+  ) => Promise<ReadableStream<Uint8Array>>;
+
+  /**
+   * Render RSC stream to HTML stream WITHOUT RSC payload injection.
+   * Used for shell caching - returns raw HTML that can be cached.
+   */
+  renderShell: (
+    rscStream: ReadableStream<Uint8Array>,
+    options?: SSRRenderOptions
+  ) => Promise<ReadableStream<Uint8Array>>;
+
+  /**
+   * Inject RSC payload into HTML stream.
+   * Used after cached shell response.
+   */
+  injectRSCPayload: (
+    rscStream: ReadableStream<Uint8Array>
+  ) => TransformStream<Uint8Array, Uint8Array>;
+}
+
+export function createSSRHandler(deps: SSRDependencies): SSRHandlerResult {
   const {
     createFromReadableStream,
     renderToReadableStream,
@@ -109,19 +140,23 @@ export function createSSRHandler(deps: SSRDependencies) {
   } = deps;
 
   /**
-   * Render RSC stream to HTML stream
-   *
+   * Internal: Render RSC stream to HTML stream.
    * @param rscStream - The RSC stream to render
-   * @param options - Optional render options including formState for useActionState
+   * @param options - Render options
+   * @param shouldInjectRsc - Whether to inject RSC payload into HTML
    */
-  return async function renderHTML(
+  async function renderInternal(
     rscStream: ReadableStream<Uint8Array>,
-    options?: SSRRenderOptions
+    options?: SSRRenderOptions,
+    shouldInjectRsc = true
   ): Promise<ReadableStream<Uint8Array>> {
-    // Tee the stream:
+    // For shell rendering (no RSC injection), we don't need to tee the stream
+    // For full rendering, tee the stream:
     // - rscStream1: For SSR rendering (deserialize to React VDOM)
     // - rscStream2: For browser hydration (inject as __FLIGHT_DATA__)
-    const [rscStream1, rscStream2] = rscStream.tee();
+    const [rscStream1, rscStream2] = shouldInjectRsc
+      ? rscStream.tee()
+      : [rscStream, null];
 
     // Deserialize RSC stream to React tree
     let payload: Promise<RscPayload> | undefined;
@@ -155,7 +190,41 @@ export function createSSRHandler(deps: SSRDependencies) {
       formState: options?.formState,
     });
 
-    // Inject RSC payload into HTML as <script>__FLIGHT_DATA__</script>
-    return htmlStream.pipeThrough(injectRSCPayload(rscStream2));
+    // Only inject RSC payload if requested
+    if (shouldInjectRsc && rscStream2) {
+      // Inject RSC payload into HTML as <script>__FLIGHT_DATA__</script>
+      return htmlStream.pipeThrough(injectRSCPayload(rscStream2));
+    }
+
+    // Return raw HTML without RSC injection (for shell caching)
+    return htmlStream;
+  }
+
+  /**
+   * Render RSC stream to HTML stream with RSC payload injection.
+   * Full SSR flow for regular requests.
+   */
+  async function renderHTML(
+    rscStream: ReadableStream<Uint8Array>,
+    options?: SSRRenderOptions
+  ): Promise<ReadableStream<Uint8Array>> {
+    return renderInternal(rscStream, options, true);
+  }
+
+  /**
+   * Render RSC stream to HTML stream WITHOUT RSC payload injection.
+   * Used for shell caching - returns raw HTML that can be cached.
+   */
+  async function renderShell(
+    rscStream: ReadableStream<Uint8Array>,
+    options?: SSRRenderOptions
+  ): Promise<ReadableStream<Uint8Array>> {
+    return renderInternal(rscStream, options, false);
+  }
+
+  return {
+    renderHTML,
+    renderShell,
+    injectRSCPayload,
   };
 }

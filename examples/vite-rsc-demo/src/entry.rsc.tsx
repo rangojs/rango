@@ -8,10 +8,15 @@ import {
 } from "rsc-router/internal/deps/rsc";
 import { router } from "./router.js";
 import { createRSCHandler } from "rsc-router/rsc";
+import { VERSION } from "rsc-router:version";
+
+// Import loader manifest to ensure all fetchable loaders are registered at startup
+import "virtual:rsc-router/loader-manifest";
 
 // Cache is configured on the router (see router.tsx)
 export default createRSCHandler({
   router,
+  version: VERSION,
   deps: {
     renderToReadableStream,
     decodeReply,
@@ -25,4 +30,12 @@ export default createRSCHandler({
       "ssr",
       "index"
     ),
+  // Enable shell caching for fast TTFB
+  // Requires x-enable-ppr header (typically set by CDN) or __force_ppr query param for dev
+  shell: {
+    enabled: true,
+    shouldCache: (ctx) =>
+      ctx.request.headers.has("x-enable-ppr") ||
+      ctx.url.searchParams.has("__force_ppr"),
+  },
 });

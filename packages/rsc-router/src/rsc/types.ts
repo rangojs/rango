@@ -105,6 +105,113 @@ export interface SSRModule {
     rscStream: ReadableStream<Uint8Array>,
     options?: SSRRenderOptions
   ) => Promise<ReadableStream<Uint8Array>>;
+
+  /**
+   * Render RSC to HTML without RSC payload injection.
+   * Used for shell caching.
+   */
+  renderShell?: (
+    rscStream: ReadableStream<Uint8Array>,
+    options?: SSRRenderOptions
+  ) => Promise<ReadableStream<Uint8Array>>;
+
+  /**
+   * Inject RSC payload into HTML stream.
+   */
+  injectRSCPayload?: (
+    rscStream: ReadableStream<Uint8Array>
+  ) => TransformStream<Uint8Array, Uint8Array>;
+}
+
+/**
+ * Configuration for HTML shell caching (PPR - Partial Pre-Rendering)
+ *
+ * When enabled, the HTML shell (layouts + Suspense fallbacks) is cached
+ * independently from RSC data. On cache hit, the shell streams immediately
+ * while fresh RSC payload is injected on every request.
+ */
+export interface PPRShellConfig {
+  /**
+   * Enable shell caching
+   */
+  enabled: boolean;
+
+  /**
+   * Cache store implementation.
+   * If not provided, uses an internal in-memory store (dev/single-instance only).
+   *
+   * @example With custom store
+   * ```typescript
+   * shell: {
+   *   enabled: true,
+   *   store: new MemoryShellCacheStore({ defaults: { ttl: 60, swr: 300 } }),
+   * }
+   * ```
+   */
+  store?: import("../cache/shell-cache-store.js").ShellCacheStore;
+
+  /**
+   * Default TTL/SWR options when not specified via headers.
+   * If store has defaults, these take precedence.
+   */
+  defaults?: {
+    /** Default time-to-live in seconds (default: 60) */
+    ttl?: number;
+    /** Default stale-while-revalidate window in seconds (default: 0) */
+    swr?: number;
+  };
+
+  /**
+   * Custom cache key generator.
+   * Takes precedence over store.getCacheKey() if provided.
+   *
+   * Use this to add segmentation based on:
+   * - Language (Accept-Language header)
+   * - User state (guest vs authenticated)
+   * - A/B test buckets
+   * - Query params that affect shell
+   *
+   * @example Include language in cache key
+   * ```typescript
+   * cacheKey: (ctx) => {
+   *   const lang = ctx.request.headers.get("Accept-Language")?.split(",")[0] || "en";
+   *   return `shell:${ctx.version}:${lang}:${ctx.pathname}`;
+   * }
+   * ```
+   *
+   * @example Include user segment from middleware
+   * ```typescript
+   * cacheKey: (ctx) => {
+   *   const segment = ctx.variables.userSegment || "guest";
+   *   return `shell:${ctx.version}:${segment}:${ctx.pathname}`;
+   * }
+   * ```
+   */
+  cacheKey?: (ctx: import("../cache/shell-cache-store.js").ShellCacheContext) => string;
+
+  /**
+   * Determine whether to cache the shell for this request.
+   * If not provided, always caches when enabled.
+   *
+   * Use this to require opt-in via headers (e.g., from a CDN):
+   *
+   * @example Require header for caching
+   * ```typescript
+   * shouldCache: (ctx) => ctx.request.headers.has("x-enable-ppr")
+   * ```
+   *
+   * @example Only cache for unauthenticated users
+   * ```typescript
+   * shouldCache: (ctx) => !ctx.request.headers.has("authorization")
+   * ```
+   */
+  shouldCache?: (ctx: import("../cache/shell-cache-store.js").ShellCacheContext) => boolean;
+
+  /**
+   * Cache-Control header for cached shell responses (deprecated, use defaults.ttl instead)
+   * @deprecated Use `defaults.ttl` instead
+   */
+  cacheControl?: string;
 }
 
 /**
@@ -186,4 +293,21 @@ export interface CreateRSCHandlerOptions<TEnv = unknown> {
    * ```
    */
   version?: string;
+
+  /**
+   * HTML shell caching configuration.
+   *
+   * When enabled, the first request to a route caches the HTML shell.
+   * Subsequent requests return the cached shell immediately (fast TTFB)
+   * and stream fresh RSC data for hydration.
+   *
+   * @example
+   * ```typescript
+   * export default createRSCHandler({
+   *   router,
+   *   shell: { enabled: true },
+   * });
+   * ```
+   */
+  shell?: PPRShellConfig | ((env: TEnv) => PPRShellConfig);
 }
