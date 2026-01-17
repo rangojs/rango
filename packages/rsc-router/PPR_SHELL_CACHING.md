@@ -12,10 +12,18 @@
 - `src/rsc/handler.ts:998-1003` - Added status check in `onResponse` callback, skips caching for non-200
 
 ### Step 2: Dev warning for loader/loading mismatch
-- [ ] Collect segments with loader() but no loading()
-- [ ] Collect segments with loader({ ssr: false })
-- [ ] Single consolidated warning per request
-- **Status**: Not started
+- [x] Collect segments with loader() but no loading()
+- [ ] Collect segments with loader({ ssr: false }) - *Note: ssr option doesn't exist yet for loaders*
+- [x] Single consolidated warning per request
+- [x] Only warn once per path per session
+- **Status**: ✅ Complete (partial - ssr: false not implemented as option doesn't exist)
+
+**Changes made:**
+- `src/router/match-middleware/cache-store.ts` - Added `warnLoaderWithoutLoading()` helper
+- Warning triggers in dev mode when segment caching is enabled
+- Groups loader segments by parent ID to detect which segments have loaders
+- Warns once per path to avoid console spam
+- Includes link to documentation for learning more
 
 ### Step 3: Loader-only optimization
 - [ ] Couple shell cache key with segment cache key

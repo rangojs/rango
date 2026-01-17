@@ -4,6 +4,9 @@
  * Stores resolved segments in cache for future requests.
  * Implements proactive caching for partial navigation scenarios.
  *
+ * DEV WARNING: Warns when segments have loaders but no loading boundary,
+ * which can cause hydration mismatches when cached.
+ *
  * FLOW DIAGRAM
  * ============
  *
@@ -145,6 +148,12 @@ export function withCacheStore<TEnv>(
     // Combine main segments with intercept segments
     const allSegmentsToCache = [...allSegments, ...state.interceptSegments];
 
+    // DEV WARNING: Check for segments with loaders but no loading boundary
+    // This can cause hydration mismatches when cached
+    if (process.env.NODE_ENV === "development") {
+      warnLoaderWithoutLoading(allSegmentsToCache, ctx.pathname);
+    }
+
     // Check if any non-loader segments have null components
     // This happens when client already had those segments (partial navigation)
     const hasNullComponents = allSegmentsToCache.some(
@@ -245,4 +254,68 @@ export function withCacheStore<TEnv>(
       return response;
     });
   };
+}
+
+// Track warned paths to avoid duplicate warnings per session
+const warnedPaths = new Set<string>();
+
+/**
+ * Warn when segments have loaders but no loading boundary.
+ * This can cause hydration mismatches when cached because:
+ * - Cached component RSC contains data baked in from render time
+ * - Fresh loaders may return different data
+ * - Mismatch between cached UI and fresh data causes hydration errors
+ *
+ * With a loading() boundary, the cached content is just the skeleton,
+ * and fresh loader data streams in separately without conflict.
+ */
+function warnLoaderWithoutLoading(
+  segments: ResolvedSegment[],
+  pathname: string
+): void {
+  // Only warn once per path per session
+  if (warnedPaths.has(pathname)) {
+    return;
+  }
+
+  // Group loader segments by their parent ID
+  // Loader ID format: {parentShortCode}D{index}.{loaderId}
+  const loadersByParent = new Map<string, string[]>();
+  for (const segment of segments) {
+    if (segment.type === "loader" && segment.loaderId) {
+      const parentId = segment.id.split("D")[0];
+      if (!loadersByParent.has(parentId)) {
+        loadersByParent.set(parentId, []);
+      }
+      loadersByParent.get(parentId)!.push(segment.loaderId);
+    }
+  }
+
+  // Find segments with loaders but no loading boundary
+  const issues: string[] = [];
+  for (const segment of segments) {
+    // Skip loader segments themselves
+    if (segment.type === "loader") continue;
+
+    // Check if this segment has associated loaders
+    const loaderIds = loadersByParent.get(segment.id);
+    if (!loaderIds || loaderIds.length === 0) continue;
+
+    // Check if segment has a loading boundary
+    if (!segment.loading) {
+      issues.push(
+        `  - ${segment.type}:${segment.id}: loader() without loading()`
+      );
+    }
+  }
+
+  if (issues.length > 0) {
+    warnedPaths.add(pathname);
+    console.warn(
+      `[rsc-router] Segment caching enabled but ${issues.length} segment(s) may cause hydration mismatches:\n` +
+        issues.join("\n") +
+        `\n\nAdd loading() boundaries to create Suspense boundaries for cached segments.` +
+        `\nLearn more: https://rsc-router.dev/docs/caching#hydration-safety`
+    );
+  }
 }
