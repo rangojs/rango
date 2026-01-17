@@ -25,12 +25,25 @@
 - Warns once per path to avoid console spam
 - Includes link to documentation for learning more
 
-### Step 3: Loader-only optimization
-- [ ] Couple shell cache key with segment cache key
-- [ ] Double lookup (shell + segment)
-- [ ] Loader-only render path on double HIT
-- [ ] Coupled caching on MISS
-- **Status**: Not started
+### Step 3: Loader-only optimization (Stage 1: Segment validation)
+- [x] Helper functions for cache key generation (compatible with segment cache format)
+- [x] Double lookup (shell + segment) on shell cache HIT
+- [x] Segment cache validation: if segment MISS, invalidate shell and fall through to full render
+- [x] Add `x-segment-cache` response header for observability
+- [ ] Loader-only render path on double HIT (Stage 2 - future)
+- [ ] Skip router.match() on double HIT (Stage 2 - future)
+- **Status**: ✅ Stage 1 Complete (segment validation)
+
+**Changes made:**
+- `src/rsc/handler.ts` - Added `getCacheKeyBase()` and `getSegmentCacheKey()` helpers
+- `src/rsc/handler.ts` - Import `CacheScope` for segment cache lookups
+- `src/rsc/handler.ts:964-988` - On shell HIT, check segment cache. If segment MISS, invalidate shell.
+- `src/rsc/handler.ts` - Added `x-segment-cache` header (hit/stale/miss/disabled) to all shell caching responses
+
+**Behavior:**
+- Shell HIT + Segment HIT: Use cached shell (future: skip component rendering)
+- Shell HIT + Segment MISS: Invalidate shell, fall through to full render
+- Shell MISS: Full render, cache shell (segments cached via router.match() pipeline)
 
 ---
 

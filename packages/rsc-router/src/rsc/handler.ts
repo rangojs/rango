@@ -38,9 +38,41 @@ import {
 } from "../cache/shell-cache-store.js";
 import { MemoryShellCacheStore } from "../cache/memory-shell-store.js";
 import { captureHtmlBytes, streamFromBytes } from "../ssr/shell-cache.js";
+import { CacheScope } from "../cache/cache-scope.js";
 
 // Default in-memory shell cache store (used when no store is provided)
 let defaultShellStore: ShellCacheStore | undefined;
+
+/**
+ * Generate cache key base from pathname and params.
+ * Matches the format used by segment cache for key compatibility.
+ * @internal
+ */
+function getCacheKeyBase(
+  pathname: string,
+  params?: Record<string, string>
+): string {
+  const paramStr = params
+    ? Object.entries(params)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => `${k}=${v}`)
+        .join("&")
+    : "";
+
+  return paramStr ? `${pathname}:${paramStr}` : pathname;
+}
+
+/**
+ * Generate segment cache key for document requests.
+ * Format: doc:[pathname]:[sorted_params]
+ * @internal
+ */
+function getSegmentCacheKey(
+  pathname: string,
+  params?: Record<string, string>
+): string {
+  return `doc:${getCacheKeyBase(pathname, params)}`;
+}
 
 /**
  * Create an RSC request handler.
@@ -922,7 +954,39 @@ export function createRSCHandler<TEnv = unknown>(
       );
 
       // Check cache (unless bypassed)
-      const cached = noShellCache ? null : await store.get(cacheKey);
+      let cached = noShellCache ? null : await store.get(cacheKey);
+
+      // Segment cache validation: if segment cache is configured, ensure segments are also cached
+      // This prevents hydration mismatches when shell is cached but segments are stale
+      let segmentCacheStatus: "hit" | "stale" | "miss" | "disabled" = "disabled";
+      const segmentStore = ctx._cacheStore;
+
+      if (cached && segmentStore) {
+        // Create a CacheScope to lookup segments
+        // Pass store in config - CacheScope is enabled when config is not false
+        const segmentCacheScope = new CacheScope({ store: segmentStore }, null);
+        const segmentKey = getSegmentCacheKey(url.pathname, ctx.params);
+
+        // Check segment cache
+        const segmentResult = await segmentCacheScope.lookupRoute(
+          url.pathname,
+          ctx.params,
+          false // not intercept
+        );
+
+        if (segmentResult) {
+          segmentCacheStatus = segmentResult.shouldRevalidate ? "stale" : "hit";
+          console.log(`[ShellCache] Segment cache ${segmentCacheStatus.toUpperCase()}: ${segmentKey}`);
+        } else {
+          segmentCacheStatus = "miss";
+          console.log(`[ShellCache] Segment cache MISS: ${segmentKey} - invalidating shell cache`);
+
+          // Segment cache miss means shell cache is stale - invalidate and treat as miss
+          // This ensures shell and segments stay in sync to prevent hydration mismatches
+          await store.delete(cacheKey);
+          cached = null; // Fall through to MISS path
+        }
+      }
 
       if (cached) {
         // Cache HIT: stream cached HTML, pipe through injectRSCPayload
@@ -935,13 +999,17 @@ export function createRSCHandler<TEnv = unknown>(
         // If shell_only mode, return just the cached shell without RSC
         if (shellOnly) {
           const cachedHtmlStream = streamFromBytes(cached.entry.html);
+          const shellOnlyHeaders: Record<string, string> = {
+            "content-type": "text/html;charset=utf-8",
+            "x-suspense-cache": cacheStatus,
+            "x-suspense-cache-age": String(cacheAge),
+            "x-suspense-cache-key": cacheKey,
+          };
+          if (segmentCacheStatus !== "disabled") {
+            shellOnlyHeaders["x-segment-cache"] = segmentCacheStatus;
+          }
           return createResponseWithMergedHeaders(cachedHtmlStream, {
-            headers: {
-              "content-type": "text/html;charset=utf-8",
-              "x-suspense-cache": cacheStatus,
-              "x-suspense-cache-age": String(cacheAge),
-              "x-suspense-cache-key": cacheKey,
-            },
+            headers: shellOnlyHeaders,
           });
         }
 
@@ -955,6 +1023,9 @@ export function createRSCHandler<TEnv = unknown>(
           "x-suspense-cache": cacheStatus,
           "x-suspense-cache-age": String(cacheAge),
         };
+        if (segmentCacheStatus !== "disabled") {
+          htmlHeaders["x-segment-cache"] = segmentCacheStatus;
+        }
         if (serverTiming) {
           htmlHeaders["Server-Timing"] = serverTiming;
         }
@@ -978,12 +1049,16 @@ export function createRSCHandler<TEnv = unknown>(
 
       // If shell_only mode, return shell without RSC and without caching
       if (shellOnly) {
+        const shellOnlyMissHeaders: Record<string, string> = {
+          "content-type": "text/html;charset=utf-8",
+          "x-suspense-cache": "miss",
+          "x-suspense-cache-key": cacheKey,
+        };
+        if (segmentStore) {
+          shellOnlyMissHeaders["x-segment-cache"] = "miss";
+        }
         return createResponseWithMergedHeaders(shellStream, {
-          headers: {
-            "content-type": "text/html;charset=utf-8",
-            "x-suspense-cache": "miss",
-            "x-suspense-cache-key": cacheKey,
-          },
+          headers: shellOnlyMissHeaders,
         });
       }
 
@@ -1023,6 +1098,9 @@ export function createRSCHandler<TEnv = unknown>(
         "content-type": "text/html;charset=utf-8",
         "x-suspense-cache": "miss",
       };
+      if (segmentStore) {
+        htmlHeaders["x-segment-cache"] = "miss";
+      }
       if (serverTiming) {
         htmlHeaders["Server-Timing"] = serverTiming;
       }
