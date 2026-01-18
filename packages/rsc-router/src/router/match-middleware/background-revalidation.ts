@@ -221,7 +221,7 @@ export function withBackgroundRevalidation<TEnv>(
           }
         }
 
-        cacheScope.cacheRoute(
+        await cacheScope.cacheRoute(
           ctx.pathname,
           ctx.matched.params,
           freshSegments,

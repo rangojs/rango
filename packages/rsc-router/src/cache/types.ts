@@ -10,6 +10,7 @@
  */
 
 import type { ResolvedSegment } from "../types.js";
+import type { RequestContext } from "../server/request-context.js";
 
 // ============================================================================
 // Segment Cache Store (low-level storage interface)
@@ -35,13 +36,54 @@ export interface CacheGetResult {
  * Implementations handle the actual storage (memory, KV, Redis, etc.).
  * The store deals with serialized data - RSC serialization is handled
  * by the cache provider layer.
+ *
+ * @typeParam TEnv - Platform bindings type (e.g., Cloudflare env)
  */
-export interface SegmentCacheStore {
+export interface SegmentCacheStore<TEnv = unknown> {
   /**
    * Default cache options for this store.
    * Used by cache() boundaries when ttl/swr are not explicitly specified.
    */
   readonly defaults?: CacheDefaults;
+
+  /**
+   * Custom key generator applied to all cache operations using this store.
+   * Receives the full RequestContext and the default-generated key.
+   * Return value becomes the final cache key (unless route overrides with `key` option).
+   *
+   * Resolution priority:
+   * 1. Route-level `key` function (full override)
+   * 2. Store-level `keyGenerator` (modifies default key)
+   * 3. Default key generation (prefix:pathname:params)
+   *
+   * @example Using headers for cache segmentation
+   * ```typescript
+   * keyGenerator: (ctx, defaultKey) => {
+   *   const segment = ctx.request.headers.get('x-user-segment') || 'default';
+   *   return `${segment}:${defaultKey}`;
+   * }
+   * ```
+   *
+   * @example Using env bindings (Cloudflare)
+   * ```typescript
+   * keyGenerator: (ctx, defaultKey) => {
+   *   const region = ctx.env.REGION || 'us';
+   *   return `${region}:${defaultKey}`;
+   * }
+   * ```
+   *
+   * @example Using cookies for locale
+   * ```typescript
+   * keyGenerator: (ctx, defaultKey) => {
+   *   const locale = ctx.cookie('locale') || 'en';
+   *   return `${locale}:${defaultKey}`;
+   * }
+   * ```
+   */
+  readonly keyGenerator?: (
+    ctx: RequestContext<TEnv>,
+    defaultKey: string
+  ) => string | Promise<string>;
 
   /**
    * Get cached entry data by key

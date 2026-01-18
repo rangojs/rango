@@ -6,13 +6,14 @@
  */
 
 import type { SegmentCacheStore, CachedEntryData, CacheDefaults, CacheGetResult } from "./types.js";
+import type { RequestContext } from "../server/request-context.js";
 
 const CACHE_GLOBAL_KEY = "__rsc_router_segment_cache_store__";
 
 /**
  * Options for MemorySegmentCacheStore
  */
-export interface MemorySegmentCacheStoreOptions {
+export interface MemorySegmentCacheStoreOptions<TEnv = unknown> {
   /**
    * Default cache options for cache() boundaries.
    * When cache() is called without explicit ttl/swr,
@@ -26,6 +27,23 @@ export interface MemorySegmentCacheStoreOptions {
    * ```
    */
   defaults?: CacheDefaults;
+
+  /**
+   * Custom key generator applied to all cache operations.
+   * Receives the full RequestContext and the default-generated key.
+   *
+   * @example
+   * ```typescript
+   * keyGenerator: (ctx, defaultKey) => {
+   *   const locale = ctx.cookie('locale') || 'en';
+   *   return `${locale}:${defaultKey}`;
+   * }
+   * ```
+   */
+  keyGenerator?: (
+    ctx: RequestContext<TEnv>,
+    defaultKey: string
+  ) => string | Promise<string>;
 }
 
 /**
@@ -51,16 +69,21 @@ export interface MemorySegmentCacheStoreOptions {
  * })
  * ```
  */
-export class MemorySegmentCacheStore implements SegmentCacheStore {
+export class MemorySegmentCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private cache: Map<string, CachedEntryData>;
   readonly defaults?: CacheDefaults;
+  readonly keyGenerator?: (
+    ctx: RequestContext<TEnv>,
+    defaultKey: string
+  ) => string | Promise<string>;
 
-  constructor(options?: MemorySegmentCacheStoreOptions) {
+  constructor(options?: MemorySegmentCacheStoreOptions<TEnv>) {
     // Use globalThis to survive HMR in development
     this.cache =
       (globalThis as any)[CACHE_GLOBAL_KEY] ??
       ((globalThis as any)[CACHE_GLOBAL_KEY] = new Map<string, CachedEntryData>());
     this.defaults = options?.defaults;
+    this.keyGenerator = options?.keyGenerator;
   }
 
   async get(key: string): Promise<CacheGetResult | null> {
