@@ -16,7 +16,10 @@ import {
   type LoaderFn,
   type ResolvedSegment,
 } from "./types";
-import { RouteContentWrapper, LoaderBoundary } from "./route-content-wrapper.js";
+import {
+  RouteContentWrapper,
+  LoaderBoundary,
+} from "./route-content-wrapper.js";
 
 /**
  * Outlet component - renders child content in layouts
@@ -116,6 +119,23 @@ export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
       );
     }
 
+    // No layout but has loaders - wrap content with LoaderBoundary for useLoader context
+    // This is common for intercept routes that use useLoader without a custom layout
+    if (segment.loaderDataPromise && segment.loaderIds) {
+      return (
+        <LoaderBoundary
+          loaderDataPromise={segment.loaderDataPromise}
+          loaderIds={segment.loaderIds}
+          fallback={segment.loading}
+          outletKey={segment.id + "-loader"}
+          outletContent={null}
+          segment={segment}
+        >
+          {content}
+        </LoaderBoundary>
+      );
+    }
+
     return content;
   }
 
@@ -209,6 +229,23 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
       <OutletProvider content={content} segment={segment}>
         {segment.layout}
       </OutletProvider>
+    );
+  }
+
+  // No layout but has loaders - wrap content with LoaderBoundary for useLoader context
+  // This is common for intercept routes that use useLoader without a custom layout
+  if (segment.loaderDataPromise && segment.loaderIds) {
+    return (
+      <LoaderBoundary
+        loaderDataPromise={segment.loaderDataPromise}
+        loaderIds={segment.loaderIds}
+        fallback={segment.loading}
+        outletKey={segment.id + "-loader"}
+        outletContent={null}
+        segment={segment}
+      >
+        {content}
+      </LoaderBoundary>
     );
   }
 
@@ -502,10 +539,16 @@ export {
 } from "./browser/react/use-navigation.js";
 
 // Action state tracking hook
-export { useAction, type ServerActionFunction } from "./browser/react/use-action.js";
+export {
+  useAction,
+  type ServerActionFunction,
+} from "./browser/react/use-action.js";
 
 // Segments state hook
-export { useSegments, type SegmentsState } from "./browser/react/use-segments.js";
+export {
+  useSegments,
+  type SegmentsState,
+} from "./browser/react/use-segments.js";
 
 // Client cache controls hook
 export {
@@ -528,7 +571,10 @@ export {
 } from "./browser/react/Link.js";
 
 // Link status hook
-export { useLinkStatus, type LinkStatus } from "./browser/react/use-link-status.js";
+export {
+  useLinkStatus,
+  type LinkStatus,
+} from "./browser/react/use-link-status.js";
 
 // Scroll restoration
 export {

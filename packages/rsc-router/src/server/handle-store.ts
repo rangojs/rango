@@ -15,6 +15,7 @@ export type HandleData = Record<string, Record<string, unknown[]>>;
 
 /**
  * Deep clone handle data to create a snapshot.
+ * @internal
  */
 function cloneHandleData(data: HandleData): HandleData {
   const clone: HandleData = {};
@@ -69,6 +70,18 @@ export interface HandleStore {
    * Each yield contains the full accumulated state (not just the delta).
    */
   stream(): AsyncGenerator<HandleData, void, unknown>;
+
+  /**
+   * Get handle data for a specific segment (for caching).
+   * Returns data in format: { handleName: [values...] }
+   */
+  getDataForSegment(segmentId: string): Record<string, unknown[]>;
+
+  /**
+   * Replay cached handle data back into the store (for cache hits).
+   * Used to restore handle data when serving cached segments.
+   */
+  replaySegmentData(segmentId: string, segmentHandles: Record<string, unknown[]>): void;
 }
 
 /**
@@ -181,11 +194,37 @@ export function createHandleStore(): HandleStore {
         }
       }
 
-      // Final yield if there's data that hasn't been yielded
+      // Final yield only if there are pending emissions that weren't yielded
       // (handles that pushed after our last yield but before completion)
-      if (Object.keys(data).length > 0) {
+      if (pendingEmissions.length > 0) {
         yield cloneHandleData(data);
       }
+    },
+
+    getDataForSegment(segmentId: string): Record<string, unknown[]> {
+      const result: Record<string, unknown[]> = {};
+      for (const handleName in data) {
+        if (data[handleName][segmentId]) {
+          result[handleName] = [...data[handleName][segmentId]];
+        }
+      }
+      return result;
+    },
+
+    replaySegmentData(segmentId: string, segmentHandles: Record<string, unknown[]>): void {
+      for (const handleName in segmentHandles) {
+        if (!data[handleName]) {
+          data[handleName] = {};
+        }
+        if (!data[handleName][segmentId]) {
+          data[handleName][segmentId] = [];
+        }
+        // Append replayed data
+        data[handleName][segmentId].push(...segmentHandles[handleName]);
+      }
+      // Trigger emission for streaming
+      pendingEmissions.push(cloneHandleData(data));
+      signalEmission();
     },
   };
 }

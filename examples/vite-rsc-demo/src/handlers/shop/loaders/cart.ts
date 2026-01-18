@@ -1,18 +1,24 @@
 import { createLoader } from "rsc-router";
+import { getCart } from "../actions/shop.actions.js";
 
 export type Cart = {
-  items: { productId: number; quantity: number; price: number }[];
+  items: { productId: string; quantity: number; price: number }[];
   total: number;
   itemCount: number;
 };
 
-const mockCart: Cart = {
-  items: [
-    { productId: 1, quantity: 2, price: 99.99 },
-    { productId: 3, quantity: 1, price: 149.99 },
-  ],
-  total: 349.97,
-  itemCount: 3,
+// Price lookup for demo products
+const productPrices: Record<string, number> = {
+  "wireless-headphones": 99.99,
+  "running-shoes": 79.99,
+  "coffee-maker": 149.99,
+  "laptop-stand": 49.99,
+  "yoga-mat": 29.99,
+  "desk-lamp": 39.99,
+  "mechanical-keyboard": 129.99,
+  "water-bottle": 24.99,
+  "air-purifier": 199.99,
+  "wireless-mouse": 34.99,
 };
 
 /**
@@ -24,5 +30,30 @@ const mockCart: Cart = {
 export const CartLoader = createLoader(async (_ctx) => {
   "use server";
   await new Promise((resolve) => setTimeout(resolve, 75));
-  return mockCart;
+
+  const cart = await getCart();
+
+  if (!cart || cart.items.length === 0) {
+    return {
+      items: [],
+      total: 0,
+      itemCount: 0,
+    };
+  }
+
+  // Build cart with prices
+  const items = cart.items.map((item) => ({
+    productId: item.productId,
+    quantity: item.quantity,
+    price: productPrices[item.productId] ?? 0,
+  }));
+
+  const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const itemCount = items.reduce((sum, item) => sum + item.quantity, 0);
+
+  return {
+    items,
+    total,
+    itemCount,
+  };
 });

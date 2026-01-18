@@ -1,5 +1,11 @@
 import { createRSCRouter, type RouterEnv, redirect, type MiddlewareFn } from "rsc-router/server";
+import { MemorySegmentCacheStore } from "rsc-router/rsc";
 import { testRoutes } from "./routes.js";
+
+// App-level cache store with defaults
+export const cacheStore = new MemorySegmentCacheStore({
+  defaults: { ttl: 60, swr: 120 },
+});
 
 export type AppEnv = RouterEnv<{}, {}>;
 

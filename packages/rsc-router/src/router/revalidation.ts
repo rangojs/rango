@@ -70,6 +70,10 @@ export async function evaluateRevalidation<TEnv>(
     if (segment.type === "route") {
       // Route segment always revalidates on actions
       defaultShouldRevalidate = true;
+    } else if (segment.type === "loader") {
+      // Loaders always revalidate on actions - they often contain action-sensitive data
+      // (e.g., cart count after add-to-cart action)
+      defaultShouldRevalidate = true;
     } else if (segment.belongsToRoute) {
       // Segment belongs to route (orphan layouts/parallels) - revalidate
       defaultShouldRevalidate = true;

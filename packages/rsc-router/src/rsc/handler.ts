@@ -22,6 +22,7 @@ import {
 } from "../server/request-context.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
+
 import type {
   RscPayload,
   ReactFormState,
@@ -57,7 +58,7 @@ import { generateNonce } from "./nonce.js";
 export function createRSCHandler<TEnv = unknown>(
   options: CreateRSCHandlerOptions<TEnv>
 ) {
-  const { router, nonce: nonceProvider } = options;
+  const { router, version } = options;
 
   // Use provided deps or default to @vitejs/plugin-rsc/rsc exports
   const deps = options.deps ?? rscDeps;
@@ -94,19 +95,29 @@ export function createRSCHandler<TEnv = unknown>(
     // Shared variables between middleware and route handlers
     const variables: Record<string, any> = {};
 
-    // Store nonce in variables so middleware can access via ctx.get('nonce')
-    if (nonce) {
-      variables.nonce = nonce;
+    // Resolve cache store configuration
+    // Priority: options.cache (handler override) > router.cache (router default)
+    // Store is enabled only if: config provided, enabled, and no ?__no_cache query param
+    let cacheStore = undefined;
+    const cacheOption = options.cache ?? router.cache;
+    if (cacheOption && !url.searchParams.has("__no_cache")) {
+      const cacheConfig =
+        typeof cacheOption === "function" ? cacheOption(env) : cacheOption;
+
+      if (cacheConfig.enabled !== false) {
+        cacheStore = cacheConfig.store;
+      }
     }
 
     // Create unified request context with all methods
-    // Includes: stub response, handle store, loader memoization, use(), cookies, headers
+    // Includes: stub response, handle store, loader memoization, use(), cookies, headers, cache store
     // params starts empty, populated after route matching via setRequestContextParams
     const requestContext = createRequestContext({
       env,
       request,
       url,
       variables,
+      cacheStore,
     });
 
     // Wrap entire request handling in request context
@@ -178,11 +189,49 @@ export function createRSCHandler<TEnv = unknown>(
     variables: Record<string, any>,
     nonce: string | undefined
   ): Promise<Response> {
+    // Early return for static file requests that don't need RSC handling
+    if (url.pathname === "/favicon.ico" || url.pathname === "/robots.txt") {
+      return new Response(null, { status: 404 });
+    }
+
     const isPartial = url.searchParams.has("_rsc_partial");
     const isAction =
       request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
     const actionId =
       request.headers.get("rsc-action") || url.searchParams.get("_rsc_action");
+
+    // Version mismatch detection - client may have stale code after HMR/deployment
+    // If versions don't match, tell the client to reload
+    const clientVersion = url.searchParams.get("_rsc_v");
+    if (version && clientVersion && clientVersion !== version) {
+      console.log(
+        `[RSC] Version mismatch: client=${clientVersion}, server=${version}. Forcing reload.`
+      );
+
+      // Clean URL by removing RSC params
+      const cleanUrl = new URL(url);
+      cleanUrl.searchParams.delete("_rsc_partial");
+      cleanUrl.searchParams.delete("_rsc_segments");
+      cleanUrl.searchParams.delete("_rsc_v");
+      cleanUrl.searchParams.delete("_rsc_stale");
+      cleanUrl.searchParams.delete("_rsc_action");
+      cleanUrl.searchParams.delete("_rsc_prev");
+
+      // For actions, reload current page (referer)
+      // For navigation, load the target URL
+      const reloadUrl = isAction
+        ? request.headers.get("referer") || cleanUrl.toString()
+        : cleanUrl.toString();
+
+      // Return special response that tells client to reload
+      return createResponseWithMergedHeaders(null, {
+        status: 200,
+        headers: {
+          "X-RSC-Reload": reloadUrl,
+          "content-type": "text/x-component;charset=utf-8",
+        },
+      });
+    }
 
     // Get handle store from request context (created at start of request)
     const handleStore = requireRequestContext()._handleStore;
@@ -347,6 +396,7 @@ export function createRSCHandler<TEnv = unknown>(
         isPartial: false,
         rootLayout: router.rootLayout,
         handles: handleStore.stream(),
+        version,
       },
       formState: actionResult,
     };
@@ -427,6 +477,7 @@ export function createRSCHandler<TEnv = unknown>(
             diff: errorResult.diff,
             isError: true,
             handles: handleStore.stream(),
+            version,
           },
           returnValue,
         };
@@ -471,6 +522,7 @@ export function createRSCHandler<TEnv = unknown>(
       const renderStart = performance.now();
       const root = renderSegments(fullMatch.segments, {
         rootLayout: router.rootLayout,
+        isAction: true,
       });
       const renderDuration = performance.now() - renderStart;
       const serverTiming = fullMatch.serverTiming
@@ -485,6 +537,7 @@ export function createRSCHandler<TEnv = unknown>(
           matched: fullMatch.matched,
           diff: fullMatch.diff,
           handles: handleStore.stream(),
+          version,
         },
         returnValue,
       };
@@ -510,7 +563,7 @@ export function createRSCHandler<TEnv = unknown>(
     setRequestContextParams(matchResult.params);
 
     const renderStart = performance.now();
-    renderSegments(matchResult.segments, { rootLayout: router.rootLayout });
+    renderSegments(matchResult.segments, { rootLayout: router.rootLayout, isAction: true });
     const renderDuration = performance.now() - renderStart;
     const serverTiming = matchResult.serverTiming
       ? `${matchResult.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
@@ -526,6 +579,7 @@ export function createRSCHandler<TEnv = unknown>(
         diff: matchResult.diff,
         slots: matchResult.slots,
         handles: handleStore.stream(),
+        version,
       },
       returnValue,
     };
@@ -728,6 +782,7 @@ export function createRSCHandler<TEnv = unknown>(
             diff: match.diff,
             isPartial: false,
             handles: handleStore.stream(),
+            version,
           },
         };
       } else {
@@ -744,6 +799,7 @@ export function createRSCHandler<TEnv = unknown>(
             isPartial: true,
             slots: result.slots,
             handles: handleStore.stream(),
+            version,
           },
         };
       }
@@ -758,6 +814,9 @@ export function createRSCHandler<TEnv = unknown>(
           headers: { Location: match.redirect },
         });
       }
+
+      // Caching is now handled in router.match() via cache provider in request context
+      // match.segments already contains cached or fresh segments as appropriate
 
       const renderStart = performance.now();
       const root = renderSegments(match.segments, {
@@ -778,6 +837,7 @@ export function createRSCHandler<TEnv = unknown>(
           isPartial: false,
           rootLayout: router.rootLayout,
           handles: handleStore.stream(),
+          version,
         },
       };
     }

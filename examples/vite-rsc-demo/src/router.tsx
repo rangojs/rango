@@ -1,5 +1,13 @@
 import { createRSCRouter, type RouterEnv } from "rsc-router/server";
+import { MemorySegmentCacheStore } from "rsc-router/rsc";
 import { RootLayout } from "./layouts/RootLayout.js";
+
+// Create cache store with defaults (persists across HMR via globalThis)
+const cacheStore = new MemorySegmentCacheStore({
+  defaults: {
+    ttl: 600000, // Default TTL for all cache() boundaries (~7 days)
+  },
+});
 import {
   homeRoutes,
   blogRoutes,
@@ -67,7 +75,11 @@ declare global {
  * Create and configure the router with type-safe context.
  * Route types are accumulated through the builder chain.
  */
-const router = createRSCRouter<AppEnv>({ debugPerformance: true, document: RootLayout })
+const router = createRSCRouter<AppEnv>({
+  debugPerformance: true,
+  document: RootLayout,
+  cache: { store: cacheStore },
+})
   .routes(homeRoutes)
   .map(() => import("./handlers/home.js"))
 

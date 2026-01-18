@@ -26,6 +26,8 @@ export interface RscPayload {
     rootLayout?: React.ComponentType<{ children: React.ReactNode }>;
     /** Handle data accumulated across route segments (async generator that yields on each push) */
     handles?: AsyncGenerator<HandleData, void, unknown>;
+    /** RSC version string for cache invalidation */
+    version?: string;
   };
   returnValue?: { ok: boolean; data: unknown };
   formState?: unknown;
@@ -116,13 +118,15 @@ export interface SSRModule {
 export type LoadSSRModule = () => Promise<SSRModule>;
 
 /**
- * Nonce provider function type.
- * Can return a nonce string, or true to auto-generate one.
+ * Cache configuration for handler.
+ * TTL is configured via store.defaults or cache() boundaries.
  */
-export type NonceProvider<TEnv = unknown> = (
-  request: Request,
-  env: TEnv
-) => string | true | Promise<string | true>;
+export interface HandlerCacheConfig {
+  /** Cache store implementation */
+  store: import("../cache/types.js").SegmentCacheStore;
+  /** Enable/disable caching (default: true) */
+  enabled?: boolean;
+}
 
 /**
  * Options for creating an RSC handler
@@ -146,31 +150,45 @@ export interface CreateRSCHandlerOptions<TEnv = unknown> {
   loadSSRModule?: LoadSSRModule;
 
   /**
-   * Nonce provider for Content Security Policy (CSP).
+   * Cache configuration for segment caching.
    *
-   * Can be:
-   * - A function that returns a nonce string
-   * - A function that returns `true` to auto-generate a nonce
-   * - Undefined to disable nonce (default)
+   * Can be a static config object or a function that receives the env
+   * (useful for accessing Cloudflare bindings).
    *
-   * The nonce will be applied to inline scripts injected by the RSC payload.
-   * It's also available to middleware via `ctx.get('nonce')`.
+   * If not provided, caching is disabled. TTL is configured via store.defaults
+   * or cache() boundaries in the route definition.
    *
-   * @example Auto-generate nonce
-   * ```tsx
-   * createRSCHandler({
-   *   router,
-   *   nonce: () => true,
-   * });
+   * @example Static config
+   * ```typescript
+   * cache: {
+   *   store: new MemorySegmentCacheStore({ defaults: { ttl: 60 } }),
+   * }
    * ```
    *
-   * @example Custom nonce from request context
-   * ```tsx
-   * createRSCHandler({
+   * @example Dynamic config with env
+   * ```typescript
+   * cache: (env) => ({
+   *   store: new KVSegmentCacheStore(env.Bindings.MY_CACHE, { defaults: { ttl: 60 } }),
+   * })
+   * ```
+   */
+  cache?: HandlerCacheConfig | ((env: TEnv) => HandlerCacheConfig);
+
+  /**
+   * RSC version string included in metadata.
+   * The browser sends this back on partial requests to detect version mismatches.
+   *
+   * Use with `rsc-router:version` virtual module for automatic invalidation.
+   *
+   * @example
+   * ```typescript
+   * import { VERSION } from "rsc-router:version";
+   *
+   * export default createRSCHandler({
    *   router,
-   *   nonce: (request, env) => env.nonce,
+   *   version: VERSION,
    * });
    * ```
    */
-  nonce?: NonceProvider<TEnv>;
+  version?: string;
 }

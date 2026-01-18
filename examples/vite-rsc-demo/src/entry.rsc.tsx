@@ -3,10 +3,13 @@ import {
   decodeReply,
   createTemporaryReferenceSet,
   loadServerAction,
+  decodeAction,
+  decodeFormState,
 } from "rsc-router/internal/deps/rsc";
 import { router } from "./router.js";
 import { createRSCHandler } from "rsc-router/rsc";
 
+// Cache is configured on the router (see router.tsx)
 export default createRSCHandler({
   router,
   deps: {
@@ -14,6 +17,8 @@ export default createRSCHandler({
     decodeReply,
     createTemporaryReferenceSet,
     loadServerAction,
+    decodeAction,
+    decodeFormState,
   },
   loadSSRModule: () =>
     import.meta.viteRsc.loadModule<typeof import("./entry.ssr.js")>(

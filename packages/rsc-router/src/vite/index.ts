@@ -10,6 +10,7 @@ import {
   VIRTUAL_ENTRY_BROWSER,
   VIRTUAL_ENTRY_SSR,
   getVirtualEntryRSC,
+  getVirtualVersionContent,
   VIRTUAL_IDS,
 } from "./virtual-entries.ts";
 
@@ -18,6 +19,15 @@ export { exposeActionId } from "./expose-action-id.ts";
 export { exposeLoaderId } from "./expose-loader-id.ts";
 export { exposeHandleId } from "./expose-handle-id.ts";
 export { exposeLocationStateId } from "./expose-location-state-id.ts";
+
+// Virtual module type declarations
+declare module "rsc-router:version" {
+  /**
+   * Version string that changes on server restart (dev) or at build time (production).
+   * Used for cache invalidation and deployment mismatch detection.
+   */
+  export const VERSION: string;
+}
 
 /**
  * Default entry file paths (relative to project root)
@@ -251,6 +261,175 @@ function getManualChunks(id: string): string | undefined {
 }
 
 /**
+ * Plugin providing rsc-router:version virtual module.
+ * Exports VERSION that changes when RSC modules change (dev) or at build time (production).
+ *
+ * The version is used for:
+ * 1. Cache invalidation - CFCacheStore uses VERSION to invalidate stale cache
+ * 2. Version mismatch detection - client sends version, server reloads on mismatch
+ *
+ * In dev mode, the version updates when:
+ * - Server starts (initial version)
+ * - RSC modules change via HMR (triggers version module invalidation)
+ *
+ * Client-only HMR changes don't update the version since they don't affect
+ * server-rendered content or cached RSC payloads.
+ * @internal
+ */
+function createVersionPlugin(): Plugin {
+  // Generate version at plugin creation time (build/server start)
+  const buildVersion = Date.now().toString(16);
+  let currentVersion = buildVersion;
+  let isDev = false;
+  let server: any = null;
+
+  return {
+    name: "rsc-router:version",
+    enforce: "pre",
+
+    configResolved(config) {
+      isDev = config.command === "serve";
+    },
+
+    configureServer(devServer) {
+      server = devServer;
+    },
+
+    resolveId(id) {
+      if (id === VIRTUAL_IDS.version) {
+        return "\0" + id;
+      }
+      return null;
+    },
+
+    load(id) {
+      if (id === "\0" + VIRTUAL_IDS.version) {
+        return getVirtualVersionContent(currentVersion);
+      }
+      return null;
+    },
+
+    // Track RSC module changes and update version
+    hotUpdate(ctx) {
+      if (!isDev) return;
+
+      // Check if this is an RSC environment update (not client/ssr)
+      // RSC modules affect server-rendered content and cached payloads
+      const isRscModule = ctx.environment?.name === "rsc";
+
+      if (isRscModule && ctx.modules.length > 0) {
+        // Update version when RSC modules change
+        currentVersion = Date.now().toString(16);
+        console.log(
+          `[rsc-router] RSC module changed, version updated: ${currentVersion}`
+        );
+
+        // Invalidate the version module so it gets reloaded with new version
+        if (server) {
+          const rscEnv = server.environments?.rsc;
+          if (rscEnv?.moduleGraph) {
+            const versionMod = rscEnv.moduleGraph.getModuleById(
+              "\0" + VIRTUAL_IDS.version
+            );
+            if (versionMod) {
+              rscEnv.moduleGraph.invalidateModule(versionMod);
+            }
+          }
+        }
+      }
+    },
+  };
+}
+
+/**
+ * Plugin that auto-injects VERSION into custom entry.rsc files.
+ * If a custom entry.rsc file uses createRSCHandler but doesn't pass version,
+ * this transform adds the import and property automatically.
+ * @internal
+ */
+function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
+  let projectRoot = "";
+  let resolvedEntryPath = "";
+
+  return {
+    name: "rsc-router:version-injector",
+    enforce: "pre",
+
+    configResolved(config) {
+      projectRoot = config.root;
+      resolvedEntryPath = resolve(projectRoot, rscEntryPath);
+    },
+
+    transform(code, id) {
+      // Only transform the RSC entry file
+      const normalizedId = Vite.normalizePath(id);
+      const normalizedEntry = Vite.normalizePath(resolvedEntryPath);
+
+      if (normalizedId !== normalizedEntry) {
+        return null;
+      }
+
+      // Check if file uses createRSCHandler
+      if (!code.includes("createRSCHandler")) {
+        return null;
+      }
+
+      // Check if VERSION is already imported
+      if (code.includes("rsc-router:version")) {
+        return null;
+      }
+
+      // Check if version property is already being passed
+      // Look for version: in the createRSCHandler call
+      const handlerCallMatch = code.match(/createRSCHandler\s*\(\s*\{/);
+      if (!handlerCallMatch) {
+        return null;
+      }
+
+      // Add VERSION import after the last import statement
+      const lastImportIndex = code.lastIndexOf("import ");
+      if (lastImportIndex === -1) {
+        return null;
+      }
+
+      // Find the end of the last import statement
+      const afterLastImport = code.indexOf("\n", lastImportIndex);
+      if (afterLastImport === -1) {
+        return null;
+      }
+
+      // Find next line that's not an import continuation
+      let insertIndex = afterLastImport + 1;
+      while (
+        insertIndex < code.length &&
+        (code.slice(insertIndex).match(/^\s*(from|import)\s/) ||
+          code[insertIndex] === "\n")
+      ) {
+        const nextNewline = code.indexOf("\n", insertIndex);
+        if (nextNewline === -1) break;
+        insertIndex = nextNewline + 1;
+      }
+
+      // Insert VERSION import
+      const versionImport = `import { VERSION } from "rsc-router:version";\n`;
+      let newCode = code.slice(0, insertIndex) + versionImport + code.slice(insertIndex);
+
+      // Add version: VERSION to createRSCHandler call
+      // Find createRSCHandler({ and add version: VERSION right after the opening brace
+      newCode = newCode.replace(
+        /createRSCHandler\s*\(\s*\{/,
+        "createRSCHandler({\n  version: VERSION,"
+      );
+
+      return {
+        code: newCode,
+        map: null,
+      };
+    },
+  };
+}
+
+/**
  * Vite plugin for rsc-router.
  *
  * Includes @vitejs/plugin-rsc and all necessary transforms for the router
@@ -281,6 +460,9 @@ export async function rscRouter(
   const enableExposeActionId = options.exposeActionId ?? true;
 
   const plugins: PluginOption[] = [];
+
+  // Track RSC entry path for version injection
+  let rscEntryPath: string | null = null;
 
   if (preset === "cloudflare") {
     // Cloudflare preset: configure entries for cloudflare worker setup
@@ -383,6 +565,9 @@ export async function rscRouter(
         rsc: userEntries.rsc ?? DEFAULT_ENTRY_PATHS.rsc,
       };
 
+      // Track RSC entry for version injection
+      rscEntryPath = entryPaths.rsc;
+
       // Use process.cwd() as initial root - will be updated in config hook
       let projectRoot = process.cwd();
 
@@ -472,6 +657,14 @@ export async function rscRouter(
 
   // Always add exposeLocationStateId for auto-generated location state keys
   plugins.push(exposeLocationStateId());
+
+  // Add version virtual module plugin for cache invalidation
+  plugins.push(createVersionPlugin());
+
+  // Add version injector for custom entry.rsc files
+  if (rscEntryPath) {
+    plugins.push(createVersionInjectorPlugin(rscEntryPath));
+  }
 
   return plugins;
 }

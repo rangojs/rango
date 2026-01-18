@@ -25,6 +25,8 @@ export interface PartialUpdateConfig {
     segments: ResolvedSegment[],
     options?: RenderSegmentsOptions
   ) => Promise<ReactNode> | ReactNode;
+  /** RSC version received from server (from initial payload metadata) */
+  version?: string;
 }
 
 /**
@@ -91,7 +93,7 @@ export type PartialUpdater = (
 export function createPartialUpdater(
   config: PartialUpdateConfig
 ): PartialUpdater {
-  const { store, client, onUpdate, renderSegments } = config;
+  const { store, client, onUpdate, renderSegments, version } = config;
 
   /**
    * Build a lookup map from current page's cached segments
@@ -172,7 +174,9 @@ export function createPartialUpdater(
         segmentIds: segments,
         previousUrl,
         staleRevalidation,
+        version,
       });
+    console.log("payload.metadata", payload.metadata);
 
     const streamComplete = rawStreamComplete.then(() => {
       streamingToken.end();
@@ -265,12 +269,31 @@ export function createPartialUpdater(
             ) {
               return mergeSegmentLoaders(fromServer, fromCache);
             }
+            // When server returns component: null for a layout segment, it means
+            // "this segment doesn't need re-rendering" - preserve the cached component
+            // to maintain the outlet chain and prevent React tree changes
+            if (
+              fromServer.component === null &&
+              fromServer.type === "layout" &&
+              fromCache?.component != null
+            ) {
+              console.log(
+                `[Browser] Preserving cached component for layout ${id} (server returned null)`
+              );
+              return { ...fromServer, component: fromCache.component };
+            }
             return fromServer;
           }
           // Fall back to current page's cached segments
           const fromCache = currentSegmentMap.get(id);
           if (!fromCache) {
             console.warn(`[Browser] Missing segment: ${id}`);
+            return fromCache;
+          }
+          // Clear loading for cached segments to prevent suspense - server decided
+          // this segment doesn't need re-rendering, so show content as-is
+          if (fromCache.loading !== undefined) {
+            return { ...fromCache, loading: undefined };
           }
           return fromCache;
         })

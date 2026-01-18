@@ -23,6 +23,7 @@ export function hasBodyContent(body: FormData | string): boolean {
 /**
  * Create a Response with headers merged from the request context's stub response.
  * This ensures headers/cookies set during middleware or handler execution are included.
+ * Also triggers any registered onResponse callbacks.
  */
 export function createResponseWithMergedHeaders(
   body: BodyInit | null,
@@ -44,8 +45,20 @@ export function createResponseWithMergedHeaders(
     }
   });
 
-  return new Response(body, {
+  // Use ctx.res.status if it was set (e.g., 404 for notFound, 500 for error)
+  // Otherwise use the status from init
+  const status = ctx.res.status !== 200 ? ctx.res.status : init.status;
+
+  let response = new Response(body, {
     ...init,
+    status,
     headers: mergedHeaders,
   });
+
+  // Run onResponse callbacks - each can inspect/modify the response
+  for (const callback of ctx._onResponseCallbacks) {
+    response = callback(response) ?? response;
+  }
+
+  return response;
 }

@@ -1,4 +1,4 @@
-import { map, Meta } from "rsc-router/server";
+import { map, Meta, redirect, notFound } from "rsc-router/server";
 import { Outlet, Link } from "rsc-router/client";
 import type { testRoutes } from "./routes.js";
 import { SlowProductLocationState } from "./location-states.js";
@@ -18,7 +18,11 @@ import {
   ComposingNonFetchableUsesFetchable,
   ComposingFetchableUsesFetchable,
   ComposingFetchableUsesNonFetchable,
+  NonCachedTestLoader,
+  CachedTestLoader,
+  InterceptCacheTestLoader,
 } from "./loaders.js";
+import { CacheTestModal, UseLoaderModal } from "./components/CacheTestModal.js";
 import { Breadcrumbs } from "./handles.js";
 import { AddToCartButton } from "./components/AddToCartButton.js";
 import { QuantityControl } from "./components/QuantityControl.js";
@@ -59,7 +63,7 @@ import {
 } from "./components/HookTests.js";
 
 export default map<typeof testRoutes>(
-  ({ route, layout, intercept, loader, loading, when, middleware }) => [
+  ({ route, layout, intercept, loader, loading, when, middleware, cache, notFoundBoundary }) => [
     // Root layout with HTML structure
     layout(
       (ctx) => {
@@ -495,79 +499,82 @@ export default map<typeof testRoutes>(
         ),
 
         // Blog routes for testing route resolution and trailing slashes
-        route(
-          "blog.index",
-          (ctx) => {
+        // Wrapped in cache() for testing caching behavior
+        cache({ ttl: 600 }, () => [
+          route(
+            "blog.index",
+            (ctx) => {
+              const pushBreadcrumb = ctx.use(Breadcrumbs);
+              const meta = ctx.use(Meta);
+              pushBreadcrumb({ label: "Blog", href: "/blog" });
+              meta({ title: "Blog - RSC Router Test App" });
+              meta({ name: "description", content: "Blog posts from RSC Router" });
+              return (
+                <div data-testid="blog-index-page">
+                  <Link to="/" data-testid="back-link">
+                    ← Back to Home
+                  </Link>
+                  <h1 data-testid="blog-title">Blog</h1>
+                  <p data-testid="blog-description">Welcome to the blog</p>
+                  <ul data-testid="blog-posts">
+                    <li>
+                      <Link to="/blog/post-1" data-testid="blog-post-link-1">
+                        Post 1
+                      </Link>
+                    </li>
+                    <li>
+                      <Link to="/blog/post-2" data-testid="blog-post-link-2">
+                        Post 2
+                      </Link>
+                    </li>
+                  </ul>
+                  <div data-testid="blog-product-links" style={{ marginTop: "1rem" }}>
+                    <h3>Featured Products</h3>
+                    <Link to="/product/product-a" data-testid="blog-product-link">
+                      View Product A
+                    </Link>
+                  </div>
+                </div>
+              );
+            }
+          ),
+
+          route("blog.post", (ctx) => {
             const pushBreadcrumb = ctx.use(Breadcrumbs);
             const meta = ctx.use(Meta);
             pushBreadcrumb({ label: "Blog", href: "/blog" });
-            meta({ title: "Blog - RSC Router Test App" });
-            meta({ name: "description", content: "Blog posts from RSC Router" });
+            pushBreadcrumb({ label: `Post ${ctx.params.postId}`, href: `/blog/${ctx.params.postId}` });
+            meta({ title: `Post ${ctx.params.postId} - Blog - RSC Router Test App` });
+            meta({ name: "description", content: `Content for post ${ctx.params.postId}` });
+
+            // Test async meta with Promise - og:description streams in after 500ms
+            meta(
+              new Promise((resolve) =>
+                setTimeout(
+                  () => resolve({ property: "og:description", content: `Async meta for ${ctx.params.postId}` }),
+                  500
+                )
+              )
+            );
+
+            // Test async meta with IIFE pattern - og:author streams in after 300ms
+            meta((async () => {
+              await new Promise((r) => setTimeout(r, 300));
+              return { name: "author", content: `Author of ${ctx.params.postId}` };
+            })());
             return (
-              <div data-testid="blog-index-page">
-                <Link to="/" data-testid="back-link">
-                  ← Back to Home
+              <div data-testid="blog-post-page">
+                <Link to="/blog" data-testid="back-to-blog">
+                  ← Back to Blog
                 </Link>
-                <h1 data-testid="blog-title">Blog</h1>
-                <p data-testid="blog-description">Welcome to the blog</p>
-                <ul data-testid="blog-posts">
-                  <li>
-                    <Link to="/blog/post-1" data-testid="blog-post-link-1">
-                      Post 1
-                    </Link>
-                  </li>
-                  <li>
-                    <Link to="/blog/post-2" data-testid="blog-post-link-2">
-                      Post 2
-                    </Link>
-                  </li>
-                </ul>
-                <div data-testid="blog-product-links" style={{ marginTop: "1rem" }}>
-                  <h3>Featured Products</h3>
-                  <Link to="/product/product-a" data-testid="blog-product-link">
-                    View Product A
-                  </Link>
-                </div>
+                <h1 data-testid="blog-post-title">Post: {ctx.params.postId}</h1>
+                <p data-testid="blog-post-content">
+                  Content for post {ctx.params.postId}
+                </p>
               </div>
             );
-          }
-        ),
-
-        route("blog.post", (ctx) => {
-          const pushBreadcrumb = ctx.use(Breadcrumbs);
-          const meta = ctx.use(Meta);
-          pushBreadcrumb({ label: "Blog", href: "/blog" });
-          pushBreadcrumb({ label: `Post ${ctx.params.postId}`, href: `/blog/${ctx.params.postId}` });
-          meta({ title: `Post ${ctx.params.postId} - Blog - RSC Router Test App` });
-          meta({ name: "description", content: `Content for post ${ctx.params.postId}` });
-
-          // Test async meta with Promise - og:description streams in after 500ms
-          meta(
-            new Promise((resolve) =>
-              setTimeout(
-                () => resolve({ property: "og:description", content: `Async meta for ${ctx.params.postId}` }),
-                500
-              )
-            )
-          );
-
-          // Test async meta with IIFE pattern - og:author streams in after 300ms
-          meta((async () => {
-            await new Promise((r) => setTimeout(r, 300));
-            return { name: "author", content: `Author of ${ctx.params.postId}` };
-          })());
-          return (
-            <div data-testid="blog-post-page">
-              <Link to="/blog" data-testid="back-to-blog">
-                ← Back to Blog
-              </Link>
-              <h1 data-testid="blog-post-title">Post: {ctx.params.postId}</h1>
-              <p data-testid="blog-post-content">
-                Content for post {ctx.params.postId}
-              </p>
-            </div>
-          );
-        }),
+          }),
+        ]),
 
         // Trailing slash configuration test routes
         route("trailingSlash.ignore", () => (
@@ -1542,5 +1549,314 @@ export default map<typeof testRoutes>(
         </div>
       );
     }),
+
+    // =====================================================
+    // CACHE TEST ROUTES
+    // Routes for testing loader caching behavior
+    // =====================================================
+
+    // Route with NON-cached loader (default behavior)
+    // Loaders should NOT be cached by default
+    route(
+      "cacheTest.nonCachedLoader",
+      async (ctx) => {
+        const data = await ctx.use(NonCachedTestLoader);
+        return (
+          <div data-testid="non-cached-loader-page">
+            <Link to="/" data-testid="back-link">
+              ← Back to Home
+            </Link>
+            <h1 data-testid="page-title">Non-Cached Loader Test</h1>
+            <p data-testid="loader-count">Loader count: {data.count}</p>
+            <p data-testid="loader-message">{data.message}</p>
+            <p data-testid="loaded-at">Loaded: {data.loadedAt}</p>
+          </div>
+        );
+      },
+      () => [loader(NonCachedTestLoader)]
+    ),
+
+    // Route with CACHED loader (opt-in via cache())
+    // Demonstrates explicit loader caching
+    route(
+      "cacheTest.cachedLoader",
+      async (ctx) => {
+        const data = await ctx.use(CachedTestLoader);
+        return (
+          <div data-testid="cached-loader-page">
+            <Link to="/" data-testid="back-link">
+              ← Back to Home
+            </Link>
+            <h1 data-testid="page-title">Cached Loader Test</h1>
+            <p data-testid="loader-count">Loader count: {data.count}</p>
+            <p data-testid="loader-message">{data.message}</p>
+            <p data-testid="loaded-at">Loaded: {data.loadedAt}</p>
+          </div>
+        );
+      },
+      () => [
+        loader(CachedTestLoader, () => [
+          cache({ ttl: 600 }),
+        ]),
+      ]
+    ),
+
+    // =====================================================
+    // INTERCEPT CACHE TEST ROUTES
+    // Uses client component with useLoader to avoid stale data issues
+    // Layout with @cacheModal outlet wraps index, detail route and intercept
+    // Detail route is cached, intercept is not cached
+    // =====================================================
+
+    layout(
+      () => (
+        <div data-testid="cache-intercept-layout">
+          <Outlet />
+          <Outlet name="@cacheModal" />
+        </div>
+      ),
+      () => [
+        // Index page for intercept cache testing
+        route(
+          "cacheTest.interceptIndex",
+          () => (
+            <div data-testid="cache-intercept-index">
+              <h1>Cache Intercept Test</h1>
+              <p>Click a link to test intercept caching:</p>
+              <ul>
+                <li>
+                  <Link to="/cache-test/intercept/item-a" data-testid="cache-intercept-link-a">
+                    Item A
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/cache-test/intercept/item-b" data-testid="cache-intercept-link-b">
+                    Item B
+                  </Link>
+                </li>
+              </ul>
+            </div>
+          )
+        ),
+
+        // Detail route wrapped in cache - for direct navigation
+        cache({ ttl: 600 }, () => [
+          route(
+            "cacheTest.interceptDetail",
+            async (ctx) => {
+              const data = await ctx.use(InterceptCacheTestLoader);
+              return (
+                <div data-testid="cache-intercept-detail">
+                  <Link to="/cache-test/intercept" data-testid="back-to-intercept-index">
+                    Back
+                  </Link>
+                  <h1>Item Detail: {ctx.params.itemId}</h1>
+                  <p>This is the full detail page (direct navigation)</p>
+                  <CacheTestModal data={data} testId="detail-loader-data" />
+                </div>
+              );
+            },
+            () => [loader(InterceptCacheTestLoader)]
+          ),
+        ]),
+
+        // Intercept for modal - renders in @cacheModal slot
+        // Fetches data with ctx.use() and passes as props
+        intercept(
+          "@cacheModal",
+          "cacheTest.interceptDetail",
+          async (ctx) => {
+            const data = await ctx.use(InterceptCacheTestLoader);
+            return (
+              <CacheTestModal
+                data={data}
+                testId="cache-test-modal"
+              />
+            );
+          },
+          () => [
+            when(({ from }) => from.pathname === "/cache-test/intercept"),
+            loader(InterceptCacheTestLoader),
+          ]
+        ),
+      ]
+    ),
+
+    // =====================================================
+    // useLoader INTERCEPT TEST ROUTES (non-cached)
+    // Tests useLoader with loader() registration pattern
+    // =====================================================
+
+    layout(
+      () => (
+        <div data-testid="useloader-intercept-layout">
+          <Outlet />
+          <Outlet name="@useLoaderModal" />
+        </div>
+      ),
+      () => [
+        // Index page for useLoader intercept testing
+        route(
+          "cacheTest.useLoaderIndex",
+          () => (
+            <div data-testid="useloader-intercept-index">
+              <h1>useLoader Intercept Test</h1>
+              <p>Click a link to test useLoader with loader() registration:</p>
+              <ul>
+                <li>
+                  <Link to="/cache-test/useloader/item-a" data-testid="useloader-link-a">
+                    Item A
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/cache-test/useloader/item-b" data-testid="useloader-link-b">
+                    Item B
+                  </Link>
+                </li>
+              </ul>
+            </div>
+          )
+        ),
+
+        // Detail route (non-cached) - for direct navigation
+        route(
+          "cacheTest.useLoaderDetail",
+          (ctx) => (
+            <div data-testid="useloader-intercept-detail">
+              <Link to="/cache-test/useloader" data-testid="back-to-useloader-index">
+                Back
+              </Link>
+              <h1>Item Detail: {ctx.params.itemId}</h1>
+              <p>This is the full detail page (direct navigation)</p>
+              <UseLoaderModal loader={InterceptCacheTestLoader} testId="detail-useloader-data" />
+            </div>
+          ),
+          () => [loader(InterceptCacheTestLoader)]
+        ),
+
+        // Intercept for modal - client component uses useLoader directly
+        intercept(
+          "@useLoaderModal",
+          "cacheTest.useLoaderDetail",
+          () => (
+            <UseLoaderModal
+              loader={InterceptCacheTestLoader}
+              testId="useloader-modal"
+            />
+          ),
+          () => [
+            when(({ from }) => from.pathname === "/cache-test/useloader"),
+            loader(InterceptCacheTestLoader),
+          ]
+        ),
+      ]
+    ),
+
+    // Proactive caching test routes
+    // Layout is INSIDE cache boundary, so navigating between items
+    // will have null layout component (client has it), triggering proactive caching
+    cache({ ttl: 600 }, () => [
+      layout(
+        () => (
+          <div data-testid="proactive-cache-layout">
+            <h2 data-testid="proactive-layout-title">Proactive Cache Layout</h2>
+            <p data-testid="proactive-layout-rendered">
+              Layout rendered at: {new Date().toISOString()}
+            </p>
+            <nav data-testid="proactive-nav">
+              <Link to="/" data-testid="proactive-back-home">← Home</Link>
+              {" | "}
+              <Link to="/proactive-cache" data-testid="proactive-nav-index">Index</Link>
+              {" | "}
+              <Link to="/proactive-cache/item-a" data-testid="proactive-nav-a">Item A</Link>
+              {" | "}
+              <Link to="/proactive-cache/item-b" data-testid="proactive-nav-b">Item B</Link>
+            </nav>
+            <Outlet />
+          </div>
+        ),
+        () => [
+          route("proactiveCache.index", () => (
+            <div data-testid="proactive-index-page">
+              <h3>Proactive Cache Index</h3>
+              <p data-testid="proactive-index-rendered">
+                Index rendered at: {new Date().toISOString()}
+              </p>
+            </div>
+          )),
+
+          route("proactiveCache.itemA", () => (
+            <div data-testid="proactive-item-a-page">
+              <h3>Item A</h3>
+              <p data-testid="proactive-item-a-rendered">
+                Item A rendered at: {new Date().toISOString()}
+              </p>
+            </div>
+          )),
+
+          route("proactiveCache.itemB", () => (
+            <div data-testid="proactive-item-b-page">
+              <h3>Item B</h3>
+              <p data-testid="proactive-item-b-rendered">
+                Item B rendered at: {new Date().toISOString()}
+              </p>
+            </div>
+          )),
+        ]
+      ),
+    ]),
+
+    // =====================================================
+    // CACHE STATUS TEST ROUTES
+    // Tests that only 200 responses are cached
+    // All routes wrapped in cache() to enable caching behavior
+    // =====================================================
+    cache({ ttl: 600 }, () => [
+      // Not found boundary to catch notFound() calls and return 404
+      notFoundBoundary(({ notFound: info }) => (
+        <div data-testid="cache-status-not-found-page">
+          <Link to="/" data-testid="back-link">← Back to Home</Link>
+          <h1 data-testid="cache-status-not-found-title">Not Found (404)</h1>
+          <p data-testid="cache-status-not-found-message">{info.message}</p>
+        </div>
+      )),
+
+      // Success route (200) - should be cached
+      route("cacheStatus.success", () => (
+        <div data-testid="cache-status-success-page">
+          <Link to="/" data-testid="back-link">← Back to Home</Link>
+          <h1 data-testid="cache-status-success-title">Cache Status: Success (200)</h1>
+          <p data-testid="cache-status-success-rendered">
+            Rendered at: {new Date().toISOString()}
+          </p>
+        </div>
+      )),
+
+      // Not Found route (404) - should NOT be cached
+      route("cacheStatus.notFound", () => {
+        notFound("This resource does not exist");
+      }),
+
+      // Server Error route (500) - should NOT be cached
+      route("cacheStatus.serverError", () => {
+        throw new Error("Intentional server error for cache status testing");
+      }),
+
+      // Redirect route (308) - should NOT be cached
+      route("cacheStatus.redirect", () => {
+        return redirect("/cache-status/redirect-target", 308);
+      }),
+
+      // Redirect target route (200) - should be cached
+      route("cacheStatus.redirectTarget", () => (
+        <div data-testid="cache-status-redirect-target-page">
+          <Link to="/" data-testid="back-link">← Back to Home</Link>
+          <h1 data-testid="cache-status-redirect-target-title">Cache Status: Redirect Target (200)</h1>
+          <p data-testid="cache-status-redirect-target-rendered">
+            Rendered at: {new Date().toISOString()}
+          </p>
+        </div>
+      )),
+    ]),
   ]
 );

@@ -57,6 +57,11 @@
     "./internal/deps/html-stream-server": {
       "types": "./src/deps/html-stream-server.ts",
       "default": "./src/deps/html-stream-server.ts"
+    },
+    "./cache": {
+      "react-server": "./src/cache/index.ts",
+      "types": "./src/cache/index.ts",
+      "default": "./src/cache/index.ts"
     }
   },
   "files": [

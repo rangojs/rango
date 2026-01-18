@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type {
+  PartialCacheOptions,
   DefaultEnv,
   ErrorBoundaryHandler,
   ExtractRouteParams,
@@ -16,7 +17,13 @@ import type {
   ShouldRevalidateFn,
   TrailingSlashMode,
 } from "./types.js";
-import { getContext, type EntryData, type InterceptEntry, type InterceptWhenFn, type InterceptSelectorContext } from "./server/context";
+import {
+  getContext,
+  type EntryData,
+  type InterceptEntry,
+  type InterceptWhenFn,
+  type InterceptSelectorContext,
+} from "./server/context";
 import { invariant } from "./errors";
 import RootLayout from "./server/root-layout";
 import type {
@@ -37,6 +44,7 @@ import type {
   InterceptUseItem,
   LoaderUseItem,
   WhenItem,
+  CacheItem,
 } from "./route-types.js";
 // const __DEV__ = import.meta.MODE === "development";
 
@@ -81,13 +89,22 @@ function isRouteConfig(value: unknown): value is RouteConfig {
 export function route<const T extends RouteDefinition>(
   input: T,
   options?: RouteDefinitionOptions
-): ResolvedRouteMap<T> & { __trailingSlash?: Record<string, TrailingSlashMode> } {
+): ResolvedRouteMap<T> & {
+  __trailingSlash?: Record<string, TrailingSlashMode>;
+} {
   const trailingSlash: Record<string, TrailingSlashMode> = {};
-  const routes = flattenRoutes(input as RouteDefinition, "", trailingSlash, options?.trailingSlash);
+  const routes = flattenRoutes(
+    input as RouteDefinition,
+    "",
+    trailingSlash,
+    options?.trailingSlash
+  );
 
   // Attach trailing slash config as a non-enumerable property
   // This keeps backwards compatibility while passing the config through
-  const result = routes as ResolvedRouteMap<T> & { __trailingSlash?: Record<string, TrailingSlashMode> };
+  const result = routes as ResolvedRouteMap<T> & {
+    __trailingSlash?: Record<string, TrailingSlashMode>;
+  };
   if (Object.keys(trailingSlash).length > 0) {
     Object.defineProperty(result, "__trailingSlash", {
       value: trailingSlash,
@@ -130,7 +147,12 @@ function flattenRoutes(
       }
     } else {
       // Nested routes - flatten recursively
-      const nested = flattenRoutes(value, `${fullKey}.`, trailingSlashConfig, defaultTrailingSlash);
+      const nested = flattenRoutes(
+        value,
+        `${fullKey}.`,
+        trailingSlashConfig,
+        defaultTrailingSlash
+      );
       Object.assign(flattened, nested);
     }
   }
@@ -156,10 +178,15 @@ export type {
   ParallelUseItem,
   InterceptUseItem,
   WhenItem,
+  CacheItem,
 } from "./route-types.js";
 
 // Re-export intercept selector types for use in handlers
-export type { InterceptSelectorContext, InterceptSegmentsState, InterceptWhenFn } from "./server/context";
+export type {
+  InterceptSelectorContext,
+  InterceptSegmentsState,
+  InterceptWhenFn,
+} from "./server/context";
 
 /**
  * Route helpers provided by map()
@@ -413,6 +440,71 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * @param fn - Selector function receiving navigation context, returns boolean
    */
   when: (fn: InterceptWhenFn) => WhenItem;
+  /**
+   * Define cache configuration for segments
+   *
+   * Creates a cache boundary that applies to all children unless overridden.
+   * Cache config inherits down the route tree like middleware wrapping.
+   *
+   * When ttl is not specified, uses store defaults (explicit store first,
+   * then app-level store). When store is not specified, uses app-level store.
+   *
+   * Note: Loaders are NOT cached by default. Use cache() inside loader()
+   * to explicitly opt-in to loader caching.
+   *
+   * ```typescript
+   * // Using app-level defaults (ttl inherited from store.defaults)
+   * cache(() => [
+   *   layout(<BlogLayout />),      // cached with default TTL
+   *   route("post/:slug"),         // cached with default TTL
+   * ])
+   *
+   * // Cache all segments with explicit 60s TTL
+   * cache({ ttl: 60 }, () => [
+   *   layout(<BlogLayout />),      // cached
+   *   route("post/:slug"),         // cached
+   * ])
+   *
+   * // With stale-while-revalidate
+   * cache({ ttl: 60, swr: 300 }, () => [
+   *   route("product/:id"),
+   * ])
+   *
+   * // Override for specific section
+   * cache({ ttl: 60 }, () => [
+   *   layout(<RootLayout />),
+   *   cache({ ttl: 300 }, () => [
+   *     route("static-page"),     // longer TTL
+   *   ]),
+   *   cache(false, () => [
+   *     route("admin"),           // not cached
+   *   ]),
+   * ])
+   *
+   * // Use different store for specific routes
+   * cache({ store: kvStore, ttl: 3600 }, () => [
+   *   route("archive/:year"),     // uses KV store
+   * ])
+   *
+   * // Opt-in loader caching
+   * route("product/:id", ProductHandler, () => [
+   *   loader(ProductLoader),               // NOT cached (default)
+   *   loader(StaticMetadata, () => [
+   *     cache({ ttl: 3600 }),              // cached for 1 hour
+   *   ]),
+   * ])
+   * ```
+   * @param optionsOrChildren - Cache options, false to disable, or children callback
+   * @param children - Optional callback returning child segments (when first arg is options)
+   */
+  cache: {
+    (): CacheItem;
+    (children: () => AllUseItems[]): CacheItem;
+    (
+      options: PartialCacheOptions | false,
+      use?: () => AllUseItems[]
+    ): CacheItem;
+  };
 };
 
 const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
@@ -420,11 +512,12 @@ const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
   if (!ctx) throw new Error("revalidate() must be called inside map()");
 
   // Attach to last entry in stack
-  if (!ctx.parent || !ctx.parent?.revalidate) {
+  const parent = ctx.parent;
+  if (!parent || !("revalidate" in parent)) {
     invariant(false, "No parent entry available for revalidate()");
   }
   const name = `$${getContext().getNextIndex("revalidate")}`;
-  ctx.parent.revalidate.push(fn);
+  parent.revalidate.push(fn);
   return { name, type: "revalidate" } as RevalidateItem;
 };
 
@@ -465,11 +558,12 @@ const errorBoundary: RouteHelpers<any, any>["errorBoundary"] = (fallback) => {
   if (!ctx) throw new Error("errorBoundary() must be called inside map()");
 
   // Attach to parent entry in stack
-  if (!ctx.parent || !ctx.parent?.errorBoundary) {
+  const parent = ctx.parent;
+  if (!parent || !("errorBoundary" in parent)) {
     invariant(false, "No parent entry available for errorBoundary()");
   }
   const name = `$${getContext().getNextIndex("errorBoundary")}`;
-  ctx.parent.errorBoundary.push(fallback);
+  parent.errorBoundary.push(fallback);
   return { name, type: "errorBoundary" } as ErrorBoundaryItem;
 };
 
@@ -511,11 +605,12 @@ const notFoundBoundary: RouteHelpers<any, any>["notFoundBoundary"] = (
   if (!ctx) throw new Error("notFoundBoundary() must be called inside map()");
 
   // Attach to parent entry in stack
-  if (!ctx.parent || !ctx.parent?.notFoundBoundary) {
+  const parent = ctx.parent;
+  if (!parent || !("notFoundBoundary" in parent)) {
     invariant(false, "No parent entry available for notFoundBoundary()");
   }
   const name = `$${getContext().getNextIndex("notFoundBoundary")}`;
-  ctx.parent.notFoundBoundary.push(fallback);
+  parent.notFoundBoundary.push(fallback);
   return { name, type: "notFoundBoundary" } as NotFoundBoundaryItem;
 };
 
@@ -535,7 +630,10 @@ const when: RouteHelpers<any, any>["when"] = (fn) => {
   // which should have a `when` array. If not present, we're not inside intercept()
   const parent = ctx.parent as any;
   if (!parent || !("when" in parent)) {
-    invariant(false, "when() can only be used inside intercept() use() callback");
+    invariant(
+      false,
+      "when() can only be used inside intercept() use() callback"
+    );
   }
 
   const name = `$${getContext().getNextIndex("when")}`;
@@ -543,16 +641,119 @@ const when: RouteHelpers<any, any>["when"] = (fn) => {
   return { name, type: "when" } as WhenItem;
 };
 
+/**
+ * Cache helper - defines caching configuration for segments
+ *
+ * Creates a cache boundary that applies to all children unless overridden.
+ * When used without children, attaches cache config to the parent entry
+ * (e.g., for loader-specific caching).
+ *
+ * Supports three call signatures:
+ * - cache() - no args, uses app-level defaults (for loader caching)
+ * - cache(() => [...]) - wraps children with app-level defaults
+ * - cache({ ttl: 60 }, () => [...]) - with explicit options
+ */
+const cache: RouteHelpers<any, any>["cache"] = (
+  optionsOrChildren?: PartialCacheOptions | false | (() => AllUseItems[]),
+  maybeChildren?: () => AllUseItems[]
+) => {
+  const store = getContext();
+  const ctx = store.getStore();
+  if (!ctx) throw new Error("cache() must be called inside map()");
+
+  // Handle overloaded signature: cache(), cache(children), or cache(options, children)
+  let options: PartialCacheOptions | false;
+  let children: (() => AllUseItems[]) | undefined;
+
+  if (optionsOrChildren === undefined) {
+    // cache() - no args, use defaults
+    options = {};
+    children = undefined;
+  } else if (typeof optionsOrChildren === "function") {
+    // cache(() => [...]) - use empty options (will use defaults)
+    options = {};
+    children = optionsOrChildren;
+  } else {
+    // cache(options, children) - explicit options
+    options = optionsOrChildren;
+    children = maybeChildren;
+  }
+
+  const name = `$${store.getNextIndex("cache")}`;
+  const cacheConfig = { options };
+
+  // If no children, attach cache config to current parent (for loader caching)
+  if (!children) {
+    // Check if we're inside a loader() use() callback
+    const parent = ctx.parent as any;
+    if (parent && "cache" in parent) {
+      // Direct assignment to loader entry's cache field
+      parent.cache = cacheConfig;
+    } else if (parent) {
+      // Attach to parent entry (layout/route/parallel)
+      parent.cache = cacheConfig;
+    }
+    return { name, type: "cache" } as CacheItem;
+  }
+
+  // With children: create a cache entry (like layout with caching semantics)
+  const namespace = `${ctx.namespace}.${store.getNextIndex("cache")}`;
+
+  const entry = {
+    id: namespace,
+    shortCode: store.getShortCode("cache"),
+    type: "cache",
+    parent: ctx.parent,
+    cache: cacheConfig,
+    // Cache entries render like layouts (with Outlet as default handler)
+    handler: RootLayout, // RootLayout just renders <Outlet />
+    middleware: [],
+    revalidate: [],
+    errorBoundary: [],
+    notFoundBoundary: [],
+    layout: [],
+    parallel: [],
+    intercept: [],
+    loader: [],
+  } as EntryData;
+
+  // Run children with cache entry as parent
+  const result = store.run(namespace, entry, children);
+
+  invariant(
+    Array.isArray(result) && result.every((item) => isValidUseItem(item)),
+    `cache() children callback must return an array of use items [${namespace}]`
+  );
+
+  // Check if this cache has routes (similar to layout logic)
+  const hasRoutes =
+    result &&
+    Array.isArray(result) &&
+    result.some((item) => item.type === "route");
+
+  if (!hasRoutes) {
+    const parent = ctx.parent;
+    if (parent && "layout" in parent) {
+      // Attach to parent's layout array (cache entries are structural like layouts)
+      entry.parent = null;
+      parent.layout.push(entry);
+    }
+  }
+
+  return { name: namespace, type: "cache", uses: result } as CacheItem;
+};
+
 const middleware: RouteHelpers<any, any>["middleware"] = (...fn) => {
   const ctx = getContext().getStore();
   if (!ctx) throw new Error("middleware() must be called inside map()");
 
   // Attach to last entry in stack
-  if (!ctx.parent || !ctx.parent?.middleware) {
+  const parent = ctx.parent;
+  if (!parent || !("middleware" in parent)) {
     invariant(false, "No parent entry available for middleware()");
   }
   const name = `$${getContext().getNextIndex("middleware")}`;
-  ctx.parent.middleware.push(...fn);
+  parent.middleware.push(...fn);
   return { name, type: "middleware" } as MiddlewareItem;
 };
 
@@ -574,6 +775,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     type: "parallel",
     parent: null, // Parallels don't participate in parent chain traversal
     handler: slots,
+    loading: undefined, // Allow loading() to attach loading state
     middleware: [],
     revalidate: [],
     errorBoundary: [],
@@ -626,7 +828,7 @@ const intercept: RouteHelpers<any, any>["intercept"] = (
     errorBoundary: [],
     notFoundBoundary: [],
     loader: [],
-    when: [],  // Selector conditions for conditional interception
+    when: [], // Selector conditions for conditional interception
   };
 
   // Run use callback if provided to collect loaders, revalidate, middleware, etc.
@@ -645,8 +847,8 @@ const intercept: RouteHelpers<any, any>["intercept"] = (
       errorBoundary: entry.errorBoundary,
       notFoundBoundary: entry.notFoundBoundary,
       loader: entry.loader,
-      layout: capturedLayouts,  // Capture layout() calls
-      when: entry.when,  // Capture when() conditions
+      layout: capturedLayouts, // Capture layout() calls
+      when: entry.when, // Capture when() conditions
       // Use getter/setter to capture loading on the entry
       get loading() {
         return entry.loading;
@@ -665,7 +867,9 @@ const intercept: RouteHelpers<any, any>["intercept"] = (
     // Extract layout from captured layouts (use first one if multiple)
     // Layout inside intercept should always be ReactNode or Handler, not Record slots
     if (capturedLayouts.length > 0 && capturedLayouts[0].type === "layout") {
-      entry.layout = capturedLayouts[0].handler as ReactNode | Handler<any, any>;
+      entry.layout = capturedLayouts[0].handler as
+        | ReactNode
+        | Handler<any, any>;
     }
 
     invariant(
@@ -734,15 +938,16 @@ const loadingFn: RouteHelpers<any, any>["loading"] = (component, skipSSR) => {
   const ctx = store.getStore();
   if (!ctx) throw new Error("loading() must be called inside map()");
 
-  if (!ctx.parent) {
+  const parent = ctx.parent;
+  if (!parent || !("loading" in parent)) {
     invariant(false, "No parent entry available for loading()");
   }
 
   // If skipSSR is true and we're in SSR, set loading to false
   if (skipSSR && ctx.isSSR) {
-    ctx.parent.loading = false;
+    parent.loading = false;
   } else {
-    ctx.parent.loading = component;
+    parent.loading = component;
   }
 
   const name = `$${store.getNextIndex("loading")}`;
@@ -762,6 +967,7 @@ const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
     type: "route",
     parent: ctx.parent,
     handler,
+    loading: undefined, // Allow loading() to attach loading state
     middleware: [],
     revalidate: [],
     errorBoundary: [],
@@ -808,6 +1014,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     type: "layout",
     parent: ctx.parent,
     handler,
+    loading: undefined, // Allow loading() to attach loading state
     middleware: [],
     revalidate: [],
     errorBoundary: [],
@@ -850,7 +1057,9 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     } else {
       // Has parent - register as orphan layout
       invariant(
-        parent.type === "route" || parent.type === "layout",
+        parent.type === "route" ||
+          parent.type === "layout" ||
+          parent.type === "cache",
         `Orphan layouts can only be defined inside route or layout > check [${namespace}]`
       );
 
@@ -888,6 +1097,7 @@ const isValidUseItem = (item: any): item is AllUseItems | undefined | null => {
         "errorBoundary",
         "notFoundBoundary",
         "when",
+        "cache",
       ].includes(item.type))
   );
 };
@@ -999,6 +1209,13 @@ const createWhenHelper = (): RouteHelpers<any, any>["when"] => {
 };
 
 /**
+ * Create cache helper for cache configuration
+ */
+const createCacheHelper = (): RouteHelpers<any, any>["cache"] => {
+  return cache;
+};
+
+/**
  * Type-safe handler definition helper
  *
  */
@@ -1024,6 +1241,7 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
       errorBoundary: createErrorBoundaryHelper<TEnv>(),
       notFoundBoundary: createNotFoundBoundaryHelper<TEnv>(),
       when: createWhenHelper(),
+      cache: createCacheHelper(),
     };
 
     return [layout(RootLayout, () => builder(helpers))].flat(3);
