@@ -4,10 +4,21 @@ import { initSegmentsSync } from "../browser/react/use-segments.js";
 import type { HandleData } from "../browser/types.js";
 
 /**
+ * Options for injectRSCPayload
+ */
+export interface InjectRSCPayloadOptions {
+  /**
+   * Nonce for Content Security Policy (CSP)
+   */
+  nonce?: string;
+}
+
+/**
  * Options for renderToReadableStream from react-dom/server
  */
 interface RenderToReadableStreamOptions {
   bootstrapScriptContent?: string;
+  nonce?: string;
   formState?: unknown;
 }
 
@@ -22,6 +33,11 @@ export interface SSRRenderOptions {
    * receive the action result during SSR.
    */
   formState?: unknown;
+
+  /**
+   * Nonce for Content Security Policy (CSP)
+   */
+  nonce?: string;
 }
 
 /**
@@ -45,7 +61,8 @@ export interface SSRDependencies {
    * injectRSCPayload from rsc-html-stream/server
    */
   injectRSCPayload: (
-    rscStream: ReadableStream<Uint8Array>
+    rscStream: ReadableStream<Uint8Array>,
+    options?: InjectRSCPayloadOptions
   ) => TransformStream<Uint8Array, Uint8Array>;
 
   /**
@@ -112,12 +129,13 @@ export function createSSRHandler(deps: SSRDependencies) {
    * Render RSC stream to HTML stream
    *
    * @param rscStream - The RSC stream to render
-   * @param options - Optional render options including formState for useActionState
+   * @param options - Optional render options including formState for useActionState and nonce for CSP
    */
   return async function renderHTML(
     rscStream: ReadableStream<Uint8Array>,
     options?: SSRRenderOptions
   ): Promise<ReadableStream<Uint8Array>> {
+    const { nonce, formState } = options ?? {};
     // Tee the stream:
     // - rscStream1: For SSR rendering (deserialize to React VDOM)
     // - rscStream2: For browser hydration (inject as __FLIGHT_DATA__)
@@ -150,12 +168,14 @@ export function createSSRHandler(deps: SSRDependencies) {
 
     // Render React tree to HTML stream
     // Pass formState for useActionState progressive enhancement if provided
+    // Pass nonce for CSP if provided
     const htmlStream = await renderToReadableStream(<SsrRoot />, {
       bootstrapScriptContent,
-      formState: options?.formState,
+      formState,
+      nonce,
     });
 
-    // Inject RSC payload into HTML as <script>__FLIGHT_DATA__</script>
-    return htmlStream.pipeThrough(injectRSCPayload(rscStream2));
+    // Inject RSC payload into HTML as <script nonce="...">__FLIGHT_DATA__</script>
+    return htmlStream.pipeThrough(injectRSCPayload(rscStream2, { nonce }));
   };
 }

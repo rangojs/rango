@@ -5,7 +5,7 @@ import { rscRouter } from "rsc-router/vite";
 
 export default defineConfig({
   server: {
-    port: 5001,
+    port: 5002,
     // Bind to all interfaces for CI compatibility (fixes IPv6/IPv4 issues in Docker/Linux)
     host: process.env.CI ? "0.0.0.0" : undefined,
   },
