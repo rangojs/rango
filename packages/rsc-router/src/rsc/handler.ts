@@ -32,6 +32,8 @@ import type {
 import { hasBodyContent, createResponseWithMergedHeaders } from "./helpers.js";
 import { generateNonce } from "./nonce.js";
 import { VERSION } from "rsc-router:version";
+import type { ErrorPhase } from "../types.js";
+import { invokeOnError } from "../router/error-handling.js";
 
 /**
  * Create an RSC request handler.
@@ -77,6 +79,18 @@ export function createRSCHandler<TEnv = unknown>(
   const loadSSRModule =
     options.loadSSRModule ??
     (() => import.meta.viteRsc.loadModule("ssr", "index"));
+
+  /**
+   * Wrapper for invokeOnError that binds the router's onError callback.
+   * Uses the shared utility from router/error-handling.ts for consistent behavior.
+   */
+  function callOnError(
+    error: unknown,
+    phase: ErrorPhase,
+    context: Parameters<typeof invokeOnError<TEnv>>[3]
+  ): void {
+    invokeOnError(router.onError, error, phase, context, "RSC");
+  }
 
   return async function handler(
     request: Request,
@@ -286,9 +300,22 @@ export function createRSCHandler<TEnv = unknown>(
 
       // Return 404 for unmatched routes instead of 500
       if (error instanceof RouteNotFoundError) {
+        callOnError(error, "routing", {
+          request,
+          url,
+          env,
+          handledByBoundary: false,
+        });
         return createResponseWithMergedHeaders("Not Found", { status: 404 });
       }
 
+      // Report unhandled errors
+      callOnError(error, "routing", {
+        request,
+        url,
+        env,
+        handledByBoundary: false,
+      });
       console.error(`[RSC] Error:`, error);
       throw error;
     }
@@ -347,6 +374,12 @@ export function createRSCHandler<TEnv = unknown>(
         const boundAction = await decodeAction(formData);
         actionResult = await boundAction();
       } catch (error) {
+        callOnError(error, "action", {
+          request,
+          url,
+          env,
+          handledByBoundary: false,
+        });
         console.error("[RSC] Progressive enhancement action error:", error);
       }
     } else if (isDirectAction && directActionId) {
@@ -363,6 +396,13 @@ export function createRSCHandler<TEnv = unknown>(
         const loadedAction = await loadServerAction(directActionId);
         actionResult = await loadedAction.apply(null, args);
       } catch (error) {
+        callOnError(error, "action", {
+          request,
+          url,
+          env,
+          actionId: directActionId,
+          handledByBoundary: false,
+        });
         console.error("[RSC] Progressive enhancement action error:", error);
       }
     }
@@ -371,6 +411,12 @@ export function createRSCHandler<TEnv = unknown>(
     try {
       reactFormState = await decodeFormState(actionResult, formData);
     } catch (error) {
+      callOnError(error, "action", {
+        request,
+        url,
+        env,
+        handledByBoundary: false,
+      });
       console.error("[RSC] Failed to decode form state:", error);
     }
 
@@ -450,6 +496,13 @@ export function createRSCHandler<TEnv = unknown>(
         args = await decodeReply(body, { temporaryReferences });
       }
     } catch (error) {
+      callOnError(error, "action", {
+        request,
+        url,
+        env,
+        actionId,
+        handledByBoundary: false,
+      });
       throw new Error(`Failed to decode action arguments: ${error}`, {
         cause: error,
       });
@@ -470,6 +523,15 @@ export function createRSCHandler<TEnv = unknown>(
 
       // Try to render error boundary
       const errorResult = await router.matchError(request, env, error, "route");
+
+      // Report the action error (handledByBoundary indicates if error boundary will render)
+      callOnError(error, "action", {
+        request,
+        url,
+        env,
+        actionId,
+        handledByBoundary: !!errorResult,
+      });
 
       if (errorResult) {
         setRequestContextParams(errorResult.params);
@@ -708,17 +770,13 @@ export function createRSCHandler<TEnv = unknown>(
 
       console.error("[RSC] Loader error:", error);
 
-      if (router.onError) {
-        try {
-          router.onError(err, {
-            source: "loader",
-            pathname: url.pathname,
-            loaderId,
-          });
-        } catch (callbackError) {
-          console.error("[RSC] onError callback failed:", callbackError);
-        }
-      }
+      callOnError(error, "loader", {
+        request,
+        url,
+        env,
+        loaderName: loaderId,
+        handledByBoundary: false,
+      });
 
       const errorPayload = {
         loaderResult: null,
