@@ -26,6 +26,8 @@ export interface RscPayload {
     rootLayout?: React.ComponentType<{ children: React.ReactNode }>;
     /** Handle data accumulated across route segments (async generator that yields on each push) */
     handles?: AsyncGenerator<HandleData, void, unknown>;
+    /** RSC version string for cache invalidation */
+    version?: string;
   };
   returnValue?: { ok: boolean; data: unknown };
   formState?: unknown;
@@ -116,6 +118,17 @@ export interface SSRModule {
 export type LoadSSRModule = () => Promise<SSRModule>;
 
 /**
+ * Cache configuration for handler.
+ * TTL is configured via store.defaults or cache() boundaries.
+ */
+export interface HandlerCacheConfig {
+  /** Cache store implementation */
+  store: import("../cache/types.js").SegmentCacheStore;
+  /** Enable/disable caching (default: true) */
+  enabled?: boolean;
+}
+
+/**
  * Nonce provider function type.
  * Can return a nonce string, or true to auto-generate one.
  */
@@ -144,6 +157,42 @@ export interface CreateRSCHandlerOptions<TEnv = unknown> {
    * Defaults to: () => import.meta.viteRsc.loadModule("ssr", "index")
    */
   loadSSRModule?: LoadSSRModule;
+
+  /**
+   * Cache configuration for segment caching.
+   *
+   * Can be a static config object or a function that receives the env
+   * (useful for accessing Cloudflare bindings).
+   *
+   * If not provided, caching is disabled. TTL is configured via store.defaults
+   * or cache() boundaries in the route definition.
+   *
+   * @example Static config
+   * ```typescript
+   * cache: {
+   *   store: new MemorySegmentCacheStore({ defaults: { ttl: 60 } }),
+   * }
+   * ```
+   *
+   * @example Dynamic config with env
+   * ```typescript
+   * cache: (env) => ({
+   *   store: new KVSegmentCacheStore(env.Bindings.MY_CACHE, { defaults: { ttl: 60 } }),
+   * })
+   * ```
+   */
+  cache?: HandlerCacheConfig | ((env: TEnv) => HandlerCacheConfig);
+
+  /**
+   * RSC version string included in metadata.
+   * The browser sends this back on partial requests to detect version mismatches.
+   *
+   * Defaults to the auto-generated VERSION from `rsc-router:version` virtual module.
+   * Only set this if you need a custom versioning strategy.
+   *
+   * @default VERSION from rsc-router:version
+   */
+  version?: string;
 
   /**
    * Nonce provider for Content Security Policy (CSP).

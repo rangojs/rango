@@ -157,16 +157,21 @@ function escapeRegex(str: string): string {
  * - "always": Redirect to with trailing slash
  * - "ignore": Match both, no redirect
  */
-export function findMatch<TEnv>(
-  pathname: string,
-  routesEntries: RouteEntry<TEnv>[]
-): {
+/**
+ * Result of a route match
+ */
+export interface RouteMatchResult<TEnv = any> {
   entry: RouteEntry<TEnv>;
   routeKey: string;
   params: Record<string, string>;
   optionalParams: Set<string>;
   redirectTo?: string;
-} | null {
+}
+
+export function findMatch<TEnv>(
+  pathname: string,
+  routesEntries: RouteEntry<TEnv>[]
+): RouteMatchResult<TEnv> | null {
   const pathnameHasTrailingSlash = pathname.length > 1 && pathname.endsWith("/");
   // Try alternate pathname for redirect matching
   const alternatePathname = pathnameHasTrailingSlash

@@ -150,8 +150,9 @@ export async function initBrowserApp(
   // Create composable utilities
   const client = createNavigationClient(deps);
 
-  // Extract rootLayout from metadata for browser-side re-renders
+  // Extract rootLayout and version from metadata for browser-side re-renders
   const rootLayout = initialPayload.metadata?.rootLayout;
+  const version = initialPayload.metadata?.version;
 
   // Create a bound renderSegments that includes rootLayout
   const renderSegments = (
@@ -167,6 +168,7 @@ export async function initBrowserApp(
     deps,
     onUpdate: (update) => store.emitUpdate(update),
     renderSegments,
+    version,
   });
   actionBridge.register();
 
@@ -177,6 +179,7 @@ export async function initBrowserApp(
     client,
     onUpdate: (update) => store.emitUpdate(update),
     renderSegments,
+    version,
   });
 
   // Optionally enable global link interception

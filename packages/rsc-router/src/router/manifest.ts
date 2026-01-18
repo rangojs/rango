@@ -53,9 +53,14 @@ export async function loadManifest(
   Store.manifest.clear();
 
   try {
+    // Include mountIndex in namespace to ensure unique cache keys per mount
+    const namespaceWithMount = mountIndex !== undefined
+      ? `#router.M${mountIndex}`
+      : "#router";
+
     const useItems = await getContext().runWithStore(
       Store,
-      Store.namespace || "#router",
+      Store.namespace || namespaceWithMount,
       Store.parent,
       async () => {
         const load = await entry.handler();

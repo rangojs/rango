@@ -358,3 +358,66 @@ export const ComposingFetchableUsesNonFetchable = createLoader(
   true // fetchable
 );
 
+// ============================================================================
+// Cache Testing Loaders
+// These loaders are used to test loader caching behavior
+// ============================================================================
+
+// Counter for non-cached loader
+let nonCachedLoaderCount = 0;
+
+/**
+ * Non-cached loader (default behavior) - runs on every request
+ * Used to verify loaders are NOT cached by default
+ */
+export const NonCachedTestLoader = createLoader(async () => {
+  nonCachedLoaderCount++;
+  return {
+    count: nonCachedLoaderCount,
+    message: "Non-cached loader data",
+    loadedAt: new Date().toISOString(),
+  };
+});
+
+// Counter for cached loader
+let cachedLoaderCount = 0;
+
+/**
+ * Cached loader - opt-in via cache() in handlers.tsx
+ * Used to verify loaders CAN be cached when explicitly configured
+ */
+export const CachedTestLoader = createLoader(async () => {
+  cachedLoaderCount++;
+  return {
+    count: cachedLoaderCount,
+    message: "Cached loader data",
+    loadedAt: new Date().toISOString(),
+  };
+});
+
+// Counter for intercept cache test loader
+let interceptCacheLoaderCount = 0;
+
+/**
+ * Fetchable loader for intercept cache testing.
+ * Used with a client component that calls useLoader - this way the
+ * route segment is cached but loader data is fetched fresh.
+ */
+export const InterceptCacheTestLoader = createLoader(
+  async () => {
+    interceptCacheLoaderCount++;
+    return {
+      count: interceptCacheLoaderCount,
+      message: "Intercept cache test data",
+      loadedAt: new Date().toISOString(),
+    };
+  },
+  true // fetchable - allows useLoader to get fresh data
+);
+
+export type InterceptCacheTestLoaderData = {
+  count: number;
+  message: string;
+  loadedAt: string;
+};
+

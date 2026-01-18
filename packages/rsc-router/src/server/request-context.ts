@@ -17,6 +17,7 @@ import type { Handle } from "../handle.js";
 import { createHandleStore, type HandleStore } from "./handle-store.js";
 import { isHandle } from "../handle.js";
 import { track } from "./context.js";
+import type { SegmentCacheStore } from "../cache/types.js";
 
 /**
  * Unified request context available via getRequestContext()
@@ -97,6 +98,45 @@ export interface RequestContext<
 
   /** @internal Handle store for tracking handle data across segments */
   _handleStore: HandleStore;
+
+  /** @internal Cache store for segment caching (optional, used by CacheScope) */
+  _cacheStore?: SegmentCacheStore;
+
+  /**
+   * Schedule work to run after the response is sent.
+   * On Cloudflare Workers, uses ctx.waitUntil().
+   * On Node.js, runs as fire-and-forget.
+   *
+   * @example
+   * ```typescript
+   * ctx.waitUntil(async () => {
+   *   await cacheStore.set(key, data, ttl);
+   * });
+   * ```
+   */
+  waitUntil(fn: () => Promise<void>): void;
+
+  /**
+   * Register a callback to run when the response is created.
+   * Callbacks are sync and receive the response. They can:
+   * - Inspect response status/headers
+   * - Return a modified response
+   * - Schedule async work via waitUntil
+   *
+   * @example
+   * ```typescript
+   * ctx.onResponse((res) => {
+   *   if (res.status === 200) {
+   *     ctx.waitUntil(async () => await cacheIt());
+   *   }
+   *   return res;
+   * });
+   * ```
+   */
+  onResponse(callback: (response: Response) => Response): void;
+
+  /** @internal Registered onResponse callbacks */
+  _onResponseCallbacks: Array<(response: Response) => Response>;
 }
 
 // AsyncLocalStorage instance for request context
@@ -150,6 +190,14 @@ export function requireRequestContext<TEnv = unknown>(): RequestContext<TEnv> {
 }
 
 /**
+ * Cloudflare Workers ExecutionContext (subset we need)
+ */
+export interface ExecutionContext {
+  waitUntil(promise: Promise<any>): void;
+  passThroughOnException(): void;
+}
+
+/**
  * Options for creating a request context
  */
 export interface CreateRequestContextOptions<TEnv> {
@@ -157,6 +205,10 @@ export interface CreateRequestContextOptions<TEnv> {
   request: Request;
   url: URL;
   variables: Record<string, any>;
+  /** Optional cache store for segment caching (used by CacheScope) */
+  cacheStore?: SegmentCacheStore;
+  /** Optional Cloudflare execution context for waitUntil support */
+  executionContext?: ExecutionContext;
 }
 
 /**
@@ -170,7 +222,7 @@ export interface CreateRequestContextOptions<TEnv> {
 export function createRequestContext<TEnv>(
   options: CreateRequestContextOptions<TEnv>
 ): RequestContext<TEnv> {
-  const { env, request, url, variables } = options;
+  const { env, request, url, variables, cacheStore, executionContext } = options;
   const cookieHeader = request.headers.get("Cookie");
   let parsedCookies: Record<string, string> | null = null;
 
@@ -239,6 +291,23 @@ export function createRequestContext<TEnv>(
     method: request.method,
 
     _handleStore: handleStore,
+    _cacheStore: cacheStore,
+
+    waitUntil(fn: () => Promise<void>): void {
+      if (executionContext?.waitUntil) {
+        // Cloudflare Workers: use native waitUntil
+        executionContext.waitUntil(fn());
+      } else {
+        // Node.js: fire-and-forget
+        fn().catch((err) => console.error("[waitUntil]", err));
+      }
+    },
+
+    _onResponseCallbacks: [],
+
+    onResponse(callback: (response: Response) => Response): void {
+      this._onResponseCallbacks.push(callback);
+    },
   };
 
   // Now create use() with access to ctx

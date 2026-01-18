@@ -101,4 +101,33 @@ export const testRoutes = route({
   },
   // Route for testing progressive enhancement (no-JS form submissions)
   progressiveEnhancement: "/progressive-enhancement",
+  // Routes for testing cache behavior
+  cacheTest: {
+    // Route with non-cached loader (default)
+    nonCachedLoader: "/cache-test/non-cached-loader",
+    // Route with cached loader (opt-in)
+    cachedLoader: "/cache-test/cached-loader",
+    // Index for intercept testing (links to detail)
+    interceptIndex: "/cache-test/intercept",
+    // Detail route for intercept testing (can be intercepted)
+    interceptDetail: "/cache-test/intercept/:itemId",
+    // Index for useLoader intercept testing
+    useLoaderIndex: "/cache-test/useloader",
+    // Detail route for useLoader intercept testing (non-cached)
+    useLoaderDetail: "/cache-test/useloader/:itemId",
+  },
+  // Routes for testing proactive caching (cached layout with multiple routes)
+  proactiveCache: {
+    index: "/proactive-cache",
+    itemA: "/proactive-cache/item-a",
+    itemB: "/proactive-cache/item-b",
+  },
+  // Routes for testing cache status behavior (only cache 200 responses)
+  cacheStatus: {
+    success: "/cache-status/success",
+    notFound: "/cache-status/not-found",
+    serverError: "/cache-status/server-error",
+    redirect: "/cache-status/redirect",
+    redirectTarget: "/cache-status/redirect-target",
+  },
 });
