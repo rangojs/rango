@@ -2699,6 +2699,14 @@ export function createRSCRouter<TEnv = any>(
         return await collectMatchResult(pipeline, ctx, state);
       } catch (error) {
         if (error instanceof Response) throw error;
+        // Report unhandled errors during full match pipeline
+        invokeOnError(error, "routing", {
+          request,
+          url: ctx.url,
+          env,
+          isPartial: false,
+          handledByBoundary: false,
+        });
         throw sanitizeError(error);
       }
     });
@@ -3337,6 +3345,15 @@ export function createRSCRouter<TEnv = any>(
         return await collectMatchResult(pipeline, ctx, state);
       } catch (error) {
         if (error instanceof Response) throw error;
+        // Report unhandled errors during partial match pipeline
+        invokeOnError(error, actionContext ? "action" : "revalidation", {
+          request,
+          url: ctx.url,
+          env: context,
+          actionId: actionContext?.actionId,
+          isPartial: true,
+          handledByBoundary: false,
+        });
         throw sanitizeError(error);
       }
     });

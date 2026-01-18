@@ -32,6 +32,7 @@ import type {
 import { hasBodyContent, createResponseWithMergedHeaders } from "./helpers.js";
 import { generateNonce } from "./nonce.js";
 import { VERSION } from "rsc-router:version";
+import type { OnErrorContext, ErrorPhase } from "../types.js";
 
 /**
  * Create an RSC request handler.
@@ -77,6 +78,58 @@ export function createRSCHandler<TEnv = unknown>(
   const loadSSRModule =
     options.loadSSRModule ??
     (() => import.meta.viteRsc.loadModule("ssr", "index"));
+
+  /**
+   * Safely invoke router.onError callback with full context
+   */
+  function invokeOnError(
+    error: unknown,
+    phase: ErrorPhase,
+    context: {
+      request: Request;
+      url: URL;
+      env?: TEnv;
+      routeKey?: string;
+      params?: Record<string, string>;
+      loaderName?: string;
+      actionId?: string;
+      isPartial?: boolean;
+      handledByBoundary?: boolean;
+    }
+  ): void {
+    if (!router.onError) return;
+
+    const errorObj = error instanceof Error ? error : new Error(String(error));
+
+    const errorContext: OnErrorContext<TEnv> = {
+      error: errorObj,
+      phase,
+      request: context.request,
+      url: context.url,
+      pathname: context.url.pathname,
+      method: context.request.method,
+      routeKey: context.routeKey,
+      params: context.params,
+      loaderName: context.loaderName,
+      actionId: context.actionId,
+      env: context.env,
+      isPartial: context.isPartial,
+      handledByBoundary: context.handledByBoundary,
+      stack: errorObj.stack,
+    };
+
+    try {
+      const result = router.onError(errorContext);
+      // If onError returns a promise, catch any rejections
+      if (result instanceof Promise) {
+        result.catch((callbackError) => {
+          console.error("[RSC.onError] Callback error:", callbackError);
+        });
+      }
+    } catch (callbackError) {
+      console.error("[RSC.onError] Callback error:", callbackError);
+    }
+  }
 
   return async function handler(
     request: Request,
@@ -286,9 +339,22 @@ export function createRSCHandler<TEnv = unknown>(
 
       // Return 404 for unmatched routes instead of 500
       if (error instanceof RouteNotFoundError) {
+        invokeOnError(error, "routing", {
+          request,
+          url,
+          env,
+          handledByBoundary: false,
+        });
         return createResponseWithMergedHeaders("Not Found", { status: 404 });
       }
 
+      // Report unhandled errors
+      invokeOnError(error, "routing", {
+        request,
+        url,
+        env,
+        handledByBoundary: false,
+      });
       console.error(`[RSC] Error:`, error);
       throw error;
     }
@@ -347,6 +413,12 @@ export function createRSCHandler<TEnv = unknown>(
         const boundAction = await decodeAction(formData);
         actionResult = await boundAction();
       } catch (error) {
+        invokeOnError(error, "action", {
+          request,
+          url,
+          env,
+          handledByBoundary: false,
+        });
         console.error("[RSC] Progressive enhancement action error:", error);
       }
     } else if (isDirectAction && directActionId) {
@@ -363,6 +435,13 @@ export function createRSCHandler<TEnv = unknown>(
         const loadedAction = await loadServerAction(directActionId);
         actionResult = await loadedAction.apply(null, args);
       } catch (error) {
+        invokeOnError(error, "action", {
+          request,
+          url,
+          env,
+          actionId: directActionId,
+          handledByBoundary: false,
+        });
         console.error("[RSC] Progressive enhancement action error:", error);
       }
     }
@@ -371,6 +450,12 @@ export function createRSCHandler<TEnv = unknown>(
     try {
       reactFormState = await decodeFormState(actionResult, formData);
     } catch (error) {
+      invokeOnError(error, "action", {
+        request,
+        url,
+        env,
+        handledByBoundary: false,
+      });
       console.error("[RSC] Failed to decode form state:", error);
     }
 
@@ -450,6 +535,13 @@ export function createRSCHandler<TEnv = unknown>(
         args = await decodeReply(body, { temporaryReferences });
       }
     } catch (error) {
+      invokeOnError(error, "action", {
+        request,
+        url,
+        env,
+        actionId,
+        handledByBoundary: false,
+      });
       throw new Error(`Failed to decode action arguments: ${error}`, {
         cause: error,
       });
@@ -470,6 +562,15 @@ export function createRSCHandler<TEnv = unknown>(
 
       // Try to render error boundary
       const errorResult = await router.matchError(request, env, error, "route");
+
+      // Report the action error (handledByBoundary indicates if error boundary will render)
+      invokeOnError(error, "action", {
+        request,
+        url,
+        env,
+        actionId,
+        handledByBoundary: !!errorResult,
+      });
 
       if (errorResult) {
         setRequestContextParams(errorResult.params);
@@ -708,17 +809,13 @@ export function createRSCHandler<TEnv = unknown>(
 
       console.error("[RSC] Loader error:", error);
 
-      if (router.onError) {
-        try {
-          router.onError(err, {
-            source: "loader",
-            pathname: url.pathname,
-            loaderId,
-          });
-        } catch (callbackError) {
-          console.error("[RSC] onError callback failed:", callbackError);
-        }
-      }
+      invokeOnError(error, "loader", {
+        request,
+        url,
+        env,
+        loaderName: loaderId,
+        handledByBoundary: false,
+      });
 
       const errorPayload = {
         loaderResult: null,
