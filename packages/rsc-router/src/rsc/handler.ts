@@ -1,4 +1,5 @@
 /// <reference types="@vitejs/plugin-rsc/types" />
+/// <reference path="../vite/version.d.ts" />
 /**
  * RSC Request Handler
  *
@@ -30,6 +31,7 @@ import type {
 } from "./types.js";
 import { hasBodyContent, createResponseWithMergedHeaders } from "./helpers.js";
 import { generateNonce } from "./nonce.js";
+import { VERSION } from "rsc-router:version";
 
 /**
  * Create an RSC request handler.
@@ -58,7 +60,7 @@ import { generateNonce } from "./nonce.js";
 export function createRSCHandler<TEnv = unknown>(
   options: CreateRSCHandlerOptions<TEnv>
 ) {
-  const { router, version, nonce: nonceProvider } = options;
+  const { router, version = VERSION, nonce: nonceProvider } = options;
 
   // Use provided deps or default to @vitejs/plugin-rsc/rsc exports
   const deps = options.deps ?? rscDeps;
@@ -95,6 +97,11 @@ export function createRSCHandler<TEnv = unknown>(
     // Shared variables between middleware and route handlers
     const variables: Record<string, any> = {};
 
+    // Store nonce in variables so middleware can access via ctx.get('nonce')
+    if (nonce) {
+      variables.nonce = nonce;
+    }
+
     // Resolve cache store configuration
     // Priority: options.cache (handler override) > router.cache (router default)
     // Store is enabled only if: config provided, enabled, and no ?__no_cache query param
@@ -107,11 +114,6 @@ export function createRSCHandler<TEnv = unknown>(
       if (cacheConfig.enabled !== false) {
         cacheStore = cacheConfig.store;
       }
-    }
-
-    // Store nonce in variables so middleware can access via ctx.get('nonce')
-    if (nonce) {
-      variables.nonce = nonce;
     }
 
     // Create unified request context with all methods
@@ -708,15 +710,10 @@ export function createRSCHandler<TEnv = unknown>(
 
       if (router.onError) {
         try {
-          router.onError({
-            error: err,
-            phase: "loader",
-            request,
-            url,
+          router.onError(err, {
+            source: "loader",
             pathname: url.pathname,
-            method: request.method,
-            env,
-            loaderName: loaderId,
+            loaderId,
           });
         } catch (callbackError) {
           console.error("[RSC] onError callback failed:", callbackError);

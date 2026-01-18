@@ -920,19 +920,16 @@ export type RouteMiddlewareFn<
 // ============================================================================
 
 /**
- * Context passed to cache condition/key/tags functions
+ * Context passed to cache condition/key/tags functions.
  *
- * Available during cache evaluation before handler execution.
- * Since this runs early in the request lifecycle, middleware variables
- * may not be available yet.
+ * This is a subset of RequestContext that's guaranteed to be available
+ * during cache key generation (before middleware runs).
+ *
+ * Note: While the full RequestContext is passed, middleware-set variables
+ * (ctx.var, ctx.get()) may not be populated yet since cache lookup
+ * happens before middleware execution.
  */
-export type CacheContext = {
-  request: Request;
-  url: URL;
-  pathname: string;
-  params: Record<string, string>;
-  searchParams: URLSearchParams;
-};
+export type { RequestContext as CacheContext } from "./server/request-context.js";
 
 /**
  * Cache configuration options for cache() DSL
@@ -972,7 +969,7 @@ export type CacheContext = {
  * }, () => [...])
  * ```
  */
-export interface CacheOptions {
+export interface CacheOptions<TEnv = unknown> {
   /**
    * Time-to-live in seconds.
    * After this period, cached content is considered stale.
@@ -1024,6 +1021,9 @@ export interface CacheOptions {
    * Conditional cache read function.
    * Return false to skip cache for this request (always fetch fresh).
    *
+   * Has access to full RequestContext including env, request, params, cookies, etc.
+   * Note: Middleware-set variables (ctx.var) may not be populated yet.
+   *
    * @example
    * ```typescript
    * condition: (ctx) => {
@@ -1035,19 +1035,28 @@ export interface CacheOptions {
    * }
    * ```
    */
-  condition?: (ctx: CacheContext) => boolean;
+  condition?: (ctx: import("./server/request-context.js").RequestContext<TEnv>) => boolean;
 
   /**
-   * Custom cache key function.
-   * By default, cache key is based on entry ID and route params.
-   * Use this to include additional factors like query params or headers.
+   * Custom cache key function - FULL OVERRIDE.
+   * Bypasses default key generation AND store's keyGenerator.
+   *
+   * Has access to full RequestContext including env, request, params, cookies, etc.
+   * Note: Middleware-set variables (ctx.var) may not be populated yet.
    *
    * @example
    * ```typescript
+   * // Include query params in cache key
    * key: (ctx) => `product-${ctx.params.id}-${ctx.searchParams.get('variant')}`
+   *
+   * // Include env bindings
+   * key: (ctx) => `${ctx.env.REGION}:product:${ctx.params.id}`
+   *
+   * // Include cookies
+   * key: (ctx) => `${ctx.cookie('locale')}:${ctx.pathname}`
    * ```
    */
-  key?: (ctx: CacheContext) => string;
+  key?: (ctx: import("./server/request-context.js").RequestContext<TEnv>) => string | Promise<string>;
 
   /**
    * Tags for cache invalidation.
@@ -1062,7 +1071,7 @@ export interface CacheOptions {
    * tags: (ctx) => [`product:${ctx.params.id}`, 'products']
    * ```
    */
-  tags?: string[] | ((ctx: CacheContext) => string[]);
+  tags?: string[] | ((ctx: import("./server/request-context.js").RequestContext<TEnv>) => string[]);
 }
 
 /**
@@ -1085,7 +1094,7 @@ export interface CacheOptions {
  * cache({ ttl: 300 }, () => [...])
  * ```
  */
-export type PartialCacheOptions = Partial<CacheOptions>;
+export type PartialCacheOptions<TEnv = unknown> = Partial<CacheOptions<TEnv>>;
 
 /**
  * Cache entry configuration stored in EntryData.

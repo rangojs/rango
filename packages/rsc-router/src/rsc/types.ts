@@ -118,15 +118,6 @@ export interface SSRModule {
 export type LoadSSRModule = () => Promise<SSRModule>;
 
 /**
- * Nonce provider function type.
- * Can return a nonce string, or true to auto-generate one.
- */
-export type NonceProvider<TEnv = unknown> = (
-  request: Request,
-  env: TEnv
-) => string | true | Promise<string | true>;
-
-/**
  * Cache configuration for handler.
  * TTL is configured via store.defaults or cache() boundaries.
  */
@@ -136,6 +127,15 @@ export interface HandlerCacheConfig {
   /** Enable/disable caching (default: true) */
   enabled?: boolean;
 }
+
+/**
+ * Nonce provider function type.
+ * Can return a nonce string, or true to auto-generate one.
+ */
+export type NonceProvider<TEnv = unknown> = (
+  request: Request,
+  env: TEnv
+) => string | true | Promise<string | true>;
 
 /**
  * Options for creating an RSC handler
@@ -157,35 +157,6 @@ export interface CreateRSCHandlerOptions<TEnv = unknown> {
    * Defaults to: () => import.meta.viteRsc.loadModule("ssr", "index")
    */
   loadSSRModule?: LoadSSRModule;
-
-  /**
-   * Nonce provider for Content Security Policy (CSP).
-   *
-   * Can be:
-   * - A function that returns a nonce string
-   * - A function that returns `true` to auto-generate a nonce
-   * - Undefined to disable nonce (default)
-   *
-   * The nonce will be applied to inline scripts injected by the RSC payload.
-   * It's also available to middleware via `ctx.get('nonce')`.
-   *
-   * @example Auto-generate nonce
-   * ```tsx
-   * createRSCHandler({
-   *   router,
-   *   nonce: () => true,
-   * });
-   * ```
-   *
-   * @example Custom nonce from request context
-   * ```tsx
-   * createRSCHandler({
-   *   router,
-   *   nonce: (request, env) => env.nonce,
-   * });
-   * ```
-   */
-  nonce?: NonceProvider<TEnv>;
 
   /**
    * Cache configuration for segment caching.
@@ -216,17 +187,39 @@ export interface CreateRSCHandlerOptions<TEnv = unknown> {
    * RSC version string included in metadata.
    * The browser sends this back on partial requests to detect version mismatches.
    *
-   * Use with `rsc-router:version` virtual module for automatic invalidation.
+   * Defaults to the auto-generated VERSION from `rsc-router:version` virtual module.
+   * Only set this if you need a custom versioning strategy.
    *
-   * @example
-   * ```typescript
-   * import { VERSION } from "rsc-router:version";
+   * @default VERSION from rsc-router:version
+   */
+  version?: string;
+
+  /**
+   * Nonce provider for Content Security Policy (CSP).
    *
-   * export default createRSCHandler({
+   * Can be:
+   * - A function that returns a nonce string
+   * - A function that returns `true` to auto-generate a nonce
+   * - Undefined to disable nonce (default)
+   *
+   * The nonce will be applied to inline scripts injected by the RSC payload.
+   * It's also available to middleware via `ctx.get('nonce')`.
+   *
+   * @example Auto-generate nonce
+   * ```tsx
+   * createRSCHandler({
    *   router,
-   *   version: VERSION,
+   *   nonce: () => true,
+   * });
+   * ```
+   *
+   * @example Custom nonce from request context
+   * ```tsx
+   * createRSCHandler({
+   *   router,
+   *   nonce: (request, env) => env.nonce,
    * });
    * ```
    */
-  version?: string;
+  nonce?: NonceProvider<TEnv>;
 }

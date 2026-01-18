@@ -1,3 +1,4 @@
+/// <reference path="../../vite/version.d.ts" />
 /**
  * Cloudflare Edge Cache Store
  *
@@ -17,6 +18,8 @@ import type {
   CacheDefaults,
   CacheGetResult,
 } from "../types.js";
+import type { RequestContext } from "../../server/request-context.js";
+import { VERSION } from "rsc-router:version";
 
 // ============================================================================
 // Constants
@@ -39,7 +42,7 @@ export const MAX_REVALIDATION_INTERVAL = 30;
 // Types
 // ============================================================================
 
-export interface CFCacheStoreOptions {
+export interface CFCacheStoreOptions<TEnv = unknown> {
   /**
    * Cache namespace. If not provided, uses caches.default (recommended).
    * Only set this if you need isolated cache storage.
@@ -59,23 +62,47 @@ export interface CFCacheStoreOptions {
   waitUntil?: (fn: () => Promise<void>) => void;
 
   /**
-   * Cache version string. When this changes, all cached entries are effectively
-   * invalidated (new keys won't match old entries).
+   * Cache version string override. When this changes, all cached entries are
+   * effectively invalidated (new keys won't match old entries).
    *
-   * Use this to prevent stale RSC payloads after code changes.
-   * The recommended approach is to use the `rsc-router:version` virtual module
-   * which automatically changes on server restart in dev mode.
-   *
-   * @example
-   * ```typescript
-   * import { VERSION } from "rsc-router:version";
-   *
-   * const cacheStore = new CFCacheStore({
-   *   version: VERSION,
-   * });
-   * ```
+   * Defaults to the auto-generated VERSION from `rsc-router:version` virtual module.
+   * Only set this if you need a custom versioning strategy.
    */
   version?: string;
+
+  /**
+   * Custom key generator applied to all cache operations.
+   * Receives the full RequestContext (including env) and the default-generated key.
+   * Return value becomes the final cache key (unless route overrides with `key` option).
+   *
+   * @example Using headers for user segmentation
+   * ```typescript
+   * keyGenerator: (ctx, defaultKey) => {
+   *   const segment = ctx.request.headers.get('x-user-segment') || 'default';
+   *   return `${segment}:${defaultKey}`;
+   * }
+   * ```
+   *
+   * @example Using env bindings for multi-region
+   * ```typescript
+   * keyGenerator: (ctx, defaultKey) => {
+   *   const region = ctx.env.REGION || 'us';
+   *   return `${region}:${defaultKey}`;
+   * }
+   * ```
+   *
+   * @example Using cookies for locale-aware caching
+   * ```typescript
+   * keyGenerator: (ctx, defaultKey) => {
+   *   const locale = ctx.cookie('locale') || 'en';
+   *   return `${locale}:${defaultKey}`;
+   * }
+   * ```
+   */
+  keyGenerator?: (
+    ctx: RequestContext<TEnv>,
+    defaultKey: string
+  ) => string | Promise<string>;
 }
 
 /**
@@ -88,20 +115,25 @@ export type CacheStatus = "HIT" | "REVALIDATING";
 // CFCacheStore Implementation
 // ============================================================================
 
-export class CFCacheStore implements SegmentCacheStore {
+export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   readonly defaults?: CacheDefaults;
+  readonly keyGenerator?: (
+    ctx: RequestContext<TEnv>,
+    defaultKey: string
+  ) => string | Promise<string>;
 
   private readonly namespace?: string;
   private readonly baseUrl: string;
   private readonly waitUntil?: (fn: () => Promise<void>) => void;
   private readonly version?: string;
 
-  constructor(options: CFCacheStoreOptions = {}) {
+  constructor(options: CFCacheStoreOptions<TEnv> = {}) {
     this.namespace = options.namespace;
     this.baseUrl = options.baseUrl ?? "https://rsc-cache.internal.com/";
     this.defaults = options.defaults;
     this.waitUntil = options.waitUntil;
-    this.version = options.version;
+    this.version = options.version ?? VERSION;
+    this.keyGenerator = options.keyGenerator;
   }
 
   /**

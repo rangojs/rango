@@ -20,14 +20,7 @@ export { exposeLoaderId } from "./expose-loader-id.ts";
 export { exposeHandleId } from "./expose-handle-id.ts";
 export { exposeLocationStateId } from "./expose-location-state-id.ts";
 
-// Virtual module type declarations
-declare module "rsc-router:version" {
-  /**
-   * Version string that changes on server restart (dev) or at build time (production).
-   * Used for cache invalidation and deployment mismatch detection.
-   */
-  export const VERSION: string;
-}
+// Virtual module type declarations in ./version.d.ts
 
 /**
  * Default entry file paths (relative to project root)
