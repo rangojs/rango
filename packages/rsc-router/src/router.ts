@@ -30,10 +30,13 @@ import { getRequestContext } from "./server/request-context.js";
 import type {
   ErrorBoundaryHandler,
   ErrorInfo,
+  ErrorPhase,
   HandlerContext,
   LoaderDataResult,
   MatchResult,
   NotFoundBoundaryHandler,
+  OnErrorCallback,
+  OnErrorContext,
   ResolvedRouteMap,
   ResolvedSegment,
   RouteDefinition,
@@ -191,17 +194,7 @@ export interface RSCRouterOptions<TEnv = any> {
    * });
    * ```
    */
-  onError?: (
-    error: Error,
-    context: {
-      /** Where the error occurred: 'loader', 'action', 'route' */
-      source: "loader" | "action" | "route";
-      /** The request pathname */
-      pathname: string;
-      /** The loader ID if source is 'loader' */
-      loaderId?: string;
-    }
-  ) => void;
+  onError?: OnErrorCallback<TEnv>;
 
   /**
    * Cache store for segment caching.

@@ -58,7 +58,7 @@ import { generateNonce } from "./nonce.js";
 export function createRSCHandler<TEnv = unknown>(
   options: CreateRSCHandlerOptions<TEnv>
 ) {
-  const { router, version } = options;
+  const { router, version, nonce: nonceProvider } = options;
 
   // Use provided deps or default to @vitejs/plugin-rsc/rsc exports
   const deps = options.deps ?? rscDeps;
@@ -107,6 +107,11 @@ export function createRSCHandler<TEnv = unknown>(
       if (cacheConfig.enabled !== false) {
         cacheStore = cacheConfig.store;
       }
+    }
+
+    // Store nonce in variables so middleware can access via ctx.get('nonce')
+    if (nonce) {
+      variables.nonce = nonce;
     }
 
     // Create unified request context with all methods
