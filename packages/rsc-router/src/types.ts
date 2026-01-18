@@ -1286,18 +1286,29 @@ export type LoaderDefinition<T = any, TParams = Record<string, string | undefine
 // ============================================================================
 
 /**
- * Phase where the error occurred during request handling
+ * Phase where the error occurred during request handling.
+ *
+ * Coverage notes:
+ * - "routing": Invoked when route matching fails (router.ts, rsc/handler.ts)
+ * - "manifest": Reserved for manifest loading errors (not currently invoked)
+ * - "middleware": Reserved for middleware execution errors (errors propagate to handler phase)
+ * - "loader": Invoked when loader execution fails (router.ts via wrapLoaderWithErrorHandling, rsc/handler.ts)
+ * - "handler": Invoked when route/layout handler execution fails (router.ts)
+ * - "rendering": Invoked during SSR rendering errors (ssr/index.tsx, separate callback)
+ * - "action": Invoked when server action execution fails (rsc/handler.ts, router.ts)
+ * - "revalidation": Invoked when revalidation fails (router.ts, conditional with action)
+ * - "unknown": Fallback for unclassified errors (not currently invoked)
  */
 export type ErrorPhase =
   | "routing"      // During route matching
-  | "manifest"     // During manifest loading
-  | "middleware"   // During middleware execution
+  | "manifest"     // During manifest loading (reserved, not currently invoked)
+  | "middleware"   // During middleware execution (errors propagate to handler phase)
   | "loader"       // During loader execution
   | "handler"      // During route/layout handler execution
-  | "rendering"    // During RSC/SSR rendering
+  | "rendering"    // During RSC/SSR rendering (SSR handler uses separate callback)
   | "action"       // During server action execution
   | "revalidation" // During revalidation evaluation
-  | "unknown";     // Unknown phase
+  | "unknown";     // Fallback for unclassified errors
 
 /**
  * Comprehensive context passed to onError callback

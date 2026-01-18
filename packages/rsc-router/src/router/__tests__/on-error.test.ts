@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { OnErrorCallback, OnErrorContext, ErrorPhase, ErrorInfo } from "../../types";
-import { wrapLoaderWithErrorHandling } from "../loader-resolution";
+import { wrapLoaderWithErrorHandling, LoaderErrorCallback } from "../loader-resolution";
+import { invokeOnError, type InvokeOnErrorContext } from "../error-handling";
 
 describe("OnError Types", () => {
   describe("OnErrorContext", () => {
@@ -700,5 +701,235 @@ describe("Error Context Edge Cases", () => {
     };
 
     expect(context.error.cause).toBe(rootCause);
+  });
+});
+
+describe("invokeOnError Shared Utility", () => {
+  const createMockContext = (): InvokeOnErrorContext => ({
+    request: new Request("https://example.com/test"),
+    url: new URL("https://example.com/test"),
+  });
+
+  describe("callback invocation", () => {
+    it("should not call callback if undefined", () => {
+      const context = createMockContext();
+
+      expect(() => {
+        invokeOnError(undefined, new Error("test"), "routing", context);
+      }).not.toThrow();
+    });
+
+    it("should invoke callback with full context", () => {
+      const callback = vi.fn();
+      const error = new Error("Test error");
+      const context: InvokeOnErrorContext = {
+        request: new Request("https://example.com/products/123"),
+        url: new URL("https://example.com/products/123"),
+        routeKey: "products.detail",
+        params: { id: "123" },
+        segmentId: "M1R0",
+        segmentType: "route",
+        env: { DB: "test" },
+        isPartial: true,
+        handledByBoundary: false,
+      };
+
+      invokeOnError(callback, error, "handler", context);
+
+      expect(callback).toHaveBeenCalledTimes(1);
+      const receivedContext = callback.mock.calls[0][0];
+      expect(receivedContext.error).toBe(error);
+      expect(receivedContext.phase).toBe("handler");
+      expect(receivedContext.pathname).toBe("/products/123");
+      expect(receivedContext.method).toBe("GET");
+      expect(receivedContext.routeKey).toBe("products.detail");
+      expect(receivedContext.params).toEqual({ id: "123" });
+      expect(receivedContext.segmentId).toBe("M1R0");
+      expect(receivedContext.segmentType).toBe("route");
+      expect(receivedContext.env).toEqual({ DB: "test" });
+      expect(receivedContext.isPartial).toBe(true);
+      expect(receivedContext.handledByBoundary).toBe(false);
+      expect(receivedContext.stack).toBeDefined();
+    });
+
+    it("should convert non-Error objects to Error", () => {
+      const callback = vi.fn();
+      const context = createMockContext();
+
+      invokeOnError(callback, "string error", "routing", context);
+
+      const receivedContext = callback.mock.calls[0][0];
+      expect(receivedContext.error).toBeInstanceOf(Error);
+      expect(receivedContext.error.message).toBe("string error");
+    });
+
+    it("should calculate duration from requestStartTime", () => {
+      const callback = vi.fn();
+      const context: InvokeOnErrorContext = {
+        ...createMockContext(),
+        requestStartTime: performance.now() - 100, // 100ms ago
+      };
+
+      invokeOnError(callback, new Error("test"), "loader", context);
+
+      const receivedContext = callback.mock.calls[0][0];
+      expect(receivedContext.duration).toBeGreaterThanOrEqual(100);
+      expect(receivedContext.duration).toBeLessThan(200);
+    });
+
+    it("should not set duration if requestStartTime is not provided", () => {
+      const callback = vi.fn();
+      const context = createMockContext();
+
+      invokeOnError(callback, new Error("test"), "loader", context);
+
+      const receivedContext = callback.mock.calls[0][0];
+      expect(receivedContext.duration).toBeUndefined();
+    });
+  });
+
+  describe("error handling in callback", () => {
+    it("should catch sync callback errors and log them", () => {
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const callback: OnErrorCallback = () => {
+        throw new Error("Callback sync error");
+      };
+      const context = createMockContext();
+
+      expect(() => {
+        invokeOnError(callback, new Error("original"), "routing", context);
+      }).not.toThrow();
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        "[Router.onError] Callback error:",
+        expect.any(Error)
+      );
+      consoleSpy.mockRestore();
+    });
+
+    it("should catch async callback rejections and log them", async () => {
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const callback: OnErrorCallback = async () => {
+        throw new Error("Callback async error");
+      };
+      const context = createMockContext();
+
+      invokeOnError(callback, new Error("original"), "routing", context);
+
+      // Wait for the async rejection to be caught
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        "[Router.onError] Callback error:",
+        expect.any(Error)
+      );
+      consoleSpy.mockRestore();
+    });
+
+    it("should use custom log prefix", () => {
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const callback: OnErrorCallback = () => {
+        throw new Error("Callback error");
+      };
+      const context = createMockContext();
+
+      invokeOnError(callback, new Error("original"), "rendering", context, "RSC");
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        "[RSC.onError] Callback error:",
+        expect.any(Error)
+      );
+      consoleSpy.mockRestore();
+    });
+  });
+
+  describe("all phases", () => {
+    const phases: ErrorPhase[] = [
+      "routing",
+      "manifest",
+      "middleware",
+      "loader",
+      "handler",
+      "rendering",
+      "action",
+      "revalidation",
+      "unknown",
+    ];
+
+    phases.forEach((phase) => {
+      it(`should accept phase: ${phase}`, () => {
+        const callback = vi.fn();
+        const context = createMockContext();
+
+        invokeOnError(callback, new Error("test"), phase, context);
+
+        expect(callback).toHaveBeenCalledWith(
+          expect.objectContaining({ phase })
+        );
+      });
+    });
+  });
+
+  describe("optional context fields", () => {
+    it("should pass through all optional fields", () => {
+      const callback = vi.fn();
+      const context: InvokeOnErrorContext = {
+        request: new Request("https://example.com/api", { method: "POST" }),
+        url: new URL("https://example.com/api"),
+        routeKey: "api.action",
+        params: { id: "1" },
+        segmentId: "M1A0",
+        segmentType: "middleware",
+        loaderName: "TestLoader",
+        middlewareId: "auth",
+        actionId: "createItem",
+        env: { secret: "123" },
+        isPartial: false,
+        handledByBoundary: true,
+        metadata: { custom: "data" },
+        requestStartTime: performance.now() - 50,
+      };
+
+      invokeOnError(callback, new Error("test"), "action", context);
+
+      const received = callback.mock.calls[0][0];
+      expect(received.method).toBe("POST");
+      expect(received.loaderName).toBe("TestLoader");
+      expect(received.middlewareId).toBe("auth");
+      expect(received.actionId).toBe("createItem");
+      expect(received.metadata).toEqual({ custom: "data" });
+    });
+
+    it("should handle minimal context", () => {
+      const callback = vi.fn();
+      const context: InvokeOnErrorContext = {
+        request: new Request("https://example.com"),
+        url: new URL("https://example.com"),
+      };
+
+      invokeOnError(callback, new Error("test"), "unknown", context);
+
+      const received = callback.mock.calls[0][0];
+      expect(received.routeKey).toBeUndefined();
+      expect(received.params).toBeUndefined();
+      expect(received.segmentId).toBeUndefined();
+      expect(received.duration).toBeUndefined();
+    });
+  });
+});
+
+describe("LoaderErrorCallback Type", () => {
+  it("should accept valid callback signature", () => {
+    const callback: LoaderErrorCallback = (error, context) => {
+      expect(typeof context.segmentId).toBe("string");
+      expect(typeof context.loaderName).toBe("string");
+      expect(typeof context.handledByBoundary).toBe("boolean");
+    };
+
+    callback(new Error("test"), {
+      segmentId: "M1L0.TestLoader",
+      loaderName: "TestLoader",
+      handledByBoundary: false,
+    });
   });
 });

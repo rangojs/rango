@@ -53,6 +53,7 @@ import {
   createNotFoundSegment,
   findNearestErrorBoundary as findErrorBoundary,
   findNearestNotFoundBoundary as findNotFoundBoundary,
+  invokeOnError,
 } from "./router/error-handling.js";
 import { createHandlerContext } from "./router/handler-context.js";
 import {
@@ -460,70 +461,15 @@ export function createRSCRouter<TEnv = any>(
   } = options;
 
   /**
-   * Invoke the onError callback with comprehensive context
-   * Catches any errors in the callback itself to prevent masking the original error
+   * Wrapper for invokeOnError that binds the router's onError callback.
+   * Uses the shared utility from router/error-handling.ts for consistent behavior.
    */
-  function invokeOnError(
+  function callOnError(
     error: unknown,
     phase: ErrorPhase,
-    context: {
-      request: Request;
-      url: URL;
-      routeKey?: string;
-      params?: Record<string, string>;
-      segmentId?: string;
-      segmentType?: "layout" | "route" | "parallel" | "loader" | "middleware";
-      loaderName?: string;
-      middlewareId?: string;
-      actionId?: string;
-      env?: TEnv;
-      isPartial?: boolean;
-      handledByBoundary?: boolean;
-      metadata?: Record<string, unknown>;
-      requestStartTime?: number;
-    }
+    context: Parameters<typeof invokeOnError<TEnv>>[3]
   ): void {
-    if (!onError) return;
-
-    const errorObj = error instanceof Error ? error : new Error(String(error));
-    const duration = context.requestStartTime
-      ? performance.now() - context.requestStartTime
-      : undefined;
-
-    const errorContext: OnErrorContext<TEnv> = {
-      error: errorObj,
-      phase,
-      request: context.request,
-      url: context.url,
-      pathname: context.url.pathname,
-      method: context.request.method,
-      routeKey: context.routeKey,
-      params: context.params,
-      segmentId: context.segmentId,
-      segmentType: context.segmentType,
-      loaderName: context.loaderName,
-      middlewareId: context.middlewareId,
-      actionId: context.actionId,
-      env: context.env,
-      duration,
-      isPartial: context.isPartial,
-      handledByBoundary: context.handledByBoundary,
-      stack: errorObj.stack,
-      metadata: context.metadata,
-    };
-
-    try {
-      const result = onError(errorContext);
-      // If onError returns a promise, catch any rejections
-      if (result instanceof Promise) {
-        result.catch((callbackError) => {
-          console.error("[Router.onError] Callback error:", callbackError);
-        });
-      }
-    } catch (callbackError) {
-      // Log but don't throw - we don't want callback errors to mask the original error
-      console.error("[Router.onError] Callback error:", callbackError);
-    }
+    invokeOnError(onError, error, phase, context, "Router");
   }
 
   // Validate document is a function (component)
@@ -649,7 +595,7 @@ export function createRSCRouter<TEnv = any>(
       // Invoke onError when loader fails
       errorContext
         ? (error, ctx) => {
-            invokeOnError(error, "loader", {
+            callOnError(error, "loader", {
               request: errorContext.request,
               url: errorContext.url,
               routeKey: errorContext.routeKey,
@@ -1585,7 +1531,7 @@ export function createRSCRouter<TEnv = any>(
           );
 
           // Invoke onError with notFound context
-          invokeOnError(error, "handler", {
+          callOnError(error, "handler", {
             request: context.request,
             url: context.url,
             routeKey,
@@ -1635,7 +1581,7 @@ export function createRSCRouter<TEnv = any>(
       const effectiveFallback = fallback ?? DefaultErrorFallback;
 
       // Invoke onError callback
-      invokeOnError(error, "handler", {
+      callOnError(error, "handler", {
         request: context.request,
         url: context.url,
         routeKey,
@@ -1906,7 +1852,7 @@ export function createRSCRouter<TEnv = any>(
 
           // Invoke onError with notFound context
           if (errorContext) {
-            invokeOnError(error, "handler", {
+            callOnError(error, "handler", {
               request: errorContext.request,
               url: errorContext.url,
               routeKey: errorContext.routeKey,
@@ -1963,7 +1909,7 @@ export function createRSCRouter<TEnv = any>(
 
       // Invoke onError callback
       if (errorContext) {
-        invokeOnError(error, "handler", {
+        callOnError(error, "handler", {
           request: errorContext.request,
           url: errorContext.url,
           routeKey: errorContext.routeKey,
@@ -2700,7 +2646,7 @@ export function createRSCRouter<TEnv = any>(
       } catch (error) {
         if (error instanceof Response) throw error;
         // Report unhandled errors during full match pipeline
-        invokeOnError(error, "routing", {
+        callOnError(error, "routing", {
           request,
           url: ctx.url,
           env,
@@ -3346,7 +3292,7 @@ export function createRSCRouter<TEnv = any>(
       } catch (error) {
         if (error instanceof Response) throw error;
         // Report unhandled errors during partial match pipeline
-        invokeOnError(error, actionContext ? "action" : "revalidation", {
+        callOnError(error, actionContext ? "action" : "revalidation", {
           request,
           url: ctx.url,
           env: context,

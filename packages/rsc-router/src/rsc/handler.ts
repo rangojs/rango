@@ -32,7 +32,8 @@ import type {
 import { hasBodyContent, createResponseWithMergedHeaders } from "./helpers.js";
 import { generateNonce } from "./nonce.js";
 import { VERSION } from "rsc-router:version";
-import type { OnErrorContext, ErrorPhase } from "../types.js";
+import type { ErrorPhase } from "../types.js";
+import { invokeOnError } from "../router/error-handling.js";
 
 /**
  * Create an RSC request handler.
@@ -80,55 +81,15 @@ export function createRSCHandler<TEnv = unknown>(
     (() => import.meta.viteRsc.loadModule("ssr", "index"));
 
   /**
-   * Safely invoke router.onError callback with full context
+   * Wrapper for invokeOnError that binds the router's onError callback.
+   * Uses the shared utility from router/error-handling.ts for consistent behavior.
    */
-  function invokeOnError(
+  function callOnError(
     error: unknown,
     phase: ErrorPhase,
-    context: {
-      request: Request;
-      url: URL;
-      env?: TEnv;
-      routeKey?: string;
-      params?: Record<string, string>;
-      loaderName?: string;
-      actionId?: string;
-      isPartial?: boolean;
-      handledByBoundary?: boolean;
-    }
+    context: Parameters<typeof invokeOnError<TEnv>>[3]
   ): void {
-    if (!router.onError) return;
-
-    const errorObj = error instanceof Error ? error : new Error(String(error));
-
-    const errorContext: OnErrorContext<TEnv> = {
-      error: errorObj,
-      phase,
-      request: context.request,
-      url: context.url,
-      pathname: context.url.pathname,
-      method: context.request.method,
-      routeKey: context.routeKey,
-      params: context.params,
-      loaderName: context.loaderName,
-      actionId: context.actionId,
-      env: context.env,
-      isPartial: context.isPartial,
-      handledByBoundary: context.handledByBoundary,
-      stack: errorObj.stack,
-    };
-
-    try {
-      const result = router.onError(errorContext);
-      // If onError returns a promise, catch any rejections
-      if (result instanceof Promise) {
-        result.catch((callbackError) => {
-          console.error("[RSC.onError] Callback error:", callbackError);
-        });
-      }
-    } catch (callbackError) {
-      console.error("[RSC.onError] Callback error:", callbackError);
-    }
+    invokeOnError(router.onError, error, phase, context, "RSC");
   }
 
   return async function handler(
@@ -339,7 +300,7 @@ export function createRSCHandler<TEnv = unknown>(
 
       // Return 404 for unmatched routes instead of 500
       if (error instanceof RouteNotFoundError) {
-        invokeOnError(error, "routing", {
+        callOnError(error, "routing", {
           request,
           url,
           env,
@@ -349,7 +310,7 @@ export function createRSCHandler<TEnv = unknown>(
       }
 
       // Report unhandled errors
-      invokeOnError(error, "routing", {
+      callOnError(error, "routing", {
         request,
         url,
         env,
@@ -413,7 +374,7 @@ export function createRSCHandler<TEnv = unknown>(
         const boundAction = await decodeAction(formData);
         actionResult = await boundAction();
       } catch (error) {
-        invokeOnError(error, "action", {
+        callOnError(error, "action", {
           request,
           url,
           env,
@@ -435,7 +396,7 @@ export function createRSCHandler<TEnv = unknown>(
         const loadedAction = await loadServerAction(directActionId);
         actionResult = await loadedAction.apply(null, args);
       } catch (error) {
-        invokeOnError(error, "action", {
+        callOnError(error, "action", {
           request,
           url,
           env,
@@ -450,7 +411,7 @@ export function createRSCHandler<TEnv = unknown>(
     try {
       reactFormState = await decodeFormState(actionResult, formData);
     } catch (error) {
-      invokeOnError(error, "action", {
+      callOnError(error, "action", {
         request,
         url,
         env,
@@ -535,7 +496,7 @@ export function createRSCHandler<TEnv = unknown>(
         args = await decodeReply(body, { temporaryReferences });
       }
     } catch (error) {
-      invokeOnError(error, "action", {
+      callOnError(error, "action", {
         request,
         url,
         env,
@@ -564,7 +525,7 @@ export function createRSCHandler<TEnv = unknown>(
       const errorResult = await router.matchError(request, env, error, "route");
 
       // Report the action error (handledByBoundary indicates if error boundary will render)
-      invokeOnError(error, "action", {
+      callOnError(error, "action", {
         request,
         url,
         env,
@@ -809,7 +770,7 @@ export function createRSCHandler<TEnv = unknown>(
 
       console.error("[RSC] Loader error:", error);
 
-      invokeOnError(error, "loader", {
+      callOnError(error, "loader", {
         request,
         url,
         env,

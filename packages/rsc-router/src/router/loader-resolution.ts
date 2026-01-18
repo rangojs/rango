@@ -24,11 +24,28 @@ import { getFetchableLoader } from "../loader.rsc.js";
 import { getRequestContext } from "../server/request-context.js";
 
 /**
+ * Internal callback signature for loader error notifications.
+ * This is a simplified callback for internal use in wrapLoaderWithErrorHandling.
+ * The caller (wrapLoaderPromise in router.ts) bridges this to the full OnErrorCallback.
+ */
+export type LoaderErrorCallback = (
+  error: unknown,
+  context: {
+    segmentId: string;
+    loaderName: string;
+    handledByBoundary: boolean;
+  }
+) => void;
+
+/**
  * Wrap a loader promise with error handling for deferred client-side resolution.
  * Catches errors and converts them to LoaderDataResult objects that include
  * error info and pre-rendered fallback UI when an error boundary is available.
  *
- * @param onError - Optional callback invoked when loader errors occur
+ * @param onError - Optional callback invoked when loader errors occur.
+ *   This has a simplified signature for internal use - the caller (typically
+ *   wrapLoaderPromise in router.ts) is responsible for bridging to the full
+ *   OnErrorCallback with complete request context (request, url, env, etc.).
  */
 export function wrapLoaderWithErrorHandling<T>(
   promise: Promise<T>,
@@ -43,14 +60,7 @@ export function wrapLoaderWithErrorHandling<T>(
     segmentId: string,
     segmentType: ErrorInfo["segmentType"]
   ) => ErrorInfo,
-  onError?: (
-    error: unknown,
-    context: {
-      segmentId: string;
-      loaderName: string;
-      handledByBoundary: boolean;
-    }
-  ) => void
+  onError?: LoaderErrorCallback
 ): Promise<LoaderDataResult<T>> {
   // Extract loader name from segmentId (format: "M1L0D0.loaderName")
   const loaderName = segmentId.split(".").pop() || "unknown";
