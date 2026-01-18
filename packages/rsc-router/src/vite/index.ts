@@ -150,31 +150,6 @@ function fileExists(root: string, relativePath: string): boolean {
 }
 
 /**
- * Plugin to ensure resolved URLs are available for cloudflare dev server.
- * The cloudflare plugin needs server.resolvedUrls to be set.
- */
-function ensureResolvedUrls(): Plugin {
-  return {
-    name: "rsc-router:ensure-resolved-urls",
-    enforce: "pre",
-    configureServer(server) {
-      const port = server.config.server.port ?? 5173;
-      const host = server.config.server.host || "localhost";
-      const https = server.config.server.https;
-      const protocol = https ? "https" : "http";
-      const hostStr = typeof host === "string" ? host : "localhost";
-
-      if (!server.resolvedUrls) {
-        (server as unknown as { resolvedUrls: object }).resolvedUrls = {
-          local: [`${protocol}://${hostStr}:${port}/`],
-          network: [],
-        };
-      }
-    },
-  };
-}
-
-/**
  * Create a virtual modules plugin for default entry files
  */
 function createVirtualEntriesPlugin(
@@ -321,9 +296,6 @@ export async function rscRouter(
       ssr: VIRTUAL_IDS.ssr,
     };
 
-    // Ensure resolved URLs are available for cloudflare dev server
-    plugins.push(ensureResolvedUrls());
-
     plugins.push({
       name: "rsc-router:cloudflare-integration",
       enforce: "pre",
@@ -351,21 +323,12 @@ export async function rscRouter(
                 },
               },
             },
-            rsc: {
-              build: {
-                rollupOptions: {
-                  // Ensure `default` export only in cloudflare entry output
-                  preserveEntrySignatures: "exports-only",
-                },
-              },
-            },
             ssr: {
               // Build SSR inside RSC directory so wrangler can deploy self-contained dist/rsc
               build: {
                 outDir: "./dist/rsc/ssr",
               },
               resolve: {
-                noExternal: true,
                 // Ensure single React instance in SSR child environment
                 dedupe: ["react", "react-dom"],
               },
