@@ -5,8 +5,8 @@ import type { shopRoutes } from "@/routes.js";
  * Mock authentication middleware - adds a mock user to context
  */
 export const mockAuthMiddleware: MiddlewareFn<
-  GenericParams,
-  RSCRouter.Env
+  RSCRouter.Env,
+  GenericParams
 >[] = [
   (ctx, next) => {
     // Simulate authentication - add mock user to context (type-safe!)

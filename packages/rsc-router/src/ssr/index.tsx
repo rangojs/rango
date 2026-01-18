@@ -2,7 +2,44 @@ import React from "react";
 import { initHandleDataSync } from "../browser/react/use-handle.js";
 import { initSegmentsSync } from "../browser/react/use-segments.js";
 import type { HandleData } from "../browser/types.js";
-import type { OnErrorCallback, OnErrorContext, ErrorPhase } from "../types.js";
+import type { ErrorPhase } from "../types.js";
+
+/**
+ * Options for injectRSCPayload
+ */
+export interface InjectRSCPayloadOptions {
+  /**
+   * Nonce for Content Security Policy (CSP)
+   */
+  nonce?: string;
+}
+
+/**
+ * Options for renderToReadableStream from react-dom/server
+ */
+interface RenderToReadableStreamOptions {
+  bootstrapScriptContent?: string;
+  nonce?: string;
+  formState?: unknown;
+}
+
+/**
+ * Options for the renderHTML function
+ */
+export interface SSRRenderOptions {
+  /**
+   * Form state for useActionState progressive enhancement.
+   * This is the result of decodeFormState() and should be passed to
+   * react-dom's renderToReadableStream to enable useActionState to
+   * receive the action result during SSR.
+   */
+  formState?: unknown;
+
+  /**
+   * Nonce for Content Security Policy (CSP)
+   */
+  nonce?: string;
+}
 
 /**
  * SSR dependencies from external packages
@@ -18,14 +55,15 @@ export interface SSRDependencies<TEnv = unknown> {
    */
   renderToReadableStream: (
     element: React.ReactNode,
-    options?: { bootstrapScriptContent?: string }
+    options?: RenderToReadableStreamOptions
   ) => Promise<ReadableStream<Uint8Array>>;
 
   /**
    * injectRSCPayload from rsc-html-stream/server
    */
   injectRSCPayload: (
-    rscStream: ReadableStream<Uint8Array>
+    rscStream: ReadableStream<Uint8Array>,
+    options?: InjectRSCPayloadOptions
   ) => TransformStream<Uint8Array, Uint8Array>;
 
   /**
@@ -109,10 +147,16 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
 
   /**
    * Render RSC stream to HTML stream
+   *
+   * @param rscStream - The RSC stream to render
+   * @param options - Optional render options including formState for useActionState and nonce for CSP
    */
   return async function renderHTML(
-    rscStream: ReadableStream<Uint8Array>
+    rscStream: ReadableStream<Uint8Array>,
+    options?: SSRRenderOptions
   ): Promise<ReadableStream<Uint8Array>> {
+    const { nonce, formState } = options ?? {};
+
     try {
       // Tee the stream:
       // - rscStream1: For SSR rendering (deserialize to React VDOM)
@@ -145,12 +189,16 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       const bootstrapScriptContent = await loadBootstrapScriptContent();
 
       // Render React tree to HTML stream
+      // Pass formState for useActionState progressive enhancement if provided
+      // Pass nonce for CSP if provided
       const htmlStream = await renderToReadableStream(<SsrRoot />, {
         bootstrapScriptContent,
+        formState,
+        nonce,
       });
 
-      // Inject RSC payload into HTML as <script>__FLIGHT_DATA__</script>
-      return htmlStream.pipeThrough(injectRSCPayload(rscStream2));
+      // Inject RSC payload into HTML as <script nonce="...">__FLIGHT_DATA__</script>
+      return htmlStream.pipeThrough(injectRSCPayload(rscStream2, { nonce }));
     } catch (error) {
       // Invoke onError callback if provided
       if (onError) {

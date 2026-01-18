@@ -124,3 +124,19 @@ export const loadersRoutes = route({
   stats: "/stats",
 });
 
+/**
+ * Middleware demo routes - comprehensive middleware examples
+ * Demonstrates global, pattern-based, route-level, and loader middleware
+ */
+export const middlewareRoutes = route({
+  index: "/",
+  // Auth-protected route (pattern-based middleware)
+  dashboard: "/dashboard",
+  // Route with route-level middleware
+  timed: "/timed",
+  // Route demonstrating variable sharing
+  user: "/user/:userId",
+  // API route with loader middleware
+  api: "/api/data",
+});
+

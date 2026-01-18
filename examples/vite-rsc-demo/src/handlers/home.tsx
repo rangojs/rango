@@ -41,6 +41,14 @@ export default map<typeof homeRoutes>(
                 Navigate to <a href="/protected?logged_in=true">Protected</a> to
                 test middleware short-circuit & URL filtering
               </li>
+              <li>
+                Navigate to <a href="/loaders">Loaders</a> to test useLoader &
+                useFetchLoader APIs
+              </li>
+              <li>
+                Navigate to <a href="/middleware">Middleware</a> to test global,
+                pattern-based, route-level, and loader middleware
+              </li>
             </ul>
           </div>
         </DebugSegmentWrapper>

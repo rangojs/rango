@@ -1,5 +1,9 @@
 node_modules
 dist
 .turbo
+.wrangler
 playwright-report
 test-results
+
+# Temporary research docs
+MIDDLEWARE_RESEARCH.md

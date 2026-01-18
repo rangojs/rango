@@ -16,12 +16,12 @@ import type {
   ErrorBoundaryHandler,
   ErrorBoundaryFallbackProps,
   ErrorInfo,
-  RouterInternalContext,
 } from "../types";
 import type { LoaderRevalidationResult, ActionContext } from "./types";
 import { isHandle, type Handle } from "../handle.js";
 import type { HandleStore } from "../server/handle-store.js";
-import { getFetchableLoader } from "../loader.js";
+import { getFetchableLoader } from "../loader.rsc.js";
+import { getRequestContext } from "../server/request-context.js";
 
 /**
  * Wrap a loader promise with error handling for deferred client-side resolution.
@@ -124,9 +124,9 @@ export function setupLoaderAccess<TEnv>(
   ctx: HandlerContext<any, TEnv>,
   loaderPromises: Map<string, Promise<any>>
 ): void {
-  // Get HandleStore from internal context (if available)
+  // Get HandleStore from request context
   const getHandleStore = (): HandleStore | undefined => {
-    return (ctx.env as RouterInternalContext)?.__handleStore;
+    return getRequestContext()?._handleStore;
   };
 
   // The use() function handles both loaders and handles
@@ -201,6 +201,9 @@ export function setupLoaderAccess<TEnv>(
         // Recursive call - will start dep loader if not already started
         return ctx.use(dep);
       },
+      // Default to GET for loaders called through route handlers
+      method: "GET",
+      body: undefined,
     };
 
     // Start loader execution with tracking

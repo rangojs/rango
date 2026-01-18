@@ -5,4 +5,6 @@ export {
   decodeReply,
   createTemporaryReferenceSet,
   loadServerAction,
+  decodeAction,
+  decodeFormState,
 } from "@vitejs/plugin-rsc/rsc";
