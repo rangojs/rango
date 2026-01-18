@@ -21,7 +21,9 @@ export default defineConfig({
   projects: [
     {
       name: "dev",
+      // Exclude production tests (by test name) and HMR test files (by file name)
       grep: /^(?!.*\(production\))/,
+      testIgnore: ["**/hmr.test.ts", "**/loader-hmr.test.ts"],
       use: browserConfig,
     },
     {
@@ -33,6 +35,16 @@ export default defineConfig({
       fullyParallel: false,
       // Use single worker to prevent parallel server startups
       metadata: { workers: 1 },
+    },
+    {
+      name: "hmr",
+      // Only run HMR test files (hmr.test.ts, loader-hmr.test.ts)
+      testMatch: ["**/hmr.test.ts", "**/loader-hmr.test.ts"],
+      use: browserConfig,
+      // HMR tests modify files, run serially to avoid conflicts
+      fullyParallel: false,
+      // Run after dev and production tests complete
+      dependencies: ["dev", "production"],
     },
   ],
   workers: process.env.CI ? 2 : 4,

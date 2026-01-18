@@ -5,12 +5,13 @@
  * The RSC handler looks up loaders by $$id to execute them.
  */
 
-import type { LoaderFn, MiddlewareFn } from "../types.js";
-import { getFetchableLoader } from "../loader.js";
+import type { LoaderFn } from "../types.js";
+import type { MiddlewareFn } from "../router/middleware.js";
+import { getFetchableLoader } from "../loader.rsc.js";
 
 interface RegisteredLoader {
   fn: LoaderFn<any, any, any>;
-  middleware: MiddlewareFn<any>[];
+  middleware: MiddlewareFn[];
 }
 
 // Server-side cache - maps loader $$id to function and middleware
@@ -43,7 +44,7 @@ export function setLoaderImports(
 export function registerLoader(
   id: string,
   fn: LoaderFn<any, any, any>,
-  middleware: MiddlewareFn<any>[] = []
+  middleware: MiddlewareFn[] = []
 ): void {
   if (loaderRegistry.has(id)) {
     // Already registered (can happen during HMR)

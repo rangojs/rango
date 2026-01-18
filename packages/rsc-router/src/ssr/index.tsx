@@ -14,6 +14,33 @@ export interface InjectRSCPayloadOptions {
 }
 
 /**
+ * Options for renderToReadableStream from react-dom/server
+ */
+interface RenderToReadableStreamOptions {
+  bootstrapScriptContent?: string;
+  nonce?: string;
+  formState?: unknown;
+}
+
+/**
+ * Options for the renderHTML function
+ */
+export interface SSRRenderOptions {
+  /**
+   * Form state for useActionState progressive enhancement.
+   * This is the result of decodeFormState() and should be passed to
+   * react-dom's renderToReadableStream to enable useActionState to
+   * receive the action result during SSR.
+   */
+  formState?: unknown;
+
+  /**
+   * Nonce for Content Security Policy (CSP)
+   */
+  nonce?: string;
+}
+
+/**
  * SSR dependencies from external packages
  */
 export interface SSRDependencies {
@@ -27,7 +54,7 @@ export interface SSRDependencies {
    */
   renderToReadableStream: (
     element: React.ReactNode,
-    options?: { bootstrapScriptContent?: string; nonce?: string }
+    options?: RenderToReadableStreamOptions
   ) => Promise<ReadableStream<Uint8Array>>;
 
   /**
@@ -72,16 +99,6 @@ async function consumeAsyncGenerator(
 }
 
 /**
- * Options for renderHTML
- */
-export interface RenderHTMLOptions {
-  /**
-   * Nonce for Content Security Policy (CSP)
-   */
-  nonce?: string;
-}
-
-/**
  * Create an SSR handler that converts RSC streams to HTML.
  *
  * @example
@@ -110,12 +127,15 @@ export function createSSRHandler(deps: SSRDependencies) {
 
   /**
    * Render RSC stream to HTML stream
+   *
+   * @param rscStream - The RSC stream to render
+   * @param options - Optional render options including formState for useActionState and nonce for CSP
    */
   return async function renderHTML(
     rscStream: ReadableStream<Uint8Array>,
-    options?: RenderHTMLOptions
+    options?: SSRRenderOptions
   ): Promise<ReadableStream<Uint8Array>> {
-    const { nonce } = options ?? {};
+    const { nonce, formState } = options ?? {};
     // Tee the stream:
     // - rscStream1: For SSR rendering (deserialize to React VDOM)
     // - rscStream2: For browser hydration (inject as __FLIGHT_DATA__)
@@ -146,9 +166,12 @@ export function createSSRHandler(deps: SSRDependencies) {
     // Get bootstrap script content
     const bootstrapScriptContent = await loadBootstrapScriptContent();
 
-    // Render React tree to HTML stream with optional nonce for CSP
+    // Render React tree to HTML stream
+    // Pass formState for useActionState progressive enhancement if provided
+    // Pass nonce for CSP if provided
     const htmlStream = await renderToReadableStream(<SsrRoot />, {
       bootstrapScriptContent,
+      formState,
       nonce,
     });
 

@@ -4,7 +4,8 @@
  * Creates the handler context object passed to route handlers, middleware, and loaders.
  */
 
-import type { HandlerContext, RouterInternalContext } from "../types";
+import type { HandlerContext } from "../types";
+import { getRequestContext } from "../server/request-context.js";
 
 /**
  * Create HandlerContext with typed env/var/get/set
@@ -17,10 +18,10 @@ export function createHandlerContext<TEnv>(
   url: URL,
   bindings: any = {}
 ): HandlerContext<any, TEnv> {
-  // Use middleware variables if available, otherwise create fresh object
-  // This allows app-level middleware to share state with route handlers
-  const variables: any =
-    (bindings as RouterInternalContext)?.__middlewareVariables ?? {};
+  // Get variables from request context - this is the unified context
+  // shared between middleware and route handlers
+  const requestContext = getRequestContext();
+  const variables: any = requestContext?.var ?? {};
 
   // Filter system parameters (starting with _rsc) from searchParams
   // This ensures handlers only see user-facing query params

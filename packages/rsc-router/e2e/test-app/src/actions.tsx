@@ -92,6 +92,26 @@ export async function triggerRevalidation(): Promise<{ triggered: boolean; times
 }
 
 /**
+ * Simple form action for testing progressive enhancement (no-JS)
+ * Returns the submitted name to verify the form was processed
+ */
+let lastSubmittedName: string | null = null;
+
+export async function submitNameAction(formData: FormData): Promise<void> {
+  await delay(100);
+  const name = formData.get("name") as string;
+  lastSubmittedName = name;
+}
+
+export async function getLastSubmittedName(): Promise<string | null> {
+  return lastSubmittedName;
+}
+
+export async function resetLastSubmittedName(): Promise<void> {
+  lastSubmittedName = null;
+}
+
+/**
  * Streaming action with React node result
  * Total time: 1s initial + 2s streaming = 3s (matches test expectations)
  */

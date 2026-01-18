@@ -59,7 +59,7 @@ import {
 } from "./components/HookTests.js";
 
 export default map<typeof testRoutes>(
-  ({ route, layout, intercept, loader, loading, when }) => [
+  ({ route, layout, intercept, loader, loading, when, middleware }) => [
     // Root layout with HTML structure
     layout(
       (ctx) => {
@@ -397,6 +397,12 @@ export default map<typeof testRoutes>(
           () => [
             loader(SlowProductDetailLoader),
             loading(<SlowModalSkeleton />),
+            // Intercept-level middleware - sets header and cookie
+            middleware(async (ctx, next) => {
+              await next();
+              ctx.header("X-Intercept-Middleware", "applied");
+              ctx.setCookie("intercept-visited", "true", { path: "/" });
+            }),
           ]
         ),
 
@@ -1371,6 +1377,79 @@ export default map<typeof testRoutes>(
       );
     }),
 
+    // Route-level middleware test - middleware defined inside route() callback
+    route(
+      "middlewareTest.routeLevel",
+      (ctx) => {
+        // Read variable set by route-level middleware
+        const routeMiddlewareValue = ctx.get("routeMiddlewareApplied");
+        return (
+          <div data-testid="middleware-test-route-level">
+            <Link to="/middleware-test" data-testid="back-link">
+              ← Back to Middleware Tests
+            </Link>
+            <h1 data-testid="route-level-title">Route-Level Middleware Test</h1>
+            <p data-testid="route-level-description">
+              This route has middleware defined inside the route() callback.
+            </p>
+            <div data-testid="route-middleware-value">
+              {routeMiddlewareValue || "No middleware value"}
+            </div>
+          </div>
+        );
+      },
+      () => [
+        // Route-level middleware that sets a header and a variable
+        middleware(async (ctx, next) => {
+          ctx.set("routeMiddlewareApplied", "yes");
+          await next();
+          ctx.header("X-Route-Level-Middleware", "applied");
+        }),
+      ]
+    ),
+
+    // Route-level middleware with params test - verify ctx.params is available and typesafe
+    route(
+      "middlewareTest.routeLevelWithParams",
+      (ctx) => {
+        // Read variables set by route-level middleware (which read from ctx.params)
+        const middlewareRouteId = ctx.get("middlewareRouteId");
+        const paramsAvailableInMiddleware = ctx.get("paramsAvailableInMiddleware");
+        return (
+          <div data-testid="middleware-test-route-level-params">
+            <Link to="/middleware-test" data-testid="back-link">
+              ← Back to Middleware Tests
+            </Link>
+            <h1 data-testid="route-level-params-title">Route-Level Middleware with Params</h1>
+            <p data-testid="route-level-params-description">
+              Tests that ctx.params is available in route-level middleware.
+            </p>
+            <div data-testid="handler-route-id">
+              Handler routeId: {ctx.params.routeId}
+            </div>
+            <div data-testid="middleware-route-id">
+              Middleware routeId: {middlewareRouteId || "not set"}
+            </div>
+            <div data-testid="params-available">
+              Params available in middleware: {paramsAvailableInMiddleware || "no"}
+            </div>
+          </div>
+        );
+      },
+      () => [
+        // Route-level middleware that reads ctx.params
+        middleware(async (ctx, next) => {
+          // ctx.params should be typed with routeId from the route definition
+          const routeId = ctx.params.routeId;
+          ctx.set("middlewareRouteId", routeId);
+          ctx.set("paramsAvailableInMiddleware", routeId ? "yes" : "no");
+          await next();
+          // Also set header with param value for HTTP-level verification
+          ctx.header("X-Middleware-Route-Id", routeId);
+        }),
+      ]
+    ),
+
     // Route for testing ctx.use(loader) composition
     // Tests all combinations: fetchable/non-fetchable loaders using fetchable/non-fetchable dependencies
     // Also tests memoization - base loaders should only be invoked once per request
@@ -1423,5 +1502,45 @@ export default map<typeof testRoutes>(
         );
       }
     ),
+
+    // Route for testing progressive enhancement (no-JS form submissions)
+    // When JS is disabled, form submissions should return full HTML, not RSC stream
+    route("progressiveEnhancement", async (ctx) => {
+      // Import the action dynamically to get the server function
+      const { submitNameAction, getLastSubmittedName } = await import("./actions.js");
+      const lastSubmitted = await getLastSubmittedName();
+
+      return (
+        <div data-testid="progressive-enhancement-page">
+          <Link to="/" data-testid="back-link">
+            ← Back to Home
+          </Link>
+          <h1 data-testid="page-title">Progressive Enhancement Test</h1>
+          <p data-testid="page-description">
+            This form should work without JavaScript enabled.
+          </p>
+
+          <form action={submitNameAction} method="post" data-testid="pe-form">
+            <label htmlFor="name">Name:</label>
+            <input
+              type="text"
+              id="name"
+              name="name"
+              defaultValue="test-name"
+              data-testid="pe-input"
+            />
+            <button type="submit" data-testid="pe-submit">
+              Submit
+            </button>
+          </form>
+
+          {lastSubmitted && (
+            <div data-testid="pe-result">
+              <p>Last submitted name: <span data-testid="pe-result-name">{lastSubmitted}</span></p>
+            </div>
+          )}
+        </div>
+      );
+    }),
   ]
 );

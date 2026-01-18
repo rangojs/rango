@@ -12,6 +12,7 @@ import {
   errorRoutes,
   kanbanRoutes,
   loadersRoutes,
+  middlewareRoutes,
 } from "./routes.js";
 
 /**
@@ -33,12 +34,18 @@ export interface AppVariables {
   user?: {
     id: string;
     name: string;
-    email: string;
+    email?: string;
   };
   permissions?: string[];
   requestId?: string;
   requestCount?: number;
   rateLimitRemaining?: number;
+  responseTime?: string;
+  enrichedUser?: {
+    id: string;
+    name: string;
+    role: string;
+  };
 }
 
 /**
@@ -92,7 +99,10 @@ const router = createRSCRouter<AppEnv>({ debugPerformance: true, document: RootL
   .map(() => import("./handlers/kanban.js"))
 
   .routes("/loaders", loadersRoutes) // Loaders - demonstrates useLoader & useFetchLoader
-  .map(() => import("./handlers/loaders-demo.js"));
+  .map(() => import("./handlers/loaders-demo.js"))
+
+  .routes("/middleware", middlewareRoutes) // Middleware - comprehensive middleware examples
+  .map(() => import("./handlers/middleware.js"));
 
 /**
  * Extract route types directly from the router chain
@@ -115,4 +125,4 @@ declare global {
 export { router };
 export const href = router.href;
 
-console.log("[Router] Configured with 11 route groups (lazy-loaded handlers)");
+console.log("[Router] Configured with 12 route groups (lazy-loaded handlers)");
