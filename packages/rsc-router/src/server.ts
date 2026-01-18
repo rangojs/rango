@@ -65,6 +65,7 @@ export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 // Middleware types
 export type {
   MiddlewareFn,
+  MiddlewareFn as AppMiddlewareFn, // Alias for backwards compatibility
   MiddlewareContext,
   CookieOptions,
 } from "./router/middleware.js";

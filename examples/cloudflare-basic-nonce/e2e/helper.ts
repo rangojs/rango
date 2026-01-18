@@ -88,7 +88,7 @@ export function expectNoCSPViolations(page: Page) {
   const consoleHandler = (msg: import("@playwright/test").ConsoleMessage) => {
     const text = msg.text();
     // Skip Report-Only violations - they're expected in dev mode (HMR uses eval)
-    if (text.includes("[Report Only]")) {
+    if (text.includes("[Report Only]") || text.includes("report-only")) {
       return;
     }
     // Also skip informational messages about ignored directives

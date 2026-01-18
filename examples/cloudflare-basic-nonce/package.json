@@ -18,8 +18,8 @@
     "rsc-router": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.19.0",
-    "@cloudflare/workers-types": "^4.20251217.0",
+    "@cloudflare/vite-plugin": "^1.21.0",
+    "@cloudflare/workers-types": "^4.20260114.0",
     "@playwright/test": "^1.49.1",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
