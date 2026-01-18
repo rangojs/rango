@@ -14,7 +14,7 @@ export default defineConfig({
     rscRouter({ preset: "cloudflare" }),
     cloudflare({
       configPath: "./wrangler.json",
-      viteEnvironment: { name: "rsc" },
+      viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
     }),
   ],
 });

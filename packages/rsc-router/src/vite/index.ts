@@ -366,6 +366,13 @@ export async function rscRouter(
               },
               resolve: {
                 noExternal: true,
+                // Ensure single React instance in SSR child environment
+                dedupe: ["react", "react-dom"],
+              },
+              // Pre-bundle SSR entry and React for proper module linking with childEnvironments
+              optimizeDeps: {
+                entries: [finalEntries.ssr],
+                include: ["react", "react-dom/server.edge", "react/jsx-runtime"],
               },
             },
           },
@@ -383,13 +390,14 @@ export async function rscRouter(
     );
 
     // Add RSC plugin with cloudflare-specific options
+    // Note: loadModuleDevProxy should NOT be used with childEnvironments
+    // since SSR runs in workerd alongside RSC
     plugins.push(
       rsc({
         get entries() {
           return finalEntries;
         },
         serverHandler: false,
-        loadModuleDevProxy: true,
       }) as PluginOption
     );
   } else {
