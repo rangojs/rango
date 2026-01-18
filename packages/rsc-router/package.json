@@ -37,6 +37,9 @@
       "types": "./src/vite/index.ts",
       "import": "./src/vite/index.ts"
     },
+    "./types": {
+      "types": "./src/vite/version.d.ts"
+    },
     "./internal/deps/browser": {
       "types": "./src/deps/browser.ts",
       "default": "./src/deps/browser.ts"

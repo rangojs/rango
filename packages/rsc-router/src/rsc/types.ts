@@ -187,17 +187,10 @@ export interface CreateRSCHandlerOptions<TEnv = unknown> {
    * RSC version string included in metadata.
    * The browser sends this back on partial requests to detect version mismatches.
    *
-   * Use with `rsc-router:version` virtual module for automatic invalidation.
+   * Defaults to the auto-generated VERSION from `rsc-router:version` virtual module.
+   * Only set this if you need a custom versioning strategy.
    *
-   * @example
-   * ```typescript
-   * import { VERSION } from "rsc-router:version";
-   *
-   * export default createRSCHandler({
-   *   router,
-   *   version: VERSION,
-   * });
-   * ```
+   * @default VERSION from rsc-router:version
    */
   version?: string;
 

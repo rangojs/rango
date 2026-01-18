@@ -1,3 +1,4 @@
+/// <reference path="../../vite/version.d.ts" />
 /**
  * Cloudflare Edge Cache Store
  *
@@ -18,6 +19,7 @@ import type {
   CacheGetResult,
 } from "../types.js";
 import type { RequestContext } from "../../server/request-context.js";
+import { VERSION } from "rsc-router:version";
 
 // ============================================================================
 // Constants
@@ -60,21 +62,11 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
   waitUntil?: (fn: () => Promise<void>) => void;
 
   /**
-   * Cache version string. When this changes, all cached entries are effectively
-   * invalidated (new keys won't match old entries).
+   * Cache version string override. When this changes, all cached entries are
+   * effectively invalidated (new keys won't match old entries).
    *
-   * Use this to prevent stale RSC payloads after code changes.
-   * The recommended approach is to use the `rsc-router:version` virtual module
-   * which automatically changes on server restart in dev mode.
-   *
-   * @example
-   * ```typescript
-   * import { VERSION } from "rsc-router:version";
-   *
-   * const cacheStore = new CFCacheStore({
-   *   version: VERSION,
-   * });
-   * ```
+   * Defaults to the auto-generated VERSION from `rsc-router:version` virtual module.
+   * Only set this if you need a custom versioning strategy.
    */
   version?: string;
 
@@ -140,7 +132,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     this.baseUrl = options.baseUrl ?? "https://rsc-cache.internal.com/";
     this.defaults = options.defaults;
     this.waitUntil = options.waitUntil;
-    this.version = options.version;
+    this.version = options.version ?? VERSION;
     this.keyGenerator = options.keyGenerator;
   }
 

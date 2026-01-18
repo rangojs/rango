@@ -1,4 +1,5 @@
 /// <reference types="@vitejs/plugin-rsc/types" />
+/// <reference path="../vite/version.d.ts" />
 /**
  * RSC Request Handler
  *
@@ -30,6 +31,7 @@ import type {
 } from "./types.js";
 import { hasBodyContent, createResponseWithMergedHeaders } from "./helpers.js";
 import { generateNonce } from "./nonce.js";
+import { VERSION } from "rsc-router:version";
 
 /**
  * Create an RSC request handler.
@@ -58,7 +60,7 @@ import { generateNonce } from "./nonce.js";
 export function createRSCHandler<TEnv = unknown>(
   options: CreateRSCHandlerOptions<TEnv>
 ) {
-  const { router, version, nonce: nonceProvider } = options;
+  const { router, version = VERSION, nonce: nonceProvider } = options;
 
   // Use provided deps or default to @vitejs/plugin-rsc/rsc exports
   const deps = options.deps ?? rscDeps;
