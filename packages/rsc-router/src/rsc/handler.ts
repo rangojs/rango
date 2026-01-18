@@ -29,6 +29,7 @@ import type {
   CreateRSCHandlerOptions,
 } from "./types.js";
 import { hasBodyContent, createResponseWithMergedHeaders } from "./helpers.js";
+import { generateNonce } from "./nonce.js";
 
 /**
  * Create an RSC request handler.
@@ -57,7 +58,7 @@ import { hasBodyContent, createResponseWithMergedHeaders } from "./helpers.js";
 export function createRSCHandler<TEnv = unknown>(
   options: CreateRSCHandlerOptions<TEnv>
 ) {
-  const { router, version } = options;
+  const { router, version, nonce: nonceProvider } = options;
 
   // Use provided deps or default to @vitejs/plugin-rsc/rsc exports
   const deps = options.deps ?? rscDeps;
@@ -79,6 +80,13 @@ export function createRSCHandler<TEnv = unknown>(
     request: Request,
     env: TEnv = {} as TEnv
   ): Promise<Response> {
+    // Resolve nonce if provider is set
+    let nonce: string | undefined;
+    if (nonceProvider) {
+      const result = await nonceProvider(request, env);
+      nonce = result === true ? generateNonce() : result;
+    }
+
     const url = new URL(request.url);
 
     // Match global middleware
@@ -86,6 +94,11 @@ export function createRSCHandler<TEnv = unknown>(
 
     // Shared variables between middleware and route handlers
     const variables: Record<string, any> = {};
+
+    // Store nonce in variables so middleware can access via ctx.get('nonce')
+    if (nonce) {
+      variables.nonce = nonce;
+    }
 
     // Resolve cache store configuration
     // Priority: options.cache (handler override) > router.cache (router default)
@@ -122,7 +135,7 @@ export function createRSCHandler<TEnv = unknown>(
     return runWithRequestContext(requestContext, async () => {
       // Core handler logic (wrapped by middleware)
       const coreHandler = async (): Promise<Response> => {
-        return coreRequestHandler(request, env, url, variables);
+        return coreRequestHandler(request, env, url, variables, nonce);
       };
 
       // Execute middleware chain if any, otherwise call core handler directly
@@ -145,7 +158,8 @@ export function createRSCHandler<TEnv = unknown>(
     request: Request,
     env: TEnv,
     url: URL,
-    variables: Record<string, any>
+    variables: Record<string, any>,
+    nonce: string | undefined
   ): Promise<Response> {
     // First, check for route-level middleware
     const preview = await router.previewMatch(request, env);
@@ -164,12 +178,12 @@ export function createRSCHandler<TEnv = unknown>(
 
       // Execute route middleware wrapping the actual request handling
       return executeMiddleware(middlewareEntries, request, env, variables, () =>
-        coreRequestHandlerInner(request, env, url, variables)
+        coreRequestHandlerInner(request, env, url, variables, nonce)
       );
     }
 
     // No route middleware, proceed directly
-    return coreRequestHandlerInner(request, env, url, variables);
+    return coreRequestHandlerInner(request, env, url, variables, nonce);
   }
 
   // Inner request handler (actual RSC logic, wrapped by route middleware if any)
@@ -177,7 +191,8 @@ export function createRSCHandler<TEnv = unknown>(
     request: Request,
     env: TEnv,
     url: URL,
-    variables: Record<string, any>
+    variables: Record<string, any>,
+    nonce: string | undefined
   ): Promise<Response> {
     // Early return for static file requests that don't need RSC handling
     if (url.pathname === "/favicon.ico" || url.pathname === "/robots.txt") {
@@ -235,7 +250,8 @@ export function createRSCHandler<TEnv = unknown>(
         env,
         url,
         isAction,
-        handleStore
+        handleStore,
+        nonce
       );
       if (progressiveResult) {
         return progressiveResult;
@@ -259,7 +275,7 @@ export function createRSCHandler<TEnv = unknown>(
       // ============================================================================
       // REGULAR RSC RENDERING (Navigation)
       // ============================================================================
-      return handleRscRendering(request, env, url, isPartial, handleStore);
+      return handleRscRendering(request, env, url, isPartial, handleStore, nonce);
     } catch (error) {
       // Check if middleware/handler returned Response
       if (error instanceof Response) {
@@ -287,7 +303,8 @@ export function createRSCHandler<TEnv = unknown>(
     env: TEnv,
     url: URL,
     isAction: boolean,
-    handleStore: ReturnType<typeof requireRequestContext>["_handleStore"]
+    handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+    nonce: string | undefined
   ): Promise<Response | null> {
     const contentType = request.headers.get("content-type") || "";
     const isFormSubmission =
@@ -393,6 +410,7 @@ export function createRSCHandler<TEnv = unknown>(
     const ssrModule = await loadSSRModule();
     const htmlStream = await ssrModule.renderHTML(rscStream, {
       formState: reactFormState,
+      nonce,
     });
 
     return new Response(htmlStream, {
@@ -724,7 +742,8 @@ export function createRSCHandler<TEnv = unknown>(
     env: TEnv,
     url: URL,
     isPartial: boolean,
-    handleStore: ReturnType<typeof requireRequestContext>["_handleStore"]
+    handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
+    nonce: string | undefined
   ): Promise<Response> {
     let payload: RscPayload;
     let serverTiming: string | undefined;
@@ -847,7 +866,7 @@ export function createRSCHandler<TEnv = unknown>(
 
     // Delegate to SSR for HTML response
     const ssrModule = await loadSSRModule();
-    const htmlStream = await ssrModule.renderHTML(rscStream);
+    const htmlStream = await ssrModule.renderHTML(rscStream, { nonce });
 
     const htmlHeaders: Record<string, string> = {
       "content-type": "text/html;charset=utf-8",

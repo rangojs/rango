@@ -26,6 +26,7 @@ export type {
   LoadSSRModule,
   CreateRSCHandlerOptions,
   HandlerCacheConfig,
+  NonceProvider,
 } from "./types.js";
 
 // Re-export HandleStore types for consumers who need custom handling

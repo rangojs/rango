@@ -1,5 +1,5 @@
 {
-  "name": "cloudflare-basic",
+  "name": "cloudflare-basic-nonce",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -27,6 +27,6 @@
     "tinyexec": "^0.3.2",
     "typescript": "^5.7.0",
     "vite": "catalog:",
-    "wrangler": "^4.59.2"
+    "wrangler": "^4.56.0"
   }
 }
