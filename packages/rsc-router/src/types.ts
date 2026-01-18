@@ -920,19 +920,16 @@ export type RouteMiddlewareFn<
 // ============================================================================
 
 /**
- * Context passed to cache condition/key/tags functions
+ * Context passed to cache condition/key/tags functions.
  *
- * Available during cache evaluation before handler execution.
- * Since this runs early in the request lifecycle, middleware variables
- * may not be available yet.
+ * This is a subset of RequestContext that's guaranteed to be available
+ * during cache key generation (before middleware runs).
+ *
+ * Note: While the full RequestContext is passed, middleware-set variables
+ * (ctx.var, ctx.get()) may not be populated yet since cache lookup
+ * happens before middleware execution.
  */
-export type CacheContext = {
-  request: Request;
-  url: URL;
-  pathname: string;
-  params: Record<string, string>;
-  searchParams: URLSearchParams;
-};
+export type { RequestContext as CacheContext } from "./server/request-context.js";
 
 /**
  * Cache configuration options for cache() DSL
@@ -972,7 +969,7 @@ export type CacheContext = {
  * }, () => [...])
  * ```
  */
-export interface CacheOptions {
+export interface CacheOptions<TEnv = unknown> {
   /**
    * Time-to-live in seconds.
    * After this period, cached content is considered stale.
@@ -1024,6 +1021,9 @@ export interface CacheOptions {
    * Conditional cache read function.
    * Return false to skip cache for this request (always fetch fresh).
    *
+   * Has access to full RequestContext including env, request, params, cookies, etc.
+   * Note: Middleware-set variables (ctx.var) may not be populated yet.
+   *
    * @example
    * ```typescript
    * condition: (ctx) => {
@@ -1035,19 +1035,28 @@ export interface CacheOptions {
    * }
    * ```
    */
-  condition?: (ctx: CacheContext) => boolean;
+  condition?: (ctx: import("./server/request-context.js").RequestContext<TEnv>) => boolean;
 
   /**
-   * Custom cache key function.
-   * By default, cache key is based on entry ID and route params.
-   * Use this to include additional factors like query params or headers.
+   * Custom cache key function - FULL OVERRIDE.
+   * Bypasses default key generation AND store's keyGenerator.
+   *
+   * Has access to full RequestContext including env, request, params, cookies, etc.
+   * Note: Middleware-set variables (ctx.var) may not be populated yet.
    *
    * @example
    * ```typescript
+   * // Include query params in cache key
    * key: (ctx) => `product-${ctx.params.id}-${ctx.searchParams.get('variant')}`
+   *
+   * // Include env bindings
+   * key: (ctx) => `${ctx.env.REGION}:product:${ctx.params.id}`
+   *
+   * // Include cookies
+   * key: (ctx) => `${ctx.cookie('locale')}:${ctx.pathname}`
    * ```
    */
-  key?: (ctx: CacheContext) => string;
+  key?: (ctx: import("./server/request-context.js").RequestContext<TEnv>) => string | Promise<string>;
 
   /**
    * Tags for cache invalidation.
@@ -1062,7 +1071,7 @@ export interface CacheOptions {
    * tags: (ctx) => [`product:${ctx.params.id}`, 'products']
    * ```
    */
-  tags?: string[] | ((ctx: CacheContext) => string[]);
+  tags?: string[] | ((ctx: import("./server/request-context.js").RequestContext<TEnv>) => string[]);
 }
 
 /**
@@ -1085,7 +1094,7 @@ export interface CacheOptions {
  * cache({ ttl: 300 }, () => [...])
  * ```
  */
-export type PartialCacheOptions = Partial<CacheOptions>;
+export type PartialCacheOptions<TEnv = unknown> = Partial<CacheOptions<TEnv>>;
 
 /**
  * Cache entry configuration stored in EntryData.
@@ -1271,4 +1280,194 @@ export type LoaderDefinition<T = any, TParams = Record<string, string | undefine
   fn?: LoaderFn<T, TParams, any>;  // Optional - stripped on client via "use server"
   action?: LoaderAction<T>;  // Optional - for fetchable loaders
 };
+
+// ============================================================================
+// Error Handling Types
+// ============================================================================
+
+/**
+ * Phase where the error occurred during request handling.
+ *
+ * Coverage notes:
+ * - "routing": Invoked when route matching fails (router.ts, rsc/handler.ts)
+ * - "manifest": Reserved for manifest loading errors (not currently invoked)
+ * - "middleware": Reserved for middleware execution errors (errors propagate to handler phase)
+ * - "loader": Invoked when loader execution fails (router.ts via wrapLoaderWithErrorHandling, rsc/handler.ts)
+ * - "handler": Invoked when route/layout handler execution fails (router.ts)
+ * - "rendering": Invoked during SSR rendering errors (ssr/index.tsx, separate callback)
+ * - "action": Invoked when server action execution fails (rsc/handler.ts, router.ts)
+ * - "revalidation": Invoked when revalidation fails (router.ts, conditional with action)
+ * - "unknown": Fallback for unclassified errors (not currently invoked)
+ */
+export type ErrorPhase =
+  | "routing"      // During route matching
+  | "manifest"     // During manifest loading (reserved, not currently invoked)
+  | "middleware"   // During middleware execution (errors propagate to handler phase)
+  | "loader"       // During loader execution
+  | "handler"      // During route/layout handler execution
+  | "rendering"    // During RSC/SSR rendering (SSR handler uses separate callback)
+  | "action"       // During server action execution
+  | "revalidation" // During revalidation evaluation
+  | "unknown";     // Fallback for unclassified errors
+
+/**
+ * Comprehensive context passed to onError callback
+ *
+ * Provides all available information about where and when an error occurred
+ * during request handling. The callback can use this for logging, monitoring,
+ * error tracking services, or custom error responses.
+ *
+ * @example
+ * ```typescript
+ * const router = createRSCRouter<AppEnv>({
+ *   onError: (context) => {
+ *     // Log to error tracking service
+ *     errorTracker.capture({
+ *       error: context.error,
+ *       phase: context.phase,
+ *       url: context.request.url,
+ *       route: context.routeKey,
+ *       userId: context.env?.user?.id,
+ *     });
+ *
+ *     // Log to console with context
+ *     console.error(`[${context.phase}] Error in ${context.routeKey}:`, {
+ *       message: context.error.message,
+ *       segment: context.segmentId,
+ *       duration: context.duration,
+ *     });
+ *   },
+ * });
+ * ```
+ */
+export interface OnErrorContext<TEnv = any> {
+  /**
+   * The error that occurred
+   */
+  error: Error;
+
+  /**
+   * Phase where the error occurred
+   */
+  phase: ErrorPhase;
+
+  /**
+   * The original request
+   */
+  request: Request;
+
+  /**
+   * Parsed URL from the request
+   */
+  url: URL;
+
+  /**
+   * Request pathname
+   */
+  pathname: string;
+
+  /**
+   * HTTP method
+   */
+  method: string;
+
+  /**
+   * Matched route key (if available)
+   * e.g., "shop.products.detail"
+   */
+  routeKey?: string;
+
+  /**
+   * Route params (if available)
+   * e.g., { slug: "headphones" }
+   */
+  params?: Record<string, string>;
+
+  /**
+   * Segment ID where error occurred (if available)
+   * e.g., "M1L0" for a layout, "M1R0" for a route
+   */
+  segmentId?: string;
+
+  /**
+   * Segment type where error occurred (if available)
+   */
+  segmentType?: "layout" | "route" | "parallel" | "loader" | "middleware";
+
+  /**
+   * Loader name (if error occurred in a loader)
+   */
+  loaderName?: string;
+
+  /**
+   * Middleware name/id (if error occurred in middleware)
+   */
+  middlewareId?: string;
+
+  /**
+   * Action ID (if error occurred during server action)
+   * e.g., "src/actions.ts#addToCart"
+   */
+  actionId?: string;
+
+  /**
+   * Environment/bindings (platform context)
+   */
+  env?: TEnv;
+
+  /**
+   * Duration from request start to error (milliseconds)
+   */
+  duration?: number;
+
+  /**
+   * Whether this is a partial/navigation request
+   */
+  isPartial?: boolean;
+
+  /**
+   * Whether an error boundary caught the error
+   * If true, the error was handled and a fallback UI was rendered
+   */
+  handledByBoundary?: boolean;
+
+  /**
+   * Stack trace (if available)
+   */
+  stack?: string;
+
+  /**
+   * Additional metadata specific to the error phase
+   */
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Callback function for error handling
+ *
+ * Called whenever an error occurs during request handling.
+ * The callback is for notification/logging purposes - it cannot
+ * modify the error handling flow (use errorBoundary for that).
+ *
+ * @param context - Comprehensive error context
+ *
+ * @example
+ * ```typescript
+ * const onError: OnErrorCallback = (context) => {
+ *   // Send to error tracking service
+ *   Sentry.captureException(context.error, {
+ *     tags: {
+ *       phase: context.phase,
+ *       route: context.routeKey,
+ *     },
+ *     extra: {
+ *       url: context.url.toString(),
+ *       params: context.params,
+ *       duration: context.duration,
+ *     },
+ *   });
+ * };
+ * ```
+ */
+export type OnErrorCallback<TEnv = any> = (context: OnErrorContext<TEnv>) => void | Promise<void>;
 

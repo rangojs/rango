@@ -95,6 +95,11 @@ export interface SSRRenderOptions {
    * receive the action result during SSR.
    */
   formState?: ReactFormState | null;
+
+  /**
+   * Nonce for Content Security Policy (CSP)
+   */
+  nonce?: string;
 }
 
 /**
@@ -231,6 +236,15 @@ export interface HandlerCacheConfig {
 }
 
 /**
+ * Nonce provider function type.
+ * Can return a nonce string, or true to auto-generate one.
+ */
+export type NonceProvider<TEnv = unknown> = (
+  request: Request,
+  env: TEnv
+) => string | true | Promise<string | true>;
+
+/**
  * Options for creating an RSC handler
  */
 export interface CreateRSCHandlerOptions<TEnv = unknown> {
@@ -280,17 +294,10 @@ export interface CreateRSCHandlerOptions<TEnv = unknown> {
    * RSC version string included in metadata.
    * The browser sends this back on partial requests to detect version mismatches.
    *
-   * Use with `rsc-router:version` virtual module for automatic invalidation.
+   * Defaults to the auto-generated VERSION from `rsc-router:version` virtual module.
+   * Only set this if you need a custom versioning strategy.
    *
-   * @example
-   * ```typescript
-   * import { VERSION } from "rsc-router:version";
-   *
-   * export default createRSCHandler({
-   *   router,
-   *   version: VERSION,
-   * });
-   * ```
+   * @default VERSION from rsc-router:version
    */
   version?: string;
 
@@ -310,4 +317,33 @@ export interface CreateRSCHandlerOptions<TEnv = unknown> {
    * ```
    */
   shell?: PPRShellConfig | ((env: TEnv) => PPRShellConfig);
+
+  /**
+   * Nonce provider for Content Security Policy (CSP).
+   *
+   * Can be:
+   * - A function that returns a nonce string
+   * - A function that returns `true` to auto-generate a nonce
+   * - Undefined to disable nonce (default)
+   *
+   * The nonce will be applied to inline scripts injected by the RSC payload.
+   * It's also available to middleware via `ctx.get('nonce')`.
+   *
+   * @example Auto-generate nonce
+   * ```tsx
+   * createRSCHandler({
+   *   router,
+   *   nonce: () => true,
+   * });
+   * ```
+   *
+   * @example Custom nonce from request context
+   * ```tsx
+   * createRSCHandler({
+   *   router,
+   *   nonce: (request, env) => env.nonce,
+   * });
+   * ```
+   */
+  nonce?: NonceProvider<TEnv>;
 }

@@ -20,14 +20,7 @@ export { exposeLoaderId } from "./expose-loader-id.ts";
 export { exposeHandleId } from "./expose-handle-id.ts";
 export { exposeLocationStateId } from "./expose-location-state-id.ts";
 
-// Virtual module type declarations
-declare module "rsc-router:version" {
-  /**
-   * Version string that changes on server restart (dev) or at build time (production).
-   * Used for cache invalidation and deployment mismatch detection.
-   */
-  export const VERSION: string;
-}
+// Virtual module type declarations in ./version.d.ts
 
 /**
  * Default entry file paths (relative to project root)
@@ -157,31 +150,6 @@ export type RscRouterOptions = RscRouterNodeOptions | RscRouterCloudflareOptions
 function fileExists(root: string, relativePath: string): boolean {
   const absolutePath = resolve(root, relativePath);
   return existsSync(absolutePath);
-}
-
-/**
- * Plugin to ensure resolved URLs are available for cloudflare dev server.
- * The cloudflare plugin needs server.resolvedUrls to be set.
- */
-function ensureResolvedUrls(): Plugin {
-  return {
-    name: "rsc-router:ensure-resolved-urls",
-    enforce: "pre",
-    configureServer(server) {
-      const port = server.config.server.port ?? 5173;
-      const host = server.config.server.host || "localhost";
-      const https = server.config.server.https;
-      const protocol = https ? "https" : "http";
-      const hostStr = typeof host === "string" ? host : "localhost";
-
-      if (!server.resolvedUrls) {
-        (server as unknown as { resolvedUrls: object }).resolvedUrls = {
-          local: [`${protocol}://${hostStr}:${port}/`],
-          network: [],
-        };
-      }
-    },
-  };
 }
 
 /**
@@ -503,9 +471,6 @@ export async function rscRouter(
       ssr: VIRTUAL_IDS.ssr,
     };
 
-    // Ensure resolved URLs are available for cloudflare dev server
-    plugins.push(ensureResolvedUrls());
-
     plugins.push({
       name: "rsc-router:cloudflare-integration",
       enforce: "pre",
@@ -533,21 +498,19 @@ export async function rscRouter(
                 },
               },
             },
-            rsc: {
-              build: {
-                rollupOptions: {
-                  // Ensure `default` export only in cloudflare entry output
-                  preserveEntrySignatures: "exports-only",
-                },
-              },
-            },
             ssr: {
               // Build SSR inside RSC directory so wrangler can deploy self-contained dist/rsc
               build: {
                 outDir: "./dist/rsc/ssr",
               },
               resolve: {
-                noExternal: true,
+                // Ensure single React instance in SSR child environment
+                dedupe: ["react", "react-dom"],
+              },
+              // Pre-bundle SSR entry and React for proper module linking with childEnvironments
+              optimizeDeps: {
+                entries: [finalEntries.ssr],
+                include: ["react", "react-dom/server.edge", "react/jsx-runtime"],
               },
             },
           },
@@ -565,13 +528,14 @@ export async function rscRouter(
     );
 
     // Add RSC plugin with cloudflare-specific options
+    // Note: loadModuleDevProxy should NOT be used with childEnvironments
+    // since SSR runs in workerd alongside RSC
     plugins.push(
       rsc({
         get entries() {
           return finalEntries;
         },
         serverHandler: false,
-        loadModuleDevProxy: true,
       }) as PluginOption
     );
   } else {

@@ -53,7 +53,7 @@ function getCacheKeyBase(
 }
 
 /**
- * Generate cache key for a route request.
+ * Generate default cache key for a route request.
  * Single cache entry per route - uses pathname as the key.
  * Includes request type prefix since they produce different segment sets:
  * - doc: document requests (full page load)
@@ -61,7 +61,7 @@ function getCacheKeyBase(
  * - intercept: intercept navigation (modal/overlay routes)
  * @internal
  */
-function getRouteCacheKey(
+function getDefaultRouteCacheKey(
   pathname: string,
   params?: Record<string, string>,
   isIntercept?: boolean
@@ -359,6 +359,57 @@ export class CacheScope {
   }
 
   /**
+   * Resolve the cache key using custom key functions or default generation.
+   *
+   * Resolution priority:
+   * 1. Route-level `key` function (full override)
+   * 2. Store-level `keyGenerator` (modifies default key)
+   * 3. Default key generation (prefix:pathname:params)
+   *
+   * @internal
+   */
+  private async resolveKey(
+    pathname: string,
+    params: Record<string, string>,
+    isIntercept?: boolean
+  ): Promise<string> {
+    const requestCtx = getRequestContext();
+    if (!requestCtx) {
+      // Fallback to default key if no request context
+      return getDefaultRouteCacheKey(pathname, params, isIntercept);
+    }
+
+    // Priority 1: Route-level key function (full override)
+    if (this.config !== false && this.config.key) {
+      try {
+        const customKey = await this.config.key(requestCtx);
+        return customKey;
+      } catch (error) {
+        console.error(`[CacheScope] Custom key function failed, using default:`, error);
+        return getDefaultRouteCacheKey(pathname, params, isIntercept);
+      }
+    }
+
+    // Generate default key
+    const defaultKey = getDefaultRouteCacheKey(pathname, params, isIntercept);
+
+    // Priority 2: Store-level keyGenerator (modifies default key)
+    const store = this.getStore();
+    if (store?.keyGenerator) {
+      try {
+        const modifiedKey = await store.keyGenerator(requestCtx, defaultKey);
+        return modifiedKey;
+      } catch (error) {
+        console.error(`[CacheScope] Store keyGenerator failed, using default:`, error);
+        return defaultKey;
+      }
+    }
+
+    // Priority 3: Default key
+    return defaultKey;
+  }
+
+  /**
    * Lookup cached segments for a route (single cache entry per request).
    * Returns { segments, shouldRevalidate } or null if cache miss.
    *
@@ -379,7 +430,8 @@ export class CacheScope {
     const store = this.getStore();
     if (!store) return null;
 
-    const key = getRouteCacheKey(pathname, params, isIntercept);
+    // Resolve cache key (may use custom key functions)
+    const key = await this.resolveKey(pathname, params, isIntercept);
 
     try {
       const result = await store.get(key);
@@ -428,12 +480,12 @@ export class CacheScope {
    * @param segments - All resolved segments to cache
    * @param isIntercept - Whether this is an intercept navigation (uses different cache key)
    */
-  cacheRoute(
+  async cacheRoute(
     pathname: string,
     params: Record<string, string>,
     segments: ResolvedSegment[],
     isIntercept?: boolean
-  ): void {
+  ): Promise<void> {
     if (!this.enabled || segments.length === 0) return;
 
     const store = this.getStore();
@@ -450,7 +502,10 @@ export class CacheScope {
     if (nonLoaderSegments.length === 0) return;
 
     const ttl = this.ttl;
-    const key = getRouteCacheKey(pathname, params, isIntercept);
+    const swr = this.swr;
+
+    // Resolve cache key early (while request context is available)
+    const key = await this.resolveKey(pathname, params, isIntercept);
 
     // Check if this is a partial request (navigation) vs document request
     const isPartial = requestCtx.url.searchParams.has("_rsc_partial");
@@ -483,7 +538,7 @@ export class CacheScope {
           expiresAt: Date.now() + ttl * 1000,
         };
 
-        await store.set(key, data, ttl, this.swr);
+        await store.set(key, data, ttl, swr);
 
         const segmentTypes = nonLoaderSegments.map((s) =>
           s.type === "parallel" ? s.slot : s.type

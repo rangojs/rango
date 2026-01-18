@@ -50,22 +50,3 @@ export {
 
 // Cache scope
 export { CacheScope, createCacheScope } from "./cache-scope.js";
-
-// Shell cache store types and implementations
-export type {
-  ShellCacheStore,
-  ShellCacheEntry,
-  ShellCacheResult,
-  ShellCacheContext,
-  ShellCacheDefaults,
-} from "./shell-cache-store.js";
-
-export {
-  defaultShellCacheKey,
-  resolveShellCacheKey,
-} from "./shell-cache-store.js";
-
-export {
-  MemoryShellCacheStore,
-  type MemoryShellCacheStoreOptions,
-} from "./memory-shell-store.js";

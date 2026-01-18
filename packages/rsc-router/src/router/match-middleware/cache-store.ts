@@ -218,7 +218,7 @@ export function withCacheStore<TEnv>(
             }
 
             const completeSegments = [...freshSegments, ...freshInterceptSegments];
-            cacheScope.cacheRoute(
+            await cacheScope.cacheRoute(
               ctx.pathname,
               ctx.matched.params,
               completeSegments,
@@ -233,13 +233,15 @@ export function withCacheStore<TEnv>(
         });
       } else {
         // All segments have components - cache directly
-        // cacheRoute handles its own waitUntil internally
-        cacheScope.cacheRoute(
-          ctx.pathname,
-          ctx.matched.params,
-          allSegmentsToCache,
-          ctx.isIntercept
-        );
+        // Schedule caching in waitUntil since cacheRoute is now async (key resolution)
+        requestCtx.waitUntil(async () => {
+          await cacheScope.cacheRoute(
+            ctx.pathname,
+            ctx.matched.params,
+            allSegmentsToCache,
+            ctx.isIntercept
+          );
+        });
       }
 
       return response;

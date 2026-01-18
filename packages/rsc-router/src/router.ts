@@ -30,10 +30,13 @@ import { getRequestContext } from "./server/request-context.js";
 import type {
   ErrorBoundaryHandler,
   ErrorInfo,
+  ErrorPhase,
   HandlerContext,
   LoaderDataResult,
   MatchResult,
   NotFoundBoundaryHandler,
+  OnErrorCallback,
+  OnErrorContext,
   ResolvedRouteMap,
   ResolvedSegment,
   RouteDefinition,
@@ -50,6 +53,7 @@ import {
   createNotFoundSegment,
   findNearestErrorBoundary as findErrorBoundary,
   findNearestNotFoundBoundary as findNotFoundBoundary,
+  invokeOnError,
 } from "./router/error-handling.js";
 import { createHandlerContext } from "./router/handler-context.js";
 import {
@@ -157,38 +161,41 @@ export interface RSCRouterOptions<TEnv = any> {
   defaultNotFoundBoundary?: ReactNode | NotFoundBoundaryHandler;
 
   /**
-   * Callback invoked when an error occurs in loaders or route handlers.
-   * Use this for error monitoring, logging to external services, etc.
+   * Callback invoked when an error occurs during request handling.
    *
-   * The error is always logged to the server console with full details.
-   * In production, only a sanitized error message is sent to the client.
+   * This callback is for notification/logging purposes - it cannot modify
+   * the error handling flow. Use errorBoundary() in route definitions to
+   * customize error UI.
    *
-   * @param error - The original error with full stack trace
-   * @param context - Additional context about where the error occurred
+   * The callback receives comprehensive context about the error including:
+   * - The error itself
+   * - Phase where it occurred (routing, middleware, loader, handler, etc.)
+   * - Request info (URL, method, params)
+   * - Route info (routeKey, segmentId)
+   * - Environment/bindings
+   * - Duration from request start
    *
    * @example
    * ```typescript
    * const router = createRSCRouter<AppEnv>({
-   *   onError: (error, context) => {
-   *     // Send to error monitoring service
-   *     Sentry.captureException(error, {
-   *       tags: { source: context.source, path: context.pathname },
+   *   onError: (context) => {
+   *     // Send to error tracking service
+   *     Sentry.captureException(context.error, {
+   *       tags: {
+   *         phase: context.phase,
+   *         route: context.routeKey,
+   *       },
+   *       extra: {
+   *         url: context.url.toString(),
+   *         params: context.params,
+   *         duration: context.duration,
+   *       },
    *     });
    *   },
    * });
    * ```
    */
-  onError?: (
-    error: Error,
-    context: {
-      /** Where the error occurred: 'loader', 'action', 'route' */
-      source: "loader" | "action" | "route";
-      /** The request pathname */
-      pathname: string;
-      /** The loader ID if source is 'loader' */
-      loaderId?: string;
-    }
-  ) => void;
+  onError?: OnErrorCallback<TEnv>;
 
   /**
    * Cache store for segment caching.
@@ -453,6 +460,18 @@ export function createRSCRouter<TEnv = any>(
     cache,
   } = options;
 
+  /**
+   * Wrapper for invokeOnError that binds the router's onError callback.
+   * Uses the shared utility from router/error-handling.ts for consistent behavior.
+   */
+  function callOnError(
+    error: unknown,
+    phase: ErrorPhase,
+    context: Parameters<typeof invokeOnError<TEnv>>[3]
+  ): void {
+    invokeOnError(onError, error, phase, context, "Router");
+  }
+
   // Validate document is a function (component)
   // Note: We cannot validate "use client" at runtime since it's a bundler directive.
   // If a server component is passed, React will throw during rendering with a
@@ -550,11 +569,21 @@ export function createRSCRouter<TEnv = any>(
   };
 
   // Wrapper for wrapLoaderWithErrorHandling that uses router's error boundary finder
+  // Includes onError callback for loader error notification
   function wrapLoaderPromise<T>(
     promise: Promise<T>,
     entry: EntryData,
     segmentId: string,
-    pathname: string
+    pathname: string,
+    errorContext?: {
+      request: Request;
+      url: URL;
+      routeKey?: string;
+      params?: Record<string, string>;
+      env?: TEnv;
+      isPartial?: boolean;
+      requestStartTime?: number;
+    }
   ): Promise<LoaderDataResult<T>> {
     return wrapLoaderWithErrorHandling(
       promise,
@@ -562,7 +591,25 @@ export function createRSCRouter<TEnv = any>(
       segmentId,
       pathname,
       findNearestErrorBoundary,
-      createErrorInfo
+      createErrorInfo,
+      // Invoke onError when loader fails
+      errorContext
+        ? (error, ctx) => {
+            callOnError(error, "loader", {
+              request: errorContext.request,
+              url: errorContext.url,
+              routeKey: errorContext.routeKey,
+              params: errorContext.params,
+              segmentId: ctx.segmentId,
+              segmentType: "loader",
+              loaderName: ctx.loaderName,
+              env: errorContext.env,
+              isPartial: errorContext.isPartial,
+              handledByBoundary: ctx.handledByBoundary,
+              requestStartTime: errorContext.requestStartTime,
+            });
+          }
+        : undefined
     );
   }
 
@@ -1445,6 +1492,7 @@ export function createRSCRouter<TEnv = any>(
    * @param context - Handler context
    * @param loaderPromises - Shared loader promise map
    * @param resolveFn - The actual resolution function to call
+   * @param errorContext - Additional context for onError callback
    * @returns Segments from successful resolution, or an error segment if error boundary caught
    * @throws If error occurs and no error boundary is defined
    */
@@ -1454,7 +1502,12 @@ export function createRSCRouter<TEnv = any>(
     params: Record<string, string>,
     context: HandlerContext<any, TEnv>,
     loaderPromises: Map<string, Promise<any>>,
-    resolveFn: () => Promise<ResolvedSegment[]>
+    resolveFn: () => Promise<ResolvedSegment[]>,
+    errorContext?: {
+      env?: TEnv;
+      isPartial?: boolean;
+      requestStartTime?: number;
+    }
   ): Promise<ResolvedSegment[]> {
     try {
       return await resolveFn();
@@ -1476,6 +1529,21 @@ export function createRSCRouter<TEnv = any>(
             entry.type,
             context.pathname
           );
+
+          // Invoke onError with notFound context
+          callOnError(error, "handler", {
+            request: context.request,
+            url: context.url,
+            routeKey,
+            params,
+            segmentId: entry.shortCode,
+            segmentType: entry.type as any,
+            env: errorContext?.env,
+            isPartial: errorContext?.isPartial,
+            handledByBoundary: true,
+            metadata: { notFound: true, message: notFoundInfo.message },
+            requestStartTime: errorContext?.requestStartTime,
+          });
 
           console.log(
             `[Router] NotFound caught by notFoundBoundary in ${entry.shortCode}:`,
@@ -1511,6 +1579,20 @@ export function createRSCRouter<TEnv = any>(
 
       // Use default fallback if no error boundary found
       const effectiveFallback = fallback ?? DefaultErrorFallback;
+
+      // Invoke onError callback
+      callOnError(error, "handler", {
+        request: context.request,
+        url: context.url,
+        routeKey,
+        params,
+        segmentId: entry.shortCode,
+        segmentType: entry.type as any,
+        env: errorContext?.env,
+        isPartial: errorContext?.isPartial,
+        handledByBoundary: !!fallback,
+        requestStartTime: errorContext?.requestStartTime,
+      });
 
       console.log(
         `[Router] Error caught by ${fallback ? "error boundary" : "default fallback"} in ${entry.shortCode}:`,
@@ -1737,7 +1819,15 @@ export function createRSCRouter<TEnv = any>(
     entry: EntryData,
     params: Record<string, string>,
     resolveFn: () => Promise<SegmentRevalidationResult>,
-    pathname?: string
+    pathname?: string,
+    errorContext?: {
+      request: Request;
+      url: URL;
+      routeKey?: string;
+      env?: TEnv;
+      isPartial?: boolean;
+      requestStartTime?: number;
+    }
   ): Promise<SegmentRevalidationResult> {
     try {
       return await resolveFn();
@@ -1759,6 +1849,23 @@ export function createRSCRouter<TEnv = any>(
             entry.type,
             pathname
           );
+
+          // Invoke onError with notFound context
+          if (errorContext) {
+            callOnError(error, "handler", {
+              request: errorContext.request,
+              url: errorContext.url,
+              routeKey: errorContext.routeKey,
+              params,
+              segmentId: entry.shortCode,
+              segmentType: entry.type as any,
+              env: errorContext.env,
+              isPartial: errorContext.isPartial,
+              handledByBoundary: true,
+              metadata: { notFound: true, message: notFoundInfo.message },
+              requestStartTime: errorContext.requestStartTime,
+            });
+          }
 
           console.log(
             `[Router] NotFound caught by notFoundBoundary in ${entry.shortCode}:`,
@@ -1799,6 +1906,22 @@ export function createRSCRouter<TEnv = any>(
 
       // Use default fallback if no error boundary found
       const effectiveFallback = fallback ?? DefaultErrorFallback;
+
+      // Invoke onError callback
+      if (errorContext) {
+        callOnError(error, "handler", {
+          request: errorContext.request,
+          url: errorContext.url,
+          routeKey: errorContext.routeKey,
+          params,
+          segmentId: entry.shortCode,
+          segmentType: entry.type as any,
+          env: errorContext.env,
+          isPartial: errorContext.isPartial,
+          handledByBoundary: !!fallback,
+          requestStartTime: errorContext.requestStartTime,
+        });
+      }
 
       console.log(
         `[Router] Error caught by ${fallback ? "error boundary" : "default fallback"} in ${entry.shortCode}:`,
@@ -2522,6 +2645,14 @@ export function createRSCRouter<TEnv = any>(
         return await collectMatchResult(pipeline, ctx, state);
       } catch (error) {
         if (error instanceof Response) throw error;
+        // Report unhandled errors during full match pipeline
+        callOnError(error, "routing", {
+          request,
+          url: ctx.url,
+          env,
+          isPartial: false,
+          handledByBoundary: false,
+        });
         throw sanitizeError(error);
       }
     });
@@ -2874,6 +3005,9 @@ export function createRSCRouter<TEnv = any>(
     const url = new URL(request.url);
     const pathname = url.pathname;
 
+    // Track request start time for duration in onError (local to this request)
+    const requestStartTime = performance.now();
+
     // Initialize metrics store for this request
     const metricsStore = getMetricsStore();
 
@@ -3157,6 +3291,15 @@ export function createRSCRouter<TEnv = any>(
         return await collectMatchResult(pipeline, ctx, state);
       } catch (error) {
         if (error instanceof Response) throw error;
+        // Report unhandled errors during partial match pipeline
+        callOnError(error, actionContext ? "action" : "revalidation", {
+          request,
+          url: ctx.url,
+          env: context,
+          actionId: actionContext?.actionId,
+          isPartial: true,
+          handledByBoundary: false,
+        });
         throw sanitizeError(error);
       }
     });

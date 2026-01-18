@@ -2,12 +2,24 @@ import React from "react";
 import { initHandleDataSync } from "../browser/react/use-handle.js";
 import { initSegmentsSync } from "../browser/react/use-segments.js";
 import type { HandleData } from "../browser/types.js";
+import type { ErrorPhase } from "../types.js";
+
+/**
+ * Options for injectRSCPayload
+ */
+export interface InjectRSCPayloadOptions {
+  /**
+   * Nonce for Content Security Policy (CSP)
+   */
+  nonce?: string;
+}
 
 /**
  * Options for renderToReadableStream from react-dom/server
  */
 interface RenderToReadableStreamOptions {
   bootstrapScriptContent?: string;
+  nonce?: string;
   formState?: unknown;
 }
 
@@ -22,12 +34,17 @@ export interface SSRRenderOptions {
    * receive the action result during SSR.
    */
   formState?: unknown;
+
+  /**
+   * Nonce for Content Security Policy (CSP)
+   */
+  nonce?: string;
 }
 
 /**
  * SSR dependencies from external packages
  */
-export interface SSRDependencies {
+export interface SSRDependencies<TEnv = unknown> {
   /**
    * createFromReadableStream from @vitejs/plugin-rsc/ssr
    */
@@ -45,7 +62,8 @@ export interface SSRDependencies {
    * injectRSCPayload from rsc-html-stream/server
    */
   injectRSCPayload: (
-    rscStream: ReadableStream<Uint8Array>
+    rscStream: ReadableStream<Uint8Array>,
+    options?: InjectRSCPayloadOptions
   ) => TransformStream<Uint8Array, Uint8Array>;
 
   /**
@@ -53,6 +71,24 @@ export interface SSRDependencies {
    * Typically: () => import.meta.viteRsc.loadBootstrapScriptContent("index")
    */
   loadBootstrapScriptContent: () => Promise<string>;
+
+  /**
+   * Optional callback invoked when an error occurs during SSR rendering.
+   *
+   * This callback is for notification/logging purposes.
+   *
+   * @example
+   * ```typescript
+   * export const renderHTML = createSSRHandler({
+   *   // ... other deps
+   *   onError: (error, context) => {
+   *     console.error('[SSR] Rendering error:', error);
+   *     Sentry.captureException(error);
+   *   },
+   * });
+   * ```
+   */
+  onError?: (error: Error, context: { phase: ErrorPhase }) => void;
 }
 
 /**
@@ -100,131 +136,80 @@ async function consumeAsyncGenerator(
  * });
  * ```
  */
-/**
- * Return type for createSSRHandler
- */
-export interface SSRHandlerResult {
-  /**
-   * Render RSC stream to HTML stream with RSC payload injection.
-   * Full SSR flow for regular requests.
-   */
-  renderHTML: (
-    rscStream: ReadableStream<Uint8Array>,
-    options?: SSRRenderOptions
-  ) => Promise<ReadableStream<Uint8Array>>;
-
-  /**
-   * Render RSC stream to HTML stream WITHOUT RSC payload injection.
-   * Used for shell caching - returns raw HTML that can be cached.
-   */
-  renderShell: (
-    rscStream: ReadableStream<Uint8Array>,
-    options?: SSRRenderOptions
-  ) => Promise<ReadableStream<Uint8Array>>;
-
-  /**
-   * Inject RSC payload into HTML stream.
-   * Used after cached shell response.
-   */
-  injectRSCPayload: (
-    rscStream: ReadableStream<Uint8Array>
-  ) => TransformStream<Uint8Array, Uint8Array>;
-}
-
-export function createSSRHandler(deps: SSRDependencies): SSRHandlerResult {
+export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
   const {
     createFromReadableStream,
     renderToReadableStream,
     injectRSCPayload,
     loadBootstrapScriptContent,
+    onError,
   } = deps;
 
   /**
-   * Internal: Render RSC stream to HTML stream.
+   * Render RSC stream to HTML stream
+   *
    * @param rscStream - The RSC stream to render
-   * @param options - Render options
-   * @param shouldInjectRsc - Whether to inject RSC payload into HTML
+   * @param options - Optional render options including formState for useActionState and nonce for CSP
    */
-  async function renderInternal(
+  return async function renderHTML(
     rscStream: ReadableStream<Uint8Array>,
-    options?: SSRRenderOptions,
-    shouldInjectRsc = true
+    options?: SSRRenderOptions
   ): Promise<ReadableStream<Uint8Array>> {
-    // For shell rendering (no RSC injection), we don't need to tee the stream
-    // For full rendering, tee the stream:
-    // - rscStream1: For SSR rendering (deserialize to React VDOM)
-    // - rscStream2: For browser hydration (inject as __FLIGHT_DATA__)
-    const [rscStream1, rscStream2] = shouldInjectRsc
-      ? rscStream.tee()
-      : [rscStream, null];
+    const { nonce, formState } = options ?? {};
 
-    // Deserialize RSC stream to React tree
-    let payload: Promise<RscPayload> | undefined;
-    let handlesPromise: Promise<HandleData> | undefined;
-    function SsrRoot() {
-      payload ??= createFromReadableStream<RscPayload>(rscStream1);
-      const resolved = React.use(payload);
+    try {
+      // Tee the stream:
+      // - rscStream1: For SSR rendering (deserialize to React VDOM)
+      // - rscStream2: For browser hydration (inject as __FLIGHT_DATA__)
+      const [rscStream1, rscStream2] = rscStream.tee();
 
-      // Initialize segments state before children render (for useSegments hook)
-      initSegmentsSync(resolved.metadata?.matched, resolved.metadata?.pathname);
+      // Deserialize RSC stream to React tree
+      let payload: Promise<RscPayload> | undefined;
+      let handlesPromise: Promise<HandleData> | undefined;
+      function SsrRoot() {
+        payload ??= createFromReadableStream<RscPayload>(rscStream1);
+        const resolved = React.use(payload);
 
-      // Await handles and initialize state before children render
-      // The handles property is an async generator that yields on each push
-      // Memoize the promise since async generators can only be iterated once
-      if (resolved.metadata?.handles) {
-        handlesPromise ??= consumeAsyncGenerator(resolved.metadata.handles);
-        const handleData = React.use(handlesPromise);
-        initHandleDataSync(handleData, resolved.metadata.matched);
+        // Initialize segments state before children render (for useSegments hook)
+        initSegmentsSync(resolved.metadata?.matched, resolved.metadata?.pathname);
+
+        // Await handles and initialize state before children render
+        // The handles property is an async generator that yields on each push
+        // Memoize the promise since async generators can only be iterated once
+        if (resolved.metadata?.handles) {
+          handlesPromise ??= consumeAsyncGenerator(resolved.metadata.handles);
+          const handleData = React.use(handlesPromise);
+          initHandleDataSync(handleData, resolved.metadata.matched);
+        }
+
+        return resolved.root;
       }
 
-      return resolved.root;
+      // Get bootstrap script content
+      const bootstrapScriptContent = await loadBootstrapScriptContent();
+
+      // Render React tree to HTML stream
+      // Pass formState for useActionState progressive enhancement if provided
+      // Pass nonce for CSP if provided
+      const htmlStream = await renderToReadableStream(<SsrRoot />, {
+        bootstrapScriptContent,
+        formState,
+        nonce,
+      });
+
+      // Inject RSC payload into HTML as <script nonce="...">__FLIGHT_DATA__</script>
+      return htmlStream.pipeThrough(injectRSCPayload(rscStream2, { nonce }));
+    } catch (error) {
+      // Invoke onError callback if provided
+      if (onError) {
+        const errorObj = error instanceof Error ? error : new Error(String(error));
+        try {
+          onError(errorObj, { phase: "rendering" });
+        } catch (callbackError) {
+          console.error("[SSRHandler.onError] Callback error:", callbackError);
+        }
+      }
+      throw error;
     }
-
-    // Get bootstrap script content
-    const bootstrapScriptContent = await loadBootstrapScriptContent();
-
-    // Render React tree to HTML stream
-    // Pass formState for useActionState progressive enhancement if provided
-    const htmlStream = await renderToReadableStream(<SsrRoot />, {
-      bootstrapScriptContent,
-      formState: options?.formState,
-    });
-
-    // Only inject RSC payload if requested
-    if (shouldInjectRsc && rscStream2) {
-      // Inject RSC payload into HTML as <script>__FLIGHT_DATA__</script>
-      return htmlStream.pipeThrough(injectRSCPayload(rscStream2));
-    }
-
-    // Return raw HTML without RSC injection (for shell caching)
-    return htmlStream;
-  }
-
-  /**
-   * Render RSC stream to HTML stream with RSC payload injection.
-   * Full SSR flow for regular requests.
-   */
-  async function renderHTML(
-    rscStream: ReadableStream<Uint8Array>,
-    options?: SSRRenderOptions
-  ): Promise<ReadableStream<Uint8Array>> {
-    return renderInternal(rscStream, options, true);
-  }
-
-  /**
-   * Render RSC stream to HTML stream WITHOUT RSC payload injection.
-   * Used for shell caching - returns raw HTML that can be cached.
-   */
-  async function renderShell(
-    rscStream: ReadableStream<Uint8Array>,
-    options?: SSRRenderOptions
-  ): Promise<ReadableStream<Uint8Array>> {
-    return renderInternal(rscStream, options, false);
-  }
-
-  return {
-    renderHTML,
-    renderShell,
-    injectRSCPayload,
   };
 }

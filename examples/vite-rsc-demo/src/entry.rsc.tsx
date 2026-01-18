@@ -8,15 +8,14 @@ import {
 } from "rsc-router/internal/deps/rsc";
 import { router } from "./router.js";
 import { createRSCHandler } from "rsc-router/rsc";
-import { VERSION } from "rsc-router:version";
 
 // Import loader manifest to ensure all fetchable loaders are registered at startup
 import "virtual:rsc-router/loader-manifest";
 
 // Cache is configured on the router (see router.tsx)
+// VERSION is auto-imported by createRSCHandler
 export default createRSCHandler({
   router,
-  version: VERSION,
   deps: {
     renderToReadableStream,
     decodeReply,

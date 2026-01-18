@@ -2,6 +2,7 @@
  * Router Error Handling Utilities
  *
  * Error boundary and not-found boundary handling for RSC Router.
+ * Also includes the shared invokeOnError utility for error callback invocation.
  */
 
 import type { ReactNode } from "react";
@@ -14,7 +15,95 @@ import type {
   NotFoundInfo,
   NotFoundBoundaryHandler,
   NotFoundBoundaryFallbackProps,
+  ErrorPhase,
+  OnErrorCallback,
+  OnErrorContext,
 } from "../types";
+
+/**
+ * Context required to invoke the onError callback.
+ * This is a subset of OnErrorContext that callers must provide.
+ */
+export interface InvokeOnErrorContext<TEnv = any> {
+  request: Request;
+  url: URL;
+  routeKey?: string;
+  params?: Record<string, string>;
+  segmentId?: string;
+  segmentType?: "layout" | "route" | "parallel" | "loader" | "middleware";
+  loaderName?: string;
+  middlewareId?: string;
+  actionId?: string;
+  env?: TEnv;
+  isPartial?: boolean;
+  handledByBoundary?: boolean;
+  metadata?: Record<string, unknown>;
+  /** Request start time from performance.now() for duration calculation */
+  requestStartTime?: number;
+}
+
+/**
+ * Invoke the onError callback with comprehensive context.
+ * Catches any errors in the callback itself to prevent masking the original error.
+ *
+ * This is a shared utility used by both the router and RSC handler to ensure
+ * consistent error callback behavior across the codebase.
+ *
+ * @param onError - The onError callback to invoke (may be undefined)
+ * @param error - The error that occurred
+ * @param phase - The phase where the error occurred
+ * @param context - Additional context about the error
+ * @param logPrefix - Prefix for console.error messages (e.g., "Router" or "RSC")
+ */
+export function invokeOnError<TEnv = any>(
+  onError: OnErrorCallback<TEnv> | undefined,
+  error: unknown,
+  phase: ErrorPhase,
+  context: InvokeOnErrorContext<TEnv>,
+  logPrefix: string = "Router"
+): void {
+  if (!onError) return;
+
+  const errorObj = error instanceof Error ? error : new Error(String(error));
+  const duration = context.requestStartTime
+    ? performance.now() - context.requestStartTime
+    : undefined;
+
+  const errorContext: OnErrorContext<TEnv> = {
+    error: errorObj,
+    phase,
+    request: context.request,
+    url: context.url,
+    pathname: context.url.pathname,
+    method: context.request.method,
+    routeKey: context.routeKey,
+    params: context.params,
+    segmentId: context.segmentId,
+    segmentType: context.segmentType,
+    loaderName: context.loaderName,
+    middlewareId: context.middlewareId,
+    actionId: context.actionId,
+    env: context.env,
+    duration,
+    isPartial: context.isPartial,
+    handledByBoundary: context.handledByBoundary,
+    stack: errorObj.stack,
+    metadata: context.metadata,
+  };
+
+  try {
+    const result = onError(errorContext);
+    // If onError returns a promise, catch any rejections
+    if (result instanceof Promise) {
+      result.catch((callbackError) => {
+        console.error(`[${logPrefix}.onError] Callback error:`, callbackError);
+      });
+    }
+  } catch (callbackError) {
+    // Log but don't throw - we don't want callback errors to mask the original error
+    console.error(`[${logPrefix}.onError] Callback error:`, callbackError);
+  }
+}
 
 /**
  * Find the nearest error boundary by walking up the entry chain
