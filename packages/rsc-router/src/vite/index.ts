@@ -431,9 +431,8 @@ export async function rscRouter(
                   },
                 },
               },
-              // Pre-bundle client entry for proper module linking with virtual entries
+              // Pre-bundle rsc-html-stream to prevent discovery during first request
               optimizeDeps: {
-                entries: [finalEntries.client],
                 include: ["rsc-html-stream/client"],
               },
             },
