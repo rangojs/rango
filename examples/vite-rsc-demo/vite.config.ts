@@ -9,13 +9,7 @@ export default defineConfig({
     react(),
     rscRouter({
       router: "./src/router.tsx",
-      rsc: {
-        entries: {
-          client: "./src/entry.browser.tsx",
-          ssr: "./src/entry.ssr.tsx",
-          rsc: "./src/entry.rsc.tsx",
-        },
-      },
+      // Uses virtual entries by default (no explicit entries needed)
     }),
     devtoolsJson(),
   ],
