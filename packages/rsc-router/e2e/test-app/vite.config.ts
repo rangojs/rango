@@ -7,13 +7,7 @@ export default defineConfig({
   plugins: [
     rscRouter({
       router: "./src/router.tsx",
-      rsc: {
-        entries: {
-          client: "./src/entry.browser.tsx",
-          ssr: "./src/entry.ssr.tsx",
-          rsc: "./src/entry.rsc.tsx",
-        },
-      },
+      // Using virtual entries (no explicit entries specified)
     }),
     devtoolsJson(),
   ],

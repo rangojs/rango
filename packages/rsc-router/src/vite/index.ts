@@ -130,10 +130,8 @@ export type RscRouterOptions = RscRouterNodeOptions | RscRouterCloudflareOptions
  */
 function createVirtualEntriesPlugin(
   entries: { client: string; ssr: string; rsc?: string },
-  routerPath?: string,
-  options?: { forCloudflare?: boolean }
+  routerPath?: string
 ): Plugin {
-  const forCloudflare = options?.forCloudflare ?? false;
 
   // Build virtual modules map based on which entries use virtual IDs
   const virtualModules: Record<string, string> = {};
@@ -254,7 +252,8 @@ function createVersionPlugin(): Plugin {
 
       // Check if this is an RSC environment update (not client/ssr)
       // RSC modules affect server-rendered content and cached payloads
-      const isRscModule = ctx.environment?.name === "rsc";
+      // In Vite 6, environment is accessed via `this.environment`
+      const isRscModule = this.environment?.name === "rsc";
 
       if (isRscModule && ctx.modules.length > 0) {
         // Update version when RSC modules change
@@ -453,11 +452,7 @@ export async function rscRouter(
       },
     });
 
-    plugins.push(
-      createVirtualEntriesPlugin(finalEntries, undefined, {
-        forCloudflare: true,
-      })
-    );
+    plugins.push(createVirtualEntriesPlugin(finalEntries));
 
     // Add RSC plugin with cloudflare-specific options
     // Note: loadModuleDevProxy should NOT be used with childEnvironments
@@ -501,7 +496,15 @@ export async function rscRouter(
         enforce: "pre",
 
         config() {
-          // Configure client environment for manual chunks
+          // Configure environments for RSC
+          // When using virtual entries, we need to explicitly configure optimizeDeps
+          // so Vite pre-bundles React before processing the virtual modules.
+          // Without this, the dep optimizer may run multiple times with different hashes,
+          // causing React instance mismatches.
+          const useVirtualClient = finalEntries.client === VIRTUAL_IDS.browser;
+          const useVirtualSSR = finalEntries.ssr === VIRTUAL_IDS.ssr;
+          const useVirtualRSC = finalEntries.rsc === VIRTUAL_IDS.rsc;
+
           return {
             environments: {
               client: {
@@ -512,7 +515,31 @@ export async function rscRouter(
                     },
                   },
                 },
+                ...(useVirtualClient && {
+                  optimizeDeps: {
+                    // Tell Vite to scan the virtual entry for dependencies
+                    entries: [VIRTUAL_IDS.browser],
+                  },
+                }),
               },
+              ...(useVirtualSSR && {
+                ssr: {
+                  optimizeDeps: {
+                    entries: [VIRTUAL_IDS.ssr],
+                    // Pre-bundle React for SSR to ensure single instance
+                    include: ["react", "react-dom/server.edge", "react/jsx-runtime"],
+                  },
+                },
+              }),
+              ...(useVirtualRSC && {
+                rsc: {
+                  optimizeDeps: {
+                    entries: [VIRTUAL_IDS.rsc],
+                    // Pre-bundle React for RSC to ensure single instance
+                    include: ["react", "react/jsx-runtime"],
+                  },
+                },
+              }),
             },
           };
         },
