@@ -5,7 +5,16 @@ import devtoolsJson from "vite-plugin-devtools-json";
 
 export default defineConfig({
   plugins: [
-    rscRouter({ entry: "./src/router.tsx" }),
+    rscRouter({
+      router: "./src/router.tsx",
+      rsc: {
+        entries: {
+          client: "./src/entry.browser.tsx",
+          ssr: "./src/entry.ssr.tsx",
+          rsc: "./src/entry.rsc.tsx",
+        },
+      },
+    }),
     devtoolsJson(),
   ],
   esbuild: {

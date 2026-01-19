@@ -6,7 +6,7 @@ import {
   decodeAction,
   decodeFormState,
 } from "rsc-router/internal/deps/rsc";
-import { router, cacheStore } from "./router.js";
+import { router } from "./router.js";
 import { createRSCHandler } from "rsc-router/rsc";
 
 export default createRSCHandler({
@@ -24,7 +24,4 @@ export default createRSCHandler({
       "ssr",
       "index"
     ),
-  cache: {
-    store: cacheStore,
-  },
 });
