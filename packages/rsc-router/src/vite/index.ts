@@ -431,6 +431,10 @@ export async function rscRouter(
                   },
                 },
               },
+              // Pre-bundle client entry for proper module linking with virtual entries
+              optimizeDeps: {
+                entries: [finalEntries.client],
+              },
             },
             ssr: {
               // Build SSR inside RSC directory so wrangler can deploy self-contained dist/rsc
