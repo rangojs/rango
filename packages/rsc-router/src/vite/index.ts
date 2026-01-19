@@ -434,6 +434,7 @@ export async function rscRouter(
               // Pre-bundle client entry for proper module linking with virtual entries
               optimizeDeps: {
                 entries: [finalEntries.client],
+                include: ["rsc-html-stream/client"],
               },
             },
             ssr: {
@@ -448,7 +449,12 @@ export async function rscRouter(
               // Pre-bundle SSR entry and React for proper module linking with childEnvironments
               optimizeDeps: {
                 entries: [finalEntries.ssr],
-                include: ["react", "react-dom/server.edge", "react/jsx-runtime"],
+                include: [
+                  "react",
+                  "react-dom/server.edge",
+                  "react/jsx-runtime",
+                  "rsc-html-stream/server",
+                ],
               },
             },
           },
