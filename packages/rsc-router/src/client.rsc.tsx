@@ -69,3 +69,20 @@ export {
   type LocationStateDefinition,
   type LocationStateEntry,
 } from "./browser/react/location-state-shared.js";
+
+// Stub exports for client-only hooks
+// These satisfy esbuild's dependency scan but throw if accidentally used in RSC
+function clientOnlyHookError(hookName: string): never {
+  throw new Error(
+    `${hookName}() can only be used in client components. ` +
+      `Add "use client" directive at the top of your file.`
+  );
+}
+
+export function useHandle(): never {
+  return clientOnlyHookError("useHandle");
+}
+
+export function useLocationState(): never {
+  return clientOnlyHookError("useLocationState");
+}

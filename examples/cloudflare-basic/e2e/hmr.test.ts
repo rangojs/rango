@@ -18,14 +18,23 @@ test.describe("hmr", () => {
   // Store original file contents for cleanup
   const originalContents = new Map<string, string>();
 
-  test.afterAll(() => {
-    // Restore all modified files to avoid git conflicts
+  test.afterEach(() => {
+    // Restore all modified files after each test to ensure clean state
     for (const [filePath, content] of originalContents) {
       fs.writeFileSync(filePath, content, "utf-8");
     }
+    originalContents.clear();
   });
 
-  async function triggerHMRAndWait(page: Page, filePath: string): Promise<void> {
+  /**
+   * Trigger HMR by modifying a file and wait for the RSC stream to complete.
+   * Optionally makes a visible content change and returns the expected new text.
+   */
+  async function triggerHMRAndWait(
+    page: Page,
+    filePath: string,
+    options?: { visibleChange?: { search: string; replace: string } }
+  ): Promise<{ expectedText?: string }> {
     const fullPath = path.join(f.root, filePath);
     const content = fs.readFileSync(fullPath, "utf-8");
 
@@ -34,10 +43,23 @@ test.describe("hmr", () => {
       originalContents.set(fullPath, content);
     }
 
+    let newContent = content;
+    let expectedText: string | undefined;
+
+    // Apply visible change if specified
+    if (options?.visibleChange) {
+      const { search, replace } = options.visibleChange;
+      if (content.includes(search)) {
+        newContent = content.replace(search, replace);
+        expectedText = replace;
+      }
+    }
+
+    // Always add/update HMR trigger marker to ensure file change is detected
     const marker = `// HMR trigger: ${Date.now()}`;
-    const newContent = content.includes("// HMR trigger:")
-      ? content.replace(/\/\/ HMR trigger: \d+/, marker)
-      : content + `\n${marker}\n`;
+    newContent = newContent.includes("// HMR trigger:")
+      ? newContent.replace(/\/\/ HMR trigger: \d+/, marker)
+      : newContent + `\n${marker}\n`;
 
     const hmrComplete = page.waitForEvent("console", {
       predicate: (msg) => msg.text().includes("RSC stream complete"),
@@ -48,6 +70,8 @@ test.describe("hmr", () => {
 
     await hmrComplete;
     await page.waitForTimeout(200);
+
+    return { expectedText };
   }
 
   test("should update content after HMR without page reload", async ({
@@ -78,10 +102,20 @@ test.describe("hmr", () => {
 
     await using __ = await expectNoReload(page);
 
-    await triggerHMRAndWait(page, "src/handlers/about.tsx");
+    // Make a visible change and verify it appears
+    const { expectedText } = await triggerHMRAndWait(
+      page,
+      "src/handlers/about.tsx",
+      {
+        visibleChange: {
+          search: ">About</h1>",
+          replace: ">About (HMR Updated)</h1>",
+        },
+      }
+    );
 
     await expect(testId(page, "about-page")).toBeVisible();
-    await expect(testId(page, "about-title")).toHaveText("About");
+    await expect(testId(page, "about-title")).toHaveText("About (HMR Updated)");
   });
 
   test("should preserve navigation after HMR", async ({ page }) => {
@@ -92,14 +126,26 @@ test.describe("hmr", () => {
 
     await testId(page, "nav-about").click();
     await expect(testId(page, "about-page")).toBeVisible();
+    await expect(testId(page, "about-title")).toHaveText("About");
 
-    await using __ = await expectNoReload(page);
+    // Only monitor for reload during HMR, not during subsequent navigation
+    {
+      await using __ = await expectNoReload(page);
 
-    await triggerHMRAndWait(page, "src/handlers/about.tsx");
+      // Make a visible change and verify it appears without reload
+      await triggerHMRAndWait(page, "src/handlers/about.tsx", {
+        visibleChange: {
+          search: ">About</h1>",
+          replace: ">About (HMR Updated)</h1>",
+        },
+      });
 
-    await expect(testId(page, "about-page")).toBeVisible();
-    await expect(testId(page, "nav")).toBeVisible();
+      await expect(testId(page, "about-page")).toBeVisible();
+      await expect(testId(page, "about-title")).toHaveText("About (HMR Updated)");
+      await expect(testId(page, "nav")).toBeVisible();
+    }
 
+    // Navigation after HMR should still work
     await testId(page, "nav-home").click();
     await expect(testId(page, "home-page")).toBeVisible();
   });

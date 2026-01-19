@@ -114,23 +114,30 @@ export async function clickAndWaitFor(
 }
 
 /**
- * Verify that navigation happens without full page reload
+ * Verify that navigation happens without full page reload.
+ * Uses network request monitoring to detect document requests which indicate a full reload.
  */
 export async function expectNoReload(page: Page) {
-  await page.evaluate(() => {
-    const el = document.createElement("meta");
-    el.setAttribute("name", "x-reload-check");
-    document.head.append(el);
-  });
+  const documentRequests: string[] = [];
+
+  const requestHandler = (request: import("@playwright/test").Request) => {
+    // Track document requests (HTML pages) which indicate a full reload
+    if (request.resourceType() === "document") {
+      documentRequests.push(request.url());
+    }
+  };
+
+  page.on("request", requestHandler);
 
   return {
     [Symbol.asyncDispose]: async () => {
-      await expect(page.locator(`meta[name="x-reload-check"]`)).toBeAttached({
-        timeout: 1,
-      });
-      await page.evaluate(() => {
-        document.querySelector(`meta[name="x-reload-check"]`)!.remove();
-      });
+      page.off("request", requestHandler);
+
+      if (documentRequests.length > 0) {
+        throw new Error(
+          `Full page reload detected. Document requests made:\n${documentRequests.join("\n")}`
+        );
+      }
     },
   };
 }

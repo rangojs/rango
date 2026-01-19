@@ -1,6 +1,5 @@
 import type { Plugin, PluginOption } from "vite";
 import * as Vite from "vite";
-import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { exposeActionId } from "./expose-action-id.ts";
 import { exposeLoaderId } from "./expose-loader-id.ts";
@@ -23,37 +22,25 @@ export { exposeLocationStateId } from "./expose-location-state-id.ts";
 // Virtual module type declarations in ./version.d.ts
 
 /**
- * Default entry file paths (relative to project root)
- */
-const DEFAULT_ENTRY_PATHS = {
-  client: "./src/entry.browser.tsx",
-  ssr: "./src/entry.ssr.tsx",
-  rsc: "./src/entry.rsc.tsx",
-} as const;
-
-/**
- * RSC plugin entry points configuration
+ * RSC plugin entry points configuration.
+ * All entries use virtual modules by default. Specify a path to use a custom entry file.
  */
 export interface RscEntries {
   /**
-   * Path to the browser/client entry file.
-   * If the file doesn't exist, a default virtual entry is used.
-   * @default "./src/entry.browser.tsx"
+   * Path to a custom browser/client entry file.
+   * If not specified, a default virtual entry is used.
    */
   client?: string;
 
   /**
-   * Path to the SSR entry file.
-   * If the file doesn't exist, a default virtual entry is used.
-   * @default "./src/entry.ssr.tsx"
+   * Path to a custom SSR entry file.
+   * If not specified, a default virtual entry is used.
    */
   ssr?: string;
 
   /**
-   * Path to the RSC entry file.
-   * If the file doesn't exist, a default virtual entry is used.
-   * The default expects a router export from "./src/router.tsx".
-   * @default "./src/entry.rsc.tsx"
+   * Path to a custom RSC entry file.
+   * If not specified, a default virtual entry is used that imports the router from the `entry` option.
    */
   rsc?: string;
 }
@@ -64,8 +51,8 @@ export interface RscEntries {
 export interface RscPluginOptions {
   /**
    * Entry points for client, ssr, and rsc environments.
-   * All entries have sensible defaults and can be omitted.
-   * If entry files don't exist, virtual defaults are provided.
+   * All entries use virtual modules by default.
+   * Specify paths only when you need custom entry files.
    */
   entries?: RscEntries;
 }
@@ -92,15 +79,15 @@ export interface RscRouterNodeOptions extends RscRouterBaseOptions {
   preset?: "node";
 
   /**
-   * Path to the router entry file that exports your route configuration.
-   * This file must export a `router` object.
+   * Path to your router configuration file that exports the route tree.
+   * This file must export a `router` object created with `createRouter()`.
    *
    * @example
    * ```ts
-   * rscRouter({ entry: './src/router.tsx' })
+   * rscRouter({ router: './src/router.tsx' })
    * ```
    */
-  entry: string;
+  router: string;
 
   /**
    * RSC plugin configuration. By default, rsc-router includes @vitejs/plugin-rsc
@@ -126,17 +113,10 @@ export interface RscRouterCloudflareOptions extends RscRouterBaseOptions {
    * Deployment preset for Cloudflare Workers.
    * When using cloudflare preset:
    * - @vitejs/plugin-rsc is NOT added (cloudflare plugin adds it)
-   * - Router is expected at ./src/router.tsx (or specify with `entry`)
-   * - Worker entry is expected at ./src/worker.rsc.tsx
-   * - Browser and SSR use virtual entries by default
+   * - Your worker entry (e.g., worker.rsc.tsx) imports the router directly
+   * - Browser and SSR use virtual entries
    */
   preset: "cloudflare";
-
-  /**
-   * Path to the router entry file.
-   * @default "./src/router.tsx"
-   */
-  entry?: string;
 }
 
 /**
@@ -145,77 +125,41 @@ export interface RscRouterCloudflareOptions extends RscRouterBaseOptions {
 export type RscRouterOptions = RscRouterNodeOptions | RscRouterCloudflareOptions;
 
 /**
- * Check if a file exists relative to the project root
- */
-function fileExists(root: string, relativePath: string): boolean {
-  const absolutePath = resolve(root, relativePath);
-  return existsSync(absolutePath);
-}
-
-/**
- * Create a virtual modules plugin for default entry files
+ * Create a virtual modules plugin for default entry files.
+ * Provides virtual module content when entries use VIRTUAL_IDS (no custom entry configured).
  */
 function createVirtualEntriesPlugin(
   entries: { client: string; ssr: string; rsc?: string },
-  initialRoot: string,
-  routerEntry: string,
-  options?: { forCloudflare?: boolean }
+  routerPath?: string
 ): Plugin {
-  const forCloudflare = options?.forCloudflare ?? false;
 
-  // These will be computed in configResolved when we have the final root (cloudflare only)
-  let virtualModules: Record<string, string> = {};
-  let initialized = false;
+  // Build virtual modules map based on which entries use virtual IDs
+  const virtualModules: Record<string, string> = {};
 
-  function initializeVirtualModules(root: string) {
-    if (initialized && !forCloudflare) return;
-    initialized = true;
-
-    // Track which entries need virtual modules
-    const useVirtual = {
-      client: !fileExists(root, entries.client),
-      ssr: !fileExists(root, entries.ssr),
-      rsc: entries.rsc ? !fileExists(root, entries.rsc) : false,
-    };
-
-    virtualModules = {};
-
-    if (useVirtual.client) {
-      virtualModules[VIRTUAL_IDS.browser] = VIRTUAL_ENTRY_BROWSER;
-    }
-    if (useVirtual.ssr) {
-      virtualModules[VIRTUAL_IDS.ssr] = VIRTUAL_ENTRY_SSR;
-    }
-    if (useVirtual.rsc) {
-      // Convert relative path to absolute for virtual module imports
-      const absoluteRouterPath = routerEntry.startsWith(".")
-        ? "/" + routerEntry.slice(2) // ./src/router.tsx -> /src/router.tsx
-        : routerEntry;
-      virtualModules[VIRTUAL_IDS.rsc] = getVirtualEntryRSC(absoluteRouterPath);
-    }
+  if (entries.client === VIRTUAL_IDS.browser) {
+    virtualModules[VIRTUAL_IDS.browser] = VIRTUAL_ENTRY_BROWSER;
   }
-
-  // Initialize with initial root (may be updated in configResolved for cloudflare)
-  initializeVirtualModules(initialRoot);
+  if (entries.ssr === VIRTUAL_IDS.ssr) {
+    virtualModules[VIRTUAL_IDS.ssr] = VIRTUAL_ENTRY_SSR;
+  }
+  if (entries.rsc === VIRTUAL_IDS.rsc && routerPath) {
+    // Convert relative path to absolute for virtual module imports
+    const absoluteRouterPath = routerPath.startsWith(".")
+      ? "/" + routerPath.slice(2) // ./src/router.tsx -> /src/router.tsx
+      : routerPath;
+    virtualModules[VIRTUAL_IDS.rsc] = getVirtualEntryRSC(absoluteRouterPath);
+  }
 
   return {
     name: "rsc-router:virtual-entries",
     enforce: "pre",
 
-    configResolved: forCloudflare
-      ? (config) => {
-          // Re-initialize with the resolved root for cloudflare
-          initialized = false;
-          initializeVirtualModules(config.root);
-        }
-      : undefined,
-
     resolveId(id) {
       if (id in virtualModules) {
         return "\0" + id;
       }
-      // For cloudflare: handle if the id already has the null prefix
-      if (forCloudflare && id.startsWith("\0") && id.slice(1) in virtualModules) {
+      // Handle if the id already has the null prefix (RSC plugin wrapper imports)
+      if (id.startsWith("\0") && id.slice(1) in virtualModules) {
         return id;
       }
       return null;
@@ -308,7 +252,8 @@ function createVersionPlugin(): Plugin {
 
       // Check if this is an RSC environment update (not client/ssr)
       // RSC modules affect server-rendered content and cached payloads
-      const isRscModule = ctx.environment?.name === "rsc";
+      // In Vite 6, environment is accessed via `this.environment`
+      const isRscModule = this.environment?.name === "rsc";
 
       if (isRscModule && ctx.modules.length > 0) {
         // Update version when RSC modules change
@@ -431,7 +376,7 @@ function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
  * @example Node.js (default)
  * ```ts
  * export default defineConfig({
- *   plugins: [react(), rscRouter({ entry: './src/router.tsx' })],
+ *   plugins: [react(), rscRouter({ router: './src/router.tsx' })],
  * });
  * ```
  *
@@ -459,14 +404,14 @@ export async function rscRouter(
 
   if (preset === "cloudflare") {
     // Cloudflare preset: configure entries for cloudflare worker setup
-    const routerEntry = options.entry ?? "./src/router.tsx";
+    // Router is not needed here - worker.rsc.tsx imports it directly
 
     // Dynamically import @vitejs/plugin-rsc
     const { default: rsc } = await import("@vitejs/plugin-rsc");
 
-    let projectRoot = process.cwd();
     // Only client and ssr entries - rsc entry is handled by cloudflare plugin
-    let finalEntries: { client: string; ssr: string } = {
+    // Always use virtual modules for cloudflare preset
+    const finalEntries: { client: string; ssr: string } = {
       client: VIRTUAL_IDS.browser,
       ssr: VIRTUAL_IDS.ssr,
     };
@@ -474,18 +419,7 @@ export async function rscRouter(
     plugins.push({
       name: "rsc-router:cloudflare-integration",
       enforce: "pre",
-      config(config) {
-        projectRoot = config.root || process.cwd();
-        // Use real files if they exist, otherwise virtual
-        finalEntries = {
-          client: fileExists(projectRoot, DEFAULT_ENTRY_PATHS.client)
-            ? DEFAULT_ENTRY_PATHS.client
-            : VIRTUAL_IDS.browser,
-          ssr: fileExists(projectRoot, DEFAULT_ENTRY_PATHS.ssr)
-            ? DEFAULT_ENTRY_PATHS.ssr
-            : VIRTUAL_IDS.ssr,
-        };
-
+      config() {
         // Configure environments for cloudflare deployment
         return {
           environments: {
@@ -496,6 +430,10 @@ export async function rscRouter(
                     manualChunks: getManualChunks,
                   },
                 },
+              },
+              // Pre-bundle rsc-html-stream to prevent discovery during first request
+              optimizeDeps: {
+                include: ["rsc-html-stream/client"],
               },
             },
             ssr: {
@@ -510,7 +448,12 @@ export async function rscRouter(
               // Pre-bundle SSR entry and React for proper module linking with childEnvironments
               optimizeDeps: {
                 entries: [finalEntries.ssr],
-                include: ["react", "react-dom/server.edge", "react/jsx-runtime"],
+                include: [
+                  "react",
+                  "react-dom/server.edge",
+                  "react/jsx-runtime",
+                  "rsc-html-stream/server",
+                ],
               },
             },
           },
@@ -518,14 +461,7 @@ export async function rscRouter(
       },
     });
 
-    plugins.push(
-      createVirtualEntriesPlugin(
-        { client: DEFAULT_ENTRY_PATHS.client, ssr: DEFAULT_ENTRY_PATHS.ssr },
-        projectRoot,
-        routerEntry,
-        { forCloudflare: true }
-      )
-    );
+    plugins.push(createVirtualEntriesPlugin(finalEntries));
 
     // Add RSC plugin with cloudflare-specific options
     // Note: loadModuleDevProxy should NOT be used with childEnvironments
@@ -541,7 +477,7 @@ export async function rscRouter(
   } else {
     // Node preset: full RSC plugin integration
     const nodeOptions = options as RscRouterNodeOptions;
-    const entry = nodeOptions.entry;
+    const routerPath = nodeOptions.router;
     const rscOption = nodeOptions.rsc ?? true;
 
     // Add RSC plugin by default (can be disabled with rsc: false)
@@ -549,48 +485,35 @@ export async function rscRouter(
       // Dynamically import @vitejs/plugin-rsc
       const { default: rsc } = await import("@vitejs/plugin-rsc");
 
-      // Resolve entry paths
+      // Resolve entry paths: use explicit config or virtual modules
       const userEntries =
         typeof rscOption === "boolean" ? {} : rscOption.entries || {};
-      const entryPaths = {
-        client: userEntries.client ?? DEFAULT_ENTRY_PATHS.client,
-        ssr: userEntries.ssr ?? DEFAULT_ENTRY_PATHS.ssr,
-        rsc: userEntries.rsc ?? DEFAULT_ENTRY_PATHS.rsc,
+      const finalEntries = {
+        client: userEntries.client ?? VIRTUAL_IDS.browser,
+        ssr: userEntries.ssr ?? VIRTUAL_IDS.ssr,
+        rsc: userEntries.rsc ?? VIRTUAL_IDS.rsc,
       };
 
-      // Track RSC entry for version injection
-      rscEntryPath = entryPaths.rsc;
+      // Track RSC entry for version injection (only if custom entry provided)
+      rscEntryPath = userEntries.rsc ?? null;
 
-      // Use process.cwd() as initial root - will be updated in config hook
-      let projectRoot = process.cwd();
-
-      // Create wrapper plugin that checks for duplicates and sets up virtual entries
+      // Create wrapper plugin that checks for duplicates
       let hasWarnedDuplicate = false;
-
-      // Determine initial entries (will be finalized in config hook)
-      let finalEntries = { ...entryPaths };
 
       plugins.push({
         name: "rsc-router:rsc-integration",
         enforce: "pre",
 
-        config(config) {
-          projectRoot = config.root || process.cwd();
+        config() {
+          // Configure environments for RSC
+          // When using virtual entries, we need to explicitly configure optimizeDeps
+          // so Vite pre-bundles React before processing the virtual modules.
+          // Without this, the dep optimizer may run multiple times with different hashes,
+          // causing React instance mismatches.
+          const useVirtualClient = finalEntries.client === VIRTUAL_IDS.browser;
+          const useVirtualSSR = finalEntries.ssr === VIRTUAL_IDS.ssr;
+          const useVirtualRSC = finalEntries.rsc === VIRTUAL_IDS.rsc;
 
-          // Check which entry files exist and use virtual modules for missing ones
-          finalEntries = {
-            client: fileExists(projectRoot, entryPaths.client)
-              ? entryPaths.client
-              : VIRTUAL_IDS.browser,
-            ssr: fileExists(projectRoot, entryPaths.ssr)
-              ? entryPaths.ssr
-              : VIRTUAL_IDS.ssr,
-            rsc: fileExists(projectRoot, entryPaths.rsc)
-              ? entryPaths.rsc
-              : VIRTUAL_IDS.rsc,
-          };
-
-          // Configure client environment for manual chunks
           return {
             environments: {
               client: {
@@ -601,7 +524,31 @@ export async function rscRouter(
                     },
                   },
                 },
+                ...(useVirtualClient && {
+                  optimizeDeps: {
+                    // Tell Vite to scan the virtual entry for dependencies
+                    entries: [VIRTUAL_IDS.browser],
+                  },
+                }),
               },
+              ...(useVirtualSSR && {
+                ssr: {
+                  optimizeDeps: {
+                    entries: [VIRTUAL_IDS.ssr],
+                    // Pre-bundle React for SSR to ensure single instance
+                    include: ["react", "react-dom/server.edge", "react/jsx-runtime"],
+                  },
+                },
+              }),
+              ...(useVirtualRSC && {
+                rsc: {
+                  optimizeDeps: {
+                    entries: [VIRTUAL_IDS.rsc],
+                    // Pre-bundle React for RSC to ensure single instance
+                    include: ["react", "react/jsx-runtime"],
+                  },
+                },
+              }),
             },
           };
         },
@@ -623,16 +570,13 @@ export async function rscRouter(
       });
 
       // Add virtual entries plugin
-      plugins.push(createVirtualEntriesPlugin(entryPaths, projectRoot, entry));
+      plugins.push(createVirtualEntriesPlugin(finalEntries, routerPath));
 
-      // Add the RSC plugin directly with a getter for entries
-      // This ensures the plugin is in the array before configResolved runs
+      // Add the RSC plugin directly
       // Cast to PluginOption to handle type differences between bundled vite types
       plugins.push(
         rsc({
-          get entries() {
-            return finalEntries;
-          },
+          entries: finalEntries,
         }) as PluginOption
       );
     }
