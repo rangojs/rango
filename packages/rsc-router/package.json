@@ -1,6 +1,6 @@
 {
   "name": "@ivogt/rsc-router",
-  "version": "0.0.0-experimental.11",
+  "version": "0.0.0-experimental.12",
   "type": "module",
   "description": "Type-safe RSC router with partial rendering support",
   "author": "Ivo Todorov",
