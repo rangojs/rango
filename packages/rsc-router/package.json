@@ -1,10 +1,30 @@
 {
-  "name": "rsc-router",
-  "version": "0.1.0",
+  "name": "@ivogt/rsc-router",
+  "version": "0.0.0-experimental.1",
   "type": "module",
   "description": "Type-safe RSC router with partial rendering support",
   "author": "Ivo Todorov",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ivogt/vite-rsc.git",
+    "directory": "packages/rsc-router"
+  },
+  "homepage": "https://github.com/ivogt/vite-rsc#readme",
+  "bugs": {
+    "url": "https://github.com/ivogt/vite-rsc/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "experimental"
+  },
+  "keywords": [
+    "react",
+    "rsc",
+    "react-server-components",
+    "router",
+    "vite"
+  ],
   "exports": {
     ".": {
       "react-server": "./src/index.rsc.ts",
@@ -68,7 +88,8 @@
     }
   },
   "files": [
-    "src"
+    "src",
+    "README.md"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -79,7 +100,7 @@
   },
   "peerDependencies": {
     "@cloudflare/vite-plugin": "^1.21.0",
-    "@vitejs/plugin-rsc": "catalog:",
+    "@vitejs/plugin-rsc": "^0.5.14",
     "react": "^18.0.0 || ^19.0.0",
     "vite": "^7.3.0"
   },
@@ -92,7 +113,7 @@
     }
   },
   "dependencies": {
-    "@vitejs/plugin-rsc": "catalog:",
+    "@vitejs/plugin-rsc": "^0.5.14",
     "magic-string": "^0.30.17",
     "rsc-html-stream": "^0.0.7"
   },
