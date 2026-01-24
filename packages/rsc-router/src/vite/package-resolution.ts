@@ -12,7 +12,7 @@ import packageJson from "../../package.json" with { type: "json" };
 /**
  * The canonical name used in virtual entries (without scope)
  */
-const VIRTUAL_PACKAGE_NAME = "rsc-router";
+const VIRTUAL_PACKAGE_NAME = "@ivogt/rsc-router";
 
 /**
  * Get the published package name (e.g., "@ivogt/rsc-router")
@@ -25,12 +25,12 @@ export function getPublishedPackageName(): string {
  * Check if the package is installed from npm (scoped) vs workspace (unscoped)
  *
  * In workspace development:
- * - Package is installed as "rsc-router" via pnpm workspace alias
+ * - Package is installed as "@ivogt/rsc-router" via pnpm workspace alias
  * - The scoped name (@ivogt/rsc-router) doesn't exist in node_modules
  *
  * When installed from npm:
  * - Package is installed as "@ivogt/rsc-router"
- * - We need aliases to map "rsc-router/*" to "@ivogt/rsc-router/*"
+ * - We need aliases to map "@ivogt/rsc-router/*" to "@ivogt/rsc-router/*"
  */
 export function isInstalledFromNpm(): boolean {
   const packageName = getPublishedPackageName();

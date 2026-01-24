@@ -25,7 +25,7 @@ function hashLoaderId(filePath: string, exportName: string): string {
  * Check if file imports createLoader from rsc-router
  */
 function hasCreateLoaderImport(code: string): boolean {
-  // Match: import { createLoader } from "rsc-router" or "rsc-router/server"
+  // Match: import { createLoader } from "@ivogt/rsc-router" or "@ivogt/rsc-router/server"
   // Must be exact - no aliasing support
   const pattern =
     /import\s*\{[^}]*\bcreateLoader\b[^}]*\}\s*from\s*["']rsc-router(?:\/server)?["']/;
@@ -176,7 +176,7 @@ let manifestGenerated = false;
  * The manifest can be imported by the RSC handler to get all loaders.
  *
  * Requirements:
- * - Must use direct import: import { createLoader } from "rsc-router"
+ * - Must use direct import: import { createLoader } from "@ivogt/rsc-router"
  * - No aliasing support (import { createLoader as cl } won't work)
  * - Must use named export: export const MyLoader = createLoader(...)
  */
@@ -194,7 +194,7 @@ export function exposeLoaderId(): Plugin {
   const pendingLoaderScans = new Map<string, Promise<void>>();
 
   return {
-    name: "rsc-router:expose-loader-id",
+    name: "@ivogt/rsc-router:expose-loader-id",
     enforce: "post",
 
     configResolved(resolvedConfig) {
@@ -276,7 +276,7 @@ export function exposeLoaderId(): Plugin {
         if (!isBuild) {
           // Dev mode: empty map - use fallback path parsing in loader registry
           // IDs in dev mode are "filePath#exportName" format for easier debugging
-          return `import { setLoaderImports } from "rsc-router/server";
+          return `import { setLoaderImports } from "@ivogt/rsc-router/server";
 
 // Dev mode: empty map, loaders are resolved dynamically via path parsing
 setLoaderImports({});
@@ -297,14 +297,14 @@ setLoaderImports({});
 
         // If no loaders discovered, set empty map
         if (lazyImports.length === 0) {
-          return `import { setLoaderImports } from "rsc-router/server";
+          return `import { setLoaderImports } from "@ivogt/rsc-router/server";
 
 // No fetchable loaders discovered during build
 setLoaderImports({});
 `;
         }
 
-        const code = `import { setLoaderImports } from "rsc-router/server";
+        const code = `import { setLoaderImports } from "@ivogt/rsc-router/server";
 
 // Lazy import map - loaders are loaded on-demand when first requested
 setLoaderImports({

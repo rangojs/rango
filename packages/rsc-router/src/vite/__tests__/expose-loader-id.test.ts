@@ -24,22 +24,22 @@ function extractLoaderExports(code: string): string[] {
 describe("exposeLoaderId plugin", () => {
   describe("hasCreateLoaderImport", () => {
     it("should detect direct import from rsc-router", () => {
-      const code = `import { createLoader } from "rsc-router";`;
+      const code = `import { createLoader } from "@ivogt/rsc-router";`;
       expect(hasCreateLoaderImport(code)).toBe(true);
     });
 
     it("should detect import from rsc-router/server", () => {
-      const code = `import { createLoader } from "rsc-router/server";`;
+      const code = `import { createLoader } from "@ivogt/rsc-router/server";`;
       expect(hasCreateLoaderImport(code)).toBe(true);
     });
 
     it("should detect createLoader with other imports", () => {
-      const code = `import { map, createLoader, route } from "rsc-router";`;
+      const code = `import { map, createLoader, route } from "@ivogt/rsc-router";`;
       expect(hasCreateLoaderImport(code)).toBe(true);
     });
 
     it("should NOT detect aliased import", () => {
-      const code = `import { createLoader as cl } from "rsc-router";`;
+      const code = `import { createLoader as cl } from "@ivogt/rsc-router";`;
       // Our simple pattern doesn't support aliasing - this is intentional
       expect(hasCreateLoaderImport(code)).toBe(true); // Still matches the word
     });
@@ -50,12 +50,12 @@ describe("exposeLoaderId plugin", () => {
     });
 
     it("should NOT detect default import", () => {
-      const code = `import createLoader from "rsc-router";`;
+      const code = `import createLoader from "@ivogt/rsc-router";`;
       expect(hasCreateLoaderImport(code)).toBe(false);
     });
 
     it("should NOT detect namespace import", () => {
-      const code = `import * as router from "rsc-router";`;
+      const code = `import * as router from "@ivogt/rsc-router";`;
       expect(hasCreateLoaderImport(code)).toBe(false);
     });
   });

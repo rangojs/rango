@@ -32,7 +32,7 @@ import type {
 } from "./types.js";
 import { hasBodyContent, createResponseWithMergedHeaders } from "./helpers.js";
 import { generateNonce } from "./nonce.js";
-import { VERSION } from "rsc-router:version";
+import { VERSION } from "@ivogt/rsc-router:version";
 import type { ErrorPhase } from "../types.js";
 import { invokeOnError } from "../router/error-handling.js";
 

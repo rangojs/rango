@@ -33,13 +33,13 @@ export { exposeLocationStateId } from "./expose-location-state-id.ts";
  * before Vite's plugin system can handle virtual modules.
  */
 const versionEsbuildPlugin = {
-  name: "rsc-router-version",
+  name: "@ivogt/rsc-router-version",
   setup(build: any) {
     build.onResolve({ filter: /^rsc-router:version$/ }, (args: any) => ({
       path: args.path,
-      namespace: "rsc-router-virtual",
+      namespace: "@ivogt/rsc-router-virtual",
     }));
-    build.onLoad({ filter: /.*/, namespace: "rsc-router-virtual" }, () => ({
+    build.onLoad({ filter: /.*/, namespace: "@ivogt/rsc-router-virtual" }, () => ({
       contents: `export const VERSION = "dev";`,
       loader: "js",
     }));
@@ -184,7 +184,7 @@ function createVirtualEntriesPlugin(
   }
 
   return {
-    name: "rsc-router:virtual-entries",
+    name: "@ivogt/rsc-router:virtual-entries",
     enforce: "pre",
 
     resolveId(id) {
@@ -254,7 +254,7 @@ function createVersionPlugin(): Plugin {
   let server: any = null;
 
   return {
-    name: "rsc-router:version",
+    name: "@ivogt/rsc-router:version",
     enforce: "pre",
 
     configResolved(config) {
@@ -323,7 +323,7 @@ function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
   let resolvedEntryPath = "";
 
   return {
-    name: "rsc-router:version-injector",
+    name: "@ivogt/rsc-router:version-injector",
     enforce: "pre",
 
     configResolved(config) {
@@ -346,7 +346,7 @@ function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
       }
 
       // Check if VERSION is already imported
-      if (code.includes("rsc-router:version")) {
+      if (code.includes("@ivogt/rsc-router:version")) {
         return null;
       }
 
@@ -382,7 +382,7 @@ function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
       }
 
       // Insert VERSION import
-      const versionImport = `import { VERSION } from "rsc-router:version";\n`;
+      const versionImport = `import { VERSION } from "@ivogt/rsc-router:version";\n`;
       let newCode = code.slice(0, insertIndex) + versionImport + code.slice(insertIndex);
 
       // Add version: VERSION to createRSCHandler call
@@ -454,7 +454,7 @@ export async function rscRouter(
     };
 
     plugins.push({
-      name: "rsc-router:cloudflare-integration",
+      name: "@ivogt/rsc-router:cloudflare-integration",
       enforce: "pre",
       config() {
         // Configure environments for cloudflare deployment
@@ -561,7 +561,7 @@ export async function rscRouter(
       let hasWarnedDuplicate = false;
 
       plugins.push({
-        name: "rsc-router:rsc-integration",
+        name: "@ivogt/rsc-router:rsc-integration",
         enforce: "pre",
 
         config() {
@@ -691,7 +691,7 @@ export async function rscRouter(
  */
 function createCjsToEsmPlugin(): Plugin {
   return {
-    name: "rsc-router:cjs-to-esm",
+    name: "@ivogt/rsc-router:cjs-to-esm",
     enforce: "pre",
     transform(code, id) {
       const cleanId = id.split("?")[0];
