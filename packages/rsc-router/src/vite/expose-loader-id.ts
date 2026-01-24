@@ -28,7 +28,7 @@ function hasCreateLoaderImport(code: string): boolean {
   // Match: import { createLoader } from "@ivogt/rsc-router" or "@ivogt/rsc-router/server"
   // Must be exact - no aliasing support
   const pattern =
-    /import\s*\{[^}]*\bcreateLoader\b[^}]*\}\s*from\s*["']rsc-router(?:\/server)?["']/;
+    /import\s*\{[^}]*\bcreateLoader\b[^}]*\}\s*from\s*["']@ivogt\/rsc-router(?:\/server)?["']/;
   return pattern.test(code);
 }
 

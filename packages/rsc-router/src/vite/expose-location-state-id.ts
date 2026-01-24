@@ -27,7 +27,7 @@ function hashLocationStateKey(filePath: string, exportName: string): string {
 function hasCreateLocationStateImport(code: string): boolean {
   // Match: import { createLocationState } from "@ivogt/rsc-router" or "@ivogt/rsc-router/client"
   const pattern =
-    /import\s*\{[^}]*\bcreateLocationState\b[^}]*\}\s*from\s*["']rsc-router(?:\/[^"']+)?["']/;
+    /import\s*\{[^}]*\bcreateLocationState\b[^}]*\}\s*from\s*["']@ivogt\/rsc-router(?:\/[^"']+)?["']/;
   return pattern.test(code);
 }
 
