@@ -4,7 +4,7 @@ import { describe, it, expect } from "vitest";
  * Mock function to test createLoader detection patterns
  */
 function hasCreateLoaderImport(code: string): boolean {
-  const pattern = /import\s*\{[^}]*\bcreateLoader\b[^}]*\}\s*from\s*["']rsc-router(?:\/server)?["']/;
+  const pattern = /import\s*\{[^}]*\bcreateLoader\b[^}]*\}\s*from\s*["']@ivogt\/rsc-router(?:\/server)?["']/;
   return pattern.test(code);
 }
 

@@ -27,7 +27,7 @@ function hashHandleId(filePath: string, exportName: string): string {
 function hasCreateHandleImport(code: string): boolean {
   // Match: import { createHandle } from "@ivogt/rsc-router" or "@ivogt/rsc-router/..."
   const pattern =
-    /import\s*\{[^}]*\bcreateHandle\b[^}]*\}\s*from\s*["']@ivogt/rsc-router(?:\/[^"']+)?["']/;
+    /import\s*\{[^}]*\bcreateHandle\b[^}]*\}\s*from\s*["']@ivogt\/rsc-router(?:\/[^"']+)?["']/;
   return pattern.test(code);
 }
 
