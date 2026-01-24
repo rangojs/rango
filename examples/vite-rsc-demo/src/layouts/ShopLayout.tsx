@@ -1,4 +1,4 @@
-import { Outlet } from "rsc-router/client";
+import { Outlet } from "@ivogt/rsc-router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { CartBadge, UserGreeting } from "../components/CartBadge.js";
 import { LoadingSpinner } from "@/handlers/shop/components/loading.js";

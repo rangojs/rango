@@ -1,4 +1,4 @@
-import type { DocumentProps } from "rsc-router";
+import type { DocumentProps } from "@ivogt/rsc-router";
 
 export default function Document({ children }: DocumentProps) {
   return (

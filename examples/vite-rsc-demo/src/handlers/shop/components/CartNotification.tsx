@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAction } from "rsc-router/client";
+import { useAction } from "@ivogt/rsc-router/client";
 import { updateCartQuantity } from "../actions/shop.actions.js";
 const getOwnProps = (item: any) => {
   const reflect = Reflect.ownKeys(item);

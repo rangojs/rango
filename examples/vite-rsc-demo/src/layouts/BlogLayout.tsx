@@ -1,4 +1,4 @@
-import { Outlet, ParallelOutlet } from "rsc-router/client";
+import { Outlet, ParallelOutlet } from "@ivogt/rsc-router/client";
 
 export function BlogLayout() {
   return (

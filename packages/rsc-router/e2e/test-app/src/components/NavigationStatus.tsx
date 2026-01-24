@@ -1,6 +1,6 @@
 "use client";
 
-import { useNavigation } from "rsc-router/client";
+import { useNavigation } from "@ivogt/rsc-router/client";
 import { useState, useEffect } from "react";
 
 /**

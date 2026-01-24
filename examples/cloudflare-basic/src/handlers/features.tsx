@@ -1,4 +1,4 @@
-import { map, Meta } from "rsc-router/server";
+import { map, Meta } from "@ivogt/rsc-router/server";
 import type { featuresRoutes } from "../routes.js";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import { FeatureLoading } from "../components/FeatureLoading.js";

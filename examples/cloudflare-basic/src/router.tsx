@@ -1,4 +1,4 @@
-import { createRSCRouter } from "rsc-router/server";
+import { createRSCRouter } from "@ivogt/rsc-router/server";
 import { homeRoutes, aboutRoutes, counterRoutes, featuresRoutes, blogRoutes, proactiveCacheRoutes } from "./routes.js";
 import { AppShell } from "./components/AppShell.js";
 import type { AppEnv } from "./env.js";

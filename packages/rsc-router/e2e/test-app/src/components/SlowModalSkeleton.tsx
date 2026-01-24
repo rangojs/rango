@@ -1,6 +1,6 @@
 "use client";
 
-import { useLocationState } from "rsc-router/client";
+import { useLocationState } from "@ivogt/rsc-router/client";
 import { Modal } from "./Modal.js";
 import { SlowProductLocationState } from "../location-states.js";
 

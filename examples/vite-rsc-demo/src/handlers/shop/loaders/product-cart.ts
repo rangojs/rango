@@ -1,4 +1,4 @@
-import { createLoader } from "rsc-router";
+import { createLoader } from "@ivogt/rsc-router";
 import { getCart } from "../actions/shop.actions.js";
 
 export type ProductCartData = {

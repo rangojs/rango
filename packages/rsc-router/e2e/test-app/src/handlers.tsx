@@ -1,5 +1,5 @@
-import { map, Meta, redirect, notFound } from "rsc-router/server";
-import { Outlet, Link } from "rsc-router/client";
+import { map, Meta, redirect, notFound } from "@ivogt/rsc-router/server";
+import { Outlet, Link } from "@ivogt/rsc-router/client";
 import type { testRoutes } from "./routes.js";
 import { SlowProductLocationState } from "./location-states.js";
 import {

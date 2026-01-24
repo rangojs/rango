@@ -1,7 +1,7 @@
-import { map, createLoader, notFound } from "rsc-router/server";
+import { map, createLoader, notFound } from "@ivogt/rsc-router/server";
 import type { errorRoutes } from "../routes.js";
-import type { ErrorBoundaryFallbackProps, NotFoundBoundaryFallbackProps } from "rsc-router";
-import { Outlet } from "rsc-router/client";
+import type { ErrorBoundaryFallbackProps, NotFoundBoundaryFallbackProps } from "@ivogt/rsc-router";
+import { Outlet } from "@ivogt/rsc-router/client";
 import { ClientErrorThrower } from "../components/ClientErrorThrower.js";
 
 /**

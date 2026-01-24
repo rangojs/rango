@@ -1,6 +1,6 @@
 "use client";
 
-import { useLoader } from "rsc-router/client";
+import { useLoader } from "@ivogt/rsc-router/client";
 import { KanbanLoader } from "./loader.js";
 import { KanbanBoard } from "./components.js";
 import { DebugSegmentWrapper } from "../../components/DebugSegmentWrapper.js";

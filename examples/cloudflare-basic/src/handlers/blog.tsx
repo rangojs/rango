@@ -1,5 +1,5 @@
-import { map, Meta, notFound } from "rsc-router/server";
-import { Link, Outlet, ParallelOutlet } from "rsc-router/client";
+import { map, Meta, notFound } from "@ivogt/rsc-router/server";
+import { Link, Outlet, ParallelOutlet } from "@ivogt/rsc-router/client";
 import type { blogRoutes } from "../routes.js";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import {

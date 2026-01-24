@@ -1,4 +1,4 @@
-import type { ShouldRevalidateFn, RouteRevalidateFn, GenericParams, RevalidateParams } from "rsc-router/server";
+import type { ShouldRevalidateFn, RouteRevalidateFn, GenericParams, RevalidateParams } from "@ivogt/rsc-router/server";
 import type { adminRoutes } from "@/routes.js";
 
 // Global soft decision: suggests revalidation but allows override

@@ -1,5 +1,5 @@
-import { map } from "rsc-router/server";
-import { Link, Outlet } from "rsc-router/client";
+import { map } from "@ivogt/rsc-router/server";
+import { Link, Outlet } from "@ivogt/rsc-router/client";
 import type { proactiveCacheRoutes } from "../routes.js";
 
 /**

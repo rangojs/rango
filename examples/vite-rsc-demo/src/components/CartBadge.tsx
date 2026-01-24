@@ -1,6 +1,6 @@
 "use client";
 
-import { useLoader } from "rsc-router/client";
+import { useLoader } from "@ivogt/rsc-router/client";
 import { CartLoader } from "../handlers/shop/loaders/cart.js";
 import { UserLoader } from "../handlers/shop/loaders/user.js";
 import { clearCart } from "../handlers/shop/actions/shop.actions.js";

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSegments } from "rsc-router/client";
+import { useSegments } from "@ivogt/rsc-router/client";
 
 /**
  * Debug component to display current segments state

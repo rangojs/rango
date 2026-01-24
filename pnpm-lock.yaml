@@ -4,6 +4,18 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+catalogs:
+  default:
+    '@types/react':
+      specifier: ^19.2.7
+      version: 19.2.7
+    '@types/react-dom':
+      specifier: ^19.2.3
+      version: 19.2.3
+    vite:
+      specifier: ^7.3.0
+      version: 7.3.0
+
 overrides:
   react: ^19.2.1
   react-dom: ^19.2.1
@@ -25,15 +37,15 @@ importers:
 
   examples/cloudflare-basic:
     dependencies:
+      '@ivogt/rsc-router':
+        specifier: workspace:*
+        version: link:../../packages/rsc-router
       react:
         specifier: ^19.2.1
         version: 19.2.3
       react-dom:
         specifier: ^19.2.1
         version: 19.2.3(react@19.2.3)
-      rsc-router:
-        specifier: workspace:*
-        version: link:../../packages/rsc-router
     devDependencies:
       '@cloudflare/vite-plugin':
         specifier: ^1.21.0
@@ -68,15 +80,15 @@ importers:
 
   examples/cloudflare-basic-nonce:
     dependencies:
+      '@ivogt/rsc-router':
+        specifier: workspace:*
+        version: link:../../packages/rsc-router
       react:
         specifier: ^19.2.1
         version: 19.2.3
       react-dom:
         specifier: ^19.2.1
         version: 19.2.3(react@19.2.3)
-      rsc-router:
-        specifier: workspace:*
-        version: link:../../packages/rsc-router
     devDependencies:
       '@cloudflare/vite-plugin':
         specifier: ^1.21.0
@@ -111,15 +123,15 @@ importers:
 
   examples/vite-rsc-demo:
     dependencies:
+      '@ivogt/rsc-router':
+        specifier: workspace:*
+        version: link:../../packages/rsc-router
       react:
         specifier: ^19.2.1
         version: 19.2.3
       react-dom:
         specifier: ^19.2.1
         version: 19.2.3(react@19.2.3)
-      rsc-router:
-        specifier: workspace:*
-        version: link:../../packages/rsc-router
     devDependencies:
       '@playwright/test':
         specifier: ^1.49.1
@@ -227,6 +239,9 @@ importers:
       '@types/react-dom':
         specifier: 'catalog:'
         version: 19.2.3(@types/react@19.2.7)
+      esbuild:
+        specifier: ^0.27.0
+        version: 0.27.2
       react:
         specifier: ^19.2.1
         version: 19.2.3
@@ -245,15 +260,15 @@ importers:
 
   packages/rsc-router/e2e/test-app:
     dependencies:
+      '@ivogt/rsc-router':
+        specifier: workspace:*
+        version: link:../..
       react:
         specifier: ^19.2.1
         version: 19.2.3
       react-dom:
         specifier: ^19.2.1
         version: 19.2.3(react@19.2.3)
-      rsc-router:
-        specifier: workspace:*
-        version: link:../..
     devDependencies:
       '@types/react':
         specifier: 'catalog:'

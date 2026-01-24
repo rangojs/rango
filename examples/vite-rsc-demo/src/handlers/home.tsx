@@ -1,7 +1,7 @@
-import { map } from "rsc-router/server";
+import { map } from "@ivogt/rsc-router/server";
 import type { homeRoutes } from "../routes.js";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
-import { Outlet, ParallelOutlet } from "rsc-router/client";
+import { Outlet, ParallelOutlet } from "@ivogt/rsc-router/client";
 import { TestGetLoaderComponent } from "../components/TestGetLoader.js";
 // Import loader to ensure it registers on server
 import "../loaders/test-get-loader.js";

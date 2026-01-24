@@ -1,6 +1,6 @@
 "use client";
 
-import { useLoader } from "rsc-router/client";
+import { useLoader } from "@ivogt/rsc-router/client";
 import { TodoDetailLoader } from "./loader.js";
 import { DebugSegmentWrapper } from "../../components/DebugSegmentWrapper.js";
 import { SegmentTimer } from "../../components/SegmentTimer.js";

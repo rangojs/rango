@@ -1,5 +1,5 @@
-import { createRSCRouter, type RouterEnv, redirect, type MiddlewareFn } from "rsc-router/server";
-import { MemorySegmentCacheStore } from "rsc-router/rsc";
+import { createRSCRouter, type RouterEnv, redirect, type MiddlewareFn } from "@ivogt/rsc-router/server";
+import { MemorySegmentCacheStore } from "@ivogt/rsc-router/rsc";
 import { testRoutes } from "./routes.js";
 
 // App-level cache store with defaults

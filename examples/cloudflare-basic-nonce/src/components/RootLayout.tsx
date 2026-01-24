@@ -1,4 +1,4 @@
-import { Outlet } from "rsc-router/client";
+import { Outlet } from "@ivogt/rsc-router/client";
 
 export function RootLayout() {
   return (

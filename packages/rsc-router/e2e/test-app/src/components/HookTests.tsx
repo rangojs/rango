@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useActionState } from "react";
-import { useLoader, useFetchLoader, ErrorBoundary, type LoaderDefinition } from "rsc-router/client";
+import { useLoader, useFetchLoader, ErrorBoundary, type LoaderDefinition } from "@ivogt/rsc-router/client";
 
 // Type for the hook test loader data
 interface HookTestLoaderData {

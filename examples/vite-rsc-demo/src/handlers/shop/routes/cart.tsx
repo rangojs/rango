@@ -1,9 +1,9 @@
-import type { RouteHandler } from "rsc-router/server";
+import type { RouteHandler } from "@ivogt/rsc-router/server";
 import type { shopRoutes } from "@/routes.js";
 import { products } from "@/handlers/shop/data.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
-import { ParallelOutlet } from "rsc-router/client";
+import { ParallelOutlet } from "@ivogt/rsc-router/client";
 
 export const CartRoute: RouteHandler<typeof shopRoutes, "cart"> = () => (
   <DebugSegmentWrapper type="route" name="Cart">
