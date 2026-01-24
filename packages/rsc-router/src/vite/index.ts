@@ -727,19 +727,28 @@ function createCjsToEsmPlugin(): Plugin {
           transformed = transformed.slice(license.length);
         }
 
-        // Remove "use strict" and the conditional IIFE wrapper
+        // Remove "use strict" (both dev and prod have this)
+        transformed = transformed.replace(/^\s*["']use strict["'];\s*/, "");
+
+        // Remove the conditional IIFE wrapper (development only)
         transformed = transformed.replace(
-          /^\s*["']use strict["'];\s*["']production["']\s*!==\s*process\.env\.NODE_ENV\s*&&\s*\(function\s*\(\)\s*\{/,
+          /^\s*["']production["']\s*!==\s*process\.env\.NODE_ENV\s*&&\s*\(function\s*\(\)\s*\{/,
           ""
         );
 
-        // Remove the closing of the conditional IIFE at the end
+        // Remove the closing of the conditional IIFE at the end (development only)
         transformed = transformed.replace(/\}\)\(\);?\s*$/, "");
 
-        // Replace require('react') and require('react-dom') with imports
+        // Replace require('react') and require('react-dom') with imports (development)
         transformed = transformed.replace(
           /var\s+React\s*=\s*require\s*\(\s*["']react["']\s*\)\s*,[\s\n]+ReactDOM\s*=\s*require\s*\(\s*["']react-dom["']\s*\)\s*,/g,
           'import React from "react";\nimport ReactDOM from "react-dom";\nvar '
+        );
+
+        // Replace require('react-dom') only (production - doesn't import React)
+        transformed = transformed.replace(
+          /var\s+ReactDOM\s*=\s*require\s*\(\s*["']react-dom["']\s*\)\s*,/g,
+          'import ReactDOM from "react-dom";\nvar '
         );
 
         // Transform exports.xyz = function() to export function xyz()
