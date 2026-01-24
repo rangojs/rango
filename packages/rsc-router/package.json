@@ -1,6 +1,6 @@
 {
   "name": "@ivogt/rsc-router",
-  "version": "0.0.0-experimental.7",
+  "version": "0.0.0-experimental.8",
   "type": "module",
   "description": "Type-safe RSC router with partial rendering support",
   "author": "Ivo Todorov",
@@ -55,7 +55,7 @@
     },
     "./vite": {
       "types": "./src/vite/index.ts",
-      "import": "./src/vite/index.ts"
+      "import": "./dist/vite/index.js"
     },
     "./types": {
       "types": "./src/vite/version.d.ts"
@@ -89,9 +89,12 @@
   },
   "files": [
     "src",
+    "dist",
     "README.md"
   ],
   "scripts": {
+    "build": "pnpm dlx esbuild src/vite/index.ts --bundle --format=esm --outfile=dist/vite/index.js --platform=node --packages=external",
+    "prepublishOnly": "pnpm build",
     "typecheck": "tsc --noEmit",
     "test": "playwright test",
     "test:ui": "playwright test --ui",
@@ -124,6 +127,7 @@
     "@types/react-dom": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
+    "esbuild": "^0.27.0",
     "tinyexec": "^0.3.2",
     "typescript": "^5.3.0",
     "vitest": "^2.1.8"
