@@ -161,6 +161,39 @@ export interface RSCRouterOptions<TEnv = any> {
   defaultNotFoundBoundary?: ReactNode | NotFoundBoundaryHandler;
 
   /**
+   * Component to render when no route matches the requested URL.
+   *
+   * This is rendered within your document/app shell with a 404 status code.
+   * Use this for a custom 404 page that maintains your app's look and feel.
+   *
+   * If not provided, a default "Page not found" component is rendered.
+   *
+   * Can be a static ReactNode or a function receiving the pathname.
+   *
+   * @example
+   * ```typescript
+   * // Simple static component
+   * const router = createRSCRouter<AppEnv>({
+   *   document: AppShell,
+   *   notFound: <NotFound404 />,
+   * });
+   *
+   * // Dynamic component with pathname
+   * const router = createRSCRouter<AppEnv>({
+   *   document: AppShell,
+   *   notFound: ({ pathname }) => (
+   *     <div>
+   *       <h1>404 - Not Found</h1>
+   *       <p>No page exists at {pathname}</p>
+   *       <a href="/">Go home</a>
+   *     </div>
+   *   ),
+   * });
+   * ```
+   */
+  notFound?: ReactNode | ((props: { pathname: string }) => ReactNode);
+
+  /**
    * Callback invoked when an error occurs during request handling.
    *
    * This callback is for notification/logging purposes - it cannot modify
@@ -369,6 +402,11 @@ export interface RSCRouter<
   readonly cache?: RSCRouterOptions<TEnv>["cache"];
 
   /**
+   * Not found component to render when no route matches (for internal use by RSC handler)
+   */
+  readonly notFound?: RSCRouterOptions<TEnv>["notFound"];
+
+  /**
    * App-level middleware entries (for internal use by RSC handler)
    * These wrap the entire request/response cycle
    */
@@ -456,6 +494,7 @@ export function createRSCRouter<TEnv = any>(
     document: documentOption,
     defaultErrorBoundary,
     defaultNotFoundBoundary,
+    notFound,
     onError,
     cache,
   } = options;
@@ -3470,6 +3509,9 @@ export function createRSCRouter<TEnv = any>(
 
     // Expose cache configuration for RSC handler
     cache,
+
+    // Expose notFound component for RSC handler
+    notFound,
 
     // Expose global middleware for RSC handler
     middleware: globalMiddleware,

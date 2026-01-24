@@ -7,6 +7,7 @@
  * and progressive enhancement (no-JS form submissions).
  */
 
+import { createElement } from "react";
 import { renderSegments } from "../segment-system.js";
 import { RouteNotFoundError } from "../errors.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
@@ -291,22 +292,85 @@ export function createRSCHandler<TEnv = unknown>(
       // ============================================================================
       // REGULAR RSC RENDERING (Navigation)
       // ============================================================================
-      return handleRscRendering(request, env, url, isPartial, handleStore, nonce);
+      // Note: Must use "return await" for try/catch to catch async rejections
+      return await handleRscRendering(request, env, url, isPartial, handleStore, nonce);
     } catch (error) {
       // Check if middleware/handler returned Response
       if (error instanceof Response) {
         return error;
       }
 
-      // Return 404 for unmatched routes instead of 500
-      if (error instanceof RouteNotFoundError) {
+      // Render 404 page for unmatched routes
+      // Check both instanceof and error.name for cross-bundle compatibility
+      const isRouteNotFound =
+        error instanceof RouteNotFoundError ||
+        (error instanceof Error && error.name === "RouteNotFoundError");
+      if (isRouteNotFound) {
         callOnError(error, "routing", {
           request,
           url,
           env,
-          handledByBoundary: false,
+          handledByBoundary: true, // Handled by notFound component
         });
-        return createResponseWithMergedHeaders("Not Found", { status: 404 });
+
+        // Get notFound component from router options or use default
+        const notFoundOption = router.notFound;
+        const notFoundComponent =
+          typeof notFoundOption === "function"
+            ? notFoundOption({ pathname: url.pathname })
+            : notFoundOption ?? createElement("h1", null, "Not Found");
+
+        // Create a simple segment for the 404 page
+        const notFoundSegment = {
+          id: "notFound",
+          namespace: "notFound",
+          type: "route" as const,
+          index: 0,
+          component: notFoundComponent,
+          params: {},
+        };
+
+        // Render with rootLayout to maintain app shell
+        const root = await renderSegments([notFoundSegment], {
+          rootLayout: router.rootLayout,
+        });
+
+        const payload: RscPayload = {
+          root,
+          metadata: {
+            pathname: url.pathname,
+            segments: [notFoundSegment],
+            matched: [],
+            diff: [],
+            isPartial: false,
+            handles: handleStore.stream(),
+            version,
+          },
+        };
+
+        const rscStream = renderToReadableStream(payload);
+
+        // Determine if this is an RSC request or HTML request
+        const isRscRequest =
+          (!request.headers.get("accept")?.includes("text/html") &&
+            !url.searchParams.has("__html")) ||
+          url.searchParams.has("__rsc");
+
+        if (isRscRequest) {
+          return createResponseWithMergedHeaders(rscStream, {
+            status: 404,
+            headers: { "content-type": "text/x-component;charset=utf-8" },
+          });
+        }
+
+        // Delegate to SSR for HTML response
+        const ssrModule = await loadSSRModule();
+        const htmlStream = await ssrModule.renderHTML(rscStream, { nonce });
+
+        return createResponseWithMergedHeaders(htmlStream, {
+          status: 404,
+          headers: { "content-type": "text/html;charset=utf-8" },
+        });
       }
 
       // Report unhandled errors
