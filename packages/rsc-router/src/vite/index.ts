@@ -477,14 +477,10 @@ export async function rscRouter(
                   },
                 },
               },
-              // Pre-bundle rsc-html-stream and react-server-dom vendor to prevent discovery during first request
-              // The vendor file is CJS and needs to be transformed to ESM by Vite's optimizer
+              // Pre-bundle rsc-html-stream to prevent discovery during first request
               // Exclude rsc-router modules to ensure same Context instance
               optimizeDeps: {
-                include: [
-                  "rsc-html-stream/client",
-                  "@vitejs/plugin-rsc/vendor/react-server-dom/client.browser",
-                ],
+                include: ["rsc-html-stream/client"],
                 exclude: excludeDeps,
                 esbuildOptions: sharedEsbuildOptions,
               },
@@ -598,9 +594,7 @@ export async function rscRouter(
                   },
                 },
                 // Always exclude rsc-router modules, conditionally add virtual entry
-                // Include react-server-dom vendor to transform CJS to ESM
                 optimizeDeps: {
-                  include: ["@vitejs/plugin-rsc/vendor/react-server-dom/client.browser"],
                   exclude: excludeDeps,
                   esbuildOptions: sharedEsbuildOptions,
                   ...(useVirtualClient && {
@@ -684,9 +678,9 @@ export async function rscRouter(
     plugins.push(createVersionInjectorPlugin(rscEntryPath));
   }
 
-  // CJS to ESM transformation is now handled by Vite's optimizeDeps.include
-  // See client environment config where we include "@vitejs/plugin-rsc/vendor/react-server-dom/client.browser"
-  // plugins.push(createCjsToEsmPlugin());
+  // Transform CJS vendor files to ESM for browser compatibility
+  // optimizeDeps.include doesn't work because the file is loaded after initial optimization
+  plugins.push(createCjsToEsmPlugin());
 
   return plugins;
 }
