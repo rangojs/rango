@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Outlet } from "rsc-router/client";
+import { Outlet } from "../client.js";
 
 const MapRootLayout = (
   <>
