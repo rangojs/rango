@@ -2,6 +2,7 @@ import type { ComponentType } from "react";
 import { type ReactNode } from "react";
 import { CacheScope, createCacheScope } from "./cache/cache-scope.js";
 import type { SegmentCacheStore } from "./cache/types.js";
+import { assertClientComponent } from "./component-utils.js";
 import { DefaultDocument } from "./components/DefaultDocument.js";
 import { DefaultErrorFallback } from "./default-error-boundary.js";
 import {
@@ -511,16 +512,9 @@ export function createRSCRouter<TEnv = any>(
     invokeOnError(onError, error, phase, context, "Router");
   }
 
-  // Validate document is a function (component)
-  // Note: We cannot validate "use client" at runtime since it's a bundler directive.
-  // If a server component is passed, React will throw during rendering with a
-  // "Functions cannot be passed to Client Components" error.
-  if (documentOption !== undefined && typeof documentOption !== "function") {
-    throw new Error(
-      `document must be a client component function with "use client" directive. ` +
-        `Make sure to pass the component itself, not a JSX element: ` +
-        `document: MyDocument (correct) vs document: <MyDocument /> (incorrect)`
-    );
+  // Validate document is a client component
+  if (documentOption !== undefined) {
+    assertClientComponent(documentOption, "document");
   }
 
   // Use default document if none provided (keeps internal name as rootLayout)
