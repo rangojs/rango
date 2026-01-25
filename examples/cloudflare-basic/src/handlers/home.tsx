@@ -23,7 +23,7 @@ const features = [
 ];
 
 export default map<typeof homeRoutes>(({ route }) => [
-  route("index", (ctx) => {
+  route("home", (ctx) => {
     const meta = ctx.use(Meta);
     meta({ title: "Home - RSC Router Cloudflare" });
     meta({ name: "description", content: "A minimal RSC Router example running on Cloudflare Workers" });

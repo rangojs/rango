@@ -23,7 +23,7 @@ const features: Record<string, { name: string; description: string; details: str
 
 export default map<typeof featuresRoutes>(({ route, loading }) => [
   route(
-    "detail",
+    "featuresDetail",
     async (ctx) => {
     const slug = ctx.params.slug;
     const feature = features[slug];

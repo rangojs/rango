@@ -5,7 +5,7 @@ import { getCounter } from "../actions/counter.js";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 
 export default map<typeof counterRoutes>(({ route }) => [
-  route("index", async (ctx) => {
+  route("counter", async (ctx) => {
     const meta = ctx.use(Meta);
     meta({ title: "Counter - RSC Router Cloudflare" });
     meta({ name: "description", content: "Interactive counter demo with Server Actions on Cloudflare Workers" });

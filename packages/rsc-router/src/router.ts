@@ -18,6 +18,11 @@ import {
   type SanitizePrefix,
 } from "./href.js";
 import { registerRouteMap } from "./route-map-builder.js";
+import {
+  createRouteHelpers,
+  type RouteHelpers,
+} from "./route-definition.js";
+import MapRootLayout from "./server/root-layout.js";
 import type { AllUseItems } from "./route-types.js";
 import {
   EntryData,
@@ -266,13 +271,137 @@ export interface RSCRouterOptions<TEnv = any> {
 }
 
 /**
+ * Type-level detection of conflicting route keys.
+ * When two route definitions have the same key with different values,
+ * TypeScript intersection produces `never` for that key, breaking the type.
+ *
+ * This helper extracts keys that would conflict.
+ */
+type ConflictingKeys<
+  TExisting extends Record<string, string>,
+  TNew extends Record<string, string>
+> = {
+  [K in keyof TExisting & keyof TNew]: TExisting[K] extends TNew[K]
+    ? TNew[K] extends TExisting[K]
+      ? never // Same value, no conflict
+      : K // Different values, conflict
+    : K; // Different values, conflict
+}[keyof TExisting & keyof TNew];
+
+/**
+ * Produces a helpful error type when route key conflicts are detected.
+ * If no conflicts, returns the merged type. If conflicts exist, returns an error type.
+ */
+type AssertNoRouteKeyConflicts<
+  TExisting extends Record<string, string>,
+  TNew extends Record<string, string>,
+  TMerged
+> = ConflictingKeys<TExisting, TNew> extends never
+  ? TMerged // No conflicts, return the merged type
+  : {
+      __error: "Route key conflict detected! The following keys are duplicated with different URL patterns:";
+      conflictingKeys: ConflictingKeys<TExisting, TNew>;
+      hint: "Use unique key names for each route, e.g., 'home' instead of 'index' for multiple route definitions";
+    };
+
+/**
+ * Simplified route helpers for inline route definitions
+ * Uses TRoutes (Record<string, string>) instead of RouteDefinition
+ */
+type InlineRouteHelpers<
+  TRoutes extends Record<string, string>,
+  TEnv,
+> = {
+  /**
+   * Define a route handler for a specific route pattern
+   */
+  route: <K extends keyof TRoutes & string>(
+    name: K,
+    handler:
+      | ((ctx: HandlerContext<{}, TEnv>) => ReactNode | Promise<ReactNode>)
+      | ReactNode
+  ) => AllUseItems;
+
+  /**
+   * Define a layout that wraps child routes
+   */
+  layout: (
+    component: ReactNode | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>),
+    use?: () => AllUseItems[]
+  ) => AllUseItems;
+
+  /**
+   * Define parallel routes
+   */
+  parallel: (
+    slots: Record<`@${string}`, ReactNode | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>)>,
+    use?: () => AllUseItems[]
+  ) => AllUseItems;
+
+  /**
+   * Define route middleware
+   */
+  middleware: (fn: (ctx: any, next: () => Promise<void>) => Promise<void>) => AllUseItems;
+
+  /**
+   * Define revalidation handlers
+   */
+  revalidate: (fn: (ctx: any) => boolean | Promise<boolean>) => AllUseItems;
+
+  /**
+   * Define data loaders
+   */
+  loader: (loader: any, use?: () => AllUseItems[]) => AllUseItems;
+
+  /**
+   * Define loading states
+   */
+  loading: (component: ReactNode) => AllUseItems;
+
+  /**
+   * Define error boundaries
+   */
+  errorBoundary: (
+    handler: ReactNode | ((props: { error: Error }) => ReactNode)
+  ) => AllUseItems;
+
+  /**
+   * Define not found boundaries
+   */
+  notFoundBoundary: (
+    handler: ReactNode | ((props: { pathname: string }) => ReactNode)
+  ) => AllUseItems;
+
+  /**
+   * Define intercept routes
+   */
+  intercept: (
+    name: string,
+    handler: ReactNode | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>),
+    use?: () => AllUseItems[]
+  ) => AllUseItems;
+
+  /**
+   * Define when conditions for intercepts
+   */
+  when: (condition: (ctx: any) => boolean | Promise<boolean>) => AllUseItems;
+
+  /**
+   * Define cache configuration
+   */
+  cache: (config: { ttl?: number; swr?: number } | false, use?: () => AllUseItems[]) => AllUseItems;
+};
+
+/**
  * Router builder for chaining .use() and .map()
  * TRoutes accumulates all registered route types through the chain
+ * TLocalRoutes contains just the routes for the current .routes() call (without prefix)
  */
 interface RouteBuilder<
   T extends RouteDefinition,
   TEnv,
   TRoutes extends Record<string, string>,
+  TLocalRoutes extends Record<string, string> = Record<string, string>,
 > {
   /**
    * Add middleware scoped to this mount
@@ -289,8 +418,34 @@ interface RouteBuilder<
   use(
     patternOrMiddleware: string | MiddlewareFn<TEnv>,
     middleware?: MiddlewareFn<TEnv>
-  ): RouteBuilder<T, TEnv, TRoutes>;
+  ): RouteBuilder<T, TEnv, TRoutes, TLocalRoutes>;
 
+  /**
+   * Map routes to handlers
+   *
+   * Supports two patterns:
+   *
+   * 1. Lazy loading (code-split):
+   * ```typescript
+   * .routes(homeRoutes)
+   * .map(() => import("./handlers/home"))
+   * ```
+   *
+   * 2. Inline definition:
+   * ```typescript
+   * .routes({ index: "/", about: "/about" })
+   * .map(({ route }) => [
+   *   route("index", () => <HomePage />),
+   *   route("about", () => <AboutPage />),
+   * ])
+   * ```
+   */
+  // Inline definition overload - handler receives helpers (must be first for correct inference)
+  // Uses TLocalRoutes so route names don't need the prefix
+  map<H extends (helpers: InlineRouteHelpers<TLocalRoutes, TEnv>) => Array<AllUseItems>>(
+    handler: H
+  ): RSCRouter<TEnv, TRoutes>;
+  // Lazy loading overload - no parameters
   map(
     handler: () =>
       | Array<AllUseItems>
@@ -316,23 +471,38 @@ export interface RSCRouter<
   /**
    * Register routes with a prefix
    * Route types are accumulated through the chain
+   *
+   * @throws Compile-time error if route keys conflict with previously registered routes
    */
   routes<TPrefix extends string, T extends ResolvedRouteMap<any>>(
     prefix: TPrefix,
     routes: T
-  ): RouteBuilder<
-    RouteDefinition,
-    TEnv,
-    TRoutes & PrefixedRoutes<T, SanitizePrefix<TPrefix>>
-  >;
+  ): ConflictingKeys<TRoutes, PrefixedRoutes<T, SanitizePrefix<TPrefix>>> extends never
+    ? RouteBuilder<
+        RouteDefinition,
+        TEnv,
+        TRoutes & PrefixedRoutes<T, SanitizePrefix<TPrefix>>,
+        T  // Local routes without prefix
+      >
+    : {
+        __error: `Route key conflict! Keys [${ConflictingKeys<TRoutes, PrefixedRoutes<T, SanitizePrefix<TPrefix>>> & string}] already exist with different URL patterns.`;
+        hint: "Use unique key names for each route definition, or use a prefix to namespace them.";
+      };
 
   /**
    * Register routes without a prefix
    * Route types are accumulated through the chain
+   *
+   * @throws Compile-time error if route keys conflict with previously registered routes
    */
   routes<T extends ResolvedRouteMap<any>>(
     routes: T
-  ): RouteBuilder<RouteDefinition, TEnv, TRoutes & T>;
+  ): ConflictingKeys<TRoutes, T> extends never
+    ? RouteBuilder<RouteDefinition, TEnv, TRoutes & T, T>
+    : {
+        __error: `Route key conflict! Keys [${ConflictingKeys<TRoutes, T> & string}] already exist with different URL patterns.`;
+        hint: "Use unique key names for each route definition, or use a prefix to namespace them.";
+      };
 
   /**
    * Add global middleware that runs on all routes
@@ -3393,7 +3563,7 @@ export function createRSCRouter<TEnv = any>(
   function createRouteBuilder<TNewRoutes extends Record<string, string>>(
     prefix: string,
     routes: TNewRoutes
-  ): RouteBuilder<RouteDefinition, TEnv, TNewRoutes> {
+  ): RouteBuilder<RouteDefinition, TEnv, any, TNewRoutes> {
     const currentMountIndex = mountIndex++;
 
     // Merge routes into the href map with prefixes
@@ -3421,7 +3591,7 @@ export function createRSCRouter<TEnv = any>(
       | undefined;
 
     // Create builder object so .use() can return it
-    const builder: RouteBuilder<RouteDefinition, TEnv, TNewRoutes> = {
+    const builder: RouteBuilder<RouteDefinition, TEnv, any, TNewRoutes> = {
       use(
         patternOrMiddleware: string | MiddlewareFn<TEnv>,
         middleware?: MiddlewareFn<TEnv>
@@ -3432,16 +3602,42 @@ export function createRSCRouter<TEnv = any>(
       },
 
       map(
-        handler: () =>
+        handler:
+          | ((helpers: InlineRouteHelpers<TNewRoutes, TEnv>) => Array<AllUseItems>)
+          | (() =>
+              | Array<AllUseItems>
+              | Promise<{ default: () => Array<AllUseItems> }>
+              | Promise<() => Array<AllUseItems>>)
+      ) {
+        // Detect inline vs lazy handlers
+        // Inline handlers expect arguments (helpers), lazy handlers don't
+        let wrappedHandler: () =>
           | Array<AllUseItems>
           | Promise<{ default: () => Array<AllUseItems> }>
-          | Promise<() => Array<AllUseItems>>
-      ) {
+          | Promise<() => Array<AllUseItems>>;
+
+        if (handler.length > 0) {
+          // Inline handler: defer execution to request time (helpers need request context)
+          // createRouteHelpers returns RouteHelpers which is compatible at runtime
+          // Wrap in layout (like map() from route-definition does) since top-level must be a layout
+          const inlineHandler = handler as (helpers: InlineRouteHelpers<any, TEnv>) => Array<AllUseItems>;
+          wrappedHandler = () => {
+            const helpers = createRouteHelpers<any, TEnv>() as InlineRouteHelpers<any, TEnv>;
+            return [helpers.layout(MapRootLayout, () => inlineHandler(helpers))].flat(3);
+          };
+        } else {
+          // Lazy handler: use as-is
+          wrappedHandler = handler as () =>
+            | Array<AllUseItems>
+            | Promise<{ default: () => Array<AllUseItems> }>
+            | Promise<() => Array<AllUseItems>>;
+        }
+
         routesEntries.push({
           prefix,
           routes: routes as ResolvedRouteMap<any>,
           trailingSlash: trailingSlashConfig,
-          handler,
+          handler: wrappedHandler,
           mountIndex: currentMountIndex,
         });
         // Return router with accumulated types
