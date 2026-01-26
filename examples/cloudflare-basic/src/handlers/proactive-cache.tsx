@@ -1,5 +1,5 @@
-import { map } from "rsc-router/server";
-import { Link, Outlet } from "rsc-router/client";
+import { map } from "@ivogt/rsc-router/server";
+import { Link, Outlet } from "@ivogt/rsc-router/client";
 import type { proactiveCacheRoutes } from "../routes.js";
 
 /**
@@ -37,7 +37,7 @@ export default map<typeof proactiveCacheRoutes>(({ route, layout, cache }) => [
         </div>
       ),
       () => [
-        route("index", () => (
+        route("proactiveCache", () => (
           <div data-testid="proactive-index-page">
             <h3>Proactive Cache Index</h3>
             <p data-testid="proactive-index-rendered">
@@ -46,7 +46,7 @@ export default map<typeof proactiveCacheRoutes>(({ route, layout, cache }) => [
           </div>
         )),
 
-        route("itemA", () => (
+        route("proactiveCacheItemA", () => (
           <div data-testid="proactive-item-a-page">
             <h3>Item A</h3>
             <p data-testid="proactive-item-a-rendered">
@@ -55,7 +55,7 @@ export default map<typeof proactiveCacheRoutes>(({ route, layout, cache }) => [
           </div>
         )),
 
-        route("itemB", () => (
+        route("proactiveCacheItemB", () => (
           <div data-testid="proactive-item-b-page">
             <h3>Item B</h3>
             <p data-testid="proactive-item-b-rendered">

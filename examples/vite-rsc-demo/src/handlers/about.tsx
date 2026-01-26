@@ -1,6 +1,6 @@
-import { map } from "rsc-router/server";
+import { map } from "@ivogt/rsc-router/server";
 import type { aboutRoutes } from "../routes.js";
-import { Outlet } from "rsc-router/client";
+import { Outlet } from "@ivogt/rsc-router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 
 /**

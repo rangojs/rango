@@ -1,6 +1,6 @@
 //#region Imports
-import { map } from "rsc-router/server";
-import { MemorySegmentCacheStore } from "rsc-router/rsc";
+import { map } from "@ivogt/rsc-router/server";
+import { MemorySegmentCacheStore } from "@ivogt/rsc-router/rsc";
 import type { shopRoutes } from "../routes.js";
 import { ShopLayout } from "../layouts/ShopLayout.js";
 import { CheckoutLayout } from "../layouts/CheckoutLayout.js";
@@ -44,7 +44,7 @@ import {
   orderDetailRevalidation,
   productDetailRevalidation,
 } from "./shop/revalidation/index.js";
-import { Outlet, ParallelOutlet } from "rsc-router/client";
+import { Outlet, ParallelOutlet } from "@ivogt/rsc-router/client";
 // Loaders - server-side data fetchers
 import {
   UserLoader,

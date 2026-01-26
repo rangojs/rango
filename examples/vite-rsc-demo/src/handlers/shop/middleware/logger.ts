@@ -1,4 +1,4 @@
-import type { MiddlewareFn } from "rsc-router/server";
+import type { MiddlewareFn } from "@ivogt/rsc-router/server";
 
 export const loggerMiddleware: MiddlewareFn[] = [
   (ctx, next) => {

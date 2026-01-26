@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { createLoader } from "rsc-router";
+import { createLoader } from "@ivogt/rsc-router";
 import {
   usersStore,
   notesStore,

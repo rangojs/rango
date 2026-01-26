@@ -156,39 +156,38 @@ test.describe("action-id-resolution (production)", () => {
         const filePath = path.join(distPath, file);
         const content = fs.readFileSync(filePath, "utf-8");
 
-        // Look for createServerReference calls (client-side action stubs)
-        if (content.includes("createServerReference")) {
+        // Look for action $$id assignments (added by expose-action-id plugin)
+        // In minified bundles, createServerReference becomes a single letter,
+        // but the $$id="hash#actionName" pattern remains stable
+        // Pattern: $$id="hash#actionName" or .$$id="hash#actionName"
+        const actionIdMatches = content.match(
+          /\$\$id\s*=\s*"([a-f0-9]+#[^"]+)"/g
+        );
+
+        if (actionIdMatches && actionIdMatches.length > 0) {
           foundActionReference = true;
 
-          // Extract all action IDs from createServerReference calls
-          // Pattern: createServerReference("hash#actionName", ...)
-          const actionIdMatches = content.match(
-            /createServerReference\("([^"]+)"/g
-          );
+          for (const match of actionIdMatches) {
+            // Extract the ID part
+            const idMatch = match.match(/\$\$id\s*=\s*"([^"]+)"/);
+            if (idMatch) {
+              const actionId = idMatch[1];
 
-          if (actionIdMatches) {
-            for (const match of actionIdMatches) {
-              // Extract the ID part
-              const idMatch = match.match(/createServerReference\("([^"]+)"/);
-              if (idMatch) {
-                const actionId = idMatch[1];
+              // Action ID should be in format "hash#actionName"
+              // Hash should be alphanumeric (not a file path)
+              const [hash, actionName] = actionId.split("#");
 
-                // Action ID should be in format "hash#actionName"
-                // Hash should be alphanumeric (not a file path)
-                const [hash, actionName] = actionId.split("#");
+              // Hash should NOT look like a file path
+              expect(hash).not.toContain("/");
+              expect(hash).not.toContain("src");
+              expect(hash).not.toContain(".ts");
+              expect(hash).not.toContain(".js");
 
-                // Hash should NOT look like a file path
-                expect(hash).not.toContain("/");
-                expect(hash).not.toContain("src");
-                expect(hash).not.toContain(".ts");
-                expect(hash).not.toContain(".js");
+              // Hash should be alphanumeric (hex hash)
+              expect(hash).toMatch(/^[a-f0-9]+$/i);
 
-                // Hash should be alphanumeric (hex hash)
-                expect(hash).toMatch(/^[a-f0-9]+$/i);
-
-                // Action name should be present
-                expect(actionName).toBeTruthy();
-              }
+              // Action name should be present
+              expect(actionName).toBeTruthy();
             }
           }
         }

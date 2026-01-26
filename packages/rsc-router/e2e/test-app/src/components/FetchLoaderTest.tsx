@@ -1,6 +1,6 @@
 "use client";
 
-import { useFetchLoader, type LoaderDefinition } from "rsc-router/client";
+import { useFetchLoader, type LoaderDefinition } from "@ivogt/rsc-router/client";
 
 interface FetchLoaderTestProps {
   loader: LoaderDefinition<{

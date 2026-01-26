@@ -1,6 +1,6 @@
 "use client";
 
-import { useLoader, Outlet } from "rsc-router/client";
+import { useLoader, Outlet } from "@ivogt/rsc-router/client";
 import { ActionCounterLoader } from "./loader.js";
 
 export function ActionCounterDisplay() {

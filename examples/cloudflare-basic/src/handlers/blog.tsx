@@ -1,5 +1,5 @@
-import { map, Meta, notFound } from "rsc-router/server";
-import { Link, Outlet, ParallelOutlet } from "rsc-router/client";
+import { map, Meta, notFound } from "@ivogt/rsc-router/server";
+import { Link, Outlet, ParallelOutlet } from "@ivogt/rsc-router/client";
 import type { blogRoutes } from "../routes.js";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import {
@@ -203,7 +203,7 @@ export default map<typeof blogRoutes>(
         // Cache boundary for route content (not sidebar - loaders stay fresh)
         cache({ ttl: 60, swr: 300 }, () => [
           // Blog index page - lists all posts
-          route("index", (ctx) => {
+          route("blog", (ctx) => {
             const meta = ctx.use(Meta);
             meta({ title: "Blog - RSC Router Cloudflare" });
             meta({
@@ -289,7 +289,7 @@ export default map<typeof blogRoutes>(
           }),
 
           // Blog post detail page - push post-specific breadcrumb
-          route("post", (ctx) => {
+          route("blogPost", (ctx) => {
             // Read post directly - static data gets cached with RSC output
             const post = getBlogPost(ctx.params.slug);
 

@@ -10,7 +10,7 @@ export default defineConfig({
   resolve: {
     alias: {
       // Mock the virtual module for tests
-      "rsc-router:version": resolve(__dirname, "src/__mocks__/version.ts"),
+      "@ivogt/rsc-router:version": resolve(__dirname, "src/__mocks__/version.ts"),
     },
   },
 });

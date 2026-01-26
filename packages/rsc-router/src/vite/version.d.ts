@@ -3,7 +3,7 @@
  * This module is provided by the Vite plugin at build/dev time.
  */
 
-declare module "rsc-router:version" {
+declare module "@ivogt/rsc-router:version" {
   /**
    * Auto-generated version string for cache invalidation.
    * Changes on server restart (dev) or build (prod).

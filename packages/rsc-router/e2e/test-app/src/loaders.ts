@@ -1,4 +1,4 @@
-import { createLoader } from "rsc-router/server";
+import { createLoader } from "@ivogt/rsc-router/server";
 
 // Product data
 const products = [

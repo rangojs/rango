@@ -1,6 +1,6 @@
 "use client";
 
-import { useLinkStatus } from "rsc-router/client";
+import { useLinkStatus } from "@ivogt/rsc-router/client";
 
 /**
  * Loading indicator that shows when the parent Link is pending

@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Link, href, MetaTags } from "rsc-router/client";
+import { Link, href, MetaTags } from "@ivogt/rsc-router/client";
 import { BreadcrumbNav } from "./BreadcrumbNav.js";
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -27,10 +27,18 @@ export function AppShell({ children }: { children: ReactNode }) {
       </head>
       <body>
         <nav data-testid="nav">
-          <Link to={href("/")} data-testid="nav-home">Home</Link>
-          <Link to={href("/about")} data-testid="nav-about">About</Link>
-          <Link to={href("/counter")} data-testid="nav-counter">Counter</Link>
-          <Link to={href("/blog")} data-testid="nav-blog">Blog</Link>
+          <Link to={href("/")} data-testid="nav-home">
+            Home
+          </Link>
+          <Link to={href("/about")} data-testid="nav-about">
+            About
+          </Link>
+          <Link to={href("/counter")} data-testid="nav-counter">
+            Counter
+          </Link>
+          <Link to={href("/blog")} data-testid="nav-blog">
+            Blog
+          </Link>
         </nav>
         <BreadcrumbNav />
         {children}

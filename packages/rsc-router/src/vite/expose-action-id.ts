@@ -229,7 +229,7 @@ export function exposeActionId(): Plugin {
   let rscPluginApi: RscPluginApi | undefined;
 
   return {
-    name: "rsc-router:expose-action-id",
+    name: "@ivogt/rsc-router:expose-action-id",
     // Run after all other plugins (including RSC plugin's transforms)
     enforce: "post",
 
@@ -251,7 +251,7 @@ export function exposeActionId(): Plugin {
       if (!rscPluginApi) {
         throw new Error(
           "[rsc-router] Could not find @vitejs/plugin-rsc. " +
-            "rsc-router requires the Vite RSC plugin.\n" +
+            "@ivogt/rsc-router requires the Vite RSC plugin.\n" +
             "The RSC plugin should be included automatically. If you disabled it with\n" +
             "rscRouter({ rsc: false }), add rsc() before rscRouter() in your config."
         );

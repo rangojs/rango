@@ -1,4 +1,4 @@
-import type { MetaDescriptor } from "rsc-router/server";
+import type { MetaDescriptor } from "@ivogt/rsc-router/server";
 
 interface ChildMetaSetterProps {
   meta: (descriptor: MetaDescriptor) => void;

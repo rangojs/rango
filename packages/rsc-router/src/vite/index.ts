@@ -12,6 +12,12 @@ import {
   getVirtualVersionContent,
   VIRTUAL_IDS,
 } from "./virtual-entries.ts";
+import {
+  getExcludeDeps,
+  getPackageAliases,
+  getPublishedPackageName,
+  isWorkspaceDevelopment,
+} from "./package-resolution.ts";
 
 // Re-export plugins
 export { exposeActionId } from "./expose-action-id.ts";
@@ -20,6 +26,33 @@ export { exposeHandleId } from "./expose-handle-id.ts";
 export { exposeLocationStateId } from "./expose-location-state-id.ts";
 
 // Virtual module type declarations in ./version.d.ts
+
+/**
+ * esbuild plugin to provide rsc-router:version virtual module during optimization.
+ * This is needed because esbuild runs during Vite's dependency optimization phase,
+ * before Vite's plugin system can handle virtual modules.
+ */
+const versionEsbuildPlugin = {
+  name: "@ivogt/rsc-router-version",
+  setup(build: any) {
+    build.onResolve({ filter: /^rsc-router:version$/ }, (args: any) => ({
+      path: args.path,
+      namespace: "@ivogt/rsc-router-virtual",
+    }));
+    build.onLoad({ filter: /.*/, namespace: "@ivogt/rsc-router-virtual" }, () => ({
+      contents: `export const VERSION = "dev";`,
+      loader: "js",
+    }));
+  },
+};
+
+/**
+ * Shared esbuild options for dependency optimization.
+ * Includes the version stub plugin for all environments.
+ */
+const sharedEsbuildOptions = {
+  plugins: [versionEsbuildPlugin],
+};
 
 /**
  * RSC plugin entry points configuration.
@@ -151,7 +184,7 @@ function createVirtualEntriesPlugin(
   }
 
   return {
-    name: "rsc-router:virtual-entries",
+    name: "@ivogt/rsc-router:virtual-entries",
     enforce: "pre",
 
     resolveId(id) {
@@ -221,7 +254,7 @@ function createVersionPlugin(): Plugin {
   let server: any = null;
 
   return {
-    name: "rsc-router:version",
+    name: "@ivogt/rsc-router:version",
     enforce: "pre",
 
     configResolved(config) {
@@ -290,7 +323,7 @@ function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
   let resolvedEntryPath = "";
 
   return {
-    name: "rsc-router:version-injector",
+    name: "@ivogt/rsc-router:version-injector",
     enforce: "pre",
 
     configResolved(config) {
@@ -313,7 +346,7 @@ function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
       }
 
       // Check if VERSION is already imported
-      if (code.includes("rsc-router:version")) {
+      if (code.includes("@ivogt/rsc-router:version")) {
         return null;
       }
 
@@ -349,7 +382,7 @@ function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
       }
 
       // Insert VERSION import
-      const versionImport = `import { VERSION } from "rsc-router:version";\n`;
+      const versionImport = `import { VERSION } from "@ivogt/rsc-router:version";\n`;
       let newCode = code.slice(0, insertIndex) + versionImport + code.slice(insertIndex);
 
       // Add version: VERSION to createRSCHandler call
@@ -399,6 +432,10 @@ export async function rscRouter(
 
   const plugins: PluginOption[] = [];
 
+  // Get package resolution info (workspace vs npm install)
+  const rscRouterAliases = getPackageAliases();
+  const excludeDeps = getExcludeDeps();
+
   // Track RSC entry path for version injection
   let rscEntryPath: string | null = null;
 
@@ -417,11 +454,20 @@ export async function rscRouter(
     };
 
     plugins.push({
-      name: "rsc-router:cloudflare-integration",
+      name: "@ivogt/rsc-router:cloudflare-integration",
       enforce: "pre",
       config() {
         // Configure environments for cloudflare deployment
         return {
+          // Exclude rsc-router modules from optimization to prevent module duplication
+          // This ensures the same Context instance is used by both browser entry and RSC proxy modules
+          optimizeDeps: {
+            exclude: excludeDeps,
+            esbuildOptions: sharedEsbuildOptions,
+          },
+          resolve: {
+            alias: rscRouterAliases,
+          },
           environments: {
             client: {
               build: {
@@ -432,8 +478,11 @@ export async function rscRouter(
                 },
               },
               // Pre-bundle rsc-html-stream to prevent discovery during first request
+              // Exclude rsc-router modules to ensure same Context instance
               optimizeDeps: {
                 include: ["rsc-html-stream/client"],
+                exclude: excludeDeps,
+                esbuildOptions: sharedEsbuildOptions,
               },
             },
             ssr: {
@@ -446,6 +495,7 @@ export async function rscRouter(
                 dedupe: ["react", "react-dom"],
               },
               // Pre-bundle SSR entry and React for proper module linking with childEnvironments
+              // Exclude rsc-router modules to ensure same Context instance
               optimizeDeps: {
                 entries: [finalEntries.ssr],
                 include: [
@@ -454,6 +504,16 @@ export async function rscRouter(
                   "react/jsx-runtime",
                   "rsc-html-stream/server",
                 ],
+                exclude: excludeDeps,
+                esbuildOptions: sharedEsbuildOptions,
+              },
+            },
+            rsc: {
+              // RSC environment needs exclude list and esbuild options
+              // Exclude rsc-router modules to prevent createContext in RSC environment
+              optimizeDeps: {
+                exclude: excludeDeps,
+                esbuildOptions: sharedEsbuildOptions,
               },
             },
           },
@@ -501,7 +561,7 @@ export async function rscRouter(
       let hasWarnedDuplicate = false;
 
       plugins.push({
-        name: "rsc-router:rsc-integration",
+        name: "@ivogt/rsc-router:rsc-integration",
         enforce: "pre",
 
         config() {
@@ -515,6 +575,15 @@ export async function rscRouter(
           const useVirtualRSC = finalEntries.rsc === VIRTUAL_IDS.rsc;
 
           return {
+            // Exclude rsc-router modules from optimization to prevent module duplication
+            // This ensures the same Context instance is used by both browser entry and RSC proxy modules
+            optimizeDeps: {
+              exclude: excludeDeps,
+              esbuildOptions: sharedEsbuildOptions,
+            },
+            resolve: {
+              alias: rscRouterAliases,
+            },
             environments: {
               client: {
                 build: {
@@ -524,12 +593,15 @@ export async function rscRouter(
                     },
                   },
                 },
-                ...(useVirtualClient && {
-                  optimizeDeps: {
+                // Always exclude rsc-router modules, conditionally add virtual entry
+                optimizeDeps: {
+                  exclude: excludeDeps,
+                  esbuildOptions: sharedEsbuildOptions,
+                  ...(useVirtualClient && {
                     // Tell Vite to scan the virtual entry for dependencies
                     entries: [VIRTUAL_IDS.browser],
-                  },
-                }),
+                  }),
+                },
               },
               ...(useVirtualSSR && {
                 ssr: {
@@ -537,6 +609,8 @@ export async function rscRouter(
                     entries: [VIRTUAL_IDS.ssr],
                     // Pre-bundle React for SSR to ensure single instance
                     include: ["react", "react-dom/server.edge", "react/jsx-runtime"],
+                    exclude: excludeDeps,
+                    esbuildOptions: sharedEsbuildOptions,
                   },
                 },
               }),
@@ -546,6 +620,7 @@ export async function rscRouter(
                     entries: [VIRTUAL_IDS.rsc],
                     // Pre-bundle React for RSC to ensure single instance
                     include: ["react", "react/jsx-runtime"],
+                    esbuildOptions: sharedEsbuildOptions,
                   },
                 },
               }),
@@ -603,6 +678,102 @@ export async function rscRouter(
     plugins.push(createVersionInjectorPlugin(rscEntryPath));
   }
 
+  // Transform CJS vendor files to ESM for browser compatibility
+  // optimizeDeps.include doesn't work because the file is loaded after initial optimization
+  plugins.push(createCjsToEsmPlugin());
+
   return plugins;
+}
+
+/**
+ * Transform CJS vendor files from @vitejs/plugin-rsc to ESM for browser compatibility.
+ * The react-server-dom vendor files are shipped as CJS which doesn't work in browsers.
+ */
+function createCjsToEsmPlugin(): Plugin {
+  return {
+    name: "@ivogt/rsc-router:cjs-to-esm",
+    enforce: "pre",
+    transform(code, id) {
+      const cleanId = id.split("?")[0];
+
+      // Transform the client.browser.js entry point to re-export from CJS
+      if (
+        cleanId.includes("vendor/react-server-dom/client.browser.js") ||
+        cleanId.includes("vendor\\react-server-dom\\client.browser.js")
+      ) {
+        const isProd = process.env.NODE_ENV === "production";
+        const cjsFile = isProd
+          ? "./cjs/react-server-dom-webpack-client.browser.production.js"
+          : "./cjs/react-server-dom-webpack-client.browser.development.js";
+
+        return {
+          code: `export * from "${cjsFile}";`,
+          map: null,
+        };
+      }
+
+      // Transform the actual CJS files to ESM
+      if (
+        (cleanId.includes("vendor/react-server-dom/cjs/") ||
+          cleanId.includes("vendor\\react-server-dom\\cjs\\")) &&
+        cleanId.includes("client.browser")
+      ) {
+        let transformed = code;
+
+        // Extract the license comment to preserve it
+        const licenseMatch = transformed.match(/^\/\*\*[\s\S]*?\*\//);
+        const license = licenseMatch ? licenseMatch[0] : "";
+        if (license) {
+          transformed = transformed.slice(license.length);
+        }
+
+        // Remove "use strict" (both dev and prod have this)
+        transformed = transformed.replace(/^\s*["']use strict["'];\s*/, "");
+
+        // Remove the conditional IIFE wrapper (development only)
+        transformed = transformed.replace(
+          /^\s*["']production["']\s*!==\s*process\.env\.NODE_ENV\s*&&\s*\(function\s*\(\)\s*\{/,
+          ""
+        );
+
+        // Remove the closing of the conditional IIFE at the end (development only)
+        transformed = transformed.replace(/\}\)\(\);?\s*$/, "");
+
+        // Replace require('react') and require('react-dom') with imports (development)
+        transformed = transformed.replace(
+          /var\s+React\s*=\s*require\s*\(\s*["']react["']\s*\)\s*,[\s\n]+ReactDOM\s*=\s*require\s*\(\s*["']react-dom["']\s*\)\s*,/g,
+          'import React from "react";\nimport ReactDOM from "react-dom";\nvar '
+        );
+
+        // Replace require('react-dom') only (production - doesn't import React)
+        transformed = transformed.replace(
+          /var\s+ReactDOM\s*=\s*require\s*\(\s*["']react-dom["']\s*\)\s*,/g,
+          'import ReactDOM from "react-dom";\nvar '
+        );
+
+        // Transform exports.xyz = function() to export function xyz()
+        transformed = transformed.replace(
+          /exports\.(\w+)\s*=\s*function\s*\(/g,
+          "export function $1("
+        );
+
+        // Transform exports.xyz = value to export const xyz = value
+        transformed = transformed.replace(
+          /exports\.(\w+)\s*=/g,
+          "export const $1 ="
+        );
+
+        // Reconstruct with license at the top
+        transformed = license + "\n" + transformed;
+
+        return {
+          code: transformed,
+          map: null,
+        };
+      }
+
+      return null;
+    },
+  };
 }
 

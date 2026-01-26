@@ -1,4 +1,4 @@
-import { createRSCRouter, type RouterEnv, type AppMiddlewareFn } from "rsc-router/server";
+import { createRSCRouter, type RouterEnv, type AppMiddlewareFn } from "@ivogt/rsc-router/server";
 import { homeRoutes, aboutRoutes, counterRoutes } from "./routes.js";
 import { AppShell } from "./components/AppShell.js";
 

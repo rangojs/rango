@@ -1,4 +1,4 @@
-import { createLoader } from "rsc-router";
+import { createLoader } from "@ivogt/rsc-router";
 import { products } from "../data.js";
 
 export type Recommendation = {

@@ -1,4 +1,4 @@
-import type { RouteHandler } from "rsc-router/server";
+import type { RouteHandler } from "@ivogt/rsc-router/server";
 import type { shopRoutes } from "@/routes.js";
 import { products } from "@/handlers/shop/data.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
@@ -10,7 +10,7 @@ import {
   StreamingActionStatus,
 } from "@/components/StreamingActionForm.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
-import { OutletProvider, ParallelOutlet } from "rsc-router/client";
+import { OutletProvider, ParallelOutlet } from "@ivogt/rsc-router/client";
 import {
   addToCart,
   addToCartWithResult,

@@ -1,5 +1,5 @@
-import { map, Meta } from "rsc-router/server";
-import { Link } from "rsc-router/client";
+import { map, Meta } from "@ivogt/rsc-router/server";
+import { Link } from "@ivogt/rsc-router/client";
 import type { homeRoutes } from "../routes.js";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import { FeatureLocationState } from "../location-states.js";
@@ -23,7 +23,7 @@ const features = [
 ];
 
 export default map<typeof homeRoutes>(({ route }) => [
-  route("index", (ctx) => {
+  route("home", (ctx) => {
     const meta = ctx.use(Meta);
     meta({ title: "Home - RSC Router Cloudflare" });
     meta({ name: "description", content: "A minimal RSC Router example running on Cloudflare Workers" });
