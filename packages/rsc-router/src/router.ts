@@ -271,10 +271,15 @@ export interface RSCRouterOptions<TEnv = any> {
 
 /**
  * Type-level detection of conflicting route keys.
- * When two route definitions have the same key with different values,
- * TypeScript intersection produces `never` for that key, breaking the type.
+ * Extracts keys that exist in both TExisting and TNew but with different URL patterns.
+ * Returns `never` if no conflicts exist.
  *
- * This helper extracts keys that would conflict.
+ * @example
+ * ```typescript
+ * ConflictingKeys<{ a: "/a" }, { a: "/b" }> // "a" (conflict - same key, different URLs)
+ * ConflictingKeys<{ a: "/a" }, { a: "/a" }> // never (no conflict - same key and URL)
+ * ConflictingKeys<{ a: "/a" }, { b: "/b" }> // never (no conflict - different keys)
+ * ```
  */
 type ConflictingKeys<
   TExisting extends Record<string, string>,
@@ -288,24 +293,12 @@ type ConflictingKeys<
 }[keyof TExisting & keyof TNew];
 
 /**
- * Produces a helpful error type when route key conflicts are detected.
- * If no conflicts, returns the merged type. If conflicts exist, returns an error type.
- */
-type AssertNoRouteKeyConflicts<
-  TExisting extends Record<string, string>,
-  TNew extends Record<string, string>,
-  TMerged
-> = ConflictingKeys<TExisting, TNew> extends never
-  ? TMerged // No conflicts, return the merged type
-  : {
-      __error: "Route key conflict detected! The following keys are duplicated with different URL patterns:";
-      conflictingKeys: ConflictingKeys<TExisting, TNew>;
-      hint: "Use unique key names for each route, e.g., 'home' instead of 'index' for multiple route definitions";
-    };
-
-/**
- * Simplified route helpers for inline route definitions
- * Uses TRoutes (Record<string, string>) instead of RouteDefinition
+ * Simplified route helpers for inline route definitions.
+ * Uses TRoutes (Record<string, string>) instead of RouteDefinition.
+ *
+ * Note: Some helpers use `any` for context types as a trade-off for simpler usage.
+ * The main type safety is in the `route` helper which enforces valid route names.
+ * For full type safety, use the standard map() API with separate handler files.
  */
 type InlineRouteHelpers<
   TRoutes extends Record<string, string>,
@@ -501,7 +494,7 @@ export interface RSCRouter<
     ? RouteBuilder<RouteDefinition, TEnv, TRoutes & T, T>
     : {
         __error: `Route key conflict! Keys [${ConflictingKeys<TRoutes, T> & string}] already exist with different URL patterns.`;
-        hint: "Use unique key names for each route definition, or use a prefix to namespace them.";
+        hint: "Use unique key names for each route definition.";
       };
 
   /**
@@ -3581,6 +3574,16 @@ export function createRSCRouter<TEnv = any>(
           : prefix && pattern === "/"
             ? prefix
             : pattern;
+
+      // Runtime validation: warn if key already exists with different pattern
+      const existingPattern = mergedRouteMap[key];
+      if (existingPattern !== undefined && existingPattern !== prefixedPattern) {
+        console.warn(
+          `[rsc-router] Route key conflict: "${key}" already maps to "${existingPattern}", ` +
+            `overwriting with "${prefixedPattern}". Use unique key names to avoid this.`
+        );
+      }
+
       // Use original key - enables reusable route modules
       mergedRouteMap[key] = prefixedPattern;
     }
@@ -3612,35 +3615,15 @@ export function createRSCRouter<TEnv = any>(
               | Promise<{ default: () => Array<AllUseItems> }>
               | Promise<() => Array<AllUseItems>>)
       ) {
-        // Detect inline vs lazy handlers
-        // Inline handlers expect arguments (helpers), lazy handlers don't
-        let wrappedHandler: () =>
-          | Array<AllUseItems>
-          | Promise<{ default: () => Array<AllUseItems> }>
-          | Promise<() => Array<AllUseItems>>;
-
-        if (handler.length > 0) {
-          // Inline handler: defer execution to request time (helpers need request context)
-          // createRouteHelpers returns RouteHelpers which is structurally compatible at runtime
-          // Wrap in layout (like map() from route-definition does) since top-level must be a layout
-          const inlineHandler = handler as (helpers: InlineRouteHelpers<any, TEnv>) => Array<AllUseItems>;
-          wrappedHandler = () => {
-            const helpers = createRouteHelpers<any, TEnv>() as unknown as InlineRouteHelpers<any, TEnv>;
-            return [helpers.layout(MapRootLayout, () => inlineHandler(helpers))].flat(3);
-          };
-        } else {
-          // Lazy handler: use as-is
-          wrappedHandler = handler as () =>
-            | Array<AllUseItems>
-            | Promise<{ default: () => Array<AllUseItems> }>
-            | Promise<() => Array<AllUseItems>>;
-        }
-
+        // Store handler as-is - detection happens at call time based on return type
+        // Both patterns use the same signature:
+        // - Inline: ({ route }) => [...] - receives helpers, returns Array
+        // - Lazy: () => import(...) - ignores helpers, returns Promise
         routesEntries.push({
           prefix,
           routes: routes as ResolvedRouteMap<any>,
           trailingSlash: trailingSlashConfig,
-          handler: wrappedHandler,
+          handler: handler as any,
           mountIndex: currentMountIndex,
         });
         // Return router with accumulated types
