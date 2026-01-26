@@ -30,6 +30,7 @@ export {
   createHref,
   type HrefFunction,
   type PrefixedRoutes,
+  type PrefixRoutePatterns,
   type ParamsFor,
   type SanitizePrefix,
   type MergeRoutes,

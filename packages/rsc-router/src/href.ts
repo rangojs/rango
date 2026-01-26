@@ -8,19 +8,22 @@ export type SanitizePrefix<T extends string> = T extends `/${infer P}` ? P : T;
 
 /**
  * Helper type to merge multiple route definitions into a single accumulated type.
- * Use this to define your app's complete route map for type-safe router.href().
+ * Note: When using createRSCRouter, types accumulate automatically through the
+ * builder chain, so this type is typically not needed.
  *
  * @example
  * ```typescript
- * import { homeRoutes, blogRoutes, shopRoutes } from "./routes";
- *
+ * // Manual type merging (rarely needed):
  * type AppRoutes = MergeRoutes<[
  *   typeof homeRoutes,
- *   PrefixedRoutes<typeof blogRoutes, "blog">,
- *   PrefixedRoutes<typeof shopRoutes, "shop">,
+ *   PrefixRoutePatterns<typeof blogRoutes, "/blog">,
  * ]>;
  *
- * export const router = createRSCRouter<AppEnv>() as RSCRouter<AppEnv, AppRoutes>;
+ * // Preferred: Let router accumulate types automatically
+ * const router = createRSCRouter<AppEnv>()
+ *   .routes(homeRoutes).map(...)
+ *   .routes("/blog", blogRoutes).map(...);
+ * type AppRoutes = typeof router.routeMap;
  * ```
  */
 export type MergeRoutes<T extends Record<string, string>[]> = T extends [
@@ -111,9 +114,10 @@ export type HrefFunction<TRoutes extends Record<string, string>> = {
  *
  * @example
  * ```typescript
- * const href = createHref(mergedRouteMap);
- * href("shop.cart"); // "/shop/cart"
- * href("shop.products.detail", { slug: "my-product" }); // "/shop/product/my-product"
+ * // Given routes: { cart: "/shop/cart", detail: "/shop/product/:slug" }
+ * const href = createHref(routeMap);
+ * href("cart"); // "/shop/cart"
+ * href("detail", { slug: "my-product" }); // "/shop/product/my-product"
  * ```
  */
 export function createHref<TRoutes extends Record<string, string>>(

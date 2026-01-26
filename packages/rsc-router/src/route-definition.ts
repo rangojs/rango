@@ -1249,6 +1249,30 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
 }
 
 /**
+ * Create RouteHelpers for inline route definitions
+ * Used internally by router.map() for inline handler syntax
+ */
+export function createRouteHelpers<
+  T extends RouteDefinition,
+  TEnv,
+>(): RouteHelpers<T, TEnv> {
+  return {
+    route: createRouteHelper<T, TEnv>(),
+    layout: createLayoutHelper<TEnv>(),
+    parallel: createParallelHelper<TEnv>(),
+    intercept: createInterceptHelper<T, TEnv>(),
+    middleware: createMiddlewareHelper<TEnv>(),
+    revalidate: createRevalidateHelper<TEnv>(),
+    loader: createLoaderHelper<TEnv>(),
+    loading: createLoadingHelper(),
+    errorBoundary: createErrorBoundaryHelper<TEnv>(),
+    notFoundBoundary: createNotFoundBoundaryHelper<TEnv>(),
+    when: createWhenHelper(),
+    cache: createCacheHelper(),
+  };
+}
+
+/**
  * Create a loader definition
  *
  * Loaders are RSC-compatible data fetchers that:

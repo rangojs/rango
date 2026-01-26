@@ -60,9 +60,10 @@ import { invokeOnError } from "../router/error-handling.js";
  * });
  * ```
  */
-export function createRSCHandler<TEnv = unknown>(
-  options: CreateRSCHandlerOptions<TEnv>
-) {
+export function createRSCHandler<
+  TEnv = unknown,
+  TRoutes extends Record<string, string> = Record<string, string>,
+>(options: CreateRSCHandlerOptions<TEnv, TRoutes>) {
   const { router, version = VERSION, nonce: nonceProvider } = options;
 
   // Use provided deps or default to @vitejs/plugin-rsc/rsc exports

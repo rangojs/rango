@@ -2,34 +2,38 @@ import { route } from "@ivogt/rsc-router";
 
 // Home route: /
 export const homeRoutes = route({
-  index: "/",
+  home: "/",
 });
 
 // About route: /about
 export const aboutRoutes = route({
-  index: "/about",
+  about: "/about",
 });
 
 // Counter route: /counter (demonstrates server actions)
 export const counterRoutes = route({
-  index: "/counter",
+  counter: "/counter",
 });
 
 // Features route: /features/:slug (demonstrates location state)
 export const featuresRoutes = route({
-  detail: "/features/:slug",
+  featuresDetail: "/features/:slug",
 });
 
 // Blog routes: /blog and /blog/:slug (demonstrates CF cache with SWR)
+// Uses prefix registration, so paths are relative
+// Keys must be globally unique since they're not prefixed
 export const blogRoutes = route({
-  index: "/blog",
-  post: "/blog/:slug",
+  blog: "/",
+  blogPost: "/:slug",
 });
 
 // Proactive cache test routes: /proactive-cache/*
 // Layout is INSIDE cache boundary to test proactive caching behavior
+// Uses prefix registration, so paths are relative
+// Keys must be globally unique since they're not prefixed
 export const proactiveCacheRoutes = route({
-  index: "/proactive-cache",
-  itemA: "/proactive-cache/item-a",
-  itemB: "/proactive-cache/item-b",
+  proactiveCache: "/",
+  proactiveCacheItemA: "/item-a",
+  proactiveCacheItemB: "/item-b",
 });

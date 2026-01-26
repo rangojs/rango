@@ -3,7 +3,7 @@ import type { aboutRoutes } from "../routes.js";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 
 export default map<typeof aboutRoutes>(({ route }) => [
-  route("index", (ctx) => {
+  route("about", (ctx) => {
     const meta = ctx.use(Meta);
     meta({ title: "About - RSC Router Cloudflare" });
     meta({ name: "description", content: "Learn about RSC Router - a code-first, type-safe router for React Server Components" });
