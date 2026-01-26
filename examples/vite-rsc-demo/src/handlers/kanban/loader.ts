@@ -1,4 +1,4 @@
-import { createLoader } from "rsc-router";
+import { createLoader } from "@ivogt/rsc-router";
 import { boardStore, type Board, type Card } from "./data.js";
 
 export type BoardData = Board;

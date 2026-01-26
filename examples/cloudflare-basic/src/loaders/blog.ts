@@ -1,4 +1,4 @@
-import { createLoader } from "rsc-router/server";
+import { createLoader } from "@ivogt/rsc-router/server";
 
 /**
  * Blog post data structure
@@ -77,7 +77,7 @@ resulting in minimal latency.
 The CF Cache API allows you to cache RSC responses at the edge:
 
 \`\`\`typescript
-import { CFCacheStore } from "rsc-router/cache/cf";
+import { CFCacheStore } from "@ivogt/rsc-router/cache/cf";
 
 const cacheStore = new CFCacheStore({
   defaults: { ttl: 60, swr: 300 }

@@ -1,4 +1,4 @@
-import { map, Meta } from "rsc-router/server";
+import { map, Meta } from "@ivogt/rsc-router/server";
 import type { homeRoutes } from "../routes.js";
 
 export default map<typeof homeRoutes>(({ route }) => [

@@ -140,11 +140,14 @@ export type NonceProvider<TEnv = unknown> = (
 /**
  * Options for creating an RSC handler
  */
-export interface CreateRSCHandlerOptions<TEnv = unknown> {
+export interface CreateRSCHandlerOptions<
+  TEnv = unknown,
+  TRoutes extends Record<string, string> = Record<string, string>,
+> {
   /**
    * The RSC router instance
    */
-  router: RSCRouter<TEnv>;
+  router: RSCRouter<TEnv, TRoutes>;
 
   /**
    * RSC dependencies from @vitejs/plugin-rsc/rsc.

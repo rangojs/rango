@@ -25,9 +25,9 @@ function hashLocationStateKey(filePath: string, exportName: string): string {
  * Check if file imports createLocationState from rsc-router
  */
 function hasCreateLocationStateImport(code: string): boolean {
-  // Match: import { createLocationState } from "rsc-router" or "rsc-router/client"
+  // Match: import { createLocationState } from "@ivogt/rsc-router" or "@ivogt/rsc-router/client"
   const pattern =
-    /import\s*\{[^}]*\bcreateLocationState\b[^}]*\}\s*from\s*["']rsc-router(?:\/[^"']+)?["']/;
+    /import\s*\{[^}]*\bcreateLocationState\b[^}]*\}\s*from\s*["']@ivogt\/rsc-router(?:\/[^"']+)?["']/;
   return pattern.test(code);
 }
 
@@ -135,7 +135,7 @@ function transformLocationStateExports(
  * The key is auto-generated from file path + export name.
  *
  * Requirements:
- * - Must use direct import: import { createLocationState } from "rsc-router"
+ * - Must use direct import: import { createLocationState } from "@ivogt/rsc-router"
  * - Must use named export: export const MyState = createLocationState(...)
  */
 export function exposeLocationStateId(): Plugin {
@@ -143,7 +143,7 @@ export function exposeLocationStateId(): Plugin {
   let isBuild = false;
 
   return {
-    name: "rsc-router:expose-location-state-id",
+    name: "@ivogt/rsc-router:expose-location-state-id",
     enforce: "post",
 
     configResolved(resolvedConfig) {

@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Link, ScrollRestoration, href } from "rsc-router/client";
+import { Link, ScrollRestoration, href } from "@ivogt/rsc-router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { BreadcrumbNav } from "../components/BreadcrumbNav.js";
 

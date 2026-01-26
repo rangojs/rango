@@ -10,11 +10,11 @@ import {
   setServerCallback,
   encodeReply,
   createTemporaryReferenceSet,
-} from "rsc-router/internal/deps/browser";
+} from "@ivogt/rsc-router/internal/deps/browser";
 import { createElement, StrictMode } from "react";
 import { hydrateRoot } from "react-dom/client";
-import { rscStream } from "rsc-router/internal/deps/html-stream-client";
-import { initBrowserApp, RSCRouter } from "rsc-router/browser";
+import { rscStream } from "@ivogt/rsc-router/internal/deps/html-stream-client";
+import { initBrowserApp, RSCRouter } from "@ivogt/rsc-router/browser";
 
 async function initializeApp() {
   const deps = {
@@ -37,10 +37,10 @@ initializeApp().catch(console.error);
 `.trim();
 
 export const VIRTUAL_ENTRY_SSR: string = `
-import { createFromReadableStream } from "rsc-router/internal/deps/ssr";
+import { createFromReadableStream } from "@ivogt/rsc-router/internal/deps/ssr";
 import { renderToReadableStream } from "react-dom/server.edge";
-import { injectRSCPayload } from "rsc-router/internal/deps/html-stream-server";
-import { createSSRHandler } from "rsc-router/ssr";
+import { injectRSCPayload } from "@ivogt/rsc-router/internal/deps/html-stream-server";
+import { createSSRHandler } from "@ivogt/rsc-router/ssr";
 
 export const renderHTML = createSSRHandler({
   createFromReadableStream,
@@ -63,10 +63,10 @@ import {
   loadServerAction,
   decodeAction,
   decodeFormState,
-} from "rsc-router/internal/deps/rsc";
+} from "@ivogt/rsc-router/internal/deps/rsc";
 import { router } from "${routerPath}";
-import { createRSCHandler } from "rsc-router/rsc";
-import { VERSION } from "rsc-router:version";
+import { createRSCHandler } from "@ivogt/rsc-router/rsc";
+import { VERSION } from "@ivogt/rsc-router:version";
 
 // Import loader manifest to ensure all fetchable loaders are registered at startup
 // This is critical for serverless/multi-process deployments where the loader module
@@ -97,7 +97,7 @@ export const VIRTUAL_IDS = {
   browser: "virtual:rsc-router/entry.browser.js",
   ssr: "virtual:rsc-router/entry.ssr.js",
   rsc: "virtual:rsc-router/entry.rsc.js",
-  version: "rsc-router:version",
+  version: "@ivogt/rsc-router:version",
 } as const;
 
 /**

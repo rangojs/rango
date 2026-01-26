@@ -1,4 +1,4 @@
-import type { ShouldRevalidateFn, GenericParams } from "rsc-router/server";
+import type { ShouldRevalidateFn, GenericParams } from "@ivogt/rsc-router/server";
 
 export const globalRevalidation: ShouldRevalidateFn<
   GenericParams,

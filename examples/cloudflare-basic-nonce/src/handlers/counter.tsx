@@ -1,4 +1,4 @@
-import { map, Meta } from "rsc-router/server";
+import { map, Meta } from "@ivogt/rsc-router/server";
 import type { counterRoutes } from "../routes.js";
 import { Counter } from "../components/Counter.js";
 import { getCounter } from "../actions/counter.js";

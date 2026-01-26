@@ -1,6 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
-import { createRSCHandler } from "rsc-router/rsc";
-import { CFCacheStore } from "rsc-router/cache";
+import { createRSCHandler } from "@ivogt/rsc-router/rsc";
+import { CFCacheStore } from "@ivogt/rsc-router/cache";
 import { router } from "./router.js";
 import type { AppBindings } from "./env.js";
 

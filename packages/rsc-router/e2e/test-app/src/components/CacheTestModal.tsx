@@ -1,6 +1,6 @@
 "use client";
 
-import { useLoader, type LoaderDefinition } from "rsc-router/client";
+import { useLoader, type LoaderDefinition } from "@ivogt/rsc-router/client";
 import type { InterceptCacheTestLoaderData } from "../loaders.js";
 
 interface CacheTestModalProps {

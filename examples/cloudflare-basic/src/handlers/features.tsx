@@ -1,4 +1,4 @@
-import { map, Meta } from "rsc-router/server";
+import { map, Meta } from "@ivogt/rsc-router/server";
 import type { featuresRoutes } from "../routes.js";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import { FeatureLoading } from "../components/FeatureLoading.js";
@@ -23,7 +23,7 @@ const features: Record<string, { name: string; description: string; details: str
 
 export default map<typeof featuresRoutes>(({ route, loading }) => [
   route(
-    "detail",
+    "featuresDetail",
     async (ctx) => {
     const slug = ctx.params.slug;
     const feature = features[slug];

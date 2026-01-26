@@ -25,9 +25,9 @@ function hashHandleId(filePath: string, exportName: string): string {
  * Check if file imports createHandle from rsc-router
  */
 function hasCreateHandleImport(code: string): boolean {
-  // Match: import { createHandle } from "rsc-router" or "rsc-router/..."
+  // Match: import { createHandle } from "@ivogt/rsc-router" or "@ivogt/rsc-router/..."
   const pattern =
-    /import\s*\{[^}]*\bcreateHandle\b[^}]*\}\s*from\s*["']rsc-router(?:\/[^"']+)?["']/;
+    /import\s*\{[^}]*\bcreateHandle\b[^}]*\}\s*from\s*["']@ivogt\/rsc-router(?:\/[^"']+)?["']/;
   return pattern.test(code);
 }
 
@@ -167,7 +167,7 @@ function transformHandleExports(
  * The name is auto-generated from file path + export name.
  *
  * Requirements:
- * - Must use direct import: import { createHandle } from "rsc-router"
+ * - Must use direct import: import { createHandle } from "@ivogt/rsc-router"
  * - Must use named export: export const MyHandle = createHandle(...)
  */
 export function exposeHandleId(): Plugin {
@@ -175,7 +175,7 @@ export function exposeHandleId(): Plugin {
   let isBuild = false;
 
   return {
-    name: "rsc-router:expose-handle-id",
+    name: "@ivogt/rsc-router:expose-handle-id",
     enforce: "post",
 
     configResolved(resolvedConfig) {

@@ -19,7 +19,7 @@ import type {
   CacheGetResult,
 } from "../types.js";
 import type { RequestContext } from "../../server/request-context.js";
-import { VERSION } from "rsc-router:version";
+import { VERSION } from "@ivogt/rsc-router:version";
 
 // ============================================================================
 // Constants

@@ -1,5 +1,5 @@
-import { map, createLoader } from "rsc-router/server";
-import { Outlet, Link } from "rsc-router/client";
+import { map, createLoader } from "@ivogt/rsc-router/server";
+import { Outlet, Link } from "@ivogt/rsc-router/client";
 import type { middlewareRoutes } from "../routes.js";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 

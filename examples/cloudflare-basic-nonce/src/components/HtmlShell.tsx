@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Outlet, MetaTags } from "rsc-router/client";
+import { Outlet, MetaTags } from "@ivogt/rsc-router/client";
 
 /**
  * RSC Root layout that renders the full HTML shell.

@@ -46,6 +46,9 @@ jobs:
         if: matrix.project == 'dev' && matrix.shard == 1
         run: pnpm --filter rsc-router test:unit
 
+      - name: Build rsc-router
+        run: pnpm --filter @ivogt/rsc-router build
+
       - name: Install Playwright browsers
         run: pnpm --filter rsc-router exec playwright install --with-deps chromium
 
@@ -104,6 +107,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      - name: Build rsc-router
+        run: pnpm --filter @ivogt/rsc-router build
+
       - name: Install Playwright browsers
         run: pnpm --filter vite-rsc-demo exec playwright install --with-deps chromium
 
@@ -141,6 +147,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
+
+      - name: Build rsc-router
+        run: pnpm --filter @ivogt/rsc-router build
 
       - name: Install Playwright browsers
         run: pnpm --filter cloudflare-basic exec playwright install --with-deps chromium

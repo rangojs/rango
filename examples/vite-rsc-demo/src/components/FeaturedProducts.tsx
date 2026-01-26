@@ -1,7 +1,7 @@
 "use client";
 
 import { use, Suspense, type ReactNode } from "react";
-import { useLoader } from "rsc-router/client";
+import { useLoader } from "@ivogt/rsc-router/client";
 import {
   FeaturedProductsLoader,
   type FeaturedProductsData,

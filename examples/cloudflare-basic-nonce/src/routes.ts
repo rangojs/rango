@@ -1,4 +1,4 @@
-import { route } from "rsc-router";
+import { route } from "@ivogt/rsc-router";
 
 // Home route: /
 export const homeRoutes = route({

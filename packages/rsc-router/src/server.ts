@@ -30,6 +30,7 @@ export {
   createHref,
   type HrefFunction,
   type PrefixedRoutes,
+  type PrefixRoutePatterns,
   type ParamsFor,
   type SanitizePrefix,
   type MergeRoutes,
@@ -81,6 +82,12 @@ export {
   InvalidHandlerError,
   sanitizeError,
 } from "./errors.js";
+
+// Component utilities
+export {
+  isClientComponent,
+  assertClientComponent,
+} from "./component-utils.js";
 
 // Types (re-exported for convenience)
 export type {

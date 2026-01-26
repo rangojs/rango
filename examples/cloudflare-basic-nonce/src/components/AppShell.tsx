@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Link, href, MetaTags } from "rsc-router/client";
+import { Link, href, MetaTags } from "@ivogt/rsc-router/client";
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (

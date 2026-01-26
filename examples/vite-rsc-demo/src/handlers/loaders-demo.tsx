@@ -1,5 +1,5 @@
-import { map } from "rsc-router/server";
-import { Outlet, Link } from "rsc-router/client";
+import { map } from "@ivogt/rsc-router/server";
+import { Outlet, Link } from "@ivogt/rsc-router/client";
 import type { loadersRoutes } from "../routes.js";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { UsersLoader } from "./loaders-demo/loaders.js";

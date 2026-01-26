@@ -1,4 +1,4 @@
-import { createLoader } from "rsc-router";
+import { createLoader } from "@ivogt/rsc-router";
 
 /**
  * Test fetchable loader for GET-based fetching

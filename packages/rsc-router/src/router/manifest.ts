@@ -5,7 +5,9 @@
  */
 
 import { invariant, RouteNotFoundError } from "../errors";
+import { createRouteHelpers } from "../route-definition";
 import { getContext, type EntryData, type MetricsStore } from "../server/context";
+import MapRootLayout from "../server/root-layout";
 import type { RouteEntry } from "../types";
 
 /**
@@ -63,19 +65,39 @@ export async function loadManifest(
       Store.namespace || namespaceWithMount,
       Store.parent,
       async () => {
-        const load = await entry.handler();
-        if (
-          load &&
-          load !== null &&
-          typeof load === "object" &&
-          "default" in load
-        ) {
-          return load.default();
+        // Create helpers - inline handlers use them, lazy handlers ignore them
+        const helpers = createRouteHelpers();
+
+        // Call handler with helpers - works for both inline and lazy
+        const result = entry.handler(helpers);
+
+        // Handle based on return type
+        if (result instanceof Promise) {
+          // Lazy: () => import(...) - returns Promise
+          const load = await result;
+          if (
+            load &&
+            load !== null &&
+            typeof load === "object" &&
+            "default" in load
+          ) {
+            // Promise<{ default: () => Array }> - e.g., dynamic import
+            // Pass helpers - functions that need them will use them,
+            // functions from route-definition's map() will ignore them
+            return load.default(helpers);
+          }
+          if (typeof load === "function") {
+            // Promise<() => Array>
+            return load(helpers);
+          }
+          // Promise<Array> - direct array from async handler
+          return load;
         }
-        if (typeof load === "function") {
-          return load();
-        }
-        return load;
+
+        // Inline: ({ route }) => [...] - returns Array directly
+        // Wrap with layout (like map() from route-definition does)
+        // Flatten nested arrays from layout/route definitions
+        return [helpers.layout(MapRootLayout, () => result)].flat(3);
       }
     );
 
