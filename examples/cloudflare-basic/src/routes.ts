@@ -22,16 +22,18 @@ export const featuresRoutes = route({
 
 // Blog routes: /blog and /blog/:slug (demonstrates CF cache with SWR)
 // Uses prefix registration, so paths are relative
+// Keys must be globally unique since they're not prefixed
 export const blogRoutes = route({
-  index: "/",
-  post: "/:slug",
+  blog: "/",
+  blogPost: "/:slug",
 });
 
 // Proactive cache test routes: /proactive-cache/*
 // Layout is INSIDE cache boundary to test proactive caching behavior
 // Uses prefix registration, so paths are relative
+// Keys must be globally unique since they're not prefixed
 export const proactiveCacheRoutes = route({
-  index: "/",
-  itemA: "/item-a",
-  itemB: "/item-b",
+  proactiveCache: "/",
+  proactiveCacheItemA: "/item-a",
+  proactiveCacheItemB: "/item-b",
 });

@@ -96,9 +96,12 @@ export const router = createRSCRouter<AppEnv>({
   ]);
 
 // Now AppRoutes includes ALL routes including the inline ones!
+// Route keys stay unchanged (not prefixed), only URL patterns get prefixed.
 // Hover over AppRoutes in your IDE to see:
-// - index, about, counter, features, blog, proactive-cache routes
-// - inline.index, inline.docs, inline.pricing
+// - home, about, counter, featuresDetail (from route definitions)
+// - blog, blogPost (mounted at /blog)
+// - proactiveCache, proactiveCacheItemA, proactiveCacheItemB (mounted at /proactive-cache)
+// - index, docs, pricing (inline routes mounted at /inline)
 type AppRoutes = typeof router.routeMap;
 
 declare global {

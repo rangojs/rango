@@ -14,8 +14,7 @@ import {
 import {
   createHref,
   type HrefFunction,
-  type PrefixedRoutes,
-  type SanitizePrefix,
+  type PrefixRoutePatterns,
 } from "./href.js";
 import { registerRouteMap } from "./route-map-builder.js";
 import {
@@ -395,7 +394,7 @@ type InlineRouteHelpers<
 /**
  * Router builder for chaining .use() and .map()
  * TRoutes accumulates all registered route types through the chain
- * TLocalRoutes contains just the routes for the current .routes() call (without prefix)
+ * TLocalRoutes contains the routes for the current .routes() call (for inline handler typing)
  */
 interface RouteBuilder<
   T extends RouteDefinition,
@@ -470,23 +469,24 @@ export interface RSCRouter<
 > {
   /**
    * Register routes with a prefix
-   * Route types are accumulated through the chain
+   * Route keys stay unchanged, only URL patterns get the prefix applied.
+   * This enables composable route modules that work regardless of mount point.
    *
    * @throws Compile-time error if route keys conflict with previously registered routes
    */
   routes<TPrefix extends string, T extends ResolvedRouteMap<any>>(
     prefix: TPrefix,
     routes: T
-  ): ConflictingKeys<TRoutes, PrefixedRoutes<T, SanitizePrefix<TPrefix>>> extends never
+  ): ConflictingKeys<TRoutes, T> extends never
     ? RouteBuilder<
         RouteDefinition,
         TEnv,
-        TRoutes & PrefixedRoutes<T, SanitizePrefix<TPrefix>>,
-        T  // Local routes without prefix
+        TRoutes & PrefixRoutePatterns<T, TPrefix>,
+        T
       >
     : {
-        __error: `Route key conflict! Keys [${ConflictingKeys<TRoutes, PrefixedRoutes<T, SanitizePrefix<TPrefix>>> & string}] already exist with different URL patterns.`;
-        hint: "Use unique key names for each route definition, or use a prefix to namespace them.";
+        __error: `Route key conflict! Keys [${ConflictingKeys<TRoutes, T> & string}] already exist with different URL patterns.`;
+        hint: "Use unique key names for each route definition.";
       };
 
   /**
@@ -525,11 +525,13 @@ export interface RSCRouter<
   /**
    * Type-safe URL builder for registered routes
    * Types are inferred from the accumulated route registrations
+   * Route keys stay unchanged regardless of mount prefix.
    *
    * @example
    * ```typescript
-   * router.href("shop.cart"); // "/shop/cart"
-   * router.href("shop.products.detail", { slug: "widget" }); // "/shop/product/widget"
+   * // Given: .routes("/shop", { cart: "/cart", detail: "/product/:slug" })
+   * router.href("cart"); // "/shop/cart"
+   * router.href("detail", { slug: "widget" }); // "/shop/product/widget"
    * ```
    */
   href: HrefFunction<TRoutes>;
@@ -647,14 +649,16 @@ export interface RSCRouter<
  * });
  *
  * // Route types accumulate through the chain - no module augmentation needed!
+ * // Keys stay unchanged, only URL patterns get the prefix
  * router
  *   .routes(homeRoutes)          // accumulates homeRoutes
  *   .map(() => import('./home'))
- *   .routes('/shop', shopRoutes) // accumulates PrefixedRoutes<shopRoutes, "shop">
+ *   .routes('/shop', shopRoutes) // accumulates shopRoutes with prefixed URLs
  *   .map(() => import('./shop'));
  *
  * // router.href now has type-safe autocomplete for all registered routes
- * router.href("shop.cart");
+ * // Given shopRoutes = { cart: "/cart" }, href uses original key:
+ * router.href("cart"); // "/shop/cart"
  * ```
  */
 export function createRSCRouter<TEnv = any>(
@@ -3566,12 +3570,10 @@ export function createRSCRouter<TEnv = any>(
   ): RouteBuilder<RouteDefinition, TEnv, any, TNewRoutes> {
     const currentMountIndex = mountIndex++;
 
-    // Merge routes into the href map with prefixes
-    // This enables type-safe router.href() calls
+    // Merge routes into the href map
+    // Keys stay unchanged for composability - only URL patterns get prefixed
     const routeEntries = routes as Record<string, string>;
     for (const [key, pattern] of Object.entries(routeEntries)) {
-      // Build prefixed key: "shop" + "cart" -> "shop.cart"
-      const prefixedKey = prefix ? `${prefix.slice(1)}.${key}` : key;
       // Build prefixed pattern: "/shop" + "/cart" -> "/shop/cart"
       const prefixedPattern =
         prefix && pattern !== "/"
@@ -3579,7 +3581,8 @@ export function createRSCRouter<TEnv = any>(
           : prefix && pattern === "/"
             ? prefix
             : pattern;
-      mergedRouteMap[prefixedKey] = prefixedPattern;
+      // Use original key - enables reusable route modules
+      mergedRouteMap[key] = prefixedPattern;
     }
 
     // Auto-register route map for runtime href() usage
@@ -3618,11 +3621,11 @@ export function createRSCRouter<TEnv = any>(
 
         if (handler.length > 0) {
           // Inline handler: defer execution to request time (helpers need request context)
-          // createRouteHelpers returns RouteHelpers which is compatible at runtime
+          // createRouteHelpers returns RouteHelpers which is structurally compatible at runtime
           // Wrap in layout (like map() from route-definition does) since top-level must be a layout
           const inlineHandler = handler as (helpers: InlineRouteHelpers<any, TEnv>) => Array<AllUseItems>;
           wrappedHandler = () => {
-            const helpers = createRouteHelpers<any, TEnv>() as InlineRouteHelpers<any, TEnv>;
+            const helpers = createRouteHelpers<any, TEnv>() as unknown as InlineRouteHelpers<any, TEnv>;
             return [helpers.layout(MapRootLayout, () => inlineHandler(helpers))].flat(3);
           };
         } else {

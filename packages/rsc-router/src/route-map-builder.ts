@@ -23,7 +23,7 @@
  * ```
  */
 
-import type { PrefixedRoutes } from "./href.js";
+import type { PrefixRoutePatterns } from "./href.js";
 
 /**
  * Route map builder interface
@@ -37,12 +37,12 @@ export interface RouteMapBuilder<TRoutes extends Record<string, string> = {}> {
   add<T extends Record<string, string>>(routes: T): RouteMapBuilder<TRoutes & T>;
 
   /**
-   * Add routes with prefix
+   * Add routes with prefix (only URL patterns are prefixed, keys stay unchanged)
    */
   add<T extends Record<string, string>, P extends string>(
     routes: T,
     prefix: P
-  ): RouteMapBuilder<TRoutes & PrefixedRoutes<T, P>>;
+  ): RouteMapBuilder<TRoutes & PrefixRoutePatterns<T, `/${P}`>>;
 
   /**
    * The accumulated route map (for typeof extraction in module augmentation)
@@ -52,10 +52,11 @@ export interface RouteMapBuilder<TRoutes extends Record<string, string> = {}> {
 
 /**
  * Add routes to a map with optional prefix
+ * Keys stay unchanged for composability - only URL patterns get prefixed.
  *
  * @param routeMap - The map to add routes to
  * @param routes - Routes to add
- * @param prefix - Optional prefix for keys and paths
+ * @param prefix - Optional prefix for URL paths (keys stay unchanged)
  */
 function addRoutes(
   routeMap: Record<string, string>,
@@ -63,14 +64,14 @@ function addRoutes(
   prefix: string = ""
 ): void {
   for (const [key, pattern] of Object.entries(routes)) {
-    const prefixedKey = prefix ? `${prefix}.${key}` : key;
     const prefixedPattern =
       prefix && pattern !== "/"
         ? `/${prefix}${pattern}`
         : prefix && pattern === "/"
           ? `/${prefix}`
           : pattern;
-    routeMap[prefixedKey] = prefixedPattern;
+    // Use original key - enables reusable route modules
+    routeMap[key] = prefixedPattern;
   }
 }
 
