@@ -149,9 +149,9 @@ const router = createRSCRouter<AppEnv>({ document: Document })
 .routes(shopRoutes)
 .map(() => import("./handlers/shop"))
 
-// Sync definition
-.routes(homeRoutes)
-.map(() => [
+// Inline definition (no separate handler file)
+.routes({ index: "/", about: "/about" })
+.map(({ route }) => [
   route("index", () => <HomePage />),
   route("about", () => <AboutPage />),
 ])
@@ -199,25 +199,36 @@ const router = createRSCRouter<AppEnv>({ document: Document })
 ## Type-Safe Links with href()
 
 ```typescript
+// routes/shop.ts - use dot notation for namespaced keys
+export const shopRoutes = route({
+  "shop.index": "/",
+  "shop.products": "/products",
+  "shop.product": "/products/:slug",
+  "shop.cart": "/cart",
+});
+
+// router.tsx
 const router = createRSCRouter<AppEnv>({ document: Document })
   .routes(homeRoutes)
   .map(() => import("./handlers/home"))
-  .routes("/shop", shopRoutes)
+  .routes("/shop", shopRoutes)  // Keys stay unchanged, only URLs get prefixed
   .map(() => import("./handlers/shop"));
 
 // Export for use in components
 export const href = router.href;
 
 // Usage with full autocomplete
-href("index");                              // "/"
-href("about");                              // "/about"
-href("shop.products");                      // "/shop/products"
-href("shop.products.detail", { slug: "widget" }); // "/shop/products/widget"
+href("index");                                 // "/"
+href("about");                                 // "/about"
+href("shop.products");                         // "/shop/products"
+href("shop.product", { slug: "widget" });      // "/shop/products/widget"
 
 // In components
 import { href } from "./router";
 <Link to={href("shop.cart")}>Cart</Link>
 ```
+
+**Note**: Route keys stay unchanged when mounted with a prefix. Only URL patterns get the prefix applied. Use dot notation (e.g., `shop.products`) for namespaced keys.
 
 ## Route Type Registration
 
