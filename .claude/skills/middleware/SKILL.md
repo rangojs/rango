@@ -38,6 +38,61 @@ const router = createRSCRouter<AppEnv>({ document: Document })
 - `/users/:id` - Match `/users/123`, extract `{ id: "123" }`
 - `/api/:version/*` - Match `/api/v1/users`, extract `{ version: "v1" }`
 
+## Middleware Scoping Rules
+
+**Key insight:** `.map()` returns the **router** (not the builder), so after `.map()` you're back to global scope.
+
+```typescript
+const router = createRSCRouter<AppEnv>({ document: Document })
+  // GLOBAL - no mount prefix
+  .use(loggerMiddleware)           // Runs for ALL routes
+
+  // SCOPED to /shop/*
+  .routes("/shop", shopRoutes)
+  .use(shopAuthMiddleware)         // Only /shop/*
+  .use("/cart/*", cartMiddleware)  // Only /shop/cart/*
+  .map(() => import("./handlers/shop"))
+
+  // GLOBAL again - .map() returned router, not builder
+  .use(anotherMiddleware)          // Runs for ALL routes (including /admin)
+
+  // SCOPED to /admin/*
+  .routes("/admin", adminRoutes)
+  .use(adminAuthMiddleware)        // Only /admin/*
+  .map(() => import("./handlers/admin"))
+
+  // GLOBAL again
+  .use(finalMiddleware);           // Runs for ALL routes
+```
+
+**The chain structure:**
+```
+router.use()     → returns router (global middleware)
+router.routes()  → returns builder (scoped to mount prefix)
+builder.use()    → returns builder (middleware scoped to mount prefix)
+builder.map()    → returns router (ends scope, back to global)
+```
+
+**Example execution order:**
+```typescript
+.use(A)                    // Global: all routes
+.routes("/shop", shop)
+  .use(B)                  // Scoped: /shop/*
+  .use("/vip/*", C)        // Scoped: /shop/vip/*
+  .map(...)
+.use(D)                    // Global: all routes
+.routes("/admin", admin)
+  .use(E)                  // Scoped: /admin/*
+  .map(...)
+.use(F)                    // Global: all routes
+```
+
+Result:
+- `/shop/products` → A, B, D, F
+- `/shop/vip/lounge` → A, B, C, D, F
+- `/admin/dashboard` → A, D, E, F
+- `/` (home) → A, D, F
+
 ## Handler-Level Middleware
 
 Register middleware within route handlers using the `middleware()` helper:
