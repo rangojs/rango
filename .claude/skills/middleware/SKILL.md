@@ -4,24 +4,55 @@ description: Define middleware for authentication, logging, and request processi
 argument-hint: [middleware-name]
 ---
 
-# Middleware Routes
+# Middleware
 
 Middleware runs before/after route handlers using the onion model.
 
-## Basic Middleware
+## Router-Level Middleware
+
+Register middleware on the router with `.use()`:
+
+```typescript
+// router.tsx
+import { createRSCRouter } from "rsc-router/server";
+
+const router = createRSCRouter<AppEnv>({ document: Document })
+  // Global middleware (runs for ALL routes)
+  .use(loggerMiddleware)
+  .use(requestIdMiddleware)
+
+  // Pattern-based middleware (runs for matching paths)
+  .use("/admin/*", adminAuthMiddleware)
+  .use("/api/*", rateLimitMiddleware)
+  .use("/api/:version/*", apiVersionMiddleware)
+
+  // Routes with scoped middleware
+  .routes("/shop", shopRoutes)
+  .use(shopAuthMiddleware)  // Only runs for /shop/* routes
+  .map(() => import("./handlers/shop"));
+```
+
+**Pattern matching:**
+- `*` - Match all routes
+- `/admin/*` - Match `/admin` and anything under it
+- `/users/:id` - Match `/users/123`, extract `{ id: "123" }`
+- `/api/:version/*` - Match `/api/v1/users`, extract `{ version: "v1" }`
+
+## Handler-Level Middleware
+
+Register middleware within route handlers using the `middleware()` helper:
 
 ```typescript
 import { map } from "rsc-router/server";
 
 export default map<typeof routes>(({ route, middleware }) => [
+  // Handler-wide middleware
   middleware(async (ctx, next) => {
-    // BEFORE handler
     console.log("Request started:", ctx.pathname);
     const start = Date.now();
 
-    await next(); // Continue to handler
+    await next();
 
-    // AFTER handler
     const duration = Date.now() - start;
     ctx.header("X-Response-Time", `${duration}ms`);
   }),
@@ -30,30 +61,60 @@ export default map<typeof routes>(({ route, middleware }) => [
 ]);
 ```
 
+## Route-Specific Middleware
+
+Apply middleware to individual routes:
+
+```typescript
+export default map<typeof routes>(({ route, middleware }) => [
+  // No middleware
+  route("public", PublicPage),
+
+  // With route-specific middleware
+  route(
+    "dashboard",
+    (ctx) => <DashboardPage user={ctx.get("user")} />,
+    () => [
+      middleware(async (ctx, next) => {
+        const user = await getUser(ctx.request);
+        if (!user) throw redirect("/login");
+        ctx.set("user", user);
+        await next();
+      }),
+    ]
+  ),
+]);
+```
+
 ## Middleware Context API
 
 ```typescript
 middleware(async (ctx, next) => {
   // Request info
-  ctx.request     // Raw Request object
-  ctx.url         // URL object
-  ctx.pathname    // Current path
-  ctx.method      // GET, POST, etc.
-  ctx.params      // Route parameters
+  ctx.request        // Raw Request object
+  ctx.url            // URL object
+  ctx.pathname       // Current path
+  ctx.searchParams   // URLSearchParams
+  ctx.params         // Route parameters (from pattern)
+  ctx.env            // Platform bindings (Cloudflare, etc.)
 
   // Variable storage (share data with handlers)
   ctx.set("user", { id: "123", name: "John" });
-  ctx.get("user"); // Retrieve stored value
-  ctx.var;         // All stored variables
+  ctx.get("user");   // Retrieve stored value
 
   // Response headers
   ctx.header("X-Custom", "value");
-  ctx.setCookie("session", "abc", { httpOnly: true });
+
+  // Cookies
+  ctx.cookie("session");           // Read request cookie
+  ctx.cookies();                   // Read all cookies as object
+  ctx.setCookie("auth", "token", { httpOnly: true, secure: true });
+  ctx.deleteCookie("old-session");
 
   await next();
 
   // After handler - access response
-  ctx.res;         // Response object (only after next())
+  ctx.res;           // Response object (available after next())
 });
 ```
 
@@ -92,25 +153,6 @@ export default map<typeof routes>(({ route, layout, middleware }) => [
 ]);
 ```
 
-## Scoped Middleware
-
-Apply middleware to specific routes:
-
-```typescript
-export default map<typeof routes>(({ route, layout, middleware }) => [
-  // Public routes (no auth)
-  route("index", HomePage),
-  route("about", AboutPage),
-
-  // Protected routes (with auth)
-  middleware(authMiddleware),
-  layout(<DashboardLayout />, () => [
-    route("dashboard", DashboardPage),
-    route("settings", SettingsPage),
-  ]),
-]);
-```
-
 ## Multiple Middleware (Onion Model)
 
 ```typescript
@@ -134,19 +176,24 @@ loggerMiddleware (enter)
 loggerMiddleware (exit)
 ```
 
-## Global Middleware (Router Level)
+## Scoped Middleware in Layouts
+
+Apply middleware to layout children:
 
 ```typescript
-// router.tsx
-const router = createRSCRouter<AppEnv>({
-  document: RootLayout,
-})
-  .use(globalLoggerMiddleware)     // All routes
-  .use("/api/*", apiAuthMiddleware) // Pattern-based
-  .use("/admin/*", adminMiddleware)
+export default map<typeof routes>(({ route, layout, middleware }) => [
+  // Public routes (no auth)
+  route("index", HomePage),
+  route("about", AboutPage),
 
-  .routes("/", routes)
-  .map(() => import("./handlers/main.js"));
+  // Protected routes - middleware applies to layout and all children
+  layout(<DashboardLayout />, () => [
+    middleware(authMiddleware),  // Runs for all dashboard routes
+
+    route("dashboard.index", DashboardPage),
+    route("dashboard.settings", SettingsPage),
+  ]),
+]);
 ```
 
 ## Loader Middleware
@@ -175,20 +222,32 @@ export const UserProfileLoader = createLoader(
 
 ## Short-Circuit Middleware
 
-Stop execution early:
+Stop execution early by returning a Response or throwing:
 
 ```typescript
+// Return Response to short-circuit
 export const maintenanceMiddleware = async (ctx, next) => {
   if (isMaintenanceMode()) {
-    // Don't call next() - returns immediately
-    return <MaintenancePage />;
+    return new Response("Under Maintenance", { status: 503 });
   }
   await next();
 };
 
+// Throw redirect
 export const redirectMiddleware = async (ctx, next) => {
   if (ctx.pathname === "/old-path") {
     throw redirect("/new-path");
+  }
+  await next();
+};
+
+// Return early for auth
+export const authGuard = async (ctx, next) => {
+  if (!isAuthenticated(ctx)) {
+    return new Response(null, {
+      status: 302,
+      headers: { Location: "/login" },
+    });
   }
   await next();
 };
@@ -255,11 +314,74 @@ export const rateLimitMiddleware = async (ctx, next) => {
 };
 ```
 
-## Middleware Type Signature
+## Type-Safe Route Middleware
+
+Use `RouteMiddlewareFn` for type-safe params:
 
 ```typescript
-type Middleware<Env = unknown> = (
-  ctx: MiddlewareContext<Env>,
-  next: () => Promise<void>
-) => Promise<void | Response | JSX.Element>;
+import type { RouteMiddlewareFn } from "rsc-router";
+import type { shopRoutes } from "./routes/shop";
+
+// Middleware with typed params from route definition
+export const productMiddleware: RouteMiddlewareFn<
+  typeof shopRoutes,
+  "shop.product"  // Route has :slug param
+> = async (ctx, next) => {
+  // ctx.params.slug is typed as string
+  console.log("Viewing product:", ctx.params.slug);
+  await next();
+};
+```
+
+## Middleware Type Signatures
+
+```typescript
+// Basic middleware function
+type MiddlewareFn<TEnv = any, TParams = Record<string, string>> = (
+  ctx: MiddlewareContext<TEnv, TParams>,
+  next: () => Promise<Response>
+) => Response | Promise<Response> | void | Promise<void>;
+
+// Middleware context
+interface MiddlewareContext<TEnv, TParams> {
+  request: Request;
+  url: URL;
+  pathname: string;
+  searchParams: URLSearchParams;
+  env: TEnv;
+  params: TParams;
+  res: Response;
+
+  cookie(name: string): string | undefined;
+  cookies(): Record<string, string>;
+  setCookie(name: string, value: string, options?: CookieOptions): void;
+  deleteCookie(name: string, options?: CookieOptions): void;
+
+  get<K extends string>(key: K): any;
+  set<K extends string>(key: K, value: any): void;
+  header(name: string, value: string): void;
+}
+```
+
+## Cookie Options
+
+```typescript
+interface CookieOptions {
+  domain?: string;
+  path?: string;
+  expires?: Date;
+  maxAge?: number;
+  httpOnly?: boolean;
+  secure?: boolean;
+  sameSite?: "strict" | "lax" | "none";
+}
+
+// Example
+ctx.setCookie("session", token, {
+  httpOnly: true,
+  secure: true,
+  sameSite: "lax",
+  maxAge: 60 * 60 * 24 * 7,  // 1 week
+  path: "/",
+});
 ```
