@@ -259,24 +259,23 @@ From within the modal, use navigation:
 ```typescript
 "use client";
 
-import { useRouter } from "rsc-router";
-
+// Go back (closes modal, restores background)
 function CloseButton() {
-  const router = useRouter();
-
   return (
-    <button onClick={() => router.back()}>
+    <button onClick={() => window.history.back()}>
       Close
     </button>
   );
 }
 
 // Or navigate to a specific route
+import { useNavigation } from "rsc-router";
+
 function CloseButton() {
-  const router = useRouter();
+  const { navigate } = useNavigation();
 
   return (
-    <button onClick={() => router.push("/products")}>
+    <button onClick={() => navigate("/products")}>
       Close
     </button>
   );
