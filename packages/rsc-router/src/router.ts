@@ -294,16 +294,19 @@ type ConflictingKeys<
 
 /**
  * Error type returned when route keys conflict.
- * Includes dummy routes/map methods that propagate the error,
- * so TypeScript shows the error at the first conflict location.
+ * Methods require an impossible `never` parameter so TypeScript errors at the call site.
  */
 type RouteConflictError<TConflicts extends string> = {
-  __error: `Route key conflict! Key "${TConflicts}" already exists with a different URL pattern. Note: if multiple keys conflict, only one may be shown here.`;
+  __error: `Route key conflict! Key "${TConflicts}" already exists with a different URL pattern.`;
   hint: "Route keys must be globally unique. Use prefixed names like 'blog.index' instead of 'index'.";
   conflictingKeys: TConflicts;
-  // These methods propagate the error so it appears at the right location
-  routes: (...args: any[]) => RouteConflictError<TConflicts>;
-  map: (...args: any[]) => RouteConflictError<TConflicts>;
+  // These methods require `never` so calling them produces an error at the call site
+  routes: (
+    __conflict: `Fix route key conflict: "${TConflicts}" is already defined with a different URL pattern`
+  ) => never;
+  map: (
+    __conflict: `Fix route key conflict: "${TConflicts}" is already defined with a different URL pattern`
+  ) => never;
 };
 
 /**
