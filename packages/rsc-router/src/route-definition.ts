@@ -1216,13 +1216,23 @@ const createCacheHelper = (): RouteHelpers<any, any>["cache"] => {
 };
 
 /**
+ * Branded type for route handlers that carries the route type info.
+ * This enables type-safe verification that imported handlers match route definitions.
+ */
+export interface RouteHandlers<T extends RouteDefinition> {
+  (): Array<AllUseItems>;
+  /** Brand to carry route type info for type checking */
+  readonly __routes: T;
+}
+
+/**
  * Type-safe handler definition helper
  *
  */
 export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
   builder: (helpers: RouteHelpers<T, TEnv>) => Array<AllUseItems>
-): () => Array<AllUseItems> {
-  return () => {
+): RouteHandlers<T> {
+  const handler = () => {
     // Check if it's a builder function (array-based API)
     invariant(
       typeof builder === "function",
@@ -1246,6 +1256,8 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
 
     return [layout(RootLayout, () => builder(helpers))].flat(3);
   };
+  // Cast to RouteHandlers to carry the route type brand
+  return handler as RouteHandlers<T>;
 }
 
 /**

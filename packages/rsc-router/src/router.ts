@@ -20,6 +20,7 @@ import { registerRouteMap } from "./route-map-builder.js";
 import {
   createRouteHelpers,
   type RouteHelpers,
+  type RouteHandlers,
 } from "./route-definition.js";
 import MapRootLayout from "./server/root-layout.js";
 import type { AllUseItems } from "./route-types.js";
@@ -454,12 +455,12 @@ interface RouteBuilder<
   map<H extends (helpers: InlineRouteHelpers<TLocalRoutes, TEnv>) => Array<AllUseItems>>(
     handler: H
   ): RSCRouter<TEnv, TRoutes>;
-  // Lazy loading overload - no parameters
+  // Lazy loading overload - verifies imported handlers match route definition
   map(
     handler: () =>
       | Array<AllUseItems>
-      | Promise<{ default: () => Array<AllUseItems> }>
-      | Promise<() => Array<AllUseItems>>
+      | Promise<{ default: RouteHandlers<TLocalRoutes> }>
+      | Promise<RouteHandlers<TLocalRoutes>>
   ): RSCRouter<TEnv, TRoutes>;
 
   /**

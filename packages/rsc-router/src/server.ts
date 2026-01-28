@@ -12,6 +12,7 @@ export {
   createLoader,
   redirect,
   type RouteHelpers,
+  type RouteHandlers,
   type InterceptSelectorContext,
   type InterceptSegmentsState,
   type InterceptWhenFn,
