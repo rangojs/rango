@@ -283,7 +283,7 @@ export interface RSCRouterOptions<TEnv = any> {
  */
 type ConflictingKeys<
   TExisting extends Record<string, string>,
-  TNew extends Record<string, string>
+  TNew extends Record<string, string>,
 > = {
   [K in keyof TExisting & keyof TNew]: TExisting[K] extends TNew[K]
     ? TNew[K] extends TExisting[K]
@@ -291,6 +291,23 @@ type ConflictingKeys<
       : K // Different values, conflict
     : K; // Different values, conflict
 }[keyof TExisting & keyof TNew];
+
+/**
+ * Error type returned when route keys conflict.
+ * Methods require an impossible `never` parameter so TypeScript errors at the call site.
+ */
+type RouteConflictError<TConflicts extends string> = {
+  __error: `Route key conflict! Key "${TConflicts}" already exists with a different URL pattern.`;
+  hint: "Route keys must be globally unique. Use prefixed names like 'blog.index' instead of 'index'.";
+  conflictingKeys: TConflicts;
+  // These methods require `never` so calling them produces an error at the call site
+  routes: (
+    __conflict: `Fix route key conflict: "${TConflicts}" is already defined with a different URL pattern`
+  ) => never;
+  map: (
+    __conflict: `Fix route key conflict: "${TConflicts}" is already defined with a different URL pattern`
+  ) => never;
+};
 
 /**
  * Simplified route helpers for inline route definitions.
@@ -470,17 +487,14 @@ export interface RSCRouter<
   routes<const TPrefix extends string, const T extends Record<string, string>>(
     prefix: TPrefix,
     routes: T
-  ): ConflictingKeys<TRoutes, T> extends never
+  ): ConflictingKeys<TRoutes, PrefixRoutePatterns<T, TPrefix>> extends never
     ? RouteBuilder<
         RouteDefinition,
         TEnv,
         TRoutes & PrefixRoutePatterns<T, TPrefix>,
         T
       >
-    : {
-        __error: `Route key conflict! Keys [${ConflictingKeys<TRoutes, T> & string}] already exist with different URL patterns.`;
-        hint: "Use unique key names for each route definition.";
-      };
+    : RouteConflictError<ConflictingKeys<TRoutes, PrefixRoutePatterns<T, TPrefix>> & string>;
 
   /**
    * Register routes without a prefix
@@ -492,10 +506,7 @@ export interface RSCRouter<
     routes: T
   ): ConflictingKeys<TRoutes, T> extends never
     ? RouteBuilder<RouteDefinition, TEnv, TRoutes & T, T>
-    : {
-        __error: `Route key conflict! Keys [${ConflictingKeys<TRoutes, T> & string}] already exist with different URL patterns.`;
-        hint: "Use unique key names for each route definition.";
-      };
+    : RouteConflictError<ConflictingKeys<TRoutes, T> & string>;
 
   /**
    * Add global middleware that runs on all routes
