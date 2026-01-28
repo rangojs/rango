@@ -20,7 +20,7 @@ export default map<typeof protectedRoutes>(({ route, layout, middleware }) => [
     next();
   }),
 
-  route("index", (ctx) => (
+  route("protected.index", (ctx) => (
     <div>
       <h2>Protected Area</h2>
       <p>You are authenticated!</p>
@@ -29,14 +29,14 @@ export default map<typeof protectedRoutes>(({ route, layout, middleware }) => [
     </div>
   )),
 
-  route("dashboard", () => (
+  route("protected.dashboard", () => (
     <div>
       <h2>Dashboard</h2>
       <p>Protected dashboard content</p>
     </div>
   )),
 
-  route("profile", (ctx) => (
+  route("protected.profile", (ctx) => (
     <div>
       <h2>Profile: {ctx.params.username}</h2>
       <p>Protected profile page</p>

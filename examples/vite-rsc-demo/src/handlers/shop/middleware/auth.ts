@@ -25,7 +25,7 @@ export const mockAuthMiddleware: MiddlewareFn<
  */
 export const requireAuthMiddleware: RouteMiddlewareFn<
   typeof shopRoutes,
-  "checkout.index"
+  "shop.checkout.index"
 >[] = [
   (ctx, next) => {
     console.log("[Shop Middleware] Auth check");

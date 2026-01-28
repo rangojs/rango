@@ -29,7 +29,7 @@ import { AddToCartStatus } from "./components/add-to-cart-w-res.client";
 
 // ==================== PRODUCT ROUTES ====================
 
-export const IndexRoute: RouteHandler<typeof shopRoutes, "index"> = () => (
+export const IndexRoute: RouteHandler<typeof shopRoutes, "shop.index"> = () => (
   <DebugSegmentWrapper type="route" name="Shop Index">
     <div style={{ display: "flex", gap: "2rem" }}>
       {/* Category sidebar - parallel route */}
@@ -60,7 +60,7 @@ export const IndexRoute: RouteHandler<typeof shopRoutes, "index"> = () => (
 
 export const ProductsCategoryRoute: RouteHandler<
   typeof shopRoutes,
-  "products.category"
+  "shop.products.category"
 > = (ctx) => {
   const categoryProducts = products.filter(
     (p) => p.category === ctx.params.category
@@ -96,7 +96,7 @@ export const ProductsCategoryRoute: RouteHandler<
 
 export const ProductsDetailRoute: RouteHandler<
   typeof shopRoutes,
-  "products.detail.view"
+  "shop.products.detail.view"
 > = async (ctx) => {
   // Artificial delay to demonstrate loading skeleton
   await new Promise((resolve) => setTimeout(resolve, 1000));

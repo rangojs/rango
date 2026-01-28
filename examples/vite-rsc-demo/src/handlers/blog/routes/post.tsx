@@ -5,7 +5,7 @@ import { SegmentTimer } from "@/components/SegmentTimer.js";
 import { CurrentURL } from "@/components/CurrentURL.js";
 import { Link } from "@ivogt/rsc-router/client";
 
-export const PostRoute: RouteHandler<typeof blogRoutes, "post"> = (ctx) => {
+export const PostRoute: RouteHandler<typeof blogRoutes, "blog.post"> = (ctx) => {
   const renderTime = new Date().toISOString();
   const queryParams: [string, string][] = Array.from(
     ctx.searchParams.entries()

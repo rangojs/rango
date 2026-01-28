@@ -596,13 +596,13 @@ export default map<typeof middlewareRoutes>(({ route, layout, middleware, loader
   // Layout for the demo
   layout(<MiddlewareDemoLayout />, () => [
     // Index route
-    route("index", (ctx) => (
+    route("middleware.index", (ctx) => (
       <MiddlewareIndexPage requestId={ctx.get("requestId")} />
     )),
 
     // Dashboard - protected by route-level middleware
     route(
-      "dashboard",
+      "middleware.dashboard",
       (ctx) => <DashboardPage user={ctx.get("user")} />,
       () => [
         middleware(async (ctx, next) => {
@@ -620,7 +620,7 @@ export default map<typeof middlewareRoutes>(({ route, layout, middleware, loader
 
     // Timed route with route-level middleware
     route(
-      "timed",
+      "middleware.timed",
       (ctx) => <TimedPage elapsed={ctx.get("responseTime")} />,
       () => [
         middleware(async (ctx, next) => {
@@ -636,7 +636,7 @@ export default map<typeof middlewareRoutes>(({ route, layout, middleware, loader
 
     // User route with variable sharing
     route(
-      "user",
+      "middleware.user",
       (ctx) => (
         <UserPage
           userId={ctx.params.userId}
@@ -660,7 +660,7 @@ export default map<typeof middlewareRoutes>(({ route, layout, middleware, loader
     ),
 
     // API route with loader middleware
-    route("api", () => <ApiDataPage />, () => [
+    route("middleware.api", () => <ApiDataPage />, () => [
       loader(ApiDataLoader),
     ]),
   ]),

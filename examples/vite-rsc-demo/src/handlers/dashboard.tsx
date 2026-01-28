@@ -36,7 +36,7 @@ export default map<typeof dashboardRoutes>(({ route, layout, middleware, paralle
     }),
 
     // Index with parallels
-    route("index", () => (
+    route("dashboard.index", () => (
       <div style={{ background: "#f0f9ff", padding: "2rem", borderRadius: "8px" }}>
         <p className="segment-id">Segment: Dashboard Index</p>
         <h1>Dashboard Home</h1>
@@ -65,7 +65,7 @@ export default map<typeof dashboardRoutes>(({ route, layout, middleware, paralle
     ]),
 
     // Settings with middleware
-    route("settings", () => (
+    route("dashboard.settings", () => (
       <div style={{ background: "#f0f9ff", padding: "2rem", borderRadius: "8px" }}>
         <p className="segment-id">Segment: Dashboard Settings</p>
         <h1>Dashboard Settings</h1>

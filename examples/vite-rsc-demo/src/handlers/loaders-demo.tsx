@@ -232,10 +232,10 @@ export default map<typeof loadersRoutes>(
       ]),
 
       // Index route - demonstrates useLoader
-      route("index", () => <LoadersIndexPage />),
+      route("loaders.index", () => <LoadersIndexPage />),
 
       // Stats route - demonstrates useFetchLoader
-      route("stats", () => <LoadersStatsPage />),
+      route("loaders.stats", () => <LoadersStatsPage />),
     ]),
   ]
 );

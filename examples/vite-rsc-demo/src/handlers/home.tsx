@@ -13,7 +13,7 @@ import "../loaders/test-get-loader.js";
 export default map<typeof homeRoutes>(
   ({ route, layout, revalidate, middleware, parallel }) => [
     route(
-      "index",
+      "home.index",
       () => (
         <DebugSegmentWrapper type="route" name="Home">
           <div>

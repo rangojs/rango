@@ -86,7 +86,7 @@ const router = createRSCRouter<AppEnv>({
   .routes("/blog", blogRoutes) // Mount blog routes at /blog prefix
   .map(() => import("./handlers/blog.js"))
 
-  .routes("", aboutRoutes)
+  .routes(aboutRoutes)
   .map(() => import("./handlers/about.js"))
 
   .routes("/dashboard", dashboardRoutes) // Dashboard with parallel routes
@@ -129,7 +129,6 @@ declare global {
     interface RegisteredRoutes extends AppRoutes {}
   }
 }
-
 /**
  * Export the router and type-safe href.
  * Import href from here for type safety: `import { href } from "./router.js"`

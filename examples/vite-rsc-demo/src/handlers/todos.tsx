@@ -107,7 +107,7 @@ export default map<typeof todosRoutes>(
 
       // Index route - list all todos
       route(
-        "index",
+        "todos.index",
         () => (
           <TodosIndexContent
             serverValue={Math.random().toString(36).substring(2, 7)}
@@ -118,7 +118,7 @@ export default map<typeof todosRoutes>(
 
       // Detail route - view single todo
       route(
-        "detail",
+        "todos.detail",
         () => <TodoDetailContent />,
         () => [loader(TodoDetailLoader), revalidate(() => false)]
       ),

@@ -206,7 +206,7 @@ export default map<typeof kanbanRoutes>(
       // Intercept card route during soft navigation
       // Renders in @modal slot instead of default Outlet
       // Uses layout(<CardModalWrapper />) to properly chain loader data context via Outlet
-      intercept("@modal", "card", <CardDetailContent />, () => [
+      intercept("@modal", "kanban.card", <CardDetailContent />, () => [
         layout(<CardModalWrapper />),
         loading(<CardDetailSkeleton />),
         loader(CardDetailLoader),
@@ -215,11 +215,11 @@ export default map<typeof kanbanRoutes>(
     ]),
 
     // Index route - board is in layout, nothing extra needed here
-    route("index", () => <></>),
+    route("kanban.index", () => <></>),
 
     // Card detail route - full page for hard navigation (direct URL)
     route(
-      "card",
+      "kanban.card",
       () => <CardDetailContent />,
       () => [
         loader(CardDetailLoader, () => [
