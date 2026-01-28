@@ -467,7 +467,7 @@ export interface RSCRouter<
    *
    * @throws Compile-time error if route keys conflict with previously registered routes
    */
-  routes<TPrefix extends string, T extends ResolvedRouteMap<any>>(
+  routes<const TPrefix extends string, const T extends Record<string, string>>(
     prefix: TPrefix,
     routes: T
   ): ConflictingKeys<TRoutes, T> extends never
@@ -488,7 +488,7 @@ export interface RSCRouter<
    *
    * @throws Compile-time error if route keys conflict with previously registered routes
    */
-  routes<T extends ResolvedRouteMap<any>>(
+  routes<const T extends Record<string, string>>(
     routes: T
   ): ConflictingKeys<TRoutes, T> extends never
     ? RouteBuilder<RouteDefinition, TEnv, TRoutes & T, T>
