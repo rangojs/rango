@@ -52,10 +52,10 @@ export default map<typeof blogRoutes>(
             ]
           ),
 
-          route("index", IndexRoute),
+          route("blog.index", IndexRoute),
 
           route(
-            "post",
+            "blog.post",
             (ctx) => {
               // Push post title breadcrumb
               const push = ctx.use(Breadcrumbs);

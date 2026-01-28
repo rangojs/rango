@@ -5,7 +5,7 @@ import { SegmentTimer } from "@/components/SegmentTimer.js";
 
 export const AccountIndexRoute: RouteHandler<
   typeof shopRoutes,
-  "account.index"
+  "shop.account.index"
 > = (ctx) => {
   // Type-safe context access!
   const user = ctx.get("user") || {
@@ -90,7 +90,7 @@ export const AccountIndexRoute: RouteHandler<
 
 export const AccountOrdersRoute: RouteHandler<
   typeof shopRoutes,
-  "account.orders"
+  "shop.account.orders"
 > = () => (
   <div>
     <h2>Order History</h2>
@@ -144,7 +144,7 @@ export const AccountOrdersRoute: RouteHandler<
     >
       <h4>Middleware Demo</h4>
       <p>
-        This route uses <code>[middleware("account.orders", "permissions")]</code>
+        This route uses <code>[middleware("shop.account.orders", "permissions")]</code>
       </p>
       <SegmentTimer />
     </div>
@@ -153,7 +153,7 @@ export const AccountOrdersRoute: RouteHandler<
 
 export const AccountOrderDetailRoute: RouteHandler<
   typeof shopRoutes,
-  "account.orderDetail"
+  "shop.account.orderDetail"
 > = (ctx) => {
   const order = orders.find((o) => o.id === ctx.params.id);
 
@@ -236,7 +236,7 @@ export const AccountOrderDetailRoute: RouteHandler<
         <h4>Dynamic Segment Revalidation</h4>
         <p>
           This route uses{" "}
-          <code>[revalidate("account.orderDetail")]</code>
+          <code>[revalidate("shop.account.orderDetail")]</code>
         </p>
         <p>
           Revalidates only when order ID changes (params-aware revalidation)

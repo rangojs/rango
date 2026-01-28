@@ -4,30 +4,30 @@ import { route } from "@ivogt/rsc-router";
  * Home route
  */
 export const homeRoutes = route({
-  index: "/",
+  "home.index": "/",
 });
 
 /**
  * Blog routes with params (relative paths - will be mounted at /blog)
  */
 export const blogRoutes = route({
-  index: "/",
-  post: "/:slug",
+  "blog.index": "/",
+  "blog.post": "/:slug",
 });
 
 /**
  * About route
  */
 export const aboutRoutes = route({
-  about: "/about",
+  "about.index": "/about",
 });
 
 /**
  * Dashboard routes (for testing parallel routes)
  */
 export const dashboardRoutes = route({
-  index: "/",
-  settings: "/settings",
+  "dashboard.index": "/",
+  "dashboard.settings": "/settings",
 });
 
 /**
@@ -35,31 +35,19 @@ export const dashboardRoutes = route({
  * Tests nested routes, dynamic segments, layout composition, and parallel routes
  */
 export const shopRoutes = route({
-  index: "/",
-  products: {
-    category: "/products/:category",
-    detail: {
-      view: "/product/:slug",
-      reviews: {
-        index: "/product/:slug/reviews",
-        detail: "/product/:slug/reviews/:reviewId",
-        edit: {
-          index: "/product/:slug/reviews/:reviewId/edit",
-        },
-      },
-    },
-  },
-  cart: "/cart",
-  checkout: {
-    index: "/checkout",
-    payment: "/checkout/payment",
-    confirm: "/checkout/confirm",
-  },
-  account: {
-    index: "/account",
-    orders: "/account/orders",
-    orderDetail: "/account/orders/:id",
-  },
+  "shop.index": "/",
+  "shop.products.category": "/products/:category",
+  "shop.products.detail.view": "/product/:slug",
+  "shop.products.detail.reviews.index": "/product/:slug/reviews",
+  "shop.products.detail.reviews.detail": "/product/:slug/reviews/:reviewId",
+  "shop.products.detail.reviews.edit.index": "/product/:slug/reviews/:reviewId/edit",
+  "shop.cart": "/cart",
+  "shop.checkout.index": "/checkout",
+  "shop.checkout.payment": "/checkout/payment",
+  "shop.checkout.confirm": "/checkout/confirm",
+  "shop.account.index": "/account",
+  "shop.account.orders": "/account/orders",
+  "shop.account.orderDetail": "/account/orders/:id",
 });
 
 /**
@@ -67,10 +55,10 @@ export const shopRoutes = route({
  * Tests global soft decisions with route-specific overrides
  */
 export const adminRoutes = route({
-  index: "/",
-  users: "/users",
-  user: "/users/:id",
-  settings: "/settings",
+  "admin.index": "/",
+  "admin.users": "/users",
+  "admin.user": "/users/:id",
+  "admin.settings": "/settings",
 });
 
 /**
@@ -78,9 +66,9 @@ export const adminRoutes = route({
  * Tests soft/hard redirects, error handling, transparent URLs
  */
 export const protectedRoutes = route({
-  index: "/",
-  dashboard: "/dashboard",
-  profile: "/profile/:username",
+  "protected.index": "/",
+  "protected.dashboard": "/dashboard",
+  "protected.profile": "/profile/:username",
 });
 
 /**
@@ -88,8 +76,8 @@ export const protectedRoutes = route({
  * Tests CRUD operations with server actions and optimistic updates
  */
 export const todosRoutes = route({
-  index: "/",
-  detail: "/:id",
+  "todos.index": "/",
+  "todos.detail": "/:id",
 });
 
 /**
@@ -97,13 +85,13 @@ export const todosRoutes = route({
  * Tests server-side error capture and fallback UI rendering
  */
 export const errorRoutes = route({
-  index: "/",
-  throwError: "/throw",
-  loaderError: "/loader-error",
-  notFound: "/not-found",
-  notFoundLoader: "/not-found-loader",
-  unhandled: "/unhandled",
-  clientError: "/client-error",
+  "errors.index": "/",
+  "errors.throwError": "/throw",
+  "errors.loaderError": "/loader-error",
+  "errors.notFound": "/not-found",
+  "errors.notFoundLoader": "/not-found-loader",
+  "errors.unhandled": "/unhandled",
+  "errors.clientError": "/client-error",
 });
 
 /**
@@ -111,8 +99,8 @@ export const errorRoutes = route({
  * Tests optimistic updates with drag-and-drop card management
  */
 export const kanbanRoutes = route({
-  index: "/",
-  card: "/card/:cardId",
+  "kanban.index": "/",
+  "kanban.card": "/card/:cardId",
 });
 
 /**
@@ -120,8 +108,8 @@ export const kanbanRoutes = route({
  * Shows SSR loader data access vs on-demand client-side fetching
  */
 export const loadersRoutes = route({
-  index: "/",
-  stats: "/stats",
+  "loaders.index": "/",
+  "loaders.stats": "/stats",
 });
 
 /**
@@ -129,14 +117,9 @@ export const loadersRoutes = route({
  * Demonstrates global, pattern-based, route-level, and loader middleware
  */
 export const middlewareRoutes = route({
-  index: "/",
-  // Auth-protected route (pattern-based middleware)
-  dashboard: "/dashboard",
-  // Route with route-level middleware
-  timed: "/timed",
-  // Route demonstrating variable sharing
-  user: "/user/:userId",
-  // API route with loader middleware
-  api: "/api/data",
+  "middleware.index": "/",
+  "middleware.dashboard": "/dashboard",
+  "middleware.timed": "/timed",
+  "middleware.user": "/user/:userId",
+  "middleware.api": "/api/data",
 });
-

@@ -17,14 +17,14 @@ export default map<typeof adminRoutes>(({ route, layout, revalidate }) => [
   // Global soft revalidation
   revalidate(globalRevalidation),
 
-  route("index", IndexRoute),
-  route("users", UsersRoute),
+  route("admin.index", IndexRoute),
+  route("admin.users", UsersRoute),
 
-  route("user", UserRoute, () => [
+  route("admin.user", UserRoute, () => [
     revalidate(userRevalidation),
   ]),
 
-  route("settings", SettingsRoute, () => [
+  route("admin.settings", SettingsRoute, () => [
     revalidate(settingsRevalidation),
   ]),
 ]);

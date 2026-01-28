@@ -4,7 +4,7 @@ import { SegmentTimer } from "@/components/SegmentTimer.js";
 
 export const CheckoutIndexRoute: RouteHandler<
   typeof shopRoutes,
-  "checkout.index"
+  "shop.checkout.index"
 > = (ctx) => (
   <div style={{ display: "flex", gap: "2rem" }}>
     <div style={{ flex: 1 }}>
@@ -113,7 +113,7 @@ export const CheckoutIndexRoute: RouteHandler<
 
 export const CheckoutPaymentRoute: RouteHandler<
   typeof shopRoutes,
-  "checkout.payment"
+  "shop.checkout.payment"
 > = () => (
   <div style={{ display: "flex", gap: "2rem" }}>
     <div style={{ flex: 1 }}>
@@ -209,7 +209,7 @@ export const CheckoutPaymentRoute: RouteHandler<
 
 export const CheckoutConfirmRoute: RouteHandler<
   typeof shopRoutes,
-  "checkout.confirm"
+  "shop.checkout.confirm"
 > = () => (
   <div>
     <div
@@ -264,7 +264,7 @@ export const CheckoutConfirmRoute: RouteHandler<
       <h4>Revalidation Demo</h4>
       <p>
         This confirmation page uses{" "}
-        <code>[revalidate("checkout.confirm")]</code> with{" "}
+        <code>[revalidate("shop.checkout.confirm")]</code> with{" "}
         <code>return false</code>
       </p>
       <p>

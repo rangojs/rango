@@ -3,7 +3,7 @@ import type { shopRoutes } from "@/routes.js";
 
 export const orderDetailRevalidation: RouteRevalidateFn<
   typeof shopRoutes,
-  "account.orderDetail"
+  "shop.account.orderDetail"
 > = ({
   currentParams,
   nextParams,

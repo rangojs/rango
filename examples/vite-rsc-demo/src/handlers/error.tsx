@@ -119,7 +119,7 @@ export default map<typeof errorRoutes>(
 
     // Unhandled error route - NO error boundary in parent chain
     // This tests the root ErrorBoundary added by renderSegments
-    route("unhandled", () => {
+    route("errors.unhandled", () => {
       throw new Error("This error is NOT caught by any route error boundary - it bubbles to root");
     }),
 
@@ -136,7 +136,7 @@ export default map<typeof errorRoutes>(
         notFoundBoundary(NotFoundFallback),
 
         // Index route - works fine, no error
-        route("index", () => (
+        route("errors.index", () => (
           <div>
             <h2>Error & NotFound Boundary Test Index</h2>
             <p>This page works correctly. Click the links above to test error scenarios:</p>
@@ -164,14 +164,14 @@ export default map<typeof errorRoutes>(
         )),
 
         // Route that throws an error in the handler
-        route("throwError", () => {
+        route("errors.throwError", () => {
           // This error will be caught by the errorBoundary defined on the parent layout
           throw new Error("Simulated handler error - something went wrong!");
         }),
 
         // Route that has a failing loader - uses route-specific error boundary
         route(
-          "loaderError",
+          "errors.loaderError",
           () => (
             <div>
               <h2>Loader Data Page</h2>
@@ -187,14 +187,14 @@ export default map<typeof errorRoutes>(
         ),
 
         // Route that throws notFound() in the handler
-        route("notFound", () => {
+        route("errors.notFound", () => {
           // This will be caught by the notFoundBoundary defined on the parent layout
           throw notFound("The requested page content was not found");
         }),
 
         // Route that has a loader which throws notFound() - uses route-specific boundary
         route(
-          "notFoundLoader",
+          "errors.notFoundLoader",
           () => (
             <div>
               <h2>Loader Data Page</h2>
@@ -211,7 +211,7 @@ export default map<typeof errorRoutes>(
 
         // Route that renders a client component which throws an error
         // Tests the client-side ErrorBoundary behavior
-        route("clientError", () => <ClientErrorThrower />),
+        route("errors.clientError", () => <ClientErrorThrower />),
       ]
     ),
   ]

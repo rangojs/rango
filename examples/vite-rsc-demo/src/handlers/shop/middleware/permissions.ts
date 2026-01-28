@@ -3,7 +3,7 @@ import type { shopRoutes } from "@/routes.js";
 
 export const permissionsMiddleware: RouteMiddlewareFn<
   typeof shopRoutes,
-  "account.orders"
+  "shop.account.orders"
 >[] = [
   (ctx, next) => {
     console.log("[Shop Middleware] Checking order view permissions");
