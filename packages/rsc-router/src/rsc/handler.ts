@@ -21,9 +21,9 @@ import {
   setRequestContextParams,
   requireRequestContext,
   createRequestContext,
+  type ExecutionContext,
 } from "../server/request-context.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
-
 
 import type {
   RscPayload,
@@ -89,14 +89,14 @@ export function createRSCHandler<
   function callOnError(
     error: unknown,
     phase: ErrorPhase,
-    context: Parameters<typeof invokeOnError<TEnv>>[3]
+    context: Parameters<typeof invokeOnError<TEnv>>[3],
   ): void {
     invokeOnError(router.onError, error, phase, context, "RSC");
   }
 
   return async function handler(
     request: Request,
-    env: TEnv = {} as TEnv
+    env: TEnv & { ctx?: ExecutionContext } = {} as TEnv & { ctx?: ExecutionContext },
   ): Promise<Response> {
     // Resolve nonce if provider is set
     let nonce: string | undefined;
@@ -141,6 +141,7 @@ export function createRSCHandler<
       url,
       variables,
       cacheStore,
+      executionContext: env.ctx,
     });
 
     // Wrap entire request handling in request context
@@ -163,7 +164,7 @@ export function createRSCHandler<
           request,
           env,
           variables,
-          coreHandler
+          coreHandler,
         );
       }
 
@@ -177,7 +178,7 @@ export function createRSCHandler<
     env: TEnv,
     url: URL,
     variables: Record<string, any>,
-    nonce: string | undefined
+    nonce: string | undefined,
   ): Promise<Response> {
     // First, check for route-level middleware
     const preview = await router.previewMatch(request, env);
@@ -196,7 +197,7 @@ export function createRSCHandler<
 
       // Execute route middleware wrapping the actual request handling
       return executeMiddleware(middlewareEntries, request, env, variables, () =>
-        coreRequestHandlerInner(request, env, url, variables, nonce)
+        coreRequestHandlerInner(request, env, url, variables, nonce),
       );
     }
 
@@ -210,7 +211,7 @@ export function createRSCHandler<
     env: TEnv,
     url: URL,
     variables: Record<string, any>,
-    nonce: string | undefined
+    nonce: string | undefined,
   ): Promise<Response> {
     // Early return for static file requests that don't need RSC handling
     if (url.pathname === "/favicon.ico" || url.pathname === "/robots.txt") {
@@ -228,7 +229,7 @@ export function createRSCHandler<
     const clientVersion = url.searchParams.get("_rsc_v");
     if (version && clientVersion && clientVersion !== version) {
       console.log(
-        `[RSC] Version mismatch: client=${clientVersion}, server=${version}. Forcing reload.`
+        `[RSC] Version mismatch: client=${clientVersion}, server=${version}. Forcing reload.`,
       );
 
       // Clean URL by removing RSC params
@@ -269,7 +270,7 @@ export function createRSCHandler<
         url,
         isAction,
         handleStore,
-        nonce
+        nonce,
       );
       if (progressiveResult) {
         return progressiveResult;
@@ -294,7 +295,14 @@ export function createRSCHandler<
       // REGULAR RSC RENDERING (Navigation)
       // ============================================================================
       // Note: Must use "return await" for try/catch to catch async rejections
-      return await handleRscRendering(request, env, url, isPartial, handleStore, nonce);
+      return await handleRscRendering(
+        request,
+        env,
+        url,
+        isPartial,
+        handleStore,
+        nonce,
+      );
     } catch (error) {
       // Check if middleware/handler returned Response
       if (error instanceof Response) {
@@ -319,7 +327,7 @@ export function createRSCHandler<
         const notFoundComponent =
           typeof notFoundOption === "function"
             ? notFoundOption({ pathname: url.pathname })
-            : notFoundOption ?? createElement("h1", null, "Not Found");
+            : (notFoundOption ?? createElement("h1", null, "Not Found"));
 
         // Create a simple segment for the 404 page
         const notFoundSegment = {
@@ -398,7 +406,7 @@ export function createRSCHandler<
     url: URL,
     isAction: boolean,
     handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
-    nonce: string | undefined
+    nonce: string | undefined,
   ): Promise<Response | null> {
     const contentType = request.headers.get("content-type") || "";
     const isFormSubmission =
@@ -539,7 +547,7 @@ export function createRSCHandler<
     env: TEnv,
     url: URL,
     actionId: string,
-    handleStore: ReturnType<typeof requireRequestContext>["_handleStore"]
+    handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
   ): Promise<Response> {
     const temporaryReferences = createTemporaryReferenceSet();
 
@@ -697,7 +705,10 @@ export function createRSCHandler<
     setRequestContextParams(matchResult.params);
 
     const renderStart = performance.now();
-    renderSegments(matchResult.segments, { rootLayout: router.rootLayout, isAction: true });
+    renderSegments(matchResult.segments, {
+      rootLayout: router.rootLayout,
+      isAction: true,
+    });
     const renderDuration = performance.now() - renderStart;
     const serverTiming = matchResult.serverTiming
       ? `${matchResult.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
@@ -743,7 +754,7 @@ export function createRSCHandler<
     request: Request,
     env: TEnv,
     url: URL,
-    variables: Record<string, any>
+    variables: Record<string, any>,
   ): Promise<Response> {
     const loaderId = url.searchParams.get("_rsc_loader");
 
@@ -758,7 +769,7 @@ export function createRSCHandler<
     if (!registeredLoader) {
       return createResponseWithMergedHeaders(
         `Loader "${loaderId}" not found in registry`,
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -791,7 +802,7 @@ export function createRSCHandler<
         } catch {
           return createResponseWithMergedHeaders(
             "Invalid _rsc_loader_params JSON",
-            { status: 400 }
+            { status: 400 },
           );
         }
       }
@@ -827,7 +838,7 @@ export function createRSCHandler<
           return createResponseWithMergedHeaders(rscStream, {
             headers: { "content-type": "text/x-component;charset=utf-8" },
           });
-        }
+        },
       );
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -868,7 +879,7 @@ export function createRSCHandler<
     url: URL,
     isPartial: boolean,
     handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
-    nonce: string | undefined
+    nonce: string | undefined,
   ): Promise<Response> {
     let payload: RscPayload;
     let serverTiming: string | undefined;
