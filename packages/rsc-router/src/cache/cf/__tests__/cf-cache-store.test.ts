@@ -57,6 +57,15 @@ const mockCaches = new MockCaches();
 (globalThis as any).caches = mockCaches;
 
 // ============================================================================
+// Mock ExecutionContext
+// ============================================================================
+
+const createMockCtx = () => ({
+  waitUntil: vi.fn((p: Promise<any>) => p),
+  passThroughOnException: vi.fn(),
+});
+
+// ============================================================================
 // Test Data
 // ============================================================================
 
@@ -88,39 +97,39 @@ describe("CFCacheStore", () => {
   });
 
   describe("constructor", () => {
-    it("should use default namespace and baseUrl", () => {
-      const store = new CFCacheStore();
-      expect(store).toBeDefined();
+    it("should require ctx", () => {
+      expect(() => new CFCacheStore({} as any)).toThrow(
+        "[CFCacheStore] ExecutionContext (ctx) is required"
+      );
     });
 
-    it("should accept custom options", () => {
+    it("should accept ctx and custom options", () => {
       const store = new CFCacheStore({
+        ctx: createMockCtx(),
         namespace: "custom-cache",
         baseUrl: "https://custom.internal/",
         defaults: { ttl: 120, swr: 600 },
       });
       expect(store.defaults).toEqual({ ttl: 120, swr: 600 });
     });
-
-    it("should accept waitUntil function", () => {
-      const waitUntil = vi.fn();
-      const store = new CFCacheStore({ waitUntil });
-      expect(store).toBeDefined();
-    });
   });
 
   describe("get/set", () => {
     it("should return null for missing key", async () => {
-      const store = new CFCacheStore();
+      const store = new CFCacheStore({ ctx: createMockCtx() });
       const result = await store.get("missing-key");
       expect(result).toBeNull();
     });
 
     it("should store and retrieve data", async () => {
-      const store = new CFCacheStore();
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
       const data = createTestData();
 
       await store.set("test-key", data, 60);
+      // Execute waitUntil callback
+      await mockCtx.waitUntil.mock.results[0].value;
+
       const result = await store.get("test-key");
 
       expect(result).not.toBeNull();
@@ -129,10 +138,12 @@ describe("CFCacheStore", () => {
     });
 
     it("should set Cache-Control header with TTL", async () => {
-      const store = new CFCacheStore();
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
       const data = createTestData();
 
       await store.set("test-key", data, 60);
+      await mockCtx.waitUntil.mock.results[0].value;
 
       // Uses caches.default by default
       const cache = mockCaches.default;
@@ -143,10 +154,12 @@ describe("CFCacheStore", () => {
     });
 
     it("should extend TTL with SWR window", async () => {
-      const store = new CFCacheStore();
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
       const data = createTestData();
 
       await store.set("test-key", data, 60, 300);
+      await mockCtx.waitUntil.mock.results[0].value;
 
       const cache = mockCaches.default;
       const request = new Request("https://rsc-cache.internal.com/test-key");
@@ -156,10 +169,12 @@ describe("CFCacheStore", () => {
     });
 
     it("should use store defaults for SWR if not provided", async () => {
-      const store = new CFCacheStore({ defaults: { swr: 120 } });
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx, defaults: { swr: 120 } });
       const data = createTestData();
 
       await store.set("test-key", data, 60);
+      await mockCtx.waitUntil.mock.results[0].value;
 
       const cache = mockCaches.default;
       const request = new Request("https://rsc-cache.internal.com/test-key");
@@ -169,10 +184,12 @@ describe("CFCacheStore", () => {
     });
 
     it("should use named cache when namespace is provided", async () => {
-      const store = new CFCacheStore({ namespace: "custom-cache" });
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx, namespace: "custom-cache" });
       const data = createTestData();
 
       await store.set("test-key", data, 60);
+      await mockCtx.waitUntil.mock.results[0].value;
 
       const cache = await mockCaches.open("custom-cache");
       const request = new Request("https://rsc-cache.internal.com/test-key");
@@ -181,19 +198,18 @@ describe("CFCacheStore", () => {
       expect(response?.headers.get("Cache-Control")).toBe("public, max-age=60");
     });
 
-    it("should use waitUntil for non-blocking writes when provided", async () => {
-      const waitUntil = vi.fn();
-      const store = new CFCacheStore({ waitUntil });
+    it("should use waitUntil for non-blocking writes", async () => {
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
       const data = createTestData();
 
       await store.set("test-key", data, 60);
 
-      expect(waitUntil).toHaveBeenCalledTimes(1);
-      expect(waitUntil).toHaveBeenCalledWith(expect.any(Function));
+      expect(mockCtx.waitUntil).toHaveBeenCalledTimes(1);
+      expect(mockCtx.waitUntil).toHaveBeenCalledWith(expect.any(Promise));
 
-      // Execute the waitUntil callback
-      const callback = waitUntil.mock.calls[0][0];
-      await callback();
+      // Wait for the write to complete
+      await mockCtx.waitUntil.mock.results[0].value;
 
       // Now the entry should be in cache
       const result = await store.get("test-key");
@@ -205,10 +221,12 @@ describe("CFCacheStore", () => {
     it("should set stale-at header based on TTL", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
-      const store = new CFCacheStore();
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
       const data = createTestData();
 
       await store.set("test-key", data, 60);
+      await mockCtx.waitUntil.mock.results[0].value;
 
       const cache = mockCaches.default;
       const request = new Request("https://rsc-cache.internal.com/test-key");
@@ -221,10 +239,12 @@ describe("CFCacheStore", () => {
     });
 
     it("should set status header to HIT", async () => {
-      const store = new CFCacheStore();
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
       const data = createTestData();
 
       await store.set("test-key", data, 60);
+      await mockCtx.waitUntil.mock.results[0].value;
 
       const cache = mockCaches.default;
       const request = new Request("https://rsc-cache.internal.com/test-key");
@@ -238,10 +258,12 @@ describe("CFCacheStore", () => {
     it("should return shouldRevalidate=false for fresh entries", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
-      const store = new CFCacheStore();
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
       const data = createTestData();
 
       await store.set("test-key", data, 60);
+      await mockCtx.waitUntil.mock.results[0].value;
 
       // Still fresh
       vi.advanceTimersByTime(30 * 1000);
@@ -253,10 +275,12 @@ describe("CFCacheStore", () => {
     it("should return shouldRevalidate=true and atomically mark REVALIDATING for stale entries", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
-      const store = new CFCacheStore();
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
       const data = createTestData();
 
       await store.set("test-key", data, 60, 300);
+      await mockCtx.waitUntil.mock.results[0].value;
 
       // Past TTL but within SWR window
       vi.advanceTimersByTime(120 * 1000);
@@ -277,10 +301,12 @@ describe("CFCacheStore", () => {
     it("should return shouldRevalidate=false when already REVALIDATING", async () => {
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
-      const store = new CFCacheStore();
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
       const data = createTestData();
 
       await store.set("test-key", data, 60, 300);
+      await mockCtx.waitUntil.mock.results[0].value;
 
       // Make it stale
       vi.advanceTimersByTime(120 * 1000);
@@ -300,10 +326,12 @@ describe("CFCacheStore", () => {
       // subsequent ones see REVALIDATING status and don't trigger again.
       vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
-      const store = new CFCacheStore();
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
       const data = createTestData();
 
       await store.set("test-key", data, 60, 300);
+      await mockCtx.waitUntil.mock.results[0].value;
 
       // Make it stale
       vi.advanceTimersByTime(120 * 1000);
@@ -326,10 +354,13 @@ describe("CFCacheStore", () => {
 
   describe("delete", () => {
     it("should delete existing entry", async () => {
-      const store = new CFCacheStore();
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
       const data = createTestData();
 
       await store.set("test-key", data, 60);
+      await mockCtx.waitUntil.mock.results[0].value;
+
       const deleted = await store.delete("test-key");
 
       expect(deleted).toBe(true);
@@ -339,7 +370,7 @@ describe("CFCacheStore", () => {
     });
 
     it("should return false for non-existent entry", async () => {
-      const store = new CFCacheStore();
+      const store = new CFCacheStore({ ctx: createMockCtx() });
       const deleted = await store.delete("missing-key");
       expect(deleted).toBe(false);
     });
@@ -347,11 +378,13 @@ describe("CFCacheStore", () => {
 
   describe("key encoding", () => {
     it("should handle special characters in keys", async () => {
-      const store = new CFCacheStore();
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
       const data = createTestData();
 
       const key = "route:products/category=electronics&page=1";
       await store.set(key, data, 60);
+      await mockCtx.waitUntil.mock.results[0].value;
 
       const result = await store.get(key);
       expect(result).not.toBeNull();
