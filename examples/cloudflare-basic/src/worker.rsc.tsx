@@ -30,6 +30,6 @@ export default {
       cache: { store: cacheStore },
     });
 
-    return handler(request, { Bindings: env, Variables: {} });
+    return handler(request, { Bindings: env, Variables: {}, ctx });
   },
 } satisfies ExportedHandler<AppBindings>;

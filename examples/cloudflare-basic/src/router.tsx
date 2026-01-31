@@ -9,6 +9,7 @@ import {
   blogRoutes,
   proactiveCacheRoutes,
   documentCacheRoutes,
+  slowCacheRoutes,
 } from "./routes.js";
 import { AppShell } from "./components/AppShell.js";
 import { RootLayout } from "./components/RootLayout.js";
@@ -49,6 +50,9 @@ export const router = createRSCRouter<AppEnv>({
 
   .routes(documentCacheRoutes)
   .map(() => import("./handlers/document-cache.js"))
+
+  .routes(slowCacheRoutes)
+  .map(() => import("./handlers/slow-cache.js"))
 
   // ============================================
   // INLINE ROUTE DEFINITION EXAMPLE

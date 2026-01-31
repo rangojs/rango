@@ -42,6 +42,14 @@ export const MAX_REVALIDATION_INTERVAL = 30;
 // Types
 // ============================================================================
 
+/**
+ * Cloudflare Workers ExecutionContext (subset we need)
+ */
+export interface ExecutionContext {
+  waitUntil(promise: Promise<any>): void;
+  passThroughOnException(): void;
+}
+
 export interface CFCacheStoreOptions<TEnv = unknown> {
   /**
    * Cache namespace. If not provided, uses caches.default (recommended).
@@ -56,10 +64,15 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
   defaults?: CacheDefaults;
 
   /**
-   * waitUntil function from request's ExecutionContext.
-   * Used for non-blocking cache writes.
+   * Cloudflare ExecutionContext for non-blocking cache writes.
+   * Pass the `ctx` from your worker's fetch handler.
+   *
+   * @example
+   * ```typescript
+   * new CFCacheStore({ ctx: env.ctx })
+   * ```
    */
-  waitUntil?: (fn: () => Promise<void>) => void;
+  ctx: ExecutionContext;
 
   /**
    * Cache version string override. When this changes, all cached entries are
@@ -127,13 +140,21 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private readonly waitUntil?: (fn: () => Promise<void>) => void;
   private readonly version?: string;
 
-  constructor(options: CFCacheStoreOptions<TEnv> = {}) {
+  constructor(options: CFCacheStoreOptions<TEnv>) {
+    if (!options.ctx) {
+      throw new Error(
+        "[CFCacheStore] ExecutionContext (ctx) is required. " +
+        "Pass the Cloudflare ExecutionContext from your worker's fetch handler: " +
+        "new CFCacheStore({ ctx: env.ctx })"
+      );
+    }
+
     this.namespace = options.namespace;
     this.baseUrl = options.baseUrl ?? "https://rsc-cache.internal.com/";
     this.defaults = options.defaults;
-    this.waitUntil = options.waitUntil;
     this.version = options.version ?? VERSION;
     this.keyGenerator = options.keyGenerator;
+    this.waitUntil = (fn) => options.ctx.waitUntil(fn());
   }
 
   /**
