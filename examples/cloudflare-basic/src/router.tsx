@@ -26,7 +26,6 @@ export const router = createRSCRouter<AppEnv>({
   document: AppShell,
 })
   // Document cache middleware - caches full responses based on Cache-Control headers
-  // Routes opt-in by setting s-maxage header
   .use(createDocumentCacheMiddleware())
 
   // Register routes with lazy-loaded handlers

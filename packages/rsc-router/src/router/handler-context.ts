@@ -36,6 +36,9 @@ export function createHandlerContext<TEnv>(
   const cleanUrl = new URL(url);
   cleanUrl.search = cleanSearchParams.toString();
 
+  // Get stub response from request context for setting headers
+  const stubResponse = requestContext?.res ?? new Response(null, { status: 200 });
+
   return {
     params,
     request,
@@ -52,6 +55,8 @@ export function createHandlerContext<TEnv>(
       variables[key] = value;
     }) as HandlerContext<any, TEnv>["set"],
     _originalRequest: request, // Raw request for advanced use
+    res: stubResponse, // Stub response for setting headers
+    headers: stubResponse.headers, // Shorthand for res.headers
     // Placeholder use() - will be replaced with actual implementation during request
     use: () => {
       throw new Error("ctx.use() called before loaders were initialized");

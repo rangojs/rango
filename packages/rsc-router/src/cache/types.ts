@@ -110,6 +110,27 @@ export interface SegmentCacheStore<TEnv = unknown> {
    * Clear all cached entries (optional, for testing)
    */
   clear?(): Promise<void>;
+
+  // ============================================================================
+  // Document Cache Methods (optional)
+  // ============================================================================
+  // These methods are for caching full HTTP responses (document-level caching).
+  // Stores that support response caching should implement these methods.
+
+  /**
+   * Get a cached Response by key.
+   * Returns the response and whether it should be revalidated (SWR).
+   */
+  getResponse?(key: string): Promise<{ response: Response; shouldRevalidate: boolean } | null>;
+
+  /**
+   * Store a Response with TTL and optional SWR window.
+   * @param key - Cache key
+   * @param response - Response to cache (will be cloned)
+   * @param ttl - Time-to-live in seconds
+   * @param swr - Optional stale-while-revalidate window in seconds
+   */
+  putResponse?(key: string, response: Response, ttl: number, swr?: number): Promise<void>;
 }
 
 /**

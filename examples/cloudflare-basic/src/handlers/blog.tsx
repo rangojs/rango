@@ -204,6 +204,9 @@ export default map<typeof blogRoutes>(
         cache({ ttl: 60, swr: 300 }, () => [
           // Blog index page - lists all posts
           route("blog", (ctx) => {
+            // Opt-in to document caching
+            ctx.headers.set("Cache-Control", "s-maxage=60, stale-while-revalidate=300");
+
             const meta = ctx.use(Meta);
             meta({ title: "Blog - RSC Router Cloudflare" });
             meta({
@@ -290,6 +293,9 @@ export default map<typeof blogRoutes>(
 
           // Blog post detail page - push post-specific breadcrumb
           route("blogPost", (ctx) => {
+            // Opt-in to document caching
+            ctx.headers.set("Cache-Control", "s-maxage=60, stale-while-revalidate=300");
+
             // Read post directly - static data gets cached with RSC output
             const post = getBlogPost(ctx.params.slug);
 
