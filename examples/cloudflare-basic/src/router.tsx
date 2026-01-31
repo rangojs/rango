@@ -1,5 +1,6 @@
 import { createRSCRouter } from "@ivogt/rsc-router/server";
 import { Link, href } from "@ivogt/rsc-router/client";
+import { createDocumentCacheMiddleware } from "@ivogt/rsc-router/cache";
 import {
   homeRoutes,
   aboutRoutes,
@@ -7,6 +8,7 @@ import {
   featuresRoutes,
   blogRoutes,
   proactiveCacheRoutes,
+  documentCacheRoutes,
 } from "./routes.js";
 import { AppShell } from "./components/AppShell.js";
 import { RootLayout } from "./components/RootLayout.js";
@@ -22,6 +24,10 @@ import type { AppEnv } from "./env.js";
 export const router = createRSCRouter<AppEnv>({
   document: AppShell,
 })
+  // Document cache middleware - caches full responses based on Cache-Control headers
+  // Routes opt-in by setting s-maxage header
+  .use(createDocumentCacheMiddleware())
+
   // Register routes with lazy-loaded handlers
   .routes(homeRoutes)
   .map(() => import("./handlers/home.js"))
@@ -40,6 +46,9 @@ export const router = createRSCRouter<AppEnv>({
 
   .routes("/proactive-cache", proactiveCacheRoutes)
   .map(() => import("./handlers/proactive-cache.js"))
+
+  .routes(documentCacheRoutes)
+  .map(() => import("./handlers/document-cache.js"))
 
   // ============================================
   // INLINE ROUTE DEFINITION EXAMPLE
