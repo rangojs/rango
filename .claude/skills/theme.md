@@ -1,0 +1,44 @@
+# Theme Support
+
+Opt-in theme system with FOUC prevention.
+
+## Enable
+
+```typescript
+const router = createRSCRouter<Env>({
+  theme: {
+    defaultTheme: "system",      // "light" | "dark" | "system"
+    themes: ["light", "dark"],
+    attribute: "class",          // or "data-theme"
+    storageKey: "theme",
+  }
+});
+```
+
+## Server (route handlers)
+
+```typescript
+route("settings", (ctx) => {
+  const current = ctx.theme;    // read from cookie
+  ctx.setTheme("dark");         // set cookie
+  return <Settings />;
+});
+```
+
+## Client
+
+```tsx
+"use client";
+import { useTheme } from "@ivogt/rsc-router/theme";
+
+function ThemeToggle() {
+  const { theme, setTheme, resolvedTheme, systemTheme, themes } = useTheme();
+  return <button onClick={() => setTheme("dark")}>Dark</button>;
+}
+```
+
+## Notes
+
+- `<MetaTags />` auto-renders inline script for FOUC prevention
+- Add `suppressHydrationWarning` to `<html>`
+- Theme persists in localStorage + cookie (for SSR)

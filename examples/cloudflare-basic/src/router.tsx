@@ -10,6 +10,7 @@ import {
   proactiveCacheRoutes,
   documentCacheRoutes,
   slowCacheRoutes,
+  themeRoutes,
 } from "./routes.js";
 import { AppShell } from "./components/AppShell.js";
 import { RootLayout } from "./components/RootLayout.js";
@@ -24,6 +25,15 @@ import type { AppEnv } from "./env.js";
 // If you call methods without capturing the result, TypeScript loses the types.
 export const router = createRSCRouter<AppEnv>({
   document: AppShell,
+  // Enable theme support with system detection
+  theme: {
+    defaultTheme: "system",
+    themes: ["light", "dark", "system"],
+    attribute: "class",
+    storageKey: "theme",
+    enableSystem: true,
+    enableColorScheme: true,
+  },
 })
   // Document cache middleware - caches full responses based on Cache-Control headers
   .use(createDocumentCacheMiddleware())
@@ -52,6 +62,9 @@ export const router = createRSCRouter<AppEnv>({
 
   .routes(slowCacheRoutes)
   .map(() => import("./handlers/slow-cache.js"))
+
+  .routes(themeRoutes)
+  .map(() => import("./handlers/theme.js"))
 
   // ============================================
   // INLINE ROUTE DEFINITION EXAMPLE

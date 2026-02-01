@@ -6,7 +6,7 @@ import { BreadcrumbNav } from "./BreadcrumbNav.js";
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <MetaTags />
         <style
@@ -21,6 +21,12 @@ export function AppShell({ children }: { children: ReactNode }) {
               button { padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; background: #0070f3; color: white; border: none; border-radius: 4px; }
               button:hover { background: #0051a8; }
               .counter { font-size: 2rem; margin: 1rem 0; }
+
+              /* Dark mode styles */
+              .dark body { background: #1a1a1a; color: #e0e0e0; }
+              .dark nav { border-bottom-color: #444; }
+              .dark button { background: #0051a8; }
+              .dark button:hover { background: #0070f3; }
             `,
           }}
         />
@@ -38,6 +44,9 @@ export function AppShell({ children }: { children: ReactNode }) {
           </Link>
           <Link to={href("/blog")} data-testid="nav-blog">
             Blog
+          </Link>
+          <Link to={href("/theme")} data-testid="nav-theme">
+            Theme
           </Link>
         </nav>
         <BreadcrumbNav />

@@ -130,4 +130,9 @@ export const testRoutes = route({
     redirect: "/cache-status/redirect",
     redirectTarget: "/cache-status/redirect-target",
   },
+  // Routes for testing theme functionality
+  theme: {
+    index: "/theme",
+    toggle: "/theme/toggle",
+  },
 });

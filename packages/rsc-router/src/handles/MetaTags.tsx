@@ -6,11 +6,14 @@
  * Supports both sync and async meta descriptors. Async descriptors
  * (Promise<MetaDescriptorBase>) are resolved using React's use() hook.
  *
+ * When theme is enabled in the router config, MetaTags also renders
+ * the theme initialization script to prevent FOUC (flash of unstyled content).
+ *
  * @example
  * ```tsx
  * function RootLayout() {
  *   return (
- *     <html>
+ *     <html lang="en" suppressHydrationWarning>
  *       <head>
  *         <MetaTags />
  *       </head>
@@ -25,6 +28,8 @@ import { use } from "react";
 import { useHandle } from "../browser/react/use-handle.ts";
 import { Meta } from "./meta.ts";
 import type { MetaDescriptor, MetaDescriptorBase } from "../router/types.ts";
+import { getSSRThemeConfig } from "../theme/theme-context.js";
+import { generateThemeScript } from "../theme/theme-script.js";
 
 // Type guards for MetaDescriptorBase variants
 function hasCharSet(d: MetaDescriptorBase): d is { charSet: "utf-8" } {
@@ -159,14 +164,24 @@ function AsyncMetaTag({ promise, index }: { promise: Promise<MetaDescriptorBase>
  * Place this component inside the `<head>` element of your document.
  * It will automatically update when meta descriptors change during navigation.
  *
+ * When theme is enabled in router config, also renders the theme initialization
+ * script to prevent FOUC (flash of unstyled content).
+ *
  * Async meta descriptors (Promise<MetaDescriptorBase>) are resolved using
  * React's use() hook. RSC streaming handles the Promise resolution.
  */
 export function MetaTags(): React.ReactNode {
   const descriptors = useHandle(Meta) as MetaDescriptor[];
+  const themeConfig = getSSRThemeConfig();
 
   return (
     <>
+      {/* Theme script must be first to prevent FOUC */}
+      {themeConfig && (
+        <script
+          dangerouslySetInnerHTML={{ __html: generateThemeScript(themeConfig) }}
+        />
+      )}
       {descriptors.map((descriptor, index) => {
         if (isPromise(descriptor)) {
           return <AsyncMetaTag key={`async-${index}`} promise={descriptor} index={index} />;

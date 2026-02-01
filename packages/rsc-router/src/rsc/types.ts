@@ -8,6 +8,7 @@
 import type { ResolvedSegment, SlotState } from "../types.js";
 import type { HandleData } from "../server/handle-store.js";
 import type { RSCRouter } from "../router.js";
+import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 
 /**
  * RSC payload sent to the client
@@ -28,6 +29,10 @@ export interface RscPayload {
     handles?: AsyncGenerator<HandleData, void, unknown>;
     /** RSC version string for cache invalidation */
     version?: string;
+    /** Theme configuration for FOUC prevention */
+    themeConfig?: ResolvedThemeConfig | null;
+    /** Initial theme from cookie (for SSR hydration) */
+    initialTheme?: Theme;
   };
   returnValue?: { ok: boolean; data: unknown };
   formState?: unknown;
