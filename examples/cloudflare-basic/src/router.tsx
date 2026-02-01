@@ -11,9 +11,10 @@ import {
   documentCacheRoutes,
   slowCacheRoutes,
   themeRoutes,
+  slowRoutes,
 } from "./routes.js";
 import { AppShell } from "./components/AppShell.js";
-import { RootLayout } from "./components/RootLayout.js";
+import { RootLayout } from "./components/SlowRootLayout.js";
 import type { AppEnv } from "./env.js";
 
 // Create the router with document component
@@ -66,6 +67,9 @@ export const router = createRSCRouter<AppEnv>({
   .routes(themeRoutes)
   .map(() => import("./handlers/theme.js"))
 
+  .routes("/slow", slowRoutes)
+  .map(() => import("./handlers/slow.js"))
+
   // ============================================
   // INLINE ROUTE DEFINITION EXAMPLE
   // ============================================
@@ -92,10 +96,16 @@ export const router = createRSCRouter<AppEnv>({
             This page is defined inline in router.tsx
           </p>
           <nav className="flex gap-4">
-            <Link to={href("/inline/docs")} className="text-blue-600 hover:underline">
+            <Link
+              to={href("/inline/docs")}
+              className="text-blue-600 hover:underline"
+            >
               Docs
             </Link>
-            <Link to={href("/inline/pricing")} className="text-blue-600 hover:underline">
+            <Link
+              to={href("/inline/pricing")}
+              className="text-blue-600 hover:underline"
+            >
               Pricing
             </Link>
           </nav>
