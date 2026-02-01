@@ -224,7 +224,7 @@ function getManualChunks(id: string): string | undefined {
   ) {
     return "react";
   }
-  if (normalized.includes("node_modules/rsc-router/")) {
+  if (normalized.includes("node_modules/@ivogt/rsc-router/")) {
     return "router";
   }
   return undefined;
