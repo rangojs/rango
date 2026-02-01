@@ -224,7 +224,9 @@ function getManualChunks(id: string): string | undefined {
   ) {
     return "react";
   }
-  if (normalized.includes("node_modules/@ivogt/rsc-router/")) {
+  // Use dynamic package name from package.json
+  const packageName = getPublishedPackageName();
+  if (normalized.includes(`node_modules/${packageName}/`)) {
     return "router";
   }
   return undefined;
