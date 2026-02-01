@@ -18,7 +18,10 @@ import type {
   CacheDefaults,
   CacheGetResult,
 } from "../types.js";
-import type { RequestContext } from "../../server/request-context.js";
+import {
+  getRequestContext,
+  type RequestContext,
+} from "../../server/request-context.js";
 import { VERSION } from "@ivogt/rsc-router:version";
 
 // ============================================================================
@@ -57,7 +60,13 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    */
   namespace?: string;
 
-  /** Base URL for cache keys (default: 'https://rsc-cache.internal.com/') */
+  /**
+   * Base URL for cache keys.
+   *
+   * If not provided, derives from request hostname via requestContext:
+   * - Production domains → uses `https://{hostname}/`
+   * - Dev/preview (localhost, workers.dev, pages.dev) → uses internal fallback URL
+   */
   baseUrl?: string;
 
   /** Default cache options */
@@ -150,11 +159,45 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     }
 
     this.namespace = options.namespace;
-    this.baseUrl = options.baseUrl ?? "https://rsc-cache.internal.com/";
+    this.baseUrl = options.baseUrl ?? this.deriveBaseUrl();
     this.defaults = options.defaults;
     this.version = options.version ?? VERSION;
     this.keyGenerator = options.keyGenerator;
     this.waitUntil = (fn) => options.ctx.waitUntil(fn());
+  }
+
+  /**
+   * Derive base URL from request hostname via requestContext.
+   * Uses internal fallback for dev/preview environments.
+   * @internal
+   */
+  private deriveBaseUrl(): string {
+    const fallback = "https://rsc-cache.internal.com/";
+
+    const ctx = getRequestContext();
+    if (!ctx?.request) {
+      return fallback;
+    }
+
+    try {
+      const url = new URL(ctx.request.url);
+      const hostname = url.hostname;
+
+      // Use fallback for dev/preview environments
+      if (
+        hostname === "localhost" ||
+        hostname === "127.0.0.1" ||
+        hostname.endsWith(".workers.dev") ||
+        hostname.endsWith(".pages.dev")
+      ) {
+        return fallback;
+      }
+
+      // Use actual hostname for production
+      return `https://${hostname}/`;
+    } catch {
+      return fallback;
+    }
   }
 
   /**

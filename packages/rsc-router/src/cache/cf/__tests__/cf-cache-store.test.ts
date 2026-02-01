@@ -391,4 +391,38 @@ describe("CFCacheStore", () => {
       expect(result!.data).toEqual(data);
     });
   });
+
+  describe("baseUrl configuration", () => {
+    it("should use explicit baseUrl when provided", async () => {
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        baseUrl: "https://custom.example.com/",
+      });
+      const data = createTestData();
+
+      await store.set("custom-key", data, 60);
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      // Verify round-trip works with custom baseUrl
+      const result = await store.get("custom-key");
+      expect(result).not.toBeNull();
+      expect(result!.data).toEqual(data);
+    });
+
+    it("should use fallback when no requestContext available", async () => {
+      // Default behavior when getRequestContext returns null
+      const mockCtx = createMockCtx();
+      const store = new CFCacheStore({ ctx: mockCtx });
+      const data = createTestData();
+
+      await store.set("fallback-key", data, 60);
+      await mockCtx.waitUntil.mock.results[0].value;
+
+      // Verify round-trip works with fallback baseUrl
+      const result = await store.get("fallback-key");
+      expect(result).not.toBeNull();
+      expect(result!.data).toEqual(data);
+    });
+  });
 });
