@@ -134,6 +134,13 @@ export interface DocumentCacheOptions<TEnv = any> {
    * ```
    */
   isEnabled?: (ctx: MiddlewareContext<TEnv>) => boolean | Promise<boolean>;
+
+  /**
+   * Enable debug logging for cache operations.
+   * Logs HIT, MISS, STALE, and REVALIDATED events.
+   * Defaults to false.
+   */
+  debug?: boolean;
 }
 
 /**
@@ -159,7 +166,11 @@ export interface DocumentCacheOptions<TEnv = any> {
 export function createDocumentCacheMiddleware<TEnv = any>(
   options: DocumentCacheOptions<TEnv> = {},
 ): MiddlewareFn<TEnv> {
-  const { skipPaths = [], keyGenerator, isEnabled } = options;
+  const { skipPaths = [], keyGenerator, isEnabled, debug = false } = options;
+
+  const log = debug
+    ? (message: string) => console.log(message)
+    : () => {};
 
   return async function documentCacheMiddleware(
     ctx: MiddlewareContext<TEnv>,
@@ -216,7 +227,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       if (cached && cached.response.status === 200) {
         if (!cached.shouldRevalidate) {
           // Fresh hit - return immediately
-          console.log(`[DocumentCache] HIT ${typeLabel}: ${url.pathname}`);
+          log(`[DocumentCache] HIT ${typeLabel}: ${url.pathname}`);
           let response = addCacheStatusHeader(cached.response, "HIT");
           // Run onResponse callbacks even for cache hits
           if (requestCtx && requestCtx._onResponseCallbacks.length > 0) {
@@ -229,9 +240,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
         }
 
         // Stale hit - return cached response, revalidate in background
-        console.log(
-          `[DocumentCache] STALE ${typeLabel}: ${url.pathname} (revalidating)`,
-        );
+        log(`[DocumentCache] STALE ${typeLabel}: ${url.pathname} (revalidating)`);
 
         if (requestCtx) {
           requestCtx.waitUntil(async () => {
@@ -246,9 +255,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
                   directives.sMaxAge!,
                   directives.staleWhileRevalidate,
                 );
-                console.log(
-                  `[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`,
-                );
+                log(`[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`);
               }
             } catch (error) {
               console.error(`[DocumentCache] Revalidation failed:`, error);
@@ -274,9 +281,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       const directives = shouldCacheResponse(originalResponse);
 
       if (directives) {
-        console.log(
-          `[DocumentCache] MISS ${typeLabel}: ${url.pathname} (caching with s-maxage=${directives.sMaxAge})`,
-        );
+        log(`[DocumentCache] MISS ${typeLabel}: ${url.pathname} (caching with s-maxage=${directives.sMaxAge})`);
 
         // Tee the body so we can return one stream and cache the other
         const [returnStream, cacheStream] = originalResponse.body!.tee();

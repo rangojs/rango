@@ -294,14 +294,13 @@ export function createRequestContext<TEnv>(
     _cacheStore: cacheStore,
 
     waitUntil(fn: () => Promise<void>): void {
-      if (!executionContext?.waitUntil) {
-        throw new Error(
-          "[waitUntil] No ExecutionContext provided. " +
-          "Pass the Cloudflare ExecutionContext (ctx) as the third parameter to the handler: " +
-          "handler(request, env, ctx)"
-        );
+      if (executionContext?.waitUntil) {
+        // Cloudflare Workers: use native waitUntil
+        executionContext.waitUntil(fn());
+      } else {
+        // Node.js / dev: fire-and-forget with error logging
+        fn().catch((err) => console.error("[waitUntil] Background task failed:", err));
       }
-      executionContext.waitUntil(fn());
     },
 
     _onResponseCallbacks: [],

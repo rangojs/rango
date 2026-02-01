@@ -327,7 +327,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   ): Promise<void> {
     try {
       const cache = await this.getCache();
-      const request = this.keyToRequest(`v-doc:${key}`);
+      const request = this.keyToRequest(`doc:${key}`);
 
       // Extended TTL covers SWR window
       const swrWindow = swr ?? this.defaults?.swr ?? 0;
