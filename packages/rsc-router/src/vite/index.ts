@@ -216,6 +216,7 @@ function createVirtualEntriesPlugin(
  */
 function getManualChunks(id: string): string | undefined {
   const normalized = Vite.normalizePath(id);
+
   if (
     normalized.includes("node_modules/react/") ||
     normalized.includes("node_modules/react-dom/") ||
@@ -225,8 +226,12 @@ function getManualChunks(id: string): string | undefined {
     return "react";
   }
   // Use dynamic package name from package.json
+  // Check both npm install path and workspace symlink resolved path
   const packageName = getPublishedPackageName();
-  if (normalized.includes(`node_modules/${packageName}/`)) {
+  if (
+    normalized.includes(`node_modules/${packageName}/`) ||
+    normalized.includes("packages/rsc-router/")
+  ) {
     return "router";
   }
   return undefined;
