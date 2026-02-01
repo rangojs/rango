@@ -1,4 +1,12 @@
 /// <reference path="../../vite/version.d.ts" />
+
+// Extend CacheStorage with Cloudflare's default cache property
+declare global {
+  interface CacheStorage {
+    readonly default: Cache;
+  }
+}
+
 /**
  * Cloudflare Edge Cache Store
  *
