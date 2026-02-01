@@ -50,3 +50,9 @@ export {
 
 // Cache scope
 export { CacheScope, createCacheScope } from "./cache-scope.js";
+
+// Document-level cache middleware
+export {
+  createDocumentCacheMiddleware,
+  type DocumentCacheOptions,
+} from "./document-cache.js";

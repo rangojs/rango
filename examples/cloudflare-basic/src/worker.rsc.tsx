@@ -16,12 +16,12 @@ export default {
       return new Response(null, { status: 404 });
     }
 
-    // Create CF cache store with waitUntil for non-blocking writes
+    // Create CF cache store with ExecutionContext for non-blocking writes
     // Uses caches.default by default, SWR enabled at the edge
     // VERSION is auto-imported, changes on server restart to invalidate stale cache
     const cacheStore = new CFCacheStore({
       defaults: { ttl: 60, swr: 300 },
-      waitUntil: (fn) => ctx.waitUntil(fn()),
+      ctx,
     });
 
     // Create handler with CF cache store (version is auto-set from rsc-router:version)
@@ -30,6 +30,6 @@ export default {
       cache: { store: cacheStore },
     });
 
-    return handler(request, { Bindings: env, Variables: {} });
+    return handler(request, { Bindings: env, Variables: {}, ctx });
   },
 } satisfies ExportedHandler<AppBindings>;

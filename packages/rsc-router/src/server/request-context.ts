@@ -298,8 +298,8 @@ export function createRequestContext<TEnv>(
         // Cloudflare Workers: use native waitUntil
         executionContext.waitUntil(fn());
       } else {
-        // Node.js: fire-and-forget
-        fn().catch((err) => console.error("[waitUntil]", err));
+        // Node.js / dev: fire-and-forget with error logging
+        fn().catch((err) => console.error("[waitUntil] Background task failed:", err));
       }
     },
 

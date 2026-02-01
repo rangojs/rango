@@ -42,6 +42,14 @@ export const MAX_REVALIDATION_INTERVAL = 30;
 // Types
 // ============================================================================
 
+/**
+ * Cloudflare Workers ExecutionContext (subset we need)
+ */
+export interface ExecutionContext {
+  waitUntil(promise: Promise<any>): void;
+  passThroughOnException(): void;
+}
+
 export interface CFCacheStoreOptions<TEnv = unknown> {
   /**
    * Cache namespace. If not provided, uses caches.default (recommended).
@@ -56,10 +64,15 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
   defaults?: CacheDefaults;
 
   /**
-   * waitUntil function from request's ExecutionContext.
-   * Used for non-blocking cache writes.
+   * Cloudflare ExecutionContext for non-blocking cache writes.
+   * Pass the `ctx` from your worker's fetch handler.
+   *
+   * @example
+   * ```typescript
+   * new CFCacheStore({ ctx: env.ctx })
+   * ```
    */
-  waitUntil?: (fn: () => Promise<void>) => void;
+  ctx: ExecutionContext;
 
   /**
    * Cache version string override. When this changes, all cached entries are
@@ -101,7 +114,7 @@ export interface CFCacheStoreOptions<TEnv = unknown> {
    */
   keyGenerator?: (
     ctx: RequestContext<TEnv>,
-    defaultKey: string
+    defaultKey: string,
   ) => string | Promise<string>;
 }
 
@@ -119,7 +132,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   readonly defaults?: CacheDefaults;
   readonly keyGenerator?: (
     ctx: RequestContext<TEnv>,
-    defaultKey: string
+    defaultKey: string,
   ) => string | Promise<string>;
 
   private readonly namespace?: string;
@@ -127,13 +140,21 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private readonly waitUntil?: (fn: () => Promise<void>) => void;
   private readonly version?: string;
 
-  constructor(options: CFCacheStoreOptions<TEnv> = {}) {
+  constructor(options: CFCacheStoreOptions<TEnv>) {
+    if (!options.ctx) {
+      throw new Error(
+        "[CFCacheStore] ExecutionContext (ctx) is required. " +
+          "Pass the Cloudflare ExecutionContext from your worker's fetch handler: " +
+          "new CFCacheStore({ ctx: env.ctx })",
+      );
+    }
+
     this.namespace = options.namespace;
     this.baseUrl = options.baseUrl ?? "https://rsc-cache.internal.com/";
     this.defaults = options.defaults;
-    this.waitUntil = options.waitUntil;
     this.version = options.version ?? VERSION;
     this.keyGenerator = options.keyGenerator;
+    this.waitUntil = (fn) => options.ctx.waitUntil(fn());
   }
 
   /**
@@ -170,10 +191,13 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // Read status headers
       const status = response.headers.get(CACHE_STATUS_HEADER);
       const age = Number(response.headers.get("age") ?? "0");
-      const staleAt = Number(response.headers.get(CACHE_STALE_AT_HEADER) ?? "0");
+      const staleAt = Number(
+        response.headers.get(CACHE_STALE_AT_HEADER) ?? "0",
+      );
 
       const isStale = staleAt > 0 && Date.now() > staleAt;
-      const isRevalidating = status === "REVALIDATING" && age < MAX_REVALIDATION_INTERVAL;
+      const isRevalidating =
+        status === "REVALIDATING" && age < MAX_REVALIDATION_INTERVAL;
 
       // Case 1: Fresh or already being revalidated - just return data
       if (!isStale || isRevalidating) {
@@ -190,7 +214,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
       // Blocking write - must complete before returning to prevent race
       await cache.put(
         request,
-        new Response(b1, { status: response.status, headers })
+        new Response(b1, { status: response.status, headers }),
       );
 
       const data = (await new Response(b2).json()) as CachedEntryData;
@@ -209,7 +233,7 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     key: string,
     data: CachedEntryData,
     ttl: number,
-    swr?: number
+    swr?: number,
   ): Promise<void> {
     try {
       const cache = await this.getCache();
@@ -255,6 +279,85 @@ export class CFCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
     } catch (error) {
       console.error("[CFCacheStore] delete failed:", error);
       return false;
+    }
+  }
+
+  // ============================================================================
+  // Document Cache Methods
+  // ============================================================================
+
+  /**
+   * Get a cached Response by key (for document-level caching).
+   * Returns the response and whether it should be revalidated (SWR).
+   */
+  async getResponse(
+    key: string,
+  ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
+    try {
+      const cache = await this.getCache();
+      const request = this.keyToRequest(`doc:${key}`);
+      const response = await cache.match(request);
+
+      if (!response || response.status !== 200) {
+        return null;
+      }
+
+      // Check staleness
+      const staleAt = Number(response.headers.get(CACHE_STALE_AT_HEADER) || 0);
+      const isStale = staleAt > 0 && Date.now() > staleAt;
+
+      return {
+        response,
+        shouldRevalidate: isStale,
+      };
+    } catch (error) {
+      console.error("[CFCacheStore] getResponse failed:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Store a Response with TTL and optional SWR window (for document-level caching).
+   */
+  async putResponse(
+    key: string,
+    response: Response,
+    ttl: number,
+    swr?: number,
+  ): Promise<void> {
+    try {
+      const cache = await this.getCache();
+      const request = this.keyToRequest(`doc:${key}`);
+
+      // Extended TTL covers SWR window
+      const swrWindow = swr ?? this.defaults?.swr ?? 0;
+      const totalTtl = ttl + swrWindow;
+      const staleAt = Date.now() + ttl * 1000;
+
+      // Clone and add cache headers
+      const headers = new Headers(response.headers);
+      headers.set("Cache-Control", `public, max-age=${totalTtl}`);
+      headers.set(CACHE_STALE_AT_HEADER, String(staleAt));
+
+      const toCache = new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      });
+
+      const putPromise = cache.put(request, toCache);
+
+      if (this.waitUntil) {
+        // Non-blocking write
+        this.waitUntil(async () => {
+          await putPromise;
+        });
+      } else {
+        // Blocking fallback
+        await putPromise;
+      }
+    } catch (error) {
+      console.error("[CFCacheStore] putResponse failed:", error);
     }
   }
 

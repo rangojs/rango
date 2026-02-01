@@ -295,6 +295,32 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
     : (key: string, value: any) => void;
   _originalRequest: Request;      // Raw request (includes all system params)
   /**
+   * Stub response for setting headers/cookies.
+   * Headers set here are merged into the final response.
+   *
+   * @example
+   * ```typescript
+   * route("product", (ctx) => {
+   *   ctx.res.headers.set("Cache-Control", "s-maxage=60");
+   *   return <ProductPage />;
+   * });
+   * ```
+   */
+  res: Response;
+  /**
+   * Shorthand for ctx.res.headers - response headers.
+   * Headers set here are merged into the final response.
+   *
+   * @example
+   * ```typescript
+   * route("product", (ctx) => {
+   *   ctx.headers.set("Cache-Control", "s-maxage=60");
+   *   return <ProductPage />;
+   * });
+   * ```
+   */
+  headers: Headers;
+  /**
    * Access loader data or push handle data.
    *
    * For loaders: Returns a promise that resolves to the loader data.

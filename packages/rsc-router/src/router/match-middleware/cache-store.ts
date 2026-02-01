@@ -114,10 +114,10 @@ import type { GeneratorMiddleware } from "./cache-lookup.js";
  */
 export function withCacheStore<TEnv>(
   ctx: MatchContext<TEnv>,
-  state: MatchPipelineState
+  state: MatchPipelineState,
 ): GeneratorMiddleware<ResolvedSegment> {
   return async function* (
-    source: AsyncGenerator<ResolvedSegment>
+    source: AsyncGenerator<ResolvedSegment>,
   ): AsyncGenerator<ResolvedSegment> {
     // Collect all segments while passing them through
     const allSegments: ResolvedSegment[] = [];
@@ -131,7 +131,12 @@ export function withCacheStore<TEnv>(
     // 2. This is an action (actions don't cache)
     // 3. Cache was already hit (no need to re-cache)
     // 4. Non-GET request (only cache GET requests)
-    if (!ctx.cacheScope?.enabled || ctx.isAction || state.cacheHit || ctx.request.method !== "GET") {
+    if (
+      !ctx.cacheScope?.enabled ||
+      ctx.isAction ||
+      state.cacheHit ||
+      ctx.request.method !== "GET"
+    ) {
       return;
     }
 
@@ -148,7 +153,7 @@ export function withCacheStore<TEnv>(
     // Check if any non-loader segments have null components
     // This happens when client already had those segments (partial navigation)
     const hasNullComponents = allSegmentsToCache.some(
-      (s) => s.component === null && s.type !== "loader"
+      (s) => s.component === null && s.type !== "loader",
     );
 
     const requestCtx = getRequestContext();
@@ -162,7 +167,7 @@ export function withCacheStore<TEnv>(
       // Only cache successful responses
       if (response.status !== 200) {
         console.log(
-          `[CacheStore] Skipping cache: non-200 status ${response.status} for ${ctx.pathname}`
+          `[CacheStore] Skipping cache: non-200 status ${response.status} for ${ctx.pathname}`,
         );
         return response;
       }
@@ -172,7 +177,7 @@ export function withCacheStore<TEnv>(
         // This ensures cache has complete components for future requests
         requestCtx.waitUntil(async () => {
           console.log(
-            `[Router.matchPartial] Proactive caching: ${ctx.pathname} (rendering null-component segments)`
+            `[Router.matchPartial] Proactive caching: ${ctx.pathname} (rendering null-component segments)`,
           );
           try {
             // Create fresh context for proactive caching
@@ -183,12 +188,15 @@ export function withCacheStore<TEnv>(
               ctx.url.searchParams,
               ctx.pathname,
               ctx.url,
-              ctx.bindings
+              ctx.bindings,
             );
             const proactiveLoaderPromises = new Map<string, Promise<any>>();
 
             // Set up loader access that ignores handle pushes
-            setupLoaderAccessSilent(proactiveHandlerContext, proactiveLoaderPromises);
+            setupLoaderAccessSilent(
+              proactiveHandlerContext,
+              proactiveLoaderPromises,
+            );
 
             // Re-resolve ALL segments without revalidation
             const Store = ctx.Store;
@@ -198,8 +206,8 @@ export function withCacheStore<TEnv>(
                 ctx.routeKey,
                 ctx.matched.params,
                 proactiveHandlerContext,
-                proactiveLoaderPromises
-              )
+                proactiveLoaderPromises,
+              ),
             );
 
             // Also resolve intercept segments fresh if applicable
@@ -211,24 +219,30 @@ export function withCacheStore<TEnv>(
                   ctx.interceptResult!.entry,
                   ctx.matched.params,
                   proactiveHandlerContext,
-                  true // belongsToRoute
+                  true, // belongsToRoute
                   // No revalidationContext = render fresh
-                )
+                ),
               );
             }
 
-            const completeSegments = [...freshSegments, ...freshInterceptSegments];
+            const completeSegments = [
+              ...freshSegments,
+              ...freshInterceptSegments,
+            ];
             await cacheScope.cacheRoute(
               ctx.pathname,
               ctx.matched.params,
               completeSegments,
-              ctx.isIntercept
+              ctx.isIntercept,
             );
             console.log(
-              `[Router.matchPartial] Proactive caching complete: ${ctx.pathname}`
+              `[Router.matchPartial] Proactive caching complete: ${ctx.pathname}`,
             );
           } catch (error) {
-            console.error(`[Router.matchPartial] Proactive caching failed:`, error);
+            console.error(
+              `[Router.matchPartial] Proactive caching failed:`,
+              error,
+            );
           }
         });
       } else {
@@ -239,7 +253,7 @@ export function withCacheStore<TEnv>(
             ctx.pathname,
             ctx.matched.params,
             allSegmentsToCache,
-            ctx.isIntercept
+            ctx.isIntercept,
           );
         });
       }

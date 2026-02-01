@@ -37,3 +37,17 @@ export const proactiveCacheRoutes = route({
   proactiveCacheItemA: "/item-a",
   proactiveCacheItemB: "/item-b",
 });
+
+// Document cache test route: /document-cache
+// Tests document-level caching based on Cache-Control headers
+// First request: MISS (slow), subsequent requests: HIT (instant)
+export const documentCacheRoutes = route({
+  documentCache: "/document-cache",
+});
+
+// Slow cache test route: /slow-cache
+// Tests caching with a slow async component (3 second delay)
+// First request should take 3 seconds, subsequent requests should be instant
+export const slowCacheRoutes = route({
+  slowCache: "/slow-cache",
+});
