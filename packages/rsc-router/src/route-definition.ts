@@ -362,13 +362,14 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * // Show loading on all requests (including SSR)
    * loading(<Skeleton />)
    *
-   * // Skip loading on SSR, only show on navigation
-   * loading(<Skeleton />, true)
+   * // Skip loading on SSR, only show on client navigation
+   * loading(<Skeleton />, { ssr: false })
    * ```
    * @param component - The loading UI to show during navigation
-   * @param skipSSR - If true, skip showing loading on document requests (SSR)
+   * @param options - Configuration options
+   * @param options.ssr - If false, skip showing loading on document requests (SSR)
    */
-  loading: (component: ReactNode, skipSSR?: boolean) => LoadingItem;
+  loading: (component: ReactNode, options?: { ssr?: boolean }) => LoadingItem;
   /**
    * Attach an error boundary to catch errors in this segment and children
    * ```typescript
@@ -933,7 +934,7 @@ const loaderFn: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
  * Loading helper - attaches a loading component to the current entry
  * Loading components are static (no context) and shown during navigation
  */
-const loadingFn: RouteHelpers<any, any>["loading"] = (component, skipSSR) => {
+const loadingFn: RouteHelpers<any, any>["loading"] = (component, options) => {
   const store = getContext();
   const ctx = store.getStore();
   if (!ctx) throw new Error("loading() must be called inside map()");
@@ -943,8 +944,8 @@ const loadingFn: RouteHelpers<any, any>["loading"] = (component, skipSSR) => {
     invariant(false, "No parent entry available for loading()");
   }
 
-  // If skipSSR is true and we're in SSR, set loading to false
-  if (skipSSR && ctx.isSSR) {
+  // If ssr: false and we're in SSR, set loading to false
+  if (options?.ssr === false && ctx.isSSR) {
     parent.loading = false;
   } else {
     parent.loading = component;
