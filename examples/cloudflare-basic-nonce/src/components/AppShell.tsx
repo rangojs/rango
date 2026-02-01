@@ -5,7 +5,7 @@ import { Link, href, MetaTags } from "@ivogt/rsc-router/client";
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <MetaTags />
         <style
