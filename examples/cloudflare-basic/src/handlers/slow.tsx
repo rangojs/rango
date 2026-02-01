@@ -35,6 +35,35 @@ async function SlowContent({
         <Link to={href("/slow/2")} style={{ color: "#0070f3" }}>
           Slow 2
         </Link>
+        <Link to={href("/slow/fast")} style={{ color: "#22c55e" }}>
+          Fast
+        </Link>
+        <Link to={href("/")} style={{ color: "#666" }}>
+          Home
+        </Link>
+      </nav>
+    </div>
+  );
+}
+
+function FastContent() {
+  return (
+    <div>
+      <h1>Fast Page</h1>
+      <p>This page loads instantly (no delay).</p>
+      <p style={{ marginTop: "1rem", color: "#666" }}>
+        The progress bar should NOT appear when navigating here.
+      </p>
+      <nav style={{ marginTop: "2rem", display: "flex", gap: "1rem" }}>
+        <Link to={href("/slow/1")} style={{ color: "#0070f3" }}>
+          Slow 1
+        </Link>
+        <Link to={href("/slow/2")} style={{ color: "#0070f3" }}>
+          Slow 2
+        </Link>
+        <Link to={href("/slow/fast")} style={{ color: "#22c55e" }}>
+          Fast
+        </Link>
         <Link to={href("/")} style={{ color: "#666" }}>
           Home
         </Link>
@@ -47,5 +76,6 @@ export default map<typeof slowRoutes>(({ route, layout }) => [
   layout(<RootLayout />, () => [
     route("slow1", () => <SlowContent name="1" delayMs={2000} />),
     route("slow2", () => <SlowContent name="2" delayMs={2000} />),
+    route("fast", () => <FastContent />),
   ]),
 ]);

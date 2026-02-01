@@ -2,12 +2,12 @@
 
 import { useClientCache, useNavigation } from "@ivogt/rsc-router/client";
 import { useEffect } from "react";
-import { useSpinDelay } from "spin-delay";
 
 /**
  * Shows a loading indicator only when navigation takes longer than 400ms.
- * Uses spin-delay to avoid flashing for quick navigations and ensures
- * minimum display time once shown.
+ * Uses pure CSS for delay (avoids React state timing issues with transitions).
+ * - 400ms delay before showing (CSS animation-delay)
+ * - 200ms fade out when hiding (CSS transition)
  */
 export function NavigationProgress() {
   const { clear } = useClientCache();
@@ -18,40 +18,57 @@ export function NavigationProgress() {
 
   useEffect(() => {
     if (!isNavigating) clear();
-  }, [isNavigating]);
-
-  const showProgress = useSpinDelay(isNavigating, {
-    delay: 400,
-    minDuration: 200,
-  });
-
-  console.log("showProgress", showProgress);
+  }, [isNavigating, clear]);
 
   return (
     <div
-      style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        right: 0,
-        height: "3px",
-        backgroundColor: "#e0e7ff",
-        zIndex: 9999,
-        overflow: "hidden",
-        display: isNavigating ? "block" : "none",
-      }}
+      data-navigating={isNavigating}
+      className="navigation-progress"
     >
-      <div
-        style={{
-          height: "100%",
-          width: "33%",
-          backgroundColor: "#4f46e5",
-          animation: "progress 1s ease-in-out infinite",
-        }}
-      />
+      <div className="navigation-progress-bar" />
       <style
         dangerouslySetInnerHTML={{
           __html: `
+            .navigation-progress {
+              position: fixed;
+              top: 0;
+              left: 0;
+              right: 0;
+              height: 3px;
+              background-color: #e0e7ff;
+              z-index: 9999;
+              overflow: hidden;
+              opacity: 0;
+              visibility: hidden;
+            }
+
+            /* When navigating: delay 400ms, then show */
+            .navigation-progress[data-navigating="true"] {
+              animation: showProgress 0ms forwards;
+              animation-delay: 400ms;
+            }
+
+            /* When not navigating: fade out over 200ms */
+            .navigation-progress[data-navigating="false"] {
+              opacity: 0;
+              visibility: hidden;
+              transition: opacity 200ms ease-out, visibility 0ms 200ms;
+            }
+
+            @keyframes showProgress {
+              to {
+                opacity: 1;
+                visibility: visible;
+              }
+            }
+
+            .navigation-progress-bar {
+              height: 100%;
+              width: 33%;
+              background-color: #4f46e5;
+              animation: progress 1s ease-in-out infinite;
+            }
+
             @keyframes progress {
               0% { transform: translateX(-100%); }
               100% { transform: translateX(400%); }

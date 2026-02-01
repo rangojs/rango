@@ -58,9 +58,10 @@ export const themeRoutes = route({
   theme: "/theme",
 });
 
-// Slow routes: /slow/1 and /slow/2
+// Slow routes: /slow/1 and /slow/2, plus a fast route for comparison
 // Demonstrates NavigationProgress with delayed loading
 export const slowRoutes = route({
   slow1: "/1",
   slow2: "/2",
+  fast: "/fast",
 });
