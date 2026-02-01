@@ -305,8 +305,10 @@ export interface RSCRouterOptions<TEnv = any> {
    *   </select>;
    * }
    * ```
+   *
+   * Use `theme: true` to enable with all defaults.
    */
-  theme?: import("./theme/types.js").ThemeConfig;
+  theme?: import("./theme/types.js").ThemeConfig | true;
 }
 
 /**

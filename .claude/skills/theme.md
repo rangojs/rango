@@ -5,6 +5,10 @@ Opt-in theme system with FOUC prevention.
 ## Enable
 
 ```typescript
+// Simple - all defaults
+const router = createRSCRouter<Env>({ theme: true });
+
+// Custom config
 const router = createRSCRouter<Env>({
   theme: {
     defaultTheme: "system",      // "light" | "dark" | "system"

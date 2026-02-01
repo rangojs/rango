@@ -26,9 +26,15 @@ export const THEME_COOKIE = {
 } as const;
 
 /**
- * Resolve theme config by applying defaults
+ * Resolve theme config by applying defaults.
+ * Accepts `true` to enable with all defaults, or a config object.
  */
-export function resolveThemeConfig(config: ThemeConfig): ResolvedThemeConfig {
+export function resolveThemeConfig(config: ThemeConfig | true): ResolvedThemeConfig {
+  // Handle `theme: true` shorthand
+  if (config === true) {
+    config = {};
+  }
+
   const themes = config.themes ?? [...THEME_DEFAULTS.themes];
 
   // Build value mapping - default to identity mapping
