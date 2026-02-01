@@ -1,3 +1,9 @@
+---
+name: theme
+description: Opt-in theme system with FOUC prevention for light/dark mode
+argument-hint: [setup]
+---
+
 # Theme Support
 
 Opt-in theme system with FOUC prevention.
