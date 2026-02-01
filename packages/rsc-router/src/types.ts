@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { AllUseItems } from "./route-types.js";
 import type { Handle } from "./handle.js";
 import type { MiddlewareFn } from "./router/middleware.js";
+import type { Theme } from "./theme/types.js";
 export type { MiddlewareFn } from "./router/middleware.js";
 
 /**
@@ -375,6 +376,36 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
    * @internal
    */
   _currentSegmentId?: string;
+  /**
+   * Current theme (from cookie or default).
+   * Only available when theme is enabled in router config.
+   *
+   * @example
+   * ```typescript
+   * route("settings", (ctx) => {
+   *   const currentTheme = ctx.theme; // "light" | "dark" | "system" | undefined
+   *   return <SettingsPage theme={currentTheme} />;
+   * });
+   * ```
+   */
+  theme?: Theme;
+  /**
+   * Set the theme (only available when theme is enabled in router config).
+   * Sets a cookie with the new theme value.
+   *
+   * @example
+   * ```typescript
+   * route("settings", async (ctx) => {
+   *   if (ctx.request.method === "POST") {
+   *     const formData = await ctx.request.formData();
+   *     const newTheme = formData.get("theme") as Theme;
+   *     ctx.setTheme?.(newTheme);
+   *   }
+   *   return <SettingsPage />;
+   * });
+   * ```
+   */
+  setTheme?: (theme: Theme) => void;
 };
 
 /**

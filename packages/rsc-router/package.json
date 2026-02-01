@@ -85,6 +85,10 @@
       "react-server": "./src/cache/index.ts",
       "types": "./src/cache/index.ts",
       "default": "./src/cache/index.ts"
+    },
+    "./theme": {
+      "types": "./src/theme/index.ts",
+      "default": "./src/theme/index.ts"
     }
   },
   "files": [

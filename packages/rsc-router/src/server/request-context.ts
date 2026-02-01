@@ -18,6 +18,8 @@ import { createHandleStore, type HandleStore } from "./handle-store.js";
 import { isHandle } from "../handle.js";
 import { track } from "./context.js";
 import type { SegmentCacheStore } from "../cache/types.js";
+import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
+import { THEME_COOKIE } from "../theme/constants.js";
 
 /**
  * Unified request context available via getRequestContext()
@@ -137,6 +139,44 @@ export interface RequestContext<
 
   /** @internal Registered onResponse callbacks */
   _onResponseCallbacks: Array<(response: Response) => Response>;
+
+  /**
+   * Current theme setting (only available when theme is enabled in router config)
+   *
+   * Returns the theme value from the cookie, or the default theme if not set.
+   * This is the user's preference ("light", "dark", or "system"), not the resolved value.
+   *
+   * @example
+   * ```typescript
+   * route("settings", (ctx) => {
+   *   const currentTheme = ctx.theme; // "light" | "dark" | "system" | undefined
+   *   return <SettingsPage theme={currentTheme} />;
+   * });
+   * ```
+   */
+  theme?: Theme;
+
+  /**
+   * Set the theme (only available when theme is enabled in router config)
+   *
+   * Sets a cookie with the new theme value. The change takes effect on the next request.
+   *
+   * @example
+   * ```typescript
+   * route("settings", (ctx) => {
+   *   if (ctx.method === "POST") {
+   *     const formData = await ctx.request.formData();
+   *     const newTheme = formData.get("theme") as Theme;
+   *     ctx.setTheme(newTheme);
+   *   }
+   *   return <SettingsPage />;
+   * });
+   * ```
+   */
+  setTheme?: (theme: Theme) => void;
+
+  /** @internal Theme configuration (null if theme not enabled) */
+  _themeConfig?: ResolvedThemeConfig | null;
 }
 
 // AsyncLocalStorage instance for request context
@@ -209,6 +249,8 @@ export interface CreateRequestContextOptions<TEnv> {
   cacheStore?: SegmentCacheStore;
   /** Optional Cloudflare execution context for waitUntil support */
   executionContext?: ExecutionContext;
+  /** Optional theme configuration (enables ctx.theme and ctx.setTheme) */
+  themeConfig?: ResolvedThemeConfig | null;
 }
 
 /**
@@ -222,7 +264,7 @@ export interface CreateRequestContextOptions<TEnv> {
 export function createRequestContext<TEnv>(
   options: CreateRequestContextOptions<TEnv>
 ): RequestContext<TEnv> {
-  const { env, request, url, variables, cacheStore, executionContext } = options;
+  const { env, request, url, variables, cacheStore, executionContext, themeConfig } = options;
   const cookieHeader = request.headers.get("Cookie");
   let parsedCookies: Record<string, string> | null = null;
 
@@ -239,6 +281,43 @@ export function createRequestContext<TEnv>(
       parsedCookies = parseCookiesFromHeader(cookieHeader);
     }
     return parsedCookies;
+  };
+
+  // Theme helpers (only used when themeConfig is provided)
+  const getTheme = (): Theme | undefined => {
+    if (!themeConfig) return undefined;
+
+    const stored = getParsedCookies()[themeConfig.storageKey];
+    if (stored) {
+      // Validate stored value
+      if (stored === "system" && themeConfig.enableSystem) {
+        return "system";
+      }
+      if (themeConfig.themes.includes(stored)) {
+        return stored as Theme;
+      }
+    }
+    return themeConfig.defaultTheme;
+  };
+
+  const setTheme = (theme: Theme): void => {
+    if (!themeConfig) return;
+
+    // Validate theme value
+    if (theme !== "system" && !themeConfig.themes.includes(theme)) {
+      console.warn(`[Theme] Invalid theme value: "${theme}". Valid values: system, ${themeConfig.themes.join(", ")}`);
+      return;
+    }
+
+    // Set cookie
+    stubResponse.headers.append(
+      "Set-Cookie",
+      serializeCookieValue(themeConfig.storageKey, theme, {
+        path: THEME_COOKIE.path,
+        maxAge: THEME_COOKIE.maxAge,
+        sameSite: THEME_COOKIE.sameSite,
+      })
+    );
   };
 
   // Build the context object first (without use), then add use
@@ -308,6 +387,11 @@ export function createRequestContext<TEnv>(
     onResponse(callback: (response: Response) => Response): void {
       this._onResponseCallbacks.push(callback);
     },
+
+    // Theme properties (only set when themeConfig is provided)
+    theme: themeConfig ? getTheme() : undefined,
+    setTheme: themeConfig ? setTheme : undefined,
+    _themeConfig: themeConfig,
   };
 
   // Now create use() with access to ctx

@@ -61,5 +61,8 @@ export function createHandlerContext<TEnv>(
     use: () => {
       throw new Error("ctx.use() called before loaders were initialized");
     },
+    // Theme support (when enabled via router config)
+    theme: requestContext?.theme,
+    setTheme: requestContext?.setTheme,
   };
 }

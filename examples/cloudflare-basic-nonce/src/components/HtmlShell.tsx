@@ -11,7 +11,7 @@ import { Outlet, MetaTags } from "@ivogt/rsc-router/client";
  * Uses <MetaTags /> to render route-defined meta tags.
  */
 export const HtmlShell = (
-  <html lang="en">
+  <html lang="en" suppressHydrationWarning>
     <head>
       <MetaTags />
       <style

@@ -1,8 +1,11 @@
 import React from "react";
 import { initHandleDataSync } from "../browser/react/use-handle.js";
 import { initSegmentsSync } from "../browser/react/use-segments.js";
+import { initThemeConfigSync } from "../theme/theme-context.js";
+import { ThemeProvider } from "../theme/ThemeProvider.js";
 import type { HandleData } from "../browser/types.js";
 import type { ErrorPhase } from "../types.js";
+import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 
 /**
  * Options for injectRSCPayload
@@ -100,6 +103,8 @@ interface RscPayload {
     handles?: AsyncGenerator<HandleData, void, unknown>;
     matched?: string[];
     pathname?: string;
+    themeConfig?: ResolvedThemeConfig | null;
+    initialTheme?: Theme;
   };
 }
 
@@ -173,6 +178,10 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         // Initialize segments state before children render (for useSegments hook)
         initSegmentsSync(resolved.metadata?.matched, resolved.metadata?.pathname);
 
+        // Initialize theme config for MetaTags to render theme script
+        const themeConfig = resolved.metadata?.themeConfig ?? null;
+        initThemeConfigSync(themeConfig);
+
         // Await handles and initialize state before children render
         // The handles property is an async generator that yields on each push
         // Memoize the promise since async generators can only be iterated once
@@ -180,6 +189,16 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
           handlesPromise ??= consumeAsyncGenerator(resolved.metadata.handles);
           const handleData = React.use(handlesPromise);
           initHandleDataSync(handleData, resolved.metadata.matched);
+        }
+
+        // Wrap content with ThemeProvider if theme is enabled
+        // This provides the theme context for client components that use useTheme
+        if (themeConfig) {
+          return (
+            <ThemeProvider config={themeConfig} initialTheme={resolved.metadata?.initialTheme}>
+              {resolved.root}
+            </ThemeProvider>
+          );
         }
 
         return resolved.root;

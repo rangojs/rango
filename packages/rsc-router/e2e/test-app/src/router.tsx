@@ -106,7 +106,17 @@ const headerShorthandMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
   ctx.header("X-Header-Shorthand", "works");
 };
 
-export const router = createRSCRouter<AppEnv>({ cache: { store: cacheStore } })
+export const router = createRSCRouter<AppEnv>({
+  cache: { store: cacheStore },
+  theme: {
+    defaultTheme: "system",
+    themes: ["light", "dark", "system"],
+    attribute: "class",
+    storageKey: "theme",
+    enableSystem: true,
+    enableColorScheme: true,
+  },
+})
   // Global middleware - applied to ALL routes
   .use(globalMiddleware)
   .use(timingMiddleware)

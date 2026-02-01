@@ -1,5 +1,6 @@
 import type { ReactNode, ComponentType } from "react";
 import type { ResolvedSegment, SlotState } from "../types.js";
+import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 import type { RenderSegmentsOptions } from "../segment-system.js";
 
 // ============================================================================
@@ -48,6 +49,16 @@ export interface RscMetadata {
    * Used to detect version mismatches after HMR/deployment.
    */
   version?: string;
+  /**
+   * Theme configuration from router.
+   * Included when theme is enabled in router config.
+   */
+  themeConfig?: ResolvedThemeConfig | null;
+  /**
+   * Initial theme from cookie (for SSR hydration).
+   * Included when theme is enabled in router config.
+   */
+  initialTheme?: Theme;
 }
 
 /**

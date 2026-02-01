@@ -12,6 +12,7 @@ import { createNavigationClient } from "./navigation-client.js";
 import { createServerActionBridge } from "./server-action-bridge.js";
 import { createNavigationBridge } from "./navigation-bridge.js";
 import { NavigationProvider, initHandleDataSync, initSegmentsSync } from "./react/index.js";
+import { initThemeConfigSync } from "../theme/theme-context.js";
 import type {
   RscPayload,
   RscBrowserDependencies,
@@ -20,6 +21,7 @@ import type {
   NavigationBridge,
 } from "./types.js";
 import type { EventController } from "./event-controller.js";
+import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 
 // Vite HMR types
 declare global {
@@ -69,6 +71,31 @@ export interface InitBrowserAppOptions {
    * @default true
    */
   linkInterception?: boolean;
+
+  /**
+   * Theme configuration from router.
+   * When provided, enables theme support via useTheme hook.
+   * Pass router.themeConfig here to enable theme features.
+   *
+   * @example
+   * ```tsx
+   * import { router } from "./router.js";
+   *
+   * await initBrowserApp({
+   *   rscStream,
+   *   deps: rscBrowser,
+   *   themeConfig: router.themeConfig,
+   *   initialTheme: document.documentElement.className.includes("dark") ? "dark" : "light",
+   * });
+   * ```
+   */
+  themeConfig?: ResolvedThemeConfig | null;
+
+  /**
+   * Initial theme from server (typically read from cookie).
+   * Only used when themeConfig is provided.
+   */
+  initialTheme?: Theme;
 }
 
 /**
@@ -80,6 +107,10 @@ export interface BrowserAppContext {
   bridge: NavigationBridge;
   initialPayload: RscPayload;
   initialTree: React.ReactNode | Promise<React.ReactNode>;
+  /** Theme configuration (null if theme not enabled) */
+  themeConfig?: ResolvedThemeConfig | null;
+  /** Initial theme from server */
+  initialTheme?: Theme;
 }
 
 // Module-level state for the initialized app
@@ -97,11 +128,16 @@ let browserAppContext: BrowserAppContext | null = null;
 export async function initBrowserApp(
   options: InitBrowserAppOptions
 ): Promise<BrowserAppContext> {
-  const { rscStream, deps, storeOptions, linkInterception = true } = options;
+  const { rscStream, deps, storeOptions, linkInterception = true, themeConfig, initialTheme } = options;
 
   // Load initial payload from SSR-injected __FLIGHT_DATA__
   const initialPayload =
     await deps.createFromReadableStream<RscPayload>(rscStream);
+
+  // Extract themeConfig and initialTheme from payload if not explicitly provided
+  // This allows virtual entries to work without importing the router
+  const effectiveThemeConfig = themeConfig ?? initialPayload.metadata?.themeConfig ?? null;
+  const effectiveInitialTheme = initialTheme ?? initialPayload.metadata?.initialTheme;
 
   // Get initial segments and compute history key from current URL
   const initialSegments = (initialPayload.metadata?.segments ??
@@ -124,6 +160,9 @@ export async function initBrowserApp(
 
   // Initialize segments state BEFORE hydration to avoid mismatch
   initSegmentsSync(initialPayload.metadata?.matched, initialPayload.metadata?.pathname);
+
+  // Initialize theme config for MetaTags (must match SSR state)
+  initThemeConfigSync(effectiveThemeConfig);
 
   // Initialize event controller with segment order (even without handles)
   eventController.setHandleData({}, initialPayload.metadata?.matched);
@@ -241,6 +280,8 @@ export async function initBrowserApp(
     bridge: navigationBridge,
     initialPayload,
     initialTree,
+    themeConfig: effectiveThemeConfig,
+    initialTheme: effectiveInitialTheme,
   };
   browserAppContext = context;
 
@@ -296,7 +337,7 @@ export interface RSCRouterProps {}
  * ```
  */
 export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
-  const { store, eventController, bridge, initialPayload, initialTree } =
+  const { store, eventController, bridge, initialPayload, initialTree, themeConfig, initialTheme } =
     getBrowserAppContext();
 
   return (
@@ -305,6 +346,8 @@ export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
       eventController={eventController}
       initialPayload={{ ...initialPayload, root: initialTree }}
       bridge={bridge}
+      themeConfig={themeConfig}
+      initialTheme={initialTheme}
     />
   );
 }

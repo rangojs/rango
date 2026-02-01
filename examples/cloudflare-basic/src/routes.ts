@@ -51,3 +51,9 @@ export const documentCacheRoutes = route({
 export const slowCacheRoutes = route({
   slowCache: "/slow-cache",
 });
+
+// Theme test route: /theme
+// Demonstrates theme support with useTheme hook and ctx.theme
+export const themeRoutes = route({
+  theme: "/theme",
+});

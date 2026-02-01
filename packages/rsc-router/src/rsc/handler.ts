@@ -142,6 +142,7 @@ export function createRSCHandler<
       variables,
       cacheStore,
       executionContext: env.ctx,
+      themeConfig: router.themeConfig,
     });
 
     // Wrap entire request handling in request context
@@ -354,6 +355,8 @@ export function createRSCHandler<
             isPartial: false,
             handles: handleStore.stream(),
             version,
+            themeConfig: router.themeConfig,
+            initialTheme: requireRequestContext().theme,
           },
         };
 
@@ -523,6 +526,8 @@ export function createRSCHandler<
         rootLayout: router.rootLayout,
         handles: handleStore.stream(),
         version,
+        themeConfig: router.themeConfig,
+        initialTheme: requireRequestContext().theme,
       },
       formState: actionResult,
     };
@@ -919,6 +924,8 @@ export function createRSCHandler<
             isPartial: false,
             handles: handleStore.stream(),
             version,
+            themeConfig: router.themeConfig,
+            initialTheme: requireRequestContext().theme,
           },
         };
       } else {
@@ -974,6 +981,8 @@ export function createRSCHandler<
           rootLayout: router.rootLayout,
           handles: handleStore.stream(),
           version,
+          themeConfig: router.themeConfig,
+          initialTheme: requireRequestContext().theme,
         },
       };
     }

@@ -21,6 +21,8 @@ import type {
 import type { EventController } from "../event-controller.js";
 import { RootErrorBoundary } from "../../root-error-boundary.js";
 import type { HandleData } from "../types.js";
+import { ThemeProvider } from "../../theme/ThemeProvider.js";
+import type { ResolvedThemeConfig, Theme } from "../../theme/types.js";
 
 /**
  * Process handles from an async generator, updating the event controller
@@ -106,6 +108,18 @@ export interface NavigationProviderProps {
    * Navigation bridge for handling navigation
    */
   bridge: NavigationBridge;
+
+  /**
+   * Theme configuration (null if theme not enabled)
+   * When provided, wraps content in ThemeProvider
+   */
+  themeConfig?: ResolvedThemeConfig | null;
+
+  /**
+   * Initial theme from server (from cookie)
+   * Only used when themeConfig is provided
+   */
+  initialTheme?: Theme;
 }
 
 /**
@@ -134,6 +148,8 @@ export function NavigationProvider({
   eventController,
   initialPayload,
   bridge,
+  themeConfig,
+  initialTheme,
 }: NavigationProviderProps): ReactNode {
   // Track current payload for rendering (this triggers re-renders)
   const [payload, setPayload] = useState(initialPayload);
@@ -220,9 +236,22 @@ export function NavigationProvider({
   // 3. Errors during promise resolution or navigation state updates
   // This acts as a safety net - the segment tree has its own RootErrorBoundary that
   // catches most errors, but this outer boundary catches anything that slips through.
+
+  // Build the content tree
+  let content = <RootErrorBoundary>{root}</RootErrorBoundary>;
+
+  // Wrap with ThemeProvider when theme is enabled
+  if (themeConfig) {
+    content = (
+      <ThemeProvider config={themeConfig} initialTheme={initialTheme}>
+        {content}
+      </ThemeProvider>
+    );
+  }
+
   return (
     <NavigationStoreContext.Provider value={contextValue}>
-      <RootErrorBoundary>{root}</RootErrorBoundary>
+      {content}
     </NavigationStoreContext.Provider>
   );
 }

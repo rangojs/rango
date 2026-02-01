@@ -98,6 +98,7 @@ import {
 } from "./router/match-context.js";
 import { createMatchPartialPipeline } from "./router/match-pipelines.js";
 import { collectMatchResult } from "./router/match-result.js";
+import { resolveThemeConfig } from "./theme/constants.js";
 
 /**
  * Props passed to the root layout component
@@ -268,6 +269,46 @@ export interface RSCRouterOptions<TEnv = any> {
   cache?:
     | { store: SegmentCacheStore; enabled?: boolean }
     | ((env: TEnv) => { store: SegmentCacheStore; enabled?: boolean });
+
+  /**
+   * Theme configuration for automatic theme management.
+   *
+   * When provided, enables:
+   * - ctx.theme and ctx.setTheme() in route handlers
+   * - useTheme() hook for client components
+   * - FOUC prevention via inline script in MetaTags
+   * - Automatic ThemeProvider wrapping in NavigationProvider
+   *
+   * @example
+   * ```typescript
+   * const router = createRSCRouter<AppEnv>({
+   *   theme: {
+   *     defaultTheme: "system",
+   *     themes: ["light", "dark"],
+   *   }
+   * });
+   *
+   * // In route handler:
+   * route("settings", (ctx) => {
+   *   const theme = ctx.theme;     // "light" | "dark" | "system"
+   *   ctx.setTheme("dark");        // Sets cookie
+   *   return <SettingsPage />;
+   * });
+   *
+   * // In client component:
+   * import { useTheme } from "@ivogt/rsc-router/theme";
+   *
+   * function ThemeToggle() {
+   *   const { theme, setTheme, themes } = useTheme();
+   *   return <select value={theme} onChange={e => setTheme(e.target.value)}>
+   *     {themes.map(t => <option key={t}>{t}</option>)}
+   *   </select>;
+   * }
+   * ```
+   *
+   * Use `theme: true` to enable with all defaults.
+   */
+  theme?: import("./theme/types.js").ThemeConfig | true;
 }
 
 /**
@@ -585,6 +626,12 @@ export interface RSCRouter<
   readonly notFound?: RSCRouterOptions<TEnv>["notFound"];
 
   /**
+   * Resolved theme configuration (null if theme not enabled)
+   * Used by NavigationProvider to include ThemeProvider and by MetaTags to render theme script
+   */
+  readonly themeConfig: import("./theme/types.js").ResolvedThemeConfig | null;
+
+  /**
    * App-level middleware entries (for internal use by RSC handler)
    * These wrap the entire request/response cycle
    */
@@ -677,7 +724,13 @@ export function createRSCRouter<TEnv = any>(
     notFound,
     onError,
     cache,
+    theme: themeOption,
   } = options;
+
+  // Resolve theme config (null if theme not enabled)
+  const resolvedThemeConfig = themeOption
+    ? resolveThemeConfig(themeOption)
+    : null;
 
   /**
    * Wrapper for invokeOnError that binds the router's onError callback.
@@ -3700,6 +3753,9 @@ export function createRSCRouter<TEnv = any>(
 
     // Expose notFound component for RSC handler
     notFound,
+
+    // Expose resolved theme configuration for NavigationProvider and MetaTags
+    themeConfig: resolvedThemeConfig,
 
     // Expose global middleware for RSC handler
     middleware: globalMiddleware,
