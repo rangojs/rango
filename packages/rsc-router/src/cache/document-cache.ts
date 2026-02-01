@@ -21,6 +21,23 @@ import { getRequestContext } from "../server/request-context.js";
 /** Header indicating cache status for debugging */
 const CACHE_STATUS_HEADER = "x-document-cache-status";
 
+/**
+ * Simple hash function for segment IDs.
+ * Creates a short, deterministic hash to differentiate cache keys
+ * based on which segments the client already has.
+ */
+function hashSegmentIds(segmentIds: string): string {
+  if (!segmentIds) return "";
+
+  let hash = 0;
+  for (let i = 0; i < segmentIds.length; i++) {
+    const char = segmentIds.charCodeAt(i);
+    hash = ((hash << 5) - hash + char) | 0;
+  }
+  // Convert to base36 for shorter string, take absolute value
+  return Math.abs(hash).toString(36);
+}
+
 // ============================================================================
 // Cache Control Parsing
 // ============================================================================
@@ -215,10 +232,14 @@ export function createDocumentCacheMiddleware<TEnv = any>(
     const typeLabel = isPartial ? "RSC" : "HTML";
 
     // Generate cache key
+    // For partial requests, include hash of client segments to prevent serving
+    // wrong cached response when navigating from different pages with different layouts
+    const clientSegments = url.searchParams.get("_rsc_segments") || "";
+    const segmentHash = isPartial && clientSegments ? `:${hashSegmentIds(clientSegments)}` : "";
     const typeSuffix = isPartial ? ":rsc" : ":html";
     const cacheKey = keyGenerator
-      ? keyGenerator(url) + typeSuffix
-      : `${url.pathname}${typeSuffix}`;
+      ? keyGenerator(url) + segmentHash + typeSuffix
+      : `${url.pathname}${segmentHash}${typeSuffix}`;
 
     try {
       // 1. Check cache

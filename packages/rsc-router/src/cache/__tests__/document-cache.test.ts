@@ -369,6 +369,46 @@ describe("createDocumentCacheMiddleware", () => {
       expect(next).toHaveBeenCalledTimes(1);
       expect(response.headers.get("x-document-cache-status")).toBe("MISS");
     });
+
+    it("should include segment hash in cache key for partial requests", async () => {
+      const { createDocumentCacheMiddleware } = await import("../document-cache.js");
+
+      const middleware = createDocumentCacheMiddleware();
+
+      // First partial request with segments A,B
+      const ctx1 = createMockMiddlewareContext(
+        "http://localhost/page?_rsc_partial=true&_rsc_segments=root,blog-layout",
+      );
+      const next1 = vi.fn().mockResolvedValue(
+        new Response("Response for blog navigation", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+
+      const originalModule = await import("../../server/request-context.js");
+      vi.spyOn(originalModule, "getRequestContext").mockReturnValue(
+        mockRequestCtx as any,
+      );
+
+      await middleware(ctx1, next1);
+      await vi.runAllTimersAsync();
+
+      // Second partial request with different segments
+      const ctx2 = createMockMiddlewareContext(
+        "http://localhost/page?_rsc_partial=true&_rsc_segments=root,shop-layout",
+      );
+      const next2 = vi.fn().mockResolvedValue(
+        new Response("Response for shop navigation", {
+          headers: { "Cache-Control": "s-maxage=60" },
+        }),
+      );
+
+      const response2 = await middleware(ctx2, next2);
+
+      // Should be a MISS because different segments = different cache key
+      expect(next2).toHaveBeenCalledTimes(1);
+      expect(response2.headers.get("x-document-cache-status")).toBe("MISS");
+    });
   });
 
   describe("debug logging", () => {
