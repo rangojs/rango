@@ -94,6 +94,8 @@
   "files": [
     "src",
     "dist",
+    "skills",
+    "CLAUDE.md",
     "README.md"
   ],
   "scripts": {
