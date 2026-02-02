@@ -30,9 +30,21 @@ if (typeof Symbol.dispose === "undefined") {
  */
 export function createRequestController(): RequestController {
   // Navigation controllers - aborted on new navigation
-  const controllers: AbortController[] = [];
+  // Using WeakRef to allow GC if controller is no longer referenced elsewhere
+  const controllers: WeakRef<AbortController>[] = [];
   // Action controllers - NOT aborted by navigation, only by errors
-  const actionControllers: AbortController[] = [];
+  const actionControllers: WeakRef<AbortController>[] = [];
+
+  /**
+   * Remove stale (garbage collected) refs from an array
+   */
+  function pruneStaleRefs(refs: WeakRef<AbortController>[]): void {
+    for (let i = refs.length - 1; i >= 0; i--) {
+      if (!refs[i].deref()) {
+        refs.splice(i, 1);
+      }
+    }
+  }
 
   return {
     /**
@@ -42,9 +54,9 @@ export function createRequestController(): RequestController {
      */
     create(): AbortController {
       const controller = new AbortController();
-      controllers.push(controller);
+      controllers.push(new WeakRef(controller));
       console.log(
-        `[Browser] Created abort controller, total: ${controllers.length}`
+        `[Browser] Created abort controller, total: ${controllers.length}`,
       );
       return controller;
     },
@@ -87,18 +99,19 @@ export function createRequestController(): RequestController {
      */
     createActionDisposable(): DisposableAbortController {
       const controller = new AbortController();
-      actionControllers.push(controller);
+      const ref = new WeakRef(controller);
+      actionControllers.push(ref);
       console.log(
-        `[Browser] Created action controller, total: ${actionControllers.length}`
+        `[Browser] Created action controller, total: ${actionControllers.length}`,
       );
       return {
         controller,
         [Symbol.dispose]: () => {
-          const index = actionControllers.indexOf(controller);
+          const index = actionControllers.indexOf(ref);
           if (index !== -1) {
             actionControllers.splice(index, 1);
             console.log(
-              `[Browser] Removed action controller, remaining: ${actionControllers.length}`
+              `[Browser] Removed action controller, remaining: ${actionControllers.length}`,
             );
           }
         },
@@ -112,7 +125,7 @@ export function createRequestController(): RequestController {
      * to complete in the background.
      */
     abortAll(): void {
-      controllers.forEach((controller) => controller.abort());
+      controllers.forEach((ref) => ref.deref()?.abort());
       controllers.length = 0;
       console.log(`[Browser] Aborted all navigation controllers`);
     },
@@ -124,7 +137,7 @@ export function createRequestController(): RequestController {
      * from completing and overwriting the error UI.
      */
     abortAllActions(): void {
-      actionControllers.forEach((controller) => controller.abort());
+      actionControllers.forEach((ref) => ref.deref()?.abort());
       actionControllers.length = 0;
       console.log(`[Browser] Aborted all action controllers`);
     },
@@ -137,11 +150,13 @@ export function createRequestController(): RequestController {
      * @param controller - The controller to remove
      */
     remove(controller: AbortController): void {
-      const index = controllers.indexOf(controller);
+      // Prune any stale refs while searching
+      pruneStaleRefs(controllers);
+      const index = controllers.findIndex((ref) => ref.deref() === controller);
       if (index !== -1) {
         controllers.splice(index, 1);
         console.log(
-          `[Browser] Removed abort controller, remaining: ${controllers.length}`
+          `[Browser] Removed abort controller, remaining: ${controllers.length}`,
         );
       }
     },
