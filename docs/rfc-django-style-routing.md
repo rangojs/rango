@@ -365,8 +365,12 @@ loader: [
   { loader: CartLoader, revalidate: fn },
 ]
 
-// revalidate - single function
+// revalidate - single or array (any returning true triggers revalidation)
 revalidate: ({ actionId }) => actionId?.includes("Cart")
+revalidate: [
+  ({ actionId }) => actionId?.includes("Cart"),
+  ({ currentUrl, nextUrl }) => currentUrl.search !== nextUrl.search,
+]
 ```
 
 This matches patterns in Express/Hono where you don't write `middlewares`.
@@ -389,7 +393,7 @@ path(pattern, component, {
 
   // Caching
   cache: boolean | { ttl?, staleWhileRevalidate? },
-  revalidate: (ctx: RevalidateContext) => boolean,
+  revalidate: RevalidateFn | RevalidateFn[],  // Array: any true triggers revalidation
 
   // Middleware (singular, accepts single or array)
   middleware: Middleware | Middleware[],
