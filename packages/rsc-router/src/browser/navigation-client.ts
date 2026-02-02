@@ -30,7 +30,7 @@ import { NetworkError, isNetworkError } from "../errors.js";
  * ```
  */
 export function createNavigationClient(
-  deps: Pick<RscBrowserDependencies, "createFromFetch">
+  deps: Pick<RscBrowserDependencies, "createFromFetch">,
 ): NavigationClient {
   return {
     /**
@@ -43,7 +43,7 @@ export function createNavigationClient(
      * @returns RSC payload with segments and metadata, plus stream completion promise
      */
     async fetchPartial(
-      options: FetchPartialOptions
+      options: FetchPartialOptions,
     ): Promise<FetchPartialResult> {
       const {
         targetUrl,
@@ -113,12 +113,19 @@ export function createNavigationClient(
         // Consume the tracking stream to detect when it closes
         (async () => {
           const reader = trackingStream.getReader();
+
+          // Cancel tracking if navigation is aborted
+          const onAbort = reader.cancel.bind(reader);
+          signal?.addEventListener("abort", onAbort, { once: true });
+
           try {
             while (true) {
               const { done } = await reader.read();
               if (done) break;
             }
           } finally {
+            signal?.removeEventListener("abort", onAbort);
+            reader.releaseLock();
             console.log("[STREAMING] RSC stream complete");
             resolveStreamComplete();
           }
@@ -145,7 +152,7 @@ export function createNavigationClient(
               cause: error,
               url: fetchUrl.toString(),
               operation: staleRevalidation ? "revalidation" : "navigation",
-            }
+            },
           );
         }
         throw error;
