@@ -48,6 +48,15 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Link to={href("/theme")} data-testid="nav-theme">
             Theme
           </Link>
+          <Link to={href("/slow/1")} data-testid="nav-slow-1">
+            Slow 1
+          </Link>
+          <Link to={href("/slow/2")} data-testid="nav-slow-2">
+            Slow 2
+          </Link>
+          <Link to={href("/slow/fast")} data-testid="nav-fast">
+            Fast
+          </Link>
         </nav>
         <BreadcrumbNav />
         {children}

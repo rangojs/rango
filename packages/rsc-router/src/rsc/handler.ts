@@ -96,7 +96,9 @@ export function createRSCHandler<
 
   return async function handler(
     request: Request,
-    env: TEnv & { ctx?: ExecutionContext } = {} as TEnv & { ctx?: ExecutionContext },
+    env: TEnv & { ctx?: ExecutionContext } = {} as TEnv & {
+      ctx?: ExecutionContext;
+    },
   ): Promise<Response> {
     // Resolve nonce if provider is set
     let nonce: string | undefined;
