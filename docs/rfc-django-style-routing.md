@@ -81,12 +81,12 @@ Layouts are defined **at the URL structure level**, enabling natural composition
 urls(({ layout, include }) => [
   layout(SharedLayout, () => [
     // SharedLayout wraps BOTH blog and shop
-    include("/blog", () => import("./blog")),
-    include("/shop", () => import("./shop")),
+    include("/blog", blogPatterns, { namespace: "blog" }),
+    include("/shop", shopPatterns, { namespace: "shop" }),
   ]),
 
   // Admin doesn't get SharedLayout
-  include("/admin", () => import("./admin")),
+  include("/admin", adminPatterns, { namespace: "admin" }),
 ])
 ```
 
@@ -96,9 +96,9 @@ urls(({ layout, include }) => [
 urls(({ layout, include }) => [
   // Marketing pages - public, different layout
   layout(MarketingLayout, () => [
-    include("/", () => import("./marketing/home")),
-    include("/pricing", () => import("./marketing/pricing")),
-    include("/about", () => import("./marketing/about")),
+    include("/", homePatterns, { namespace: "marketing" }),
+    include("/pricing", pricingPatterns, { namespace: "pricing" }),
+    include("/about", aboutPatterns, { namespace: "about" }),
   ]),
 
   // App pages - authenticated, shared app chrome
@@ -106,9 +106,9 @@ urls(({ layout, include }) => [
     middleware: authMiddleware,
     loader: UserLoader,
   }, () => [
-    include("/dashboard", () => import("./app/dashboard")),
-    include("/settings", () => import("./app/settings")),
-    include("/projects", () => import("./app/projects")),
+    include("/dashboard", dashboardPatterns, { namespace: "dashboard" }),
+    include("/settings", settingsPatterns, { namespace: "settings" }),
+    include("/projects", projectsPatterns, { namespace: "projects" }),
   ]),
 ])
 ```
@@ -135,11 +135,11 @@ This structure is **impossible** to express cleanly with the current API.
 |----------|---------|-------------------|
 | `urls(callback)` | Create urlpatterns with helpers in scope | `urlpatterns = [...]` |
 | `path(pattern, component, options)` | Define a route | `path(route, view, name=...)` |
-| `include(prefix, loader)` | Lazy-load nested URL config | `include('app.urls')` |
+| `include(prefix, patterns, options)` | Mount nested URL config with namespace | `include('app.urls')` |
 | `layout(component, options?, children?)` | Wrap children with layout | Template inheritance |
 | `cache(options, children)` | Cache boundary | `@cache_page()` |
 
-> **Note:** Unlike Django's `reverse()`, rsc-router's client-side `href()` uses actual path patterns, not route names. See [Client/Server Architecture](#clientserver-architecture) below.
+> **Note:** Like Django's `reverse()`, rsc-router resolves route names to URLs via `ctx.href()` (server) and `useHref()` (client). Local names are auto-prefixed with the current namespace. See [Client/Server Architecture](#clientserver-architecture) below.
 
 ### The `urls()` Helper
 
@@ -182,16 +182,19 @@ import { urls } from "@ivogt/rsc-router";
 import { RootLayout } from "../layouts/RootLayout";
 import { HomePage } from "../pages/home";
 import { AboutPage } from "../pages/about";
+import { blogPatterns } from "./blog";
+import { dashboardPatterns } from "./dashboard";
+import { shopPatterns } from "./shop";
 
 export const urlpatterns = urls(({ path, layout, include }) => [
   layout(RootLayout, () => [
     path("/", HomePage, { name: "home" }),
     path("/about", AboutPage, { name: "about" }),
 
-    // Lazy-loaded nested URL configs
-    include("/blog", () => import("./blog"), { name: "blog" }),
-    include("/dashboard", () => import("./dashboard"), { name: "dashboard" }),
-    include("/shop", () => import("./shop"), { name: "shop" }),
+    // Nested URL configs with namespaces
+    include("/blog", blogPatterns, { namespace: "blog" }),
+    include("/dashboard", dashboardPatterns, { namespace: "dashboard" }),
+    include("/shop", shopPatterns, { namespace: "shop" }),
   ]),
 ]);
 ```
@@ -320,8 +323,8 @@ export const urlpatterns = urls(({ path, layout, cache, include }) => [
     }),
 
     // Nested URL configs with separate cache
-    include("/checkout", () => import("./shop/checkout"), { name: "checkout" }),
-    include("/account", () => import("./shop/account"), { name: "account" }),
+    include("/checkout", checkoutPatterns, { namespace: "shop.checkout" }),
+    include("/account", accountPatterns, { namespace: "shop.account" }),
   ])),
 ]);
 ```
@@ -446,276 +449,294 @@ This is more declarative than chaining - the URL structure is visible in one pla
 
 ## Client/Server Architecture
 
-### Key Design Decision: No Route Manifest on Client
+### Key Design Decision: Route Manifest via RSC Payload
 
-Unlike Django's `reverse()` which resolves route names to URLs at runtime, rsc-router deliberately keeps the route manifest **server-side only**.
+Like Django's `reverse()`, rsc-router resolves route names to URLs at runtime. The route manifest is passed from server to client via the RSC payload.
 
-**Why?**
-- Smaller client bundle (no manifest to ship)
-- Client components are decoupled from route naming
-- Type safety comes from path patterns, not names
+**Why RSC payload instead of static bundle?**
+- No static bundle cost (manifest comes with page data)
+- Fresh per request (routes can change without redeploy)
+- Namespace context from matched route
 
-### Client-Side `href`
+### Server Components: `ctx.href()`
 
-On the client, `href()` uses **actual path patterns** with type-safe parameters:
+In RSC, the route context provides a namespace-aware `href()` function with full type inference:
 
 ```typescript
-// Client-side href - path-based, type-safe params
-import { href } from "@ivogt/rsc-router/client";
+// Server Component
+async function BlogPost({ ctx }: { ctx: RouteContext }) {
+  const posts = await ctx.loader(PostsLoader);
 
-href("/blog/:slug", { slug: "hello-world" })     // → "/blog/hello-world"
-href("/products/:id", { id: 123 })               // → "/products/123"
-href("/shop/checkout/payment")                   // → "/shop/checkout/payment"
+  return (
+    <>
+      {/* Local names - resolved with current namespace */}
+      <Link href={ctx.href("index")}>Back to list</Link>
+      <Link href={ctx.href("post", { slug: "next" })}>Next</Link>
 
-// Type error if params don't match pattern
-href("/blog/:slug", { id: 123 })                 // ❌ TypeScript error
+      {/* Absolute names - explicit namespace */}
+      <Link href={ctx.href("shop.cart")}>Cart</Link>
+
+      {/* Path-based - always works */}
+      <Link href={ctx.href("/about")}>About</Link>
+    </>
+  );
+}
 ```
 
-### Server-Side Route Names
+**Type inference:**
 
-The `name` property in `path()` is purely for **server-side organization**:
+```typescript
+interface RouteContext {
+  href: {
+    // Local names (inferred from current namespace's routes)
+    (name: "index"): string;
+    (name: "post", params: { slug: string }): string;
+
+    // Absolute names (all routes in app)
+    (name: "shop.cart"): string;
+    (name: "shop.product", params: { id: number }): string;
+
+    // Path-based fallback
+    (path: `/${string}`, params?: Record<string, unknown>): string;
+  };
+}
+```
+
+### Client Components: `useHref()`
+
+On the client, `useHref()` provides the same API via React context:
+
+```typescript
+"use client";
+import { useHref } from "@ivogt/rsc-router/client";
+
+function AddToCartButton({ productId }: { productId: number }) {
+  const href = useHref();
+
+  return (
+    <Link href={href("shop.cart")}>
+      View Cart
+    </Link>
+  );
+}
+```
+
+### Summary
+
+| Environment | API | Namespace Source |
+|-------------|-----|------------------|
+| Server Component | `ctx.href()` | From route context (injected) |
+| Client Component | `useHref()` | From RSC payload via React context |
+
+Same behavior, appropriate API for each environment.
+
+### Route Names
+
+The `name` property in `path()` defines a local route name:
 
 ```typescript
 path("/blog/<slug:slug>", BlogPost, { name: "post" })
-//                                         ↑ Server-only
+//                                         ↑ Local name
+```
+
+Local names are automatically prefixed with the namespace when mounted via `include()`:
+
+```typescript
+include("/blog", blogPatterns, { namespace: "blog" })
+// "post" becomes "blog.post"
 ```
 
 **Used for:**
-- Route matching and organization
+- `ctx.href()` in server components
+- `useHref()` in client components
 - Server-side redirects
 - Logging and debugging
-- Internal server references
-- Future: Named route resolution via redirect
 
-**NOT used for:**
-- Client-side `href()` calls
-- Type generation for client
+### Route Context via RSC Payload
 
-### Named Routes on Client via RSC Payload
-
-rsc-router already passes metadata from server to client via the RSC payload (e.g., `themeConfig`, `initialTheme`). The same pattern can be used for route maps.
-
-**Server includes route map in metadata:**
+rsc-router passes metadata from server to client via the RSC payload. This includes the route map and current namespace:
 
 ```typescript
-// RscMetadata (existing pattern)
+// RscMetadata
 interface RscMetadata {
   pathname: string;
   segments: ResolvedSegment[];
-  themeConfig?: ResolvedThemeConfig;
-  initialTheme?: Theme;
-  // NEW: Route map for client href
-  routeMap?: Record<string, string>;  // name → pattern
+  // Route context for client href
+  routeMap: Record<string, string>;  // "blog.index" → "/blog"
+  namespace: string;                  // Current namespace from matched route
 }
 ```
 
 **Server populates during SSR:**
 
 ```typescript
-// During render, track used routes (or send all)
 metadata.routeMap = {
-  "blog:post": "/blog/:slug",
-  "shop:product": "/shop/product/:id",
-  // Only routes used in this render, or full map
+  "blog.index": "/blog",
+  "blog.post": "/blog/:slug",
+  "shop.index": "/shop",
+  "shop.product": "/shop/product/:id",
 };
+metadata.namespace = "blog";  // From matched route's namespace
 ```
 
-**Client reads from payload:**
-
-```typescript
-// initBrowserApp already does this for theme
-const routeMap = initialPayload.metadata?.routeMap ?? {};
-
-// href checks for named route
-function href(pathOrName, params) {
-  const pattern = pathOrName.startsWith("/")
-    ? pathOrName
-    : routeMap[pathOrName];
-
-  if (!pattern) {
-    throw new Error(`Unknown route: ${pathOrName}`);
-  }
-
-  return interpolate(pattern, params);
-}
-```
-
-**Benefits of this approach:**
+**Benefits:**
 
 | Benefit | Description |
 |---------|-------------|
 | Follows existing pattern | Same as `themeConfig` injection |
 | No static bundle cost | Route map comes via RSC payload |
-| Can be scoped | Only send routes used on page |
+| Namespace context | Components know their current namespace |
 | Fresh per request | Routes can change without redeploy |
-| Works with lazy includes | Server resolves all routes by SSR time |
 
-**Client `href` supports both:**
+### Auto-Namespacing via `include()`
 
-```typescript
-// Path-based (always works, no lookup needed)
-href("/blog/:slug", { slug: "hello" })
-
-// Named (looks up from injected routeMap)
-href("blog:post", { slug: "hello" })
-```
-
-Both are type-safe; named routes resolve at runtime from the SSR-injected map.
-
-### Global `href()` with Unique Names
-
-Route names must be **globally unique** across the entire app. The `href()` function is a simple global lookup - no context needed.
+Like Django's `app_name`, namespaces are set at mount time - the mounted module doesn't need to know its namespace:
 
 ```typescript
-// urls/blog.ts - globally unique names
+// urls/blog.ts - uses LOCAL names (no prefix)
 export const urlpatterns = urls(({ path }) => [
-  path("/", BlogIndex, { name: "blog.index" }),
-  path("/:slug", BlogPost, { name: "blog.post" }),
+  path("/", BlogIndex, { name: "index" }),
+  path("/:slug", BlogPost, { name: "post" }),
 ]);
 ```
 
 ```typescript
-// components/BlogPost.tsx - uses global href
-import { href } from "@ivogt/rsc-router/client";
-
-function BlogPost({ nextSlug }) {
-  return (
-    <>
-      <Link href={href("blog.index")}>Back to list</Link>
-      <Link href={href("blog.post", { slug: nextSlug })}>Next Post</Link>
-
-      {/* Path-based also works */}
-      <Link href={href("/blog/:slug", { slug: nextSlug })}>Next Post</Link>
-    </>
-  );
-}
-```
-
-**How it works:**
-
-1. Server includes `routeMap` in RSC payload (all name → pattern mappings)
-2. Client `href()` is a simple lookup: `routeMap[name]` → interpolate params
-3. No context needed - names are globally unique
-
-### Reusable Modules with Factory Pattern
-
-For modules that need to be mounted multiple times, use a factory function:
-
-```typescript
-// urls/blog.ts - factory accepts name prefix
-export const createBlogUrls = (prefix: string) => urls(({ path }) => [
-  path("/", BlogIndex, { name: `${prefix}.index` }),
-  path("/:slug", BlogPost, { name: `${prefix}.post` }),
-]);
-
-// Helper for components
-export const createBlogHref = (prefix: string) => ({
-  index: () => href(`${prefix}.index`),
-  post: (params: { slug: string }) => href(`${prefix}.post`, params),
-});
-```
-
-```typescript
-// urls/index.ts - mount same module twice
-import { createBlogUrls } from "./blog";
-
+// urls/index.ts - namespace set at mount time
 urls(({ include }) => [
-  include("/blog", createBlogUrls("blog")),
-  include("/news", createBlogUrls("news")),  // Same module, different prefix!
+  include("/blog", blogPatterns, { namespace: "blog" }),
+  include("/news", blogPatterns, { namespace: "news" }),  // Same module, different namespace!
 ])
 ```
 
+The router automatically prefixes route names:
+- `include("/blog", ..., { namespace: "blog" })` → `"index"` becomes `"blog.index"`
+- `include("/news", ..., { namespace: "news" })` → `"index"` becomes `"news.index"`
+
+### How Namespace Resolution Works
+
+The router provides namespace context based on the matched route:
+
+1. Server knows current namespace from matched route
+2. `ctx.href()` (RSC) and `useHref()` (client) both resolve names the same way
+3. Local names (no dot) are prefixed with current namespace
+4. Absolute names (with dot) or paths are used as-is
+
 ```typescript
-// components/BlogPost.tsx - reusable with prefix
-import { createBlogHref } from "../urls/blog";
+// When mounted at /blog (namespace: "blog")
+href("index")      // → resolves "blog.index" → "/blog"
+href("post", ...)  // → resolves "blog.post" → "/blog/:slug"
 
-function BlogPost({ namePrefix, nextSlug }) {
-  const blogHref = createBlogHref(namePrefix);
-
-  return (
-    <>
-      <Link href={blogHref.index()}>Back to list</Link>
-      <Link href={blogHref.post({ slug: nextSlug })}>Next Post</Link>
-    </>
-  );
-}
-
-// Usage:
-<BlogPost namePrefix="blog" nextSlug="hello" />  // → /blog/hello
-<BlogPost namePrefix="news" nextSlug="hello" />  // → /news/hello
+// When mounted at /news (namespace: "news")
+href("index")      // → resolves "news.index" → "/news"
+href("post", ...)  // → resolves "news.post" → "/news/:slug"
 ```
 
-**Summary:**
+**Resolution priority:**
 
-| Use Case | Pattern |
-|----------|---------|
-| Single-use module | Hardcode names: `name: "blog.post"` |
-| Reusable module | Factory: `createBlogUrls(prefix)` |
-| Component in reusable module | Receive prefix via props or helper |
+1. Path-based (`/blog/:slug`) → Use directly
+2. Absolute name (`shop.cart`) → Global lookup in routeMap
+3. Local name (`index`) → Prepend current namespace, then lookup
+
+### Implementation
+
+```typescript
+// Shared resolution logic (used by both ctx.href and useHref)
+function createHref(routeMap: RouteMap, namespace: string) {
+  return (nameOrPath: string, params?: object) => {
+    // Path-based
+    if (nameOrPath.startsWith("/")) {
+      return interpolate(nameOrPath, params);
+    }
+
+    // Absolute name (has dot) or local name (no dot)
+    const fullName = nameOrPath.includes(".")
+      ? nameOrPath
+      : `${namespace}.${nameOrPath}`;
+
+    const pattern = routeMap[fullName];
+    if (!pattern) {
+      throw new Error(`Unknown route: ${fullName}`);
+    }
+
+    return interpolate(pattern, params);
+  };
+}
+
+// Server: ctx.href is created when building route context
+const ctx = {
+  href: createHref(routeMap, matchedNamespace),
+  // ...other context
+};
+
+// Client: useHref reads from React context (populated via RSC payload)
+function useHref() {
+  const { routeMap, namespace } = useRouteContext();
+  return createHref(routeMap, namespace);
+}
+```
 
 **Benefits:**
-- Simple global `href()` - no context overhead
-- Globally unique names - no conflicts
-- Reusable when needed - factory pattern
+- Django-style: mounted module doesn't know its namespace
+- Same API on server (`ctx.href`) and client (`useHref`)
+- Full type inference for all routes
+- Reusable modules work without factories or prop drilling
+- Local names are short and readable
 - Path-based always works as fallback
 
 ### Route Name Collision Detection
 
-Route names must be globally unique. The `urls()` helper must detect collisions at both **compile-time** (TypeScript) and **runtime** (startup error).
+With auto-namespacing, collisions only occur if you:
+1. Use the same namespace twice
+2. Have duplicate local names within a module
 
-**Current rsc-router approach (compile-time):**
+**Namespaces prevent most collisions:**
 
 ```typescript
-// Type-level detection of conflicting route keys
-type ConflictingKeys<TExisting, TNew> = {
-  [K in keyof TExisting & keyof TNew]: TExisting[K] extends TNew[K]
-    ? never  // Same value, no conflict
-    : K;     // Different values, conflict
-}[keyof TExisting & keyof TNew];
+// urls/blog.ts - local name "index"
+export const blogPatterns = urls(({ path }) => [
+  path("/", BlogIndex, { name: "index" }),
+]);
 
-// Error type that makes TypeScript complain at call site
-type RouteConflictError<TConflicts extends string> = {
-  __error: `Route key conflict! Key "${TConflicts}" already exists.`;
-  hint: "Use prefixed names like 'blog.index' instead of 'index'.";
-};
+// urls/shop.ts - also local name "index"
+export const shopPatterns = urls(({ path }) => [
+  path("/", ShopIndex, { name: "index" }),
+]);
+
+// urls/index.ts - different namespaces, no collision!
+urls(({ include }) => [
+  include("/blog", blogPatterns, { namespace: "blog" }),  // → "blog.index"
+  include("/shop", shopPatterns, { namespace: "shop" }),  // → "shop.index" ✅
+])
 ```
 
-**Django-style must preserve this:**
+**Collision when namespaces conflict:**
 
 ```typescript
-// urls/blog.ts
-export const blogPatterns = urls(({ path }) => [
-  path("/", BlogIndex, { name: "index" }),  // name: "index"
-]);
-
-// urls/shop.ts
-export const shopPatterns = urls(({ path }) => [
-  path("/", ShopIndex, { name: "index" }),  // name: "index" - CONFLICT!
-]);
-
-// urls/index.ts
 urls(({ include }) => [
-  include("/blog", blogPatterns),
-  include("/shop", shopPatterns),  // ❌ TypeScript error: "index" already defined
+  include("/blog", blogPatterns, { namespace: "content" }),
+  include("/news", newsPatterns, { namespace: "content" }),  // ❌ Same namespace!
 ])
+// Both have "content.index" - collision!
 ```
 
 **Runtime check (startup):**
 
 ```typescript
-function buildRouteMap(patterns) {
+function buildRouteMap(patterns, namespace?: string) {
   const routeMap = {};
 
   for (const { name, pattern } of flattenPatterns(patterns)) {
-    if (routeMap[name] && routeMap[name] !== pattern) {
+    const fullName = namespace ? `${namespace}.${name}` : name;
+
+    if (routeMap[fullName]) {
       throw new Error(
-        `Route name collision: "${name}" is defined multiple times with different patterns.\n` +
-        `  Existing: ${routeMap[name]}\n` +
+        `Route name collision: "${fullName}" is defined multiple times.\n` +
+        `  Existing: ${routeMap[fullName]}\n` +
         `  New: ${pattern}\n` +
-        `Use unique names like "blog.index" and "shop.index".`
+        `Use different namespaces for each include().`
       );
     }
-    routeMap[name] = pattern;
+    routeMap[fullName] = pattern;
   }
 
   return routeMap;
@@ -725,17 +746,17 @@ function buildRouteMap(patterns) {
 **Valid patterns:**
 
 ```typescript
-// ✅ Unique names
-path("/", BlogIndex, { name: "blog.index" })
-path("/", ShopIndex, { name: "shop.index" })
+// ✅ Different namespaces - no collision
+include("/blog", blogPatterns, { namespace: "blog" })  // → "blog.index"
+include("/news", blogPatterns, { namespace: "news" })  // → "news.index"
 
-// ✅ Factory with prefix
-createBlogUrls("blog")  // → "blog.index", "blog.post"
-createBlogUrls("news")  // → "news.index", "news.post"
+// ✅ Same module mounted twice with different namespaces
+include("/en/blog", blogPatterns, { namespace: "en.blog" })
+include("/de/blog", blogPatterns, { namespace: "de.blog" })
 
-// ❌ Collision
-path("/", BlogIndex, { name: "index" })
-path("/", ShopIndex, { name: "index" })  // Error!
+// ❌ Same namespace - collision
+include("/blog", blogPatterns, { namespace: "content" })
+include("/news", newsPatterns, { namespace: "content" })  // Error!
 ```
 
 ---
@@ -766,6 +787,177 @@ revalidate: [
 ```
 
 This matches patterns in Express/Hono where you don't write `middlewares`.
+
+---
+
+## Handlers & Handler Context
+
+Route handlers are functions that receive a type-safe context (`ctx`) with route params, request data, and platform bindings.
+
+### Handler Types
+
+**Static component** - No context needed:
+```typescript
+path("/about", <AboutPage />)
+```
+
+**Handler function** - Receives typed context:
+```typescript
+path("/product/:slug", async (ctx) => {
+  const product = await ctx.use(ProductLoader);
+  return <ProductPage product={product} />;
+})
+```
+
+**Layout handler** - Same context, wraps children:
+```typescript
+layout(async (ctx) => {
+  const user = ctx.get("user");
+  return <DashboardShell user={user} />;
+}, () => [
+  path("/", DashboardIndex, { name: "index" }),
+])
+```
+
+### Handler Context (`ctx`)
+
+Handlers receive a Hono-inspired context with type-safe access to:
+
+```typescript
+path("/product/:slug", async (ctx) => {
+  // Route params - type-safe from pattern
+  ctx.params.slug              // string (from :slug)
+
+  // Request data
+  ctx.request                  // Request object
+  ctx.searchParams             // URLSearchParams (filtered)
+  ctx.pathname                 // "/product/widget"
+  ctx.url                      // URL object
+
+  // Platform bindings (Cloudflare, etc.)
+  ctx.env.DB                   // D1Database
+  ctx.env.KV                   // KVNamespace
+  ctx.env.SECRETS              // Secret bindings
+
+  // Middleware variables (type-safe via global augmentation)
+  ctx.var.user                 // User | undefined
+  ctx.get("user")              // Alternative getter
+  ctx.set("user", newUser)     // Setter
+
+  // Response headers
+  ctx.res.headers.set("Cache-Control", "s-maxage=60")
+  ctx.headers.set("X-Custom", "value")  // Shorthand
+
+  // Loader data
+  const product = await ctx.use(ProductLoader)
+  const cart = await ctx.use(CartLoader)
+
+  // Handle data (push pattern)
+  const push = ctx.use(Breadcrumbs)
+  push({ label: "Product", href: ctx.url.pathname })
+
+  // Theme (when enabled)
+  ctx.theme                    // "light" | "dark" | "system"
+  ctx.setTheme?.("dark")       // Set theme cookie
+
+  return <ProductPage product={product} />
+})
+```
+
+### Type-Safe Params
+
+Route params are extracted from the URL pattern at compile time:
+
+| Pattern | Params Type |
+|---------|-------------|
+| `/products/:id` | `{ id: string }` |
+| `/:locale?/blog/:slug` | `{ locale?: string; slug: string }` |
+| `/:locale(en\|gb)/blog` | `{ locale: "en" \| "gb" }` |
+| `/:locale(en\|gb)?/:slug` | `{ locale?: "en" \| "gb"; slug: string }` |
+
+```typescript
+// Params are inferred from the path pattern
+path("/product/:slug", (ctx) => {
+  ctx.params.slug  // ✅ string
+  ctx.params.id    // ❌ TypeScript error - doesn't exist
+})
+
+// Optional params
+path("/:locale?/blog/:slug", (ctx) => {
+  ctx.params.locale  // string | undefined
+  ctx.params.slug    // string
+})
+
+// Constrained params
+path("/:locale(en|gb)/shop", (ctx) => {
+  ctx.params.locale  // "en" | "gb"
+})
+```
+
+### Type-Safe Variables via Global Augmentation
+
+Middleware variables (`ctx.var`, `ctx.get`, `ctx.set`) are typed via module augmentation:
+
+```typescript
+// env.ts
+export interface AppEnv {
+  Bindings: {
+    DB: D1Database;
+    KV: KVNamespace;
+    AUTH_SECRET: string;
+  };
+  Variables: {
+    user: User | undefined;
+    requestId: string;
+    permissions: string[];
+  };
+}
+
+declare global {
+  namespace RSCRouter {
+    interface Env extends AppEnv {}
+  }
+}
+```
+
+Now `ctx.var.user` and `ctx.get("user")` are fully typed:
+
+```typescript
+path("/dashboard", (ctx) => {
+  const user = ctx.get("user")  // User | undefined
+  if (!user) return redirect("/login")
+
+  ctx.set("requestId", crypto.randomUUID())  // ✅ Type-safe
+  ctx.set("invalid", 123)  // ❌ TypeScript error
+
+  return <DashboardPage user={user} />
+})
+```
+
+### Mapping from Current API
+
+**Current** - handler as first arg to `route()`:
+```typescript
+route("product", async (ctx) => {
+  const product = await ctx.use(ProductLoader);
+  return <ProductPage product={product} />;
+}, () => [
+  loader(ProductLoader),
+])
+```
+
+**Django-style** - handler as second arg to `path()`:
+```typescript
+path("/product/:slug", async (ctx) => {
+  const product = await ctx.use(ProductLoader);
+  return <ProductPage product={product} />;
+}, {
+  name: "product",
+  loader: ProductLoader,
+})
+```
+
+The handler context (`ctx`) is identical - same properties, same type safety.
 
 ---
 
@@ -1028,10 +1220,10 @@ layout(AppLayout, {
 | Handler mapping | `.routes().map()` chain | Direct component reference |
 | Layouts | Nested callbacks | `layout()` wrapper |
 | Options | `() => [loader(), loading()]` | Options object |
-| Modularity | `.map(() => import())` | `include(() => import())` |
+| Modularity | `.map(() => import())` | `include(path, patterns)` |
 | URL visibility | Hidden in route objects | Visible in path patterns |
-| Client href | Path-based | Path-based (unchanged) |
-| Route names | Required | Optional (server-only) |
+| href | Path-based | `ctx.href()` / `useHref()` with namespaces |
+| Route names | Required, globally unique | Local names, auto-namespaced |
 
 ---
 
@@ -1198,9 +1390,10 @@ include("/blog", () => import("./blog"))
    parallel: { "@sidebar": { component: Sidebar, loader: SidebarLoader } }
    ```
 
-6. **Route names**: Are they needed at all?
-   - Currently for server organization only
-   - Could be optional if not using server-side named references
+6. ~~**Route names**: Are they needed at all?~~ **RESOLVED: Yes, with auto-namespacing.**
+   - Local names in modules, auto-prefixed via `include({ namespace })`
+   - `useHref()` resolves local names using namespace context
+   - Django-style: mounted module doesn't know its namespace
 
 ---
 
@@ -1226,7 +1419,7 @@ This allows gradual migration without breaking changes.
 
 - [ ] Overall direction: Is Django-style the right inspiration?
 - [ ] Parameter syntax preference (`<int:id>` vs `:id`)
-- [ ] Client/server split: Does path-based client `href` make sense?
-- [ ] Are route names needed, or just paths?
+- [x] ~~Client/server split: Does path-based client `href` make sense?~~ → **`useHref()` with namespaces**
+- [x] ~~Are route names needed, or just paths?~~ → **Local names with auto-namespacing**
 - [x] ~~Lazy vs eager loading preference~~ → **Eager (benchmarked)**
 - [ ] Any missing features or edge cases?
