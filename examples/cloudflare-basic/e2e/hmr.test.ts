@@ -86,7 +86,7 @@ test.describe("hmr", () => {
 
     await using __ = await expectNoReload(page);
 
-    await triggerHMRAndWait(page, "src/handlers/home.tsx");
+    await triggerHMRAndWait(page, "src/pages/home.tsx");
 
     await expect(testId(page, "home-page")).toBeVisible();
   });
@@ -105,7 +105,7 @@ test.describe("hmr", () => {
     // Make a visible change and verify it appears
     const { expectedText } = await triggerHMRAndWait(
       page,
-      "src/handlers/about.tsx",
+      "src/pages/about.tsx",
       {
         visibleChange: {
           search: ">About</h1>",
@@ -133,7 +133,7 @@ test.describe("hmr", () => {
       await using __ = await expectNoReload(page);
 
       // Make a visible change and verify it appears without reload
-      await triggerHMRAndWait(page, "src/handlers/about.tsx", {
+      await triggerHMRAndWait(page, "src/pages/about.tsx", {
         visibleChange: {
           search: ">About</h1>",
           replace: ">About (HMR Updated)</h1>",
@@ -167,7 +167,7 @@ test.describe("hmr", () => {
 
     await using __ = await expectNoReload(page);
 
-    await triggerHMRAndWait(page, "src/handlers/counter.tsx");
+    await triggerHMRAndWait(page, "src/pages/counter.tsx");
 
     await expect(testId(page, "counter-page")).toBeVisible();
     const countAfter = await testId(page, "counter-value").textContent();
