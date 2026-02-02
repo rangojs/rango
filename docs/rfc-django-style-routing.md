@@ -494,6 +494,99 @@ href("blog:post", { slug: "hello" })
 
 Both are type-safe; named routes resolve at runtime from the SSR-injected map.
 
+### Local Route Names with `useLocalHref()`
+
+When a module is mounted via `include()`, its components should be able to use **local** route names without knowing the mount prefix:
+
+```typescript
+// urls/blog.ts - defines local names
+export const urlpatterns = urls(({ path }) => [
+  path("/", BlogIndex, { name: "index" }),
+  path("/:slug", BlogPost, { name: "post" }),  // Local name: "post"
+]);
+```
+
+```typescript
+// components/BlogPost.tsx - uses local name
+import { useLocalHref } from "@ivogt/rsc-router";
+
+function BlogPost({ slug, nextSlug }) {
+  const href = useLocalHref();
+
+  // Uses local name "post", not "blog:post"
+  return <Link href={href("post", { slug: nextSlug })}>Next Post</Link>;
+}
+```
+
+When `Blog` is mounted at `/blog` with `name: "blog"`, `href("post", { slug: "hello" })` automatically resolves to `/blog/hello`.
+
+**How it works:**
+
+1. **Server tracks mount context** - When rendering segments from an included module, the server knows the prefix and namespace
+
+2. **Context wraps the segment** - Router provides context with mount info:
+   ```typescript
+   <RouteContext.Provider value={{
+     prefix: "/blog",
+     namespace: "blog",
+     localRoutes: { index: "/", post: "/:slug" }
+   }}>
+     <BlogComponent />
+   </RouteContext.Provider>
+   ```
+
+3. **`useLocalHref()` reads context** - Resolves local names relative to mount:
+   ```typescript
+   function useLocalHref() {
+     const { prefix, localRoutes } = useRouteContext();
+
+     return (name, params) => {
+       const pattern = localRoutes[name];
+       return prefix + interpolate(pattern, params);
+     };
+   }
+   ```
+
+**Benefits:**
+
+| Benefit | Description |
+|---------|-------------|
+| Portable modules | Blog doesn't know it's at `/blog` |
+| Automatic resolution | Mount prefix applied by context |
+| Refactor-safe | Change mount point, components just work |
+| No special imports | Just `useLocalHref()` from router |
+
+**Full example:**
+
+```typescript
+// urls/index.ts - mounts blog at /blog
+urls(({ include }) => [
+  include("/blog", () => import("./blog"), { name: "blog" }),
+  include("/news", () => import("./blog"), { name: "news" }),  // Same module, different mount!
+])
+
+// components/BlogPost.tsx - works for both mounts
+function BlogPost() {
+  const href = useLocalHref();
+  return (
+    <>
+      <Link href={href("index")}>Back to list</Link>
+      <Link href={href("post", { slug: "next" })}>Next</Link>
+    </>
+  );
+}
+// When under /blog → "/blog", "/blog/next"
+// When under /news → "/news", "/news/next"
+```
+
+**Comparison of href functions:**
+
+| Function | Scope | Example |
+|----------|-------|---------|
+| `href("/blog/:slug", params)` | Path-based, global | Always works |
+| `href("blog:post", params)` | Named, global | Requires full namespace |
+| `useLocalHref()("post", params)` | Named, local | Resolves relative to mount |
+
 ---
 
 ## Singular Options Pattern
