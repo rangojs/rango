@@ -48,7 +48,8 @@ export default map<typeof blogRoutes>(({ route, layout, loader, loading }) => [
 | `include(loader)` | Lazy-load nested URL config | `include('app.urls')` |
 | `layout(component, config)` | Wrap children with layout | Template inheritance |
 | `cache(options, children)` | Cache boundary | `@cache_page()` |
-| `href(name, params)` | Generate URL from name | `reverse()` |
+
+> **Note:** Unlike Django's `reverse()`, rsc-router's client-side `href()` uses actual path patterns, not route names. See [Client/Server Architecture](#clientserver-architecture) below.
 
 ### Parameter Syntax
 
@@ -260,25 +261,64 @@ export const href = router.href;
 
 ---
 
-## URL Generation (href)
+## Client/Server Architecture
 
-Namespacing follows `include()` structure:
+### Key Design Decision: No Route Manifest on Client
+
+Unlike Django's `reverse()` which resolves route names to URLs at runtime, rsc-router deliberately keeps the route manifest **server-side only**.
+
+**Why?**
+- Smaller client bundle (no manifest to ship)
+- Client components are decoupled from route naming
+- Type safety comes from path patterns, not names
+
+### Client-Side `href`
+
+On the client, `href()` uses **actual path patterns** with type-safe parameters:
 
 ```typescript
-// Direct routes
-href("home")                                    // "/"
-href("about")                                   // "/about"
+// Client-side href - path-based, type-safe params
+import { href } from "@ivogt/rsc-router/client";
 
-// Included routes use colon separator
-href("blog:index")                              // "/blog"
-href("blog:post", { slug: "hello-world" })      // "/blog/hello-world"
+href("/blog/:slug", { slug: "hello-world" })     // → "/blog/hello-world"
+href("/products/:id", { id: 123 })               // → "/products/123"
+href("/shop/checkout/payment")                   // → "/shop/checkout/payment"
 
-// Deeply nested
-href("shop:index")                              // "/shop"
-href("shop:products.detail", { slug: "laptop" }) // "/shop/product/laptop"
-href("shop:checkout:payment")                   // "/shop/checkout/payment"
-href("shop:account:orderDetail", { id: 123 })   // "/shop/account/orders/123"
+// Type error if params don't match pattern
+href("/blog/:slug", { id: 123 })                 // ❌ TypeScript error
 ```
+
+### Server-Side Route Names
+
+The `name` property in `path()` is purely for **server-side organization**:
+
+```typescript
+path("/blog/<slug:slug>", BlogPost, { name: "post" })
+//                                         ↑ Server-only
+```
+
+**Used for:**
+- Route matching and organization
+- Server-side redirects
+- Logging and debugging
+- Internal server references
+- Future: Named route resolution via redirect
+
+**NOT used for:**
+- Client-side `href()` calls
+- Type generation for client
+
+### Future: Named Routes via Redirect
+
+A potential future enhancement could support named routes on the client through server redirect:
+
+```typescript
+// Future possibility - client requests by name
+href("blog:post", { slug: "hello" })
+// → Server resolves name → redirects to /blog/hello
+```
+
+This keeps the manifest server-side while allowing named route usage. Not in current scope.
 
 ---
 
@@ -385,37 +425,33 @@ layout(Component, {
 | Options | `() => [loader(), loading()]` | Options object |
 | Modularity | `.map(() => import())` | `include(() => import())` |
 | URL visibility | Hidden in route objects | Visible in path patterns |
-| Namespacing | Manual `blog.post` | Auto from include: `blog:post` |
+| Client href | Path-based | Path-based (unchanged) |
+| Route names | Required | Optional (server-only) |
 
 ---
 
 ## Type Safety & Lazy Loading Analysis
 
-### The Fundamental Tension
+### Client-Side Type Safety
 
-The current rsc-router achieves type-safe `href()` by knowing all routes at compile time:
+Since client-side `href()` uses actual path patterns (not route names), type safety is straightforward:
 
 ```typescript
-// routes.ts - ALL routes defined upfront
-export const blogRoutes = route({
-  "blog.index": "/",
-  "blog.post": "/:slug",
-});
-
-// Router knows all routes → type-safe href()
-href("blog.post", { slug: "hello" })  // ✅ Fully typed at compile time
+// Path patterns are known at compile time
+href("/blog/:slug", { slug: "hello" })  // ✅ Type-safe from path pattern
 ```
 
-With Django-style lazy `include()`:
+The route manifest and naming is server-side only, so there's no type safety concern for client `href()`.
+
+### Server-Side Route Organization
+
+Route names in `path()` are for server organization. With lazy `include()`:
 
 ```typescript
 path("/blog", include(() => import("./blog")), { name: "blog" })
-
-// Router doesn't know blog's internal routes until module loads
-href("blog:post", { slug: "hello" })  // ❓ How to type this?
 ```
 
-Django doesn't have this problem because Python's `reverse()` is runtime-based, not compile-time type-safe.
+The server doesn't need compile-time knowledge of nested routes for client type safety - it only needs to match incoming requests at runtime.
 
 ### What Current Lazy Loading Actually Does
 
@@ -456,53 +492,23 @@ The component is imported **at module load time**, even if that route never matc
 
 The benefit of manual lazy loading may be **marginal** compared to what bundlers already do automatically.
 
-### Options to Preserve Type Safety
+### Lazy Loading Options
 
-#### Option A: Separate Route Definitions (Current Approach)
+Since client type safety comes from path patterns (not route names), lazy loading is primarily a **server performance** concern.
 
-Keep routes in separate files, import eagerly for types:
-
-```typescript
-// urls/blog.ts
-export const routes = {
-  index: "/",
-  post: "/<slug:slug>",
-} as const;
-
-export const urlpatterns = layout(BlogLayout, () => [
-  path(routes.index, BlogIndex, { name: "index" }),
-  path(routes.post, BlogPost, { name: "post" }),
-]);
-```
+#### Option A: Lazy Include (Handlers loaded on match)
 
 ```typescript
 // urls/index.ts
-import { routes as blogRoutes } from "./blog";  // Tiny - just route strings
-
-path("/blog", include(blogRoutes, () => import("./blog")), { name: "blog" })
-//                     ↑ types known        ↑ handlers lazy
+path("/blog", include(() => import("./blog")), { name: "blog" })
 ```
 
-**Pros:** Best type safety, handlers still lazy
-**Cons:** Two exports per URL module, more verbose
+The `./blog` module (with handlers/components) only loads when `/blog/*` is requested.
 
-#### Option B: Type-Only Imports
+**Pros:** Minimal cold start, only load what's needed
+**Cons:** Slight latency on first request to each section
 
-Use TypeScript's `import type` which is erased at runtime:
-
-```typescript
-// urls/index.ts
-import type { urlpatterns as BlogPatterns } from "./blog";
-
-path("/blog", include<BlogPatterns>(() => import("./blog")), { name: "blog" })
-```
-
-**Pros:** Types available, no runtime import
-**Cons:** Requires explicit type annotation, can drift from implementation
-
-#### Option C: Eager Loading (Trust the Bundler)
-
-Just import everything eagerly:
+#### Option B: Eager Loading (Trust the Bundler)
 
 ```typescript
 // urls/index.ts
@@ -511,51 +517,27 @@ import { urlpatterns as blogPatterns } from "./blog";
 path("/blog", blogPatterns, { name: "blog" })
 ```
 
-**Pros:** Simplest mental model, full type safety
-**Cons:** All modules loaded at startup
+All modules loaded at startup.
 
-#### Option D: Build-Time Route Extraction
-
-A Vite plugin that:
-1. Scans all `urls/*.ts` files at build time
-2. Extracts route patterns and names
-3. Generates a `routes.d.ts` type manifest
-
-```typescript
-// Auto-generated: routes.d.ts
-declare module "@ivogt/rsc-router" {
-  interface RouteMap {
-    "home": "/";
-    "about": "/about";
-    "blog:index": "/blog";
-    "blog:post": "/blog/:slug";
-    // ...
-  }
-}
-```
-
-**Pros:** Full type safety with true lazy loading
-**Cons:** Build tooling complexity, requires plugin
+**Pros:** Simplest mental model, no first-request latency
+**Cons:** Larger initial load, longer cold start
 
 ### Recommendation
 
 Given that:
-1. RSC runs on the server (bundle size less critical)
-2. Cloudflare Workers cold starts are already fast
-3. Bundlers are smart about code splitting
-4. Type safety provides significant DX value
-5. The routes themselves are tiny (just strings)
+1. RSC runs on the server (bundle size less critical than client)
+2. Cloudflare Workers cold starts are already fast (~50ms)
+3. Modern bundlers (Vite, esbuild) handle code splitting automatically
+4. The routes themselves are tiny (just strings)
 
-**Recommended approach: Option A or Option C**
+**Either approach is valid.** The performance difference is likely marginal.
 
-- **Option A** if lazy loading proves measurably beneficial
-- **Option C** for simplicity, let the bundler optimize
-
-The complexity of manual lazy loading may not be worth the marginal performance gain, especially if it compromises type safety or developer experience.
+- **Option A** for large apps with many route sections
+- **Option B** for simplicity in smaller apps
 
 ### Benchmarking Needed
 
-Before deciding, we should measure:
+Before deciding, measure:
 - Cold start time difference with eager vs lazy loading
 - Memory usage difference
 - Whether Vite/esbuild already splits these modules
@@ -565,16 +547,15 @@ Before deciding, we should measure:
 ## Open Questions
 
 1. **Parameter syntax**: Django-style `<int:id>` vs current `:id`?
+   - Django-style is more explicit about types
+   - Current syntax is more familiar to Express/React Router users
 
-2. **Colon vs dot for namespacing**: `blog:post` vs `blog.post`?
+2. **Lazy loading**: Eager vs lazy `include()`?
+   - Lazy: `include(() => import("./blog"))`
+   - Eager: Direct import of urlpatterns
+   - Likely marginal performance difference
 
-3. **Lazy loading strategy**: Which option?
-   - **Option A**: Separate route definitions (best types, more verbose)
-   - **Option B**: Type-only imports (good balance, can drift)
-   - **Option C**: Eager loading (simplest, trust bundler)
-   - **Option D**: Build-time extraction (best of both, most complex)
-
-4. **Loader array syntax**: Mixed array vs always objects?
+3. **Loader array syntax**: Mixed array vs always objects?
    ```typescript
    // Option A: Mixed array (simpler for basic cases)
    loader: [SimpleLoader, { loader: ComplexLoader, revalidate: fn }]
@@ -586,7 +567,7 @@ Before deciding, we should measure:
    ]
    ```
 
-5. **Cache wrapper**: Function or option?
+4. **Cache wrapper**: Function or option?
    ```typescript
    // Function wrapper
    cache({ ttl: 60 }, layout(...))
@@ -595,7 +576,7 @@ Before deciding, we should measure:
    layout(Component, { cache: { ttl: 60 } }, () => [...])
    ```
 
-6. **Parallel route syntax**: Inline component vs object?
+5. **Parallel route syntax**: Inline component vs object?
    ```typescript
    // Simple (component only)
    parallel: { "@sidebar": Sidebar }
@@ -603,6 +584,10 @@ Before deciding, we should measure:
    // Full (with options)
    parallel: { "@sidebar": { component: Sidebar, loader: SidebarLoader } }
    ```
+
+6. **Route names**: Are they needed at all?
+   - Currently for server organization only
+   - Could be optional if not using server-side named references
 
 ---
 
@@ -628,7 +613,7 @@ This allows gradual migration without breaking changes.
 
 - [ ] Overall direction: Is Django-style the right inspiration?
 - [ ] Parameter syntax preference (`<int:id>` vs `:id`)
-- [ ] Namespacing separator preference (`:` vs `.`)
-- [ ] Lazy loading strategy (Option A, B, C, or D)
-- [ ] Options object vs callback API
+- [ ] Client/server split: Does path-based client `href` make sense?
+- [ ] Are route names needed, or just paths?
+- [ ] Lazy vs eager loading preference
 - [ ] Any missing features or edge cases?
