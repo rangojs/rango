@@ -37,6 +37,95 @@ export default map<typeof blogRoutes>(({ route, layout, loader, loading }) => [
 2. Three files to trace for one route group
 3. Nested callback syntax can be hard to follow
 4. URL patterns not visible at router level
+5. **Layouts cannot be shared across route groups** (see below)
+
+## Composability Improvements
+
+A key limitation of the current `.routes().map()` pattern is that **layouts are defined inside each handler**, making it difficult to share layouts across route groups.
+
+### Current Limitation
+
+```typescript
+// router.tsx
+router
+  .routes("/blog", blogRoutes)
+  .map(() => import("./handlers/blog.js"))  // BlogLayout defined inside
+
+  .routes("/shop", shopRoutes)
+  .map(() => import("./handlers/shop.js"))  // ShopLayout defined inside
+```
+
+If you want a shared layout across both blog AND shop, you must duplicate it:
+
+```typescript
+// handlers/blog.tsx
+map(({ layout }) => [
+  layout(SharedLayout, () => [     // ❌ Duplicated
+    layout(BlogLayout, () => [...])
+  ])
+])
+
+// handlers/shop.tsx
+map(({ layout }) => [
+  layout(SharedLayout, () => [     // ❌ Duplicated
+    layout(ShopLayout, () => [...])
+  ])
+])
+```
+
+### Django-Style Solution
+
+Layouts are defined **at the URL structure level**, enabling natural composition:
+
+```typescript
+urls(({ layout, include }) => [
+  layout(SharedLayout, () => [
+    // SharedLayout wraps BOTH blog and shop
+    include("/blog", () => import("./blog")),
+    include("/shop", () => import("./shop")),
+  ]),
+
+  // Admin doesn't get SharedLayout
+  include("/admin", () => import("./admin")),
+])
+```
+
+### Real-World Example: Marketing vs App Sections
+
+```typescript
+urls(({ layout, include }) => [
+  // Marketing pages - public, different layout
+  layout(MarketingLayout, () => [
+    include("/", () => import("./marketing/home")),
+    include("/pricing", () => import("./marketing/pricing")),
+    include("/about", () => import("./marketing/about")),
+  ]),
+
+  // App pages - authenticated, shared app chrome
+  layout(AppLayout, {
+    middleware: authMiddleware,
+    loader: UserLoader,
+  }, () => [
+    include("/dashboard", () => import("./app/dashboard")),
+    include("/settings", () => import("./app/settings")),
+    include("/projects", () => import("./app/projects")),
+  ]),
+])
+```
+
+This structure is **impossible** to express cleanly with the current API.
+
+### What This Enables
+
+| Pattern | Current API | Django-style |
+|---------|-------------|--------------|
+| Shared layout across route groups | Duplicate in each handler | Wrap includes with layout |
+| Shared middleware across groups | Global only or duplicate | Wrap at any level |
+| Shared loaders across groups | Hard to achieve | Attach at any level |
+| Partial shared config | Very difficult | Natural nesting |
+| Cross-cutting orphan layouts | Works but scattered | Explicit and visible |
+
+---
 
 ## Proposed API
 
