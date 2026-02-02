@@ -360,19 +360,65 @@ export const urlpatterns = urls(({ path, layout, cache }) => [
 
 ## Router Setup
 
+The `createRSCRouter` API keeps the existing `.use()` chain for global middleware, with a single `.routes(urlpatterns)` call for route definitions. Composition happens via `include()` within the patterns.
+
 ```typescript
 // router.ts
-import { createRouter } from "@ivogt/rsc-router";
+import { createRSCRouter } from "@ivogt/rsc-router/server";
+import { createDocumentCacheMiddleware } from "@ivogt/rsc-router/cache";
 import { urlpatterns } from "./urls";
+import { Document } from "./document";
+import { NotFound } from "./components/NotFound";
+import { ErrorFallback } from "./components/ErrorFallback";
+import type { AppEnv } from "./env";
 
-export const router = createRouter<AppEnv>({
-  patterns: urlpatterns,
-  notFound: NotFoundPage,
-  errorBoundary: ErrorPage,
-});
+export const router = createRSCRouter<AppEnv>({
+  document: Document,
+  notFound: ({ pathname }) => <NotFound pathname={pathname} />,
+  defaultErrorBoundary: ({ error }) => <ErrorFallback error={error} />,
+  theme: true,
+})
+  // Global middleware - applied to all routes
+  .use(createDocumentCacheMiddleware())
+  .use(loggerMiddleware)
+  .use("/api/*", rateLimitMiddleware)  // Pattern-scoped global middleware
+
+  // Single .routes() call with Django-style patterns
+  // Composition happens via include() within urlpatterns
+  .routes(urlpatterns);
 
 export const href = router.href;
 ```
+
+### Key Differences from Current API
+
+| Aspect | Current API | Django-style |
+|--------|-------------|--------------|
+| Multiple route groups | Chain `.routes().map().routes().map()` | Single `.routes()`, use `include()` |
+| Handler connection | `.map(() => import(...))` | Direct in `path()` |
+| Scoped middleware | Between `.routes()` and `.map()` | In `layout()` or `path()` options |
+| Global middleware | `.use()` before `.routes()` | Same - `.use()` before `.routes()` |
+
+### Why Single `.routes()`?
+
+With Django-style, handlers are embedded in patterns - no `.map()` needed. Multiple route groups are composed via `include()`:
+
+```typescript
+// urls/index.ts
+export const urlpatterns = urls(({ path, layout, include }) => [
+  // Global layout wraps everything
+  layout(RootLayout, () => [
+    path("/", HomePage, { name: "home" }),
+
+    // Mount route groups via include
+    include("/blog", blogPatterns),
+    include("/shop", shopPatterns),
+    include("/admin", adminPatterns),
+  ]),
+]);
+```
+
+This is more declarative than chaining - the URL structure is visible in one place.
 
 ---
 
