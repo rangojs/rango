@@ -389,13 +389,192 @@ layout(Component, {
 
 ---
 
+## Type Safety & Lazy Loading Analysis
+
+### The Fundamental Tension
+
+The current rsc-router achieves type-safe `href()` by knowing all routes at compile time:
+
+```typescript
+// routes.ts - ALL routes defined upfront
+export const blogRoutes = route({
+  "blog.index": "/",
+  "blog.post": "/:slug",
+});
+
+// Router knows all routes → type-safe href()
+href("blog.post", { slug: "hello" })  // ✅ Fully typed at compile time
+```
+
+With Django-style lazy `include()`:
+
+```typescript
+path("/blog", include(() => import("./blog")), { name: "blog" })
+
+// Router doesn't know blog's internal routes until module loads
+href("blog:post", { slug: "hello" })  // ❓ How to type this?
+```
+
+Django doesn't have this problem because Python's `reverse()` is runtime-based, not compile-time type-safe.
+
+### What Current Lazy Loading Actually Does
+
+```typescript
+.routes("/blog", blogRoutes)
+.map(() => import("./handlers/blog.js"))
+```
+
+The dynamic import is **only called when the route matches**. Until then:
+- Module is not parsed
+- Module dependencies not loaded
+- Module-level code not executed
+
+### With Direct Component Imports
+
+```typescript
+import { BlogPost } from "../pages/blog";  // Eager - loaded at startup
+
+path("/<slug:slug>", BlogPost, { name: "post" })
+```
+
+The component is imported **at module load time**, even if that route never matches.
+
+### Does Lazy Loading Actually Matter?
+
+| Factor | Impact |
+|--------|--------|
+| Cold start time | Slight - more modules to parse |
+| Memory usage | Slight - more code loaded |
+| Runtime performance | Minimal - unused code just sits there |
+| Bundle splitting | Bundler may already split chunks |
+
+**For RSC on Cloudflare Workers:**
+- Server-side rendering means bundle size is less critical than client
+- Cloudflare Workers cold starts are already fast (~50ms)
+- Modern bundlers (Vite, esbuild) handle code splitting automatically
+- Tree shaking eliminates unused exports
+
+The benefit of manual lazy loading may be **marginal** compared to what bundlers already do automatically.
+
+### Options to Preserve Type Safety
+
+#### Option A: Separate Route Definitions (Current Approach)
+
+Keep routes in separate files, import eagerly for types:
+
+```typescript
+// urls/blog.ts
+export const routes = {
+  index: "/",
+  post: "/<slug:slug>",
+} as const;
+
+export const urlpatterns = layout(BlogLayout, () => [
+  path(routes.index, BlogIndex, { name: "index" }),
+  path(routes.post, BlogPost, { name: "post" }),
+]);
+```
+
+```typescript
+// urls/index.ts
+import { routes as blogRoutes } from "./blog";  // Tiny - just route strings
+
+path("/blog", include(blogRoutes, () => import("./blog")), { name: "blog" })
+//                     ↑ types known        ↑ handlers lazy
+```
+
+**Pros:** Best type safety, handlers still lazy
+**Cons:** Two exports per URL module, more verbose
+
+#### Option B: Type-Only Imports
+
+Use TypeScript's `import type` which is erased at runtime:
+
+```typescript
+// urls/index.ts
+import type { urlpatterns as BlogPatterns } from "./blog";
+
+path("/blog", include<BlogPatterns>(() => import("./blog")), { name: "blog" })
+```
+
+**Pros:** Types available, no runtime import
+**Cons:** Requires explicit type annotation, can drift from implementation
+
+#### Option C: Eager Loading (Trust the Bundler)
+
+Just import everything eagerly:
+
+```typescript
+// urls/index.ts
+import { urlpatterns as blogPatterns } from "./blog";
+
+path("/blog", blogPatterns, { name: "blog" })
+```
+
+**Pros:** Simplest mental model, full type safety
+**Cons:** All modules loaded at startup
+
+#### Option D: Build-Time Route Extraction
+
+A Vite plugin that:
+1. Scans all `urls/*.ts` files at build time
+2. Extracts route patterns and names
+3. Generates a `routes.d.ts` type manifest
+
+```typescript
+// Auto-generated: routes.d.ts
+declare module "@ivogt/rsc-router" {
+  interface RouteMap {
+    "home": "/";
+    "about": "/about";
+    "blog:index": "/blog";
+    "blog:post": "/blog/:slug";
+    // ...
+  }
+}
+```
+
+**Pros:** Full type safety with true lazy loading
+**Cons:** Build tooling complexity, requires plugin
+
+### Recommendation
+
+Given that:
+1. RSC runs on the server (bundle size less critical)
+2. Cloudflare Workers cold starts are already fast
+3. Bundlers are smart about code splitting
+4. Type safety provides significant DX value
+5. The routes themselves are tiny (just strings)
+
+**Recommended approach: Option A or Option C**
+
+- **Option A** if lazy loading proves measurably beneficial
+- **Option C** for simplicity, let the bundler optimize
+
+The complexity of manual lazy loading may not be worth the marginal performance gain, especially if it compromises type safety or developer experience.
+
+### Benchmarking Needed
+
+Before deciding, we should measure:
+- Cold start time difference with eager vs lazy loading
+- Memory usage difference
+- Whether Vite/esbuild already splits these modules
+
+---
+
 ## Open Questions
 
 1. **Parameter syntax**: Django-style `<int:id>` vs current `:id`?
 
 2. **Colon vs dot for namespacing**: `blog:post` vs `blog.post`?
 
-3. **Loader array syntax**: Mixed array vs always objects?
+3. **Lazy loading strategy**: Which option?
+   - **Option A**: Separate route definitions (best types, more verbose)
+   - **Option B**: Type-only imports (good balance, can drift)
+   - **Option C**: Eager loading (simplest, trust bundler)
+   - **Option D**: Build-time extraction (best of both, most complex)
+
+4. **Loader array syntax**: Mixed array vs always objects?
    ```typescript
    // Option A: Mixed array (simpler for basic cases)
    loader: [SimpleLoader, { loader: ComplexLoader, revalidate: fn }]
@@ -407,7 +586,7 @@ layout(Component, {
    ]
    ```
 
-4. **Cache wrapper**: Function or option?
+5. **Cache wrapper**: Function or option?
    ```typescript
    // Function wrapper
    cache({ ttl: 60 }, layout(...))
@@ -416,7 +595,7 @@ layout(Component, {
    layout(Component, { cache: { ttl: 60 } }, () => [...])
    ```
 
-5. **Parallel route syntax**: Inline component vs object?
+6. **Parallel route syntax**: Inline component vs object?
    ```typescript
    // Simple (component only)
    parallel: { "@sidebar": Sidebar }
@@ -448,7 +627,8 @@ This allows gradual migration without breaking changes.
 ## Feedback Requested
 
 - [ ] Overall direction: Is Django-style the right inspiration?
-- [ ] Parameter syntax preference
-- [ ] Namespacing separator preference
+- [ ] Parameter syntax preference (`<int:id>` vs `:id`)
+- [ ] Namespacing separator preference (`:` vs `.`)
+- [ ] Lazy loading strategy (Option A, B, C, or D)
 - [ ] Options object vs callback API
 - [ ] Any missing features or edge cases?
