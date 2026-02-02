@@ -3762,6 +3762,7 @@ export function createRSCRouter<TEnv = any>(
         // Create manifest and patterns maps for route registration
         const manifest = new Map<string, EntryData>();
         const patterns = new Map<string, string>();
+        const trailingSlashMap = new Map<string, TrailingSlashMode>();
 
         // Run the handler once to extract patterns for route matching
         // Note: loadManifest will re-run the handler to register entries in its context
@@ -3769,6 +3770,7 @@ export function createRSCRouter<TEnv = any>(
           {
             manifest,
             patterns,
+            trailingSlash: trailingSlashMap,
             namespace: "root",
             parent: null,
             counters: {},
@@ -3786,10 +3788,15 @@ export function createRSCRouter<TEnv = any>(
         }
 
         // Store the ORIGINAL handler - loadManifest will re-run it to register manifest entries
+        // Convert trailingSlash map to object for the router
+        const trailingSlashConfig = trailingSlashMap.size > 0
+          ? Object.fromEntries(trailingSlashMap)
+          : undefined;
+
         routesEntries.push({
           prefix: "",
           routes: routesObject as ResolvedRouteMap<any>,
-          trailingSlash: undefined,
+          trailingSlash: trailingSlashConfig,
           handler: urlPatterns.handler,
           mountIndex: currentMountIndex,
         });

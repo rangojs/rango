@@ -36,6 +36,7 @@ import type {
   NotFoundBoundaryHandler,
   PartialCacheOptions,
   ShouldRevalidateFn,
+  TrailingSlashMode,
 } from "./types.js";
 import type {
   AllUseItems,
@@ -82,6 +83,8 @@ import RootLayout from "./server/root-layout";
 export interface PathOptions {
   /** Route name for href() lookups */
   name?: string;
+  /** Trailing slash behavior: "never" (redirect /path/ to /path), "always" (redirect /path to /path/), "ignore" (match both) */
+  trailingSlash?: TrailingSlashMode;
 }
 
 /**
@@ -102,6 +105,8 @@ export interface UrlPatterns<TEnv = any> {
   readonly definitions: PathDefinition[];
   /** Internal: compiled handler function */
   readonly handler: () => AllUseItems[];
+  /** Internal: trailing slash config per route name */
+  readonly trailingSlash: Record<string, TrailingSlashMode>;
   /** Brand for type checking */
   readonly [UrlPatternsBrand]: void;
   /** Environment type brand (phantom) */
@@ -380,6 +385,11 @@ function createPathHelper<TEnv>(): PathHelpers<TEnv>["path"] {
       ctx.patterns.set(routeName, prefixedPattern);
     }
 
+    // Store trailing slash config if specified
+    if (options?.trailingSlash && ctx.trailingSlash) {
+      ctx.trailingSlash.set(routeName, options.trailingSlash);
+    }
+
     // Run use callback if provided
     if (use && typeof use === "function") {
       const result = store.run(namespace, entry, use);
@@ -403,6 +413,7 @@ function processIncludeItem(item: IncludeItem): AllUseItems[] {
   const namePrefix = options?.name;
 
   // Execute the nested patterns' handler with URL and name prefixes
+  // The urlPrefix being set tells nested urls() to skip RootLayout wrapping
   return runWithPrefixes(prefix, namePrefix, () => {
     // Call the nested patterns' handler - this registers routes with prefixed patterns/names
     return (patterns as UrlPatterns).handler();
@@ -420,9 +431,17 @@ function processItems(items: AllUseItems[]): AllUseItems[] {
     if (!item) continue;
 
     if (item.type === "include") {
-      // Expand include into actual route items
-      const expanded = processIncludeItem(item as IncludeItem);
-      result.push(...processItems(expanded));
+      // Include items are already expanded during include() call
+      // Just extract the expanded items
+      const includeItem = item as IncludeItem & { _expanded?: AllUseItems[] };
+      if (includeItem._expanded) {
+        // Items were expanded immediately - just process them recursively
+        result.push(...processItems(includeItem._expanded));
+      } else {
+        // Fallback for legacy include items without _expanded
+        const expanded = processIncludeItem(item as IncludeItem);
+        result.push(...processItems(expanded));
+      }
     } else if (item.type === "layout" && (item as any).uses) {
       // Process nested items in layout
       const layoutItem = item as any;
@@ -438,6 +457,11 @@ function processItems(items: AllUseItems[]): AllUseItems[] {
 
 /**
  * Create include() helper for composing URL patterns
+ *
+ * Unlike other helpers that return items for later processing,
+ * include() IMMEDIATELY expands the nested patterns. This ensures
+ * that routes from included patterns inherit the correct parent context
+ * (the layout they're included in).
  */
 function createIncludeHelper<TEnv>(): PathHelpers<TEnv>["include"] {
   return (
@@ -449,16 +473,26 @@ function createIncludeHelper<TEnv>(): PathHelpers<TEnv>["include"] {
     const ctx = store.getStore();
     if (!ctx) throw new Error("include() must be called inside urls()");
 
-    const name = `$include_${prefix.replace(/[/:*?]/g, "_")}`;
+    const namePrefix = options?.name;
 
-    // Return include item - will be processed during handler execution
+    // IMMEDIATELY expand the nested patterns with the current context
+    // This ensures routes inherit the correct parent (e.g., UserRootLayout)
+    const expandedItems = runWithPrefixes(prefix, namePrefix, () => {
+      return (patterns as UrlPatterns).handler();
+    });
+
+    // Return a marker item that contains the expanded items
+    // processItems will extract these expanded items
+    const name = `$include_${prefix.replace(/[/:*?]/g, "_")}`;
     return {
       type: "include",
       name,
       prefix,
       patterns,
       options,
-    } as IncludeItem;
+      // Store expanded items for processItems to extract
+      _expanded: expandedItems,
+    } as IncludeItem & { _expanded: AllUseItems[] };
   };
 }
 
@@ -506,6 +540,10 @@ export function urls<TEnv = DefaultEnv>(
       "urls() expects a builder function as its argument"
     );
 
+    // Check if we're being called from within an include() context
+    // If urlPrefix is set, we're nested and should NOT wrap with RootLayout
+    const isNestedInInclude = !!getUrlPrefix();
+
     // Get base helpers from the existing route-definition module
     const baseHelpers = createRouteHelpers<any, TEnv>();
 
@@ -532,20 +570,39 @@ export function urls<TEnv = DefaultEnv>(
       cache: baseHelpers.cache,
     };
 
-    // Build the route items
-    const builderResult = builder(helpers);
+    // Only wrap with RootLayout at the top level (not when nested in include())
+    // Nested patterns should inherit the parent's RootLayout
+    if (isNestedInInclude) {
+      // Nested: execute builder directly, routes inherit outer RootLayout
+      const builderResult = builder(helpers);
+      return processItems(builderResult);
+    }
 
-    // Process any include() items to expand them
-    const processedResult = processItems(builderResult);
-
-    // Wrap with RootLayout like map() does
+    // Top-level: wrap with RootLayout like map() does
+    // IMPORTANT: builder must be called INSIDE the layout callback
+    // so that routes are registered with RootLayout as their parent
     const layout = baseHelpers.layout;
-    return [layout(RootLayout, () => processedResult)].flat(3);
+    return [layout(RootLayout, () => {
+      const builderResult = builder(helpers);
+      return processItems(builderResult);
+    })].flat(3);
   };
 
+  // trailingSlash config is populated when handler() runs
+  // We expose it via a getter that reads from the context after handler execution
   return {
     definitions,
     handler,
+    get trailingSlash() {
+      // Get the trailingSlash map from the current context
+      // This will be populated after handler() is called
+      const store = getContext();
+      const ctx = store.context.getStore();
+      if (!ctx?.trailingSlash) {
+        return {};
+      }
+      return Object.fromEntries(ctx.trailingSlash);
+    },
   } as UrlPatterns<TEnv>;
 }
 

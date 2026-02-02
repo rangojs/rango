@@ -9,14 +9,14 @@ describe("urls()", () => {
         path("/", () => <div>Home</div>),
       ]);
 
-      expect(patterns.__brand).toBe("UrlPatterns");
-      expect(typeof patterns.__handler).toBe("function");
+      expect(typeof patterns.handler).toBe("function");
+      expect(patterns.definitions).toEqual([]);
     });
 
     it("should accept empty array", () => {
       const patterns = urls(() => []);
 
-      expect(patterns.__brand).toBe("UrlPatterns");
+      expect(typeof patterns.handler).toBe("function");
     });
   });
 
@@ -48,7 +48,7 @@ describe("urls()", () => {
           parent: null,
           counters: {},
         },
-        () => urlPatterns.__handler()
+        () => urlPatterns.handler()
       );
 
       // Should have registered a route
@@ -68,7 +68,7 @@ describe("urls()", () => {
           parent: null,
           counters: {},
         },
-        () => urlPatterns.__handler()
+        () => urlPatterns.handler()
       );
 
       // Should have registered route with name "about"
@@ -89,7 +89,7 @@ describe("urls()", () => {
           parent: null,
           counters: {},
         },
-        () => urlPatterns.__handler()
+        () => urlPatterns.handler()
       );
 
       const entry = manifest.get("post");
@@ -112,7 +112,7 @@ describe("urls()", () => {
           parent: null,
           counters: {},
         },
-        () => urlPatterns.__handler()
+        () => urlPatterns.handler()
       );
 
       // Should have a route registered
@@ -134,7 +134,7 @@ describe("urls()", () => {
           parent: null,
           counters: {},
         },
-        () => urlPatterns.__handler()
+        () => urlPatterns.handler()
       );
 
       expect(manifest.has("admin")).toBe(true);
@@ -166,11 +166,41 @@ describe("urls()", () => {
           parent: null,
           counters: {},
         },
-        () => urlPatterns.__handler()
+        () => urlPatterns.handler()
       );
 
       expect(manifest.has("home")).toBe(true);
       expect(manifest.has("about")).toBe(true);
+    });
+  });
+
+  describe("trailingSlash option", () => {
+    it("should store trailingSlash config in context", () => {
+      const manifest = new Map();
+      const patterns = new Map();
+      const trailingSlash = new Map<string, "always" | "never" | "ignore">();
+
+      const urlPatterns = urls(({ path }) => [
+        path("/ts-always", () => <div>Always</div>, { name: "tsAlways", trailingSlash: "always" }),
+        path("/ts-never", () => <div>Never</div>, { name: "tsNever", trailingSlash: "never" }),
+        path("/ts-ignore", () => <div>Ignore</div>, { name: "tsIgnore", trailingSlash: "ignore" }),
+      ]);
+
+      RSCRouterContext.run(
+        {
+          manifest,
+          patterns,
+          trailingSlash,
+          namespace: "test",
+          parent: null,
+          counters: {},
+        },
+        () => urlPatterns.handler()
+      );
+
+      expect(trailingSlash.get("tsAlways")).toBe("always");
+      expect(trailingSlash.get("tsNever")).toBe("never");
+      expect(trailingSlash.get("tsIgnore")).toBe("ignore");
     });
   });
 
@@ -207,7 +237,7 @@ describe("urls()", () => {
           });
 
           // Execute handler to verify it doesn't throw
-          urlPatterns.__handler();
+          urlPatterns.handler();
         }
       );
     });
@@ -234,7 +264,7 @@ describe("urls()", () => {
             include("/blog", blogPatterns, { name: "blog" }),
           ]);
 
-          urlPatterns.__handler();
+          urlPatterns.handler();
         }
       );
 
@@ -270,7 +300,7 @@ describe("urls()", () => {
             include("/shop", shopPatterns, { name: "shop" }),
           ]);
 
-          urlPatterns.__handler();
+          urlPatterns.handler();
         }
       );
 
@@ -307,7 +337,7 @@ describe("urls()", () => {
             include("/admin", adminPatterns),
           ]);
 
-          urlPatterns.__handler();
+          urlPatterns.handler();
         }
       );
 
@@ -347,7 +377,7 @@ describe("urls()", () => {
             include("/blog", blogPatterns, { name: "blog" }),
           ]);
 
-          urlPatterns.__handler();
+          urlPatterns.handler();
         }
       );
 
@@ -386,7 +416,7 @@ describe("urls()", () => {
             include("/news", contentPatterns, { name: "news" }),
           ]);
 
-          urlPatterns.__handler();
+          urlPatterns.handler();
         }
       );
 

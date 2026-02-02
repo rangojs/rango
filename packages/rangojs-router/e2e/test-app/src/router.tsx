@@ -1,6 +1,6 @@
 import { createRSCRouter, type RouterEnv, redirect, type MiddlewareFn } from "@rangojs/router/server";
 import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
-import { testRoutes } from "./routes.js";
+import { urlpatterns } from "./urls.js";
 
 // App-level cache store with defaults
 export const cacheStore = new MemorySegmentCacheStore({
@@ -129,8 +129,7 @@ export const router = createRSCRouter<AppEnv>({
   .use("/middleware-test/cookies", cookieMiddleware)
   // Pattern-based middleware with params
   .use("/middleware-test/params/:id", paramsMiddleware)
-  .routes(testRoutes)
-  .map(() => import("./handlers.js"));
+  .routes(urlpatterns);
 
 type AppRoutes = typeof router.routeMap;
 

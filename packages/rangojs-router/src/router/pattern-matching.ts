@@ -197,6 +197,7 @@ export function findMatch<TEnv>(
       // Get trailing slash mode for this route (per-route config or pattern-based)
       const trailingSlashMode: TrailingSlashMode | undefined = entry.trailingSlash?.[routeKey];
 
+
       // Try exact match first
       const match = regex.exec(pathname);
       if (match) {

@@ -171,6 +171,8 @@ interface HelperContext {
   isSSR?: boolean;
   /** URL patterns map for path() routes (route name -> pattern) */
   patterns?: Map<string, string>;
+  /** Trailing slash config per route name */
+  trailingSlash?: Map<string, "never" | "always" | "ignore">;
   /** URL prefix from include() - applied to all path() patterns */
   urlPrefix?: string;
   /** Name prefix from include() - applied to all named routes */
@@ -218,6 +220,7 @@ export const getContext = (): {
           forRoute,
           counters: {},
           patterns: new Map<string, string>(),
+          trailingSlash: new Map<string, "never" | "always" | "ignore">(),
         } satisfies HelperContext;
       }
       return store;
@@ -290,6 +293,7 @@ export const getContext = (): {
           metrics: store.metrics,
           isSSR: store.isSSR,
           patterns: store.patterns,
+          trailingSlash: store.trailingSlash,
           urlPrefix: store.urlPrefix,
           namePrefix: store.namePrefix,
         },
@@ -306,6 +310,7 @@ export const getContext = (): {
       const counters = store?.counters || {};
       const manifest = store ? store.manifest : new Map<string, EntryData>();
       const patterns = store?.patterns || new Map<string, string>();
+      const trailingSlash = store?.trailingSlash || new Map<string, "never" | "always" | "ignore">();
       return context.run(
         {
           manifest,
@@ -317,6 +322,7 @@ export const getContext = (): {
           metrics: store?.metrics,
           isSSR: store?.isSSR,
           patterns,
+          trailingSlash,
           urlPrefix: store?.urlPrefix,
           namePrefix: store?.namePrefix,
         },
