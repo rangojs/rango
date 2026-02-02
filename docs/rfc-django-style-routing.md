@@ -1,8 +1,8 @@
-# RFC: URL Patterns and Composable Routing for rsc-router
+# RFC: URL Patterns and Composable Routing for @rangojs/router
 
 ## Overview
 
-This RFC proposes minimal changes to make URL patterns visible at route definition and enable composable route mounting. The existing helper functions (`layout`, `loader`, `revalidate`, etc.) remain unchanged.
+This RFC proposes route definition refactoring inspired by Django's URL patterns for the new `@rangojs/router` package. The changes make URL patterns visible at route definition and enable composable route mounting. The existing helper functions (`layout`, `loader`, `revalidate`, etc.) remain unchanged.
 
 ## Motivation
 
@@ -206,7 +206,7 @@ Client-side hook for resolving route names with namespace context:
 
 ```typescript
 "use client";
-import { useHref } from "@ivogt/rsc-router/client";
+import { useHref } from "@rangojs/router/client";
 
 function BlogNav() {
   const href = useHref();
@@ -345,7 +345,7 @@ path("/", Dashboard, { name: "index" }, () => [
 ## Router Setup
 
 ```typescript
-import { createRSCRouter } from "@ivogt/rsc-router/server";
+import { createRSCRouter } from "@rangojs/router/server";
 import { urlpatterns } from "./urls";
 
 export const router = createRSCRouter<AppEnv>({
@@ -424,8 +424,16 @@ router.routes(urlpatterns);
 
 ## Implementation Plan
 
-### Phase 1: `path()` Function
+### Phase 0: Package Setup
 
+- Copy `rsc-router` package to `packages/rangojs-router`
+- Update `package.json` to `@rangojs/router`
+- Update internal imports
+- Verify all existing tests pass
+
+### Phase 1: `urls()` and `path()` Functions
+
+- Add `urls()` as replacement for `map()`
 - Add `path(pattern, component, options?, children?)`
 - Compiles to existing internal `RouteEntry` structures
 - URL pattern stored alongside route definition
