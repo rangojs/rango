@@ -1,7 +1,7 @@
 import { map } from "@ivogt/rsc-router/server";
 import { Link } from "@ivogt/rsc-router/client";
 import type { themeRoutes } from "../routes.js";
-import { RootLayout } from "../components/RootLayout.js";
+import { RootLayout } from "../components/SlowRootLayout.js";
 import { ThemeToggle } from "../components/ThemeToggle.js";
 
 export default map<typeof themeRoutes>(({ route, layout }) => [
@@ -10,8 +10,8 @@ export default map<typeof themeRoutes>(({ route, layout }) => [
       <div className="theme-page">
         <h1>Theme Demo</h1>
         <p>
-          This page demonstrates the theme system with <code>useTheme</code> hook
-          and server-side <code>ctx.theme</code>.
+          This page demonstrates the theme system with <code>useTheme</code>{" "}
+          hook and server-side <code>ctx.theme</code>.
         </p>
 
         <div className="server-info">
@@ -34,8 +34,8 @@ export default map<typeof themeRoutes>(({ route, layout }) => [
           <h2>Features</h2>
           <ul>
             <li>
-              <strong>No FOUC</strong> - Theme is applied before paint via inline
-              script
+              <strong>No FOUC</strong> - Theme is applied before paint via
+              inline script
             </li>
             <li>
               <strong>System detection</strong> - Automatically detects{" "}

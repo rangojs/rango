@@ -18,7 +18,7 @@ import { RootErrorBoundary } from "./root-error-boundary.js";
  */
 function resolveLoaderData(
   resolvedData: any[],
-  loaderIds: string[]
+  loaderIds: string[],
 ): { loaderData: Record<string, any>; errorFallback: ReactNode } {
   const loaderData: Record<string, any> = {};
   let errorFallback: ReactNode = null;
@@ -126,7 +126,7 @@ export interface RenderSegmentsOptions {
  */
 export async function renderSegments(
   segments: ResolvedSegment[],
-  options?: RenderSegmentsOptions
+  options?: RenderSegmentsOptions,
 ): Promise<ReactNode> {
   const {
     isAction,
@@ -134,7 +134,30 @@ export async function renderSegments(
     forceAwait,
     rootLayout: RootLayout,
   } = options || {};
+  const temporalLazyRefs: Promise<any>[] = [];
 
+  /**
+   * Registers promises from lazy/async components for awaiting.
+   * Handles both direct promises and React lazy components (which store promise in _payload).
+   */
+  const registerLazyRef = <T,>(node: T): T => {
+    if (node instanceof Promise) {
+      temporalLazyRefs.push(node);
+    } else if (isLazyComponent(node)) {
+      temporalLazyRefs.push(node._payload);
+    }
+    return node;
+  };
+
+  // Type guard for React lazy component internals
+  function isLazyComponent(node: unknown): node is { _payload: Promise<any> } {
+    return (
+      node != null &&
+      typeof node === "object" &&
+      "_payload" in node &&
+      (node as any)._payload instanceof Promise
+    );
+  }
   // Separate segments by type, passing intercept segments for explicit injection
   const tree = segmentTreeWalk(segments, interceptSegments);
   // Render content segments as siblings
@@ -145,7 +168,7 @@ export async function renderSegments(
         node.segment.type === "route" ||
         node.segment.type === "error" ||
         node.segment.type === "notFound",
-      `Expected layout, route, error, or notFound segment, got ${node.segment.type}`
+      `Expected layout, route, error, or notFound segment, got ${node.segment.type}`,
     );
     const { component, id, params, loading } = node.segment;
 
@@ -172,7 +195,7 @@ export async function renderSegments(
 
     // Get loader entries for this node
     const loaderEntries = node.loaders.filter(
-      (loader) => loader.loaderId && loader.loaderData !== undefined
+      (loader) => loader.loaderId && loader.loaderData !== undefined,
     );
 
     // Determine the component content (with or without Suspense wrapper)
@@ -183,7 +206,6 @@ export async function renderSegments(
     if (isAction && component instanceof Promise) {
       resolvedComponent = await component;
     }
-
     let nodeContent: ReactNode =
       loading || loading === null || resolvedComponent instanceof Promise
         ? createElement(RouteContentWrapper, {
@@ -194,7 +216,7 @@ export async function renderSegments(
                 : Promise.resolve(resolvedComponent),
             fallback: loading,
           })
-        : resolvedComponent;
+        : registerLazyRef(resolvedComponent);
 
     // Common props for OutletProvider
     const outletContent: ReactNode =
@@ -208,8 +230,8 @@ export async function renderSegments(
             loaderEntries.map((loader) =>
               loader.loaderData instanceof Promise
                 ? loader.loaderData
-                : Promise.resolve(loader.loaderData)
-            )
+                : Promise.resolve(loader.loaderData),
+            ),
           )
         : Promise.resolve([]);
 
@@ -250,7 +272,7 @@ export async function renderSegments(
     const resolvedData = await loaderDataPromise;
     const { loaderData, errorFallback } = resolveLoaderData(
       resolvedData,
-      loaderIds
+      loaderIds,
     );
 
     content = createElement(OutletProvider, {
@@ -268,7 +290,7 @@ export async function renderSegments(
   const errorBoundaryWrapped = createElement(RootErrorBoundary, {
     children: content,
   });
-
+  await Promise.allSettled(temporalLazyRefs);
   // If rootLayout is provided, wrap the error boundary with it
   // This ensures the app shell stays mounted even during errors (prevents FOUC)
   if (RootLayout) {
@@ -310,7 +332,7 @@ export async function renderSegments(
  */
 function* segmentTreeWalk(
   segments: ResolvedSegment[],
-  interceptSegments?: ResolvedSegment[]
+  interceptSegments?: ResolvedSegment[],
 ): Generator<{
   segment: ResolvedSegment;
   parallel: ResolvedSegment[];

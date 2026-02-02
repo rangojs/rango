@@ -23,7 +23,7 @@ export interface PartialUpdateConfig {
   onUpdate: UpdateSubscriber;
   renderSegments: (
     segments: ResolvedSegment[],
-    options?: RenderSegmentsOptions
+    options?: RenderSegmentsOptions,
   ) => Promise<ReactNode> | ReactNode;
   /** RSC version received from server (from initial payload metadata) */
   version?: string;
@@ -66,7 +66,7 @@ export type PartialUpdater = (
      * when we send cached segment IDs to the server - if the server returns empty diff,
      * we use the same segments we told the server we have. */
     targetCacheSegments?: ResolvedSegment[];
-  }
+  },
 ) => Promise<Promise<void>>;
 
 /**
@@ -91,7 +91,7 @@ export type PartialUpdater = (
  * ```
  */
 export function createPartialUpdater(
-  config: PartialUpdateConfig
+  config: PartialUpdateConfig,
 ): PartialUpdater {
   const { store, client, onUpdate, renderSegments, version } = config;
 
@@ -125,7 +125,7 @@ export function createPartialUpdater(
       staleRevalidation?: boolean;
       interceptSourceUrl?: string;
       targetCacheSegments?: ResolvedSegment[];
-    }
+    },
   ): Promise<Promise<void>> {
     const {
       isAction = false,
@@ -197,7 +197,7 @@ export function createPartialUpdater(
       // Create lookup for new segments from server
       const newSegmentMap = new Map<string, ResolvedSegment>();
       (newSegments || []).forEach((s: ResolvedSegment) =>
-        newSegmentMap.set(s.id, s)
+        newSegmentMap.set(s.id, s),
       );
 
       // If diff is empty, nothing changed on server side.
@@ -213,7 +213,7 @@ export function createPartialUpdater(
         // targetCacheSegments being provided means we're navigating to a cached route.
         if (targetCacheSegments && targetCacheSegments.length > 0) {
           console.log(
-            `[Browser] No diff but navigating with cached segments - rendering target route`
+            `[Browser] No diff but navigating with cached segments - rendering target route`,
           );
 
           const newTree = await renderSegments(existingSegments, {
@@ -233,7 +233,7 @@ export function createPartialUpdater(
 
         // Same route revalidation with no changes - skip UI update
         console.log(
-          `[Browser] No changes - all revalidations returned false, keeping existing UI`
+          `[Browser] No changes - all revalidations returned false, keeping existing UI`,
         );
         tx.commit(matchedIds, existingSegments);
         console.log(`[Browser] Navigation complete (no re-render)\n`);
@@ -246,11 +246,11 @@ export function createPartialUpdater(
       const matchedIds = matched || [];
       console.log(`[Browser] matchedIds: ${matchedIds.join(", ")}`);
       console.log(
-        `[Browser] currentSegmentMap keys: ${[...currentSegmentMap.keys()].join(", ")}`
+        `[Browser] currentSegmentMap keys: ${[...currentSegmentMap.keys()].join(", ")}`,
       );
       console.log(
         `[Browser] newSegmentMap keys: ${[...newSegmentMap.keys()].join(", ")}`,
-        newSegmentMap
+        newSegmentMap,
       );
 
       // First pass: build segments from matched IDs
@@ -278,7 +278,7 @@ export function createPartialUpdater(
               fromCache?.component != null
             ) {
               console.log(
-                `[Browser] Preserving cached component for layout ${id} (server returned null)`
+                `[Browser] Preserving cached component for layout ${id} (server returned null)`,
               );
               return { ...fromServer, component: fromCache.component };
             }
@@ -306,7 +306,7 @@ export function createPartialUpdater(
       // Note: allSegments may include additional diff segments, so we check matchedIds specifically
       const allSegmentIdSet = new Set(allSegments.map((s) => s.id));
       const missingIds = matchedIds.filter(
-        (id: string) => !allSegmentIdSet.has(id)
+        (id: string) => !allSegmentIdSet.has(id),
       );
 
       if (missingIds.length > 0) {
@@ -315,12 +315,12 @@ export function createPartialUpdater(
         if (isRetry) {
           console.warn("Missing ids", { missingIds });
           throw new Error(
-            `[Browser] Failed to fetch segments after retry. Missing: [${missingIds.join(", ")}]`
+            `[Browser] Failed to fetch segments after retry. Missing: [${missingIds.join(", ")}]`,
           );
         }
         if (signal?.aborted) {
           console.log(
-            `[Browser] Ignoring stale navigation (aborted during HMR retry)`
+            `[Browser] Ignoring stale navigation (aborted during HMR retry)`,
           );
           return streamComplete;
         }
@@ -328,7 +328,7 @@ export function createPartialUpdater(
           return streamComplete;
         }
         console.warn(
-          `[Browser] HMR detected: Missing ${missingCount} segments. Refetching all...`
+          `[Browser] HMR detected: Missing ${missingCount} segments. Refetching all...`,
         );
 
         // Refetch with empty segments = server sends everything
@@ -347,7 +347,7 @@ export function createPartialUpdater(
 
       if (signal?.aborted) {
         console.log(
-          `[Browser] Ignoring stale navigation (aborted before render)`
+          `[Browser] Ignoring stale navigation (aborted before render)`,
         );
         return streamComplete;
       }
@@ -379,7 +379,7 @@ export function createPartialUpdater(
       // Final abort check before committing - another navigation may have started
       if (signal?.aborted) {
         console.log(
-          `[Browser] Ignoring stale navigation (aborted before commit)`
+          `[Browser] Ignoring stale navigation (aborted before commit)`,
         );
         return streamComplete;
       }
@@ -401,7 +401,7 @@ export function createPartialUpdater(
       // 6. With this fix: rebuild currentSegmentMap from source page
       if (hasActiveIntercept && targetCacheSegments) {
         console.log(
-          `[Browser] Intercept response with target cache - rebuilding segment map from source page`
+          `[Browser] Intercept response with target cache - rebuilding segment map from source page`,
         );
         currentSegmentMap = getCurrentSegmentMap();
       }
@@ -431,7 +431,7 @@ export function createPartialUpdater(
               intercept: true,
               interceptSourceUrl: segmentState.currentUrl,
             }
-          : undefined
+          : undefined,
       );
 
       // For stale revalidation: verify history key hasn't changed before updating UI
@@ -440,7 +440,7 @@ export function createPartialUpdater(
         const historyKeyNow = store.getHistoryKey();
         if (historyKeyNow !== historyKeyAtStart) {
           console.log(
-            `[Browser] Stale revalidation: history key changed (${historyKeyAtStart} -> ${historyKeyNow}), skipping UI update`
+            `[Browser] Stale revalidation: history key changed (${historyKeyAtStart} -> ${historyKeyNow}), skipping UI update`,
           );
           return streamComplete;
         }
@@ -483,7 +483,7 @@ export function createPartialUpdater(
       // This ensures URL only updates after loaders resolve
       const loaderSegments = segments.filter(
         (s: ResolvedSegment) =>
-          s.type === "loader" && s.loaderData !== undefined
+          s.type === "loader" && s.loaderData !== undefined,
       );
       if (loaderSegments.length > 0) {
         console.log(`[Browser] Awaiting ${loaderSegments.length} loader(s)...`);
@@ -491,8 +491,8 @@ export function createPartialUpdater(
           loaderSegments.map((s: ResolvedSegment) =>
             s.loaderData instanceof Promise
               ? s.loaderData
-              : Promise.resolve(s.loaderData)
-          )
+              : Promise.resolve(s.loaderData),
+          ),
         );
         console.log(`[Browser] Loaders resolved`);
       }
@@ -502,7 +502,7 @@ export function createPartialUpdater(
       // Final abort check before committing - another navigation may have started
       if (signal?.aborted) {
         console.log(
-          `[Browser] Ignoring stale navigation (aborted before commit)`
+          `[Browser] Ignoring stale navigation (aborted before commit)`,
         );
         return streamComplete;
       }

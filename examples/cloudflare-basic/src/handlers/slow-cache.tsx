@@ -1,6 +1,6 @@
 import { map, Meta } from "@ivogt/rsc-router/server";
 import type { slowCacheRoutes } from "../routes.js";
-import { RootLayout } from "../components/RootLayout.js";
+import { RootLayout } from "../components/SlowRootLayout.js";
 
 /**
  * Async data table component with 2 second delay.
@@ -26,28 +26,72 @@ async function DataTable() {
 
   return (
     <div data-testid="slow-data-table">
-      <p data-testid="render-time" style={{ color: "#666", marginBottom: "1rem" }}>
+      <p
+        data-testid="render-time"
+        style={{ color: "#666", marginBottom: "1rem" }}
+      >
         Rendered at: {renderTime}
       </p>
       <p style={{ color: "#666", marginBottom: "1rem" }}>
-        This component has a 2s delay. Cached requests show the same render time.
+        This component has a 2s delay. Cached requests show the same render
+        time.
       </p>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr style={{ background: "#f5f5f5" }}>
-            <th style={{ padding: "0.5rem", textAlign: "left", border: "1px solid #ddd" }}>ID</th>
-            <th style={{ padding: "0.5rem", textAlign: "left", border: "1px solid #ddd" }}>Name</th>
-            <th style={{ padding: "0.5rem", textAlign: "left", border: "1px solid #ddd" }}>Value</th>
-            <th style={{ padding: "0.5rem", textAlign: "left", border: "1px solid #ddd" }}>Status</th>
+            <th
+              style={{
+                padding: "0.5rem",
+                textAlign: "left",
+                border: "1px solid #ddd",
+              }}
+            >
+              ID
+            </th>
+            <th
+              style={{
+                padding: "0.5rem",
+                textAlign: "left",
+                border: "1px solid #ddd",
+              }}
+            >
+              Name
+            </th>
+            <th
+              style={{
+                padding: "0.5rem",
+                textAlign: "left",
+                border: "1px solid #ddd",
+              }}
+            >
+              Value
+            </th>
+            <th
+              style={{
+                padding: "0.5rem",
+                textAlign: "left",
+                border: "1px solid #ddd",
+              }}
+            >
+              Status
+            </th>
           </tr>
         </thead>
         <tbody>
           {data.map((row) => (
             <tr key={row.id}>
-              <td style={{ padding: "0.5rem", border: "1px solid #ddd" }}>{row.id}</td>
-              <td style={{ padding: "0.5rem", border: "1px solid #ddd" }}>{row.name}</td>
-              <td style={{ padding: "0.5rem", border: "1px solid #ddd" }}>{row.value}</td>
-              <td style={{ padding: "0.5rem", border: "1px solid #ddd" }}>{row.status}</td>
+              <td style={{ padding: "0.5rem", border: "1px solid #ddd" }}>
+                {row.id}
+              </td>
+              <td style={{ padding: "0.5rem", border: "1px solid #ddd" }}>
+                {row.name}
+              </td>
+              <td style={{ padding: "0.5rem", border: "1px solid #ddd" }}>
+                {row.value}
+              </td>
+              <td style={{ padding: "0.5rem", border: "1px solid #ddd" }}>
+                {row.status}
+              </td>
             </tr>
           ))}
         </tbody>

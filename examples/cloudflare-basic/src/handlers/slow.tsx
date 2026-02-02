@@ -74,8 +74,8 @@ function FastContent() {
 
 export default map<typeof slowRoutes>(({ route, layout }) => [
   layout(<RootLayout />, () => [
-    route("slow1", () => <SlowContent name="1" delayMs={2000} />),
-    route("slow2", () => <SlowContent name="2" delayMs={2000} />),
+    route("slow1", () => <SlowContent name="1" delayMs={5000} />),
+    route("slow2", () => <SlowContent name="2" delayMs={5000} />),
     route("fast", () => <FastContent />),
   ]),
 ]);
