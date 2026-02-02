@@ -1,4 +1,4 @@
-import { createHandle } from "@ivogt/rsc-router/client";
+import { createHandle } from "@rangojs/router/client";
 
 export interface BreadcrumbItem {
   label: string;

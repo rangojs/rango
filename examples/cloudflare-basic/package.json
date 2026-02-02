@@ -13,7 +13,7 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
-    "@ivogt/rsc-router": "workspace:*",
+    "@rangojs/router": "workspace:*",
     "react": "catalog:",
     "react-dom": "catalog:",
     "spin-delay": "^2.0.1"

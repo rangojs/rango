@@ -1,6 +1,6 @@
 "use client";
 
-import { useTheme } from "@ivogt/rsc-router/theme";
+import { useTheme } from "@rangojs/router/theme";
 
 export function ThemeToggle() {
   const { theme, setTheme, resolvedTheme, themes } = useTheme();

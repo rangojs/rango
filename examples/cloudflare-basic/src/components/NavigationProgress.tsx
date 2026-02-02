@@ -1,6 +1,6 @@
 "use client";
 
-import { useNavigation } from "@ivogt/rsc-router/client";
+import { useNavigation } from "@rangojs/router/client";
 import { useSpinDelay } from "spin-delay";
 
 export function NavigationProgress() {

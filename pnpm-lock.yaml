@@ -37,9 +37,9 @@ importers:
 
   examples/cloudflare-basic:
     dependencies:
-      '@ivogt/rsc-router':
+      '@rangojs/router':
         specifier: workspace:*
-        version: link:../../packages/rsc-router
+        version: link:../../packages/rangojs-router
       react:
         specifier: ^19.2.1
         version: 19.2.3
