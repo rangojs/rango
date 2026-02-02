@@ -790,9 +790,9 @@ path(pattern, component, {
   // Middleware (singular, accepts single or array)
   middleware: Middleware | Middleware[],
 
-  // Error handling
-  errorBoundary: ReactNode,
-  notFoundBoundary: ReactNode,
+  // Error handling (see Error Boundaries section below)
+  errorBoundary: ReactNode | ErrorBoundaryHandler,
+  notFoundBoundary: ReactNode | NotFoundBoundaryHandler,
 
   // Parallel routes
   parallel: {
@@ -870,6 +870,153 @@ path("/product/<slug:slug>", ProductDetail, {
   loader: ProductLoader,
 })
 ```
+
+---
+
+## Error Boundaries & Not Found Handling
+
+rsc-router has **two different "not found" concepts** that map differently to the Django-style API:
+
+### Concept Overview
+
+| Concept | Where Defined | When Triggered | Example |
+|---------|---------------|----------------|---------|
+| **Route not matched** | `createRSCRouter({ notFound })` | No route matches URL | `/nonexistent-page` → 404 |
+| **Data not found** | `path({ notFoundBoundary })` | `notFound()` called in loader | Product ID 999 doesn't exist |
+
+### Router-Level Options (Unchanged)
+
+These stay on `createRSCRouter()` options - they're app-wide defaults:
+
+```typescript
+createRSCRouter<AppEnv>({
+  document: Document,
+
+  // 404 page when NO route matches the URL
+  // Rendered inside document shell with 404 status
+  notFound: ({ pathname }) => (
+    <div>
+      <h1>Page Not Found</h1>
+      <p>Nothing exists at {pathname}</p>
+    </div>
+  ),
+
+  // Default fallback for unhandled errors in route tree
+  // Used when no errorBoundary defined closer to the error
+  defaultErrorBoundary: ({ error, reset }) => (
+    <div>
+      <h1>Something went wrong</h1>
+      <button onClick={reset}>Try again</button>
+    </div>
+  ),
+
+  // Default fallback for unhandled notFound() calls
+  // Used when no notFoundBoundary defined closer to the call
+  defaultNotFoundBoundary: ({ notFound }) => (
+    <div>
+      <h1>Not Found</h1>
+      <p>{notFound.message}</p>
+    </div>
+  ),
+})
+```
+
+### Route-Level Boundaries (Current vs Django-style)
+
+**Current API** - boundaries are helper functions inside `map()`:
+
+```typescript
+route("product", ProductPage, () => [
+  loader(ProductLoader),
+  errorBoundary(<ProductError />),
+  notFoundBoundary(<ProductNotFound />),
+])
+```
+
+**Django-style** - boundaries are options on `path()` or `layout()`:
+
+```typescript
+path("/product/:id", ProductPage, {
+  name: "product",
+  loader: ProductLoader,
+
+  // Catches errors in this segment and children
+  errorBoundary: <ProductError />,
+  // Or with handler for dynamic error UI:
+  errorBoundary: ({ error, reset }) => (
+    <div>
+      <h2>Product failed to load</h2>
+      <p>{error.message}</p>
+      <button onClick={reset}>Retry</button>
+    </div>
+  ),
+
+  // Catches notFound() calls in this segment and children
+  notFoundBoundary: <ProductNotFound />,
+  // Or with handler:
+  notFoundBoundary: ({ notFound }) => (
+    <div>
+      <h2>{notFound.message}</h2>
+      <a href="/products">Browse all products</a>
+    </div>
+  ),
+})
+```
+
+### Layout-Level Boundaries
+
+Boundaries on layouts catch errors/notFound from all children:
+
+```typescript
+layout(ShopLayout, {
+  // Catches errors from ANY route inside this layout
+  errorBoundary: <ShopError />,
+
+  // Catches notFound() from ANY loader inside this layout
+  notFoundBoundary: <ShopNotFound />,
+}, () => [
+  path("/", ShopIndex, { name: "index" }),
+  path("/product/:id", ProductDetail, {
+    name: "product",
+    // Route-specific boundary takes precedence
+    notFoundBoundary: <ProductNotFound />,
+  }),
+])
+```
+
+### Boundary Resolution Order
+
+When an error or `notFound()` is thrown:
+
+1. **Route-level boundary** - Closest boundary on the route itself
+2. **Layout-level boundary** - Walk up layout tree looking for boundary
+3. **Default boundary** - `defaultErrorBoundary` / `defaultNotFoundBoundary` from router
+4. **Crash** - If no default, error propagates and crashes request
+
+```typescript
+layout(AppLayout, {
+  errorBoundary: <AppError />,  // 3rd: app-wide fallback
+}, () => [
+  layout(ShopLayout, {
+    errorBoundary: <ShopError />,  // 2nd: shop section fallback
+  }, () => [
+    path("/product/:id", ProductPage, {
+      errorBoundary: <ProductError />,  // 1st: product-specific
+      loader: ProductLoader,  // If this throws, ProductError catches it
+    }),
+  ]),
+])
+```
+
+### Summary
+
+| Level | Option | Purpose |
+|-------|--------|---------|
+| Router | `notFound` | 404 page when no route matches |
+| Router | `defaultErrorBoundary` | App-wide error fallback |
+| Router | `defaultNotFoundBoundary` | App-wide notFound() fallback |
+| Route/Layout | `errorBoundary` | Segment-specific error handling |
+| Route/Layout | `notFoundBoundary` | Segment-specific notFound() handling |
 
 ---
 
