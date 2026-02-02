@@ -135,9 +135,34 @@ This structure is **impossible** to express cleanly with the current API.
 |----------|---------|-------------------|
 | `urls(callback)` | Create urlpatterns with helpers in scope | `urlpatterns = [...]` |
 | `path(pattern, component, options)` | Define a route | `path(route, view, name=...)` |
-| `include(prefix, patterns, options)` | Mount nested URL config with namespace | `include('app.urls')` |
+| `include(prefix, patterns, options?)` | Mount nested URL config | `include('app.urls')` |
 | `layout(component, options?, children?)` | Wrap children with layout | Template inheritance |
+| `intercept(slot, route, component, children?)` | Intercept route for modal/overlay | - |
 | `cache(options, children)` | Cache boundary | `@cache_page()` |
+
+### The `include()` Function
+
+```typescript
+include(prefix, patterns, options?)
+```
+
+| Param | Description |
+|-------|-------------|
+| `prefix` | URL prefix for all routes in patterns |
+| `patterns` | Nested urlpatterns to mount |
+| `options` | Optional: `{ namespace }` or `{ name }` (aliases) |
+
+Namespace is optional. When provided, route names are auto-prefixed:
+
+```typescript
+// Without namespace - routes keep their local names
+include("/blog", blogPatterns)
+
+// With namespace - "index" becomes "blog.index"
+include("/blog", blogPatterns, { namespace: "blog" })
+// Or equivalently:
+include("/blog", blogPatterns, { name: "blog" })
+```
 
 > **Note:** Like Django's `reverse()`, rsc-router resolves route names to URLs via `ctx.href()` (server) and `useHref()` (client). Local names are auto-prefixed with the current namespace. See [Client/Server Architecture](#clientserver-architecture) below.
 
@@ -146,7 +171,7 @@ This structure is **impossible** to express cleanly with the current API.
 Provides type-safe helpers in scope (similar to current `map()`):
 
 ```typescript
-export const urlpatterns = urls(({ path, layout, include, cache, parallel }) => [
+export const urlpatterns = urls(({ path, layout, include, cache, parallel, intercept, loader, revalidate }) => [
   // All helpers available without imports
   path("/", HomePage, { name: "home" }),
 
@@ -158,17 +183,17 @@ export const urlpatterns = urls(({ path, layout, include, cache, parallel }) => 
 
 ### Parameter Syntax
 
-Django-style type converters:
+Express-style parameters (same as current rsc-router):
 
 | Pattern | Example | Type |
 |---------|---------|------|
-| `<str:name>` | `/users/<str:name>` | `string` |
-| `<int:id>` | `/products/<int:id>` | `number` |
-| `<slug:slug>` | `/blog/<slug:slug>` | `string` (validated) |
-| `<uuid:id>` | `/items/<uuid:id>` | `string` (UUID) |
-| `<path:rest>` | `/files/<path:rest>` | `string` (with slashes) |
+| `:param` | `/users/:name` | `string` |
+| `:param?` | `/blog/:slug?` | `string \| undefined` |
+| `:param(a\|b)` | `/:locale(en\|de)/blog` | `"en" \| "de"` |
+| `:param(a\|b)?` | `/:locale(en\|de)?/blog` | `"en" \| "de" \| undefined` |
+| `*` | `/files/*` | `string` (catch-all, with slashes) |
 
-**Alternative:** Keep current syntax (`:id`, `:slug?`, `:locale(en|de)`)
+This maintains consistency with existing pattern matching and type inference.
 
 ---
 
@@ -224,7 +249,7 @@ export const urlpatterns = urls(({ path, layout }) => [
   }, () => [
     path("/", BlogIndex, { name: "index" }),
 
-    path("/<slug:slug>", BlogPost, {
+    path("/:slug", BlogPost, {
       name: "post",
       revalidate: postRevalidation,
     }),
@@ -286,27 +311,23 @@ export const urlpatterns = urls(({ path, layout, cache, include }) => [
       "@promoBanner": PromoBanner,
       "@notification": CartNotification,
     },
-
-    // Intercept for modal
-    intercept: {
-      "@modal": {
-        route: "products.detail",
-        component: ProductModalContent,
-        layout: ModalWrapper,
-        when: ({ from }) => !from.pathname.startsWith("/shop/products/"),
-      },
-    },
   }, () => [
+    // Intercept for modal - renders ProductModalContent in @modal slot on soft nav
+    intercept("@modal", "products.detail", ProductModalContent, () => [
+      layout(ModalWrapper),
+      revalidate(({ from }) => !from.pathname.startsWith("/shop/products/")),
+    ]),
+
     path("/", ShopIndex, {
       name: "index",
       parallel: { "@sidebar": CategorySidebar },
     }),
 
-    path("/products/<str:category>", ProductCategory, {
+    path("/products/:category", ProductCategory, {
       name: "products.category",
     }),
 
-    path("/product/<slug:slug>", ProductDetail, {
+    path("/product/:slug", ProductDetail, {
       name: "products.detail",
       loading: ProductDetailSkeleton,
       loader: [
@@ -465,7 +486,7 @@ In RSC, the route context provides a namespace-aware `href()` function with full
 ```typescript
 // Server Component
 async function BlogPost({ ctx }: { ctx: RouteContext }) {
-  const posts = await ctx.loader(PostsLoader);
+  const posts = await ctx.use(PostsLoader);
 
   return (
     <>
@@ -535,7 +556,7 @@ Same behavior, appropriate API for each environment.
 The `name` property in `path()` defines a local route name:
 
 ```typescript
-path("/blog/<slug:slug>", BlogPost, { name: "post" })
+path("/blog/:slug", BlogPost, { name: "post" })
 //                                         ↑ Local name
 ```
 
@@ -796,18 +817,20 @@ Route handlers are functions that receive a type-safe context (`ctx`) with route
 
 ### Handler Types
 
-**Static component** - No context needed:
+**Static component** - No context, no params:
 ```typescript
 path("/about", <AboutPage />)
 ```
+Static components are rendered as-is. They **do not receive route params**. Use a handler function if you need params.
 
-**Handler function** - Receives typed context:
+**Handler function** - Receives typed context with params:
 ```typescript
 path("/product/:slug", async (ctx) => {
   const product = await ctx.use(ProductLoader);
-  return <ProductPage product={product} />;
+  return <ProductPage product={product} slug={ctx.params.slug} />;
 })
 ```
+Handler functions receive `ctx` with type-safe access to route params extracted from the URL pattern.
 
 **Layout handler** - Same context, wraps children:
 ```typescript
@@ -817,6 +840,30 @@ layout(async (ctx) => {
 }, () => [
   path("/", DashboardIndex, { name: "index" }),
 ])
+```
+
+### Accessing Params in Static Components
+
+If you need route params in a component without using a handler function, use `getServerContext()`:
+
+```typescript
+import { getServerContext } from "@ivogt/rsc-router/server";
+
+// Static component that needs params
+async function BlogPost() {
+  const ctx = getServerContext();
+  const slug = ctx.params.slug;  // Access params via context
+  // ...
+}
+
+path("/blog/:slug", <BlogPost />)  // Works, but handler function is cleaner
+```
+
+**Recommendation:** Prefer handler functions when you need params. They're more explicit and type-safe:
+
+```typescript
+// Preferred: explicit params in handler
+path("/blog/:slug", (ctx) => <BlogPost slug={ctx.params.slug} />)
 ```
 
 ### Handler Context (`ctx`)
@@ -1011,27 +1058,50 @@ layout(Component, () => [
 
 // With options - options object, then children callback
 layout(Component, {
-  // All path options (middleware, loader, cache, etc.), plus:
-
-  // Intercept routes for modal/overlay patterns
-  intercept: {
-    [slot: string]: {
-      route: string,
-      component: Component,
-      layout?: Component,
-      when?: (ctx) => boolean,
-      loader?: Loader,
-      loading?: ReactNode,
-    },
-  },
+  // All path options (middleware, loader, cache, etc.)
 }, () => [
   path(...),
   path(...),
+
+  // Intercept routes for modal/overlay patterns (function, not option)
+  intercept(slotName, routeName, Component, () => [
+    // Optional children: loader, revalidate, layout, etc.
+  ]),
 ])
 
 // Orphan layout - no children, extends parent scope
 layout(Component, { middleware: authMiddleware })
 // Equivalent to current: layout(Component, () => [middleware(authMiddleware)])
+```
+
+### Intercept Function
+
+```typescript
+intercept(slotName, routeName, component, children?)
+```
+
+| Param | Description |
+|-------|-------------|
+| `slotName` | Named slot (e.g., `"@modal"`) |
+| `routeName` | Route key to intercept |
+| `component` | React element to render on soft navigation |
+| `children` | Optional - loader, revalidate, layout, middleware |
+
+Intercepts render alternative content in a named slot during soft navigation. Hard navigation (direct URL) renders the normal route.
+
+```typescript
+layout(KanbanLayout, () => [
+  loader(KanbanLoader),
+
+  // Intercept card route - renders CardModal in @modal slot on soft nav
+  intercept("@modal", "card", CardModal, () => [
+    loader(CardDetailLoader),
+    revalidate(() => false),
+  ]),
+]),
+
+// Hard navigation to /card renders this instead
+route("card", CardDetailPage),
 ```
 
 ### Orphan Layouts
@@ -1056,7 +1126,7 @@ export const urlpatterns = urls(({ path, layout }) => [
 Routes can have their own layout via the `layout` option:
 
 ```typescript
-path("/product/<slug:slug>", ProductDetail, {
+path("/product/:slug", ProductDetail, {
   name: "products.detail",
   layout: ProductLayout,  // Wraps just this route
   loader: ProductLoader,
@@ -1231,14 +1301,24 @@ layout(AppLayout, {
 
 ### Client-Side Type Safety
 
-Since client-side `href()` uses actual path patterns (not route names), type safety is straightforward:
+Both `ctx.href()` (server) and `useHref()` (client) use the same namespace-aware resolution:
 
 ```typescript
-// Path patterns are known at compile time
+// In client component
+const href = useHref();
+
+// Local names - resolved with current namespace
+href("index")                    // ✅ Type-safe: resolves "blog.index" when in blog namespace
+href("post", { slug: "hello" })  // ✅ Type-safe: requires slug param
+
+// Absolute names - explicit namespace
+href("shop.cart")                // ✅ Type-safe: global lookup
+
+// Path-based - always works
 href("/blog/:slug", { slug: "hello" })  // ✅ Type-safe from path pattern
 ```
 
-The route manifest and naming is server-side only, so there's no type safety concern for client `href()`.
+Type inference comes from the route map passed via RSC payload. Route names and their required params are known at compile time from the `urls()` definitions.
 
 ### Server-Side Route Organization
 
@@ -1267,7 +1347,7 @@ The dynamic import is **only called when the route matches**. Until then:
 ```typescript
 import { BlogPost } from "../pages/blog";  // Eager - loaded at startup
 
-path("/<slug:slug>", BlogPost, { name: "post" })
+path("/:slug", BlogPost, { name: "post" })
 ```
 
 The component is imported **at module load time**, even if that route never matches.
@@ -1351,9 +1431,10 @@ include("/blog", () => import("./blog"))
 
 ## Open Questions
 
-1. **Parameter syntax**: Django-style `<int:id>` vs current `:id`?
-   - Django-style is more explicit about types
-   - Current syntax is more familiar to Express/React Router users
+1. ~~**Parameter syntax**: Django-style `<int:id>` vs current `:id`?~~ **RESOLVED: Use Express-style.**
+   - Keep current `:param`, `:param?`, `:param(a|b)`, `*` syntax
+   - Maintains consistency with existing pattern matching
+   - Familiar to Express/React Router users
 
 2. ~~**Lazy loading**: Eager vs lazy `include()`?~~ **RESOLVED: Use eager loading.**
    - Benchmarking shows lazy loading provides no benefit on Cloudflare Workers
@@ -1418,7 +1499,7 @@ This allows gradual migration without breaking changes.
 ## Feedback Requested
 
 - [ ] Overall direction: Is Django-style the right inspiration?
-- [ ] Parameter syntax preference (`<int:id>` vs `:id`)
+- [x] ~~Parameter syntax preference~~ → **Express-style (`:param`, `:param?`, `:param(a|b)`, `*`)**
 - [x] ~~Client/server split: Does path-based client `href` make sense?~~ → **`useHref()` with namespaces**
 - [x] ~~Are route names needed, or just paths?~~ → **Local names with auto-namespacing**
 - [x] ~~Lazy vs eager loading preference~~ → **Eager (benchmarked)**
