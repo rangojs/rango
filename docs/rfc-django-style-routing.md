@@ -591,6 +591,85 @@ function BlogPost({ namePrefix, nextSlug }) {
 - Reusable when needed - factory pattern
 - Path-based always works as fallback
 
+### Route Name Collision Detection
+
+Route names must be globally unique. The `urls()` helper must detect collisions at both **compile-time** (TypeScript) and **runtime** (startup error).
+
+**Current rsc-router approach (compile-time):**
+
+```typescript
+// Type-level detection of conflicting route keys
+type ConflictingKeys<TExisting, TNew> = {
+  [K in keyof TExisting & keyof TNew]: TExisting[K] extends TNew[K]
+    ? never  // Same value, no conflict
+    : K;     // Different values, conflict
+}[keyof TExisting & keyof TNew];
+
+// Error type that makes TypeScript complain at call site
+type RouteConflictError<TConflicts extends string> = {
+  __error: `Route key conflict! Key "${TConflicts}" already exists.`;
+  hint: "Use prefixed names like 'blog.index' instead of 'index'.";
+};
+```
+
+**Django-style must preserve this:**
+
+```typescript
+// urls/blog.ts
+export const blogPatterns = urls(({ path }) => [
+  path("/", BlogIndex, { name: "index" }),  // name: "index"
+]);
+
+// urls/shop.ts
+export const shopPatterns = urls(({ path }) => [
+  path("/", ShopIndex, { name: "index" }),  // name: "index" - CONFLICT!
+]);
+
+// urls/index.ts
+urls(({ include }) => [
+  include("/blog", blogPatterns),
+  include("/shop", shopPatterns),  // ❌ TypeScript error: "index" already defined
+])
+```
+
+**Runtime check (startup):**
+
+```typescript
+function buildRouteMap(patterns) {
+  const routeMap = {};
+
+  for (const { name, pattern } of flattenPatterns(patterns)) {
+    if (routeMap[name] && routeMap[name] !== pattern) {
+      throw new Error(
+        `Route name collision: "${name}" is defined multiple times with different patterns.\n` +
+        `  Existing: ${routeMap[name]}\n` +
+        `  New: ${pattern}\n` +
+        `Use unique names like "blog.index" and "shop.index".`
+      );
+    }
+    routeMap[name] = pattern;
+  }
+
+  return routeMap;
+}
+```
+
+**Valid patterns:**
+
+```typescript
+// ✅ Unique names
+path("/", BlogIndex, { name: "blog.index" })
+path("/", ShopIndex, { name: "shop.index" })
+
+// ✅ Factory with prefix
+createBlogUrls("blog")  // → "blog.index", "blog.post"
+createBlogUrls("news")  // → "news.index", "news.post"
+
+// ❌ Collision
+path("/", BlogIndex, { name: "index" })
+path("/", ShopIndex, { name: "index" })  // Error!
+```
+
 ---
 
 ## Singular Options Pattern
@@ -800,9 +879,9 @@ The component is imported **at module load time**, even if that route never matc
 
 #### Key Finding
 
-**Cloudflare Workers (wrangler/esbuild) bundles ALL code into a single file.** Dynamic imports do NOT create separate chunks.
+**The Vite build process bundles ALL server code into a single file.** Dynamic imports do NOT create separate chunks - they're resolved at build time.
 
-The lazy bundle is 58 KB larger because wrangler adds `__esm()` wrapper machinery to simulate dynamic imports at runtime, but all code is still bundled together:
+The lazy bundle is 58 KB larger because esbuild (used by Vite) adds `__esm()` wrapper machinery to simulate dynamic imports, but all code is still bundled together:
 
 ```javascript
 // Lazy bundle adds this overhead for each "dynamic" import
@@ -811,10 +890,10 @@ var __esm = (fn, res) => function __init() {
 };
 ```
 
-#### Why Lazy Loading Fails on Workers
+#### Why Lazy Loading Doesn't Work
 
-1. **No code splitting** - All modules bundled into one file regardless of dynamic imports
-2. **Larger bundle** - Dynamic import machinery adds overhead
+1. **No code splitting** - Vite bundles all server modules into one file
+2. **Larger bundle** - Dynamic import machinery adds ~58 KB overhead
 3. **Slower builds** - Bundler does more work to handle dynamic imports
 4. **Same cold start** - All code is parsed at startup anyway
 
@@ -842,18 +921,24 @@ urls(({ include }) => [
 - Simpler mental model
 - No first-request latency
 
-### Other Runtimes
+### Why Not Support Lazy Loading?
 
-This benchmark is specific to Cloudflare Workers. Other runtimes may behave differently:
+Since rsc-router uses Vite for all builds (regardless of deployment target), the bundled output is always a single file. Dynamic imports are resolved at build time, not runtime.
 
-| Runtime | Code Splitting? | Recommendation |
-|---------|-----------------|----------------|
-| Cloudflare Workers | No | Eager |
-| Node.js | Yes (native ESM) | Either works |
-| Deno | Yes | Either works |
-| Bun | Yes | Either works |
+This means:
+- **Same bundle** whether targeting Workers, Node, Bun, or Deno
+- **No code splitting** in the server bundle
+- **Lazy syntax adds overhead** with no benefit
 
-For Workers, the `include()` API should only support eager patterns. Lazy syntax could be reserved for future runtimes that support true code splitting.
+The `include()` API should **only support eager patterns**:
+
+```typescript
+// The only supported syntax
+include("/blog", blogPatterns)
+
+// NOT supported - no benefit, just overhead
+include("/blog", () => import("./blog"))
+```
 
 ---
 
