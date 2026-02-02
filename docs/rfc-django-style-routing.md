@@ -44,12 +44,28 @@ export default map<typeof blogRoutes>(({ route, layout, loader, loading }) => [
 
 | Function | Purpose | Django Equivalent |
 |----------|---------|-------------------|
+| `urls(callback)` | Create urlpatterns with helpers in scope | `urlpatterns = [...]` |
 | `path(pattern, component, options)` | Define a route | `path(route, view, name=...)` |
-| `include(loader)` | Lazy-load nested URL config | `include('app.urls')` |
-| `layout(component, config)` | Wrap children with layout | Template inheritance |
+| `include(prefix, loader)` | Lazy-load nested URL config | `include('app.urls')` |
+| `layout(component, options?, children?)` | Wrap children with layout | Template inheritance |
 | `cache(options, children)` | Cache boundary | `@cache_page()` |
 
 > **Note:** Unlike Django's `reverse()`, rsc-router's client-side `href()` uses actual path patterns, not route names. See [Client/Server Architecture](#clientserver-architecture) below.
+
+### The `urls()` Helper
+
+Provides type-safe helpers in scope (similar to current `map()`):
+
+```typescript
+export const urlpatterns = urls(({ path, layout, include, cache, parallel }) => [
+  // All helpers available without imports
+  path("/", HomePage, { name: "home" }),
+
+  layout(BlogLayout, () => [
+    path("/blog", BlogIndex, { name: "blog.index" }),
+  ]),
+])
+```
 
 ### Parameter Syntax
 
@@ -73,19 +89,21 @@ Django-style type converters:
 
 ```typescript
 // urls/index.ts
-import { path, include, layout } from "@ivogt/rsc-router";
+import { urls } from "@ivogt/rsc-router";
 import { RootLayout } from "../layouts/RootLayout";
 import { HomePage } from "../pages/home";
 import { AboutPage } from "../pages/about";
 
-export const urlpatterns = layout(RootLayout, () => [
-  path("/", HomePage, { name: "home" }),
-  path("/about", AboutPage, { name: "about" }),
+export const urlpatterns = urls(({ path, layout, include }) => [
+  layout(RootLayout, () => [
+    path("/", HomePage, { name: "home" }),
+    path("/about", AboutPage, { name: "about" }),
 
-  // Lazy-loaded nested URL configs
-  path("/blog", include(() => import("./blog")), { name: "blog" }),
-  path("/dashboard", include(() => import("./dashboard")), { name: "dashboard" }),
-  path("/shop", include(() => import("./shop")), { name: "shop" }),
+    // Lazy-loaded nested URL configs
+    include("/blog", () => import("./blog"), { name: "blog" }),
+    include("/dashboard", () => import("./dashboard"), { name: "dashboard" }),
+    include("/shop", () => import("./shop"), { name: "shop" }),
+  ]),
 ]);
 ```
 
@@ -93,30 +111,32 @@ export const urlpatterns = layout(RootLayout, () => [
 
 ```typescript
 // urls/blog.ts
-import { path, layout, parallel } from "@ivogt/rsc-router";
+import { urls } from "@ivogt/rsc-router";
 import { BlogLayout } from "../layouts/BlogLayout";
 import { BlogIndex, BlogPost } from "../pages/blog";
 import { BlogSidebar, BlogSidebarSkeleton } from "../components/blog";
 import { BlogSidebarLoader } from "../loaders/blog";
 
-export const urlpatterns = layout(BlogLayout, {
-  middleware: loggerMiddleware,
-  cache: { ttl: 3600 },
+export const urlpatterns = urls(({ path, layout }) => [
+  layout(BlogLayout, {
+    middleware: loggerMiddleware,
+    cache: { ttl: 3600 },
 
-  parallel: {
-    "@sidebar": {
-      component: BlogSidebar,
-      loader: BlogSidebarLoader,
-      loading: BlogSidebarSkeleton,
+    parallel: {
+      "@sidebar": {
+        component: BlogSidebar,
+        loader: BlogSidebarLoader,
+        loading: BlogSidebarSkeleton,
+      },
     },
-  },
-}, () => [
-  path("/", BlogIndex, { name: "index" }),
+  }, () => [
+    path("/", BlogIndex, { name: "index" }),
 
-  path("/<slug:slug>", BlogPost, {
-    name: "post",
-    revalidate: postRevalidation,
-  }),
+    path("/<slug:slug>", BlogPost, {
+      name: "post",
+      revalidate: postRevalidation,
+    }),
+  ]),
 ]);
 ```
 
@@ -124,25 +144,27 @@ export const urlpatterns = layout(BlogLayout, {
 
 ```typescript
 // urls/dashboard.ts
-import { path, layout, parallel } from "@ivogt/rsc-router";
+import { urls } from "@ivogt/rsc-router";
 import { DashboardLayout } from "../layouts/DashboardLayout";
 import { DashboardHome, DashboardSettings } from "../pages/dashboard";
 
-export const urlpatterns = layout(DashboardLayout, {
-  middleware: [rateLimitMiddleware, analyticsMiddleware],  // array for multiple
-  revalidate: ({ currentUrl, nextUrl }) => currentUrl.search !== nextUrl.search,
-}, () => [
-  path("/", DashboardHome, {
-    name: "index",
-    parallel: {
-      "@sidebar": DashboardSidebar,
-      "@footer": DashboardFooter,
-    },
-  }),
+export const urlpatterns = urls(({ path, layout }) => [
+  layout(DashboardLayout, {
+    middleware: [rateLimitMiddleware, analyticsMiddleware],
+    revalidate: ({ currentUrl, nextUrl }) => currentUrl.search !== nextUrl.search,
+  }, () => [
+    path("/", DashboardHome, {
+      name: "index",
+      parallel: {
+        "@sidebar": DashboardSidebar,
+        "@footer": DashboardFooter,
+      },
+    }),
 
-  path("/settings", DashboardSettings, {
-    name: "settings",
-  }),
+    path("/settings", DashboardSettings, {
+      name: "settings",
+    }),
+  ]),
 ]);
 ```
 
@@ -150,95 +172,99 @@ export const urlpatterns = layout(DashboardLayout, {
 
 ```typescript
 // urls/shop.ts
-import { path, layout, cache, include } from "@ivogt/rsc-router";
+import { urls } from "@ivogt/rsc-router";
 import { ShopLayout } from "../layouts/ShopLayout";
 import { ShopIndex, ProductCategory, ProductDetail, Cart } from "../pages/shop";
 import { UserLoader, CartLoader, CategoriesLoader } from "../loaders/shop";
 import { loggerMiddleware, mockAuthMiddleware } from "../middleware/shop";
 
-export const urlpatterns = cache({ ttl: 60 }, layout(ShopLayout, {
-  middleware: [loggerMiddleware, mockAuthMiddleware],  // array for multiple
-  revalidate: globalRevalidation,
+export const urlpatterns = urls(({ path, layout, cache, include }) => [
+  cache({ ttl: 60 }, layout(ShopLayout, {
+    middleware: [loggerMiddleware, mockAuthMiddleware],
+    revalidate: globalRevalidation,
 
-  // Global loaders for entire shop section
-  loader: [
-    UserLoader,
-    { loader: CartLoader, revalidate: ({ actionId }) => actionId?.includes("Cart") },
-    CategoriesLoader,
-  ],
-
-  parallel: {
-    "@promoBanner": PromoBanner,
-    "@notification": CartNotification,
-  },
-
-  // Intercept for modal
-  intercept: {
-    "@modal": {
-      route: "products.detail",
-      component: ProductModalContent,
-      layout: ModalWrapper,
-      when: ({ from }) => !from.pathname.startsWith("/shop/products/"),
-    },
-  },
-}, () => [
-  path("/", ShopIndex, {
-    name: "index",
-    parallel: { "@sidebar": CategorySidebar },
-  }),
-
-  path("/products/<str:category>", ProductCategory, {
-    name: "products.category",
-  }),
-
-  path("/product/<slug:slug>", ProductDetail, {
-    name: "products.detail",
-    loading: ProductDetailSkeleton,
+    // Global loaders for entire shop section
     loader: [
-      { loader: ProductLoader, cache: true },
-      RelatedProductsLoader,
+      UserLoader,
+      { loader: CartLoader, revalidate: ({ actionId }) => actionId?.includes("Cart") },
+      CategoriesLoader,
     ],
-    parallel: { "@related": RelatedProducts },
-  }),
 
-  path("/cart", Cart, {
-    name: "cart",
-    loading: CartSkeleton,
-    parallel: { "@summary": OrderSummary },
-  }),
+    parallel: {
+      "@promoBanner": PromoBanner,
+      "@notification": CartNotification,
+    },
 
-  // Nested URL configs with separate cache
-  path("/checkout", include(() => import("./shop/checkout")), { name: "checkout" }),
-  path("/account", include(() => import("./shop/account")), { name: "account" }),
-]));
+    // Intercept for modal
+    intercept: {
+      "@modal": {
+        route: "products.detail",
+        component: ProductModalContent,
+        layout: ModalWrapper,
+        when: ({ from }) => !from.pathname.startsWith("/shop/products/"),
+      },
+    },
+  }, () => [
+    path("/", ShopIndex, {
+      name: "index",
+      parallel: { "@sidebar": CategorySidebar },
+    }),
+
+    path("/products/<str:category>", ProductCategory, {
+      name: "products.category",
+    }),
+
+    path("/product/<slug:slug>", ProductDetail, {
+      name: "products.detail",
+      loading: ProductDetailSkeleton,
+      loader: [
+        { loader: ProductLoader, cache: true },
+        RelatedProductsLoader,
+      ],
+      parallel: { "@related": RelatedProducts },
+    }),
+
+    path("/cart", Cart, {
+      name: "cart",
+      loading: CartSkeleton,
+      parallel: { "@summary": OrderSummary },
+    }),
+
+    // Nested URL configs with separate cache
+    include("/checkout", () => import("./shop/checkout"), { name: "checkout" }),
+    include("/account", () => import("./shop/account"), { name: "account" }),
+  ])),
+]);
 ```
 
 ### Checkout URLs (Separate Cache)
 
 ```typescript
 // urls/shop/checkout.ts
-import { path, layout, cache } from "@ivogt/rsc-router";
+import { urls } from "@ivogt/rsc-router";
 import { CheckoutLayout } from "../../layouts/CheckoutLayout";
 import { CheckoutIndex, CheckoutPayment, CheckoutConfirm } from "../../pages/checkout";
 import { requireAuthMiddleware } from "../../middleware/shop";
 
-export const urlpatterns = cache({ ttl: 10 }, layout(CheckoutLayout, {
-  middleware: requireAuthMiddleware,  // single middleware
-  loading: CheckoutSkeleton,
-}, () => [
-  path("/", CheckoutIndex, {
-    name: "index",
-    parallel: { "@summary": () => <OrderSummary variant="checkout" /> },
-  }),
+export const urlpatterns = urls(({ path, layout, cache }) => [
+  cache({ ttl: 10 }, layout(CheckoutLayout, {
+    middleware: requireAuthMiddleware,
+    loading: CheckoutSkeleton,
+  }, () => [
+    path("/", CheckoutIndex, {
+      name: "index",
+      parallel: { "@summary": () => <OrderSummary variant="checkout" /> },
+    }),
 
-  path("/payment", CheckoutPayment, {
-    name: "payment",
-  }),
+    path("/payment", CheckoutPayment, {
+      name: "payment",
+    }),
 
-  path("/confirm", CheckoutConfirm, {
-    name: "confirm",
-  }),
-]));
+    path("/confirm", CheckoutConfirm, {
+      name: "confirm",
+    }),
+  ])),
+]);
 ```
 
 ---
@@ -351,8 +377,11 @@ This matches patterns in Express/Hono where you don't write `middlewares`.
 
 ```typescript
 path(pattern, component, {
-  // Required
-  name: string,
+  // Optional name (server-side only)
+  name?: string,
+
+  // Route-level layout
+  layout?: Component,
 
   // Data fetching (singular, accepts single or array)
   loader: Loader | Loader[] | Array<Loader | { loader: Loader, revalidate?, cache? }>,
@@ -411,6 +440,39 @@ layout(Component, {
   path(...),
   path(...),
 ])
+
+// Orphan layout - no children, extends parent scope
+layout(Component, { middleware: authMiddleware })
+// Equivalent to current: layout(Component, () => [middleware(authMiddleware)])
+```
+
+### Orphan Layouts
+
+Layouts without children extend the parent scope (apply config without nesting):
+
+```typescript
+export const urlpatterns = urls(({ path, layout }) => [
+  // Orphan layouts - apply config to parent scope
+  layout(DummyLayout, { revalidate: () => false }),
+  layout(AnotherLayout, { middleware: loggerMiddleware }),
+
+  // Regular layout with children
+  layout(ShopLayout, () => [
+    path("/", ShopIndex, { name: "index" }),
+  ]),
+]);
+```
+
+### Route-Level Layouts
+
+Routes can have their own layout via the `layout` option:
+
+```typescript
+path("/product/<slug:slug>", ProductDetail, {
+  name: "products.detail",
+  layout: ProductLayout,  // Wraps just this route
+  loader: ProductLoader,
+})
 ```
 
 ---
