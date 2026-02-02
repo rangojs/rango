@@ -1423,3 +1423,194 @@ This allows gradual migration without breaking changes.
 - [x] ~~Are route names needed, or just paths?~~ → **Local names with auto-namespacing**
 - [x] ~~Lazy vs eager loading preference~~ → **Eager (benchmarked)**
 - [ ] Any missing features or edge cases?
+
+---
+
+## Implementation Plan
+
+### Git Workflow
+
+```
+main
+  └── rfc/django-style-routing (base branch for all work)
+        ├── rfc/django-style-routing-phase-1  → PR to rfc/django-style-routing
+        ├── rfc/django-style-routing-phase-2  → PR to rfc/django-style-routing
+        ├── rfc/django-style-routing-phase-3  → PR to rfc/django-style-routing
+        └── ...
+```
+
+Each phase gets its own branch, PR'd back to `rfc/django-style-routing`. Once all phases complete, merge to `main`.
+
+### Phase 1: Foundation - Package & Basic DSL
+
+**Branch:** `rfc/django-style-routing-phase-1`
+
+**Goal:** New `@rangojs/router` package with `urls()` / `path()` DSL that compiles to existing internal structures.
+
+**Tasks:**
+- [ ] Copy `rsc-router` to `rangojs-router` package
+- [ ] Update package.json (`@rangojs/router`)
+- [ ] Add `urls-dsl.ts` with `urls()` and `path()` functions
+- [ ] `path()` produces same internal `RouteEntry` structures
+- [ ] Add `.routes(urlpatterns)` overload to `createRSCRouter`
+- [ ] Add unit tests: `src/__tests__/urls-dsl.test.ts`
+- [ ] Verify existing unit tests pass
+- [ ] Verify E2E tests pass (test-app unchanged)
+
+**Tests to run:**
+```bash
+pnpm test:unit  # All unit tests green
+pnpm test       # E2E tests green (unchanged test-app)
+```
+
+### Phase 2: Layout DSL
+
+**Branch:** `rfc/django-style-routing-phase-2`
+
+**Goal:** Add `layout()` helper that wraps children.
+
+**Tasks:**
+- [ ] Implement `layout(Component, () => [...])` syntax
+- [ ] Implement `layout(Component, options, () => [...])` with options
+- [ ] Support orphan layouts (no children)
+- [ ] Add unit tests for layout compositions
+- [ ] Verify existing tests pass
+
+### Phase 3: Include & Namespace
+
+**Branch:** `rfc/django-style-routing-phase-3`
+
+**Goal:** Add `include()` with namespace support for composability.
+
+**Tasks:**
+- [ ] Implement `include(prefix, patterns, { namespace })`
+- [ ] Auto-prefix route names with namespace
+- [ ] Namespace collision detection (compile-time + runtime)
+- [ ] Add unit tests for namespace prefixing
+- [ ] Add collision detection tests
+
+### Phase 4: Options Object Migration
+
+**Branch:** `rfc/django-style-routing-phase-4`
+
+**Goal:** Move from callback helpers to options object on `path()` and `layout()`.
+
+**Tasks:**
+- [ ] Add options: `loader`, `loading`, `middleware`, `revalidate`
+- [ ] Add options: `errorBoundary`, `notFoundBoundary`
+- [ ] Add options: `parallel`, `intercept`, `cache`
+- [ ] Convert options to internal structures
+- [ ] Add unit tests for each option type
+- [ ] Create new E2E test-app using Django-style syntax
+- [ ] All E2E tests pass with new syntax
+
+### Phase 5: Single `.routes()` Enforcement
+
+**Branch:** `rfc/django-style-routing-phase-5`
+
+**Goal:** Enforce single `.routes()` call, all composition via `include()`.
+
+**Tasks:**
+- [ ] Add runtime error if `.routes()` called twice
+- [ ] Update test-app to use single `.routes()` with `include()`
+- [ ] All tests pass
+
+### Phase 6: Client `useHref()` (Last)
+
+**Branch:** `rfc/django-style-routing-phase-6`
+
+**Goal:** Namespace-aware `useHref()` hook via RSC payload.
+
+**Tasks:**
+- [ ] Add `routeMap` and `namespace` to `RscMetadata`
+- [ ] Server populates route map during SSR
+- [ ] Implement `useHref()` hook with namespace context
+- [ ] Local names resolve with current namespace
+- [ ] Absolute names and paths work as fallback
+- [ ] Add unit tests for href resolution
+- [ ] Add E2E tests for client navigation with named routes
+
+---
+
+## Progress Tracking
+
+### Current Phase: Not Started
+
+### Completed Phases
+
+_None yet_
+
+### Test Status
+
+| Test Suite | Status | Notes |
+|------------|--------|-------|
+| Unit tests (`pnpm test:unit`) | ⬜ Not run | |
+| E2E tests (`pnpm test`) | ⬜ Not run | |
+
+**Legend:** ✅ Green | 🟡 Partial (expected) | ❌ Failing (unexpected) | ⬜ Not run
+
+---
+
+## Test Strategy
+
+### Principle: Tests Follow Implementation
+
+1. **After each phase**, run tests for covered functionality
+2. **Suite can be red** for features not yet migrated
+3. **Eventually all green** - existing + new tests pass
+4. **New tests required** for each new feature
+
+### Test Categories
+
+**Unit Tests** (`src/**/__tests__/`):
+- `urls-dsl.test.ts` - New DSL produces correct structures
+- `pattern-matching.test.ts` - URL matching (unchanged)
+- `route-definition.test.ts` - Existing `route()` function
+- Middleware, cache, theme tests (unchanged)
+
+**E2E Tests** (`e2e/`):
+- Existing test-app uses current API initially
+- Phase 4+: New test-app or migrated test-app with Django-style
+- All navigation, loader, action tests must pass
+
+### Running Tests
+
+```bash
+# Unit tests only
+pnpm test:unit
+
+# E2E tests (requires test-app)
+pnpm test
+
+# Specific test file
+pnpm test:unit src/__tests__/urls-dsl.test.ts
+
+# E2E with UI
+pnpm test:ui
+```
+
+---
+
+## Changelog
+
+_Updated after each phase completion._
+
+### [Unreleased]
+
+#### Phase 1: Foundation
+- _Not started_
+
+#### Phase 2: Layout DSL
+- _Not started_
+
+#### Phase 3: Include & Namespace
+- _Not started_
+
+#### Phase 4: Options Object Migration
+- _Not started_
+
+#### Phase 5: Single `.routes()` Enforcement
+- _Not started_
+
+#### Phase 6: Client `useHref()`
+- _Not started_
