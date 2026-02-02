@@ -92,8 +92,8 @@ const router = createRouter<AppEnv>({
 
 ```typescript
 export const urlpatterns = urls(({ include }) => [
-  include("/blog", blogPatterns, { namespace: "blog" }),
-  include("/shop", shopPatterns, { namespace: "shop" }),
+  include("/blog", blogPatterns, { name: "blog" }),
+  include("/shop", shopPatterns, { name: "shop" }),
 ]);
 ```
 
@@ -115,16 +115,58 @@ path("/:slug", PostPage, { name: "post" }, () => [
 
 **Signature:**
 ```typescript
-path(pattern, component, options?, children?)
-path(pattern, handler, options?, children?)
+path(pattern, component)
+path(pattern, component, use)            // use is () => [...]
+path(pattern, component, options)        // options is { name?, ... }
+path(pattern, component, options, use)
 ```
+
+Detection: if 3rd arg is function → `use`, if object → `options`.
 
 | Param | Description |
 |-------|-------------|
 | `pattern` | URL pattern with Express-style params (`:param`, `:param?`, `:param(a\|b)`, `*`) |
 | `component` | React component or handler function `(ctx) => ReactNode` |
 | `options` | Optional: `{ name }` for route naming |
-| `children` | Optional: existing helpers (`loader`, `loading`, `revalidate`, etc.) |
+| `use` | Optional: callback returning helpers (`loader`, `loading`, `revalidate`, etc.) |
+
+**Examples:**
+```typescript
+// Pattern and component only
+path("/about", AboutPage)
+
+// With use (3rd arg is function)
+path("/:slug", PostPage, () => [
+  loader(PostLoader),
+])
+
+// With options (3rd arg is object)
+path("/:slug", PostPage, { name: "post" })
+
+// With both options and use
+path("/:slug", PostPage, { name: "post" }, () => [
+  loader(PostLoader),
+])
+```
+
+**Unnamed routes:**
+
+Name is optional. Unnamed routes are accessed via path-based `href()`:
+
+```typescript
+// Unnamed route
+path("/about", AboutPage)
+
+// Access via path (type-safe)
+href("/about")  // ✅ works
+
+// Named route - both work
+path("/blog", BlogPage, { name: "blog" })
+href("blog")    // ✅ by name
+href("/blog")   // ✅ by path
+```
+
+Path-based `href()` is an **existing type-safe feature** that must be maintained.
 
 **URL patterns use existing Express-style syntax:**
 
@@ -137,7 +179,7 @@ path(pattern, handler, options?, children?)
 
 ### 4. `include()` - Composable Route Mounting
 
-Mount nested route patterns with optional namespace:
+Mount nested route patterns with optional name prefix:
 
 ```typescript
 include(prefix, patterns, options?)
@@ -147,7 +189,7 @@ include(prefix, patterns, options?)
 |-------|-------------|
 | `prefix` | URL prefix for all routes |
 | `patterns` | Nested route patterns to mount |
-| `options` | Optional: `{ namespace }` or `{ name }` (aliases) |
+| `options` | Optional: `{ name }` for route name prefixing |
 
 **Example:**
 
@@ -162,27 +204,59 @@ export const blogPatterns = urls(({ path, layout, loader }) => [
   ]),
 ]);
 
-// urls/index.ts - mounts with namespace
+// urls/index.ts - mounts with name prefix
 export const urlpatterns = urls(({ path, layout, include }) => [
   layout(RootLayout, () => [
     path("/", HomePage, { name: "home" }),
 
     // "index" becomes "blog.index", "post" becomes "blog.post"
-    include("/blog", blogPatterns, { namespace: "blog" }),
+    include("/blog", blogPatterns, { name: "blog" }),
 
-    // Same patterns, different namespace
-    include("/news", blogPatterns, { namespace: "news" }),
+    // Same patterns, different name prefix
+    include("/news", blogPatterns, { name: "news" }),
   ]),
 ]);
 ```
 
-**Namespace is optional:**
+**Name prefix is optional:**
 ```typescript
-// Without namespace - routes keep local names
+// Without name - routes keep local names
 include("/blog", blogPatterns)
 
-// With namespace - names are prefixed
-include("/blog", blogPatterns, { namespace: "blog" })
+// With name - local names are prefixed (e.g., "index" → "blog.index")
+include("/blog", blogPatterns, { name: "blog" })
+```
+
+**Name collisions:**
+- TypeScript detects collisions at compile time
+- At runtime, last definition wins (like Django) - no crash
+
+```typescript
+include("/blog", blogPatterns, { name: "content" })  // "content.index"
+include("/news", newsPatterns, { name: "content" })  // overwrites "content.index"
+// TypeScript error, but if it slips through, /news patterns win
+```
+
+**Route references are local within urlpatterns:**
+
+All route name references (in `intercept()`, `href()`, etc.) are local to the pattern set:
+
+```typescript
+// urls/shop.ts - self-contained, doesn't know its name prefix
+export const shopPatterns = urls(({ path, layout, intercept }) => [
+  layout(ShopLayout, () => [
+    // "product" refers to the local route below
+    intercept("@modal", "product", ProductModal),
+
+    path("/", ShopIndex, { name: "index" }),
+    path("/product/:id", ProductDetail, { name: "product" }),  // ← local "product"
+  ]),
+]);
+
+// urls/index.ts
+include("/shop", shopPatterns, { name: "shop" })
+// Globally: "product" becomes "shop.product"
+// But shopPatterns doesn't need to know that
 ```
 
 **Enables shared layouts across route groups:**
@@ -191,18 +265,18 @@ include("/blog", blogPatterns, { namespace: "blog" })
 urls(({ layout, include }) => [
   // SharedLayout wraps BOTH blog and shop
   layout(SharedLayout, () => [
-    include("/blog", blogPatterns, { namespace: "blog" }),
-    include("/shop", shopPatterns, { namespace: "shop" }),
+    include("/blog", blogPatterns, { name: "blog" }),
+    include("/shop", shopPatterns, { name: "shop" }),
   ]),
 
   // Admin doesn't get SharedLayout
-  include("/admin", adminPatterns, { namespace: "admin" }),
+  include("/admin", adminPatterns, { name: "admin" }),
 ])
 ```
 
-### 5. `useHref()` - Namespace-Aware Client Href
+### 5. `useHref()` - Context-Aware Client Href
 
-Client-side hook for resolving route names with namespace context:
+Client-side hook for resolving route names with current name prefix:
 
 ```typescript
 "use client";
@@ -213,11 +287,11 @@ function BlogNav() {
 
   return (
     <>
-      {/* Local names - resolved with current namespace */}
+      {/* Local names - resolved with current name prefix */}
       <Link href={href("index")}>Blog Home</Link>
       <Link href={href("post", { slug: "hello" })}>Post</Link>
 
-      {/* Absolute names - explicit namespace */}
+      {/* Absolute names - explicit prefix */}
       <Link href={href("shop.cart")}>Cart</Link>
 
       {/* Path-based - always works */}
@@ -243,17 +317,27 @@ async function BlogPost({ ctx }) {
 **Resolution priority:**
 1. Path-based (`/blog/:slug`) → Use directly
 2. Absolute name (`shop.cart`) → Global lookup
-3. Local name (`index`) → Prepend current namespace, then lookup
+3. Local name (`index`) → Prepend current name prefix, then lookup
+
+**Global vs Scoped href:**
+
+| Method | Scope | Usage |
+|--------|-------|-------|
+| `router.href` | Global | Requires full name: `router.href("blog.index")` |
+| `ctx.href` | Scoped (server) | Auto-prefixes: `ctx.href("index")` → "blog.index" |
+| `useHref()` | Scoped (client) | Auto-prefixes: `href("index")` → "blog.index" |
+
+`router.href` remains for cases where you need global access outside of a scoped context.
 
 **Implementation:**
 
-Route map and namespace passed via RSC payload:
+Route map and current name prefix passed via RSC payload:
 
 ```typescript
 interface RscMetadata {
   // ... existing fields
   routeMap: Record<string, string>;  // "blog.index" → "/blog"
-  namespace: string;                  // Current namespace from matched route
+  routeName: string;                  // Current name prefix from matched route
 }
 ```
 
@@ -398,27 +482,26 @@ export const urlpatterns = urls(({ path, layout, include }) => [
     path("/", HomePage, { name: "home" }),
     path("/about", AboutPage, { name: "about" }),
 
-    include("/blog", blogPatterns, { namespace: "blog" }),
-    include("/shop", shopPatterns, { namespace: "shop" }),
+    include("/blog", blogPatterns, { name: "blog" }),
+    include("/shop", shopPatterns, { name: "shop" }),
   ]),
 ]);
 ```
 
 ---
 
-## Migration
+## Removed (compared to rsc-router)
 
-The new API can coexist with the current API for gradual migration:
+`@rangojs/router` is a new package. The following are **not available**:
 
-```typescript
-// Current API still works
-router
-  .routes("/blog", blogRoutes)
-  .map(() => import("./handlers/blog.js"));
+| Removed | Replacement |
+|---------|-------------|
+| `route({ "name": "/pattern" })` | `path("/pattern", Component, { name })` inside `urls()` |
+| `.routes(prefix, routes).map(handler)` | `.routes(urlpatterns)` with `include()` for composition |
+| Chained `.routes()` calls | Single `.routes()`, use `include()` for multiple groups |
+| `import { href } from ".../client"` | `useHref()` hook (scoped) or `router.href` (global) |
 
-// New API
-router.routes(urlpatterns);
-```
+**No backwards compatibility** - this is a clean break from rsc-router's API.
 
 ---
 
@@ -442,13 +525,13 @@ router.routes(urlpatterns);
 ### Phase 2: `include()` Function
 
 - Add `include(prefix, patterns, options?)`
-- Namespace prefixing for route names
-- Collision detection at startup
+- Name prefixing for route names (`{ name: "blog" }` → "index" becomes "blog.index")
+- TypeScript collision detection
 
 ### Phase 3: `useHref()` Hook
 
-- Add `routeMap` and `namespace` to RSC payload
-- Implement `useHref()` with namespace context
+- Add `routeMap` and `routeName` to RSC payload
+- Implement `useHref()` with name prefix context
 - Server `ctx.href()` uses same resolution logic
 
 ### Phase 4: Single `.routes()` Enforcement
@@ -465,8 +548,8 @@ router.routes(urlpatterns);
 | `urls()` | Replaces `map()` as entry point |
 | `.routes(urlpatterns)` | Single call, replaces `.routes().map()` chain |
 | `path()` | URL pattern visible at route definition |
-| `include()` | Composable mounting with namespace |
-| `useHref()` | Namespace-aware client href |
+| `include()` | Composable mounting with name prefix |
+| `useHref()` | Context-aware client href |
 | Type safety | Params inferred from URL pattern |
 
 Everything else stays the same.
