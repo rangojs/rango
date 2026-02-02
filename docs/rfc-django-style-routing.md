@@ -33,7 +33,59 @@ export default map<typeof blogRoutes>(({ route, layout, loader }) => [
 
 ## Proposed Changes
 
-### 1. `path()` - URL Pattern at Definition Site
+### 1. `urls()` - Replaces `map()`
+
+The `urls()` function replaces `map()` as the entry point for defining routes:
+
+```typescript
+// Current
+export default map<typeof blogRoutes>(({ route, layout, loader }) => [
+  layout(BlogLayout, () => [
+    route("blog.index", IndexPage),
+  ]),
+]);
+
+// New
+export const blogPatterns = urls(({ path, layout, loader }) => [
+  layout(BlogLayout, () => [
+    path("/", IndexPage, { name: "index" }),
+  ]),
+]);
+```
+
+**Signature:**
+```typescript
+urls(callback: (helpers) => RouteDefinition[])
+```
+
+The callback receives all helpers: `path`, `layout`, `loader`, `loading`, `revalidate`, `cache`, `middleware`, `errorBoundary`, `notFoundBoundary`, `intercept`, `parallel`, `include`.
+
+### 2. `createRSCRouter` - Single `.routes()` Call
+
+The router now accepts a single `.routes(urlpatterns)` call instead of chained `.routes().map()`:
+
+```typescript
+// Current
+router
+  .routes("/blog", blogRoutes)
+  .map(() => import("./handlers/blog.js"))
+  .routes("/shop", shopRoutes)
+  .map(() => import("./handlers/shop.js"));
+
+// New
+router.routes(urlpatterns);  // Single call, use include() for composition
+```
+
+**`.routes()` can only be called once.** Multiple route groups are composed via `include()`:
+
+```typescript
+export const urlpatterns = urls(({ include }) => [
+  include("/blog", blogPatterns, { namespace: "blog" }),
+  include("/shop", shopPatterns, { namespace: "shop" }),
+]);
+```
+
+### 3. `path()` - URL Pattern at Definition Site
 
 Replace `route()` with `path()` that includes the URL pattern:
 
@@ -71,7 +123,7 @@ path(pattern, handler, options?, children?)
 | `:param(a\|b)` | `"a" \| "b"` |
 | `*` | `string` (catch-all) |
 
-### 2. `include()` - Composable Route Mounting
+### 4. `include()` - Composable Route Mounting
 
 Mount nested route patterns with optional namespace:
 
@@ -136,7 +188,7 @@ urls(({ layout, include }) => [
 ])
 ```
 
-### 3. `useHref()` - Namespace-Aware Client Href
+### 5. `useHref()` - Namespace-Aware Client Href
 
 Client-side hook for resolving route names with namespace context:
 
@@ -193,7 +245,7 @@ interface RscMetadata {
 }
 ```
 
-### 4. Type Safety
+### 6. Type Safety
 
 Params are inferred from URL pattern at compile time:
 
@@ -390,6 +442,8 @@ router.routes(urlpatterns);
 
 | Change | Purpose |
 |--------|---------|
+| `urls()` | Replaces `map()` as entry point |
+| `.routes(urlpatterns)` | Single call, replaces `.routes().map()` chain |
 | `path()` | URL pattern visible at route definition |
 | `include()` | Composable mounting with namespace |
 | `useHref()` | Namespace-aware client href |
