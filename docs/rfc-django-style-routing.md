@@ -76,6 +76,18 @@ router
 router.routes(urlpatterns);  // Single call, use include() for composition
 ```
 
+**`.use()` still works for global middleware:**
+
+```typescript
+const router = createRSCRouter<AppEnv>({
+  document: Document,
+  notFound: NotFoundPage,
+})
+  .use(loggerMiddleware)              // Global middleware
+  .use("/api/*", rateLimitMiddleware) // Pattern-scoped middleware
+  .routes(urlpatterns);               // Single .routes() call
+```
+
 **`.routes()` can only be called once.** Multiple route groups are composed via `include()`:
 
 ```typescript
