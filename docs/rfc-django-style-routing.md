@@ -494,98 +494,102 @@ href("blog:post", { slug: "hello" })
 
 Both are type-safe; named routes resolve at runtime from the SSR-injected map.
 
-### Local Route Names with `useLocalHref()`
+### Global `href()` with Unique Names
 
-When a module is mounted via `include()`, its components should be able to use **local** route names without knowing the mount prefix:
+Route names must be **globally unique** across the entire app. The `href()` function is a simple global lookup - no context needed.
 
 ```typescript
-// urls/blog.ts - defines local names
+// urls/blog.ts - globally unique names
 export const urlpatterns = urls(({ path }) => [
-  path("/", BlogIndex, { name: "index" }),
-  path("/:slug", BlogPost, { name: "post" }),  // Local name: "post"
+  path("/", BlogIndex, { name: "blog.index" }),
+  path("/:slug", BlogPost, { name: "blog.post" }),
 ]);
 ```
 
 ```typescript
-// components/BlogPost.tsx - uses local name
-import { useLocalHref } from "@ivogt/rsc-router";
+// components/BlogPost.tsx - uses global href
+import { href } from "@ivogt/rsc-router/client";
 
-function BlogPost({ slug, nextSlug }) {
-  const href = useLocalHref();
-
-  // Uses local name "post", not "blog:post"
-  return <Link href={href("post", { slug: nextSlug })}>Next Post</Link>;
-}
-```
-
-When `Blog` is mounted at `/blog` with `name: "blog"`, `href("post", { slug: "hello" })` automatically resolves to `/blog/hello`.
-
-**How it works:**
-
-1. **Server tracks mount context** - When rendering segments from an included module, the server knows the prefix and namespace
-
-2. **Context wraps the segment** - Router provides context with mount info:
-   ```typescript
-   <RouteContext.Provider value={{
-     prefix: "/blog",
-     namespace: "blog",
-     localRoutes: { index: "/", post: "/:slug" }
-   }}>
-     <BlogComponent />
-   </RouteContext.Provider>
-   ```
-
-3. **`useLocalHref()` reads context** - Resolves local names relative to mount:
-   ```typescript
-   function useLocalHref() {
-     const { prefix, localRoutes } = useRouteContext();
-
-     return (name, params) => {
-       const pattern = localRoutes[name];
-       return prefix + interpolate(pattern, params);
-     };
-   }
-   ```
-
-**Benefits:**
-
-| Benefit | Description |
-|---------|-------------|
-| Portable modules | Blog doesn't know it's at `/blog` |
-| Automatic resolution | Mount prefix applied by context |
-| Refactor-safe | Change mount point, components just work |
-| No special imports | Just `useLocalHref()` from router |
-
-**Full example:**
-
-```typescript
-// urls/index.ts - mounts blog at /blog
-urls(({ include }) => [
-  include("/blog", () => import("./blog"), { name: "blog" }),
-  include("/news", () => import("./blog"), { name: "news" }),  // Same module, different mount!
-])
-
-// components/BlogPost.tsx - works for both mounts
-function BlogPost() {
-  const href = useLocalHref();
+function BlogPost({ nextSlug }) {
   return (
     <>
-      <Link href={href("index")}>Back to list</Link>
-      <Link href={href("post", { slug: "next" })}>Next</Link>
+      <Link href={href("blog.index")}>Back to list</Link>
+      <Link href={href("blog.post", { slug: nextSlug })}>Next Post</Link>
+
+      {/* Path-based also works */}
+      <Link href={href("/blog/:slug", { slug: nextSlug })}>Next Post</Link>
     </>
   );
 }
-// When under /blog → "/blog", "/blog/next"
-// When under /news → "/news", "/news/next"
 ```
 
-**Comparison of href functions:**
+**How it works:**
 
-| Function | Scope | Example |
-|----------|-------|---------|
-| `href("/blog/:slug", params)` | Path-based, global | Always works |
-| `href("blog:post", params)` | Named, global | Requires full namespace |
-| `useLocalHref()("post", params)` | Named, local | Resolves relative to mount |
+1. Server includes `routeMap` in RSC payload (all name → pattern mappings)
+2. Client `href()` is a simple lookup: `routeMap[name]` → interpolate params
+3. No context needed - names are globally unique
+
+### Reusable Modules with Factory Pattern
+
+For modules that need to be mounted multiple times, use a factory function:
+
+```typescript
+// urls/blog.ts - factory accepts name prefix
+export const createBlogUrls = (prefix: string) => urls(({ path }) => [
+  path("/", BlogIndex, { name: `${prefix}.index` }),
+  path("/:slug", BlogPost, { name: `${prefix}.post` }),
+]);
+
+// Helper for components
+export const createBlogHref = (prefix: string) => ({
+  index: () => href(`${prefix}.index`),
+  post: (params: { slug: string }) => href(`${prefix}.post`, params),
+});
+```
+
+```typescript
+// urls/index.ts - mount same module twice
+import { createBlogUrls } from "./blog";
+
+urls(({ include }) => [
+  include("/blog", createBlogUrls("blog")),
+  include("/news", createBlogUrls("news")),  // Same module, different prefix!
+])
+```
+
+```typescript
+// components/BlogPost.tsx - reusable with prefix
+import { createBlogHref } from "../urls/blog";
+
+function BlogPost({ namePrefix, nextSlug }) {
+  const blogHref = createBlogHref(namePrefix);
+
+  return (
+    <>
+      <Link href={blogHref.index()}>Back to list</Link>
+      <Link href={blogHref.post({ slug: nextSlug })}>Next Post</Link>
+    </>
+  );
+}
+
+// Usage:
+<BlogPost namePrefix="blog" nextSlug="hello" />  // → /blog/hello
+<BlogPost namePrefix="news" nextSlug="hello" />  // → /news/hello
+```
+
+**Summary:**
+
+| Use Case | Pattern |
+|----------|---------|
+| Single-use module | Hardcode names: `name: "blog.post"` |
+| Reusable module | Factory: `createBlogUrls(prefix)` |
+| Component in reusable module | Receive prefix via props or helper |
+
+**Benefits:**
+- Simple global `href()` - no context overhead
+- Globally unique names - no conflicts
+- Reusable when needed - factory pattern
+- Path-based always works as fallback
 
 ---
 
@@ -784,70 +788,72 @@ The component is imported **at module load time**, even if that route never matc
 
 ### Does Lazy Loading Actually Matter?
 
-| Factor | Impact |
-|--------|--------|
-| Cold start time | Slight - more modules to parse |
-| Memory usage | Slight - more code loaded |
-| Runtime performance | Minimal - unused code just sits there |
-| Bundle splitting | Bundler may already split chunks |
+**No. Benchmarking shows lazy loading is actually worse on Cloudflare Workers.**
 
-**For RSC on Cloudflare Workers:**
-- Server-side rendering means bundle size is less critical than client
-- Cloudflare Workers cold starts are already fast (~50ms)
-- Modern bundlers (Vite, esbuild) handle code splitting automatically
-- Tree shaking eliminates unused exports
+#### Benchmark Results (100 route modules)
 
-The benefit of manual lazy loading may be **marginal** compared to what bundlers already do automatically.
+| Metric | Eager | Lazy |
+|--------|-------|------|
+| Bundle size | **171 KB** | 229 KB |
+| Build time | **~17s** | ~46s |
+| Output files | 1 | 1 |
 
-### Lazy Loading Options
+#### Key Finding
 
-Since client type safety comes from path patterns (not route names), lazy loading is primarily a **server performance** concern.
+**Cloudflare Workers (wrangler/esbuild) bundles ALL code into a single file.** Dynamic imports do NOT create separate chunks.
 
-#### Option A: Lazy Include (Handlers loaded on match)
+The lazy bundle is 58 KB larger because wrangler adds `__esm()` wrapper machinery to simulate dynamic imports at runtime, but all code is still bundled together:
 
-```typescript
-// urls/index.ts
-path("/blog", include(() => import("./blog")), { name: "blog" })
+```javascript
+// Lazy bundle adds this overhead for each "dynamic" import
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
 ```
 
-The `./blog` module (with handlers/components) only loads when `/blog/*` is requested.
+#### Why Lazy Loading Fails on Workers
 
-**Pros:** Minimal cold start, only load what's needed
-**Cons:** Slight latency on first request to each section
+1. **No code splitting** - All modules bundled into one file regardless of dynamic imports
+2. **Larger bundle** - Dynamic import machinery adds overhead
+3. **Slower builds** - Bundler does more work to handle dynamic imports
+4. **Same cold start** - All code is parsed at startup anyway
 
-#### Option B: Eager Loading (Trust the Bundler)
+### Recommendation: Use Eager Loading
+
+Based on benchmarking, **eager loading is recommended** for Cloudflare Workers:
 
 ```typescript
-// urls/index.ts
-import { urlpatterns as blogPatterns } from "./blog";
+// ✅ Recommended: Eager imports
+import { blogPatterns } from "./blog";
 
-path("/blog", blogPatterns, { name: "blog" })
+urls(({ include }) => [
+  include("/blog", blogPatterns),
+])
+
+// ❌ Not recommended: Lazy imports (no benefit on Workers)
+urls(({ include }) => [
+  include("/blog", () => import("./blog")),
+])
 ```
 
-All modules loaded at startup.
+**Eager loading advantages:**
+- Smaller bundle (no dynamic import overhead)
+- Faster builds
+- Simpler mental model
+- No first-request latency
 
-**Pros:** Simplest mental model, no first-request latency
-**Cons:** Larger initial load, longer cold start
+### Other Runtimes
 
-### Recommendation
+This benchmark is specific to Cloudflare Workers. Other runtimes may behave differently:
 
-Given that:
-1. RSC runs on the server (bundle size less critical than client)
-2. Cloudflare Workers cold starts are already fast (~50ms)
-3. Modern bundlers (Vite, esbuild) handle code splitting automatically
-4. The routes themselves are tiny (just strings)
+| Runtime | Code Splitting? | Recommendation |
+|---------|-----------------|----------------|
+| Cloudflare Workers | No | Eager |
+| Node.js | Yes (native ESM) | Either works |
+| Deno | Yes | Either works |
+| Bun | Yes | Either works |
 
-**Either approach is valid.** The performance difference is likely marginal.
-
-- **Option A** for large apps with many route sections
-- **Option B** for simplicity in smaller apps
-
-### Benchmarking Needed
-
-Before deciding, measure:
-- Cold start time difference with eager vs lazy loading
-- Memory usage difference
-- Whether Vite/esbuild already splits these modules
+For Workers, the `include()` API should only support eager patterns. Lazy syntax could be reserved for future runtimes that support true code splitting.
 
 ---
 
@@ -857,10 +863,10 @@ Before deciding, measure:
    - Django-style is more explicit about types
    - Current syntax is more familiar to Express/React Router users
 
-2. **Lazy loading**: Eager vs lazy `include()`?
-   - Lazy: `include(() => import("./blog"))`
-   - Eager: Direct import of urlpatterns
-   - Likely marginal performance difference
+2. ~~**Lazy loading**: Eager vs lazy `include()`?~~ **RESOLVED: Use eager loading.**
+   - Benchmarking shows lazy loading provides no benefit on Cloudflare Workers
+   - Lazy bundles are larger due to dynamic import overhead
+   - All code is bundled into a single file regardless
 
 3. **Loader array syntax**: Mixed array vs always objects?
    ```typescript
@@ -922,5 +928,5 @@ This allows gradual migration without breaking changes.
 - [ ] Parameter syntax preference (`<int:id>` vs `:id`)
 - [ ] Client/server split: Does path-based client `href` make sense?
 - [ ] Are route names needed, or just paths?
-- [ ] Lazy vs eager loading preference
+- [x] ~~Lazy vs eager loading preference~~ → **Eager (benchmarked)**
 - [ ] Any missing features or edge cases?
