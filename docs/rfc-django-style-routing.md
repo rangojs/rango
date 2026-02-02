@@ -401,6 +401,28 @@ export const href = router.href;
 
 ### Why Single `.routes()`?
 
+**`.routes()` can only be called once.** Calling it multiple times throws an error:
+
+```typescript
+// ❌ Error: .routes() can only be called once
+router
+  .routes(blogPatterns)
+  .routes(shopPatterns)  // Throws!
+
+// ✅ Correct: Use include() for composition
+router.routes(urls(({ include }) => [
+  include("/blog", blogPatterns),
+  include("/shop", shopPatterns),
+]))
+```
+
+**Why this constraint?**
+
+1. **Single source of truth** - All routes visible in one `urlpatterns` structure
+2. **Explicit composition** - `include()` makes mounting points clear
+3. **No hidden routes** - Can't accidentally add routes in multiple places
+4. **Matches Django** - Django has one `urlpatterns` list per module
+
 With Django-style, handlers are embedded in patterns - no `.map()` needed. Multiple route groups are composed via `include()`:
 
 ```typescript
