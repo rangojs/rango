@@ -423,17 +423,76 @@ path("/blog/<slug:slug>", BlogPost, { name: "post" })
 - Client-side `href()` calls
 - Type generation for client
 
-### Future: Named Routes via Redirect
+### Named Routes on Client via RSC Payload
 
-A potential future enhancement could support named routes on the client through server redirect:
+rsc-router already passes metadata from server to client via the RSC payload (e.g., `themeConfig`, `initialTheme`). The same pattern can be used for route maps.
+
+**Server includes route map in metadata:**
 
 ```typescript
-// Future possibility - client requests by name
-href("blog:post", { slug: "hello" })
-// → Server resolves name → redirects to /blog/hello
+// RscMetadata (existing pattern)
+interface RscMetadata {
+  pathname: string;
+  segments: ResolvedSegment[];
+  themeConfig?: ResolvedThemeConfig;
+  initialTheme?: Theme;
+  // NEW: Route map for client href
+  routeMap?: Record<string, string>;  // name → pattern
+}
 ```
 
-This keeps the manifest server-side while allowing named route usage. Not in current scope.
+**Server populates during SSR:**
+
+```typescript
+// During render, track used routes (or send all)
+metadata.routeMap = {
+  "blog:post": "/blog/:slug",
+  "shop:product": "/shop/product/:id",
+  // Only routes used in this render, or full map
+};
+```
+
+**Client reads from payload:**
+
+```typescript
+// initBrowserApp already does this for theme
+const routeMap = initialPayload.metadata?.routeMap ?? {};
+
+// href checks for named route
+function href(pathOrName, params) {
+  const pattern = pathOrName.startsWith("/")
+    ? pathOrName
+    : routeMap[pathOrName];
+
+  if (!pattern) {
+    throw new Error(`Unknown route: ${pathOrName}`);
+  }
+
+  return interpolate(pattern, params);
+}
+```
+
+**Benefits of this approach:**
+
+| Benefit | Description |
+|---------|-------------|
+| Follows existing pattern | Same as `themeConfig` injection |
+| No static bundle cost | Route map comes via RSC payload |
+| Can be scoped | Only send routes used on page |
+| Fresh per request | Routes can change without redeploy |
+| Works with lazy includes | Server resolves all routes by SSR time |
+
+**Client `href` supports both:**
+
+```typescript
+// Path-based (always works, no lookup needed)
+href("/blog/:slug", { slug: "hello" })
+
+// Named (looks up from injected routeMap)
+href("blog:post", { slug: "hello" })
+```
+
+Both are type-safe; named routes resolve at runtime from the SSR-injected map.
 
 ---
 
