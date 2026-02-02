@@ -319,15 +319,14 @@ async function BlogPost({ ctx }) {
 2. Absolute name (`shop.cart`) → Global lookup
 3. Local name (`index`) → Prepend current name prefix, then lookup
 
-**Global vs Scoped href:**
+**Server vs Client href:**
 
-| Method | Scope | Usage |
-|--------|-------|-------|
-| `router.href` | Global | Requires full name: `router.href("blog.index")` |
-| `ctx.href` | Scoped (server) | Auto-prefixes: `ctx.href("index")` → "blog.index" |
-| `useHref()` | Scoped (client) | Auto-prefixes: `href("index")` → "blog.index" |
+| Method | Environment | Usage |
+|--------|-------------|-------|
+| `ctx.href()` | Server components | Auto-prefixes: `ctx.href("index")` → "blog.index" |
+| `useHref()` | Client components | Auto-prefixes: `href("index")` → "blog.index" |
 
-`router.href` remains for cases where you need global access outside of a scoped context.
+Both support absolute names (`href("shop.cart")`) and path-based (`href("/about")`) as fallbacks.
 
 **Implementation:**
 
@@ -419,7 +418,7 @@ path("/", Dashboard, { name: "index" }, () => [
 - `middleware()` - request middleware
 - `errorBoundary()` - error handling
 - `notFoundBoundary()` - not found handling
-- `intercept()` - modal/overlay patterns
+- `intercept()` - modal/overlay patterns (intercepted routes must be named)
 - `parallel()` - parallel routes
 - Handler context (`ctx`) - all properties
 - Segment rendering and caching internals
@@ -499,7 +498,8 @@ export const urlpatterns = urls(({ path, layout, include }) => [
 | `route({ "name": "/pattern" })` | `path("/pattern", Component, { name })` inside `urls()` |
 | `.routes(prefix, routes).map(handler)` | `.routes(urlpatterns)` with `include()` for composition |
 | Chained `.routes()` calls | Single `.routes()`, use `include()` for multiple groups |
-| `import { href } from ".../client"` | `useHref()` hook (scoped) or `router.href` (global) |
+| `import { href } from ".../client"` | `useHref()` hook (client) or `ctx.href()` (server) |
+| `router.href` export | Removed - use `ctx.href()` or `useHref()` |
 
 **No backwards compatibility** - this is a clean break from rsc-router's API.
 
