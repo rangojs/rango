@@ -60,7 +60,7 @@ urls(callback: (helpers) => RouteDefinition[])
 
 The callback receives all helpers: `path`, `layout`, `loader`, `loading`, `revalidate`, `cache`, `middleware`, `errorBoundary`, `notFoundBoundary`, `intercept`, `parallel`, `include`.
 
-### 2. `createRSCRouter` - Single `.routes()` Call
+### 2. `createRouter` - Single `.routes()` Call
 
 The router now accepts a single `.routes(urlpatterns)` call instead of chained `.routes().map()`:
 
@@ -79,7 +79,7 @@ router.routes(urlpatterns);  // Single call, use include() for composition
 **`.use()` still works for global middleware:**
 
 ```typescript
-const router = createRSCRouter<AppEnv>({
+const router = createRouter<AppEnv>({
   document: Document,
   notFound: NotFoundPage,
 })
@@ -345,10 +345,10 @@ path("/", Dashboard, { name: "index" }, () => [
 ## Router Setup
 
 ```typescript
-import { createRSCRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router/server";
 import { urlpatterns } from "./urls";
 
-export const router = createRSCRouter<AppEnv>({
+export const router = createRouter<AppEnv>({
   document: Document,
   notFound: NotFoundPage,
   defaultErrorBoundary: ErrorPage,
