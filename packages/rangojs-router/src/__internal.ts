@@ -38,7 +38,7 @@ export type {
   InterceptSelectorContext,
   InterceptSegmentsState,
   InterceptWhenFn,
-} from "./route-definition.js";
+} from "./server/context.js";
 
 // ============================================================================
 // Browser State (Internal)
@@ -54,7 +54,19 @@ export type { RscPayload, ReactFormState } from "./rsc/types.js";
  * @internal
  * Internal navigation store interface.
  */
-export type { NavigationStore, NavigationBridge } from "./browser/types.js";
+export type {
+  NavigationStore,
+  NavigationBridge,
+  RscMetadata,
+  ActionResult,
+  InflightAction,
+  NavigationState,
+  TrackedActionState,
+  ActionStateListener,
+  SegmentCache,
+  SegmentState,
+  NavigationUpdate,
+} from "./browser/types.js";
 
 // ============================================================================
 // Handle System (Internal)
@@ -122,14 +134,15 @@ export type { RouteMatchResult } from "./router/pattern-matching.js";
  * @internal
  * Entry data during route traversal.
  */
-export type { EntryData, InterceptEntry, MetricsStore } from "./server/context.js";
+export type {
+  EntryData,
+  InterceptEntry,
+  MetricsStore,
+  PerformanceMetric,
+  EntryCacheConfig,
+  EntryPropCommon,
+  EntryPropDatas,
+  LoaderEntry,
+  EntryPropSegments,
+} from "./server/context.js";
 
-// ============================================================================
-// Revalidation (Internal)
-// ============================================================================
-
-/**
- * @internal
- * Revalidation evaluation context.
- */
-export type { RevalidateParams } from "./types.js";
