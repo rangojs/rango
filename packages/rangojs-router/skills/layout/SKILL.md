@@ -1,6 +1,6 @@
 ---
 name: layout
-description: Define layout routes that wrap child routes in rsc-router
+description: Define layout routes that wrap child routes in @rangojs/router
 argument-hint: [layout-name]
 ---
 
@@ -11,8 +11,8 @@ Layouts wrap child routes and stack vertically from parent to child.
 ## Basic Layout
 
 ```typescript
-import { map } from "rsc-router/server";
-import { Outlet } from "rsc-router";
+import { map } from "@rangojs/router/server";
+import { Outlet } from "@rangojs/router";
 
 // Layout component
 function ShopLayout({ children }: { children: React.ReactNode }) {
@@ -146,7 +146,7 @@ layout(
 ## Layout with Handle Accumulation
 
 ```typescript
-import { createHandle } from "rsc-router";
+import { createHandle } from "@rangojs/router";
 
 export const Breadcrumbs = createHandle<{ label: string; href: string }>();
 
@@ -198,7 +198,7 @@ layout(<MyLayout />, () => [
 
 ```typescript
 // layouts/ShopLayout.tsx
-import { Outlet } from "rsc-router";
+import { Outlet } from "@rangojs/router";
 
 export function ShopLayout({ children }: { children?: React.ReactNode }) {
   return (

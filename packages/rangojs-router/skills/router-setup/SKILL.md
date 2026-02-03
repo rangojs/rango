@@ -9,7 +9,7 @@ argument-hint: [option]
 ## Basic Router Creation
 
 ```typescript
-import { createRSCRouter } from "rsc-router/server";
+import { createRSCRouter } from "@rangojs/router/server";
 import { Document } from "./document";
 
 const router = createRSCRouter({
@@ -51,8 +51,8 @@ interface RSCRouterOptions<TEnv> {
 ## Full Configuration Example
 
 ```typescript
-import { createRSCRouter } from "rsc-router/server";
-import { createMemorySegmentStore } from "rsc-router/cache";
+import { createRSCRouter } from "@rangojs/router/server";
+import { createMemorySegmentStore } from "@rangojs/router/cache";
 import { Document } from "./document";
 
 const cacheStore = createMemorySegmentStore();
@@ -100,7 +100,7 @@ const router = createRSCRouter<AppEnv>({
 Define your app's environment type:
 
 ```typescript
-import type { RouterEnv } from "rsc-router/server";
+import type { RouterEnv } from "@rangojs/router/server";
 
 interface AppBindings {
   DB: D1Database;
@@ -157,7 +157,7 @@ const router = createRSCRouter<AppEnv>({ document: Document })
 ])
 
 // With the map helper function
-import { map } from "rsc-router/server";
+import { map } from "@rangojs/router/server";
 
 // handlers/shop.ts
 export default map<typeof shopRoutes>(({ route, layout, loader }) => [
@@ -264,7 +264,7 @@ Now handlers have type-safe context without imports.
 ### Static cache
 
 ```typescript
-import { createMemorySegmentStore } from "rsc-router/cache";
+import { createMemorySegmentStore } from "@rangojs/router/cache";
 
 const cacheStore = createMemorySegmentStore();
 
@@ -292,7 +292,7 @@ const router = createRSCRouter<AppEnv>({
 ### Cloudflare KV cache
 
 ```typescript
-import { createCFKVSegmentStore } from "rsc-router/cache/cf";
+import { createCFKVSegmentStore } from "@rangojs/router/cache/cf";
 
 const router = createRSCRouter<AppEnv>({
   document: Document,
@@ -364,8 +364,8 @@ const result = await router.previewMatch(request, env);
 
 ```typescript
 // router.ts
-import { createRSCRouter } from "rsc-router/server";
-import { createMemorySegmentStore } from "rsc-router/cache";
+import { createRSCRouter } from "@rangojs/router/server";
+import { createMemorySegmentStore } from "@rangojs/router/cache";
 import { Document } from "./document";
 import { homeRoutes } from "./routes/home";
 import { shopRoutes } from "./routes/shop";

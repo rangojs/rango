@@ -1,12 +1,12 @@
 ---
 name: typesafety
-description: Set up type-safe routes, params, and environment types in rsc-router
+description: Set up type-safe routes, params, and environment types in @rangojs/router
 argument-hint: [setup]
 ---
 
 # Type Safety Setup
 
-rsc-router provides end-to-end type safety for routes, parameters, and environment.
+@rangojs/router provides end-to-end type safety for routes, parameters, and environment.
 
 ## Route Type Registration
 
@@ -14,7 +14,7 @@ Register route types globally for type-safe `href()` and params:
 
 ```typescript
 // router.tsx
-import { createRSCRouter } from "rsc-router/server";
+import { createRSCRouter } from "@rangojs/router/server";
 import { homeRoutes } from "./routes/home";
 import { shopRoutes } from "./routes/shop";
 
@@ -42,7 +42,7 @@ export const href = _router.href;
 
 ```typescript
 // routes/shop.ts
-import { route } from "rsc-router";
+import { route } from "@rangojs/router";
 
 export const shopRoutes = route({
   "shop.index": "/",
@@ -85,7 +85,7 @@ Params are automatically typed based on route patterns:
 
 ```typescript
 // handlers/shop.tsx
-import { map } from "rsc-router/server";
+import { map } from "@rangojs/router/server";
 import type { shopRoutes } from "../routes/shop";
 
 export default map<typeof shopRoutes>(({ route }) => [
@@ -109,7 +109,7 @@ Define your app's environment for type-safe bindings and variables:
 
 ```typescript
 // env.ts
-import type { RouterEnv } from "rsc-router/server";
+import type { RouterEnv } from "@rangojs/router/server";
 
 // Cloudflare bindings
 interface AppBindings {
@@ -258,7 +258,7 @@ Handles have typed data:
 
 ```typescript
 // handles/breadcrumbs.ts
-import { createHandle } from "rsc-router";
+import { createHandle } from "@rangojs/router";
 
 export const Breadcrumbs = createHandle<{ label: string; href: string }>();
 
@@ -281,7 +281,7 @@ function BreadcrumbNav() {
 
 ```typescript
 // location-states.ts
-import { createLocationState } from "rsc-router";
+import { createLocationState } from "@rangojs/router";
 
 export const ProductPreview = createLocationState<{
   name: string;

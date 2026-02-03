@@ -1,12 +1,12 @@
 ---
 name: hooks
-description: Client-side React hooks for navigation, loaders, and state in rsc-router
+description: Client-side React hooks for navigation, loaders, and state in @rangojs/router
 argument-hint: [hook-name]
 ---
 
 # Client-Side React Hooks
 
-All hooks are imported from `rsc-router` or `rsc-router/client`.
+All hooks are imported from `@rangojs/router` or `@rangojs/router/client`.
 
 ## Navigation Hooks
 
@@ -16,7 +16,7 @@ Track navigation state and control navigation:
 
 ```tsx
 "use client";
-import { useNavigation } from "rsc-router";
+import { useNavigation } from "@rangojs/router";
 
 function NavIndicator() {
   const nav = useNavigation();
@@ -48,7 +48,7 @@ Access current URL path and matched route segments:
 
 ```tsx
 "use client";
-import { useSegments } from "rsc-router";
+import { useSegments } from "@rangojs/router";
 
 function Breadcrumbs() {
   const { path, segmentIds, location } = useSegments();
@@ -70,7 +70,7 @@ Track pending state inside a Link component:
 
 ```tsx
 "use client";
-import { Link, useLinkStatus } from "rsc-router/client";
+import { Link, useLinkStatus } from "@rangojs/router/client";
 
 function LoadingIndicator() {
   const { pending } = useLinkStatus();
@@ -92,7 +92,7 @@ Access loader data (strict - data guaranteed):
 
 ```tsx
 "use client";
-import { useLoader } from "rsc-router";
+import { useLoader } from "@rangojs/router";
 import { ProductLoader } from "../loaders/product";
 
 function ProductPrice() {
@@ -114,7 +114,7 @@ Access loader with on-demand fetching (flexible):
 
 ```tsx
 "use client";
-import { useFetchLoader } from "rsc-router";
+import { useFetchLoader } from "@rangojs/router";
 import { SearchLoader } from "../loaders/search";
 
 function SearchResults() {
@@ -153,7 +153,7 @@ Get all loader data in current context:
 
 ```tsx
 "use client";
-import { useLoaderData } from "rsc-router";
+import { useLoaderData } from "@rangojs/router";
 
 function DebugPanel() {
   const allData = useLoaderData();
@@ -171,7 +171,7 @@ Access accumulated handle data from route segments:
 
 ```tsx
 "use client";
-import { useHandle } from "rsc-router";
+import { useHandle } from "@rangojs/router";
 import { Breadcrumbs } from "../handles/breadcrumbs";
 
 function BreadcrumbNav() {
@@ -202,7 +202,7 @@ Track state of server action invocations:
 
 ```tsx
 "use client";
-import { useAction } from "rsc-router";
+import { useAction } from "@rangojs/router";
 import { addToCart } from "../actions/cart";
 
 function AddToCartButton({ productId }: { productId: string }) {
@@ -237,7 +237,7 @@ Read type-safe state from history:
 
 ```tsx
 "use client";
-import { useLocationState, createLocationState } from "rsc-router";
+import { useLocationState, createLocationState } from "@rangojs/router";
 
 // Define typed state
 export const ProductState = createLocationState<{
@@ -259,7 +259,7 @@ function ProductHeader() {
 Pass state through Link:
 
 ```tsx
-import { Link } from "rsc-router/client";
+import { Link } from "@rangojs/router/client";
 import { ProductState } from "./state";
 
 <Link
@@ -278,7 +278,7 @@ Manually control client-side navigation cache:
 
 ```tsx
 "use client";
-import { useClientCache } from "rsc-router";
+import { useClientCache } from "@rangojs/router";
 
 function SaveButton() {
   const { clear } = useClientCache();
@@ -306,7 +306,7 @@ function SaveButton() {
 Render child content in layouts:
 
 ```tsx
-import { Outlet, ParallelOutlet } from "rsc-router";
+import { Outlet, ParallelOutlet } from "@rangojs/router";
 
 function DashboardLayout({ children }: { children?: React.ReactNode }) {
   return (
@@ -329,7 +329,7 @@ Access outlet content programmatically:
 
 ```tsx
 "use client";
-import { useOutlet } from "rsc-router";
+import { useOutlet } from "@rangojs/router";
 
 function ConditionalLayout() {
   const outlet = useOutlet();

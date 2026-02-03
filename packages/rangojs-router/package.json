@@ -93,6 +93,10 @@
   },
   "files": [
     "src",
+    "!src/**/__tests__",
+    "!src/**/__mocks__",
+    "!src/**/*.test.ts",
+    "!src/**/*.test.tsx",
     "dist",
     "skills",
     "CLAUDE.md",

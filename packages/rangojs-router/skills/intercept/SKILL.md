@@ -1,6 +1,6 @@
 ---
 name: intercept
-description: Define intercept routes for modals, slide-overs, and soft navigation patterns in rsc-router
+description: Define intercept routes for modals, slide-overs, and soft navigation patterns in @rangojs/router
 argument-hint: [@slot-name] [route-to-intercept]
 ---
 
@@ -11,8 +11,8 @@ Intercept routes render a different component during soft navigation (client-sid
 ## Basic Intercept
 
 ```typescript
-import { map } from "rsc-router/server";
-import { ParallelOutlet } from "rsc-router";
+import { map } from "@rangojs/router/server";
+import { ParallelOutlet } from "@rangojs/router";
 
 export default map<typeof routes>(({ route, layout, parallel, intercept, loader }) => [
   layout(
@@ -269,7 +269,7 @@ function CloseButton() {
 }
 
 // Or navigate to a specific route
-import { useNavigation } from "rsc-router";
+import { useNavigation } from "@rangojs/router";
 
 function CloseButton() {
   const { navigate } = useNavigation();

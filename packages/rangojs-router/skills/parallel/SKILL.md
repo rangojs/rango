@@ -1,6 +1,6 @@
 ---
 name: parallel
-description: Define parallel routes for multi-column layouts, sidebars, and modal slots in rsc-router
+description: Define parallel routes for multi-column layouts, sidebars, and modal slots in @rangojs/router
 argument-hint: [@slot-name]
 ---
 
@@ -11,8 +11,8 @@ Parallel routes render multiple components simultaneously in named slots.
 ## Basic Parallel Routes
 
 ```typescript
-import { map } from "rsc-router/server";
-import { ParallelOutlet } from "rsc-router";
+import { map } from "@rangojs/router/server";
+import { ParallelOutlet } from "@rangojs/router";
 
 // Handler definition
 export default map<typeof routes>(({ route, layout, parallel }) => [
@@ -187,7 +187,7 @@ parallel(
 ## ParallelOutlet Component
 
 ```typescript
-import { ParallelOutlet } from "rsc-router";
+import { ParallelOutlet } from "@rangojs/router";
 
 function Layout() {
   return (

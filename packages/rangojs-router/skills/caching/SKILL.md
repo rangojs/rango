@@ -1,20 +1,20 @@
 ---
 name: caching
-description: Configure segment caching with memory or Cloudflare KV stores in rsc-router
+description: Configure segment caching with memory or Cloudflare KV stores in @rangojs/router
 argument-hint: [setup]
 ---
 
 # Caching
 
-rsc-router supports segment-level caching with stale-while-revalidate (SWR) for optimal performance.
+@rangojs/router supports segment-level caching with stale-while-revalidate (SWR) for optimal performance.
 
 ## Router Cache Configuration
 
 Configure caching in `createRSCRouter`:
 
 ```typescript
-import { createRSCRouter } from "rsc-router/server";
-import { MemorySegmentCacheStore } from "rsc-router/cache";
+import { createRSCRouter } from "@rangojs/router/server";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 
 const store = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 300 }
@@ -51,7 +51,7 @@ const router = createRSCRouter<AppEnv>({
 ### Memory Store (Development)
 
 ```typescript
-import { MemorySegmentCacheStore } from "rsc-router/cache";
+import { MemorySegmentCacheStore } from "@rangojs/router/cache";
 
 const store = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 300 }
@@ -69,7 +69,7 @@ Features:
 ### Cloudflare Cache Store (Production)
 
 ```typescript
-import { CFCacheStore } from "rsc-router/cache/cf";
+import { CFCacheStore } from "@rangojs/router/cache/cf";
 
 const store = new CFCacheStore({
   namespace: "rsc-cache",              // Optional, uses caches.default
@@ -115,7 +115,7 @@ interface CacheOptions {
 Use `cache()` in handlers to set cache boundaries:
 
 ```typescript
-import { map } from "rsc-router/server";
+import { map } from "@rangojs/router/server";
 
 export default map<typeof routes>(({ route, layout, cache }) => [
   // Cache entire layout and children
@@ -258,8 +258,8 @@ await store.invalidateTag("products");
 
 ```typescript
 // router.tsx
-import { createRSCRouter } from "rsc-router/server";
-import { CFCacheStore } from "rsc-router/cache/cf";
+import { createRSCRouter } from "@rangojs/router/server";
+import { CFCacheStore } from "@rangojs/router/cache/cf";
 import packageJson from "./package.json";
 
 const router = createRSCRouter<AppEnv>({

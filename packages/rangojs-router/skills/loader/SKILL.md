@@ -11,7 +11,7 @@ Loaders fetch data for routes and make it available to handlers and client compo
 ## Creating a Loader
 
 ```typescript
-import { createLoader, notFound } from "rsc-router/server";
+import { createLoader, notFound } from "@rangojs/router/server";
 
 export const ProductLoader = createLoader(async (ctx) => {
   const product = await db.products.findUnique({
@@ -52,7 +52,7 @@ export const MyLoader = createLoader(async (ctx) => {
 ## Registering Loaders on Routes
 
 ```typescript
-import { map } from "rsc-router/server";
+import { map } from "@rangojs/router/server";
 import { ProductLoader } from "../loaders/product";
 
 export default map<typeof routes>(({ route, loader, loading }) => [
@@ -166,7 +166,7 @@ revalidate(({ actionId, defaultShouldRevalidate }) => {
 
 ```tsx
 "use client";
-import { useLoader } from "rsc-router";
+import { useLoader } from "@rangojs/router";
 import { ProductLoader } from "../loaders/product";
 
 function ProductPrice() {
@@ -180,7 +180,7 @@ function ProductPrice() {
 
 ```tsx
 "use client";
-import { useFetchLoader } from "rsc-router";
+import { useFetchLoader } from "@rangojs/router";
 import { SearchLoader } from "../loaders/search";
 
 function SearchResults() {

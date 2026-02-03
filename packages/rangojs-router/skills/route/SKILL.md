@@ -1,6 +1,6 @@
 ---
 name: route
-description: Define basic routes and route handlers in rsc-router
+description: Define basic routes and route handlers in @rangojs/router
 argument-hint: [route-name]
 ---
 
@@ -11,7 +11,7 @@ argument-hint: [route-name]
 Define type-safe routes using the `route()` function:
 
 ```typescript
-import { route } from "rsc-router";
+import { route } from "@rangojs/router";
 
 export const routes = route({
   index: "/",
@@ -45,7 +45,7 @@ export const routes = route({
 Use the `map()` function to define handlers:
 
 ```typescript
-import { map } from "rsc-router/server";
+import { map } from "@rangojs/router/server";
 import type { routes } from "../routes.js";
 
 export default map<typeof routes>(({ route, loader, loading, revalidate }) => [
@@ -100,7 +100,7 @@ route("product", (ctx) => {
 Register routes with the router:
 
 ```typescript
-import { createRSCRouter } from "rsc-router/server";
+import { createRSCRouter } from "@rangojs/router/server";
 import { routes } from "./routes.js";
 
 const router = createRSCRouter<AppEnv>({

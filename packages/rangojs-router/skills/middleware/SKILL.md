@@ -1,6 +1,6 @@
 ---
 name: middleware
-description: Define middleware for authentication, logging, and request processing in rsc-router
+description: Define middleware for authentication, logging, and request processing in @rangojs/router
 argument-hint: [middleware-name]
 ---
 
@@ -14,7 +14,7 @@ Register middleware on the router with `.use()`:
 
 ```typescript
 // router.tsx
-import { createRSCRouter } from "rsc-router/server";
+import { createRSCRouter } from "@rangojs/router/server";
 
 const router = createRSCRouter<AppEnv>({ document: Document })
   // Global middleware (runs for ALL routes)
@@ -98,7 +98,7 @@ Result:
 Register middleware within route handlers using the `middleware()` helper:
 
 ```typescript
-import { map } from "rsc-router/server";
+import { map } from "@rangojs/router/server";
 
 export default map<typeof routes>(({ route, middleware }) => [
   // Handler-wide middleware
@@ -177,7 +177,7 @@ middleware(async (ctx, next) => {
 
 ```typescript
 // middleware/auth.ts
-import { redirect } from "rsc-router/server";
+import { redirect } from "@rangojs/router/server";
 
 export const authMiddleware = async (ctx, next) => {
   const session = ctx.request.headers.get("Authorization");
@@ -256,7 +256,7 @@ export default map<typeof routes>(({ route, layout, middleware }) => [
 Middleware specific to a loader:
 
 ```typescript
-import { createLoader } from "rsc-router/server";
+import { createLoader } from "@rangojs/router/server";
 
 export const UserProfileLoader = createLoader(
   async (ctx) => {
@@ -374,7 +374,7 @@ export const rateLimitMiddleware = async (ctx, next) => {
 Use `RouteMiddlewareFn` for type-safe params:
 
 ```typescript
-import type { RouteMiddlewareFn } from "rsc-router";
+import type { RouteMiddlewareFn } from "@rangojs/router";
 import type { shopRoutes } from "./routes/shop";
 
 // Middleware with typed params from route definition
