@@ -1,365 +1,219 @@
 ---
 name: loader
 description: Define data loaders for fetching data in routes with createLoader
-argument-hint: [loader-name]
+argument-hint: [name]
 ---
 
-# Data Loaders
+# Data Loaders with loader()
 
-Loaders fetch data for routes and make it available to handlers and client components.
+Loaders fetch data on the server and stream it to the client.
 
 ## Creating a Loader
 
 ```typescript
-import { createLoader, notFound } from "@rangojs/router/server";
+import { createLoader } from "@rangojs/router/server";
 
-export const ProductLoader = createLoader(async (ctx) => {
-  const product = await db.products.findUnique({
-    where: { slug: ctx.params.slug },
-  });
+export const ProductLoader = createLoader("product", async (ctx) => {
+  const product = await ctx.env.Bindings.DB
+    .prepare("SELECT * FROM products WHERE slug = ?")
+    .bind(ctx.params.slug)
+    .first();
 
-  if (!product) {
-    throw notFound("Product not found");
-  }
-
-  return product;
+  return { product };
 });
 ```
 
-## Loader Context
-
-The loader receives a context with:
+## Using Loaders in Routes
 
 ```typescript
-export const MyLoader = createLoader(async (ctx) => {
-  ctx.params;      // Route parameters { id: string, slug: string }
-  ctx.query;       // Query string parameters
-  ctx.url;         // Full URL object
-  ctx.pathname;    // Current path
-  ctx.method;      // HTTP method
-  ctx.request;     // Raw Request object
+import { urls } from "@rangojs/router/server";
+import { ProductLoader } from "./loaders/product";
 
-  // Variables from middleware
-  const user = ctx.get("user");
-
-  // Use other loaders
-  const related = await ctx.use(RelatedLoader);
-
-  return { user, related };
-});
-```
-
-## Registering Loaders on Routes
-
-```typescript
-import { map } from "@rangojs/router/server";
-import { ProductLoader } from "../loaders/product";
-
-export default map<typeof routes>(({ route, loader, loading }) => [
-  route("products.detail", async (ctx) => {
-    const product = await ctx.use(ProductLoader);
-    return <ProductPage product={product} />;
-  }, () => [
+export const urlpatterns = urls(({ path, loader }) => [
+  path("/product/:slug", ProductPage, { name: "product" }, () => [
     loader(ProductLoader),
-    loading(<ProductSkeleton />),
   ]),
 ]);
 ```
 
-## Loader with Middleware
+## Consuming Loader Data
 
-Add middleware specific to a loader:
-
-```typescript
-export const UserProfileLoader = createLoader(
-  async (ctx) => {
-    const userId = ctx.get("validatedUserId");
-    return db.users.findUnique({ where: { id: userId } });
-  },
-  {
-    middleware: [
-      async (ctx, next) => {
-        const userId = ctx.params.id;
-
-        // Validate user ID
-        if (!isValidUUID(userId)) {
-          throw new Error("Invalid user ID");
-        }
-
-        ctx.set("validatedUserId", userId);
-        await next();
-      },
-    ],
-  }
-);
-```
-
-## Using Loaders in Handlers
+### In Server Components
 
 ```typescript
-route("products.detail", async (ctx) => {
-  // Fetch loader data
-  const product = await ctx.use(ProductLoader);
+import { useLoader } from "@rangojs/router/server";
+import { ProductLoader } from "./loaders/product";
 
-  // Multiple loaders
-  const [product, reviews, related] = await Promise.all([
-    ctx.use(ProductLoader),
-    ctx.use(ReviewsLoader),
-    ctx.use(RelatedProductsLoader),
-  ]);
-
-  return (
-    <ProductPage
-      product={product}
-      reviews={reviews}
-      related={related}
-    />
-  );
-}, () => [
-  loader(ProductLoader),
-  loader(ReviewsLoader),
-  loader(RelatedProductsLoader),
-])
-```
-
-## Loader Revalidation
-
-Control when loaders refetch:
-
-```typescript
-route("products.detail", ProductHandler, () => [
-  loader(ProductLoader),
-
-  // Revalidate when params change
-  revalidate(({ currentParams, nextParams }) =>
-    currentParams.slug !== nextParams.slug
-  ),
-
-  // Revalidate on specific actions
-  revalidate(({ actionId }) =>
-    actionId?.includes("updateProduct") ?? false
-  ),
-])
-```
-
-### Soft vs Hard Revalidation
-
-```typescript
-// Hard decision - stops evaluation
-revalidate(({ currentParams, nextParams }) => {
-  return currentParams.id !== nextParams.id; // boolean
-});
-
-// Soft decision - continues to next revalidator
-revalidate(({ actionId, defaultShouldRevalidate }) => {
-  if (actionId?.includes("cart")) {
-    return true; // Hard: must revalidate
-  }
-  // Soft: defer to next revalidator
-  return { defaultShouldRevalidate };
-});
-```
-
-## Client-Side Loader Access
-
-### useLoader() - Strict access
-
-```tsx
-"use client";
-import { useLoader } from "@rangojs/router";
-import { ProductLoader } from "../loaders/product";
-
-function ProductPrice() {
-  // Data guaranteed (throws if not in context)
-  const { data } = useLoader(ProductLoader);
-  return <span>${data.price}</span>;
+async function ProductPage() {
+  const { product } = await useLoader(ProductLoader);
+  return <h1>{product.name}</h1>;
 }
 ```
 
-### useFetchLoader() - Flexible access
+### In Client Components
 
-```tsx
+```typescript
 "use client";
-import { useFetchLoader } from "@rangojs/router";
-import { SearchLoader } from "../loaders/search";
+import { useLoaderData } from "@rangojs/router/client";
+import { ProductLoader } from "./loaders/product";
 
-function SearchResults() {
-  const { data, load, isLoading } = useFetchLoader(SearchLoader);
-
-  const handleSearch = async (query: string) => {
-    await load({ params: { query } });
-  };
-
-  return (
-    <div>
-      <input onChange={(e) => handleSearch(e.target.value)} />
-      {isLoading && <Spinner />}
-      {data?.results.map(r => <Result key={r.id} {...r} />)}
-    </div>
-  );
+function ProductDetails() {
+  const { product } = useLoaderData(ProductLoader);
+  return <div>{product.description}</div>;
 }
 ```
 
-## Async/Streaming Loaders
+## Loader Context
 
-Return promises for streaming:
+Loaders receive the same context as route handlers:
 
 ```typescript
-export const RecommendationsLoader = createLoader(async (ctx) => {
-  return {
-    // Immediate data
-    product: await db.products.findUnique({ where: { id: ctx.params.id } }),
+export const ProductLoader = createLoader("product", async (ctx) => {
+  // URL params
+  const { slug } = ctx.params;
 
-    // Streams while other content renders
-    recommendations: db.recommendations.findAsync(ctx.params.id),
-  };
+  // Query params
+  const variant = ctx.url.searchParams.get("variant");
+
+  // Environment (DB, KV, etc.)
+  const db = ctx.env.Bindings.DB;
+
+  // Request headers
+  const auth = ctx.request.headers.get("Authorization");
+
+  // Variables set by middleware
+  const user = ctx.env.Variables.user;
+
+  return { product: await fetchProduct(slug) };
 });
 ```
 
-## Loader Caching
+## Loader with Children
+
+Add caching or revalidation to specific loaders:
 
 ```typescript
-route("products.detail", ProductHandler, () => [
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  // Cached loader
   loader(ProductLoader, () => [
-    // Cache this loader's results
-    revalidate(({ currentParams, nextParams }) =>
-      currentParams.slug !== nextParams.slug
-    ),
+    cache({ ttl: 300 }),
+  ]),
+
+  // Loader with revalidation control
+  loader(RelatedProductsLoader, () => [
+    revalidate(() => false),  // Never revalidate
+  ]),
+
+  // Loader that revalidates after cart actions
+  loader(CartLoader, () => [
+    revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
   ]),
 ])
+```
 
-// Or use cache boundaries
-cache({ ttl: 60, swr: 300 }, () => [
+## Multiple Loaders
+
+Routes can have multiple loaders that run in parallel:
+
+```typescript
+path("/product/:slug", ProductPage, { name: "product" }, () => [
   loader(ProductLoader),
-  route("products.detail", ProductHandler),
+  loader(RelatedProductsLoader),
+  loader(ReviewsLoader),
 ])
 ```
 
-## Loader Error Handling
+## Layout Loaders
+
+Loaders on layouts are shared by all child routes:
 
 ```typescript
-export const ProductLoader = createLoader(async (ctx) => {
-  try {
-    const product = await db.products.findUnique({
-      where: { slug: ctx.params.slug },
-    });
+layout(<ShopLayout />, () => [
+  // These loaders are available to all shop routes
+  loader(CartLoader),
+  loader(CategoriesLoader),
 
-    if (!product) {
-      throw notFound("Product not found");
-    }
+  path("/shop", ShopIndex, { name: "index" }),
+  path("/shop/product/:slug", ProductPage, { name: "product" }),
+])
+```
 
-    return product;
-  } catch (error) {
-    if (error instanceof DatabaseError) {
-      throw new Error("Failed to load product");
-    }
-    throw error;
+## Streaming with Suspense
+
+Loaders stream data. Use Suspense for loading states:
+
+```typescript
+// In route definition
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  loader(ProductLoader),
+  loading(<ProductSkeleton />),  // Shows while loader streams
+])
+
+// Or in component
+function ProductPage() {
+  return (
+    <Suspense fallback={<ProductSkeleton />}>
+      <ProductDetails />
+    </Suspense>
+  );
+}
+```
+
+## Complete Example
+
+```typescript
+// loaders/shop.ts
+import { createLoader } from "@rangojs/router/server";
+
+export const ProductLoader = createLoader("product", async (ctx) => {
+  const product = await ctx.env.Bindings.DB
+    .prepare("SELECT * FROM products WHERE slug = ?")
+    .bind(ctx.params.slug)
+    .first();
+
+  if (!product) {
+    throw new Response("Product not found", { status: 404 });
   }
+
+  return { product };
 });
 
-// Handle in route
-route("products.detail", ProductHandler, () => [
-  loader(ProductLoader),
-  errorBoundary(({ error, reset }) => (
+export const CartLoader = createLoader("cart", async (ctx) => {
+  const user = ctx.env.Variables.user;
+  if (!user) return { cart: null };
+
+  const cart = await ctx.env.Bindings.KV.get(`cart:${user.id}`, "json");
+  return { cart };
+});
+
+// urls.tsx
+export const urlpatterns = urls(({ path, layout, loader, loading, cache, revalidate }) => [
+  layout(<ShopLayout />, () => [
+    // Shared cart loader for all shop routes
+    loader(CartLoader, () => [
+      revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
+    ]),
+
+    path("/shop/product/:slug", ProductPage, { name: "product" }, () => [
+      loader(ProductLoader, () => [cache({ ttl: 60 })]),
+      loading(<ProductSkeleton />),
+    ]),
+  ]),
+]);
+
+// pages/product.tsx
+import { useLoader } from "@rangojs/router/server";
+import { ProductLoader, CartLoader } from "./loaders/shop";
+
+async function ProductPage() {
+  const { product } = await useLoader(ProductLoader);
+  const { cart } = await useLoader(CartLoader);
+
+  return (
     <div>
-      <p>Error loading product: {error.message}</p>
-      <button onClick={reset}>Retry</button>
+      <h1>{product.name}</h1>
+      <AddToCartButton productId={product.id} inCart={cart?.items.includes(product.id)} />
     </div>
-  )),
-])
-```
-
-## Parallel Slot Loaders
-
-```typescript
-parallel(
-  {
-    "@sidebar": async (ctx) => {
-      const categories = await ctx.use(CategoriesLoader);
-      return <CategorySidebar categories={categories} />;
-    },
-  },
-  () => [
-    loader(CategoriesLoader),
-    loading(<SidebarSkeleton />),
-    revalidate(({ actionId }) => actionId?.includes("category") ?? false),
-  ]
-)
-```
-
-## Loader Composition
-
-```typescript
-// Base loader
-export const UserLoader = createLoader(async (ctx) => {
-  return db.users.findUnique({ where: { id: ctx.get("userId") } });
-});
-
-// Composed loader
-export const UserWithOrdersLoader = createLoader(async (ctx) => {
-  const user = await ctx.use(UserLoader);
-  const orders = await db.orders.findMany({
-    where: { userId: user.id },
-  });
-
-  return { user, orders };
-});
-```
-
-## Loader Type Safety
-
-```typescript
-// Loader type is inferred
-export const ProductLoader = createLoader(async (ctx) => {
-  return { id: "1", name: "Widget", price: 99 };
-});
-
-// In handler - type is { id: string; name: string; price: number }
-const product = await ctx.use(ProductLoader);
-
-// In client - same type
-const { data } = useLoader(ProductLoader);
-// data: { id: string; name: string; price: number }
-```
-
-## Common Patterns
-
-### List with pagination
-
-```typescript
-export const ProductListLoader = createLoader(async (ctx) => {
-  const page = parseInt(ctx.query.page ?? "1");
-  const limit = 20;
-
-  const [products, total] = await Promise.all([
-    db.products.findMany({
-      skip: (page - 1) * limit,
-      take: limit,
-    }),
-    db.products.count(),
-  ]);
-
-  return {
-    products,
-    pagination: {
-      page,
-      totalPages: Math.ceil(total / limit),
-      total,
-    },
-  };
-});
-```
-
-### Conditional loading
-
-```typescript
-export const AdminDataLoader = createLoader(async (ctx) => {
-  const user = ctx.get("user");
-
-  if (!user || user.role !== "admin") {
-    return null;
-  }
-
-  return db.adminStats.get();
-});
+  );
+}
 ```

@@ -15,50 +15,43 @@ Register route types globally for type-safe `href()` and params:
 ```typescript
 // router.tsx
 import { createRSCRouter } from "@rangojs/router/server";
-import { homeRoutes } from "./routes/home";
-import { shopRoutes } from "./routes/shop";
+import { urlpatterns } from "./urls";
 
-const _router = createRSCRouter<AppEnv>({ document: Document })
-  .routes(homeRoutes)
-  .map(() => import("./handlers/home"))
-  .routes("/shop", shopRoutes)
-  .map(() => import("./handlers/shop"));
+const router = createRSCRouter<AppEnv>({
+  document: Document,
+  urls: urlpatterns,
+});
 
-// Extract accumulated route types
-type AppRoutes = typeof _router.routeMap;
+// Extract route types for href()
+export const href = router.href;
 
 // Register globally via module augmentation
+type AppRoutes = typeof router.routeMap;
+
 declare global {
   namespace RSCRouter {
     interface RegisteredRoutes extends AppRoutes {}
   }
 }
 
-export default _router;
-export const href = _router.href;
+export default router;
 ```
 
-## Route Definition with Type-Safe Keys
+## Route Definition with Type-Safe Names
 
 ```typescript
-// routes/shop.ts
-import { route } from "@rangojs/router";
+// urls.tsx
+import { urls } from "@rangojs/router/server";
 
-export const shopRoutes = route({
-  "shop.index": "/",
-  "shop.products": "/products",
-  "shop.product": "/products/:slug",
-  "shop.cart": "/cart",
-  "shop.checkout": "/checkout/:step?",
-});
+export const urlpatterns = urls(({ path, layout }) => [
+  path("/", HomePage, { name: "home" }),
+  path("/products", ProductsPage, { name: "products" }),
+  path("/product/:slug", ProductPage, { name: "product" }),
+  path("/cart", CartPage, { name: "cart" }),
+  path("/checkout/:step?", CheckoutPage, { name: "checkout" }),
+]);
 
-// Type is inferred:
-// {
-//   "shop.index": "/",
-//   "shop.products": "/products",
-//   "shop.product": "/products/:slug",
-//   ...
-// }
+// Route names are inferred from the { name } option
 ```
 
 ## Type-Safe href()
@@ -68,39 +61,15 @@ After registration, `href()` has full autocomplete:
 ```typescript
 import { href } from "./router";
 
-// Autocomplete shows all registered routes
-href("shop.index");                          // "/shop"
-href("shop.products");                       // "/shop/products"
-href("shop.product", { slug: "widget" });    // "/shop/products/widget"
+// Autocomplete shows all registered route names
+href("home");                          // "/"
+href("products");                      // "/products"
+href("product", { slug: "widget" });   // "/product/widget"
 
 // TypeScript errors for:
-href("invalid.route");                       // Error: not a valid route
-href("shop.product");                        // Error: missing required param 'slug'
-href("shop.product", { wrong: "param" });    // Error: 'wrong' not in params
-```
-
-## Type-Safe Params in Handlers
-
-Params are automatically typed based on route patterns:
-
-```typescript
-// handlers/shop.tsx
-import { map } from "@rangojs/router/server";
-import type { shopRoutes } from "../routes/shop";
-
-export default map<typeof shopRoutes>(({ route }) => [
-  // ctx.params is typed as { slug: string }
-  route("shop.product", (ctx) => {
-    const { slug } = ctx.params;  // TypeScript knows slug exists
-    return <ProductPage slug={slug} />;
-  }),
-
-  // ctx.params is typed as { step?: string }
-  route("shop.checkout", (ctx) => {
-    const step = ctx.params.step ?? "shipping";  // Optional param
-    return <CheckoutPage step={step} />;
-  }),
-]);
+href("invalid");                       // Error: not a valid route name
+href("product");                       // Error: missing required param 'slug'
+href("product", { wrong: "param" });   // Error: 'wrong' not in params
 ```
 
 ## Environment Type Setup
@@ -119,7 +88,7 @@ interface AppBindings {
   AI: Ai;
 }
 
-// Variables set by middleware (ctx.set/ctx.get)
+// Variables set by middleware
 interface AppVariables {
   user?: { id: string; email: string; role: string };
   requestId?: string;
@@ -136,26 +105,23 @@ export type AppEnv = RouterEnv<AppBindings, AppVariables>;
 // router.tsx
 import type { AppEnv } from "./env";
 
-const router = createRSCRouter<AppEnv>({ document: Document })
-  // ...
+const router = createRSCRouter<AppEnv>({
+  document: Document,
+  urls: urlpatterns,
+});
 
-// middleware - typed ctx.set/ctx.get
-const authMiddleware = async (ctx: MiddlewareContext<AppEnv>, next) => {
-  ctx.set("user", { id: "123", email: "user@example.com", role: "admin" });
+// middleware - typed ctx.env.Variables
+import { createMiddleware } from "@rangojs/router/server";
+
+export const authMiddleware = createMiddleware(async (ctx, next) => {
+  ctx.env.Variables.user = { id: "123", email: "user@example.com", role: "admin" };
   await next();
-};
-
-// handlers - typed access
-route("dashboard", (ctx) => {
-  const user = ctx.get("user");  // { id: string; email: string; role: string } | undefined
-  const db = ctx.env.Bindings.DB;  // D1Database
-  return <Dashboard user={user} />;
 });
 
 // loaders - typed context
-export const UserLoader = createLoader<AppEnv>(async (ctx) => {
-  const db = ctx.env.Bindings.DB;
-  const userId = ctx.get("user")?.id;
+export const UserLoader = createLoader("user", async (ctx) => {
+  const db = ctx.env.Bindings.DB;  // D1Database
+  const userId = ctx.env.Variables.user?.id;
   return db.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
 });
 ```
@@ -177,50 +143,13 @@ declare global {
 Now handlers have typed context without explicit imports:
 
 ```typescript
-// handlers/dashboard.tsx - no type imports needed
-export default map(({ route }) => [
-  route("dashboard", (ctx) => {
-    // ctx.get("user") is typed from global Env
-    // ctx.params is typed from global RegisteredRoutes
-    const user = ctx.get("user");
-    return <Dashboard user={user} />;
-  }),
-]);
-```
-
-## Route Key Conflict Detection
-
-TypeScript detects duplicate keys with different URL patterns:
-
-```typescript
-// This causes a type error:
-const router = createRSCRouter<AppEnv>({ document: Document })
-  .routes({ index: "/" })
-  .map(() => import("./home"))
-  .routes({ index: "/other" })  // Error! 'index' already exists with different pattern
-  .map(() => import("./other"));
-
-// Error message:
-// Property 'map' does not exist on type '{
-//   __error: "Route key conflict! Keys [index] already exist with different URL patterns.";
-//   hint: "Use unique key names for each route definition.";
-// }'
-```
-
-### Avoiding Conflicts
-
-Use namespaced keys:
-
-```typescript
-// Good - unique keys
-export const homeRoutes = route({ "home.index": "/" });
-export const blogRoutes = route({ "blog.index": "/", "blog.post": "/:slug" });
-
-// router.tsx
-.routes(homeRoutes)
-.map(() => import("./home"))
-.routes("/blog", blogRoutes)  // Keys stay: blog.index, blog.post
-.map(() => import("./blog"))  // URLs become: /blog/, /blog/:slug
+// In loaders
+export const DashboardLoader = createLoader("dashboard", async (ctx) => {
+  // ctx.env.Variables.user is typed from global Env
+  // ctx.params is typed from route pattern
+  const user = ctx.env.Variables.user;
+  return { user };
+});
 ```
 
 ## Loader Type Safety
@@ -229,7 +158,7 @@ Loaders have typed return values:
 
 ```typescript
 // loaders/product.ts
-export const ProductLoader = createLoader(async (ctx) => {
+export const ProductLoader = createLoader("product", async (ctx) => {
   return {
     id: ctx.params.slug,
     name: "Widget",
@@ -237,18 +166,23 @@ export const ProductLoader = createLoader(async (ctx) => {
   };
 });
 
-// In handler - type is inferred
-route("shop.product", async (ctx) => {
-  const product = await ctx.use(ProductLoader);
+// In server component - type is inferred
+import { useLoader } from "@rangojs/router/server";
+
+async function ProductPage() {
+  const product = await useLoader(ProductLoader);
   // product: { id: string; name: string; price: number }
-  return <ProductPage product={product} />;
-});
+  return <h1>{product.name}</h1>;
+}
 
 // In client component - same type
+"use client";
+import { useLoaderData } from "@rangojs/router/client";
+
 function ProductPrice() {
-  const { data } = useLoader(ProductLoader);
-  // data: { id: string; name: string; price: number }
-  return <span>${data.price}</span>;
+  const { product } = useLoaderData(ProductLoader);
+  // product: { id: string; name: string; price: number }
+  return <span>${product.price}</span>;
 }
 ```
 
@@ -262,13 +196,14 @@ import { createHandle } from "@rangojs/router";
 
 export const Breadcrumbs = createHandle<{ label: string; href: string }>();
 
-// In handler - typed push
-route("shop.product", (ctx) => {
-  const push = ctx.use(Breadcrumbs);
-  push({ label: "Products", href: "/shop/products" });  // Typed
-  push({ wrong: "data" });  // Error!
-  return <ProductPage />;
-});
+// In route definition - use handle() DSL
+import { urls } from "@rangojs/router/server";
+
+export const urlpatterns = urls(({ path, handle }) => [
+  path("/shop/product/:slug", ProductPage, { name: "product" }, () => [
+    handle(Breadcrumbs, { label: "Products", href: "/shop/products" }),
+  ]),
+]);
 
 // In client - typed array
 function BreadcrumbNav() {
@@ -291,7 +226,7 @@ export const ProductPreview = createLocationState<{
 
 // Passing state through Link
 <Link
-  to={href("shop.product", { slug: "widget" })}
+  to={href("product", { slug: "widget" })}
   state={[ProductPreview({ name: "Widget", price: 99, image: "/img.jpg" })]}
 >
   View Product
@@ -315,18 +250,27 @@ function ProductHeader() {
 // 1. env.ts - Environment types
 export type AppEnv = RouterEnv<AppBindings, AppVariables>;
 
-// 2. routes/*.ts - Route definitions
-export const shopRoutes = route({
-  "shop.index": "/",
-  "shop.product": "/products/:slug",
-});
+// 2. urls.tsx - Route definitions with names
+import { urls } from "@rangojs/router/server";
+
+export const urlpatterns = urls(({ path, layout, loader }) => [
+  path("/", HomePage, { name: "home" }),
+
+  layout(<ShopLayout />, () => [
+    path("/shop", ShopIndex, { name: "shop" }),
+    path("/shop/product/:slug", ProductPage, { name: "product" }, () => [
+      loader(ProductLoader),
+    ]),
+  ]),
+]);
 
 // 3. router.tsx - Registration
-const _router = createRSCRouter<AppEnv>({ document: Document })
-  .routes(shopRoutes)
-  .map(() => import("./handlers/shop"));
+const router = createRSCRouter<AppEnv>({
+  document: Document,
+  urls: urlpatterns,
+});
 
-type AppRoutes = typeof _router.routeMap;
+type AppRoutes = typeof router.routeMap;
 
 declare global {
   namespace RSCRouter {
@@ -335,18 +279,17 @@ declare global {
   }
 }
 
-export default _router;
-export const href = _router.href;
+export default router;
+export const href = router.href;
 
-// 4. handlers/*.tsx - Type-safe handlers
-export default map<typeof shopRoutes>(({ route }) => [
-  route("shop.product", (ctx) => {
-    // ctx.params: { slug: string }
-    // ctx.get("user"): User | undefined
-    // ctx.env.Bindings.DB: D1Database
-  }),
-]);
+// 4. loaders/*.ts - Type-safe loaders
+export const ProductLoader = createLoader("product", async (ctx) => {
+  // ctx.params: { slug: string }
+  // ctx.env.Variables.user: User | undefined
+  // ctx.env.Bindings.DB: D1Database
+  return { product: await fetchProduct(ctx.params.slug) };
+});
 
 // 5. components/*.tsx - Type-safe client code
-<Link to={href("shop.product", { slug: "widget" })}>Widget</Link>
+<Link to={href("product", { slug: "widget" })}>Widget</Link>
 ```

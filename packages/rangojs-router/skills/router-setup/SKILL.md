@@ -9,309 +9,100 @@ argument-hint: [option]
 ## Basic Router Creation
 
 ```typescript
+// src/router.tsx
 import { createRSCRouter } from "@rangojs/router/server";
 import { Document } from "./document";
+import { urlpatterns } from "./urls";
 
 const router = createRSCRouter({
   document: Document,
+  urls: urlpatterns,
 });
 
 export default router;
+```
+
+## URL Patterns (Django-style)
+
+```typescript
+// src/urls.tsx
+import { urls } from "@rangojs/router/server";
+import { HomePage } from "./pages/home";
+import { AboutPage } from "./pages/about";
+import { ProductPage } from "./pages/product";
+import { RootLayout } from "./layouts/RootLayout";
+
+export const urlpatterns = urls(({ path, layout, loader, loading }) => [
+  path("/", HomePage, { name: "home" }),
+  path("/about", AboutPage, { name: "about" }),
+
+  layout(<RootLayout />, () => [
+    path("/product/:slug", ProductPage, { name: "product" }, () => [
+      loader(ProductLoader),
+      loading(<ProductSkeleton />),
+    ]),
+  ]),
+]);
+```
+
+## The urls() DSL
+
+The `urls()` function provides a callback with all available DSL functions:
+
+```typescript
+urls(({
+  path,        // Define a route
+  layout,      // Wrap routes in a layout
+  parallel,    // Define parallel routes (slots)
+  loader,      // Add data loader
+  loading,     // Add loading skeleton
+  cache,       // Configure caching
+  middleware,  // Add middleware
+  revalidate,  // Control revalidation
+  intercept,   // Intercept routes for modals
+  when,        // Conditional rendering
+}) => [
+  // Route definitions here
+]);
 ```
 
 ## Router Options
 
 ```typescript
 interface RSCRouterOptions<TEnv> {
+  // URL patterns from urls() function
+  urls: UrlPatterns;
+
   // Document component wrapping entire app
   document?: ComponentType<{ children: ReactNode }>;
 
-  // Enable performance metrics (console + Server-Timing header)
+  // Enable performance metrics
   debugPerformance?: boolean;
 
-  // Default error boundary fallback
+  // Default error boundary
   defaultErrorBoundary?: ReactNode | ErrorBoundaryHandler;
 
-  // Default not-found boundary (for notFound() calls)
+  // Default not-found boundary
   defaultNotFoundBoundary?: ReactNode | NotFoundBoundaryHandler;
 
-  // Component for routes with no match (404)
+  // Component for 404 routes
   notFound?: ReactNode | ((props: { pathname: string }) => ReactNode);
 
   // Error logging callback
   onError?: OnErrorCallback<TEnv>;
 
-  // Cache configuration
-  cache?:
-    | { store: SegmentCacheStore; enabled?: boolean }
-    | ((env: TEnv) => { store: SegmentCacheStore; enabled?: boolean });
+  // Global cache configuration
+  cache?: CacheConfig<TEnv>;
 }
-```
-
-## Full Configuration Example
-
-```typescript
-import { createRSCRouter } from "@rangojs/router/server";
-import { createMemorySegmentStore } from "@rangojs/router/cache";
-import { Document } from "./document";
-
-const cacheStore = createMemorySegmentStore();
-
-const router = createRSCRouter<AppEnv>({
-  document: Document,
-  debugPerformance: process.env.NODE_ENV === "development",
-
-  cache: {
-    store: cacheStore,
-    enabled: true,
-  },
-
-  defaultErrorBoundary: ({ error, reset }) => (
-    <div className="error">
-      <h2>Something went wrong</h2>
-      <p>{error.message}</p>
-      <button onClick={reset}>Try again</button>
-    </div>
-  ),
-
-  defaultNotFoundBoundary: ({ notFound }) => (
-    <div className="not-found">
-      <h2>Not Found</h2>
-      <p>{notFound.message}</p>
-    </div>
-  ),
-
-  notFound: ({ pathname }) => (
-    <div className="404">
-      <h1>404</h1>
-      <p>Page not found: {pathname}</p>
-    </div>
-  ),
-
-  onError: (error, ctx) => {
-    console.error("Router error:", error);
-    // Send to error tracking service
-  },
-});
-```
-
-## Environment Types
-
-Define your app's environment type:
-
-```typescript
-import type { RouterEnv } from "@rangojs/router/server";
-
-interface AppBindings {
-  DB: D1Database;
-  KV: KVNamespace;
-  RATE_LIMITER: RateLimiter;
-}
-
-interface AppVariables {
-  user?: { id: string; name: string };
-  permissions?: string[];
-}
-
-type AppEnv = RouterEnv<AppBindings, AppVariables>;
-
-const router = createRSCRouter<AppEnv>({
-  document: Document,
-});
-```
-
-## Registering Routes
-
-### routes() - Register route definitions
-
-```typescript
-import { homeRoutes } from "./routes/home";
-import { shopRoutes } from "./routes/shop";
-import { adminRoutes } from "./routes/admin";
-
-const router = createRSCRouter<AppEnv>({ document: Document })
-  // Without prefix
-  .routes(homeRoutes)
-  .map(() => import("./handlers/home"))
-
-  // With prefix
-  .routes("/shop", shopRoutes)
-  .map(() => import("./handlers/shop"))
-
-  .routes("/admin", adminRoutes)
-  .map(() => import("./handlers/admin"));
-```
-
-### map() - Register handlers
-
-```typescript
-// Async import (code splitting)
-.routes(shopRoutes)
-.map(() => import("./handlers/shop"))
-
-// Inline definition (no separate handler file)
-.routes({ index: "/", about: "/about" })
-.map(({ route }) => [
-  route("index", () => <HomePage />),
-  route("about", () => <AboutPage />),
-])
-
-// With the map helper function
-import { map } from "@rangojs/router/server";
-
-// handlers/shop.ts
-export default map<typeof shopRoutes>(({ route, layout, loader }) => [
-  layout(<ShopLayout />, () => [
-    route("index", ShopIndex),
-    route("products", ProductList),
-  ]),
-]);
-```
-
-## Global Middleware
-
-### use() - Add middleware
-
-```typescript
-const router = createRSCRouter<AppEnv>({ document: Document })
-  // Global middleware (all routes)
-  .use(loggerMiddleware)
-  .use(corsMiddleware)
-
-  // Pattern-based middleware
-  .use("/api/*", rateLimiter)
-  .use("/admin/*", adminAuthMiddleware)
-
-  // Routes with scoped middleware
-  .routes("/shop", shopRoutes)
-  .use(shopMiddleware)  // Only applies to shop routes
-  .map(() => import("./handlers/shop"));
-```
-
-### Middleware patterns
-
-```typescript
-"/admin/*"           // All paths under /admin
-"/api/*/protected"   // Wildcard in middle
-"/checkout.*"        // Routes starting with /checkout
-```
-
-## Type-Safe Links with href()
-
-```typescript
-// routes/shop.ts - use dot notation for namespaced keys
-export const shopRoutes = route({
-  "shop.index": "/",
-  "shop.products": "/products",
-  "shop.product": "/products/:slug",
-  "shop.cart": "/cart",
-});
-
-// router.tsx
-const router = createRSCRouter<AppEnv>({ document: Document })
-  .routes(homeRoutes)
-  .map(() => import("./handlers/home"))
-  .routes("/shop", shopRoutes)  // Keys stay unchanged, only URLs get prefixed
-  .map(() => import("./handlers/shop"));
-
-// Export for use in components
-export const href = router.href;
-
-// Usage with full autocomplete
-href("index");                                 // "/"
-href("about");                                 // "/about"
-href("shop.products");                         // "/shop/products"
-href("shop.product", { slug: "widget" });      // "/shop/products/widget"
-
-// In components
-import { href } from "./router";
-<Link to={href("shop.cart")}>Cart</Link>
-```
-
-**Note**: Route keys stay unchanged when mounted with a prefix. Only URL patterns get the prefix applied. Use dot notation (e.g., `shop.products`) for namespaced keys.
-
-## Route Type Registration
-
-For global type inference:
-
-```typescript
-// router.ts
-const _router = createRSCRouter<AppEnv>({ document: Document })
-  .routes(homeRoutes)
-  .map(() => import("./handlers/home"))
-  .routes("/shop", shopRoutes)
-  .map(() => import("./handlers/shop"));
-
-// Extract route types
-type AppRoutes = typeof _router.routeMap;
-
-// Augment global types
-declare global {
-  namespace RSCRouter {
-    interface RegisteredRoutes extends AppRoutes {}
-    interface Env extends AppEnv {}
-  }
-}
-
-export default _router;
-export const href = _router.href;
-```
-
-Now handlers have type-safe context without imports.
-
-## Cache Configuration
-
-### Static cache
-
-```typescript
-import { createMemorySegmentStore } from "@rangojs/router/cache";
-
-const cacheStore = createMemorySegmentStore();
-
-const router = createRSCRouter<AppEnv>({
-  document: Document,
-  cache: {
-    store: cacheStore,
-    enabled: true,
-  },
-});
-```
-
-### Dynamic cache (per-environment)
-
-```typescript
-const router = createRSCRouter<AppEnv>({
-  document: Document,
-  cache: (env) => ({
-    store: env.Bindings.CACHE_KV,
-    enabled: env.Bindings.CACHE_ENABLED === "true",
-  }),
-});
-```
-
-### Cloudflare KV cache
-
-```typescript
-import { createCFKVSegmentStore } from "@rangojs/router/cache/cf";
-
-const router = createRSCRouter<AppEnv>({
-  document: Document,
-  cache: (env) => ({
-    store: createCFKVSegmentStore(env.Bindings.CACHE_KV),
-    enabled: true,
-  }),
-});
 ```
 
 ## Document Component
 
-The document wraps the entire app and persists during errors:
-
 ```typescript
-// document.tsx
-"use client";
+// src/document.tsx
+import type { ReactNode } from "react";
 
-export function Document({ children }: { children: React.ReactNode }) {
+export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <head>
@@ -320,84 +111,136 @@ export function Document({ children }: { children: React.ReactNode }) {
         <title>My App</title>
       </head>
       <body>
-        {children}
+        <div id="root">{children}</div>
       </body>
     </html>
   );
 }
 ```
 
-## Router Methods
-
-### match() - Full render
+## Using with Cloudflare Workers
 
 ```typescript
-const result = await router.match(request, env);
-// Returns full render tree with segments, loaders, metadata
+// src/worker.tsx
+import router from "./router";
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    return router.fetch(request, env, ctx);
+  },
+};
 ```
 
-### matchPartial() - Partial navigation
+## Complete Example
 
 ```typescript
-const result = await router.matchPartial(request, env, {
-  actionId: "addToCart",
-  actionResult: { success: true },
-});
-// Only re-renders changed segments
+// src/urls.tsx
+import { urls } from "@rangojs/router/server";
+import { Outlet } from "@rangojs/router/client";
+
+// Pages
+import { HomePage } from "./pages/home";
+import { AboutPage } from "./pages/about";
+import { BlogIndexPage, BlogPostPage } from "./pages/blog";
+
+// Layouts
+import { RootLayout } from "./layouts/RootLayout";
+import { BlogLayout } from "./layouts/BlogLayout";
+
+// Loaders
+import { BlogPostLoader, BlogSidebarLoader } from "./loaders/blog";
+
+export const urlpatterns = urls(({ path, layout, parallel, loader, loading, cache }) => [
+  // Simple routes
+  path("/", HomePage, { name: "home" }),
+  path("/about", AboutPage, { name: "about" }),
+
+  // Blog with layout and loaders
+  layout(<BlogLayout />, () => [
+    // Sidebar as parallel route
+    parallel({ "@sidebar": () => <BlogSidebar /> }, () => [
+      loader(BlogSidebarLoader),
+    ]),
+
+    // Cached blog routes
+    cache({ ttl: 60 }, () => [
+      path("/blog", BlogIndexPage, { name: "blog" }),
+      path("/blog/:slug", BlogPostPage, { name: "blogPost" }, () => [
+        loader(BlogPostLoader),
+        loading(<BlogPostSkeleton />),
+      ]),
+    ]),
+  ]),
+]);
 ```
 
-### matchError() - Error handling
-
 ```typescript
-const result = await router.matchError(request, env, error);
-// Finds nearest error boundary
-```
-
-### previewMatch() - Middleware validation
-
-```typescript
-const result = await router.previewMatch(request, env);
-// Executes middleware without full segment resolution
-```
-
-## Complete Router Example
-
-```typescript
-// router.ts
+// src/router.tsx
 import { createRSCRouter } from "@rangojs/router/server";
-import { createMemorySegmentStore } from "@rangojs/router/cache";
 import { Document } from "./document";
-import { homeRoutes } from "./routes/home";
-import { shopRoutes } from "./routes/shop";
-import { adminRoutes } from "./routes/admin";
-import { loggerMiddleware, authMiddleware, adminMiddleware } from "./middleware";
+import { urlpatterns } from "./urls";
 
-const cacheStore = createMemorySegmentStore();
+const router = createRSCRouter({
+  document: Document,
+  urls: urlpatterns,
+
+  defaultErrorBoundary: ({ error, reset }) => (
+    <div>
+      <h1>Something went wrong</h1>
+      <button onClick={reset}>Try again</button>
+    </div>
+  ),
+
+  notFound: ({ pathname }) => (
+    <div>
+      <h1>404</h1>
+      <p>Page not found: {pathname}</p>
+    </div>
+  ),
+});
+
+export default router;
+```
+
+## Including Sub-patterns
+
+```typescript
+// src/urls/shop.tsx
+import { urls } from "@rangojs/router/server";
+
+export const shopPatterns = urls(({ path, layout }) => [
+  path("/", ShopIndex, { name: "index" }),
+  path("/product/:slug", ProductPage, { name: "product" }),
+]);
+
+// src/urls.tsx
+import { urls, include } from "@rangojs/router/server";
+import { shopPatterns } from "./urls/shop";
+
+export const urlpatterns = urls(({ path }) => [
+  path("/", HomePage, { name: "home" }),
+  include("/shop", shopPatterns, { name: "shop" }),
+]);
+```
+
+## Environment Types
+
+```typescript
+import type { RouterEnv } from "@rangojs/router/server";
+
+interface AppBindings {
+  DB: D1Database;
+  KV: KVNamespace;
+}
+
+interface AppVariables {
+  user?: { id: string; name: string };
+}
+
+type AppEnv = RouterEnv<AppBindings, AppVariables>;
 
 const router = createRSCRouter<AppEnv>({
   document: Document,
-  debugPerformance: true,
-  cache: { store: cacheStore, enabled: true },
-  defaultErrorBoundary: <DefaultError />,
-  notFound: ({ pathname }) => <NotFoundPage pathname={pathname} />,
-})
-  // Global middleware
-  .use(loggerMiddleware)
-
-  // Public routes
-  .routes(homeRoutes)
-  .map(() => import("./handlers/home"))
-
-  // Shop routes (with auth)
-  .routes("/shop", shopRoutes)
-  .use(authMiddleware)
-  .map(() => import("./handlers/shop"))
-
-  // Admin routes (with admin auth)
-  .routes("/admin", adminRoutes)
-  .use(adminMiddleware)
-  .map(() => import("./handlers/admin"));
-
-export default router;
-export const href = router.href;
+  urls: urlpatterns,
+});
 ```

@@ -10,48 +10,70 @@ Caches complete HTTP responses (HTML/RSC) at the edge based on Cache-Control hea
 
 ## Setup
 
-Add middleware to router:
+Configure document cache in router:
 
 ```typescript
-import { createRSCRouter, createDocumentCacheMiddleware } from "@rangojs/router/server";
+import { createRSCRouter } from "@rangojs/router/server";
 import { CFCacheStore } from "@rangojs/router/cache/cf";
+import { urlpatterns } from "./urls";
 
 const router = createRSCRouter<AppEnv>({
   document: Document,
-  cache: (env) => ({
+  urls: urlpatterns,
+  documentCache: (env) => ({
     store: new CFCacheStore({ ctx: env.ctx }),
+    skipPaths: ["/api", "/admin"],
+    debug: process.env.NODE_ENV === "development",
   }),
-})
-  .use(createDocumentCacheMiddleware())
-  .routes(routes);
-```
-
-## Route Opt-In
-
-Routes opt-in by setting `Cache-Control` with `s-maxage`:
-
-```typescript
-route("home", (ctx) => {
-  ctx.headers.set("Cache-Control", "s-maxage=60, stale-while-revalidate=300");
-  return <HomePage />;
 });
+
+export default router;
 ```
 
-## Middleware Options
+## Route Opt-In with cache()
+
+Routes opt-in to document caching using the `cache()` DSL with `documentCache` option:
 
 ```typescript
-createDocumentCacheMiddleware({
-  // Skip specific paths
-  skipPaths: ["/api", "/admin"],
+import { urls } from "@rangojs/router/server";
 
-  // Custom cache key
-  keyGenerator: (url) => url.pathname,
+export const urlpatterns = urls(({ path, cache }) => [
+  // Cache full page for 5 min, serve stale for 1 hour
+  cache({ documentCache: { sMaxAge: 300, swr: 3600 } }, () => [
+    path("/blog", BlogIndex, { name: "blog" }),
+  ]),
 
-  // Conditional caching
-  isEnabled: (ctx) => !ctx.request.headers.has("x-preview"),
+  // Long cache for individual posts
+  cache({ documentCache: { sMaxAge: 3600, swr: 86400 } }, () => [
+    path("/blog/:slug", BlogPost, { name: "blogPost" }),
+  ]),
 
-  // Debug logging
-  debug: true,
+  // No cache for dashboard (no documentCache option)
+  path("/dashboard", Dashboard, { name: "dashboard" }),
+]);
+```
+
+## Document Cache Options
+
+```typescript
+createRSCRouter({
+  // ...
+  documentCache: (env) => ({
+    // Cache store (required)
+    store: new CFCacheStore({ ctx: env.ctx }),
+
+    // Skip specific paths
+    skipPaths: ["/api", "/admin"],
+
+    // Custom cache key
+    keyGenerator: (url) => url.pathname,
+
+    // Conditional caching
+    isEnabled: (ctx) => !ctx.request.headers.has("x-preview"),
+
+    // Debug logging
+    debug: true,
+  }),
 });
 ```
 
@@ -67,7 +89,7 @@ Request → Check Cache
     ↓             ↓
   Fresh?      Run handler
     │             │
-   Yes → Return   Has s-maxage?
+   Yes → Return   Has documentCache?
     │             │
    No (stale)    Yes → Cache + Return
     │             │
@@ -96,48 +118,54 @@ Segment hash ensures different cached responses for navigations from different s
 
 - Full HTML responses (document requests)
 - RSC payloads (client navigation)
-- Only 200 OK responses with `s-maxage`
+- Only 200 OK responses with documentCache enabled
 
 ## What's NOT Cached
 
 - Server actions (`_rsc_action`)
 - Loader requests (`_rsc_loader`)
-- Responses without `s-maxage`
+- Routes without `documentCache` option
 - Non-200 responses
 
 ## Complete Example
 
 ```typescript
 // router.tsx
+import { createRSCRouter } from "@rangojs/router/server";
+import { CFCacheStore } from "@rangojs/router/cache/cf";
+import { urlpatterns } from "./urls";
+
 const router = createRSCRouter<AppEnv>({
   document: Document,
-  cache: (env) => ({
+  urls: urlpatterns,
+  documentCache: (env) => ({
     store: new CFCacheStore({ ctx: env.ctx }),
-  }),
-})
-  .use(createDocumentCacheMiddleware({
     skipPaths: ["/api"],
     debug: process.env.NODE_ENV === "development",
-  }))
-  .routes(routes);
-
-// handlers.tsx
-route("blog", (ctx) => {
-  // Cache for 5 min, serve stale for 1 hour while revalidating
-  ctx.headers.set("Cache-Control", "s-maxage=300, stale-while-revalidate=3600");
-  return <BlogIndex />;
+  }),
 });
 
-route("blog.post", (ctx) => {
-  // Long cache for individual posts
-  ctx.headers.set("Cache-Control", "s-maxage=3600, stale-while-revalidate=86400");
-  return <BlogPost slug={ctx.params.slug} />;
-});
+export default router;
 
-route("dashboard", (ctx) => {
-  // No cache header = not cached
-  return <Dashboard />;
-});
+// urls.tsx
+import { urls } from "@rangojs/router/server";
+
+export const urlpatterns = urls(({ path, layout, cache, loader }) => [
+  // Blog with document caching
+  cache({ documentCache: { sMaxAge: 300, swr: 3600 } }, () => [
+    layout(<BlogLayout />, () => [
+      path("/blog", BlogIndex, { name: "blog" }),
+      path("/blog/:slug", BlogPost, { name: "blogPost" }, () => [
+        loader(BlogPostLoader),
+      ]),
+    ]),
+  ]),
+
+  // Dashboard - no document cache (dynamic content)
+  layout(<DashboardLayout />, () => [
+    path("/dashboard", Dashboard, { name: "dashboard" }),
+  ]),
+]);
 ```
 
 ## Document Cache vs Segment Cache
@@ -145,7 +173,7 @@ route("dashboard", (ctx) => {
 | Feature | Document Cache | Segment Cache |
 |---------|---------------|---------------|
 | Granularity | Full response | Individual segments |
-| Opt-in | `s-maxage` header | `cache()` DSL |
+| Opt-in | `documentCache` in cache() | `cache({ ttl, swr })` |
 | Use case | Static pages | Dynamic compositions |
 | Key includes | URL + segment hash | Route params |
 

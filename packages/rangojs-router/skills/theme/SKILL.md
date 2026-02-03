@@ -11,11 +11,19 @@ Opt-in theme system with FOUC prevention.
 ## Enable
 
 ```typescript
+import { createRSCRouter } from "@rangojs/router/server";
+
 // Simple - all defaults
-const router = createRSCRouter<Env>({ theme: true });
+const router = createRSCRouter<Env>({
+  document: Document,
+  urls: urlpatterns,
+  theme: true,
+});
 
 // Custom config
 const router = createRSCRouter<Env>({
+  document: Document,
+  urls: urlpatterns,
   theme: {
     defaultTheme: "system",      // "light" | "dark" | "system"
     themes: ["light", "dark"],
@@ -25,13 +33,22 @@ const router = createRSCRouter<Env>({
 });
 ```
 
-## Server (route handlers)
+## Server (in loaders/middleware)
 
 ```typescript
-route("settings", (ctx) => {
-  const current = ctx.theme;    // read from cookie
-  ctx.setTheme("dark");         // set cookie
-  return <Settings />;
+import { createLoader, createMiddleware } from "@rangojs/router/server";
+
+// In a loader
+export const SettingsLoader = createLoader("settings", async (ctx) => {
+  const currentTheme = ctx.theme;    // read from cookie
+  return { theme: currentTheme };
+});
+
+// In middleware
+export const themeMiddleware = createMiddleware(async (ctx, next) => {
+  // Set theme based on user preference
+  ctx.setTheme("dark");
+  await next();
 });
 ```
 
@@ -43,7 +60,14 @@ import { useTheme } from "@rangojs/router/theme";
 
 function ThemeToggle() {
   const { theme, setTheme, resolvedTheme, systemTheme, themes } = useTheme();
-  return <button onClick={() => setTheme("dark")}>Dark</button>;
+
+  return (
+    <select value={theme} onChange={(e) => setTheme(e.target.value)}>
+      <option value="system">System</option>
+      <option value="light">Light</option>
+      <option value="dark">Dark</option>
+    </select>
+  );
 }
 ```
 

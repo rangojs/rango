@@ -11,34 +11,35 @@ Intercept routes render a different component during soft navigation (client-sid
 ## Basic Intercept
 
 ```typescript
-import { map } from "@rangojs/router/server";
-import { ParallelOutlet } from "@rangojs/router";
+import { urls } from "@rangojs/router/server";
+import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
-export default map<typeof routes>(({ route, layout, parallel, intercept, loader }) => [
-  layout(
-    () => (
-      <ShopLayout>
-        <Outlet />
-        <ParallelOutlet name="@modal" />
-      </ShopLayout>
+function ShopLayout() {
+  return (
+    <div className="shop">
+      <Outlet />
+      <ParallelOutlet name="@modal" />
+    </div>
+  );
+}
+
+export const urlpatterns = urls(({ path, layout, intercept, loader }) => [
+  layout(<ShopLayout />, () => [
+    // Intercept product detail - shows modal during soft navigation
+    intercept(
+      "@modal",              // Slot name
+      "product",             // Route name to intercept
+      <ProductModal />,      // Modal component
+      () => [
+        loader(ProductLoader),
+        loading(<ProductModalSkeleton />),
+      ]
     ),
-    () => [
-      // Define empty modal slot
-      parallel({
-        "@modal": () => null,
-      }),
 
-      // Intercept product detail into modal
-      intercept(
-        "@modal",                              // Slot name
-        "products.detail",                     // Route to intercept
-        (ctx) => <ProductModal id={ctx.params.id} />, // Modal component
-      ),
-
-      route("products.index", ProductList),
-      route("products.detail", ProductDetail), // Full page version
-    ]
-  ),
+    // Normal routes
+    path("/shop", ShopIndex, { name: "index" }),
+    path("/shop/product/:slug", ProductPage, { name: "product" }),
+  ]),
 ]);
 ```
 
@@ -46,120 +47,74 @@ export default map<typeof routes>(({ route, layout, parallel, intercept, loader 
 
 | Navigation Type | What Renders |
 |-----------------|--------------|
-| Click link `/product/abc` | `<ProductModal />` in `@modal`, background preserved |
-| Direct URL `/product/abc` | Full `<ProductDetail />` page |
-| Back button from modal | Modal closes, background restored |
-| Refresh in modal | Full page loads |
-
-## Intercept with Configuration
-
-```typescript
-intercept(
-  "@modal",
-  "products.detail",
-  async (ctx) => {
-    const product = await ctx.use(ProductLoader);
-    return <ProductModal product={product} />;
-  },
-  () => [
-    loader(ProductLoader),
-    loading(<ProductModalSkeleton />),
-    revalidate(({ actionId }) => actionId?.includes("cart") ?? false),
-    errorBoundary(<ModalErrorFallback />),
-  ]
-)
-```
-
-## Conditional Intercept with `when()`
-
-Only intercept under certain conditions:
-
-```typescript
-intercept(
-  "@modal",
-  "products.detail",
-  (ctx) => <ProductModal id={ctx.params.id} />,
-  () => [
-    // Only intercept when NOT coming from product pages
-    when(({ from }) => !from.pathname.startsWith("/products/")),
-  ]
-)
-```
-
-The `when()` callback receives:
-
-```typescript
-when(({ from, to }) => {
-  from.pathname  // Where user is coming from
-  from.params    // Params of source route
-  to.pathname    // Where user is going
-  to.params      // Params of target route
-
-  return true;   // true = intercept, false = full navigation
-})
-```
-
-## Multiple Intercepts
-
-```typescript
-layout(<ShopLayout />, () => [
-  parallel({
-    "@modal": () => null,
-    "@slideOver": () => null,
-  }),
-
-  // Product detail opens as modal
-  intercept(
-    "@modal",
-    "products.detail",
-    (ctx) => <ProductModal id={ctx.params.id} />,
-  ),
-
-  // Quick view opens as slide-over
-  intercept(
-    "@slideOver",
-    "products.quickView",
-    (ctx) => <QuickViewPanel id={ctx.params.id} />,
-  ),
-
-  // Cart opens as slide-over
-  intercept(
-    "@slideOver",
-    "cart",
-    () => <CartSlideOver />,
-  ),
-
-  route("products.index", ProductList),
-  route("products.detail", ProductDetail),
-  route("products.quickView", ProductQuickView),
-  route("cart", CartPage),
-])
-```
+| Click link `/shop/product/abc` | `<ProductModal />` in `@modal`, background preserved |
+| Direct URL `/shop/product/abc` | Full `<ProductPage />` page |
+| Browser back | Close modal, restore previous state |
 
 ## Intercept with Layout
 
-Wrap the intercepted content:
+Wrap intercept content in a modal layout:
 
 ```typescript
 intercept(
   "@modal",
-  "products.detail",
-  (ctx) => <ProductModalContent id={ctx.params.id} />,
+  "product",
+  <ProductModalContent />,
   () => [
-    layout(<ModalWrapper />, () => [
-      // Configuration applies to modal
-      loader(ProductLoader),
-      loading(<ProductModalSkeleton />),
-    ]),
+    layout(<ModalWrapper />),  // Wraps the modal content
+    loader(ProductLoader),
+    loading(<ProductModalSkeleton />),
   ]
 )
+```
 
-// ModalWrapper provides chrome around content
-function ModalWrapper({ children }: { children: React.ReactNode }) {
+## Conditional Intercept with when()
+
+Only intercept based on navigation context:
+
+```typescript
+intercept(
+  "@modal",
+  "product",
+  <ProductModal />,
+  () => [
+    // Only intercept when coming from a different section
+    when(({ from }) => !from.pathname.startsWith("/shop/product/")),
+    loader(ProductLoader),
+  ]
+)
+```
+
+## Multiple Loaders in Intercept
+
+```typescript
+intercept(
+  "@modal",
+  "product",
+  <ProductModal />,
+  () => [
+    loader(ProductLoader, () => [cache()]),
+    loader(ProductCartLoader, () => [revalidate(() => true)]),
+    loader(RecommendationsLoader),
+  ]
+)
+```
+
+## Closing the Modal
+
+Use navigation to close:
+
+```typescript
+"use client";
+import { useNavigation } from "@rangojs/router/client";
+
+function ModalWrapper({ children }) {
+  const { goBack } = useNavigation();
+
   return (
-    <div className="modal-backdrop">
-      <div className="modal-container">
-        <CloseButton />
+    <div className="modal-overlay" onClick={goBack}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <button onClick={goBack}>Close</button>
         {children}
       </div>
     </div>
@@ -167,126 +122,69 @@ function ModalWrapper({ children }: { children: React.ReactNode }) {
 }
 ```
 
-## Intercept with Middleware
+## Complete Example
 
 ```typescript
-intercept(
-  "@modal",
-  "account.settings",
-  (ctx) => <SettingsModal user={ctx.get("user")} />,
-  () => [
-    middleware(async (ctx, next) => {
-      // Verify user is logged in for modal
-      const user = ctx.get("user");
-      if (!user) {
-        throw redirect("/login");
-      }
-      await next();
-    }),
-  ]
-)
-```
+// components/ProductModal.tsx
+import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
-## Photo Gallery Example
-
-```typescript
-// Instagram-style photo gallery with modal
-export default map<typeof routes>(({ route, layout, parallel, intercept }) => [
-  layout(
-    () => (
-      <GalleryLayout>
+function ShopLayout() {
+  return (
+    <div className="shop">
+      <ParallelOutlet name="@promoBanner" />
+      <main>
         <Outlet />
-        <ParallelOutlet name="@lightbox" />
-      </GalleryLayout>
+      </main>
+      <ParallelOutlet name="@modal" />
+    </div>
+  );
+}
+
+function ModalWrapper({ children }) {
+  return (
+    <div className="modal-overlay">
+      <div className="modal">{children}</div>
+    </div>
+  );
+}
+
+// urls/shop.tsx
+import { urls } from "@rangojs/router/server";
+
+export const shopPatterns = urls(({
+  path,
+  layout,
+  parallel,
+  intercept,
+  loader,
+  loading,
+  when,
+}) => [
+  layout(<ShopLayout />, () => [
+    parallel({
+      "@promoBanner": () => <PromoBanner />,
+    }),
+
+    // Intercept product detail into modal
+    intercept(
+      "@modal",
+      "product",  // Route name (without prefix)
+      <ProductModalContent />,
+      () => [
+        when(({ from }) => !from.pathname.startsWith("/shop/product/")),
+        layout(<ModalWrapper />),
+        loading(<ProductModalSkeleton />),
+        loader(ProductLoader, () => [cache()]),
+        loader(RecommendationsLoader),
+      ]
     ),
-    () => [
-      parallel({
-        "@lightbox": () => null,
-      }),
 
-      // Photo opens in lightbox on soft nav
-      intercept(
-        "@lightbox",
-        "photos.detail",
-        (ctx) => (
-          <Lightbox>
-            <PhotoViewer id={ctx.params.id} />
-          </Lightbox>
-        ),
-        () => [
-          loader(PhotoLoader),
-          loading(<PhotoSkeleton />),
-          // Only intercept from gallery pages
-          when(({ from }) => from.pathname.startsWith("/gallery")),
-        ]
-      ),
-
-      route("photos.index", PhotoGrid),
-      route("photos.detail", PhotoPage), // Full page with comments, etc.
-    ]
-  ),
+    // Normal routes
+    path("/", ShopIndex, { name: "index" }),
+    path("/product/:slug", ProductPage, { name: "product" }, () => [
+      loader(ProductLoader),
+      loading(<ProductPageSkeleton />),
+    ]),
+  ]),
 ]);
 ```
-
-## Form Modal Example
-
-```typescript
-// Edit form in modal, full page fallback
-intercept(
-  "@modal",
-  "posts.edit",
-  async (ctx) => {
-    const post = await ctx.use(PostLoader);
-    return (
-      <EditModal>
-        <PostForm post={post} />
-      </EditModal>
-    );
-  },
-  () => [
-    loader(PostLoader),
-    middleware(authMiddleware),
-    // Revalidate after save action
-    revalidate(({ actionId }) => actionId === "savePost"),
-  ]
-)
-```
-
-## Closing the Modal
-
-From within the modal, use navigation:
-
-```typescript
-"use client";
-
-// Go back (closes modal, restores background)
-function CloseButton() {
-  return (
-    <button onClick={() => window.history.back()}>
-      Close
-    </button>
-  );
-}
-
-// Or navigate to a specific route
-import { useNavigation } from "@rangojs/router";
-
-function CloseButton() {
-  const { navigate } = useNavigation();
-
-  return (
-    <button onClick={() => navigate("/products")}>
-      Close
-    </button>
-  );
-}
-```
-
-## Key Points
-
-1. **Intercept requires a parallel slot** - Define with `parallel({ "@modal": () => null })`
-2. **Soft nav only** - Only works for client-side navigation, not direct URLs
-3. **Preserves background** - The route behind the modal stays rendered
-4. **Full page fallback** - Direct URL always shows the full route handler
-5. **Back button works** - Browser back closes modal naturally
-6. **SEO friendly** - Search engines see the full page, users get the modal UX

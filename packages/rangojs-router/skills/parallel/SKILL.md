@@ -11,35 +11,35 @@ Parallel routes render multiple components simultaneously in named slots.
 ## Basic Parallel Routes
 
 ```typescript
-import { map } from "@rangojs/router/server";
-import { ParallelOutlet } from "@rangojs/router";
+import { urls } from "@rangojs/router/server";
+import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
-// Handler definition
-export default map<typeof routes>(({ route, layout, parallel }) => [
-  layout(
-    () => (
-      <DashboardLayout>
-        <aside>
-          <ParallelOutlet name="@sidebar" />
-        </aside>
-        <main>
-          <Outlet />
-        </main>
-        <div className="notifications">
-          <ParallelOutlet name="@notifications" />
-        </div>
-      </DashboardLayout>
-    ),
-    () => [
-      parallel({
-        "@sidebar": () => <Sidebar />,
-        "@notifications": () => <NotificationPanel />,
-      }),
+function DashboardLayout() {
+  return (
+    <div className="dashboard">
+      <aside>
+        <ParallelOutlet name="@sidebar" />
+      </aside>
+      <main>
+        <Outlet />
+      </main>
+      <div className="notifications">
+        <ParallelOutlet name="@notifications" />
+      </div>
+    </div>
+  );
+}
 
-      route("dashboard.index", DashboardIndex),
-      route("dashboard.analytics", Analytics),
-    ]
-  ),
+export const urlpatterns = urls(({ path, layout, parallel }) => [
+  layout(<DashboardLayout />, () => [
+    parallel({
+      "@sidebar": () => <Sidebar />,
+      "@notifications": () => <NotificationPanel />,
+    }),
+
+    path("/dashboard", DashboardIndex, { name: "dashboard.index" }),
+    path("/dashboard/analytics", Analytics, { name: "dashboard.analytics" }),
+  ]),
 ]);
 ```
 
@@ -49,207 +49,180 @@ Access route params and loaders in parallel slots:
 
 ```typescript
 parallel({
-  "@sidebar": (ctx) => {
-    const user = ctx.get("user");
-    return <UserSidebar user={user} />;
-  },
-  "@details": async (ctx) => {
-    const data = await ctx.use(DetailsLoader);
-    return <DetailsPanel data={data} productId={ctx.params.id} />;
-  },
+  "@sidebar": (ctx) => <Sidebar userId={ctx.params.userId} />,
+  "@related": (ctx) => <RelatedProducts slug={ctx.params.slug} />,
 })
 ```
 
-## Parallel Routes with Configuration
+## Parallel Routes with Loaders
 
-Add loaders, loading states, and revalidation to slots:
+Add loaders and loading states to parallel routes:
 
 ```typescript
 parallel(
   {
-    "@sidebar": async (ctx) => {
-      const categories = await ctx.use(CategoriesLoader);
-      return <CategorySidebar categories={categories} />;
-    },
-    "@cart": async (ctx) => {
-      const cart = await ctx.use(CartLoader);
-      return <CartPreview cart={cart} />;
-    },
+    "@sidebar": () => <CategorySidebar />,
   },
   () => [
     loader(CategoriesLoader),
-    loader(CartLoader),
     loading(<SidebarSkeleton />),
-    revalidate(({ actionId }) => actionId?.includes("cart") ?? false),
+    revalidate(() => false),  // Never revalidate sidebar
   ]
 )
 ```
 
-## Independent Slot Revalidation
-
-Each parallel slot can control its own revalidation:
+## Multiple Parallel Slots
 
 ```typescript
-layout(<DashboardLayout />, () => [
-  // Sidebar only revalidates on sidebar actions
-  parallel(
-    { "@sidebar": SidebarComponent },
-    () => [
-      revalidate(({ actionId }) => actionId?.includes("sidebar") ?? false),
-    ]
-  ),
-
-  // Main content revalidates on route changes
-  parallel(
-    { "@main": MainComponent },
-    () => [
-      revalidate(({ currentParams, nextParams }) =>
-        currentParams.id !== nextParams.id
-      ),
-    ]
-  ),
-
-  route("dashboard.index", DashboardIndex),
-])
-```
-
-## Parallel Routes for Modals
-
-Use parallel routes with intercept for modal patterns:
-
-```typescript
-layout(
-  () => (
-    <ShopLayout>
-      <Outlet />
-      <ParallelOutlet name="@modal" />
-    </ShopLayout>
-  ),
-  () => [
-    parallel({
-      "@modal": () => null, // Empty by default
-    }),
-
-    // Intercept product detail into modal
-    intercept(
-      "@modal",
-      "products.detail",
-      (ctx) => <ProductModal id={ctx.params.id} />,
-      () => [
-        loader(ProductLoader),
-        loading(<ProductModalSkeleton />),
-      ]
+layout(<ShopLayout />, () => [
+  parallel({
+    "@promoBanner": () => (
+      <div className="promo-banner">
+        Summer Sale! 50% off selected items
+      </div>
     ),
+    "@sidebar": () => <CategorySidebar />,
+    "@cartPreview": () => <CartPreview />,
+    "@notification": () => <CartNotification />,
+  }),
 
-    route("products.index", ProductList),
-    route("products.detail", ProductDetail),
-  ]
-)
+  path("/shop", ShopIndex, { name: "shop" }),
+])
 ```
 
 ## Conditional Parallel Content
 
+Render different content based on context:
+
 ```typescript
 parallel({
   "@sidebar": (ctx) => {
-    const user = ctx.get("user");
-    if (!user) return null; // Hide for guests
-    if (user.role === "admin") {
-      return <AdminSidebar />;
-    }
-    return <UserSidebar />;
+    const user = ctx.env.Variables.user;
+    return user ? <UserSidebar user={user} /> : <GuestSidebar />;
   },
 })
 ```
 
-## Parallel Routes with Error Boundaries
+## Parallel Routes with Revalidation
+
+Control when parallel routes revalidate:
 
 ```typescript
 parallel(
   {
-    "@sidebar": async (ctx) => {
-      const data = await ctx.use(SidebarLoader);
-      return <Sidebar data={data} />;
-    },
+    "@cart": () => <CartSummary />,
   },
   () => [
-    loader(SidebarLoader),
-    errorBoundary(({ error, reset }) => (
-      <div className="sidebar-error">
-        <p>Sidebar failed to load</p>
-        <button onClick={reset}>Retry</button>
-      </div>
-    )),
+    loader(CartLoader),
+    // Revalidate when cart actions occur
+    revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
   ]
 )
 ```
 
-## ParallelOutlet Component
+## Named Outlets
+
+Use `ParallelOutlet` to render slots in layouts:
 
 ```typescript
-import { ParallelOutlet } from "@rangojs/router";
+import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
-function Layout() {
+function MyLayout() {
   return (
-    <div className="layout">
-      {/* Named slot - renders content from parallel() */}
-      <ParallelOutlet name="@sidebar" />
+    <div>
+      <header>
+        <ParallelOutlet name="@header" />
+      </header>
 
-      {/* Main route content */}
-      <Outlet />
+      <div className="content">
+        <aside>
+          <ParallelOutlet name="@sidebar" />
+        </aside>
 
-      {/* Another slot */}
-      <ParallelOutlet name="@footer" />
+        <main>
+          <Outlet />  {/* Main route content */}
+        </main>
+
+        <aside>
+          <ParallelOutlet name="@rightPanel" />
+        </aside>
+      </div>
+
+      <footer>
+        <ParallelOutlet name="@footer" />
+      </footer>
     </div>
   );
 }
 ```
 
-## Dashboard Example
+## Complete Example
 
 ```typescript
-// Complete dashboard with multiple panels
-export default map<typeof routes>(({ route, layout, parallel, loader }) => [
-  layout(
-    () => (
-      <div className="dashboard-grid">
-        <header>
-          <ParallelOutlet name="@header" />
-        </header>
-        <nav>
-          <ParallelOutlet name="@nav" />
-        </nav>
+import { urls } from "@rangojs/router/server";
+import { Outlet, ParallelOutlet } from "@rangojs/router/client";
+
+function ShopLayout() {
+  return (
+    <div className="shop">
+      <ParallelOutlet name="@promoBanner" />
+      <div className="content">
+        <aside>
+          <ParallelOutlet name="@sidebar" />
+        </aside>
         <main>
           <Outlet />
         </main>
         <aside>
-          <ParallelOutlet name="@activity" />
+          <ParallelOutlet name="@cartPreview" />
         </aside>
       </div>
-    ),
-    () => [
-      parallel({
-        "@header": () => <DashboardHeader />,
-        "@nav": (ctx) => <Navigation user={ctx.get("user")} />,
-        "@activity": async (ctx) => {
-          const activity = await ctx.use(ActivityLoader);
-          return <ActivityFeed items={activity} />;
-        },
-      }, () => [
-        loader(ActivityLoader),
-        revalidate(({ actionId }) => actionId?.includes("activity") ?? false),
-      ]),
+      <ParallelOutlet name="@notification" />
+    </div>
+  );
+}
 
-      route("dashboard.index", DashboardHome),
-      route("dashboard.projects", Projects),
-      route("dashboard.settings", Settings),
-    ]
-  ),
+export const shopPatterns = urls(({
+  path,
+  layout,
+  parallel,
+  loader,
+  loading,
+  revalidate,
+}) => [
+  layout(<ShopLayout />, () => [
+    // Simple parallel slot
+    parallel({
+      "@promoBanner": () => <PromoBanner />,
+    }),
+
+    // Parallel slot with loader
+    parallel(
+      { "@sidebar": () => <CategorySidebar /> },
+      () => [
+        loader(CategoriesLoader),
+        revalidate(() => false),
+      ]
+    ),
+
+    // Parallel slot with revalidation
+    parallel(
+      { "@cartPreview": () => <CartPreview /> },
+      () => [
+        loader(CartLoader),
+        loading(<CartSkeleton />),
+        revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
+      ]
+    ),
+
+    // Notification slot
+    parallel({
+      "@notification": () => <CartNotification />,
+    }),
+
+    // Routes
+    path("/", ShopIndex, { name: "index" }),
+    path("/product/:slug", ProductPage, { name: "product" }),
+  ]),
 ]);
 ```
-
-## Slot Naming Convention
-
-- Prefix with `@` (e.g., `@sidebar`, `@modal`, `@header`)
-- Use lowercase with hyphens for multi-word names (`@user-panel`)
-- Common names: `@sidebar`, `@modal`, `@header`, `@footer`, `@notifications`, `@breadcrumbs`
