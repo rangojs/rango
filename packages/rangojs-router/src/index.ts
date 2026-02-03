@@ -83,6 +83,5 @@ export { createLoader } from "./loader.js";
 // Used to define route patterns in a shared routes.ts file
 export { route } from "./route-utils.js";
 
-// Django-style URL patterns API
-export { urls } from "./urls.js";
+// Django-style URL patterns API - types only (urls() is in /server)
 export type { UrlPatterns, PathHelpers } from "./urls.js";

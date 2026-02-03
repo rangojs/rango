@@ -1,4 +1,4 @@
-import { map } from "@ivogt/rsc-router/server";
+import { map } from "@rangojs/router/server";
 import type { adminRoutes } from "../routes.js";
 import { IndexRoute, UsersRoute, UserRoute, SettingsRoute } from "./admin/routes.js";
 import { globalRevalidation, settingsRevalidation, userRevalidation } from "./admin/revalidation.js";

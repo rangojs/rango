@@ -1,7 +1,7 @@
-import { map } from "@ivogt/rsc-router/server";
-import { Outlet } from "@ivogt/rsc-router/client";
+import { map } from "@rangojs/router/server";
+import { Outlet } from "@rangojs/router/client";
 import type { kanbanRoutes } from "../routes.js";
-import type { ErrorBoundaryFallbackProps } from "@ivogt/rsc-router";
+import type { ErrorBoundaryFallbackProps } from "@rangojs/router";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import {
   KanbanLoader,

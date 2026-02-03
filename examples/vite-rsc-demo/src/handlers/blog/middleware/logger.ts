@@ -1,4 +1,4 @@
-import type { MiddlewareFn, GenericParams } from "@ivogt/rsc-router/server";
+import type { MiddlewareFn, GenericParams } from "@rangojs/router/server";
 
 export const loggerMiddleware: MiddlewareFn<RSCRouter.Env, GenericParams>[] = [
   (_ctx, next) => {

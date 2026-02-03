@@ -1,5 +1,5 @@
 /// <reference types="@cloudflare/workers-types" />
-import { createRSCHandler } from "@ivogt/rsc-router/rsc";
+import { createRSCHandler } from "@rangojs/router/rsc";
 import { router } from "./router.js";
 import type { AppBindings } from "./env.js";
 

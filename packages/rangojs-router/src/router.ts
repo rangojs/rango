@@ -3734,18 +3734,8 @@ export function createRSCRouter<TEnv = any>(
       prefixOrRoutes: string | Record<string, string> | UrlPatterns<TEnv>,
       maybeRoutes?: Record<string, string>
     ): any {
-      // Enforce single .routes() call - use include() for composition
-      if (routesCalled) {
-        throw new Error(
-          "[@rangojs/router] .routes() can only be called once. " +
-            "Use include() inside urls() to compose multiple route groups:\n\n" +
-            "  urls(({ include }) => [\n" +
-            '    include("/blog", blogPatterns, { name: "blog" }),\n' +
-            '    include("/shop", shopPatterns, { name: "shop" }),\n' +
-            "  ])"
-        );
-      }
-      routesCalled = true;
+      // Note: Multiple .routes() calls are allowed for backwards compatibility
+      // with the old map() pattern. For new code, prefer urls() with include().
 
       // Check if argument is UrlPatterns (new Django-style API)
       // Detect by checking for handler and definitions properties

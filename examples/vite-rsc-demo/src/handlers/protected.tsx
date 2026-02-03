@@ -1,4 +1,4 @@
-import { map, redirect } from "@ivogt/rsc-router/server";
+import { map, redirect } from "@rangojs/router/server";
 import type { protectedRoutes } from "../routes.js";
 
 /**

@@ -1,4 +1,4 @@
-import { map } from "@ivogt/rsc-router/server";
+import { map } from "@rangojs/router/server";
 import type { blogRoutes } from "../routes.js";
 import { BlogLayout } from "../layouts/BlogLayout.js";
 import { IndexRoute, PostRoute } from "./blog/routes.js";

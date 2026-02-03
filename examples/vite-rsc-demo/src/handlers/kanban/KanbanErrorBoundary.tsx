@@ -1,7 +1,7 @@
 "use client";
 
-import { ErrorBoundary, useClientCache, useNavigation } from "@ivogt/rsc-router/client";
-import type { ClientErrorBoundaryFallbackProps } from "@ivogt/rsc-router";
+import { ErrorBoundary, useClientCache, useNavigation } from "@rangojs/router/client";
+import type { ClientErrorBoundaryFallbackProps } from "@rangojs/router";
 import type { ReactNode } from "react";
 
 // Wrapper component that uses hooks - called as a component, not a function

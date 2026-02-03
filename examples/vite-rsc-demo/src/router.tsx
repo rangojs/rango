@@ -1,5 +1,5 @@
-import { createRSCRouter, type RouterEnv } from "@ivogt/rsc-router/server";
-import { MemorySegmentCacheStore } from "@ivogt/rsc-router/rsc";
+import { createRSCRouter, type RouterEnv } from "@rangojs/router/server";
+import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 import { RootLayout } from "./layouts/RootLayout.js";
 
 // Create cache store with defaults (persists across HMR via globalThis)

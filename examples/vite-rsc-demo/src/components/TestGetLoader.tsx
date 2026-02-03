@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useFetchLoader } from "@ivogt/rsc-router/client";
+import { useFetchLoader } from "@rangojs/router/client";
 import { TestGetLoader } from "../loaders/test-get-loader";
 
 export function TestGetLoaderComponent() {

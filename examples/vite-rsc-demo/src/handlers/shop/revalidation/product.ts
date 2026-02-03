@@ -1,4 +1,4 @@
-import type { RouteRevalidateFn } from "@ivogt/rsc-router/server";
+import type { RouteRevalidateFn } from "@rangojs/router/server";
 import type { shopRoutes } from "@/routes.js";
 
 export const productDetailRevalidation: RouteRevalidateFn<

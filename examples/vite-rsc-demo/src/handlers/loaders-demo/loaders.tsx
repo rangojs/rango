@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { createLoader } from "@ivogt/rsc-router";
+import { createLoader } from "@rangojs/router";
 import {
   usersStore,
   notesStore,

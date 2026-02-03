@@ -1,4 +1,4 @@
-import type { RouteHandler } from "@ivogt/rsc-router/server";
+import type { RouteHandler } from "@rangojs/router/server";
 import type { shopRoutes } from "@/routes.js";
 import { orders } from "@/handlers/shop/data.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";

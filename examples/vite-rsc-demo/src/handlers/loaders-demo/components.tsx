@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useActionState, useEffect, useRef } from "react";
-import { useLoader, useFetchLoader } from "@ivogt/rsc-router/client";
+import { useLoader, useFetchLoader } from "@rangojs/router/client";
 import {
   UsersLoader,
   StatsLoader,

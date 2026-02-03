@@ -1,4 +1,4 @@
-import type { RouteHandler } from "@ivogt/rsc-router/server";
+import type { RouteHandler } from "@rangojs/router/server";
 import type { blogRoutes } from "@/routes.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 

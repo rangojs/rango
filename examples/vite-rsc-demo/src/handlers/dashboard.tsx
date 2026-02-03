@@ -1,4 +1,4 @@
-import { map } from "@ivogt/rsc-router/server";
+import { map } from "@rangojs/router/server";
 import type { dashboardRoutes } from "../routes.js";
 import { DashboardLayout } from "../layouts/DashboardLayout.js";
 

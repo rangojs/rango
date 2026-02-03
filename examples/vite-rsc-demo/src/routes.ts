@@ -1,4 +1,4 @@
-import { route } from "@ivogt/rsc-router";
+import { route } from "@rangojs/router";
 
 /**
  * Home route

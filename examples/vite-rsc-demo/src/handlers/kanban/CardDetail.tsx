@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition, useEffect, useOptimistic } from "react";
-import { useLoader, Link, useNavigation } from "@ivogt/rsc-router/client";
+import { useLoader, Link, useNavigation } from "@rangojs/router/client";
 import { CardDetailLoader } from "./loader.js";
 import { kanbanUpdateCard, kanbanDeleteCard } from "./actions.js";
 import { labelColors } from "./data.js";

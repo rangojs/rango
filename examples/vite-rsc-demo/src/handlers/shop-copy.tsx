@@ -1,6 +1,6 @@
 //@ts-nocheck
 //#region Imports
-import { map } from "@ivogt/rsc-router/server";
+import { map } from "@rangojs/router/server";
 import type { shopRoutes } from "../routes.js";
 import { RootLayout } from "../layouts/RootLayout.js";
 import { ShopLayout } from "../layouts/ShopLayout.js";
@@ -39,7 +39,7 @@ import {
   orderDetailRevalidation,
   productDetailRevalidation,
 } from "./shop/revalidation/index.js";
-import { Outlet, ParallelOutlet } from "@ivogt/rsc-router/client";
+import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 //#endregion
 
 const DummyLayout = (
