@@ -1,5 +1,5 @@
 {
-  "name": "rsc-router-e2e-test-app",
+  "name": "rangojs-router-e2e-test-app",
   "version": "0.0.0",
   "private": true,
   "type": "module",
