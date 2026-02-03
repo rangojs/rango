@@ -76,9 +76,11 @@ export const urlpatterns = urls(({ path, layout, parallel, loader, loading, cach
   ]),
 
   // Slow routes for navigation progress demo
+  // /slow/1 uses handler pattern (blocks) - for testing
+  // /slow/2 uses component pattern (streams)
   layout(<RootLayout />, () => [
     path("/slow/1", SlowPage1, { name: "slow1" }),
-    path("/slow/2", SlowPage2, { name: "slow2" }),
+    path("/slow/2", () => <SlowPage2 />, { name: "slow2" }),
     path("/slow/fast", FastPage, { name: "fast" }),
   ]),
 

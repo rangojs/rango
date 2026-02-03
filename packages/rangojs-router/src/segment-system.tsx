@@ -306,7 +306,7 @@ export async function renderSegments(
     children: content,
   });
   if (typeof window === "object" || typeof document === "object") {
-  await Promise.allSettled(temporalLazyRefs);
+    await Promise.allSettled(temporalLazyRefs);
   }
 
   // Build the final result, optionally wrapped with root layout
