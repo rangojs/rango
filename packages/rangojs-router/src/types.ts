@@ -3,6 +3,7 @@ import type { AllUseItems } from "./route-types.js";
 import type { Handle } from "./handle.js";
 import type { MiddlewareFn } from "./router/middleware.js";
 import type { Theme } from "./theme/types.js";
+import type { ScopedHrefFunction } from "./href.js";
 
 // Re-export MiddlewareFn for internal/advanced use
 export type { MiddlewareFn } from "./router/middleware.js";
@@ -136,17 +137,12 @@ type ParamFromInfo<Info> =
       : never;
 
 /**
- * Merge two param objects
+ * Merge two param objects preserving optionality
+ * Uses Pick to preserve the modifiers from source types
  */
-type MergeParams<A, B> = {
-  [K in keyof A | keyof B]: K extends keyof A
-    ? K extends keyof B
-      ? A[K] | B[K]
-      : A[K]
-    : K extends keyof B
-      ? B[K]
-      : never;
-};
+type MergeParams<A, B> = Pick<A, keyof A> & Pick<B, keyof B> extends infer O
+  ? { [K in keyof O]: O[K] }
+  : never;
 
 /**
  * Extract route params from a pattern with depth limit to prevent infinite recursion
@@ -427,6 +423,9 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
   /**
    * Generate URLs from route names with scoped resolution.
    *
+   * Type-safe when RSCRouter.RegisteredRoutes is augmented (recommended).
+   * Falls back to accepting any string when not augmented.
+   *
    * Resolution priority:
    * 1. Path-based (`/about`) → Use directly
    * 2. Absolute name (`shop.cart`) → Global lookup (contains dot)
@@ -444,7 +443,7 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
    * });
    * ```
    */
-  href: (name: string, params?: Record<string, string>) => string;
+  href: ScopedHrefFunction<GetRegisteredRoutes>;
 };
 
 /**

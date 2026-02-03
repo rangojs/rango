@@ -26,9 +26,9 @@ export type SanitizePrefix<T extends string> = T extends `/${infer P}` ? P : T;
  * type AppRoutes = typeof router.routeMap;
  * ```
  */
-export type MergeRoutes<T extends Record<string, string>[]> = T extends [
-  infer First extends Record<string, string>,
-  ...infer Rest extends Record<string, string>[]
+export type MergeRoutes<T extends unknown[]> = T extends [
+  infer First,
+  ...infer Rest
 ]
   ? First & MergeRoutes<Rest>
   : {};
@@ -38,7 +38,7 @@ export type MergeRoutes<T extends Record<string, string>[]> = T extends [
  * { "cart": "/cart" } with prefix "shop" -> { "shop.cart": "/shop/cart" }
  */
 export type PrefixRouteKeys<
-  T extends Record<string, string>,
+  T,
   Prefix extends string
 > = Prefix extends ""
   ? T
@@ -49,14 +49,16 @@ export type PrefixRouteKeys<
  * { "cart": "/cart" } with prefix "/shop" -> { "cart": "/shop/cart" }
  */
 export type PrefixRoutePatterns<
-  T extends Record<string, string>,
+  T,
   PathPrefix extends string
 > = {
   [K in keyof T]: PathPrefix extends "" | "/"
     ? T[K]
     : T[K] extends "/"
       ? PathPrefix
-      : `${PathPrefix}${T[K]}`;
+      : T[K] extends string
+        ? `${PathPrefix}${T[K]}`
+        : T[K];
 };
 
 /**
@@ -71,18 +73,25 @@ export type PrefixRoutePatterns<
  * ```
  */
 export type PrefixedRoutes<
-  T extends Record<string, string>,
+  T,
   KeyPrefix extends string,
   PathPrefix extends string = KeyPrefix extends "" ? "" : `/${KeyPrefix}`
 > = PrefixRouteKeys<PrefixRoutePatterns<T, PathPrefix>, KeyPrefix>;
 
 /**
+ * Helper to safely extract route patterns from a routes object
+ * Handles both Record<string, string> and interface types (like RegisteredRoutes)
+ */
+type RoutePatternFor<TRoutes, TName extends keyof TRoutes> =
+  TRoutes[TName] extends string ? TRoutes[TName] : string;
+
+/**
  * Extract params type for a route
  */
 export type ParamsFor<
-  TRoutes extends Record<string, string>,
+  TRoutes,
   TName extends keyof TRoutes
-> = TRoutes[TName] extends string ? ExtractParams<TRoutes[TName]> : never;
+> = ExtractParams<RoutePatternFor<TRoutes, TName>>;
 
 /**
  * Check if an object type has any keys
@@ -93,16 +102,16 @@ type IsEmptyObject<T> = keyof T extends never ? true : false;
  * Type-safe href function signature
  * Provides overloads for routes with and without params
  */
-export type HrefFunction<TRoutes extends Record<string, string>> = {
+export type HrefFunction<TRoutes> = {
   // Overload 1: Routes without params - second arg optional
   <TName extends keyof TRoutes & string>(
-    name: IsEmptyObject<ParamsFor<TRoutes, TName>> extends true ? TName : never
+    name: IsEmptyObject<ExtractParams<RoutePatternFor<TRoutes, TName>>> extends true ? TName : never
   ): string;
 
   // Overload 2: Routes with params - params required
   <TName extends keyof TRoutes & string>(
     name: TName,
-    params: ParamsFor<TRoutes, TName>
+    params: ExtractParams<RoutePatternFor<TRoutes, TName>>
   ): string;
 };
 
@@ -121,16 +130,16 @@ export type HrefFunction<TRoutes extends Record<string, string>> = {
  * href("/about")                   // Path-based → used directly
  * ```
  */
-export type ScopedHrefFunction<TLocalRoutes extends Record<string, string>> = {
+export type ScopedHrefFunction<TLocalRoutes> = {
   // Overload 1: Local routes without params
   <TName extends keyof TLocalRoutes & string>(
-    name: IsEmptyObject<ParamsFor<TLocalRoutes, TName>> extends true ? TName : never
+    name: IsEmptyObject<ExtractParams<RoutePatternFor<TLocalRoutes, TName>>> extends true ? TName : never
   ): string;
 
   // Overload 2: Local routes with params
   <TName extends keyof TLocalRoutes & string>(
     name: TName,
-    params: ParamsFor<TLocalRoutes, TName>
+    params: ExtractParams<RoutePatternFor<TLocalRoutes, TName>>
   ): string;
 
   // Overload 3: Absolute name (contains dot) - global lookup
@@ -156,7 +165,7 @@ export type ScopedHrefFunction<TLocalRoutes extends Record<string, string>> = {
  */
 export function createHref<TRoutes extends Record<string, string>>(
   routeMap: TRoutes
-): HrefFunction<TRoutes> {
+): HrefFunction<TRoutes & Record<string, string>> {
   return ((name: string, params?: Record<string, string>) => {
     const pattern = routeMap[name];
     if (!pattern) {
