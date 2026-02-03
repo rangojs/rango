@@ -3,7 +3,7 @@
  *
  * Universal exports - types and utilities safe for both server and client
  *
- * For server-only exports (route, map, createRSCRouter, etc.):
+ * For server-only exports (urls, createRSCRouter, createLoader, etc.):
  *   import from "rsc-router/server"
  *
  * For client-only exports (Outlet, useOutlet, etc.):
@@ -72,9 +72,6 @@ export type { RSCRouterOptions } from "./router.js";
 // Use this when defining loaders that will be imported by client components
 export { createLoader } from "./loader.js";
 
-// Route pattern definition helper
-// Used to define route patterns in a shared routes.ts file
-export { route } from "./route-utils.js";
 
 // Django-style URL patterns API
 export { urls, type UrlPatterns, type PathHelpers } from "./urls.js";
