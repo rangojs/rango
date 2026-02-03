@@ -50,25 +50,20 @@ test.describe("bundle-analysis", () => {
   }
 
   function getRscBundleContent(): string {
-    // Include index.js (main bundle) and any assets
-    let content = "";
+    // Include main index.js and all asset files
+    const assetFiles = readdirSync(RSC_ASSETS_DIR).filter((f) =>
+      f.endsWith(".js")
+    );
+    const assetContent = assetFiles
+      .map((file) => readFileSync(join(RSC_ASSETS_DIR, file), "utf-8"))
+      .join("\n");
 
-    // Read main RSC bundle
-    if (existsSync(RSC_INDEX)) {
-      content += readFileSync(RSC_INDEX, "utf-8") + "\n";
-    }
+    // Also include the main RSC index.js where most code is bundled
+    const indexContent = existsSync(RSC_INDEX)
+      ? readFileSync(RSC_INDEX, "utf-8")
+      : "";
 
-    // Read assets if they exist
-    if (existsSync(RSC_ASSETS_DIR)) {
-      const files = readdirSync(RSC_ASSETS_DIR).filter((f) =>
-        f.endsWith(".js")
-      );
-      content += files
-        .map((file) => readFileSync(join(RSC_ASSETS_DIR, file), "utf-8"))
-        .join("\n");
-    }
-
-    return content;
+    return indexContent + "\n" + assetContent;
   }
 
   test.describe("loader-tree-shaking", () => {

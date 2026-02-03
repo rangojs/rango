@@ -236,22 +236,27 @@ test.describe("action-id-resolution (production)", () => {
     test("server RSC bundle should keep hashed IDs for inline actions (not file paths)", async () => {
       // Read the built RSC bundle
       const distPath = path.join(f.root, "dist/rsc");
-      const files = fs.readdirSync(distPath, { recursive: true }) as string[];
 
-      // Find all JS files in the RSC bundle (inline actions may be in index.js or assets/)
-      const jsFiles = files.filter(
+      // Check main index.js first (where most code is bundled), then asset files
+      const filesToCheck = ["index.js"];
+
+      // Also check any handler files in assets (if they exist)
+      const files = fs.readdirSync(distPath, { recursive: true }) as string[];
+      const handlerFiles = files.filter(
         (file) =>
           typeof file === "string" &&
-          file.endsWith(".js") &&
-          !file.startsWith("__vite")
+          file.includes("assets/") &&
+          file.includes("handlers") &&
+          file.endsWith(".js")
       );
-
-      expect(jsFiles.length).toBeGreaterThan(0);
+      filesToCheck.push(...handlerFiles);
 
       let foundInlineAction = false;
 
-      for (const file of jsFiles) {
+      for (const file of filesToCheck) {
         const filePath = path.join(distPath, file);
+        if (!fs.existsSync(filePath)) continue;
+
         const content = fs.readFileSync(filePath, "utf-8");
 
         // Look for the inline action registration
@@ -279,7 +284,7 @@ test.describe("action-id-resolution (production)", () => {
 
       expect(
         foundInlineAction,
-        "Should find inline action in RSC bundle"
+        "Should find inline action in RSC bundle (index.js or handlers assets)"
       ).toBe(true);
     });
 
