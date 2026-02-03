@@ -232,7 +232,7 @@ export type PathHelpers<TEnv> = {
    * ])
    * ```
    */
-  path: <TPattern extends string, TName extends string = never>(
+  path: <const TPattern extends string, const TName extends string = never>(
     pattern: TPattern,
     handler: ReactNode | Handler<ExtractParams<TPattern>, TEnv>,
     optionsOrUse?: PathOptions<TName> | (() => RouteUseItem[]),
@@ -260,7 +260,7 @@ export type PathHelpers<TEnv> = {
    */
   include: <
     TRoutes extends Record<string, string>,
-    TNamePrefix extends string = never
+    const TNamePrefix extends string = never
   >(
     prefix: string,
     patterns: UrlPatterns<TEnv, TRoutes>,

@@ -562,12 +562,12 @@ export interface RSCRouter<
    *   .routes(urlpatterns)  // Single call with urls() result
    * ```
    */
-  routes<
-    TPatternRoutes extends Record<string, string>,
-    T extends UrlPatterns<TEnv, TPatternRoutes>
-  >(
+  routes<T extends UrlPatterns<TEnv, any>>(
     patterns: T
-  ): RSCRouter<TEnv, TRoutes & TPatternRoutes>;
+  ): RSCRouter<
+    TEnv,
+    TRoutes & (T extends UrlPatterns<any, infer R> ? R : Record<string, string>)
+  >;
 
   /**
    * Add global middleware that runs on all routes
