@@ -81,6 +81,13 @@ import { invariant } from "./errors";
 // ============================================================================
 
 /**
+ * Sentinel type for unnamed routes.
+ * Using a branded string instead of `never` prevents TypeScript from
+ * widening array type inference when mixing named and unnamed routes.
+ */
+export type UnnamedRoute = "$unnamed";
+
+/**
  * Options for path() function
  */
 export interface PathOptions<TName extends string = string> {
@@ -168,10 +175,12 @@ type Depth = [never, 0, 1, 2, 3, 4];
  */
 type ExtractRoutesFromItem<T, D extends number = 5> = [D] extends [never]
   ? {} // Max depth reached, stop recursion
-  : // TypedRouteItem: extract name -> pattern
+  : // TypedRouteItem: extract name -> pattern (exclude unnamed routes)
     T extends TypedRouteItem<infer TName, infer TPattern>
     ? TName extends string
-      ? { [K in TName]: TPattern }
+      ? TName extends UnnamedRoute
+        ? {} // Exclude unnamed routes from type map
+        : { [K in TName]: TPattern }
       : {}
     // TypedIncludeItem: extract prefixed routes
     : T extends TypedIncludeItem<infer TRoutes, infer TPrefix>
@@ -232,7 +241,7 @@ export type PathHelpers<TEnv> = {
    * ])
    * ```
    */
-  path: <const TPattern extends string, const TName extends string = never>(
+  path: <const TPattern extends string, const TName extends string = UnnamedRoute>(
     pattern: TPattern,
     handler: ReactNode | Handler<ExtractParams<TPattern>, TEnv>,
     optionsOrUse?: PathOptions<TName> | (() => RouteUseItem[]),
