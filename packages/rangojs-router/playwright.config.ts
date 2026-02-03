@@ -43,8 +43,8 @@ export default defineConfig({
       use: browserConfig,
       // HMR tests modify files, run serially to avoid conflicts
       fullyParallel: false,
-      // Run after dev and production tests complete
-      dependencies: ["dev", "production"],
+      // Run after dev and production tests complete (only locally, not in CI where projects run in separate jobs)
+      dependencies: process.env.CI ? [] : ["dev", "production"],
     },
   ],
   workers: process.env.CI ? 2 : 4,
