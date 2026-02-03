@@ -100,15 +100,27 @@ type IsEmptyObject<T> = keyof T extends never ? true : false;
 
 /**
  * Type-safe href function signature
- * Provides overloads for routes with and without params
+ *
+ * Validates route names and params at compile time.
+ * Use route names instead of raw paths for full type safety.
+ *
+ * @example
+ * ```typescript
+ * href("cart")                           // ✓ Validates route exists
+ * href("product.detail", { id: "123" })  // ✓ Validates route + params
+ * ```
  */
 export type HrefFunction<TRoutes> = {
-  // Overload 1: Routes without params - second arg optional
+  /**
+   * Route without params - validates route name exists
+   */
   <TName extends keyof TRoutes & string>(
     name: IsEmptyObject<ExtractParams<RoutePatternFor<TRoutes, TName>>> extends true ? TName : never
   ): string;
 
-  // Overload 2: Routes with params - params required
+  /**
+   * Route with params - validates both route name and params
+   */
   <TName extends keyof TRoutes & string>(
     name: TName,
     params: ExtractParams<RoutePatternFor<TRoutes, TName>>
@@ -117,35 +129,50 @@ export type HrefFunction<TRoutes> = {
 
 /**
  * Type-safe scoped href function signature for use with useHref<typeof patterns>()
- * Accepts local route names (from the patterns), absolute names (with dot), or path-based URLs.
+ *
+ * **Recommended: Use route names for type safety.**
+ * Route names validate both the route exists and params are correct.
+ * Path-based URLs (`/...`) are an escape hatch with no validation.
  *
  * @example
  * ```typescript
- * // In a component rendered by blog routes:
- * const href = useHref<typeof blogPatterns>();
+ * // RECOMMENDED: Use route names for type safety
+ * href("blog.post", { slug: "hello" })  // ✓ Validates route + params
+ * href("shop.cart")                      // ✓ Validates route exists
  *
- * href("index")                    // Local name → resolved with current prefix
- * href("post", { slug: "hello" })  // Local name with params
- * href("shop.cart")                // Absolute name → global lookup
- * href("/about")                   // Path-based → used directly
+ * // ESCAPE HATCH: Path-based URLs (no validation)
+ * href("/about")                         // ⚠ No type checking
+ * href("/typo/in/path")                  // ⚠ Won't catch errors
  * ```
  */
 export type ScopedHrefFunction<TLocalRoutes> = {
-  // Overload 1: Local routes without params
+  /**
+   * Route without params - validates route name exists
+   * @recommended Use this for type-safe URL generation
+   */
   <TName extends keyof TLocalRoutes & string>(
     name: IsEmptyObject<ExtractParams<RoutePatternFor<TLocalRoutes, TName>>> extends true ? TName : never
   ): string;
 
-  // Overload 2: Local routes with params
+  /**
+   * Route with params - validates both route name and params
+   * @recommended Use this for type-safe URL generation with parameters
+   */
   <TName extends keyof TLocalRoutes & string>(
     name: TName,
     params: ExtractParams<RoutePatternFor<TLocalRoutes, TName>>
   ): string;
 
-  // Overload 3: Absolute name (contains dot) - global lookup
+  /**
+   * Absolute route name (contains dot) - global lookup
+   * Use for cross-module navigation: "shop.cart", "blog.post"
+   */
   (name: `${string}.${string}`, params?: Record<string, string>): string;
 
-  // Overload 4: Path-based URL - used directly
+  /**
+   * Path-based URL - ESCAPE HATCH, no type validation
+   * Prefer route names for type safety. Only use paths when necessary.
+   */
   (name: `/${string}`, params?: Record<string, string>): string;
 };
 
