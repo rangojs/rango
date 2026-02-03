@@ -41,6 +41,7 @@ import type {
 import type {
   AllUseItems,
   LayoutItem,
+  TypedLayoutItem,
   RouteItem,
   TypedRouteItem,
   ParallelItem,
@@ -58,6 +59,7 @@ import type {
   LoaderUseItem,
   WhenItem,
   CacheItem,
+  TypedCacheItem,
   IncludeItem,
   TypedIncludeItem,
   IncludeBrand,
@@ -156,11 +158,18 @@ type PrefixPatterns<
 };
 
 /**
- * Extract routes from a single item (path, include, or layout with children)
+ * Depth counter for limiting recursion (max 5 levels to avoid infinite types)
  */
-type ExtractRoutesFromItem<T> =
-  // TypedRouteItem: extract name -> pattern
-  T extends TypedRouteItem<infer TName, infer TPattern>
+type Depth = [never, 0, 1, 2, 3, 4];
+
+/**
+ * Extract routes from a single item (path, include, layout, cache with children)
+ * D is the current depth level (0-4), stops at 5
+ */
+type ExtractRoutesFromItem<T, D extends number = 5> = [D] extends [never]
+  ? {} // Max depth reached, stop recursion
+  : // TypedRouteItem: extract name -> pattern
+    T extends TypedRouteItem<infer TName, infer TPattern>
     ? TName extends string
       ? { [K in TName]: TPattern }
       : {}
@@ -169,27 +178,34 @@ type ExtractRoutesFromItem<T> =
       ? TPrefix extends string
         ? PrefixRoutes<TRoutes, TPrefix>
         : TRoutes
-      // LayoutItem with uses: recurse into children
-      : T extends LayoutItem & { uses?: infer U }
-        ? U extends readonly any[]
-          ? ExtractRoutesFromItems<U>
-          : {}
-        : {};
+      // TypedLayoutItem: extract child routes from phantom type
+      : T extends TypedLayoutItem<infer TChildRoutes>
+        ? TChildRoutes
+        // TypedCacheItem: extract child routes from phantom type
+        : T extends TypedCacheItem<infer TChildRoutes>
+          ? TChildRoutes
+          // Fallback (won't extract routes)
+          : {};
 
 /**
  * Extract routes from an array of items (union of all extracted routes)
+ * D is the current depth level
  */
-type ExtractRoutesFromItems<T extends readonly any[]> = T extends readonly [
-  infer First,
-  ...infer Rest
-]
-  ? ExtractRoutesFromItem<First> & ExtractRoutesFromItems<Rest>
-  : {};
+type ExtractRoutesFromItems<
+  T extends readonly any[],
+  D extends number = 5
+> = [D] extends [never]
+  ? {} // Max depth reached
+  : T extends readonly [infer First, ...infer Rest]
+    ? ExtractRoutesFromItem<First, D> &
+        ExtractRoutesFromItems<Rest, Depth[D]>
+    : {};
 
 /**
  * Main utility: extract route map from urls() callback return type
+ * Supports up to 5 levels of nesting
  */
-export type ExtractRoutes<T extends readonly any[]> = ExtractRoutesFromItems<T>;
+export type ExtractRoutes<T extends readonly any[]> = ExtractRoutesFromItems<T, 5>;
 
 // ============================================================================
 // Path Helpers Type
@@ -226,10 +242,10 @@ export type PathHelpers<TEnv> = {
   /**
    * Define a layout that wraps child routes
    */
-  layout: (
+  layout: <const TChildren extends readonly LayoutUseItem[] = readonly LayoutUseItem[]>(
     component: ReactNode | Handler<any, TEnv>,
-    use?: () => LayoutUseItem[]
-  ) => LayoutItem;
+    use?: () => TChildren
+  ) => TypedLayoutItem<ExtractRoutes<TChildren>>;
 
   /**
    * Include nested URL patterns with optional name prefix
@@ -317,8 +333,13 @@ export type PathHelpers<TEnv> = {
    */
   cache: {
     (): CacheItem;
-    (children: () => AllUseItems[]): CacheItem;
-    (options: PartialCacheOptions | false, use?: () => AllUseItems[]): CacheItem;
+    <const TChildren extends readonly AllUseItems[] = readonly AllUseItems[]>(
+      children: () => TChildren
+    ): TypedCacheItem<ExtractRoutes<TChildren>>;
+    <const TChildren extends readonly AllUseItems[] = readonly AllUseItems[]>(
+      options: PartialCacheOptions | false,
+      use?: () => TChildren
+    ): TypedCacheItem<ExtractRoutes<TChildren>>;
   };
 };
 
@@ -626,10 +647,11 @@ export function urls<
     const includeHelper = createIncludeHelper<TEnv>();
 
     // Combine all helpers
+    // Note: layout and cache are cast to their typed versions - phantom types don't affect runtime
     const helpers: PathHelpers<TEnv> = {
       path: pathHelper,
       include: includeHelper,
-      layout: baseHelpers.layout,
+      layout: baseHelpers.layout as PathHelpers<TEnv>["layout"],
       parallel: baseHelpers.parallel,
       intercept: baseHelpers.intercept as PathHelpers<TEnv>["intercept"],
       middleware: baseHelpers.middleware,
@@ -639,7 +661,7 @@ export function urls<
       errorBoundary: baseHelpers.errorBoundary,
       notFoundBoundary: baseHelpers.notFoundBoundary,
       when: baseHelpers.when,
-      cache: baseHelpers.cache,
+      cache: baseHelpers.cache as PathHelpers<TEnv>["cache"],
     };
 
     // Execute builder directly - manifest.ts handles RootLayout wrapping
@@ -692,4 +714,4 @@ export type ExtractPathParams<
 // Exports
 // ============================================================================
 
-export type { AllUseItems, IncludeItem, TypedRouteItem, TypedIncludeItem } from "./route-types.js";
+export type { AllUseItems, IncludeItem, TypedRouteItem, TypedIncludeItem, TypedLayoutItem, TypedCacheItem } from "./route-types.js";

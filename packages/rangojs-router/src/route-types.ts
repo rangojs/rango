@@ -28,6 +28,16 @@ export type LayoutItem = {
   uses?: AllUseItems[];
   [LayoutBrand]: void;
 };
+
+/**
+ * Typed layout item that carries child routes as phantom type
+ * Used for type inference in urls() API
+ */
+export type TypedLayoutItem<
+  TChildRoutes extends Record<string, string> = Record<string, string>
+> = LayoutItem & {
+  readonly __childRoutes?: TChildRoutes;
+};
 export type RouteItem = {
   name: string;
   type: "route";
@@ -103,6 +113,16 @@ export type CacheItem = {
   type: "cache";
   uses?: AllUseItems[];
   [CacheBrand]: void;
+};
+
+/**
+ * Typed cache item that carries child routes as phantom type
+ * Used for type inference in urls() API
+ */
+export type TypedCacheItem<
+  TChildRoutes extends Record<string, string> = Record<string, string>
+> = CacheItem & {
+  readonly __childRoutes?: TChildRoutes;
 };
 
 /**
