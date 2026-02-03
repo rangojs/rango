@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router";
+import { urls, scopedHref } from "@rangojs/router";
 import { Meta } from "@rangojs/router/server";
 import { Link } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles.js";
@@ -13,9 +13,12 @@ export const blogPatterns = urls(({ path, cache }) => [
     path(
       "/",
       (ctx) => {
+        // Use scopedHref for type-safe local route names
+        const href = scopedHref<typeof blogPatterns>(ctx.href);
+
         const pushBreadcrumb = ctx.use(Breadcrumbs);
         const meta = ctx.use(Meta);
-        pushBreadcrumb({ label: "Blog", href: "/blog" });
+        pushBreadcrumb({ label: "Blog", href: href("index") });
         meta({ title: "Blog - RSC Router Test App" });
         meta({ name: "description", content: "Blog posts from RSC Router" });
         return (
@@ -27,19 +30,21 @@ export const blogPatterns = urls(({ path, cache }) => [
             <p data-testid="blog-description">Welcome to the blog</p>
             <ul data-testid="blog-posts">
               <li>
-                <Link to="/blog/post-1" data-testid="blog-post-link-1">
+                {/* Use scoped href for local route with params */}
+                <Link to={href("post", { postId: "post-1" })} data-testid="blog-post-link-1">
                   Post 1
                 </Link>
               </li>
               <li>
-                <Link to="/blog/post-2" data-testid="blog-post-link-2">
+                <Link to={href("post", { postId: "post-2" })} data-testid="blog-post-link-2">
                   Post 2
                 </Link>
               </li>
             </ul>
             <div data-testid="blog-product-links" style={{ marginTop: "1rem" }}>
               <h3>Featured Products</h3>
-              <Link to="/product/product-a" data-testid="blog-product-link">
+              {/* Cross-module: use absolute name */}
+              <Link to={href("product.detail", { productId: "product-a" })} data-testid="blog-product-link">
                 View Product A
               </Link>
             </div>

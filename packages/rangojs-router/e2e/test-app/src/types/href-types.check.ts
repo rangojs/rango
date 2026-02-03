@@ -89,4 +89,134 @@ if (false as boolean) {
   ctx.href("href.detail", { id: "test" });
 }
 
+// =============================================================================
+// Test 10: useHref<typeof localPatterns>() composability pattern
+// =============================================================================
+// This tests that included url modules can use useHref with their own patterns
+// to get type-safe href for just their local routes.
+import type { UrlPatterns, ScopedHrefFunction, ExtractLocalRoutes } from "@rangojs/router";
+import type { ExtractParams } from "@rangojs/router";
+import { scopedHref } from "@rangojs/router";
+
+// Simulate a local module's patterns type (like blogPatterns)
+// This mirrors what urls() returns: UrlPatterns<TEnv, { routeName: pattern }>
+type LocalBlogRoutes = {
+  index: "/";
+  post: "/:slug";
+};
+type BlogPatternsType = UrlPatterns<unknown, LocalBlogRoutes>;
+
+// Type-level assertion: useHref<typeof blogPatterns>() should extract local routes
+type ExtractedHref = BlogPatternsType extends UrlPatterns<any, infer TRoutes>
+  ? ScopedHrefFunction<TRoutes>
+  : never;
+
+// Verify the extracted type is ScopedHrefFunction with our local routes
+type _AssertExtractsLocalRoutes = ExtractedHref extends ScopedHrefFunction<LocalBlogRoutes>
+  ? true
+  : never;
+const _checkExtractsLocalRoutes: _AssertExtractsLocalRoutes = true;
+
+// Test 11: Local route name validation in ScopedHrefFunction
+// When using useHref<typeof blogPatterns>(), these should type-check:
+declare const localHref: ScopedHrefFunction<LocalBlogRoutes>;
+
+// Valid local route without params
+const _localIndex: string = localHref("index");
+
+// Valid local route with params
+const _localPost: string = localHref("post", { slug: "hello" });
+
+// Absolute routes (dot notation) - allowed as escape hatch
+const _absoluteRoute: string = localHref("shop.cart");
+
+// Path-based URLs - allowed as escape hatch
+const _pathBased: string = localHref("/about");
+
+// Test 12: ExtractParams extracts correct params from local patterns
+type IndexParams = ExtractParams<LocalBlogRoutes["index"]>;
+type PostParams = ExtractParams<LocalBlogRoutes["post"]>;
+
+type _AssertIndexHasNoParams = keyof IndexParams extends never ? true : never;
+const _checkIndexHasNoParams: _AssertIndexHasNoParams = true;
+
+type _AssertPostHasSlug = PostParams extends { slug: string } ? true : never;
+const _checkPostHasSlug: _AssertPostHasSlug = true;
+
+// Test 13: Nested module patterns (like nestedHrefPatterns inside hrefPatterns)
+type NestedRoutes = {
+  index: "/";
+  detail: "/:itemId";
+};
+type NestedPatternsType = UrlPatterns<unknown, NestedRoutes>;
+
+type NestedExtractedHref = NestedPatternsType extends UrlPatterns<any, infer TRoutes>
+  ? ScopedHrefFunction<TRoutes>
+  : never;
+
+declare const nestedHref: NestedExtractedHref;
+
+// Local names in nested module should be type-safe
+const _nestedIndex: string = nestedHref("index");
+const _nestedDetail: string = nestedHref("detail", { itemId: "abc" });
+
+// Test 14: Empty patterns edge case
+type EmptyRoutes = {};
+type EmptyPatternsType = UrlPatterns<unknown, EmptyRoutes>;
+type EmptyExtractedHref = EmptyPatternsType extends UrlPatterns<any, infer TRoutes>
+  ? ScopedHrefFunction<TRoutes>
+  : never;
+
+// Empty patterns should still allow path-based and absolute routes
+declare const emptyHref: EmptyExtractedHref;
+const _emptyPathBased: string = emptyHref("/fallback");
+const _emptyAbsolute: string = emptyHref("other.module.route");
+
+// =============================================================================
+// Test 15: scopedHref() for handlers to get locally-typed href
+// =============================================================================
+// This tests that handlers can use scopedHref<typeof patterns>(ctx.href)
+// to get type-safe local route names.
+
+// Simulate ctx.href (global type)
+declare const globalHref: (name: string, params?: Record<string, string>) => string;
+
+// Use scopedHref to narrow to local routes
+type TestLocalRoutes = {
+  index: "/";
+  detail: "/:id";
+  settings: "/settings";
+};
+type TestPatternsType = UrlPatterns<unknown, TestLocalRoutes>;
+
+// Test ExtractLocalRoutes extracts routes from UrlPatterns
+type ExtractedRoutes = ExtractLocalRoutes<TestPatternsType>;
+type _AssertExtractedRoutesMatch = ExtractedRoutes extends TestLocalRoutes ? true : never;
+const _checkExtractedRoutesMatch: _AssertExtractedRoutesMatch = true;
+
+// Test scopedHref returns properly typed function
+const localHrefFromHandler = scopedHref<TestPatternsType>(globalHref);
+
+// These should all type-check
+const _handlerIndex: string = localHrefFromHandler("index");
+const _handlerDetail: string = localHrefFromHandler("detail", { id: "123" });
+const _handlerSettings: string = localHrefFromHandler("settings");
+const _handlerAbsolute: string = localHrefFromHandler("other.module.route");
+const _handlerPath: string = localHrefFromHandler("/raw/path");
+
+// Test 16: Handler usage pattern
+const testHandlerWithScopedHref: Handler = (ctx) => {
+  // This is the recommended pattern for composable modules
+  const href = scopedHref<TestPatternsType>(ctx.href);
+
+  // Local routes are now type-safe
+  const _idx = href("index");
+  const _det = href("detail", { id: "abc" });
+
+  // Cross-module still works
+  const _cross = href("blog.post", { slug: "hello" });
+
+  return null;
+};
+
 export {};

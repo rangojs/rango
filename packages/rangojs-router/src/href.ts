@@ -177,6 +177,48 @@ export type ScopedHrefFunction<TLocalRoutes> = {
 };
 
 /**
+ * Extract local routes type from UrlPatterns
+ * Used with scopedHref() to get the routes type from patterns
+ */
+export type ExtractLocalRoutes<TPatterns> =
+  TPatterns extends { readonly _routes?: infer TRoutes } ? TRoutes : Record<string, string>;
+
+/**
+ * Get a locally-typed href function from ctx.href for composable modules.
+ *
+ * This is a type-only cast - ctx.href already resolves local names at runtime
+ * based on the current route prefix. This helper just provides type safety
+ * for local route names within a url module.
+ *
+ * @param href - The ctx.href function from HandlerContext
+ * @returns The same href function, but typed for local routes
+ *
+ * @example
+ * ```typescript
+ * // urls/blog.tsx
+ * export const blogPatterns = urls(({ path }) => [
+ *   path("/", (ctx) => {
+ *     // Get locally-typed href for this module's routes
+ *     const href = scopedHref<typeof blogPatterns>(ctx.href);
+ *
+ *     href("index");              // ✓ Type-safe local route
+ *     href("post", { slug: "x" }); // ✓ Type-safe with params
+ *     href("shop.cart");          // ✓ Cross-module (absolute name)
+ *
+ *     return <BlogIndex />;
+ *   }, { name: "index" }),
+ *
+ *   path("/:slug", BlogPost, { name: "post" }),
+ * ]);
+ * ```
+ */
+export function scopedHref<TPatterns>(
+  href: (name: string, params?: Record<string, string>) => string
+): ScopedHrefFunction<ExtractLocalRoutes<TPatterns>> {
+  return href as ScopedHrefFunction<ExtractLocalRoutes<TPatterns>>;
+}
+
+/**
  * Create a type-safe href function for URL generation
  *
  * @param routeMap - Flattened route map with all registered routes

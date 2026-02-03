@@ -84,3 +84,9 @@ export type { CreateRSCHandlerOptions, HandlerCacheConfig } from "./rsc/types.js
 
 // Meta handle type
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
+
+// Href type utilities for type-safe URL generation
+// ScopedHrefFunction is used with useHref<typeof patterns>() for composable modules
+export type { ScopedHrefFunction, HrefFunction, ExtractLocalRoutes } from "./href.js";
+// scopedHref() helper for handlers to get locally-typed href
+export { scopedHref } from "./href.js";

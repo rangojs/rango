@@ -67,4 +67,91 @@ if (false as boolean) {
   ctx.href("blogPost", { slug: "test" });
 }
 
+// =============================================================================
+// Test 6: useHref<typeof localPatterns>() composability pattern
+// =============================================================================
+// This tests that included url modules can use useHref with their own patterns
+// to get type-safe href for just their local routes.
+import type { UrlPatterns, ScopedHrefFunction } from "@rangojs/router";
+import type { ExtractParams } from "@rangojs/router";
+
+// Simulate a local module's patterns type
+// When you define: const myPatterns = urls(({ path }) => [...])
+// The resulting type is: UrlPatterns<TEnv, { routeName: pattern }>
+type LocalRoutes = {
+  index: "/";
+  detail: "/:slug";
+  settings: "/settings";
+};
+type LocalPatternsType = UrlPatterns<unknown, LocalRoutes>;
+
+// Type-level assertion: useHref<typeof myPatterns>() should extract local routes
+// The useHref hook signature is:
+//   useHref<TPatterns>(): TPatterns extends UrlPatterns<any, infer TRoutes>
+//     ? ScopedHrefFunction<TRoutes>
+//     : HrefFn
+type ExtractedHref = LocalPatternsType extends UrlPatterns<any, infer TRoutes>
+  ? ScopedHrefFunction<TRoutes>
+  : never;
+
+// Verify the extracted type is ScopedHrefFunction with our local routes
+type _AssertExtractsLocalRoutes = ExtractedHref extends ScopedHrefFunction<LocalRoutes>
+  ? true
+  : never;
+const _checkExtractsLocalRoutes: _AssertExtractsLocalRoutes = true;
+
+// Test 7: Local route name validation in ScopedHrefFunction
+declare const localHref: ScopedHrefFunction<LocalRoutes>;
+
+// Valid local route without params
+const _localIndex: string = localHref("index");
+const _localSettings: string = localHref("settings");
+
+// Valid local route with params
+const _localDetail: string = localHref("detail", { slug: "hello-world" });
+
+// Absolute routes (dot notation) - allowed as escape hatch for cross-module
+const _absoluteRoute: string = localHref("shop.cart");
+
+// Path-based URLs - allowed as escape hatch
+const _pathBased: string = localHref("/api/data");
+
+// Test 8: ExtractParams extracts correct params from patterns
+type IndexParams = ExtractParams<LocalRoutes["index"]>;
+type DetailParams = ExtractParams<LocalRoutes["detail"]>;
+type SettingsParams = ExtractParams<LocalRoutes["settings"]>;
+
+type _AssertIndexHasNoParams = keyof IndexParams extends never ? true : never;
+const _checkIndexHasNoParams: _AssertIndexHasNoParams = true;
+
+type _AssertDetailHasSlug = DetailParams extends { slug: string } ? true : never;
+const _checkDetailHasSlug: _AssertDetailHasSlug = true;
+
+type _AssertSettingsHasNoParams = keyof SettingsParams extends never ? true : never;
+const _checkSettingsHasNoParams: _AssertSettingsHasNoParams = true;
+
+// Test 9: Composability - multiple independent url modules
+// Each module can use useHref<typeof itsPatterns>() with its own local routes
+type BlogRoutes = { index: "/"; post: "/:postId" };
+type ShopRoutes = { index: "/"; cart: "/cart"; product: "/product/:sku" };
+
+type BlogHref = ScopedHrefFunction<BlogRoutes>;
+type ShopHref = ScopedHrefFunction<ShopRoutes>;
+
+declare const blogHref: BlogHref;
+declare const shopHref: ShopHref;
+
+// Blog module components use blog routes
+const _blogIndex: string = blogHref("index");
+const _blogPost: string = blogHref("post", { postId: "123" });
+
+// Shop module components use shop routes
+const _shopIndex: string = shopHref("index");
+const _shopCart: string = shopHref("cart");
+const _shopProduct: string = shopHref("product", { sku: "SKU-001" });
+
+// Cross-module navigation uses absolute names
+const _toBlog: string = shopHref("blog.post", { postId: "abc" });
+const _toShop: string = blogHref("shop.cart");
+
 export {};
