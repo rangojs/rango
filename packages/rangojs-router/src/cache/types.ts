@@ -136,6 +136,8 @@ export interface SegmentCacheStore<TEnv = unknown> {
 /**
  * Serialized segment data stored in cache
  * Note: loading is preserved to ensure consistent tree structure between cached and fresh renders
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export interface SerializedSegmentData {
   /** RSC-encoded component string */
@@ -154,6 +156,8 @@ export interface SerializedSegmentData {
 
 /**
  * Raw data stored in cache for an entry
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export interface CachedEntryData {
   /** Serialized segments for this entry */
@@ -290,6 +294,7 @@ export type CacheValue =
   | Response
   | ArrayBuffer
   | string
+  | unknown[] // JSON-serializable array
   | Record<string, unknown>; // JSON-serializable object
 
 /**

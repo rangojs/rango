@@ -60,6 +60,10 @@
     "./types": {
       "types": "./src/vite/version.d.ts"
     },
+    "./__internal": {
+      "types": "./src/__internal.ts",
+      "default": "./src/__internal.ts"
+    },
     "./internal/deps/browser": {
       "types": "./src/deps/browser.ts",
       "default": "./src/deps/browser.ts"

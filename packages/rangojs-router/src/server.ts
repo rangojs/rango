@@ -7,15 +7,10 @@
 
 // Route definition helpers (server-only)
 export {
-  route,
-  map,
   createLoader,
   redirect,
   type RouteHelpers,
   type RouteHandlers,
-  type InterceptSelectorContext,
-  type InterceptSegmentsState,
-  type InterceptWhenFn,
 } from "./route-definition.js";
 
 // Django-style URL patterns (server-only)
@@ -102,34 +97,31 @@ export {
   assertClientComponent,
 } from "./component-utils.js";
 
-// Types (re-exported for convenience)
+// Types (re-exported for convenience - user-facing only)
 export type {
+  // Configuration types
   RouterEnv,
   DefaultEnv,
   RouteDefinition,
   RouteConfig,
   RouteDefinitionOptions,
   TrailingSlashMode,
-  ResolvedRouteMap,
+  // Handler types
   Handler,
   HandlerContext,
-  HandlersForRouteMap,
-  ResolvedSegment,
-  SegmentMetadata,
-  MatchResult,
-  SlotState,
   ExtractParams,
   GenericParams,
+  // Revalidation types
   RevalidateParams,
   ShouldRevalidateFn,
   RouteKeys,
   RouteHandler,
   RouteRevalidateFn,
   RouteMiddlewareFn,
+  // Loader types
   LoaderDefinition,
   LoaderFn,
   LoaderContext,
-  GetRegisteredRoutes,
   // Error boundary types
   ErrorInfo,
   ErrorBoundaryFallbackProps,

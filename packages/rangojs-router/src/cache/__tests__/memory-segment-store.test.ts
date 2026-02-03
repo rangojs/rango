@@ -307,8 +307,8 @@ describe("MemorySegmentCacheStore", () => {
           },
         ],
         handles: {
-          layout: { title: "My App" },
-          page: { meta: { description: "Product page" } },
+          layout: { title: ["My App"] },
+          page: { meta: [{ description: "Product page" }] },
         },
         expiresAt: Date.now() + 60000,
       };
@@ -383,7 +383,7 @@ describe("MemorySegmentCacheStore", () => {
           },
         ],
         handles: {
-          "日本語-segment": { title: "こんにちは" },
+          "日本語-segment": { title: ["こんにちは"] },
         },
         expiresAt: Date.now() + 60000,
       };
@@ -393,7 +393,7 @@ describe("MemorySegmentCacheStore", () => {
 
       expect(result!.data.segments[0].metadata.id).toBe("日本語-segment");
       expect(result!.data.handles["日本語-segment"]).toEqual({
-        title: "こんにちは",
+        title: ["こんにちは"],
       });
     });
 
@@ -414,7 +414,7 @@ describe("MemorySegmentCacheStore", () => {
               index: 0,
               params: { id: "123" },
               slot: "@modal",
-              belongsToRoute: "parent-route",
+              belongsToRoute: true,
               layoutName: "MainLayout",
               parallelName: "sidebar",
               loaderId: "loader-1",
@@ -431,7 +431,7 @@ describe("MemorySegmentCacheStore", () => {
 
       const seg = result!.data.segments[0];
       expect(seg.metadata.slot).toBe("@modal");
-      expect(seg.metadata.belongsToRoute).toBe("parent-route");
+      expect(seg.metadata.belongsToRoute).toBe(true);
       expect(seg.metadata.layoutName).toBe("MainLayout");
       expect(seg.metadata.loaderIds).toEqual(["loader-1", "loader-2"]);
       expect(seg.encodedLayout).toBe("layout-data");

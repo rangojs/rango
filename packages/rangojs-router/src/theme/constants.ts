@@ -19,11 +19,15 @@ export const THEME_DEFAULTS = {
 /**
  * Cookie configuration for theme persistence
  */
-export const THEME_COOKIE = {
+export const THEME_COOKIE: {
+  readonly maxAge: number;
+  readonly path: string;
+  readonly sameSite: "lax";
+} = {
   maxAge: 60 * 60 * 24 * 365, // 1 year
   path: "/",
   sameSite: "lax",
-} as const;
+};
 
 /**
  * Resolve theme config by applying defaults.

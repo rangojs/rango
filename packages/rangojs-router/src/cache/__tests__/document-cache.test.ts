@@ -124,7 +124,7 @@ describe("createDocumentCacheMiddleware", () => {
         mockRequestCtx as any,
       );
 
-      const response = await middleware(ctx, next);
+      const response = await middleware(ctx, next) as Response;
 
       expect(next).toHaveBeenCalledTimes(1);
       expect(response.headers.get("x-document-cache-status")).toBe("MISS");
@@ -154,7 +154,7 @@ describe("createDocumentCacheMiddleware", () => {
         mockRequestCtx as any,
       );
 
-      const response = await middleware(ctx, next);
+      const response = await middleware(ctx, next) as Response;
 
       expect(next).toHaveBeenCalledTimes(1);
       expect(response.headers.has("x-document-cache-status")).toBe(false);
@@ -184,7 +184,7 @@ describe("createDocumentCacheMiddleware", () => {
         mockRequestCtx as any,
       );
 
-      const response = await middleware(ctx, next);
+      const response = await middleware(ctx, next) as Response;
 
       expect(next).not.toHaveBeenCalled();
       expect(response.headers.get("x-document-cache-status")).toBe("HIT");
@@ -218,7 +218,7 @@ describe("createDocumentCacheMiddleware", () => {
         mockRequestCtx as any,
       );
 
-      const response = await middleware(ctx, next);
+      const response = await middleware(ctx, next) as Response;
 
       // Should return stale content immediately
       expect(response.headers.get("x-document-cache-status")).toBe("STALE");
@@ -246,7 +246,7 @@ describe("createDocumentCacheMiddleware", () => {
 
       const next = vi.fn().mockResolvedValue(new Response("Action response"));
 
-      const response = await middleware(ctx, next);
+      const response = await middleware(ctx, next) as Response;
 
       expect(next).toHaveBeenCalledTimes(1);
       expect(response.headers.has("x-document-cache-status")).toBe(false);
@@ -262,7 +262,7 @@ describe("createDocumentCacheMiddleware", () => {
 
       const next = vi.fn().mockResolvedValue(new Response("Loader response"));
 
-      const response = await middleware(ctx, next);
+      const response = await middleware(ctx, next) as Response;
 
       expect(next).toHaveBeenCalledTimes(1);
       expect(response.headers.has("x-document-cache-status")).toBe(false);
@@ -278,7 +278,7 @@ describe("createDocumentCacheMiddleware", () => {
 
       const next = vi.fn().mockResolvedValue(new Response("API response"));
 
-      const response = await middleware(ctx, next);
+      const response = await middleware(ctx, next) as Response;
 
       expect(next).toHaveBeenCalledTimes(1);
       expect(response.headers.has("x-document-cache-status")).toBe(false);
@@ -296,7 +296,7 @@ describe("createDocumentCacheMiddleware", () => {
 
       const next = vi.fn().mockResolvedValue(new Response("Response"));
 
-      const response = await middleware(ctx, next);
+      const response = await middleware(ctx, next) as Response;
 
       expect(next).toHaveBeenCalledTimes(1);
       expect(response.headers.has("x-document-cache-status")).toBe(false);
@@ -328,7 +328,7 @@ describe("createDocumentCacheMiddleware", () => {
         mockRequestCtx as any,
       );
 
-      const response = await middleware(ctx, next);
+      const response = await middleware(ctx, next) as Response;
 
       expect(next).not.toHaveBeenCalled();
       expect(response.headers.get("x-document-cache-status")).toBe("HIT");
@@ -363,7 +363,7 @@ describe("createDocumentCacheMiddleware", () => {
         mockRequestCtx as any,
       );
 
-      const response = await middleware(ctx, next);
+      const response = await middleware(ctx, next) as Response;
 
       // Should be a MISS since RSC key is different
       expect(next).toHaveBeenCalledTimes(1);
@@ -403,7 +403,7 @@ describe("createDocumentCacheMiddleware", () => {
         }),
       );
 
-      const response2 = await middleware(ctx2, next2);
+      const response2 = await middleware(ctx2, next2) as Response;
 
       // Should be a MISS because different segments = different cache key
       expect(next2).toHaveBeenCalledTimes(1);
@@ -486,7 +486,7 @@ describe("createDocumentCacheMiddleware", () => {
         brokenCtx as any,
       );
 
-      const response = await middleware(ctx, next);
+      const response = await middleware(ctx, next) as Response;
 
       expect(next).toHaveBeenCalledTimes(1);
       expect(await response.text()).toBe("Fallback");
@@ -513,7 +513,7 @@ describe("createDocumentCacheMiddleware", () => {
         noCacheCtx as any,
       );
 
-      const response = await middleware(ctx, next);
+      const response = await middleware(ctx, next) as Response;
 
       expect(next).toHaveBeenCalledTimes(1);
       expect(response.headers.has("x-document-cache-status")).toBe(false);

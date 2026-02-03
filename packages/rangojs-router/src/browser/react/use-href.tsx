@@ -199,7 +199,7 @@ export function HrefProvider({
   routeMap: Record<string, string>;
   routeName?: string;
   children: React.ReactNode;
-}) {
+}): React.ReactElement {
   return (
     <HrefContext.Provider value={{ routeMap, routeName }}>
       {children}

@@ -31,7 +31,7 @@ function createMockContext(overrides: Partial<MatchContext> = {}): MatchContext 
     prevUrl: new URL("https://example.com/prev"),
     prevParams: {},
     prevMatch: null,
-    matched: { path: "/test", params: {}, entries: [], score: 0 },
+    matched: { entry: {} as any, routeKey: "test", params: {}, optionalParams: new Set<string>() },
     manifestEntry: {} as any,
     entries: [],
     routeKey: "test",
@@ -60,7 +60,9 @@ function createSegment(
 ): ResolvedSegment {
   return {
     id,
+    namespace: id,
     type: "route",
+    index: 0,
     component: `Component_${id}`,
     params: {},
     ...options,
@@ -119,7 +121,7 @@ describe("match-result", () => {
     it("should include params from matched route", () => {
       const ctx = createMockContext({
         isFullMatch: true,
-        matched: { path: "/users/:id", params: { id: "123" }, entries: [], score: 0 },
+        matched: { entry: {} as any, routeKey: "users", params: { id: "123" }, optionalParams: new Set<string>() },
       });
       const state = createPipelineState();
       const segments = [createSegment("page")];
@@ -374,10 +376,10 @@ describe("match-result", () => {
       const ctx = createMockContext({
         isFullMatch: true,
         matched: {
-          path: "/users/:userId/posts/:postId",
+          entry: {} as any,
+          routeKey: "users/posts",
           params: { userId: "123", postId: "456" },
-          entries: [],
-          score: 0,
+          optionalParams: new Set<string>(),
         },
       });
       const state = createPipelineState();

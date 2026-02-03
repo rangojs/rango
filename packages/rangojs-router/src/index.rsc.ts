@@ -28,20 +28,18 @@ export {
   route,
 } from "./index.js";
 
-// Re-export all types from index.ts
+// Re-export all types from index.ts (user-facing types only)
 export type {
+  // Configuration types
   RouterEnv,
   DefaultEnv,
   RouteDefinition,
-  ResolvedRouteMap,
+  // Handler types
   Handler,
   HandlerContext,
-  HandlersForRouteMap,
-  ResolvedSegment,
-  SegmentMetadata,
-  MatchResult,
   ExtractParams,
   GenericParams,
+  // Revalidation types
   RevalidateParams,
   ShouldRevalidateFn,
   MiddlewareFn,
@@ -49,19 +47,21 @@ export type {
   RouteHandler,
   RouteRevalidateFn,
   RouteMiddlewareFn,
+  // Loader types
   LoaderDefinition,
   LoaderFn,
   LoaderContext,
+  // Error boundary types
   ErrorInfo,
   ErrorBoundaryFallbackProps,
   ErrorBoundaryHandler,
   ClientErrorBoundaryFallbackProps,
+  // NotFound boundary types
   NotFoundInfo,
   NotFoundBoundaryFallbackProps,
   NotFoundBoundaryHandler,
+  // Router options
   RSCRouterOptions,
-  PerformanceMetric,
-  MetricsStore,
 } from "./index.js";
 
 // Server-side createLoader - includes the actual loader function
@@ -77,3 +77,17 @@ export {
   type IncludeOptions,
   type IncludeItem,
 } from "./urls.js";
+
+// Core router (server-side)
+export {
+  createRSCRouter,
+  type RSCRouter,
+  type RootLayoutProps,
+} from "./router.js";
+
+// RSC handler (server-side)
+export { createRSCHandler } from "./rsc/handler.js";
+export type { CreateRSCHandlerOptions, HandlerCacheConfig } from "./rsc/types.js";
+
+// Built-in handles (server-side)
+export { Meta } from "./handles/meta.js";

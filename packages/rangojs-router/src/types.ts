@@ -762,6 +762,8 @@ export type NotFoundBoundaryHandler = (props: NotFoundBoundaryFallbackProps) => 
  * - loader: Data segment (no visual rendering, carries loaderData)
  * - error: Error fallback segment (replaces failed segment with error UI)
  * - notFound: Not found fallback segment (replaces segment when data not found)
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export interface ResolvedSegment {
   id: string;
@@ -790,6 +792,8 @@ export interface ResolvedSegment {
 
 /**
  * Segment metadata (without component)
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export interface SegmentMetadata {
   id: string;
@@ -808,6 +812,8 @@ export interface SegmentMetadata {
 /**
  * State of a named slot (e.g., @modal, @sidebar)
  * Used for intercepting routes where slots render alternative content
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export interface SlotState {
   /**
@@ -829,6 +835,8 @@ export interface RootLayoutProps {
 
 /**
  * Router match result
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export interface MatchResult {
   segments: ResolvedSegment[];
@@ -1247,6 +1255,11 @@ export type LoaderContext<TParams = Record<string, string | undefined>, TEnv = a
    * Available when loader is called via load({ method: "POST", body: {...} })
    */
   body: TBody | undefined;
+  /**
+   * Form data when loader is invoked via action (fetchable loaders)
+   * Available when loader is called via form submission
+   */
+  formData?: FormData;
 };
 
 /**

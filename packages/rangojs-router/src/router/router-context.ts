@@ -75,7 +75,9 @@ export interface RouterContext<TEnv = any> {
     searchParams: URLSearchParams,
     pathname: string,
     url: URL,
-    env: TEnv
+    bindings?: any,
+    routeMap?: Record<string, string>,
+    routeName?: string
   ) => HandlerContext<any, TEnv>;
 
   // Loader setup
