@@ -1,7 +1,6 @@
-import type { RouteRevalidateFn } from "@rangojs/router/server";
-import type { blogRoutes } from "@/routes.js";
+import type { ShouldRevalidateFn } from "@rangojs/router/server";
 
-export const postRevalidation: RouteRevalidateFn<typeof blogRoutes, "blog.post"> = ({
+export const postRevalidation: ShouldRevalidateFn<{ slug: string }> = ({
   currentParams,
   nextParams,
   defaultShouldRevalidate,

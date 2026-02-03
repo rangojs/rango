@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react';
 
 interface SegmentTimerProps {
-  segmentId: string;
-  serverRenderTime: string;
+  segmentId?: string;
+  serverRenderTime?: string;
 }
 
 /**
@@ -15,8 +15,9 @@ interface SegmentTimerProps {
  * If segment re-renders (revalidates), timer resets to 0
  * If segment is skipped (not revalidated), timer keeps counting
  */
-export function SegmentTimer({ segmentId, serverRenderTime }: SegmentTimerProps) {
+export function SegmentTimer({ segmentId = 'Segment', serverRenderTime }: SegmentTimerProps) {
   const [seconds, setSeconds] = useState(0);
+  const [renderTime] = useState(() => serverRenderTime || new Date().toISOString());
 
   useEffect(() => {
     // Reset timer when component mounts (segment re-rendered)
@@ -27,7 +28,7 @@ export function SegmentTimer({ segmentId, serverRenderTime }: SegmentTimerProps)
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [serverRenderTime]); // Reset when serverRenderTime changes
+  }, [renderTime]); // Reset when renderTime changes
 
   return (
     <div style={{
@@ -43,7 +44,7 @@ export function SegmentTimer({ segmentId, serverRenderTime }: SegmentTimerProps)
         <strong>Segment:</strong> <code>{segmentId}</code>
       </div>
       <div style={{ marginBottom: '0.5rem' }}>
-        <strong>Server Rendered:</strong> {serverRenderTime}
+        <strong>Server Rendered:</strong> {renderTime}
       </div>
       <div style={{ fontSize: '1.1rem', fontWeight: 'bold' }}>
         ⏱️ Client Age: <span style={{

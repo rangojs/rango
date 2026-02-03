@@ -1,11 +1,10 @@
-import type { RouteHandler } from "@rangojs/router/server";
-import type { blogRoutes } from "@/routes.js";
+import type { Handler } from "@rangojs/router/server";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 import { CurrentURL } from "@/components/CurrentURL.js";
 import { Link } from "@rangojs/router/client";
 
-export const PostRoute: RouteHandler<typeof blogRoutes, "blog.post"> = (ctx) => {
+export const PostRoute: Handler<{ slug: string }> = (ctx) => {
   const renderTime = new Date().toISOString();
   const queryParams: [string, string][] = Array.from(
     ctx.searchParams.entries()

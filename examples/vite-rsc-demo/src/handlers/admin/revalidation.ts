@@ -1,5 +1,4 @@
-import type { ShouldRevalidateFn, RouteRevalidateFn, GenericParams, RevalidateParams } from "@rangojs/router/server";
-import type { adminRoutes } from "@/routes.js";
+import type { ShouldRevalidateFn, GenericParams } from "@rangojs/router/server";
 
 // Global soft decision: suggests revalidation but allows override
 export const globalRevalidation: ShouldRevalidateFn<GenericParams, RSCRouter.Env> = () => {
@@ -8,14 +7,14 @@ export const globalRevalidation: ShouldRevalidateFn<GenericParams, RSCRouter.Env
 };
 
 // Settings page: HARD decision - never revalidate (static)
-export const settingsRevalidation: RouteRevalidateFn<typeof adminRoutes, "admin.settings"> = () => {
+export const settingsRevalidation: ShouldRevalidateFn = () => {
   console.log("[Admin] Settings: HARD decision - never revalidate");
   return false; // HARD: short-circuit, don't revalidate
 };
 
 // User detail: HARD decision - only if ID changes
-export const userRevalidation: RouteRevalidateFn<typeof adminRoutes, "admin.user"> = ((params: RevalidateParams<{ id: string }>) => {
+export const userRevalidation: ShouldRevalidateFn<{ id: string }> = (params) => {
   const changed = params.currentParams.id !== params.nextParams.id;
   console.log(`[Admin] User detail: HARD decision - ID changed=${changed}`);
   return changed; // HARD: short-circuit with this value
-});
+};

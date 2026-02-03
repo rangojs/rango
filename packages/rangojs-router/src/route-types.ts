@@ -34,6 +34,18 @@ export type RouteItem = {
   uses?: AllUseItems[];
   [RouteBrand]: void;
 };
+
+/**
+ * Typed route item that carries route name and pattern as phantom types
+ * Used for type inference in urls() API
+ */
+export type TypedRouteItem<
+  TName extends string = string,
+  TPattern extends string = string
+> = RouteItem & {
+  readonly __name?: TName;
+  readonly __pattern?: TPattern;
+};
 export type ParallelItem = {
   name: string;
   type: "parallel";
@@ -103,6 +115,18 @@ export type IncludeItem = {
   patterns: unknown; // UrlPatterns - avoid circular ref
   options?: { name?: string };
   [IncludeBrand]: void;
+};
+
+/**
+ * Typed include item that carries nested routes as phantom type
+ * Used for type inference in urls() API
+ */
+export type TypedIncludeItem<
+  TRoutes extends Record<string, string> = Record<string, string>,
+  TNamePrefix extends string = string
+> = IncludeItem & {
+  readonly __routes?: TRoutes;
+  readonly __namePrefix?: TNamePrefix;
 };
 
 /**

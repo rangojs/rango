@@ -165,7 +165,7 @@ export const products = [
 export const categories = ["electronics", "sports", "home"];
 
 export const orders = [
-  { id: "ORD-001", date: "2024-01-15", total: 249.97, status: "Delivered" },
-  { id: "ORD-002", date: "2024-01-20", total: 79.99, status: "Shipped" },
-  { id: "ORD-003", date: "2024-01-25", total: 149.99, status: "Processing" },
+  { id: "ORD-001", date: "2024-01-15", total: 249.97, status: "Delivered", items: ["Wireless Headphones", "Running Shoes", "Coffee Maker"] },
+  { id: "ORD-002", date: "2024-01-20", total: 79.99, status: "Shipped", items: ["Running Shoes"] },
+  { id: "ORD-003", date: "2024-01-25", total: 149.99, status: "Processing", items: ["Coffee Maker"] },
 ];

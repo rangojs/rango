@@ -1,12 +1,9 @@
-import type { RouteHandler } from "@rangojs/router/server";
-import type { shopRoutes } from "@/routes.js";
+import type { Handler } from "@rangojs/router/server";
+import type { AppEnv } from "@/router.js";
 import { orders } from "@/handlers/shop/data.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 
-export const AccountIndexRoute: RouteHandler<
-  typeof shopRoutes,
-  "shop.account.index"
-> = (ctx) => {
+export const AccountIndexRoute: Handler<{}, AppEnv> = (ctx) => {
   // Type-safe context access!
   const user = ctx.get("user") || {
     id: "guest",
@@ -88,10 +85,7 @@ export const AccountIndexRoute: RouteHandler<
   );
 };
 
-export const AccountOrdersRoute: RouteHandler<
-  typeof shopRoutes,
-  "shop.account.orders"
-> = () => (
+export const AccountOrdersRoute: Handler = () => (
   <div>
     <h2>Order History</h2>
     <p className="segment-id">Segment: Account Orders</p>
@@ -151,10 +145,7 @@ export const AccountOrdersRoute: RouteHandler<
   </div>
 );
 
-export const AccountOrderDetailRoute: RouteHandler<
-  typeof shopRoutes,
-  "shop.account.orderDetail"
-> = (ctx) => {
+export const AccountOrderDetailRoute: Handler<{ id: string }> = (ctx) => {
   const order = orders.find((o) => o.id === ctx.params.id);
 
   if (!order) {

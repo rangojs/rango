@@ -1,5 +1,4 @@
-import type { RouteHandler } from "@rangojs/router/server";
-import type { shopRoutes } from "@/routes.js";
+import type { Handler } from "@rangojs/router/server";
 import { products } from "@/handlers/shop/data.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 import { CurrentURL } from "@/components/CurrentURL.js";
@@ -29,7 +28,7 @@ import { AddToCartStatus } from "./components/add-to-cart-w-res.client";
 
 // ==================== PRODUCT ROUTES ====================
 
-export const IndexRoute: RouteHandler<typeof shopRoutes, "shop.index"> = () => (
+export const IndexRoute: Handler = () => (
   <DebugSegmentWrapper type="route" name="Shop Index">
     <div style={{ display: "flex", gap: "2rem" }}>
       {/* Category sidebar - parallel route */}
@@ -58,10 +57,7 @@ export const IndexRoute: RouteHandler<typeof shopRoutes, "shop.index"> = () => (
   </DebugSegmentWrapper>
 );
 
-export const ProductsCategoryRoute: RouteHandler<
-  typeof shopRoutes,
-  "shop.products.category"
-> = (ctx) => {
+export const ProductsCategoryRoute: Handler<{ category: string }> = (ctx) => {
   const categoryProducts = products.filter(
     (p) => p.category === ctx.params.category
   );
@@ -94,10 +90,7 @@ export const ProductsCategoryRoute: RouteHandler<
   );
 };
 
-export const ProductsDetailRoute: RouteHandler<
-  typeof shopRoutes,
-  "shop.products.detail.view"
-> = async (ctx) => {
+export const ProductsDetailRoute: Handler<{ slug: string }> = async (ctx) => {
   // Artificial delay to demonstrate loading skeleton
   await new Promise((resolve) => setTimeout(resolve, 1000));
 

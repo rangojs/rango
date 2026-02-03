@@ -103,7 +103,7 @@ export function MiddlewareDemoLayout() {
   );
 }
 
-export function MiddlewareIndexPage(ctx: HandlerContext) {
+export function MiddlewareIndexPage(ctx: HandlerContext<{}, RSCRouter.Env>) {
   const requestId = ctx.get("requestId");
   return (
     <DebugSegmentWrapper type="route" name="Middleware Index">
@@ -198,7 +198,7 @@ export function MiddlewareIndexPage(ctx: HandlerContext) {
   );
 }
 
-export function MiddlewareDashboardPage(ctx: HandlerContext) {
+export function MiddlewareDashboardPage(ctx: HandlerContext<{}, RSCRouter.Env>) {
   const user = ctx.get("user");
   return (
     <DebugSegmentWrapper type="route" name="Dashboard (Protected)">
@@ -265,7 +265,7 @@ export function MiddlewareDashboardPage(ctx: HandlerContext) {
   );
 }
 
-export function MiddlewareTimedPage(ctx: HandlerContext) {
+export function MiddlewareTimedPage(ctx: HandlerContext<{}, RSCRouter.Env>) {
   const elapsed = ctx.get("responseTime");
   return (
     <DebugSegmentWrapper type="route" name="Timed (Route-Level MW)">
@@ -304,7 +304,7 @@ export function MiddlewareTimedPage(ctx: HandlerContext) {
   );
 }
 
-export function MiddlewareUserPage(ctx: HandlerContext<{ userId: string }>) {
+export function MiddlewareUserPage(ctx: HandlerContext<{ userId: string }, RSCRouter.Env>) {
   const enrichedUser = ctx.get("enrichedUser");
   return (
     <DebugSegmentWrapper type="route" name="User (Variable Sharing)">

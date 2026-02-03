@@ -42,6 +42,7 @@ import type {
   AllUseItems,
   LayoutItem,
   RouteItem,
+  TypedRouteItem,
   ParallelItem,
   InterceptItem,
   MiddlewareItem,
@@ -58,6 +59,7 @@ import type {
   WhenItem,
   CacheItem,
   IncludeItem,
+  TypedIncludeItem,
   IncludeBrand,
   UrlPatternsBrand,
 } from "./route-types.js";
@@ -79,9 +81,9 @@ import { invariant } from "./errors";
 /**
  * Options for path() function
  */
-export interface PathOptions {
+export interface PathOptions<TName extends string = string> {
   /** Route name for href() lookups */
-  name?: string;
+  name?: TName;
   /** Trailing slash behavior: "never" (redirect /path/ to /path), "always" (redirect /path to /path/), "ignore" (match both) */
   trailingSlash?: TrailingSlashMode;
 }
@@ -99,7 +101,10 @@ export interface PathDefinition {
 /**
  * Result of urls() - contains the route definitions
  */
-export interface UrlPatterns<TEnv = any> {
+export interface UrlPatterns<
+  TEnv = any,
+  TRoutes extends Record<string, string> = Record<string, string>
+> {
   /** Internal: route definitions */
   readonly definitions: PathDefinition[];
   /** Internal: compiled handler function */
@@ -110,15 +115,81 @@ export interface UrlPatterns<TEnv = any> {
   readonly [UrlPatternsBrand]: void;
   /** Environment type brand (phantom) */
   readonly _env?: TEnv;
+  /** Routes type brand (phantom) - carries route name -> pattern mapping */
+  readonly _routes?: TRoutes;
 }
 
 /**
  * Options for include()
  */
-export interface IncludeOptions {
+export interface IncludeOptions<TNamePrefix extends string = string> {
   /** Name prefix for all routes in this pattern set */
-  name?: string;
+  name?: TNamePrefix;
 }
+
+// ============================================================================
+// Route Type Extraction Utilities
+// ============================================================================
+
+/**
+ * Prefix route names with a given prefix (e.g., "blog" + "post" = "blog.post")
+ */
+type PrefixRoutes<
+  TRoutes extends Record<string, string>,
+  TPrefix extends string
+> = TPrefix extends ""
+  ? TRoutes
+  : {
+      [K in keyof TRoutes as K extends string ? `${TPrefix}.${K}` : never]: TRoutes[K];
+    };
+
+/**
+ * Prefix route patterns with a URL prefix (e.g., "/blog" + "/:slug" = "/blog/:slug")
+ */
+type PrefixPatterns<
+  TRoutes extends Record<string, string>,
+  TUrlPrefix extends string
+> = {
+  [K in keyof TRoutes]: TRoutes[K] extends string
+    ? `${TUrlPrefix}${TRoutes[K]}`
+    : TRoutes[K];
+};
+
+/**
+ * Extract routes from a single item (path, include, or layout with children)
+ */
+type ExtractRoutesFromItem<T> =
+  // TypedRouteItem: extract name -> pattern
+  T extends TypedRouteItem<infer TName, infer TPattern>
+    ? TName extends string
+      ? { [K in TName]: TPattern }
+      : {}
+    // TypedIncludeItem: extract prefixed routes
+    : T extends TypedIncludeItem<infer TRoutes, infer TPrefix>
+      ? TPrefix extends string
+        ? PrefixRoutes<TRoutes, TPrefix>
+        : TRoutes
+      // LayoutItem with uses: recurse into children
+      : T extends LayoutItem & { uses?: infer U }
+        ? U extends readonly any[]
+          ? ExtractRoutesFromItems<U>
+          : {}
+        : {};
+
+/**
+ * Extract routes from an array of items (union of all extracted routes)
+ */
+type ExtractRoutesFromItems<T extends readonly any[]> = T extends readonly [
+  infer First,
+  ...infer Rest
+]
+  ? ExtractRoutesFromItem<First> & ExtractRoutesFromItems<Rest>
+  : {};
+
+/**
+ * Main utility: extract route map from urls() callback return type
+ */
+export type ExtractRoutes<T extends readonly any[]> = ExtractRoutesFromItems<T>;
 
 // ============================================================================
 // Path Helpers Type
@@ -145,12 +216,12 @@ export type PathHelpers<TEnv> = {
    * ])
    * ```
    */
-  path: <TPattern extends string>(
+  path: <TPattern extends string, TName extends string = never>(
     pattern: TPattern,
     handler: ReactNode | Handler<ExtractParams<TPattern>, TEnv>,
-    optionsOrUse?: PathOptions | (() => RouteUseItem[]),
+    optionsOrUse?: PathOptions<TName> | (() => RouteUseItem[]),
     use?: () => RouteUseItem[]
-  ) => RouteItem;
+  ) => TypedRouteItem<TName, TPattern>;
 
   /**
    * Define a layout that wraps child routes
@@ -171,11 +242,14 @@ export type PathHelpers<TEnv> = {
    * include("/blog", blogPatterns, { name: "blog" })
    * ```
    */
-  include: (
+  include: <
+    TRoutes extends Record<string, string>,
+    TNamePrefix extends string = never
+  >(
     prefix: string,
-    patterns: UrlPatterns<TEnv>,
-    options?: IncludeOptions
-  ) => IncludeItem;
+    patterns: UrlPatterns<TEnv, TRoutes>,
+    options?: IncludeOptions<TNamePrefix>
+  ) => TypedIncludeItem<TRoutes, TNamePrefix>;
 
   /**
    * Define parallel routes that render simultaneously in named slots
@@ -423,7 +497,7 @@ function processIncludeItem(item: IncludeItem): AllUseItems[] {
  * Recursively process items, expanding any IncludeItems
  * Returns items with IncludeItems expanded into actual route items
  */
-function processItems(items: AllUseItems[]): AllUseItems[] {
+function processItems(items: readonly AllUseItems[]): AllUseItems[] {
   const result: AllUseItems[] = [];
 
   for (const item of items) {
@@ -526,9 +600,12 @@ import {
  * ]);
  * ```
  */
-export function urls<TEnv = DefaultEnv>(
-  builder: (helpers: PathHelpers<TEnv>) => AllUseItems[]
-): UrlPatterns<TEnv> {
+export function urls<
+  TEnv = DefaultEnv,
+  const TItems extends readonly AllUseItems[] = readonly AllUseItems[]
+>(
+  builder: (helpers: PathHelpers<TEnv>) => TItems
+): UrlPatterns<TEnv, ExtractRoutes<TItems>> {
   // Collect path definitions during build
   const definitions: PathDefinition[] = [];
 
@@ -587,7 +664,7 @@ export function urls<TEnv = DefaultEnv>(
       }
       return Object.fromEntries(ctx.trailingSlash);
     },
-  } as UrlPatterns<TEnv>;
+  } as UrlPatterns<TEnv, ExtractRoutes<TItems>>;
 }
 
 // ============================================================================
@@ -615,4 +692,4 @@ export type ExtractPathParams<
 // Exports
 // ============================================================================
 
-export type { AllUseItems } from "./route-types.js";
+export type { AllUseItems, IncludeItem, TypedRouteItem, TypedIncludeItem } from "./route-types.js";

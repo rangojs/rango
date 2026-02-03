@@ -1,8 +1,6 @@
-import type { RouteRevalidateFn } from "@rangojs/router/server";
-import type { shopRoutes } from "@/routes.js";
+import type { ShouldRevalidateFn } from "@rangojs/router/server";
 
-export const cartRevalidation: RouteRevalidateFn<typeof shopRoutes, "shop.cart"> =
-  () => {
+export const cartRevalidation: ShouldRevalidateFn = () => {
   console.log("[Shop] Cart always revalidates (fresh data)");
   return true; // Always refresh cart
 };

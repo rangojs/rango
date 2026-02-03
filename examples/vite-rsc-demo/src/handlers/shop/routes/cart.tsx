@@ -1,11 +1,10 @@
-import type { RouteHandler } from "@rangojs/router/server";
-import type { shopRoutes } from "@/routes.js";
+import type { Handler } from "@rangojs/router/server";
 import { products } from "@/handlers/shop/data.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 import { ParallelOutlet } from "@rangojs/router/client";
 
-export const CartRoute: RouteHandler<typeof shopRoutes, "shop.cart"> = () => (
+export const CartRoute: Handler = () => (
   <DebugSegmentWrapper type="route" name="Cart">
     <div style={{ display: "flex", gap: "2rem" }}>
       <div style={{ flex: 1 }}>

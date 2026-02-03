@@ -1,5 +1,4 @@
-import type { MiddlewareFn, RouteMiddlewareFn, GenericParams } from "@rangojs/router/server";
-import type { shopRoutes } from "@/routes.js";
+import type { MiddlewareFn, GenericParams } from "@rangojs/router/server";
 
 /**
  * Mock authentication middleware - adds a mock user to context
@@ -23,10 +22,7 @@ export const mockAuthMiddleware: MiddlewareFn<
 /**
  * Require authentication middleware - checks for user in context
  */
-export const requireAuthMiddleware: RouteMiddlewareFn<
-  typeof shopRoutes,
-  "shop.checkout.index"
->[] = [
+export const requireAuthMiddleware: MiddlewareFn[] = [
   (ctx, next) => {
     console.log("[Shop Middleware] Auth check");
     const user = ctx.get("user"); // Type-safe!
