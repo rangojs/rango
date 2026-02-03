@@ -25,9 +25,9 @@
  */
 
 import { use } from "react";
-import { useHandle } from "../browser/react/use-handle.ts";
-import { Meta } from "./meta.ts";
-import type { MetaDescriptor, MetaDescriptorBase } from "../router/types.ts";
+import { useHandle } from "../browser/react/use-handle.js";
+import { Meta } from "./meta.js";
+import type { MetaDescriptor, MetaDescriptorBase } from "../router/types.js";
 import { getSSRThemeConfig } from "../theme/theme-context.js";
 import { generateThemeScript } from "../theme/theme-script.js";
 
