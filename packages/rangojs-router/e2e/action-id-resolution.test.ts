@@ -238,20 +238,19 @@ test.describe("action-id-resolution (production)", () => {
       const distPath = path.join(f.root, "dist/rsc");
       const files = fs.readdirSync(distPath, { recursive: true }) as string[];
 
-      // Find the handlers bundle which contains the inline action
-      const handlerFiles = files.filter(
+      // Find all JS files in the RSC bundle (inline actions may be in index.js or assets/)
+      const jsFiles = files.filter(
         (file) =>
           typeof file === "string" &&
-          file.includes("assets/") &&
-          file.includes("handlers") &&
-          file.endsWith(".js")
+          file.endsWith(".js") &&
+          !file.startsWith("__vite")
       );
 
-      expect(handlerFiles.length).toBeGreaterThan(0);
+      expect(jsFiles.length).toBeGreaterThan(0);
 
       let foundInlineAction = false;
 
-      for (const file of handlerFiles) {
+      for (const file of jsFiles) {
         const filePath = path.join(distPath, file);
         const content = fs.readFileSync(filePath, "utf-8");
 
@@ -280,7 +279,7 @@ test.describe("action-id-resolution (production)", () => {
 
       expect(
         foundInlineAction,
-        "Should find inline action in handlers bundle"
+        "Should find inline action in RSC bundle"
       ).toBe(true);
     });
 
