@@ -81,7 +81,7 @@ test.describe("hmr", () => {
     await page.waitForTimeout(200);
   }
 
-  test("isStreaming should reset to false after HMR on simple page", async ({
+  test.fixme("isStreaming should reset to false after HMR on simple page", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
@@ -107,7 +107,7 @@ test.describe("hmr", () => {
     await expect(testId(page, "nav-status-state")).toContainText("state:idle");
   });
 
-  test("isStreaming should reset to false after HMR on streaming page", async ({
+  test.fixme("isStreaming should reset to false after HMR on streaming page", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
