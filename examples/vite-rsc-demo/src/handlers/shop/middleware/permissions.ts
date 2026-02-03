@@ -1,6 +1,6 @@
-import type { Middleware, GenericParams } from "@rangojs/router/server";
+import type { Middleware } from "@rangojs/router/server";
 
-export const permissionsMiddleware: Middleware<RSCRouter.Env, GenericParams>[] = [
+export const permissionsMiddleware: Middleware[] = [
   (ctx, next) => {
     console.log("[Shop Middleware] Checking order view permissions");
     const user = ctx.get("user"); // Type-safe!

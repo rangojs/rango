@@ -263,7 +263,7 @@ export type ResolvedRouteMap<T extends RouteDefinition> = UnionToIntersection<Fl
  * }
  * ```
  */
-export type Handler<T = {}, TEnv = any> = (
+export type Handler<T = {}, TEnv = DefaultEnv> = (
   ctx: HandlerContext<T extends string ? ExtractParams<T> : T, TEnv>
 ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>;
 
@@ -935,17 +935,17 @@ export interface RouteEntry<TEnv = any> {
  * }
  * ```
  */
-export type Revalidate<T = GenericParams, TEnv = any> = ShouldRevalidateFn<T, TEnv>;
+export type Revalidate<T = GenericParams, TEnv = DefaultEnv> = ShouldRevalidateFn<T, TEnv>;
 
 /**
- * Middleware function with typed environment and params
+ * Middleware function with typed params and environment
  *
- * @template TEnv - Environment type (defaults to any, uses global RSCRouter.Env)
  * @template TParams - Params object (defaults to generic)
+ * @template TEnv - Environment type (defaults to global RSCRouter.Env)
  *
- * Note: Unlike Handler, Middleware cannot directly use route names for params typing
- * because middleware is defined during router setup, before RegisteredRoutes is populated.
- * Use ParamsFor<"route.name"> helper if you need typed params from a route name:
+ * Note: Middleware cannot directly use route names for params typing because
+ * middleware is defined during router setup, before RegisteredRoutes is populated.
+ * Use ExtractParams<"/path/:id"> for typed params from a path pattern.
  *
  * @example
  * ```typescript
@@ -955,20 +955,26 @@ export type Revalidate<T = GenericParams, TEnv = any> = ShouldRevalidateFn<T, TE
  *   await next();
  * }
  *
- * // With explicit params
- * const middleware: Middleware<AppEnv, { id: string }> = async (ctx, next) => {
+ * // With explicit params (most common)
+ * const middleware: Middleware<{ id: string }> = async (ctx, next) => {
  *   console.log(ctx.params.id);
  *   await next();
  * }
  *
  * // With params from path pattern
- * const middleware: Middleware<AppEnv, ExtractParams<"/products/:id">> = async (ctx, next) => {
+ * const middleware: Middleware<ExtractParams<"/products/:id">> = async (ctx, next) => {
  *   console.log(ctx.params.id);
+ *   await next();
+ * }
+ *
+ * // With both params and explicit env
+ * const middleware: Middleware<{ id: string }, AppEnv> = async (ctx, next) => {
+ *   ctx.set("user", { id: ctx.params.id });
  *   await next();
  * }
  * ```
  */
-export type Middleware<TEnv = any, TParams = GenericParams> = MiddlewareFn<TEnv, TParams>;
+export type Middleware<TParams = GenericParams, TEnv = DefaultEnv> = MiddlewareFn<TEnv, TParams>;
 
 
 // ============================================================================

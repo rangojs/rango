@@ -19,7 +19,7 @@ export interface AppBindings {}
 export interface AppVariables {
   user?: { id: string; name: string };
   visitCount?: number;
-  middlewareParams?: Record<string, string>;
+  middlewareParams?: Record<string, string | undefined>;
   // Route-level middleware variables
   routeMiddlewareApplied?: string;
   middlewareRouteId?: string;

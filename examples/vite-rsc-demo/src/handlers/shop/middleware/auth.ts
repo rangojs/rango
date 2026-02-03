@@ -1,12 +1,9 @@
-import type { Middleware, GenericParams } from "@rangojs/router/server";
+import type { Middleware } from "@rangojs/router/server";
 
 /**
  * Mock authentication middleware - adds a mock user to context
  */
-export const mockAuthMiddleware: Middleware<
-  RSCRouter.Env,
-  GenericParams
->[] = [
+export const mockAuthMiddleware: Middleware[] = [
   (ctx, next) => {
     // Simulate authentication - add mock user to context (type-safe!)
     console.log("[Shop Middleware] Auth: Adding mock user to context");
@@ -22,7 +19,7 @@ export const mockAuthMiddleware: Middleware<
 /**
  * Require authentication middleware - checks for user in context
  */
-export const requireAuthMiddleware: Middleware<RSCRouter.Env, GenericParams>[] = [
+export const requireAuthMiddleware: Middleware[] = [
   (ctx, next) => {
     console.log("[Shop Middleware] Auth check");
     const user = ctx.get("user"); // Type-safe!
