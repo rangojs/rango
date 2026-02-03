@@ -516,6 +516,7 @@ export function createNavigationBridge(
       // since it may have fresher data after an action revalidation.
       // This avoids unnecessary server round-trips for shared layout loaders.
       let cachedSegments = cached?.segments;
+      const cachedHandleData = cached?.handleData;
       if (cachedSegments && sourceCached?.segments) {
         const sourceSegmentMap = new Map(
           sourceCached.segments.map((s) => [s.id, s])
@@ -565,7 +566,8 @@ export function createNavigationBridge(
           // so the segment map is consistent with what we tell the server we have.
           // Server decides what needs revalidation based on route matching and custom functions.
           // No need for staleRevalidation flag - we're sending the freshest segments we have.
-          hasUsableCache ? { targetCacheSegments: cachedSegments } : undefined
+          // Also pass cached handle data for restoring breadcrumbs when server returns empty diff.
+          hasUsableCache ? { targetCacheSegments: cachedSegments, targetCacheHandleData: cachedHandleData } : undefined
         );
       } catch (error) {
         // Ignore AbortError - navigation was cancelled by a newer navigation

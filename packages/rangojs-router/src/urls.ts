@@ -71,7 +71,6 @@ import {
   type InterceptWhenFn,
 } from "./server/context";
 import { invariant } from "./errors";
-import RootLayout from "./server/root-layout";
 
 // ============================================================================
 // Types
@@ -540,10 +539,6 @@ export function urls<TEnv = DefaultEnv>(
       "urls() expects a builder function as its argument"
     );
 
-    // Check if we're being called from within an include() context
-    // If urlPrefix is set, we're nested and should NOT wrap with RootLayout
-    const isNestedInInclude = !!getUrlPrefix();
-
     // Get base helpers from the existing route-definition module
     const baseHelpers = createRouteHelpers<any, TEnv>();
 
@@ -570,22 +565,11 @@ export function urls<TEnv = DefaultEnv>(
       cache: baseHelpers.cache,
     };
 
-    // Only wrap with RootLayout at the top level (not when nested in include())
-    // Nested patterns should inherit the parent's RootLayout
-    if (isNestedInInclude) {
-      // Nested: execute builder directly, routes inherit outer RootLayout
-      const builderResult = builder(helpers);
-      return processItems(builderResult);
-    }
-
-    // Top-level: wrap with RootLayout like map() does
-    // IMPORTANT: builder must be called INSIDE the layout callback
-    // so that routes are registered with RootLayout as their parent
-    const layout = baseHelpers.layout;
-    return [layout(RootLayout, () => {
-      const builderResult = builder(helpers);
-      return processItems(builderResult);
-    })].flat(3);
+    // Execute builder directly - manifest.ts handles RootLayout wrapping
+    // for inline handlers (non-Promise results).
+    // For nested include() calls, routes inherit the outer RootLayout.
+    const builderResult = builder(helpers);
+    return processItems(builderResult);
   };
 
   // trailingSlash config is populated when handler() runs

@@ -66,6 +66,9 @@ export type PartialUpdater = (
      * when we send cached segment IDs to the server - if the server returns empty diff,
      * we use the same segments we told the server we have. */
     targetCacheSegments?: ResolvedSegment[];
+    /** Cached handle data for the target URL. When server returns empty diff and we're
+     * rendering from cache, this is passed to the UI to restore breadcrumbs etc. */
+    targetCacheHandleData?: Record<string, Record<string, unknown[]>>;
   },
 ) => Promise<Promise<void>>;
 
@@ -125,6 +128,7 @@ export function createPartialUpdater(
       staleRevalidation?: boolean;
       interceptSourceUrl?: string;
       targetCacheSegments?: ResolvedSegment[];
+      targetCacheHandleData?: Record<string, Record<string, unknown[]>>;
     },
   ): Promise<Promise<void>> {
     const {
@@ -132,6 +136,7 @@ export function createPartialUpdater(
       staleRevalidation = false,
       interceptSourceUrl,
       targetCacheSegments,
+      targetCacheHandleData,
     } = options || {};
     const segmentState = store.getSegmentState();
     const url = targetUrl || window.location.href;
@@ -222,9 +227,18 @@ export function createPartialUpdater(
 
           tx.commit(matchedIds, existingSegments);
 
+          // Include cachedHandleData in metadata so NavigationProvider can restore
+          // breadcrumbs and other handle data from cache.
+          // IMPORTANT: Remove `handles` from metadata to prevent NavigationProvider from
+          // processing an empty handles stream, which would clear the cached breadcrumbs.
+          // When rendering from cache with empty diff, we want to use cachedHandleData instead.
+          const { handles: _unusedHandles, ...metadataWithoutHandles } = payload.metadata!;
           onUpdate({
             root: newTree,
-            metadata: payload.metadata!,
+            metadata: {
+              ...metadataWithoutHandles,
+              cachedHandleData: targetCacheHandleData,
+            },
           });
 
           console.log(`[Browser] Navigation complete (rendered from cache)\n`);
