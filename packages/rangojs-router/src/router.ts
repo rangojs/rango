@@ -3203,7 +3203,9 @@ export function createRSCRouter<TEnv = any>(
       url.searchParams,
       pathname,
       url,
-      bindings
+      bindings,
+      mergedRouteMap,
+      matched.routeKey
     );
 
     // Create request-scoped loader promises map
@@ -3255,6 +3257,7 @@ export function createRSCRouter<TEnv = any>(
         : matched.routeKey,
       handlerContext,
       loaderPromises,
+      routeMap: mergedRouteMap,
       metricsStore,
       Store,
       interceptContextMatch: null,
@@ -3385,7 +3388,9 @@ export function createRSCRouter<TEnv = any>(
       url.searchParams,
       pathname,
       url,
-      bindings
+      bindings,
+      mergedRouteMap,
+      matched.routeKey
     );
 
     const clientSegmentSet = new Set(clientSegmentIds);
@@ -3511,6 +3516,7 @@ export function createRSCRouter<TEnv = any>(
       localRouteName,
       handlerContext,
       loaderPromises,
+      routeMap: mergedRouteMap,
       metricsStore,
       Store,
       interceptContextMatch,

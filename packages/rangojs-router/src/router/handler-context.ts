@@ -8,6 +8,55 @@ import type { HandlerContext } from "../types";
 import { getRequestContext } from "../server/request-context.js";
 
 /**
+ * Resolve route name with namespace prefix support.
+ * Same logic as client-side useHref for consistency.
+ */
+function resolveRouteName(
+  name: string,
+  routeMap: Record<string, string>,
+  currentRoutePrefix?: string
+): string | undefined {
+  // 1. Path-based - starts with /
+  if (name.startsWith("/")) {
+    return name;
+  }
+
+  // 2. Absolute name - already has a dot (e.g., "shop.cart")
+  if (name.includes(".")) {
+    return routeMap[name];
+  }
+
+  // 3. Local name - try with current prefix first, then fall back to direct lookup
+  if (currentRoutePrefix) {
+    // Extract the prefix from current route name
+    // e.g., "blog.posts.detail" → prefix is "blog.posts"
+    const lastDot = currentRoutePrefix.lastIndexOf(".");
+    const prefix = lastDot > 0 ? currentRoutePrefix.substring(0, lastDot) : currentRoutePrefix;
+
+    // Try prefixed name
+    const prefixedName = `${prefix}.${name}`;
+    if (routeMap[prefixedName] !== undefined) {
+      return routeMap[prefixedName];
+    }
+
+    // If current route is a nested include, try parent prefixes
+    // e.g., for "blog.posts.detail", try "blog.posts.index", then "blog.index"
+    let currentPrefix = prefix;
+    while (currentPrefix.includes(".")) {
+      const parentDot = currentPrefix.lastIndexOf(".");
+      currentPrefix = currentPrefix.substring(0, parentDot);
+      const parentPrefixedName = `${currentPrefix}.${name}`;
+      if (routeMap[parentPrefixedName] !== undefined) {
+        return routeMap[parentPrefixedName];
+      }
+    }
+  }
+
+  // Fall back to direct lookup (route without prefix)
+  return routeMap[name];
+}
+
+/**
  * Create HandlerContext with typed env/var/get/set
  */
 export function createHandlerContext<TEnv>(
@@ -16,7 +65,9 @@ export function createHandlerContext<TEnv>(
   searchParams: URLSearchParams,
   pathname: string,
   url: URL,
-  bindings: any = {}
+  bindings: any = {},
+  routeMap: Record<string, string> = {},
+  routeName?: string
 ): HandlerContext<any, TEnv> {
   // Get variables from request context - this is the unified context
   // shared between middleware and route handlers
@@ -64,5 +115,44 @@ export function createHandlerContext<TEnv>(
     // Theme support (when enabled via router config)
     theme: requestContext?.theme,
     setTheme: requestContext?.setTheme,
+    // Scoped href for URL generation
+    href: (name: string, hrefParams?: Record<string, string>) => {
+      // Path-based - return directly (optionally with param substitution)
+      if (name.startsWith("/")) {
+        if (hrefParams) {
+          return name.replace(/:([^/]+)/g, (_, key) => {
+            const value = hrefParams[key];
+            if (value === undefined) {
+              throw new Error(`Missing param "${key}" for path "${name}"`);
+            }
+            return encodeURIComponent(value);
+          });
+        }
+        return name;
+      }
+
+      // Resolve route name with namespace support
+      const pattern = resolveRouteName(name, routeMap, routeName);
+
+      if (pattern === undefined) {
+        throw new Error(
+          `Unknown route: "${name}"${routeName ? ` (current route: ${routeName})` : ""}`
+        );
+      }
+
+      // If no params, return pattern directly
+      if (!hrefParams) {
+        return pattern;
+      }
+
+      // Substitute params
+      return pattern.replace(/:([^/]+)/g, (_, key) => {
+        const value = hrefParams[key];
+        if (value === undefined) {
+          throw new Error(`Missing param "${key}" for route "${name}"`);
+        }
+        return encodeURIComponent(value);
+      });
+    },
   };
 }

@@ -406,6 +406,27 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
    * ```
    */
   setTheme?: (theme: Theme) => void;
+  /**
+   * Generate URLs from route names with scoped resolution.
+   *
+   * Resolution priority:
+   * 1. Path-based (`/about`) → Use directly
+   * 2. Absolute name (`shop.cart`) → Global lookup (contains dot)
+   * 3. Local name (`index`) → Prepend current name prefix, then lookup
+   *
+   * @example
+   * ```typescript
+   * // In a handler within blogPatterns (mounted at /blog with name "blog"):
+   * route("post", (ctx) => {
+   *   const homeUrl = ctx.href("index");           // → "/blog/"
+   *   const postUrl = ctx.href("post", { slug: "hello" }); // → "/blog/hello"
+   *   const cartUrl = ctx.href("shop.cart");       // → "/shop/cart"
+   *   const aboutUrl = ctx.href("/about");         // → "/about"
+   *   return <PostPage />;
+   * });
+   * ```
+   */
+  href: (name: string, params?: Record<string, string>) => string;
 };
 
 /**

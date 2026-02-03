@@ -163,6 +163,9 @@ export interface MatchContext<TEnv = any> {
   handlerContext: HandlerContext<any, TEnv>;
   loaderPromises: Map<string, Promise<any>>;
 
+  // Route map for href resolution
+  routeMap: Record<string, string>;
+
   // Metrics
   metricsStore: MetricsStore | undefined;
 
