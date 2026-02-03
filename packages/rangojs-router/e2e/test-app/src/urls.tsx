@@ -17,6 +17,7 @@ import { hooksPatterns } from "./urls/hooks.js";
 import { middlewarePatterns } from "./urls/middleware.js";
 import { cachePatterns } from "./urls/cache.js";
 import { themePatterns } from "./urls/theme.js";
+import { hrefPatterns } from "./urls/href.js";
 import {
   ProductsLoader,
   ProductDetailLoader,
@@ -400,5 +401,8 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
 
     // Theme patterns
     include("/theme", themePatterns, { name: "theme" }),
+
+    // Href test patterns
+    include("/href", hrefPatterns, { name: "href" }),
   ]),
 ]);

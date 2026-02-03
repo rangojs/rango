@@ -845,6 +845,11 @@ export interface MatchResult {
    */
   routeName?: string;
   /**
+   * Map of route names to URL patterns.
+   * Used by useHref() to resolve route names to URLs.
+   */
+  routeMap?: Record<string, string>;
+  /**
    * Server-Timing header value (only present when debugPerformance is enabled)
    * Can be added to response headers for DevTools integration
    */
