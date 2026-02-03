@@ -216,11 +216,10 @@ export function createHandleStore(): HandleStore {
         if (!data[handleName]) {
           data[handleName] = {};
         }
-        if (!data[handleName][segmentId]) {
-          data[handleName][segmentId] = [];
-        }
-        // Append replayed data
-        data[handleName][segmentId].push(...segmentHandles[handleName]);
+        // Replace with replayed data (not append) to avoid handle bleeding between routes.
+        // When a cached segment is restored, its handles should replace any existing data
+        // for that segment, not accumulate on top of data from a different route.
+        data[handleName][segmentId] = [...segmentHandles[handleName]];
       }
       // Trigger emission for streaming
       pendingEmissions.push(cloneHandleData(data));
