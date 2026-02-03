@@ -159,10 +159,7 @@ export function BlogPostPage(ctx: HandlerContext<{ slug: string }>) {
           )}
         </div>
 
-        <SegmentTimer
-          segmentId="R2.1 (Blog Post)"
-          serverRenderTime={renderTime}
-        />
+<SegmentTimer serverRenderTime={renderTime} />
 
         <div
           style={{

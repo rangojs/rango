@@ -219,7 +219,7 @@ export const ProductsDetailRoute: Handler<{ slug: string }> = async (ctx) => {
                   </li>
                 )}
               </ul>
-              <SegmentTimer />
+              <SegmentTimer serverRenderTime={new Date().toISOString()} />
             </div>
 
             <CurrentURL />

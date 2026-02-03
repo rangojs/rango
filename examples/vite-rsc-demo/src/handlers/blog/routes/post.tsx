@@ -84,10 +84,7 @@ export const PostRoute: Handler<{ slug: string }> = (ctx) => {
           </p>
         </div>
 
-        <SegmentTimer
-          segmentId="R2.1 (Blog Post)"
-          serverRenderTime={renderTime}
-        />
+<SegmentTimer serverRenderTime={renderTime} />
 
         <div
           style={{
