@@ -23,7 +23,7 @@ export function TodosCount() {
   );
 }
 
-export function TodosIndexContent({ serverValue }: { serverValue?: string }) {
+export function TodosIndexContent() {
   const { data } = useLoader(TodosLoader);
 
   return (
@@ -38,7 +38,7 @@ export function TodosIndexContent({ serverValue }: { serverValue?: string }) {
           }}
         >
           <h2 style={{ margin: "0 0 1rem 0", color: "#334155" }}>
-            Server Actions Demo ({serverValue ?? "no server value"})
+            Server Actions Demo
           </h2>
           <p style={{ color: "#64748b", margin: 0 }}>
             This page demonstrates RSC Router's server actions with optimistic

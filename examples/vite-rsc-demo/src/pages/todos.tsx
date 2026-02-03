@@ -45,11 +45,7 @@ export function TodosLayout() {
 }
 
 export function TodosIndexPage() {
-  return (
-    <TodosIndexContent
-      serverValue={Math.random().toString(36).substring(2, 7)}
-    />
-  );
+  return <TodosIndexContent />;
 }
 
 export function TodoDetailPage() {
