@@ -1,4 +1,4 @@
-import type { MiddlewareFn, GenericParams, HandlerContext } from "@rangojs/router";
+import type { Middleware, GenericParams, HandlerContext } from "@rangojs/router";
 import { Outlet, Link } from "@rangojs/router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 
@@ -387,7 +387,7 @@ export function MiddlewareApiPage() {
 }
 
 // Global middleware
-export const globalMiddleware: MiddlewareFn<RSCRouter.Env, GenericParams>[] = [
+export const globalMiddleware: Middleware<RSCRouter.Env, GenericParams>[] = [
   async (ctx, next) => {
     const requestId = crypto.randomUUID().slice(0, 8);
     ctx.set("requestId", requestId);
@@ -403,7 +403,7 @@ export const globalMiddleware: MiddlewareFn<RSCRouter.Env, GenericParams>[] = [
 ];
 
 // Dashboard middleware
-export const dashboardMiddleware: MiddlewareFn<RSCRouter.Env, GenericParams>[] = [
+export const dashboardMiddleware: Middleware<RSCRouter.Env, GenericParams>[] = [
   async (ctx, next) => {
     const isAuth = ctx.searchParams.get("auth") === "true";
     console.log(`[Auth Middleware] Checking auth for ${ctx.pathname}: ${isAuth}`);
@@ -417,7 +417,7 @@ export const dashboardMiddleware: MiddlewareFn<RSCRouter.Env, GenericParams>[] =
 ];
 
 // Timed middleware
-export const timedMiddleware: MiddlewareFn<RSCRouter.Env, GenericParams>[] = [
+export const timedMiddleware: Middleware<RSCRouter.Env, GenericParams>[] = [
   async (ctx, next) => {
     const start = performance.now();
     await next();
@@ -429,7 +429,7 @@ export const timedMiddleware: MiddlewareFn<RSCRouter.Env, GenericParams>[] = [
 ];
 
 // User middleware
-export const userMiddleware: MiddlewareFn<RSCRouter.Env, GenericParams>[] = [
+export const userMiddleware: Middleware<RSCRouter.Env, GenericParams>[] = [
   async (ctx, next) => {
     const userId = ctx.params.userId as string;
     ctx.set("enrichedUser", {
@@ -443,7 +443,7 @@ export const userMiddleware: MiddlewareFn<RSCRouter.Env, GenericParams>[] = [
 ];
 
 // API middleware
-export const apiMiddleware: MiddlewareFn<RSCRouter.Env, GenericParams>[] = [
+export const apiMiddleware: Middleware<RSCRouter.Env, GenericParams>[] = [
   async (ctx, next) => {
     console.log("[API Middleware] Running");
     ctx.header("X-API-Middleware", "executed");

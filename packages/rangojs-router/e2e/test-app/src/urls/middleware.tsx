@@ -66,7 +66,7 @@ export const middlewarePatterns = urls(({ path, middleware }) => [
     "/protected",
     (ctx) => {
       // Get user from middleware-set context variable
-      const user = ctx.get("user") as { id: string; name: string } | undefined;
+      const user = ctx.get("user");
       return (
         <div data-testid="middleware-test-protected">
           <Link to="/middleware-test" data-testid="back-link">
@@ -91,7 +91,7 @@ export const middlewarePatterns = urls(({ path, middleware }) => [
   path(
     "/protected/dashboard",
     (ctx) => {
-      const user = ctx.get("user") as { id: string; name: string } | undefined;
+      const user = ctx.get("user");
       return (
         <div data-testid="middleware-test-protected-dashboard">
           <Link to="/middleware-test" data-testid="back-link">
@@ -125,7 +125,7 @@ export const middlewarePatterns = urls(({ path, middleware }) => [
   path(
     "/cookies",
     (ctx) => {
-      const visitCount = ctx.get("visitCount") as number | undefined;
+      const visitCount = ctx.get("visitCount");
       return (
         <div data-testid="middleware-test-cookies">
           <Link to="/middleware-test" data-testid="back-link">
@@ -146,7 +146,7 @@ export const middlewarePatterns = urls(({ path, middleware }) => [
   path(
     "/params/:paramId",
     (ctx) => {
-      const middlewareParams = ctx.get("middlewareParams") as Record<string, string> | undefined;
+      const middlewareParams = ctx.get("middlewareParams");
       return (
         <div data-testid="middleware-test-params">
           <Link to="/middleware-test" data-testid="back-link">

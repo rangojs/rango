@@ -35,18 +35,16 @@ export type {
   DefaultEnv,
   RouteDefinition,
   // Handler types
-  Handler,
+  Handler,            // Supports params object, path pattern, or route name
   HandlerContext,
   ExtractParams,
   GenericParams,
+  // Middleware types
+  Middleware,
   // Revalidation types
   RevalidateParams,
-  ShouldRevalidateFn,
-  MiddlewareFn,
+  Revalidate,
   RouteKeys,
-  RouteHandler,
-  RouteRevalidateFn,
-  RouteMiddlewareFn,
   // Loader types
   LoaderDefinition,
   LoaderFn,

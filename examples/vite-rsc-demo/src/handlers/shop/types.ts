@@ -7,7 +7,7 @@
  * The shop example now uses framework types directly:
  * - RouteHandler<typeof shopRoutes, "cart">
  * - RouteRevalidateFn<typeof shopRoutes, "cart">
- * - RouteMiddlewareFn<typeof shopRoutes, "cart">
+ * - RouteMiddleware<typeof shopRoutes, "cart">
  *
  * You can create aliases like these if you prefer shorter syntax:
  *

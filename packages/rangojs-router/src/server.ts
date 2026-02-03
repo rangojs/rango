@@ -71,10 +71,8 @@ export {
 // Meta types
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 
-// Middleware types
+// Middleware context types (Middleware type is exported from types.ts)
 export type {
-  MiddlewareFn,
-  MiddlewareFn as AppMiddlewareFn, // Alias for backwards compatibility
   MiddlewareContext,
   CookieOptions,
 } from "./router/middleware.js";
@@ -107,17 +105,16 @@ export type {
   RouteDefinitionOptions,
   TrailingSlashMode,
   // Handler types
-  Handler,
+  Handler,            // Supports params object, path pattern, or route name
   HandlerContext,
   ExtractParams,
   GenericParams,
+  // Middleware types (also exported from router/middleware.js above)
+  Middleware,         // Supports env type and optional route name for params
   // Revalidation types
   RevalidateParams,
-  ShouldRevalidateFn,
+  Revalidate,
   RouteKeys,
-  RouteHandler,
-  RouteRevalidateFn,
-  RouteMiddlewareFn,
   // Loader types
   LoaderDefinition,
   LoaderFn,

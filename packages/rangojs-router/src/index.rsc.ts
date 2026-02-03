@@ -39,14 +39,12 @@ export type {
   HandlerContext,
   ExtractParams,
   GenericParams,
+  // Middleware types
+  Middleware,
   // Revalidation types
   RevalidateParams,
-  ShouldRevalidateFn,
-  MiddlewareFn,
+  Revalidate,
   RouteKeys,
-  RouteHandler,
-  RouteRevalidateFn,
-  RouteMiddlewareFn,
   // Loader types
   LoaderDefinition,
   LoaderFn,

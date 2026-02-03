@@ -1,4 +1,4 @@
-import { createRSCRouter, type AppMiddlewareFn } from "@rangojs/router/server";
+import { createRSCRouter, type Middleware } from "@rangojs/router/server";
 import { urlpatterns } from "./urls.js";
 import { AppShell } from "./components/AppShell.js";
 import type { AppEnv } from "./env.js";
@@ -37,7 +37,7 @@ function isDevelopment(url: URL): boolean {
  * - In development: Uses Report-Only mode to avoid blocking HMR scripts
  * - In production: Uses enforcing CSP
  */
-const cspMiddleware: AppMiddlewareFn<AppEnv> = async (ctx, next) => {
+const cspMiddleware: Middleware<AppEnv> = async (ctx, next) => {
   await next();
 
   // Only add CSP to HTML responses

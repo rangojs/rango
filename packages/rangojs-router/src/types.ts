@@ -3,6 +3,8 @@ import type { AllUseItems } from "./route-types.js";
 import type { Handle } from "./handle.js";
 import type { MiddlewareFn } from "./router/middleware.js";
 import type { Theme } from "./theme/types.js";
+
+// Re-export MiddlewareFn for internal/advanced use
 export type { MiddlewareFn } from "./router/middleware.js";
 
 /**
@@ -243,11 +245,27 @@ type UnionToIntersection<U> = (
 export type ResolvedRouteMap<T extends RouteDefinition> = UnionToIntersection<FlattenRoutes<T>>;
 
 /**
- * Handler function that receives context and returns React content
+ * Handler function that receives context and returns React content or a Response
+ *
+ * @template T - Params object OR path pattern string
+ * @template TEnv - Environment type
+ *
+ * @example
+ * ```typescript
+ * // With explicit params object
+ * const handler: Handler<{ id: string }> = (ctx) => {
+ *   ctx.params.id // string
+ * }
+ *
+ * // With path pattern - params extracted automatically
+ * const handler: Handler<"/product/:id"> = (ctx) => {
+ *   ctx.params.id // string
+ * }
+ * ```
  */
-export type Handler<TParams = {}, TEnv = any> = (
-  ctx: HandlerContext<TParams, TEnv>
-) => ReactNode | Promise<ReactNode>;
+export type Handler<T = {}, TEnv = any> = (
+  ctx: HandlerContext<T extends string ? ExtractParams<T> : T, TEnv>
+) => ReactNode | Promise<ReactNode> | Response | Promise<Response>;
 
 /**
  * Context passed to handlers (Hono-inspired type-safe context)
@@ -903,113 +921,55 @@ export interface RouteEntry<TEnv = any> {
   mountIndex: number;
 }
 
-/**
- * Type-safe route handler helper for specific routes
- *
- * Automatically extracts the correct param types from your route definition.
- *
- * @template TRoutes - Your route definition object (e.g., typeof shopRoutes)
- * @template K - The route key (e.g., "cart", "products.detail")
- * @template TEnv - Environment type (defaults to global RSCRouter.Env)
- *
- * @example
- * ```typescript
- * import { RouteHandler } from "rsc-router";
- * import { shopRoutes } from "./routes.js";
- *
- * export const cartRoute: RouteHandler<typeof shopRoutes, "cart"> = (ctx) => {
- *   // ctx.params is typed correctly for the cart route
- *   // ctx.get('user') is type-safe via global augmentation
- *   return <CartPage />;
- * }
- *
- * export const productRoute: RouteHandler<typeof shopRoutes, "products.detail"> = (ctx) => {
- *   // ctx.params.slug is automatically typed as string
- *   return <ProductDetail slug={ctx.params.slug} />;
- * }
- * ```
- */
-export type RouteHandler<
-  TRoutes extends RouteDefinition,
-  K extends keyof TRoutes,
-  TEnv = DefaultEnv
-> = Handler<ExtractRouteParams<TRoutes, K & string>, TEnv>;
 
 /**
- * Type-safe revalidation function helper for specific routes
+ * Revalidation function with typed params
  *
- * Automatically extracts the correct param types from your route definition.
- *
- * @template TRoutes - Your route definition object (e.g., typeof shopRoutes)
- * @template K - The route key (e.g., "cart", "products.detail")
- * @template TEnv - Environment type (defaults to global RSCRouter.Env)
+ * @template T - Params object
+ * @template TEnv - Environment type
  *
  * @example
  * ```typescript
- * import { RouteRevalidateFn } from "rsc-router";
- * import { shopRoutes } from "./routes.js";
- *
- * export const cartRevalidation: RouteRevalidateFn<typeof shopRoutes, "cart"> = ({
- *   currentParams,
- *   nextParams
- * }) => {
- *   // params are typed correctly for the cart route
- *   return true; // Always revalidate cart
- * }
- *
- * export const productRevalidation: RouteRevalidateFn<typeof shopRoutes, "products.detail"> = ({
- *   currentParams,
- *   nextParams
- * }) => {
- *   // currentParams.slug and nextParams.slug are automatically typed
+ * const revalidate: Revalidate<{ slug: string }> = ({ currentParams, nextParams }) => {
  *   return currentParams.slug !== nextParams.slug;
  * }
  * ```
  */
-export type RouteRevalidateFn<
-  TRoutes extends RouteDefinition,
-  K extends keyof TRoutes,
-  TEnv = DefaultEnv
-> = ShouldRevalidateFn<ExtractRouteParams<TRoutes, K & string>, TEnv>;
+export type Revalidate<T = GenericParams, TEnv = any> = ShouldRevalidateFn<T, TEnv>;
 
 /**
- * Type-safe middleware function helper for specific routes
+ * Middleware function with typed environment and params
  *
- * Automatically extracts the correct param types from your route definition.
+ * @template TEnv - Environment type (defaults to any, uses global RSCRouter.Env)
+ * @template TParams - Params object (defaults to generic)
  *
- * @template TRoutes - Your route definition object (e.g., typeof shopRoutes)
- * @template K - The route key (e.g., "checkout.index", "account.orders")
- * @template TEnv - Environment type (defaults to global RSCRouter.Env)
+ * Note: Unlike Handler, Middleware cannot directly use route names for params typing
+ * because middleware is defined during router setup, before RegisteredRoutes is populated.
+ * Use ParamsFor<"route.name"> helper if you need typed params from a route name:
  *
  * @example
  * ```typescript
- * import { RouteMiddlewareFn } from "rsc-router";
- * import { shopRoutes } from "./routes.js";
- *
- * export const checkoutMiddleware: RouteMiddlewareFn<typeof shopRoutes, "checkout.index"> = async (ctx, next) => {
- *   // ctx.params is typed correctly for checkout.index route
- *   // ctx.get('user') is type-safe via global augmentation
- *   if (!ctx.get('user')) {
- *     return redirect('/login');
- *   }
+ * // Basic middleware (uses global RSCRouter.Env via module augmentation)
+ * const middleware: Middleware = async (ctx, next) => {
+ *   ctx.set("user", { id: "123" }); // Type-safe!
  *   await next();
- *   // ctx.res available here for header modification
  * }
  *
- * export const productMiddleware: RouteMiddlewareFn<typeof shopRoutes, "products.detail"> = async (ctx, next) => {
- *   // ctx.params.slug is automatically typed as string
- *   console.log('Viewing product:', ctx.params.slug);
- *   const response = await next();
- *   response.headers.set('X-Product', ctx.params.slug);
- *   return response;
+ * // With explicit params
+ * const middleware: Middleware<AppEnv, { id: string }> = async (ctx, next) => {
+ *   console.log(ctx.params.id);
+ *   await next();
+ * }
+ *
+ * // With params from path pattern
+ * const middleware: Middleware<AppEnv, ExtractParams<"/products/:id">> = async (ctx, next) => {
+ *   console.log(ctx.params.id);
+ *   await next();
  * }
  * ```
  */
-export type RouteMiddlewareFn<
-  TRoutes extends RouteDefinition,
-  K extends keyof TRoutes,
-  TEnv = DefaultEnv
-> = MiddlewareFn<TEnv, ExtractRouteParams<TRoutes, K & string>>;
+export type Middleware<TEnv = any, TParams = GenericParams> = MiddlewareFn<TEnv, TParams>;
+
 
 // ============================================================================
 // Cache Types

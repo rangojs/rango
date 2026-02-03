@@ -10,6 +10,7 @@ export interface AppBindings {
 // Middleware-injected variables
 export interface AppVariables {
   requestId?: string;
+  nonce?: string; // CSP nonce injected by RSC handler
 }
 
 // Combined app environment
