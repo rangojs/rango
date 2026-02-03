@@ -1,3 +1,3 @@
 # @rangojs/router
 
-Use `/rango` for overview and links to all skills.
+Run `/rango` first to understand the API and see all available skills.

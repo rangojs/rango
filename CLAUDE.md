@@ -1,2 +1,2 @@
 - When writing code comments, never use icons and emojis. Keep comments technical and focused on implementation details.
-- Use `/rango` for @rangojs/router overview and links to all skills.
+- Before working on routing, run `/rango` to understand the @rangojs/router API and available skills.
