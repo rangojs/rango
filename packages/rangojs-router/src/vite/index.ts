@@ -230,7 +230,8 @@ function getManualChunks(id: string): string | undefined {
   const packageName = getPublishedPackageName();
   if (
     normalized.includes(`node_modules/${packageName}/`) ||
-    normalized.includes("packages/rsc-router/")
+    normalized.includes("packages/rsc-router/") ||
+    normalized.includes("packages/rangojs-router/")
   ) {
     return "router";
   }
