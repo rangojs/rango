@@ -295,20 +295,70 @@ export type Handler<T = {}, TEnv = DefaultEnv> = (
  * ```
  */
 export type HandlerContext<TParams = {}, TEnv = any> = {
+  /**
+   * Route parameters extracted from the URL pattern.
+   * Type-safe when using Handler<"/path/:param"> or Handler<{ param: string }>.
+   */
   params: TParams;
+  /**
+   * The incoming Request object (with system params filtered from URL).
+   * Use `_originalRequest` if you need access to raw system params.
+   */
   request: Request;
-  searchParams: URLSearchParams;  // Filtered (no _rsc* params)
+  /**
+   * Query parameters from the URL (system params like `_rsc*` are filtered).
+   * Use for user-facing query strings only.
+   */
+  searchParams: URLSearchParams;
+  /**
+   * The pathname portion of the request URL.
+   */
   pathname: string;
-  url: URL;                       // Filtered (no _rsc* params)
+  /**
+   * The full URL object (with system params filtered).
+   * Use `_originalRequest.url` if you need the raw URL with system params.
+   */
+  url: URL;
+  /**
+   * Platform bindings (DB, KV, secrets, etc.) from RouterEnv.
+   * Access resources like `ctx.env.DB`, `ctx.env.KV`.
+   */
   env: TEnv extends RouterEnv<infer B, any> ? B : {};
+  /**
+   * Middleware-injected variables from RouterEnv.
+   * Access values like `ctx.var.user`, `ctx.var.permissions`.
+   */
   var: TEnv extends RouterEnv<any, infer V> ? V : {};
+  /**
+   * Type-safe getter for middleware variables.
+   * Alternative to `ctx.var.key` with better autocomplete.
+   *
+   * @example
+   * ```typescript
+   * const user = ctx.get("user"); // Type-safe!
+   * ```
+   */
   get: TEnv extends RouterEnv<any, infer V>
     ? <K extends keyof V>(key: K) => V[K]
     : (key: string) => any;
+  /**
+   * Type-safe setter for middleware variables.
+   * Use in middleware to pass data to handlers.
+   *
+   * @example
+   * ```typescript
+   * ctx.set("user", { id: "123", name: "John" }); // Type-safe!
+   * ```
+   */
   set: TEnv extends RouterEnv<any, infer V>
     ? <K extends keyof V>(key: K, value: V[K]) => void
     : (key: string, value: any) => void;
-  _originalRequest: Request;      // Raw request (includes all system params)
+  /**
+   * Raw request with all system parameters intact.
+   * Use only when you need access to internal `_rsc*` params.
+   * @internal
+   */
+  _originalRequest: Request;
   /**
    * Stub response for setting headers/cookies.
    * Headers set here are merged into the final response.
@@ -421,26 +471,20 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
    */
   setTheme?: (theme: Theme) => void;
   /**
-   * Generate URLs from route names with scoped resolution.
+   * Generate URLs from route names.
    *
-   * Type-safe when RSCRouter.RegisteredRoutes is augmented (recommended).
-   * Falls back to accepting any string when not augmented.
-   *
-   * Resolution priority:
-   * 1. Path-based (`/about`) → Use directly
-   * 2. Absolute name (`shop.cart`) → Global lookup (contains dot)
-   * 3. Local name (`index`) → Prepend current name prefix, then lookup
+   * **Recommended: Use route names for type safety.**
+   * Route names validate both the route exists and params are correct.
+   * Path-based URLs (`/...`) are an escape hatch with no validation.
    *
    * @example
    * ```typescript
-   * // In a handler within blogPatterns (mounted at /blog with name "blog"):
-   * route("post", (ctx) => {
-   *   const homeUrl = ctx.href("index");           // → "/blog/"
-   *   const postUrl = ctx.href("post", { slug: "hello" }); // → "/blog/hello"
-   *   const cartUrl = ctx.href("shop.cart");       // → "/shop/cart"
-   *   const aboutUrl = ctx.href("/about");         // → "/about"
-   *   return <PostPage />;
-   * });
+   * // RECOMMENDED: Use route names for type safety
+   * ctx.href("shop.cart")                    // ✓ Validates route exists
+   * ctx.href("blog.post", { slug: "hello" }) // ✓ Validates route + params
+   *
+   * // ESCAPE HATCH: Path-based URLs (no validation)
+   * ctx.href("/about")                       // ⚠ No type checking
    * ```
    */
   href: ScopedHrefFunction<GetRegisteredRoutes>;
