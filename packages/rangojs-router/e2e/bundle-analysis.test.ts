@@ -50,10 +50,25 @@ test.describe("bundle-analysis", () => {
   }
 
   function getRscBundleContent(): string {
-    const files = readdirSync(RSC_ASSETS_DIR).filter((f) => f.endsWith(".js"));
-    return files
-      .map((file) => readFileSync(join(RSC_ASSETS_DIR, file), "utf-8"))
-      .join("\n");
+    // Include index.js (main bundle) and any assets
+    let content = "";
+
+    // Read main RSC bundle
+    if (existsSync(RSC_INDEX)) {
+      content += readFileSync(RSC_INDEX, "utf-8") + "\n";
+    }
+
+    // Read assets if they exist
+    if (existsSync(RSC_ASSETS_DIR)) {
+      const files = readdirSync(RSC_ASSETS_DIR).filter((f) =>
+        f.endsWith(".js")
+      );
+      content += files
+        .map((file) => readFileSync(join(RSC_ASSETS_DIR, file), "utf-8"))
+        .join("\n");
+    }
+
+    return content;
   }
 
   test.describe("loader-tree-shaking", () => {
