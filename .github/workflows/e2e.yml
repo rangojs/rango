@@ -49,6 +49,9 @@ jobs:
       - name: Build rsc-router
         run: pnpm --filter @ivogt/rsc-router build
 
+      - name: Build rangojs-router
+        run: pnpm --filter @rangojs/router build
+
       - name: Install Playwright browsers
         run: pnpm --filter rsc-router exec playwright install --with-deps chromium
 
@@ -110,6 +113,9 @@ jobs:
       - name: Build rsc-router
         run: pnpm --filter @ivogt/rsc-router build
 
+      - name: Build rangojs-router
+        run: pnpm --filter @rangojs/router build
+
       - name: Install Playwright browsers
         run: pnpm --filter vite-rsc-demo exec playwright install --with-deps chromium
 
@@ -150,6 +156,9 @@ jobs:
 
       - name: Build rsc-router
         run: pnpm --filter @ivogt/rsc-router build
+
+      - name: Build rangojs-router
+        run: pnpm --filter @rangojs/router build
 
       - name: Install Playwright browsers
         run: pnpm --filter cloudflare-basic exec playwright install --with-deps chromium
