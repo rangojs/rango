@@ -1,7 +1,8 @@
 "use client";
 
 import { createContext, useContext, type Context } from "react";
-import { createHref } from "../../href.js";
+import { createHref, type ScopedHrefFunction } from "../../href.js";
+import type { UrlPatterns } from "../../urls.js";
 
 /**
  * Context value for href resolution
@@ -108,19 +109,22 @@ export type HrefFn = {
  * 2. Absolute name (`shop.cart`) → Global lookup (contains dot)
  * 3. Local name (`index`) → Prepend current name prefix, then lookup
  *
+ * @typeParam TPatterns - Optional patterns type for type-safe local route names
  * @returns A function to generate URLs from route names
  *
  * @example
  * ```tsx
  * "use client";
  * import { useHref } from "@rangojs/router/client";
+ * import { blogPatterns } from "../urls/blog";
  *
  * function BlogNav() {
- *   const href = useHref();
+ *   // Type-safe: knows "index" | "post" are valid local names
+ *   const href = useHref<typeof blogPatterns>();
  *
  *   return (
  *     <>
- *       {/* Local names - resolved with current name prefix *\/}
+ *       {/* Local names - type-safe, resolved with current name prefix *\/}
  *       <Link href={href("index")}>Blog Home</Link>
  *       <Link href={href("post", { slug: "hello" })}>Post</Link>
  *
@@ -134,24 +138,28 @@ export type HrefFn = {
  * }
  * ```
  */
-export function useHref(): HrefFn {
+export function useHref<
+  TPatterns extends UrlPatterns<any, any> = UrlPatterns<any, Record<string, string>>
+>(): TPatterns extends UrlPatterns<any, infer TRoutes>
+  ? ScopedHrefFunction<TRoutes>
+  : HrefFn {
   const context = useContext(HrefContext);
 
   if (!context) {
     // Return a function that warns and returns the name as-is
-    return (name: string, _params?: Record<string, string>) => {
+    return ((name: string, _params?: Record<string, string>) => {
       if (process.env.NODE_ENV !== "production") {
         console.warn(
           "[useHref] HrefContext not found. Make sure HrefProvider is mounted. Returning name as-is."
         );
       }
       return name;
-    };
+    }) as any;
   }
 
   const { routeMap, routeName } = context;
 
-  return (name: string, params?: Record<string, string>) => {
+  return ((name: string, params?: Record<string, string>) => {
     // Path-based - return directly (optionally with param substitution)
     if (name.startsWith("/")) {
       if (params) {
@@ -189,7 +197,7 @@ export function useHref(): HrefFn {
       }
       return encodeURIComponent(value);
     });
-  };
+  }) as any;
 }
 
 /**

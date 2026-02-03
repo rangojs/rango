@@ -614,5 +614,8 @@ export {
   type HrefContextValue,
 } from "./browser/react/use-href.js";
 
+// Type-safe scoped href function for useHref<typeof patterns>()
+export type { ScopedHrefFunction } from "./href.js";
+
 // Loader definition type - for typing loader props in client components
 export type { LoaderDefinition } from "./types.js";

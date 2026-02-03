@@ -107,6 +107,40 @@ export type HrefFunction<TRoutes extends Record<string, string>> = {
 };
 
 /**
+ * Type-safe scoped href function signature for use with useHref<typeof patterns>()
+ * Accepts local route names (from the patterns), absolute names (with dot), or path-based URLs.
+ *
+ * @example
+ * ```typescript
+ * // In a component rendered by blog routes:
+ * const href = useHref<typeof blogPatterns>();
+ *
+ * href("index")                    // Local name → resolved with current prefix
+ * href("post", { slug: "hello" })  // Local name with params
+ * href("shop.cart")                // Absolute name → global lookup
+ * href("/about")                   // Path-based → used directly
+ * ```
+ */
+export type ScopedHrefFunction<TLocalRoutes extends Record<string, string>> = {
+  // Overload 1: Local routes without params
+  <TName extends keyof TLocalRoutes & string>(
+    name: IsEmptyObject<ParamsFor<TLocalRoutes, TName>> extends true ? TName : never
+  ): string;
+
+  // Overload 2: Local routes with params
+  <TName extends keyof TLocalRoutes & string>(
+    name: TName,
+    params: ParamsFor<TLocalRoutes, TName>
+  ): string;
+
+  // Overload 3: Absolute name (contains dot) - global lookup
+  (name: `${string}.${string}`, params?: Record<string, string>): string;
+
+  // Overload 4: Path-based URL - used directly
+  (name: `/${string}`, params?: Record<string, string>): string;
+};
+
+/**
  * Create a type-safe href function for URL generation
  *
  * @param routeMap - Flattened route map with all registered routes
