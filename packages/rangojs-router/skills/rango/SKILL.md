@@ -39,10 +39,10 @@ export const urlpatterns = urls(({ path, layout }) => [
 ]);
 
 // router.tsx
-import { createRSCRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router/server";
 import { urlpatterns } from "./urls";
 
-export default createRSCRouter({ document: Document }).urls(urlpatterns);
+export default createRouter({ document: Document }).urls(urlpatterns);
 ```
 
 Use `/typesafety` for type-safe href and environment setup.

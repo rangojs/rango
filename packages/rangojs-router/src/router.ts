@@ -151,7 +151,7 @@ export interface RSCRouterOptions<TEnv = any> {
    * }
    *
    * // router.tsx
-   * const router = createRSCRouter<AppEnv>({
+   * const router = createRouter<AppEnv>({
    *   document: Document,
    * });
    * ```
@@ -183,13 +183,13 @@ export interface RSCRouterOptions<TEnv = any> {
    * @example
    * ```typescript
    * // Simple static component
-   * const router = createRSCRouter<AppEnv>({
+   * const router = createRouter<AppEnv>({
    *   document: AppShell,
    *   notFound: <NotFound404 />,
    * });
    *
    * // Dynamic component with pathname
-   * const router = createRSCRouter<AppEnv>({
+   * const router = createRouter<AppEnv>({
    *   document: AppShell,
    *   notFound: ({ pathname }) => (
    *     <div>
@@ -220,7 +220,7 @@ export interface RSCRouterOptions<TEnv = any> {
    *
    * @example
    * ```typescript
-   * const router = createRSCRouter<AppEnv>({
+   * const router = createRouter<AppEnv>({
    *   onError: (context) => {
    *     // Send to error tracking service
    *     Sentry.captureException(context.error, {
@@ -253,7 +253,7 @@ export interface RSCRouterOptions<TEnv = any> {
    * ```typescript
    * import { MemorySegmentCacheStore } from "rsc-router/rsc";
    *
-   * const router = createRSCRouter({
+   * const router = createRouter({
    *   cache: {
    *     store: new MemorySegmentCacheStore({ defaults: { ttl: 60 } }),
    *   },
@@ -262,7 +262,7 @@ export interface RSCRouterOptions<TEnv = any> {
    *
    * @example Dynamic config with env
    * ```typescript
-   * const router = createRSCRouter<AppEnv>({
+   * const router = createRouter<AppEnv>({
    *   cache: (env) => ({
    *     store: new KVSegmentCacheStore(env.Bindings.MY_CACHE),
    *   }),
@@ -284,7 +284,7 @@ export interface RSCRouterOptions<TEnv = any> {
    *
    * @example
    * ```typescript
-   * const router = createRSCRouter<AppEnv>({
+   * const router = createRouter<AppEnv>({
    *   theme: {
    *     defaultTheme: "system",
    *     themes: ["light", "dark"],
@@ -559,7 +559,7 @@ export interface RSCRouter<
    *
    * @example
    * ```typescript
-   * createRSCRouter({})
+   * createRouter({})
    *   .routes(urlpatterns)  // Single call with urls() result
    * ```
    */
@@ -576,7 +576,7 @@ export interface RSCRouter<
    *
    * @example
    * ```typescript
-   * createRSCRouter({ document: RootLayout })
+   * createRouter({ document: RootLayout })
    *   .use(loggerMiddleware)           // All routes
    *   .use("/api/*", rateLimiter)      // Pattern match
    *   .routes(homeRoutes)
@@ -608,7 +608,7 @@ export interface RSCRouter<
    *
    * @example
    * ```typescript
-   * const _router = createRSCRouter<AppEnv>()
+   * const _router = createRouter<AppEnv>()
    *   .routes(homeRoutes).map(() => import('./home'))
    *   .routes('/shop', shopRoutes).map(() => import('./shop'));
    *
@@ -716,7 +716,7 @@ export interface RSCRouter<
  *   user?: User;
  * }
  *
- * const router = createRSCRouter<AppContext>({
+ * const router = createRouter<AppContext>({
  *   debugPerformance: true  // Enable metrics
  * });
  *
@@ -760,7 +760,7 @@ function handleHandlerResult(
   return result;
 }
 
-export function createRSCRouter<TEnv = any>(
+export function createRouter<TEnv = any>(
   options: RSCRouterOptions<TEnv> = {}
 ): RSCRouter<TEnv, {}> {
   const {

@@ -18,9 +18,9 @@ export const shopRoutes = route({
 });
 
 // 2. Create router
-import { createRSCRouter } from "rsc-router/server";
+import { createRouter } from "rsc-router/server";
 
-const router = createRSCRouter<AppContext>();
+const router = createRouter<AppContext>();
 router.route("/shop", shopRoutes).map(() => import("./handlers/shop"));
 
 // 3. Define handlers
@@ -471,7 +471,7 @@ For type-safe links, register your routes via module augmentation:
 
 ```typescript
 // router.ts
-import { createRSCRouter, route } from "rsc-router/server";
+import { createRouter, route } from "rsc-router/server";
 
 const shopRoutes = route({
   index: "/",
@@ -479,7 +479,7 @@ const shopRoutes = route({
   products: { detail: "/product/:slug" },
 });
 
-const router = createRSCRouter<AppEnv>();
+const router = createRouter<AppEnv>();
 router.route("/shop", shopRoutes).map(() => import("./handlers/shop"));
 
 // Extract route types from router
@@ -724,7 +724,7 @@ route("post", (ctx) => {
 ## Router Options
 
 ```typescript
-createRSCRouter<AppContext>({
+createRouter<AppContext>({
   defaultErrorBoundary: ({ error }) => <DefaultError error={error} />,
   defaultNotFoundBoundary: ({ notFound }) => <DefaultNotFound />,
 });

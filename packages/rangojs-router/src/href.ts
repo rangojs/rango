@@ -8,7 +8,7 @@ export type SanitizePrefix<T extends string> = T extends `/${infer P}` ? P : T;
 
 /**
  * Helper type to merge multiple route definitions into a single accumulated type.
- * Note: When using createRSCRouter, types accumulate automatically through the
+ * Note: When using createRouter, types accumulate automatically through the
  * builder chain, so this type is typically not needed.
  *
  * @example
@@ -20,7 +20,7 @@ export type SanitizePrefix<T extends string> = T extends `/${infer P}` ? P : T;
  * ]>;
  *
  * // Preferred: Let router accumulate types automatically
- * const router = createRSCRouter<AppEnv>()
+ * const router = createRouter<AppEnv>()
  *   .routes(homeRoutes).map(...)
  *   .routes("/blog", blogRoutes).map(...);
  * type AppRoutes = typeof router.routeMap;

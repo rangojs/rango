@@ -5,7 +5,7 @@ import { MetaTags } from "../handles/MetaTags.js";
 
 /**
  * Default document component that provides a basic HTML structure.
- * Used when no custom document is provided to createRSCRouter.
+ * Used when no custom document is provided to createRouter.
  * Includes MetaTags for automatic charset, viewport, and route meta support.
  *
  * Uses suppressHydrationWarning on <html> because the theme script

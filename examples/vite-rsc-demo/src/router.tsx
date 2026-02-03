@@ -1,4 +1,4 @@
-import { createRSCRouter, type RouterEnv } from "@rangojs/router/server";
+import { createRouter, type RouterEnv } from "@rangojs/router/server";
 import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 import { RootLayout } from "./layouts/RootLayout.js";
 
@@ -64,7 +64,7 @@ declare global {
  * Create and configure the router with type-safe context.
  * All routes are defined using the Django-style urls() API.
  */
-const router = createRSCRouter<AppEnv>({
+const router = createRouter<AppEnv>({
   debugPerformance: true,
   document: RootLayout,
   cache: { store: cacheStore },

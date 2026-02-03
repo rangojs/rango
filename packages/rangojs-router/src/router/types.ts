@@ -43,7 +43,7 @@ export type ActionContext = {
 
 /**
  * Dependencies passed to segment resolution functions
- * These are created within createRSCRouter and passed to extracted utilities
+ * These are created within createRouter and passed to extracted utilities
  */
 export interface RouterDependencies<TEnv> {
   findNearestErrorBoundary: (

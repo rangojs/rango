@@ -1,4 +1,4 @@
-import { createRSCRouter, type Middleware } from "@rangojs/router/server";
+import { createRouter, type Middleware } from "@rangojs/router/server";
 import { urlpatterns } from "./urls.js";
 import { AppShell } from "./components/AppShell.js";
 import type { AppEnv } from "./env.js";
@@ -64,7 +64,7 @@ const cspMiddleware: Middleware = async (ctx, next) => {
 // Create the router with document component
 // AppShell wraps both route content and error boundaries,
 // preventing the app shell from unmounting during errors (avoids FOUC)
-export const router = createRSCRouter<AppEnv>({
+export const router = createRouter<AppEnv>({
   document: AppShell,
 })
   // CSP middleware - adds Content-Security-Policy headers to all HTML responses

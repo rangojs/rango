@@ -1,4 +1,4 @@
-import { createRSCRouter, type RouterEnv, redirect, type Middleware } from "@rangojs/router/server";
+import { createRouter, type RouterEnv, redirect, type Middleware } from "@rangojs/router/server";
 import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 import { urlpatterns } from "./urls.js";
 
@@ -126,7 +126,7 @@ const headerShorthandMiddleware: Middleware = async (ctx, next) => {
   ctx.header("X-Header-Shorthand", "works");
 };
 
-export const router = createRSCRouter<AppEnv>({
+export const router = createRouter<AppEnv>({
   cache: { store: cacheStore },
   theme: {
     defaultTheme: "system",

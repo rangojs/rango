@@ -1,4 +1,4 @@
-import { createRSCRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router/server";
 import { createDocumentCacheMiddleware } from "@rangojs/router/cache";
 import { urlpatterns } from "./urls.js";
 import { Document } from "./document.js";
@@ -7,7 +7,7 @@ import type { AppEnv } from "./env.js";
 // Create the router with document component
 // Document is a server component that wraps the HTML shell
 // Navigation is handled by NavLayout in urls.tsx
-export const router = createRSCRouter<AppEnv>({
+export const router = createRouter<AppEnv>({
   document: Document,
   // Enable theme support with system detection
   theme: {

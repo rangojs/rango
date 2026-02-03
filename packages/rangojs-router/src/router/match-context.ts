@@ -260,5 +260,5 @@ export type CreateMatchContextResult<TEnv = any> =
 
 // Note: createMatchContext() will be implemented in Step J10 when we wire everything together.
 // It requires access to RouterContext (findMatch, loadManifest, etc.) which are closure
-// functions from createRSCRouter(). The implementation will live in router.ts initially
+// functions from createRouter(). The implementation will live in router.ts initially
 // and call getRouterContext() to access these dependencies.

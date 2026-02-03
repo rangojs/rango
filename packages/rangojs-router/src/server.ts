@@ -27,7 +27,7 @@ export type { IncludeItem } from "./route-types.js";
 
 // Core router (server-only)
 export {
-  createRSCRouter,
+  createRouter,
   type RSCRouter,
   type RSCRouterOptions,
   type RootLayoutProps,

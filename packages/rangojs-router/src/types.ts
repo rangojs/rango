@@ -87,7 +87,7 @@ export type DefaultEnv = keyof RSCRouter.Env extends never ? any : RSCRouter.Env
  * }
  *
  * type AppEnv = RouterEnv<AppBindings, AppVariables>;
- * const router = createRSCRouter<AppEnv>();
+ * const router = createRouter<AppEnv>();
  * ```
  */
 export interface RouterEnv<TBindings = {}, TVariables = {}> {
@@ -1423,7 +1423,7 @@ export type ErrorPhase =
  *
  * @example
  * ```typescript
- * const router = createRSCRouter<AppEnv>({
+ * const router = createRouter<AppEnv>({
  *   onError: (context) => {
  *     // Log to error tracking service
  *     errorTracker.capture({

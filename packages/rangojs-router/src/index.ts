@@ -3,7 +3,7 @@
  *
  * Universal exports - types and utilities safe for both server and client
  *
- * For server-only exports (urls, createRSCRouter, createLoader, etc.):
+ * For server-only exports (urls, createRouter, createLoader, etc.):
  *   import from "rsc-router/server"
  *
  * For client-only exports (Outlet, useOutlet, etc.):

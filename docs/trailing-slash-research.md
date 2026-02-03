@@ -82,7 +82,7 @@ Link: ./post → /blog/post
 ### Router-Level Configuration
 
 ```typescript
-const router = createRSCRouter({
+const router = createRouter({
   trailingSlash: "never",  // default
 });
 ```

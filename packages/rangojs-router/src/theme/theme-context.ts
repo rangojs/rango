@@ -63,7 +63,7 @@ export function requireThemeContext(): ThemeContextValue {
     throw new Error(
       "useTheme must be used within a ThemeProvider. " +
         "Make sure theme is enabled in your router config: " +
-        "createRSCRouter({ theme: { ... } })"
+        "createRouter({ theme: { ... } })"
     );
   }
   return ctx;

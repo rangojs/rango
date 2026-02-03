@@ -76,7 +76,7 @@ export {
 
 // Core router (server-side)
 export {
-  createRSCRouter,
+  createRouter,
   type RSCRouter,
   type RootLayoutProps,
 } from "./router.js";
