@@ -30,7 +30,7 @@ test.describe("hmr", () => {
   }
 
   test.beforeAll(() => {
-    handlerFilePath = path.join(f.root, "src/handlers.tsx");
+    handlerFilePath = path.join(f.root, "src/urls.tsx");
     const currentContent = fs.readFileSync(handlerFilePath, "utf-8");
     // Store content without any existing HMR markers (clean state)
     originalContent = stripHmrMarkers(currentContent);
@@ -56,7 +56,7 @@ test.describe("hmr", () => {
 
   // Helper to trigger HMR by touching a server component file and waiting for completion
   async function triggerHMRAndWait(page: Page): Promise<void> {
-    // Modify handlers.tsx (server component) to trigger RSC HMR
+    // Modify urls.tsx (server component) to trigger RSC HMR
     const content = fs.readFileSync(handlerFilePath, "utf-8");
 
     // Add a comment with timestamp to trigger HMR
