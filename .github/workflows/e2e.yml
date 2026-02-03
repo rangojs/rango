@@ -6,74 +6,6 @@ on:
     branches: [main]
 
 jobs:
-  rsc-router-e2e:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Dev tests sharded across 5 jobs
-          - project: dev
-            shard: 1
-          - project: dev
-            shard: 2
-          - project: dev
-            shard: 3
-          - project: dev
-            shard: 4
-          - project: dev
-            shard: 5
-          # Production tests run in single job (no sharding)
-          - project: production
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: "pnpm"
-
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Run rsc-router unit tests
-        if: matrix.project == 'dev' && matrix.shard == 1
-        run: pnpm --filter rsc-router test:unit
-
-      - name: Build rsc-router
-        run: pnpm --filter @ivogt/rsc-router build
-
-      - name: Build rangojs-router
-        run: pnpm --filter @rangojs/router build
-
-      - name: Install Playwright browsers
-        run: pnpm --filter rsc-router exec playwright install --with-deps chromium
-
-      - name: Build test app for bundle analysis
-        run: pnpm --filter rsc-router-e2e-test-app build
-
-      - name: Run rsc-router e2e tests (${{ matrix.project }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
-        run: |
-          if [ -n "${{ matrix.shard }}" ]; then
-            pnpm --filter rsc-router exec playwright test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/5
-          else
-            pnpm --filter rsc-router exec playwright test --project=${{ matrix.project }}
-          fi
-
-      - name: Upload test results
-        uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: playwright-report-rsc-router-${{ matrix.project }}${{ matrix.shard && format('-shard-{0}', matrix.shard) || '' }}
-          path: packages/rsc-router/playwright-report/
-          retention-days: 7
-
   demo-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -109,9 +41,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
-
-      - name: Build rsc-router
-        run: pnpm --filter @ivogt/rsc-router build
 
       - name: Build rangojs-router
         run: pnpm --filter @rangojs/router build
@@ -153,9 +82,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
-
-      - name: Build rsc-router
-        run: pnpm --filter @ivogt/rsc-router build
 
       - name: Build rangojs-router
         run: pnpm --filter @rangojs/router build
