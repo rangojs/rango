@@ -64,6 +64,62 @@ jobs:
           path: examples/vite-rsc-demo/playwright-report/
           retention-days: 7
 
+  rangojs-router-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Dev tests sharded across 3 jobs
+          - project: dev
+            shard: 1
+          - project: dev
+            shard: 2
+          - project: dev
+            shard: 3
+          # Production tests run in single job
+          - project: production
+          # HMR tests run in single job
+          - project: hmr
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build rangojs-router
+        run: pnpm --filter @rangojs/router build
+
+      - name: Install Playwright browsers
+        run: pnpm --filter @rangojs/router exec playwright install --with-deps chromium
+
+      - name: Run rangojs-router e2e tests (${{ matrix.project }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
+        run: |
+          if [ -n "${{ matrix.shard }}" ]; then
+            pnpm --filter @rangojs/router test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/3
+          else
+            pnpm --filter @rangojs/router test --project=${{ matrix.project }}
+          fi
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-router-${{ matrix.project }}${{ matrix.shard && format('-shard-{0}', matrix.shard) || '' }}
+          path: packages/rangojs-router/playwright-report/
+          retention-days: 7
+
   cloudflare-basic-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 15
