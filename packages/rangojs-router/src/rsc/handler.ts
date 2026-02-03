@@ -348,6 +348,8 @@ export function createRSCHandler<
         // Render with rootLayout to maintain app shell
         const root = await renderSegments([notFoundSegment], {
           rootLayout: router.rootLayout,
+          routeMap,
+          // No routeName for not-found routes
         });
 
         const payload: RscPayload = {
@@ -520,6 +522,8 @@ export function createRSCHandler<
 
     const root = renderSegments(match.segments, {
       rootLayout: router.rootLayout,
+      routeMap,
+      routeName: match.routeName,
     });
 
     const payload: RscPayload = {
@@ -681,6 +685,8 @@ export function createRSCHandler<
       const root = renderSegments(fullMatch.segments, {
         rootLayout: router.rootLayout,
         isAction: true,
+        routeMap,
+        routeName: fullMatch.routeName,
       });
       const renderDuration = performance.now() - renderStart;
       const serverTiming = fullMatch.serverTiming
@@ -726,6 +732,8 @@ export function createRSCHandler<
     renderSegments(matchResult.segments, {
       rootLayout: router.rootLayout,
       isAction: true,
+      routeMap,
+      routeName: matchResult.routeName,
     });
     const renderDuration = performance.now() - renderStart;
     const serverTiming = matchResult.serverTiming
@@ -923,6 +931,8 @@ export function createRSCHandler<
         const renderStart = performance.now();
         const root = renderSegments(match.segments, {
           rootLayout: router.rootLayout,
+          routeMap,
+          routeName: match.routeName,
         });
         const renderDuration = performance.now() - renderStart;
         serverTiming = match.serverTiming
@@ -983,6 +993,8 @@ export function createRSCHandler<
       const renderStart = performance.now();
       const root = renderSegments(match.segments, {
         rootLayout: router.rootLayout,
+        routeMap,
+        routeName: match.routeName,
       });
       const renderDuration = performance.now() - renderStart;
       serverTiming = match.serverTiming

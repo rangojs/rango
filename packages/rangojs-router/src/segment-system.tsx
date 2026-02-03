@@ -1,5 +1,6 @@
 import { createElement, type ReactNode, type ComponentType } from "react";
 import { OutletProvider } from "./client.js";
+import { HrefProvider } from "./browser/react/use-href.js";
 import type {
   ResolvedSegment,
   LoaderDataResult,
@@ -83,6 +84,18 @@ export interface RenderSegmentsOptions {
    * preventing the app shell from unmounting during errors (avoids FOUC).
    */
   rootLayout?: ComponentType<RootLayoutProps>;
+
+  /**
+   * Route map for useHref() during SSR.
+   * Maps route names to URL patterns.
+   */
+  routeMap?: Record<string, string>;
+
+  /**
+   * Current matched route name for useHref() during SSR.
+   * Used for local name resolution.
+   */
+  routeName?: string;
 }
 
 /**
@@ -133,6 +146,8 @@ export async function renderSegments(
     interceptSegments,
     forceAwait,
     rootLayout: RootLayout,
+    routeMap,
+    routeName,
   } = options || {};
   const temporalLazyRefs: Promise<any>[] = [];
 
@@ -291,15 +306,29 @@ export async function renderSegments(
     children: content,
   });
   await Promise.allSettled(temporalLazyRefs);
+
+  // Build the final result, optionally wrapped with root layout
+  let result: ReactNode = errorBoundaryWrapped;
+
   // If rootLayout is provided, wrap the error boundary with it
   // This ensures the app shell stays mounted even during errors (prevents FOUC)
   if (RootLayout) {
-    return createElement(RootLayout, {
+    result = createElement(RootLayout, {
       children: errorBoundaryWrapped,
     });
   }
 
-  return errorBoundaryWrapped;
+  // Wrap with HrefProvider for useHref() to work during SSR
+  // This provides route info to client components during server rendering
+  if (routeMap) {
+    result = createElement(HrefProvider, {
+      routeMap,
+      routeName,
+      children: result,
+    });
+  }
+
+  return result;
 }
 
 /**

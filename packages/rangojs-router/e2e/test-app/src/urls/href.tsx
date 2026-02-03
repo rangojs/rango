@@ -56,12 +56,7 @@ export const hrefPatterns = urls(({ path, include }) => [
 
           <section data-testid="client-href-section">
             <h2>Client-side useHref</h2>
-            <HrefTestClient
-              initialLocalIndex={localIndexHref}
-              initialLocalDetail={localDetailHref}
-              initialAbsoluteBlog={absoluteBlogHref}
-              initialPathBased={pathBasedHref}
-            />
+            <HrefTestClient />
           </section>
 
           <section data-testid="navigation-section">
@@ -116,13 +111,7 @@ export const hrefPatterns = urls(({ path, include }) => [
 
           <section data-testid="detail-client-href">
             <h2>Client-side useHref (from detail route)</h2>
-            <HrefTestClient
-              isDetailPage
-              initialLocalIndex={backToIndex}
-              initialLocalDetail={siblingDetail}
-              initialAbsoluteBlog={ctx.href("blog.index")}
-              initialPathBased="/about"
-            />
+            <HrefTestClient isDetailPage />
           </section>
 
           <nav>

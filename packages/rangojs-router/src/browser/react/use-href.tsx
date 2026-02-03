@@ -1,25 +1,12 @@
 "use client";
 
-import { createContext, useContext, type Context } from "react";
+import { useContext } from "react";
 import { createHref, type ScopedHrefFunction } from "../../href.js";
 import type { UrlPatterns } from "../../urls.js";
+import { HrefContext, type HrefContextValue } from "../../href-context.js";
 
-/**
- * Context value for href resolution
- */
-export interface HrefContextValue {
-  /** Route map: route name -> URL pattern */
-  routeMap: Record<string, string>;
-  /** Current matched route name (includes name prefix from include()) */
-  routeName?: string;
-}
-
-/**
- * Context for href resolution (route map and current route name)
- * Populated from RSC metadata during hydration/navigation
- */
-export const HrefContext: Context<HrefContextValue | null> =
-  createContext<HrefContextValue | null>(null);
+// Re-export for backwards compatibility
+export { HrefContext, type HrefContextValue } from "../../href-context.js";
 
 /**
  * Resolution priority for href:

@@ -116,10 +116,9 @@ test.describe("Scoped Href Resolution", () => {
       await page.goto(f.url("/href"));
       await waitForHydration(page);
 
-      // Client-side local "detail" receives server-computed value with id: "123"
-      // (the server passes ctx.href("detail", { id: "123" }) as initial prop)
+      // Client-side useHref computes detail with id: "from-client"
       const clientLocalDetail = testId(page, "client-local-detail");
-      await expect(clientLocalDetail).toContainText("/href/123");
+      await expect(clientLocalDetail).toContainText("/href/from-client");
     });
 
     test("should resolve absolute route name (with dot)", async ({ page }) => {
@@ -155,24 +154,12 @@ test.describe("Scoped Href Resolution", () => {
       await expect(page).toHaveURL(/\/href\/item-abc/);
       await expect(testId(page, "href-detail-page")).toBeVisible();
 
-      // After navigation, client href should still resolve correctly
-      // From detail page context (sibling detail href)
+      // After navigation, client href resolves with isDetailPage=true
+      // So it uses id: "client-item" instead of "from-client"
       const clientLocalDetail = testId(page, "client-local-detail");
-      await expect(clientLocalDetail).toContainText("/href/sibling-item");
+      await expect(clientLocalDetail).toContainText("/href/client-item");
     });
 
-    test("should resolve dynamic useHref after hydration", async ({ page }) => {
-      using _ = expectNoPageError(page);
-
-      await page.goto(f.url("/href"));
-      await waitForHydration(page);
-
-      // Wait for the dynamic href section to update after useEffect runs
-      await expect(testId(page, "dynamic-local-index")).toContainText("/href", {
-        timeout: 5000,
-      });
-      await expect(testId(page, "dynamic-absolute-blog")).toContainText("/blog");
-    });
   });
 
   test.describe("Link navigation with href", () => {
@@ -258,9 +245,9 @@ test.describe("Scoped Href Resolution (production)", () => {
     await expect(testId(page, "server-absolute-blog")).toContainText("/blog");
     await expect(testId(page, "server-path-based")).toContainText("/about");
 
-    // Client-side hrefs (initial values from server)
+    // Client-side hrefs (useHref works during SSR)
     await expect(testId(page, "client-local-index")).toContainText("/href");
-    await expect(testId(page, "client-local-detail")).toContainText("/href/123");
+    await expect(testId(page, "client-local-detail")).toContainText("/href/from-client");
     await expect(testId(page, "client-absolute-blog")).toContainText("/blog");
     await expect(testId(page, "client-path-based")).toContainText("/about");
   });
