@@ -273,8 +273,8 @@ export type Handler<T = {}, TEnv = DefaultEnv> = (
  * - Middleware variables (var.user, var.permissions)
  * - Getter/setter for variables (get('user'), set('user', ...))
  *
- * **Important:** System parameters (query params starting with `_rsc`) are filtered out.
- * Handlers see only user-facing query params. Access raw request via `_originalRequest`.
+ * **Note:** System parameters (query params starting with `_rsc`) are automatically
+ * filtered from `url`, `searchParams`, and `request.url` for cleaner access.
  *
  * @example
  * ```typescript
@@ -284,13 +284,8 @@ export type Handler<T = {}, TEnv = DefaultEnv> = (
  *   ctx.var.user           // Variable (User | undefined)
  *   ctx.get('user')        // Alternative getter
  *   ctx.set('user', {...}) // Setter
- *
- *   // Clean URLs (system params filtered):
- *   ctx.url                // No _rsc* params
- *   ctx.searchParams       // No _rsc* params
- *
- *   // Advanced: access raw request
- *   ctx._originalRequest   // Full request with all params
+ *   ctx.url                // Clean URL (no _rsc* params)
+ *   ctx.searchParams       // Clean params (no _rsc* params)
  * }
  * ```
  */
@@ -301,8 +296,8 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
    */
   params: TParams;
   /**
-   * The incoming Request object (with system params filtered from URL).
-   * Use `_originalRequest` if you need access to raw system params.
+   * The incoming Request object.
+   * System params (`_rsc*`) are filtered from the URL for cleaner access.
    */
   request: Request;
   /**
@@ -316,7 +311,6 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
   pathname: string;
   /**
    * The full URL object (with system params filtered).
-   * Use `_originalRequest.url` if you need the raw URL with system params.
    */
   url: URL;
   /**
@@ -353,12 +347,6 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
   set: TEnv extends RouterEnv<any, infer V>
     ? <K extends keyof V>(key: K, value: V[K]) => void
     : (key: string, value: any) => void;
-  /**
-   * Raw request with all system parameters intact.
-   * Use only when you need access to internal `_rsc*` params.
-   * @internal
-   */
-  _originalRequest: Request;
   /**
    * Stub response for setting headers/cookies.
    * Headers set here are merged into the final response.
@@ -435,12 +423,6 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
     ) => void;
   };
   /**
-   * Internal: Current segment ID for handle data attribution.
-   * Set by the router before calling each handler.
-   * @internal
-   */
-  _currentSegmentId?: string;
-  /**
    * Current theme (from cookie or default).
    * Only available when theme is enabled in router config.
    *
@@ -488,6 +470,18 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
    * ```
    */
   href: ScopedHrefFunction<GetRegisteredRoutes>;
+};
+
+/**
+ * Internal handler context with additional props for router internals.
+ * Use `HandlerContext` for user-facing code.
+ * @internal
+ */
+export type InternalHandlerContext<TParams = {}, TEnv = any> = HandlerContext<TParams, TEnv> & {
+  /** Raw request with all system parameters intact. */
+  _originalRequest: Request;
+  /** Current segment ID for handle data attribution. */
+  _currentSegmentId?: string;
 };
 
 /**

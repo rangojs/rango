@@ -35,7 +35,9 @@ const testParamHandler: Handler<"/blog/:slug"> = (ctx) => {
 };
 
 // Test 3: Handler type with explicit params object
-const testExplicitParamsHandler: Handler<{ slug: string; tab?: string }> = (ctx) => {
+const testExplicitParamsHandler: Handler<{ slug: string; tab?: string }> = (
+  ctx,
+) => {
   const _slug: string = ctx.params.slug;
   const _tab: string | undefined = ctx.params.tab;
   return null;
@@ -44,7 +46,12 @@ const testExplicitParamsHandler: Handler<{ slug: string; tab?: string }> = (ctx)
 // Test 4: HandlerContext has typed href
 type CheckCtxHref = HandlerContext<{ id: string }>["href"];
 // Verify href is a function type that returns string
-type _AssertHrefCallable = CheckCtxHref extends (name: string, params?: any) => string ? true : never;
+type _AssertHrefCallable = CheckCtxHref extends (
+  name: string,
+  params?: any,
+) => string
+  ? true
+  : never;
 const _checkHrefCallable: _AssertHrefCallable = true;
 
 // Test 5: Verify that route names from global augmentation are available
@@ -54,7 +61,7 @@ if (false as boolean) {
   testGlobalRoutes();
   // If RegisteredRoutes is properly augmented, these should all type-check
   const ctx = {} as HandlerContext;
-  ctx.href("home");
+  ctx.href("/blog");
   ctx.href("about");
   ctx.href("blog");
   ctx.href("blogPost", { slug: "test" });

@@ -146,3 +146,14 @@ export type {
   EntryPropSegments,
 } from "./server/context.js";
 
+// ============================================================================
+// Handler Context (Internal)
+// ============================================================================
+
+/**
+ * @internal
+ * Internal handler context with additional props for router internals.
+ * Includes `_originalRequest` and `_currentSegmentId`.
+ */
+export type { InternalHandlerContext } from "./types.js";
+
