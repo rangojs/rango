@@ -26,7 +26,6 @@
     "build": "turbo run build",
     "preview": "turbo run preview",
     "lint": "turbo run lint",
-    "type-check": "turbo run type-check",
     "typecheck": "turbo run typecheck",
     "test": "pnpm test:unit && pnpm test:e2e",
     "test:unit": "pnpm --filter rsc-router test:unit && pnpm --filter host-router test",
