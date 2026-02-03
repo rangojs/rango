@@ -1,3 +1,3 @@
 # @rangojs/router
 
-Run `/rango` first to understand the API and see all available skills.
+Run `/rango` first to understand the API. Skills are in `node_modules/@rangojs/router/skills/`.
