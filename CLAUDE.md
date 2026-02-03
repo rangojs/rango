@@ -1,2 +1,2 @@
 - When writing code comments, never use icons and emojis. Keep comments technical and focused on implementation details.
-- Use the `/typesafety`, `/route`, `/layout`, `/intercept`, `/loader` skills for detailed API documentation.
+- Use `/rango` for @rangojs/router overview and links to all skills.

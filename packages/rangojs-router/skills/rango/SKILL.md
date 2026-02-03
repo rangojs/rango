@@ -1,5 +1,5 @@
 ---
-name: orientation
+name: rango
 description: Overview of @rangojs/router and available skills
 argument-hint:
 ---
