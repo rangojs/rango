@@ -9,11 +9,8 @@ const cacheStore = new MemorySegmentCacheStore({
   },
 });
 
-// Django-style URL patterns (new API)
+// Django-style URL patterns
 import { urlpatterns } from "./urls.js";
-
-// Legacy route imports (for shop - complex route with many loaders)
-import { shopRoutes } from "./routes.js";
 
 /**
  * Platform bindings (Cloudflare Workers, environment variables, etc.)
@@ -65,21 +62,13 @@ declare global {
 
 /**
  * Create and configure the router with type-safe context.
- *
- * Uses Django-style urls() API for most routes, with legacy .routes().map()
- * pattern for shop (which has complex loader requirements).
+ * All routes are defined using the Django-style urls() API.
  */
 const router = createRSCRouter<AppEnv>({
   debugPerformance: true,
   document: RootLayout,
   cache: { store: cacheStore },
-})
-  // Django-style URL patterns (new API) - defines routes with handlers inline
-  .routes(urlpatterns)
-
-  // Shop uses legacy pattern due to complex loader/intercept structure
-  .routes("/shop", shopRoutes)
-  .map(() => import("./handlers/shop.js"));
+}).routes(urlpatterns);
 
 /**
  * Extract route types directly from the router chain
@@ -101,4 +90,4 @@ declare global {
 export { router };
 export const href = router.href;
 
-console.log("[Router] Configured with urls() API + shop routes");
+console.log("[Router] Configured with Django-style urls() API");

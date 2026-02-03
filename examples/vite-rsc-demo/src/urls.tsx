@@ -1,5 +1,6 @@
 import { urls } from "@rangojs/router/server";
-import { Outlet } from "@rangojs/router/client";
+import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
+import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
 // Page imports
 import { HomePage } from "./pages/home.js";
@@ -82,6 +83,70 @@ import {
 } from "./handlers/kanban/loader.js";
 import { ErrorPageLoader, NotFoundLoader } from "./handlers/error-handlers.js";
 
+// Shop imports
+import { ShopLayout } from "./layouts/ShopLayout.js";
+import { CheckoutLayout } from "./layouts/CheckoutLayout.js";
+import { AccountLayout } from "./layouts/AccountLayout.js";
+import { Breadcrumbs } from "./handles/breadcrumbs.js";
+import {
+  IndexRoute as ShopIndexRoute,
+  ProductsCategoryRoute,
+  ProductsDetailRoute,
+  CartRoute,
+  CheckoutIndexRoute,
+  CheckoutPaymentRoute,
+  CheckoutConfirmRoute,
+  AccountIndexRoute,
+  AccountOrdersRoute,
+  AccountOrderDetailRoute,
+} from "./handlers/shop/routes/index.js";
+import {
+  CategorySidebar,
+  RelatedProducts,
+  OrderSummary,
+  RecentOrders,
+} from "./handlers/shop/components.js";
+import {
+  loggerMiddleware as shopLoggerMiddleware,
+  mockAuthMiddleware,
+  requireAuthMiddleware,
+  permissionsMiddleware,
+} from "./handlers/shop/middleware/index.js";
+import {
+  globalRevalidation as shopGlobalRevalidation,
+  cartRevalidation,
+  checkoutConfirmRevalidation,
+  orderDetailRevalidation,
+  productDetailRevalidation,
+} from "./handlers/shop/revalidation/index.js";
+import {
+  UserLoader,
+  CartLoader,
+  CategoriesLoader,
+  ProductLoader,
+  RelatedProductsLoader,
+  OrdersLoader,
+  FeaturedProductsLoader,
+  ModalRecommendationsLoader,
+  ProductCartLoader,
+} from "./handlers/shop/loaders/index.js";
+import {
+  ProductDetailSkeleton,
+  CartSkeleton,
+  CheckoutSkeleton,
+} from "./handlers/shop/components/loading.js";
+import {
+  ModalWrapper,
+  ProductModalContent,
+  ProductModalContentSkeleton,
+} from "./handlers/shop/components/ProductModal.js";
+import { CartNotification } from "./handlers/shop/components/CartNotification.js";
+
+// Checkout-specific cache with shorter TTL
+const checkoutCacheStore = new MemorySegmentCacheStore({
+  defaults: { ttl: 10 },
+});
+
 /**
  * URL patterns - Django-style routing API
  *
@@ -100,6 +165,8 @@ export const urlpatterns = urls(
     revalidate,
     errorBoundary,
     notFoundBoundary,
+    intercept,
+    when,
   }) => [
     // Home route
     path("/", HomePage, { name: "home.index" }),
@@ -303,6 +370,168 @@ export const urlpatterns = urls(
       ]),
       path("/middleware/api/data", MiddlewareApiPage, { name: "middleware.api" }, () => [
         middleware(...apiMiddleware),
+      ]),
+    ]),
+
+    // Shop routes - comprehensive ecommerce example
+    cache(() => [
+      // Orphan layouts for testing
+      layout(<><Outlet /></>, () => [revalidate(() => false)]),
+      layout(<><Outlet /></>, () => [revalidate(() => false)]),
+
+      revalidate(shopGlobalRevalidation),
+
+      // Global middleware
+      middleware(...shopLoggerMiddleware),
+      middleware(...mockAuthMiddleware),
+
+      // Global loaders
+      loader(UserLoader),
+      loader(CartLoader, () => [
+        revalidate(({ actionId }) => actionId?.includes("Cart") ?? false),
+      ]),
+      loader(CategoriesLoader),
+      loader(FeaturedProductsLoader),
+
+      // Shop layout
+      layout(
+        (ctx) => {
+          const push = ctx.use(Breadcrumbs);
+          push({ label: "Shop", href: "/shop" });
+          return (
+            <>
+              <ParallelOutlet name="@promoBanner" />
+              <ShopLayout />
+            </>
+          );
+        },
+        () => [
+          parallel({
+            "@promoBanner": () => (
+              <div style={{ background: "#d1e7dd", padding: "0.5rem", textAlign: "center" }}>
+                <p>🔥 Summer Sale! Up to 50% off on selected items! 🔥</p>
+              </div>
+            ),
+            "@notification": () => <CartNotification />,
+          }),
+
+          // Intercept product detail - shows modal during soft navigation
+          intercept(
+            "@modal",
+            "shop.products.detail.view",
+            <ProductModalContent />,
+            () => [
+              when(({ from }) => !from.pathname.startsWith("/shop/products/")),
+              layout(<ModalWrapper />),
+              loading(<ProductModalContentSkeleton />),
+              loader(ProductLoader, () => [cache()]),
+              loader(ProductCartLoader, () => [revalidate(() => true)]),
+              loader(ModalRecommendationsLoader, () => [
+                revalidate(({ actionId }) => actionId?.includes("addToCart") ?? false),
+              ]),
+            ]
+          ),
+
+          // Shop index
+          path("/shop", ShopIndexRoute, { name: "shop.index" }, () => [
+            parallel({ "@sidebar": () => <CategorySidebar /> }, () => [revalidate(() => false)]),
+          ]),
+
+          // Category
+          path("/shop/products/:category", (ctx) => {
+            const push = ctx.use(Breadcrumbs);
+            const title = ctx.params.category
+              .split("-")
+              .map((w: string) => w[0].toUpperCase() + w.slice(1))
+              .join(" ");
+            push({ label: title, href: `/shop/products/${ctx.params.category}` });
+            return ProductsCategoryRoute(ctx);
+          }, { name: "shop.products.category" }),
+
+          // Product detail
+          path("/shop/product/:slug", (ctx) => {
+            const push = ctx.use(Breadcrumbs);
+            const title = ctx.params.slug
+              .split("-")
+              .map((w: string) => w[0].toUpperCase() + w.slice(1))
+              .join(" ");
+            push({ label: title, href: `/shop/product/${ctx.params.slug}` });
+            return ProductsDetailRoute(ctx);
+          }, { name: "shop.products.detail.view" }, () => [
+            loading(<ProductDetailSkeleton />, { ssr: true }),
+            loader(ProductLoader, () => [revalidate(() => false), cache()]),
+            loader(RelatedProductsLoader, () => [revalidate(() => false)]),
+            revalidate(productDetailRevalidation),
+            parallel({ "@related": (ctx) => <RelatedProducts slug={ctx.params.slug} /> }),
+          ]),
+
+          // Reviews routes
+          path("/shop/product/:slug/reviews", (ctx) => (
+            <div>
+              <h2>Reviews for {ctx.params.slug}</h2>
+              <p>All reviews for this product</p>
+            </div>
+          ), { name: "shop.products.detail.reviews.index" }),
+
+          path("/shop/product/:slug/reviews/:reviewId", (ctx) => (
+            <div>
+              <h2>Review {ctx.params.reviewId}</h2>
+              <p>For product: {ctx.params.slug}</p>
+            </div>
+          ), { name: "shop.products.detail.reviews.detail" }),
+
+          path("/shop/product/:slug/reviews/:reviewId/edit", (ctx) => (
+            <div>
+              <h2>Edit Review {ctx.params.reviewId}</h2>
+              <p>For product: {ctx.params.slug}</p>
+              <p>4 levels deep!</p>
+            </div>
+          ), { name: "shop.products.detail.reviews.edit.index" }),
+
+          // Cart
+          path("/shop/cart", CartRoute, { name: "shop.cart" }, () => [
+            loading(<CartSkeleton />),
+            revalidate(cartRevalidation),
+            parallel({ "@summary": () => <OrderSummary variant="cart" /> }),
+          ]),
+        ]
+      ),
+
+      // Checkout routes with dedicated cache store
+      cache({ store: checkoutCacheStore }, () => [
+        layout(<CheckoutLayout />, () => [
+          loading(<CheckoutSkeleton />),
+          middleware(...requireAuthMiddleware),
+
+          path("/shop/checkout", CheckoutIndexRoute, { name: "shop.checkout.index" }, () => [
+            parallel({ "@summary": () => <OrderSummary variant="checkout" /> }),
+          ]),
+
+          path("/shop/checkout/payment", CheckoutPaymentRoute, { name: "shop.checkout.payment" }, () => [
+            parallel({ "@summary": () => <OrderSummary variant="payment" /> }),
+          ]),
+
+          path("/shop/checkout/confirm", CheckoutConfirmRoute, { name: "shop.checkout.confirm" }, () => [
+            revalidate(checkoutConfirmRevalidation),
+          ]),
+        ]),
+      ]),
+
+      // Account routes
+      layout(<AccountLayout />, () => [
+        loader(OrdersLoader),
+
+        path("/shop/account", AccountIndexRoute, { name: "shop.account.index" }, () => [
+          parallel({ "@orders": () => <RecentOrders /> }),
+        ]),
+
+        path("/shop/account/orders", AccountOrdersRoute, { name: "shop.account.orders" }, () => [
+          middleware(...permissionsMiddleware),
+        ]),
+
+        path("/shop/account/orders/:id", AccountOrderDetailRoute, { name: "shop.account.orderDetail" }, () => [
+          revalidate(orderDetailRevalidation),
+        ]),
       ]),
     ]),
   ]
