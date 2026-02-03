@@ -79,7 +79,7 @@ export const AccountIndexRoute: Handler<{}, AppEnv> = (ctx) => {
         <p>
           All <code>account.*</code> routes share the same AccountLayout
         </p>
-        <SegmentTimer />
+        <SegmentTimer serverRenderTime={new Date().toISOString()} />
       </div>
     </div>
   );
@@ -140,7 +140,7 @@ export const AccountOrdersRoute: Handler = () => (
       <p>
         This route uses <code>[middleware("shop.account.orders", "permissions")]</code>
       </p>
-      <SegmentTimer />
+      <SegmentTimer serverRenderTime={new Date().toISOString()} />
     </div>
   </div>
 );
@@ -235,7 +235,7 @@ export const AccountOrderDetailRoute: Handler<{ id: string }> = (ctx) => {
         <p>
           <strong>Current Order ID:</strong> {ctx.params.id}
         </p>
-        <SegmentTimer />
+        <SegmentTimer serverRenderTime={new Date().toISOString()} />
       </div>
 
       <div style={{ marginTop: "1rem" }}>

@@ -3479,7 +3479,10 @@ export function createRSCRouter<TEnv = any>(
             : null);
 
     // When leaving intercept, force route segment to render
-    if (isSameRouteNavigation && manifestEntry.type === "route") {
+    // Only trigger when interceptSourceUrl is set - this means the client is currently
+    // viewing the route via intercept (modal) and now navigating to see it directly.
+    // For query-only changes (same route, no intercept), don't force re-render.
+    if (isSameRouteNavigation && manifestEntry.type === "route" && interceptSourceUrl) {
       console.log(
         `[Router.matchPartial] Leaving intercept - forcing route segment render: ${manifestEntry.shortCode}`
       );

@@ -19,6 +19,7 @@ import type {
 } from "./types.js";
 import {
   getContext,
+  getNamePrefix,
   type EntryData,
   type InterceptEntry,
   type InterceptWhenFn,
@@ -819,10 +820,15 @@ const intercept: RouteHelpers<any, any>["intercept"] = (
 
   const namespace = `${ctx.namespace}.$${store.getNextIndex("intercept")}.${slotName}`;
 
+  // Apply name prefix to routeName (from include())
+  // This ensures intercepts match prefixed route keys
+  const namePrefix = getNamePrefix();
+  const prefixedRouteName = namePrefix ? `${namePrefix}.${routeName}` : routeName;
+
   // Create intercept entry with its own loaders/revalidate/middleware/when
   const entry: InterceptEntry = {
     slotName: slotName as `@${string}`,
-    routeName,
+    routeName: prefixedRouteName,
     handler,
     middleware: [],
     revalidate: [],

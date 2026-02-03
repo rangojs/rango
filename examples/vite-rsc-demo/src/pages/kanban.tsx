@@ -4,6 +4,7 @@ import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { KanbanBoardContent } from "../handlers/kanban/KanbanBoard.js";
 import { FullWidthLayout } from "../handlers/kanban/FullWidthLayout.js";
 import { KanbanErrorBoundary } from "../handlers/kanban/KanbanErrorBoundary.js";
+import { CardDetailContent } from "../handlers/kanban/CardDetail.js";
 
 export function KanbanLayout() {
   return (
@@ -70,8 +71,6 @@ export function KanbanIndexPage() {
 }
 
 export function KanbanCardPage() {
-  // Import dynamically to avoid bundling issues
-  const { CardDetailContent } = require("../handlers/kanban/CardDetail.js");
   return <CardDetailContent />;
 }
 

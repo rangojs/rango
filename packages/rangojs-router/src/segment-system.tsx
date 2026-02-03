@@ -305,7 +305,9 @@ export async function renderSegments(
   const errorBoundaryWrapped = createElement(RootErrorBoundary, {
     children: content,
   });
-  await Promise.allSettled(temporalLazyRefs);
+  if (typeof window === "object" || typeof document === "object") {
+    await Promise.allSettled(temporalLazyRefs);
+  }
 
   // Build the final result, optionally wrapped with root layout
   let result: ReactNode = errorBoundaryWrapped;

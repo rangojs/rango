@@ -729,12 +729,7 @@ export function createRSCHandler<
     setRequestContextParams(matchResult.params);
 
     const renderStart = performance.now();
-    renderSegments(matchResult.segments, {
-      rootLayout: router.rootLayout,
-      isAction: true,
-      routeMap,
-      routeName: matchResult.routeName,
-    });
+
     const renderDuration = performance.now() - renderStart;
     const serverTiming = matchResult.serverTiming
       ? `${matchResult.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`

@@ -1,6 +1,7 @@
 "use server";
 
 import { boardStore, generateCardId, type Card } from "./data.js";
+import { incrementActionCount } from "./loader.js";
 
 /**
  * Add a new card to a column
@@ -45,6 +46,7 @@ export async function kanbanAddCard(
   console.log(`[Kanban] Added card: ${newCard.title} to ${columnId}`);
   await new Promise((resolve) => setTimeout(resolve, 2000));
 
+  incrementActionCount("kanbanAddCard");
   return newCard;
 }
 
@@ -106,6 +108,7 @@ export async function kanbanMoveCard(
   );
   await new Promise((resolve) => setTimeout(resolve, 2000));
 
+  incrementActionCount("kanbanMoveCard");
   return card;
 }
 
@@ -143,6 +146,7 @@ export async function kanbanUpdateCard(
   console.log(`[Kanban] Updated card ${cardId}`);
   await new Promise((resolve) => setTimeout(resolve, 2000));
 
+  incrementActionCount("kanbanUpdateCard");
   return card;
 }
 
@@ -172,5 +176,6 @@ export async function kanbanDeleteCard(cardId: string): Promise<boolean> {
   console.log(`[Kanban] Deleted card: ${cardId}`);
   await new Promise((resolve) => setTimeout(resolve, 2000));
 
+  incrementActionCount("kanbanDeleteCard");
   return true;
 }

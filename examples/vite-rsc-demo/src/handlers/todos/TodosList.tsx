@@ -3,7 +3,6 @@
 import { useLoader, useNavigation } from "@rangojs/router/client";
 import { TodosLoader } from "./loader.js";
 import { DebugSegmentWrapper } from "../../components/DebugSegmentWrapper.js";
-import { SegmentTimer } from "../../components/SegmentTimer.js";
 import { AddTodoForm, TodoItem, TodoStats } from "./components.js";
 import { LoadingSpinner } from "../shop/components/loading.js";
 
@@ -23,7 +22,7 @@ export function TodosCount() {
   );
 }
 
-export function TodosIndexContent({ serverValue }: { serverValue?: string }) {
+export function TodosIndexContent() {
   const { data } = useLoader(TodosLoader);
 
   return (
@@ -38,7 +37,7 @@ export function TodosIndexContent({ serverValue }: { serverValue?: string }) {
           }}
         >
           <h2 style={{ margin: "0 0 1rem 0", color: "#334155" }}>
-            Server Actions Demo ({serverValue ?? "no server value"})
+            Server Actions Demo
           </h2>
           <p style={{ color: "#64748b", margin: 0 }}>
             This page demonstrates RSC Router's server actions with optimistic
@@ -80,27 +79,6 @@ export function TodosIndexContent({ serverValue }: { serverValue?: string }) {
           </div>
         )}
 
-        <div
-          style={{
-            marginTop: "2rem",
-            padding: "1rem",
-            background: "#f5f5f5",
-            borderRadius: "8px",
-          }}
-        >
-          <h4 style={{ margin: "0 0 0.5rem 0" }}>Performance</h4>
-          <SegmentTimer />
-          <p
-            style={{
-              fontSize: "0.875rem",
-              color: "#666",
-              margin: "0.5rem 0 0 0",
-            }}
-          >
-            Check the Network tab for Server-Timing header to see detailed
-            metrics.
-          </p>
-        </div>
       </div>
     </DebugSegmentWrapper>
   );

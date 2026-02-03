@@ -11,17 +11,20 @@ import {
   KanbanLoader,
   CardDetailLoader,
 } from "../handlers/kanban/loader.js";
+import { ActionCounterLayout } from "../handlers/kanban/ActionCounter.js";
 
 export const kanbanPatterns = urls(({ path, layout, loader, revalidate, errorBoundary }) => [
   // Passthrough layout for error boundary
   layout(<Outlet />, () => [
     errorBoundary(kanbanErrorBoundary),
     layout(<KanbanLayout />, () => [
-      // Action counter loader for tracking revalidation
-      loader(ActionCounterLoader, () => [
-        revalidate(({ actionId, stale }) => {
-          return actionId?.includes("kanban/actions") ?? stale ?? false;
-        }),
+      // Action counter layout with loader for tracking revalidation
+      layout(<ActionCounterLayout />, () => [
+        loader(ActionCounterLoader, () => [
+          revalidate(({ actionId, stale }) => {
+            return actionId?.includes("kanban/actions") ?? stale ?? false;
+          }),
+        ]),
       ]),
 
       // Board loader

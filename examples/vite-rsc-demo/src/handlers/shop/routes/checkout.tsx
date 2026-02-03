@@ -102,7 +102,7 @@ export const CheckoutIndexRoute: Handler<{}, AppEnv> = (ctx) => (
         <p>
           This route uses <code>[middleware("checkout.index", "requireAuth")]</code>
         </p>
-        <SegmentTimer />
+        <SegmentTimer serverRenderTime={new Date().toISOString()} />
       </div>
     </div>
   </div>
@@ -195,7 +195,7 @@ export const CheckoutPaymentRoute: Handler = () => (
           <li>ShopLayout (shop routes)</li>
           <li>CheckoutLayout (checkout flow)</li>
         </ol>
-        <SegmentTimer />
+        <SegmentTimer serverRenderTime={new Date().toISOString()} />
       </div>
     </div>
   </div>
@@ -262,7 +262,7 @@ export const CheckoutConfirmRoute: Handler = () => (
         Navigate away and back - this segment will <strong>NOT</strong>{" "}
         re-render (static confirmation)
       </p>
-      <SegmentTimer />
+      <SegmentTimer serverRenderTime={new Date().toISOString()} />
     </div>
 
     <div style={{ marginTop: "1rem" }}>

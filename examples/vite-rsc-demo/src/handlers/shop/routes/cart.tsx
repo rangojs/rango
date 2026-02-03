@@ -95,7 +95,7 @@ export const CartRoute: Handler = () => (
           cart data.
         </p>
         <p>Try navigating away and back - you'll see the segment re-renders.</p>
-        <SegmentTimer />
+        <SegmentTimer serverRenderTime={new Date().toISOString()} />
       </div>
     </div>
       {/* Order summary - parallel route */}
