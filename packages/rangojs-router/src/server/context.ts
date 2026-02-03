@@ -188,7 +188,6 @@ interface HelperContext {
   parent: EntryData | null;
   counters: Record<string, number>;
   forRoute?: string;
-  mountIndex?: number;
   metrics?: MetricsStore;
   /** True when rendering for SSR (document requests) */
   isSSR?: boolean;
@@ -281,17 +280,16 @@ export const getContext = (): {
 
       const parent = store.parent;
       const prefix = type === "layout" ? "L" : type === "parallel" ? "P" : type === "loader" ? "D" : type === "cache" ? "C" : "R";
-      const mountPrefix = store.mountIndex !== undefined ? `M${store.mountIndex}` : "";
 
       if (!parent) {
-        // Root entry: prefix with mount index and use mount-scoped counter
-        const counterKey = mountPrefix ? `${mountPrefix}_root_${type}` : `root_${type}`;
+        // Root entry: use root-scoped counter
+        const counterKey = `root_${type}`;
         store.counters[counterKey] ??= 0;
         const index = store.counters[counterKey];
         store.counters[counterKey] = index + 1;
-        return `${mountPrefix}${prefix}${index}`;
+        return `${prefix}${index}`;
       } else {
-        // Child entry: use parent-scoped counter (parent already has M prefix)
+        // Child entry: use parent-scoped counter
         const counterKey = `${parent.shortCode}_${type}`;
         store.counters[counterKey] ??= 0;
         const index = store.counters[counterKey];
@@ -312,7 +310,6 @@ export const getContext = (): {
           parent: parent || null,
           counters: store.counters,
           forRoute: store.forRoute,
-          mountIndex: store.mountIndex,
           metrics: store.metrics,
           isSSR: store.isSSR,
           patterns: store.patterns,
@@ -341,7 +338,6 @@ export const getContext = (): {
           parent: parent || null,
           counters,
           forRoute: store?.forRoute,
-          mountIndex: store?.mountIndex,
           metrics: store?.metrics,
           isSSR: store?.isSSR,
           patterns,

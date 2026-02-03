@@ -955,7 +955,6 @@ export interface RouteEntry<TEnv = any> {
       | Array<AllUseItems>
       | Promise<{ default: () => Array<AllUseItems> }>
       | Promise<() => Array<AllUseItems>>;
-  mountIndex: number;
 }
 
 

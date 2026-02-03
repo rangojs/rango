@@ -799,7 +799,6 @@ export function createRouter<TEnv = any>(
   // Use default document if none provided (keeps internal name as rootLayout)
   const rootLayout = documentOption ?? DefaultDocument;
   const routesEntries: RouteEntry<TEnv>[] = [];
-  let mountIndex = 0;
 
   // Track if .routes() has been called (for single-call enforcement in @rangojs/router)
   let routesCalled = false;
@@ -3691,8 +3690,6 @@ export function createRouter<TEnv = any>(
     prefix: string,
     routes: TNewRoutes
   ): RouteBuilder<RouteDefinition, TEnv, any, TNewRoutes> {
-    const currentMountIndex = mountIndex++;
-
     // Merge routes into the href map
     // Keys stay unchanged for composability - only URL patterns get prefixed
     const routeEntries = routes as Record<string, string>;
@@ -3754,7 +3751,6 @@ export function createRouter<TEnv = any>(
           routes: routes as ResolvedRouteMap<any>,
           trailingSlash: trailingSlashConfig,
           handler: handler as any,
-          mountIndex: currentMountIndex,
         });
         // Return router with accumulated types
         // At runtime this is the same object, but TypeScript tracks the accumulated route types
@@ -3793,7 +3789,6 @@ export function createRouter<TEnv = any>(
         typeof (prefixOrRoutes as UrlPatterns<TEnv>).handler === "function"
       ) {
         const urlPatterns = prefixOrRoutes as UrlPatterns<TEnv>;
-        const currentMountIndex = mountIndex++;
 
         // Create manifest and patterns maps for route registration
         const manifest = new Map<string, EntryData>();
@@ -3834,7 +3829,6 @@ export function createRouter<TEnv = any>(
           routes: routesObject as ResolvedRouteMap<any>,
           trailingSlash: trailingSlashConfig,
           handler: urlPatterns.handler,
-          mountIndex: currentMountIndex,
         });
 
         // Build route map from registered patterns

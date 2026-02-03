@@ -11,10 +11,10 @@ import MapRootLayout from "../server/root-layout";
 import type { RouteEntry } from "../types";
 
 /**
- * Module-level cache for manifests per mount index.
+ * Module-level cache for manifests.
  * Only used in production - dev mode skips caching for HMR support.
  */
-const manifestCache = new Map<number, Map<string, EntryData>>();
+const manifestCache = new Map<string, EntryData>();
 
 /**
  * Load manifest from route entry with AsyncLocalStorage context
@@ -27,21 +27,14 @@ export async function loadManifest(
   metricsStore?: MetricsStore,
   isSSR?: boolean
 ): Promise<EntryData> {
-  const mountIndex = entry.mountIndex;
   const isDev = process.env.NODE_ENV !== "production";
 
   // In production, check cache first
-  if (!isDev) {
-    const cachedManifest = manifestCache.get(mountIndex);
-    if (cachedManifest && cachedManifest.has(routeKey)) {
-      return cachedManifest.get(routeKey)!;
-    }
+  if (!isDev && manifestCache.has(routeKey)) {
+    return manifestCache.get(routeKey)!;
   }
 
   const Store = getContext().getOrCreateStore(routeKey);
-
-  // Set mount index in store for unique shortCode prefixes
-  Store.mountIndex = mountIndex;
 
   // Set isSSR flag so loading() can check if we're in SSR
   Store.isSSR = isSSR;
@@ -55,14 +48,9 @@ export async function loadManifest(
   Store.manifest.clear();
 
   try {
-    // Include mountIndex in namespace to ensure unique cache keys per mount
-    const namespaceWithMount = mountIndex !== undefined
-      ? `#router.M${mountIndex}`
-      : "#router";
-
     const useItems = await getContext().runWithStore(
       Store,
-      Store.namespace || namespaceWithMount,
+      Store.namespace || "#router",
       Store.parent,
       async () => {
         // Create helpers for lazy-loaded handlers that need them
@@ -117,7 +105,9 @@ export async function loadManifest(
 
     // Cache manifest in production after successful build
     if (!isDev) {
-      manifestCache.set(mountIndex, new Map(Store.manifest));
+      for (const [key, value] of Store.manifest) {
+        manifestCache.set(key, value);
+      }
     }
 
     return Store.manifest.get(routeKey)!;

@@ -12,7 +12,6 @@ const createRouteEntry = (
   routes: routes as any,
   trailingSlash,
   handler: () => [],
-  mountIndex: 0,
 });
 
 describe("compilePattern", () => {
