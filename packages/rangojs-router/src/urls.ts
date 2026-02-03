@@ -25,7 +25,7 @@
  * ]);
  * ```
  */
-import type { ReactNode } from "react";
+import { createElement, type ReactNode } from "react";
 import type {
   DefaultEnv,
   ErrorBoundaryHandler,
@@ -357,6 +357,41 @@ export type PathHelpers<TEnv> = {
 // ============================================================================
 
 /**
+ * Check if a function is async (returns a Promise when called)
+ * Detects both `async function` and arrow functions that return Promises
+ */
+function isAsyncFunction(fn: Function): boolean {
+  // Check for async function constructor name
+  return fn.constructor.name === "AsyncFunction";
+}
+
+/**
+ * Wrap an async handler function as a sync handler that returns JSX
+ *
+ * When users pass async functions directly (e.g., `path("/", AsyncPage)`),
+ * the router would await the handler result, blocking RSC streaming.
+ *
+ * This wrapper converts the async function into a sync handler that returns
+ * `<AsyncHandler {...props} />` - a React element that React renders and
+ * handles via Suspense, enabling proper streaming.
+ *
+ * @example
+ * Before: `path("/slow", SlowPage)` - router awaits SlowPage(), blocks 5s
+ * After: Internally becomes `() => <SlowPage />` - React streams it
+ */
+function wrapAsyncHandler<TEnv>(
+  asyncHandler: Handler<any, TEnv>
+): Handler<any, TEnv> {
+  // Return a sync function that creates a React element
+  // React will call the async component during render and handle it with Suspense
+  return (ctx) => {
+    // Pass the context as props to the async component
+    // The async component can destructure params, etc. from props
+    return createElement(asyncHandler as any, ctx);
+  };
+}
+
+/**
  * Check if a value is a valid use item
  */
 const isValidUseItem = (item: any): item is AllUseItems | undefined | null => {
@@ -450,9 +485,15 @@ function createPathHelper<TEnv>(): PathHelpers<TEnv>["path"] {
     const namespace = `${ctx.namespace}.${store.getNextIndex("route")}.${routeName}`;
 
     // Ensure handler is always a function (wrap ReactNode if needed)
+    // IMPORTANT: Async functions passed directly (e.g., `path("/", AsyncPage)`)
+    // would block streaming because the router awaits handler results.
+    // We auto-wrap them as JSX elements so React handles the async via Suspense.
+    // The sync wrapper returns `<AsyncHandler />` which React streams.
     const wrappedHandler: Handler<any, TEnv> =
       typeof handler === "function"
-        ? (handler as Handler<any, TEnv>)
+        ? isAsyncFunction(handler)
+          ? wrapAsyncHandler(handler as Handler<any, TEnv>)
+          : (handler as Handler<any, TEnv>)
         : () => handler;
 
     const entry = {
