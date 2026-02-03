@@ -72,6 +72,16 @@ import {
   postRevalidation,
 } from "./pages/blog.js";
 
+// Loader imports
+import { UsersLoader } from "./handlers/loaders-demo/loaders.js";
+import { TodosLoader, TodoDetailLoader } from "./handlers/todos/loader.js";
+import {
+  ActionCounterLoader,
+  KanbanLoader,
+  CardDetailLoader,
+} from "./handlers/kanban/loader.js";
+import { ErrorPageLoader, NotFoundLoader } from "./handlers/error-handlers.js";
+
 /**
  * URL patterns - Django-style routing API
  *
@@ -177,14 +187,23 @@ export const urlpatterns = urls(
       path("/protected/profile/:username", ProtectedProfilePage, { name: "protected.profile" }),
     ]),
 
-    // Todos routes - wrapped in passthrough layout for error boundary
+    // Todos routes - demonstrates loaders, actions, and streaming
     layout(<Outlet />, () => [
       errorBoundary(todosErrorBoundary),
       layout(<TodosLayout />, () => [
+        // Todos loader with revalidation based on actions
+        loader(TodosLoader, () => [
+          revalidate(({ actionId, defaultShouldRevalidate }) => {
+            const isTodosAction = actionId?.includes("todos/actions");
+            return isTodosAction ?? defaultShouldRevalidate;
+          }),
+        ]),
+
         path("/todos", TodosIndexPage, { name: "todos.index" }, () => [
           revalidate(() => false),
         ]),
         path("/todos/:id", TodoDetailPage, { name: "todos.detail" }, () => [
+          loader(TodoDetailLoader),
           revalidate(() => false),
         ]),
       ]),
@@ -213,23 +232,57 @@ export const urlpatterns = urls(
         },
         { name: "errors.throwError" }
       ),
-      path("/errors/loader-error", ErrorsLoaderErrorPage, { name: "errors.loaderError" }),
+      path("/errors/loader-error", ErrorsLoaderErrorPage, { name: "errors.loaderError" }, () => [
+        loader(ErrorPageLoader),
+      ]),
       path("/errors/not-found", ErrorsNotFoundLoaderPage, { name: "errors.notFound" }),
-      path("/errors/not-found-loader", ErrorsNotFoundLoaderPage, { name: "errors.notFoundLoader" }),
+      path("/errors/not-found-loader", ErrorsNotFoundLoaderPage, { name: "errors.notFoundLoader" }, () => [
+        loader(NotFoundLoader),
+      ]),
       path("/errors/client-error", ErrorsClientErrorPage, { name: "errors.clientError" }),
     ]),
 
-    // Kanban routes - wrapped in passthrough layout for error boundary
+    // Kanban routes - demonstrates optimistic updates with drag-and-drop
     layout(<Outlet />, () => [
       errorBoundary(kanbanErrorBoundary),
       layout(<KanbanLayout />, () => [
+        // Action counter loader for tracking revalidation
+        loader(ActionCounterLoader, () => [
+          revalidate(({ actionId, stale }) => {
+            // Track kanban actions for counter
+            return actionId?.includes("kanban/actions") ?? stale ?? false;
+          }),
+        ]),
+
+        // Board loader
+        loader(KanbanLoader, () => [
+          revalidate(({ actionId, defaultShouldRevalidate }) => {
+            // Revalidate on kanban actions
+            const isKanbanAction = actionId?.includes("kanban/actions");
+            console.log("[Kanban] Revalidation", { actionId, isKanbanAction });
+            return isKanbanAction ?? defaultShouldRevalidate;
+          }),
+        ]),
+
         path("/kanban", KanbanIndexPage, { name: "kanban.index" }),
-        path("/kanban/card/:cardId", KanbanCardPage, { name: "kanban.card" }),
+        path("/kanban/card/:cardId", KanbanCardPage, { name: "kanban.card" }, () => [
+          loader(CardDetailLoader),
+        ]),
       ]),
     ]),
 
-    // Loaders demo routes
+    // Loaders demo routes - demonstrates useLoader and useFetchLoader
     layout(<LoadersDemoLayout />, () => [
+      // Global loader for the demo - provides users data
+      loader(UsersLoader, () => [
+        revalidate(({ actionId, stale, defaultShouldRevalidate }) => {
+          // Check if this is a user-related action
+          const isUserAction = actionId?.includes("loaders-demo/actions");
+          console.log("[Loaders] Revalidation check", { actionId, isUserAction });
+          return isUserAction ?? stale ?? defaultShouldRevalidate;
+        }),
+      ]),
+
       path("/loaders", LoadersIndexPage, { name: "loaders.index" }),
       path("/loaders/stats", LoadersStatsPage, { name: "loaders.stats" }),
     ]),

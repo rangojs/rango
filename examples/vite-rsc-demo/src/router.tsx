@@ -8,20 +8,12 @@ const cacheStore = new MemorySegmentCacheStore({
     ttl: 600000, // Default TTL for all cache() boundaries (~7 days)
   },
 });
-import {
-  homeRoutes,
-  blogRoutes,
-  aboutRoutes,
-  dashboardRoutes,
-  shopRoutes,
-  adminRoutes,
-  protectedRoutes,
-  todosRoutes,
-  errorRoutes,
-  kanbanRoutes,
-  loadersRoutes,
-  middlewareRoutes,
-} from "./routes.js";
+
+// Django-style URL patterns (new API)
+import { urlpatterns } from "./urls.js";
+
+// Legacy route imports (for shop - complex route with many loaders)
+import { shopRoutes } from "./routes.js";
 
 /**
  * Platform bindings (Cloudflare Workers, environment variables, etc.)
@@ -73,48 +65,21 @@ declare global {
 
 /**
  * Create and configure the router with type-safe context.
- * Route types are accumulated through the builder chain.
+ *
+ * Uses Django-style urls() API for most routes, with legacy .routes().map()
+ * pattern for shop (which has complex loader requirements).
  */
 const router = createRSCRouter<AppEnv>({
   debugPerformance: true,
   document: RootLayout,
   cache: { store: cacheStore },
 })
-  .routes(homeRoutes)
-  .map(() => import("./handlers/home.js"))
+  // Django-style URL patterns (new API) - defines routes with handlers inline
+  .routes(urlpatterns)
 
-  .routes("/blog", blogRoutes) // Mount blog routes at /blog prefix
-  .map(() => import("./handlers/blog.js"))
-
-  .routes(aboutRoutes)
-  .map(() => import("./handlers/about.js"))
-
-  .routes("/dashboard", dashboardRoutes) // Dashboard with parallel routes
-  .map(() => import("./handlers/dashboard.js"))
-
-  .routes("/shop", shopRoutes) // Shop - comprehensive ecommerce example
-  .map(() => import("./handlers/shop.js"))
-
-  .routes("/admin", adminRoutes) // Admin - demonstrates soft/hard revalidation
-  .map(() => import("./handlers/admin.js"))
-
-  .routes("/protected", protectedRoutes) // Protected - demonstrates middleware short-circuit
-  .map(() => import("./handlers/protected.js"))
-
-  .routes("/todos", todosRoutes) // Todos - demonstrates loaders, actions, streaming
-  .map(() => import("./handlers/todos.js"))
-
-  .routes("/errors", errorRoutes) // Errors - demonstrates error boundary handling
-  .map(() => import("./handlers/error.js"))
-
-  .routes("/kanban", kanbanRoutes) // Kanban - demonstrates optimistic updates
-  .map(() => import("./handlers/kanban.js"))
-
-  .routes("/loaders", loadersRoutes) // Loaders - demonstrates useLoader & useFetchLoader
-  .map(() => import("./handlers/loaders-demo.js"))
-
-  .routes("/middleware", middlewareRoutes) // Middleware - comprehensive middleware examples
-  .map(() => import("./handlers/middleware.js"));
+  // Shop uses legacy pattern due to complex loader/intercept structure
+  .routes("/shop", shopRoutes)
+  .map(() => import("./handlers/shop.js"));
 
 /**
  * Extract route types directly from the router chain
@@ -136,4 +101,4 @@ declare global {
 export { router };
 export const href = router.href;
 
-console.log("[Router] Configured with 12 route groups (lazy-loaded handlers)");
+console.log("[Router] Configured with urls() API + shop routes");
