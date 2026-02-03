@@ -9,8 +9,8 @@ const cacheStore = new MemorySegmentCacheStore({
   },
 });
 
-// Django-style URL patterns
-import { urlpatterns } from "./urls.js";
+// Django-style URL patterns (composed from separate modules)
+import { urlpatterns } from "./urls/index.js";
 
 /**
  * Platform bindings (Cloudflare Workers, environment variables, etc.)
