@@ -127,14 +127,6 @@ import { router } from "./router";
 export default { fetch: router.fetch };
 ```
 
-This replaces the older pattern of using `createRSCHandler` separately:
-
-```typescript
-// Old pattern (still supported for advanced cases)
-import { createRSCHandler } from "@rangojs/router/rsc";
-const handler = createRSCHandler({ router, nonce: () => true });
-```
-
 ## Document Component
 
 ```typescript

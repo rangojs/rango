@@ -65,7 +65,7 @@ import {
   decodeFormState,
 } from "@rangojs/router/internal/deps/rsc";
 import { router } from "${routerPath}";
-import { createRSCHandler } from "@rangojs/router/rsc";
+import { createRSCHandler } from "@rangojs/router/internal/rsc-handler";
 import { VERSION } from "@rangojs/router:version";
 
 // Import loader manifest to ensure all fetchable loaders are registered at startup

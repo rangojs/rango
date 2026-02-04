@@ -22,7 +22,7 @@ export const router = createRouter<AppEnv>({
   cache: (env) => ({
     store: new CFCacheStore({
       defaults: { ttl: 60, swr: 300 },
-      ctx: env.ctx,
+      ctx: env.ctx!, // Always provided in Cloudflare Workers
     }),
   }),
 })

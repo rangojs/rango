@@ -85,6 +85,11 @@
       "types": "./src/deps/html-stream-server.ts",
       "default": "./src/deps/html-stream-server.ts"
     },
+    "./internal/rsc-handler": {
+      "react-server": "./src/rsc/handler.ts",
+      "types": "./src/rsc/handler.ts",
+      "default": "./src/rsc/handler.ts"
+    },
     "./cache": {
       "react-server": "./src/cache/index.ts",
       "types": "./src/cache/index.ts",

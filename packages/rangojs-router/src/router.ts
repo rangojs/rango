@@ -262,18 +262,23 @@ export interface RSCRouterOptions<TEnv = any> {
    * });
    * ```
    *
-   * @example Dynamic config with env
+   * @example Dynamic config with env (e.g., Cloudflare Workers with ExecutionContext)
    * ```typescript
    * const router = createRouter<AppEnv>({
    *   cache: (env) => ({
-   *     store: new KVSegmentCacheStore(env.Bindings.MY_CACHE),
+   *     store: new CFCacheStore({
+   *       defaults: { ttl: 60 },
+   *       ctx: env.ctx, // ExecutionContext for non-blocking writes
+   *     }),
    *   }),
    * });
    * ```
    */
   cache?:
     | { store: SegmentCacheStore; enabled?: boolean }
-    | ((env: TEnv) => { store: SegmentCacheStore; enabled?: boolean });
+    | ((
+        env: TEnv & { ctx?: ExecutionContext }
+      ) => { store: SegmentCacheStore; enabled?: boolean });
 
   /**
    * Theme configuration for automatic theme management.
