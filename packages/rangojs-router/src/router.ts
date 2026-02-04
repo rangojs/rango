@@ -187,13 +187,13 @@ export interface RSCRouterOptions<TEnv = any> {
    * ```typescript
    * // Simple static component
    * const router = createRouter<AppEnv>({
-   *   document: AppShell,
+   *   document: Document,
    *   notFound: <NotFound404 />,
    * });
    *
    * // Dynamic component with pathname
    * const router = createRouter<AppEnv>({
-   *   document: AppShell,
+   *   document: Document,
    *   notFound: ({ pathname }) => (
    *     <div>
    *       <h1>404 - Not Found</h1>
