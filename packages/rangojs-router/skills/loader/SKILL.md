@@ -38,14 +38,13 @@ export const urlpatterns = urls(({ path, loader }) => [
 
 ## Consuming Loader Data
 
-### In Server Components
+### In Server Components (Handlers)
 
 ```typescript
-import { useLoader } from "@rangojs/router";
 import { ProductLoader } from "./loaders/product";
 
-async function ProductPage() {
-  const { product } = await useLoader(ProductLoader);
+async function ProductPage(ctx: HandlerContext) {
+  const { product } = await ctx.use(ProductLoader);
   return <h1>{product.name}</h1>;
 }
 ```
@@ -202,12 +201,11 @@ export const urlpatterns = urls(({ path, layout, loader, loading, cache, revalid
 ]);
 
 // pages/product.tsx
-import { useLoader } from "@rangojs/router";
 import { ProductLoader, CartLoader } from "./loaders/shop";
 
-async function ProductPage() {
-  const { product } = await useLoader(ProductLoader);
-  const { cart } = await useLoader(CartLoader);
+async function ProductPage(ctx: HandlerContext) {
+  const { product } = await ctx.use(ProductLoader);
+  const { cart } = await ctx.use(CartLoader);
 
   return (
     <div>

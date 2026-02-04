@@ -166,11 +166,9 @@ export const ProductLoader = createLoader("product", async (ctx) => {
   };
 });
 
-// In server component - type is inferred
-import { useLoader } from "@rangojs/router";
-
-async function ProductPage() {
-  const product = await useLoader(ProductLoader);
+// In server component (handler) - use ctx.use()
+async function ProductPage(ctx: HandlerContext) {
+  const product = await ctx.use(ProductLoader);
   // product: { id: string; name: string; price: number }
   return <h1>{product.name}</h1>;
 }
