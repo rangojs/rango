@@ -58,10 +58,12 @@ export const urlpatterns = urls(({ path, include }) => [
 
   // === LOCALIZED ROUTES (5,000+ under /site/:locale) ===
   // Static "/site" prefix enables short-circuit optimization
+  // Patterns are lazily evaluated on first /site/* request (default behavior)
   include("/site/:locale", localizedPatterns, { name: "site" }),
 
   // === API ROUTES (5,000) ===
   // Static "/api" prefix enables short-circuit optimization
+  // Patterns are lazily evaluated on first /api/* request (default behavior)
   include("/api", includedPatterns, { name: "api" }),
 
   // === SHOP ROUTES (nested includes demo) ===

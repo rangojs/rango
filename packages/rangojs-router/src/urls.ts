@@ -134,38 +134,6 @@ export interface UrlPatterns<
 export interface IncludeOptions<TNamePrefix extends string = string> {
   /** Name prefix for all routes in this pattern set */
   name?: TNamePrefix;
-  /**
-   * Defer evaluation of this include's patterns until first request.
-   *
-   * When `lazy: true`, the patterns inside this include are NOT evaluated
-   * at router creation time. Instead, they are evaluated on the first request
-   * that matches this prefix, then cached for subsequent requests.
-   *
-   * This can significantly improve cold start time for apps with many routes,
-   * especially when requests only hit a subset of route prefixes.
-   *
-   * **Trade-offs:**
-   * - TypeScript types still work (autocomplete and type-checking for route names)
-   * - **href() and useHref() won't work for lazy routes until they are evaluated**
-   *   If you need to link to routes within a lazy include from outside that include,
-   *   don't use lazy evaluation for that include.
-   *
-   * Best for routes you don't need to link to from elsewhere (e.g., large API route sets).
-   *
-   * @example
-   * ```typescript
-   * urls(({ include }) => [
-   *   // 5000 site routes - only evaluated when /site/* is requested
-   *   include("/site/:locale", sitePatterns, { name: "site", lazy: true }),
-   *
-   *   // 5000 API routes - only evaluated when /api/* is requested
-   *   include("/api", apiPatterns, { name: "api", lazy: true }),
-   * ])
-   * ```
-   *
-   * @default false
-   */
-  lazy?: boolean;
 }
 
 // ============================================================================
@@ -664,73 +632,52 @@ function createIncludeHelper<TEnv>(): PathHelpers<TEnv>["include"] {
     if (!ctx) throw new Error("include() must be called inside urls()");
 
     const namePrefix = options?.name;
-    const isLazy = options?.lazy === true;
     const name = `$include_${prefix.replace(/[/:*?]/g, "_")}`;
 
-    // Track this include for build-time manifest generation
+    // Capture context for deferred evaluation
     const capturedUrlPrefix = getUrlPrefix();
+    const capturedNamePrefix = getNamePrefix();
+    const capturedParent = ctx.parent;
     const fullPrefix = capturedUrlPrefix ? capturedUrlPrefix + prefix : prefix;
     const fullNamePrefix = namePrefix
-      ? getNamePrefix()
-        ? `${getNamePrefix()}.${namePrefix}`
+      ? capturedNamePrefix
+        ? `${capturedNamePrefix}.${namePrefix}`
         : namePrefix
-      : getNamePrefix();
+      : capturedNamePrefix;
 
+    // Track this include for build-time manifest generation
     if (ctx.trackedIncludes) {
       ctx.trackedIncludes.push({
         prefix,
         fullPrefix,
         namePrefix: fullNamePrefix,
         patterns,
-        lazy: isLazy,
+        lazy: true,
       });
     }
 
-    if (isLazy) {
-      // LAZY: Don't expand patterns now - store for later evaluation
-      // Capture current context state for when we do evaluate
-      const capturedNamePrefix = getNamePrefix();
-      const capturedParent = ctx.parent;
-
-      return {
-        type: "include",
-        name,
-        prefix,
-        patterns,
-        options,
-        lazy: true,
-        // Store context for deferred evaluation
-        _lazyContext: {
-          urlPrefix: capturedUrlPrefix,
-          namePrefix: capturedNamePrefix,
-          parent: capturedParent,
-        },
-        // No _expanded - patterns not evaluated yet
-      } as IncludeItem & {
-        _lazyContext: {
-          urlPrefix: string;
-          namePrefix: string | undefined;
-          parent: EntryData | null;
-        };
-      };
-    }
-
-    // EAGER (default): Expand patterns immediately
-    // This ensures routes inherit the correct parent (e.g., UserRootLayout)
-    const expandedItems = runWithPrefixes(prefix, namePrefix, () => {
-      return (patterns as UrlPatterns).handler();
-    });
-
+    // All includes are lazy - patterns are evaluated on first matching request
+    // This improves cold start time significantly for large route sets
     return {
       type: "include",
       name,
       prefix,
       patterns,
       options,
-      lazy: false,
-      // Store expanded items for processItems to extract
-      _expanded: expandedItems,
-    } as IncludeItem & { _expanded: AllUseItems[] };
+      lazy: true,
+      // Store context for deferred evaluation
+      _lazyContext: {
+        urlPrefix: capturedUrlPrefix,
+        namePrefix: capturedNamePrefix,
+        parent: capturedParent,
+      },
+    } as IncludeItem & {
+      _lazyContext: {
+        urlPrefix: string;
+        namePrefix: string | undefined;
+        parent: EntryData | null;
+      };
+    };
   };
 }
 
