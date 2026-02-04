@@ -199,13 +199,14 @@ Handles have typed data:
 // handles/breadcrumbs.ts
 import { createHandle } from "@rangojs/router";
 
-// Simple handle - collects values into an array
+// Simple handle - collects values into a flat array (default)
 export const Breadcrumbs = createHandle<{ label: string; href: string }>();
 
-// Handle with reducer - runs on the client to transform collected values
-export const PageTitle = createHandle<string, string>({
-  reducer: (titles) => titles[titles.length - 1] ?? "My App",
-});
+// Handle with custom collect - transforms segment data into final value
+// Receives array of segment arrays: [[parent values], [child values], ...]
+export const PageTitle = createHandle<string, string>(
+  (segments) => segments.flat().at(-1) ?? "My App"
+);
 
 // In handler - push data to handle via ctx.use()
 async function ProductPage(ctx: HandlerContext) {

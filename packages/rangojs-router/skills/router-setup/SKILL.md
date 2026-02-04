@@ -100,6 +100,7 @@ interface RSCRouterOptions<TEnv> {
 
 ```typescript
 // src/document.tsx
+"use client";
 import type { ReactNode } from "react";
 
 export function Document({ children }: { children: ReactNode }) {
@@ -121,12 +122,20 @@ export function Document({ children }: { children: ReactNode }) {
 ## Using with Cloudflare Workers
 
 ```typescript
+// src/handler.ts
+import { createRSCHandler } from "@rangojs/router/rsc";
+import { router } from "./router";
+
+const handler = createRSCHandler({ router });
+
+export default handler;
+
 // src/worker.tsx
-import router from "./router";
+import handler from "./handler";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    return router.fetch(request, env, ctx);
+    return handler(request, { Bindings: env, Variables: {}, ctx });
   },
 };
 ```
