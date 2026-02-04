@@ -61,10 +61,13 @@ function AboutPage(ctx: HandlerContext) {
         overflow: "auto",
         fontSize: "0.85rem"
       }}>
-{`createRSCHandler({
-  router,
+{`const router = createRouter({
+  document: Document,
   nonce: () => true, // Auto-generate
-});`}
+});
+
+// In worker
+router.fetch(request, env);`}
       </pre>
     </main>
   );

@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { Link, MetaTags } from "@rangojs/router/client";
 
-export function AppShell({ children }: { children: ReactNode }) {
+export function Document({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
