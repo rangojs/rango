@@ -66,6 +66,28 @@ Each benchmark route returns:
 - **404 non-prefixed**: Skip ~10,005 routes (99.97% savings)
 - **TTFB improvement**: ~200ms → ~15ms
 
+## Nested Includes
+
+Nested `include()` calls create separate entries, but optimization only works if **static prefixes differ**:
+
+```typescript
+// ❌ No benefit - same staticPrefix "/site"
+include("/site/:locale", urls(({ include }) => [
+  include("/shop", ...),  // staticPrefix = "/site"
+  include("/blog", ...),  // staticPrefix = "/site"
+]))
+
+// ✅ Optimized - different static prefixes
+include("/site", urls(({ include }) => [
+  include("/shop/:cat", ...),  // staticPrefix = "/site/shop"
+  include("/blog/:cat", ...),  // staticPrefix = "/site/blog"
+]))
+```
+
+**Rule**: Put static segments BEFORE dynamic params for best optimization.
+
+See `BENCHMARK-2026-02-05-33ff555.md` for full details.
+
 ## Benchmark History
 
 - `BENCHMARK-2026-02-04-ea2cfc7.md` - Baseline before optimization
