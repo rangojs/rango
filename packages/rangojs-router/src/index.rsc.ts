@@ -26,7 +26,7 @@ export {
   sanitizeError,
 } from "./index.js";
 
-// Re-export all types from index.ts (user-facing types only)
+// Re-export all types from types.ts (user-facing types only)
 export type {
   // Configuration types
   RouterEnv,
@@ -56,9 +56,10 @@ export type {
   NotFoundInfo,
   NotFoundBoundaryFallbackProps,
   NotFoundBoundaryHandler,
-  // Router options
-  RSCRouterOptions,
-} from "./index.js";
+} from "./types.js";
+
+// Router options type (server-only, so import directly)
+export type { RSCRouterOptions } from "./router.js";
 
 // Server-side createLoader - includes the actual loader function
 // This is the key addition for RSC context

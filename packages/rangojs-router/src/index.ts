@@ -65,16 +65,9 @@ export type {
   NotFoundBoundaryHandler,
 } from "./types.js";
 
-// Router options type
-export type { RSCRouterOptions } from "./router.js";
-
 // Client-safe createLoader - only stores the $$id, function is not included
 // Use this when defining loaders that will be imported by client components
 export { createLoader } from "./loader.js";
-
-
-// Django-style URL patterns API types (safe for client)
-export type { UrlPatterns, PathHelpers } from "./urls.js";
 
 /**
  * Error-throwing stub for server-only `urls` function.
@@ -86,14 +79,15 @@ export function urls(): never {
   );
 }
 
-// Core router types
-export type { RSCRouter, RootLayoutProps } from "./router.js";
-
-// RSC handler types
-export type { CreateRSCHandlerOptions, HandlerCacheConfig } from "./rsc/types.js";
-
-// Meta handle type
-export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
+/**
+ * Error-throwing stub for server-only `createRouter` function.
+ * Import from "@rangojs/router/server" instead.
+ */
+export function createRouter(): never {
+  throw new Error(
+    'createRouter() is server-only. Import from "@rangojs/router/server" instead.'
+  );
+}
 
 // Href type utilities for type-safe URL generation
 // ScopedHrefFunction is used with useHref<typeof patterns>() for composable modules

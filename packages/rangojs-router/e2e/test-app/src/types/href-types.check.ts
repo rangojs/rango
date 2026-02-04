@@ -94,8 +94,10 @@ if (false as boolean) {
 // =============================================================================
 // This tests that included url modules can use useHref with their own patterns
 // to get type-safe href for just their local routes.
-import type { UrlPatterns, ScopedHrefFunction, ExtractLocalRoutes } from "@rangojs/router";
-import type { ExtractParams } from "@rangojs/router";
+// UrlPatterns is only available from server (it requires server context)
+import type { UrlPatterns } from "@rangojs/router/server";
+// ScopedHrefFunction, ExtractLocalRoutes, ExtractParams are safe client types
+import type { ScopedHrefFunction, ExtractLocalRoutes, ExtractParams } from "@rangojs/router";
 import { scopedHref } from "@rangojs/router";
 
 // Simulate a local module's patterns type (like blogPatterns)
