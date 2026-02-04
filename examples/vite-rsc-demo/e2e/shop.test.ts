@@ -199,6 +199,55 @@ test.describe("shop-navigation", () => {
       page.locator("text=Test Revalidation Behavior")
     ).toBeVisible({ timeout: 3000 });
   });
+
+  test("should navigate from intercept modal to full product page multiple times", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop"));
+    await waitForHydration(page);
+
+    // First attempt: Open modal and navigate to full details
+    await page
+      .locator('a[href="/shop/product/wireless-headphones"]')
+      .first()
+      .click();
+    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 3000 });
+    await page.locator("text=View Full Details").click();
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 3000 });
+    await expect(page.locator("text=Test Revalidation Behavior")).toBeVisible({ timeout: 3000 });
+
+    // Go back to shop
+    await page.locator('a[href="/shop"]').first().click();
+    await expect(page.locator("text=All Products")).toBeVisible({ timeout: 3000 });
+
+    // Second attempt: Open different product modal and navigate to full details
+    await page
+      .locator('a[href="/shop/product/running-shoes"]')
+      .first()
+      .click();
+    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 3000 });
+    // Check the modal header has the product name
+    await expect(page.locator("h2:has-text('Running Shoes')")).toBeVisible({ timeout: 3000 });
+    await page.locator("text=View Full Details").click();
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 3000 });
+    await expect(page.locator("text=Test Revalidation Behavior")).toBeVisible({ timeout: 3000 });
+
+    // Go back to shop again
+    await page.locator('a[href="/shop"]').first().click();
+    await expect(page.locator("text=All Products")).toBeVisible({ timeout: 3000 });
+
+    // Third attempt: Open same product again and verify it works
+    await page
+      .locator('a[href="/shop/product/wireless-headphones"]')
+      .first()
+      .click();
+    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 3000 });
+    await page.locator("text=View Full Details").click();
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 3000 });
+    await expect(page.locator("text=Test Revalidation Behavior")).toBeVisible({ timeout: 3000 });
+  });
 });
 
 /**

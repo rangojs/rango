@@ -137,7 +137,11 @@ export const shopPatterns = urls(
             "products.detail.view",
             <ProductModalContent />,
             () => [
-              when(({ from }) => !from.pathname.startsWith("/shop/products/")),
+              when(({ from }) => {
+                const shouldIntercept = !from.pathname.startsWith("/shop/products/") && !from.pathname.startsWith("/shop/product/");
+                console.log(`[Intercept when] from: ${from.pathname}, shouldIntercept: ${shouldIntercept}`);
+                return shouldIntercept;
+              }),
               layout(<ModalWrapper />),
               loading(<ProductModalContentSkeleton />),
               loader(ProductLoader, () => [cache()]),
