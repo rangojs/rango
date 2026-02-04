@@ -46,7 +46,7 @@ const cspMiddleware: Middleware = async (ctx, next) => {
     return;
   }
 
-  // Get the nonce from shared variables (set by createRSCHandler when nonce option is used)
+  // Get the nonce from shared variables (set by router when nonce option is used)
   const nonce = ctx.get("nonce");
   if (!nonce) {
     return;

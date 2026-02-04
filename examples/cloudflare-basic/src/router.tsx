@@ -1,5 +1,5 @@
 import { createRouter } from "@rangojs/router/server";
-import { createDocumentCacheMiddleware } from "@rangojs/router/cache";
+import { createDocumentCacheMiddleware, CFCacheStore } from "@rangojs/router/cache";
 import { urlpatterns } from "./urls.js";
 import { Document } from "./document.js";
 import type { AppEnv } from "./env.js";
@@ -18,6 +18,13 @@ export const router = createRouter<AppEnv>({
     enableSystem: true,
     enableColorScheme: true,
   },
+  // CF cache store with ExecutionContext for non-blocking writes
+  cache: (env) => ({
+    store: new CFCacheStore({
+      defaults: { ttl: 60, swr: 300 },
+      ctx: env.ctx,
+    }),
+  }),
 })
   // Document cache middleware - caches full responses based on Cache-Control headers
   .use(createDocumentCacheMiddleware())
