@@ -1,6 +1,6 @@
 {
   "name": "@rangojs/router",
-  "version": "0.0.0-experimental.2",
+  "version": "0.0.0-experimental.3",
   "type": "module",
   "description": "Django-inspired RSC router with composable URL patterns",
   "author": "Ivo Todorov",
@@ -84,6 +84,11 @@
     "./internal/deps/html-stream-server": {
       "types": "./src/deps/html-stream-server.ts",
       "default": "./src/deps/html-stream-server.ts"
+    },
+    "./internal/rsc-handler": {
+      "react-server": "./src/rsc/handler.ts",
+      "types": "./src/rsc/handler.ts",
+      "default": "./src/rsc/handler.ts"
     },
     "./cache": {
       "react-server": "./src/cache/index.ts",

@@ -13,11 +13,11 @@ Caches complete HTTP responses (HTML/RSC) at the edge based on Cache-Control hea
 Configure document cache in router:
 
 ```typescript
-import { createRSCRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router";
 import { CFCacheStore } from "@rangojs/router/cache/cf";
 import { urlpatterns } from "./urls";
 
-const router = createRSCRouter<AppEnv>({
+const router = createRouter<AppEnv>({
   document: Document,
   urls: urlpatterns,
   documentCache: (env) => ({
@@ -35,7 +35,7 @@ export default router;
 Routes opt-in to document caching using the `cache()` DSL with `documentCache` option:
 
 ```typescript
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 
 export const urlpatterns = urls(({ path, cache }) => [
   // Cache full page for 5 min, serve stale for 1 hour
@@ -56,7 +56,7 @@ export const urlpatterns = urls(({ path, cache }) => [
 ## Document Cache Options
 
 ```typescript
-createRSCRouter({
+createRouter({
   // ...
   documentCache: (env) => ({
     // Cache store (required)
@@ -131,11 +131,11 @@ Segment hash ensures different cached responses for navigations from different s
 
 ```typescript
 // router.tsx
-import { createRSCRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router";
 import { CFCacheStore } from "@rangojs/router/cache/cf";
 import { urlpatterns } from "./urls";
 
-const router = createRSCRouter<AppEnv>({
+const router = createRouter<AppEnv>({
   document: Document,
   urls: urlpatterns,
   documentCache: (env) => ({
@@ -148,7 +148,7 @@ const router = createRSCRouter<AppEnv>({
 export default router;
 
 // urls.tsx
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 
 export const urlpatterns = urls(({ path, layout, cache, loader }) => [
   // Blog with document caching

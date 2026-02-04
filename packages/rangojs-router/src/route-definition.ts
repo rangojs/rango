@@ -220,7 +220,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
   /**
    * Define a layout that wraps child routes
    * ```typescript
-   * layout(<AppShell />, () => [
+   * layout(<RootLayout />, () => [
    *   route("home", HomePage),
    *   route("about", AboutPage),
    * ])

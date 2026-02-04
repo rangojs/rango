@@ -1,20 +1,17 @@
 /**
- * RSC Router - RSC Handler Entry Point
+ * RSC Router - RSC Entry Point
  *
- * This module provides the RSC request handler for server-side rendering,
+ * This module provides RSC utilities for server-side rendering,
  * server actions, loader fetching, and progressive enhancement.
  *
  * @example Basic usage
  * ```tsx
- * import { createRSCHandler } from "rsc-router/rsc";
  * import { router } from "./router.js";
  *
- * export default createRSCHandler({ router });
+ * // Use router.fetch to handle requests
+ * export default { fetch: router.fetch };
  * ```
  */
-
-// Re-export handler
-export { createRSCHandler } from "./handler.js";
 
 // Re-export types
 export type {

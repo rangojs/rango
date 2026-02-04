@@ -11,7 +11,7 @@ Parallel routes render multiple components simultaneously in named slots.
 ## Basic Parallel Routes
 
 ```typescript
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
 function DashboardLayout() {
@@ -159,7 +159,7 @@ function MyLayout() {
 ## Complete Example
 
 ```typescript
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
 function ShopLayout() {

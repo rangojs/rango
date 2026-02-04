@@ -54,6 +54,8 @@ import type {
   ShouldRevalidateFn,
   TrailingSlashMode,
 } from "./types";
+import type { NonceProvider, RSCDependencies, LoadSSRModule } from "./rsc/types.js";
+import type { ExecutionContext } from "./server/request-context.js";
 
 // Extracted router utilities
 import {
@@ -185,13 +187,13 @@ export interface RSCRouterOptions<TEnv = any> {
    * ```typescript
    * // Simple static component
    * const router = createRouter<AppEnv>({
-   *   document: AppShell,
+   *   document: Document,
    *   notFound: <NotFound404 />,
    * });
    *
    * // Dynamic component with pathname
    * const router = createRouter<AppEnv>({
-   *   document: AppShell,
+   *   document: Document,
    *   notFound: ({ pathname }) => (
    *     <div>
    *       <h1>404 - Not Found</h1>
@@ -248,7 +250,6 @@ export interface RSCRouterOptions<TEnv = any> {
    * The store handles persistence (memory, KV, Redis, etc.).
    *
    * Can be a static config or a function receiving env for runtime bindings.
-   * Can be overridden in createRSCHandler.
    *
    * @example Static config
    * ```typescript
@@ -261,18 +262,23 @@ export interface RSCRouterOptions<TEnv = any> {
    * });
    * ```
    *
-   * @example Dynamic config with env
+   * @example Dynamic config with env (e.g., Cloudflare Workers with ExecutionContext)
    * ```typescript
    * const router = createRouter<AppEnv>({
    *   cache: (env) => ({
-   *     store: new KVSegmentCacheStore(env.Bindings.MY_CACHE),
+   *     store: new CFCacheStore({
+   *       defaults: { ttl: 60 },
+   *       ctx: env.ctx, // ExecutionContext for non-blocking writes
+   *     }),
    *   }),
    * });
    * ```
    */
   cache?:
     | { store: SegmentCacheStore; enabled?: boolean }
-    | ((env: TEnv) => { store: SegmentCacheStore; enabled?: boolean });
+    | ((
+        env: TEnv & { ctx?: ExecutionContext }
+      ) => { store: SegmentCacheStore; enabled?: boolean });
 
   /**
    * Theme configuration for automatic theme management.
@@ -313,6 +319,67 @@ export interface RSCRouterOptions<TEnv = any> {
    * Use `theme: true` to enable with all defaults.
    */
   theme?: import("./theme/types.js").ThemeConfig | true;
+
+  /**
+   * URL patterns to register with the router.
+   *
+   * Alternative to calling `.routes()` method - allows passing patterns
+   * directly in the config for a more concise setup.
+   *
+   * @example
+   * ```typescript
+   * import { urls } from "@rangojs/router/server";
+   *
+   * const urlpatterns = urls(({ path, layout }) => [
+   *   path("/", HomePage, { name: "home" }),
+   *   path("/about", AboutPage, { name: "about" }),
+   * ]);
+   *
+   * const router = createRouter<AppEnv>({
+   *   document: Document,
+   *   urls: urlpatterns,
+   * });
+   * ```
+   */
+  urls?: UrlPatterns<TEnv, any>;
+
+  /**
+   * Nonce provider for Content Security Policy (CSP).
+   *
+   * Can be:
+   * - A function that returns a nonce string
+   * - A function that returns `true` to auto-generate a nonce
+   * - Undefined to disable nonce (default)
+   *
+   * The nonce will be applied to inline scripts injected by the RSC payload.
+   * It's also available to middleware via `ctx.get('nonce')`.
+   *
+   * @example Auto-generate nonce
+   * ```tsx
+   * createRouter({
+   *   nonce: () => true,
+   * });
+   * ```
+   *
+   * @example Custom nonce from request context
+   * ```tsx
+   * createRouter({
+   *   nonce: (request, env) => env.nonce,
+   * });
+   * ```
+   */
+  nonce?: NonceProvider<TEnv>;
+
+  /**
+   * RSC version string included in metadata.
+   * The browser sends this back on partial requests to detect version mismatches.
+   *
+   * Defaults to the auto-generated VERSION from `@rangojs/router:version` virtual module.
+   * Only set this if you need a custom versioning strategy.
+   *
+   * @default VERSION from @rangojs/router:version
+   */
+  version?: string;
 }
 
 /**
@@ -658,6 +725,16 @@ export interface RSCRouter<
    */
   readonly middleware: MiddlewareEntry<TEnv>[];
 
+  /**
+   * Nonce provider for CSP (for internal use by createHandler)
+   */
+  readonly nonce?: NonceProvider<TEnv>;
+
+  /**
+   * RSC version string (for internal use by createHandler)
+   */
+  readonly version?: string;
+
   match(request: Request, context: TEnv): Promise<MatchResult>;
 
   /**
@@ -711,6 +788,32 @@ export interface RSCRouter<
    * Returns a JSON-friendly representation of all routes and layouts
    */
   debugManifest(): Promise<SerializedManifest>;
+
+  /**
+   * Handle an RSC request.
+   *
+   * Uses the router's configuration (nonce, version, cache) automatically.
+   * The handler is lazily created on first call.
+   *
+   * @example Cloudflare Workers
+   * ```tsx
+   * import { router } from "./router";
+   *
+   * export default { fetch: router.fetch };
+   * ```
+   *
+   * @example Direct export
+   * ```tsx
+   * const router = createRouter({
+   *   document: Document,
+   *   urls: urlpatterns,
+   *   nonce: () => true,
+   * });
+   *
+   * export const fetch = router.fetch;
+   * ```
+   */
+  fetch(request: Request, env: TEnv & { ctx?: ExecutionContext }): Promise<Response>;
 }
 
 /**
@@ -780,6 +883,9 @@ export function createRouter<TEnv = any>(
     onError,
     cache,
     theme: themeOption,
+    urls: urlsOption,
+    nonce,
+    version,
   } = options;
 
   // Resolve theme config (null if theme not enabled)
@@ -3916,6 +4022,32 @@ export function createRouter<TEnv = any>(
     matchError,
     previewMatch,
 
+    // Expose nonce provider for fetch
+    nonce,
+
+    // Expose version for fetch
+    version,
+
+    // RSC request handler (lazily created on first call)
+    fetch: (() => {
+      // Handler is created on first call and reused
+      let handler: ((request: Request, env: TEnv & { ctx?: ExecutionContext }) => Promise<Response>) | null = null;
+
+      return async (request: Request, env: TEnv & { ctx?: ExecutionContext }) => {
+        if (!handler) {
+          // Lazy import deferred to first request to avoid dev mode issues
+          const { createRSCHandler } = await import("./rsc/handler.js");
+          handler = createRSCHandler({
+            router: router as any,
+            cache,
+            nonce,
+            version,
+          });
+        }
+        return handler(request, env);
+      };
+    })(),
+
     // Debug utility for manifest inspection
     async debugManifest(): Promise<SerializedManifest> {
       const manifest = new Map<string, EntryData>();
@@ -3965,6 +4097,11 @@ export function createRouter<TEnv = any>(
       return serializeManifest(manifest);
     },
   };
+
+  // If urls option was provided, auto-register them
+  if (urlsOption) {
+    return router.routes(urlsOption) as RSCRouter<TEnv, {}>;
+  }
 
   return router;
 }

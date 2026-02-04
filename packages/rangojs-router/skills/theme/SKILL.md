@@ -11,17 +11,17 @@ Opt-in theme system with FOUC prevention.
 ## Enable
 
 ```typescript
-import { createRSCRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router";
 
 // Simple - all defaults
-const router = createRSCRouter<Env>({
+const router = createRouter<Env>({
   document: Document,
   urls: urlpatterns,
   theme: true,
 });
 
 // Custom config
-const router = createRSCRouter<Env>({
+const router = createRouter<Env>({
   document: Document,
   urls: urlpatterns,
   theme: {
@@ -36,7 +36,7 @@ const router = createRSCRouter<Env>({
 ## Server (in loaders/middleware)
 
 ```typescript
-import { createLoader, createMiddleware } from "@rangojs/router/server";
+import { createLoader, createMiddleware } from "@rangojs/router";
 
 // In a loader
 export const SettingsLoader = createLoader("settings", async (ctx) => {
