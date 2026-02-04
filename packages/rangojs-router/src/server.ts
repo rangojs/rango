@@ -95,6 +95,12 @@ export {
   assertClientComponent,
 } from "./component-utils.js";
 
+// Debug utilities for route matching (development only)
+export {
+  enableMatchDebug,
+  getMatchDebugStats,
+} from "./router/pattern-matching.js";
+
 // Types (re-exported for convenience - user-facing only)
 export type {
   // Configuration types

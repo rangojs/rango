@@ -520,6 +520,15 @@ function createPathHelper<TEnv>(): PathHelpers<TEnv>["path"] {
       ctx.patterns.set(routeName, prefixedPattern);
     }
 
+    // Store pattern grouped by URL prefix for separate entry creation
+    if (ctx.patternsByPrefix) {
+      const urlPrefix = getUrlPrefix() || "";
+      if (!ctx.patternsByPrefix.has(urlPrefix)) {
+        ctx.patternsByPrefix.set(urlPrefix, new Map());
+      }
+      ctx.patternsByPrefix.get(urlPrefix)!.set(routeName, prefixedPattern);
+    }
+
     // Store trailing slash config if specified
     if (options?.trailingSlash && ctx.trailingSlash) {
       ctx.trailingSlash.set(routeName, options.trailingSlash);

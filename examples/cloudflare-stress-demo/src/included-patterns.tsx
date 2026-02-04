@@ -2,8 +2,24 @@
  * 500 routes for include() testing with various param patterns
  */
 import { urls } from "@rangojs/router";
-import type { HandlerContext } from "@rangojs/router/server";
+import { getMatchDebugStats, type HandlerContext } from "@rangojs/router/server";
 import type { AppEnv } from "./env.js";
+
+// Benchmark handler for API routes - returns debug stats
+const ApiBenchmarkHandler = async (ctx: HandlerContext<AppEnv>) => {
+  const matchStats = getMatchDebugStats();
+  throw new Response(
+    JSON.stringify({
+      route: ctx.pathname,
+      timing: {
+        requestStart: ctx.var.dateStart ?? 0,
+        handlerReached: Date.now(),
+      },
+      matchStats,
+    }),
+    { headers: { "Content-Type": "application/json" } }
+  );
+};
 
 const ParamPage = async (ctx: HandlerContext<AppEnv>) => {
   await new Promise((r) => setTimeout(r, 1));
@@ -24,6 +40,9 @@ const ParamPage = async (ctx: HandlerContext<AppEnv>) => {
 };
 
 export const includedPatterns = urls(({ path }) => [
+  // === BENCHMARK: First API route ===
+  path("/bench/first", ApiBenchmarkHandler, { name: "benchFirst" }),
+
   // === RESOURCE ROUTES WITH ID (1000) ===
   ...Array.from({ length: 1000 }, (_, i) =>
     path(`/v1/resource${i + 1}/:id`, ParamPage, { name: `resource${i + 1}` })
@@ -52,4 +71,7 @@ export const includedPatterns = urls(({ path }) => [
       name: `project${i + 1}`,
     })
   ),
+
+  // === BENCHMARK: Last API route ===
+  path("/bench/last", ApiBenchmarkHandler, { name: "benchLast" }),
 ]);

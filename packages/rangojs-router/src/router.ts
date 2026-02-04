@@ -88,6 +88,7 @@ import {
   type MiddlewareFn,
 } from "./router/middleware.js";
 import {
+  extractStaticPrefix,
   findMatch as findRouteMatch,
   traverseBack,
 } from "./router/pattern-matching.js";
@@ -3865,6 +3866,7 @@ export function createRouter<TEnv = any>(
         // - Lazy: () => import(...) - ignores helpers, returns Promise
         routesEntries.push({
           prefix,
+          staticPrefix: extractStaticPrefix(prefix),
           routes: routes as ResolvedRouteMap<any>,
           trailingSlash: trailingSlashConfig,
           handler: handler as any,
@@ -3912,6 +3914,7 @@ export function createRouter<TEnv = any>(
         // Create manifest and patterns maps for route registration
         const manifest = new Map<string, EntryData>();
         const patterns = new Map<string, string>();
+        const patternsByPrefix = new Map<string, Map<string, string>>();
         const trailingSlashMap = new Map<string, TrailingSlashMode>();
 
         // Run the handler once to extract patterns for route matching
@@ -3920,6 +3923,7 @@ export function createRouter<TEnv = any>(
           {
             manifest,
             patterns,
+            patternsByPrefix,
             trailingSlash: trailingSlashMap,
             namespace: "root",
             parent: null,
@@ -3931,25 +3935,49 @@ export function createRouter<TEnv = any>(
           }
         );
 
-        // Build routes object from registered patterns (for route matching)
-        const routesObject: Record<string, string> = {};
-        for (const [name, pattern] of patterns.entries()) {
-          routesObject[name] = pattern;
-        }
-
         // Store the ORIGINAL handler - loadManifest will re-run it to register manifest entries
         // Convert trailingSlash map to object for the router
         const trailingSlashConfig = trailingSlashMap.size > 0
           ? Object.fromEntries(trailingSlashMap)
           : undefined;
 
-        routesEntries.push({
-          prefix: "",
-          routes: routesObject as ResolvedRouteMap<any>,
-          trailingSlash: trailingSlashConfig,
-          handler: urlPatterns.handler,
-          mountIndex: currentMountIndex,
-        });
+        // Create separate RouteEntry for each URL prefix group
+        // This enables prefix-based short-circuit optimization
+        if (patternsByPrefix.size > 0) {
+          for (const [prefix, prefixPatterns] of patternsByPrefix.entries()) {
+            const routesObject: Record<string, string> = {};
+            for (const [name, pattern] of prefixPatterns.entries()) {
+              routesObject[name] = pattern;
+            }
+
+            routesEntries.push({
+              // prefix is "" because patterns already include the URL prefix
+              // (e.g., "/site/:locale/user1/:id" not just "/user1/:id")
+              prefix: "",
+              // staticPrefix is the actual prefix for short-circuit optimization
+              staticPrefix: extractStaticPrefix(prefix),
+              routes: routesObject as ResolvedRouteMap<any>,
+              trailingSlash: trailingSlashConfig,
+              handler: urlPatterns.handler,
+              mountIndex: currentMountIndex,
+            });
+          }
+        } else {
+          // Fallback: no prefix grouping, use flat patterns map
+          const routesObject: Record<string, string> = {};
+          for (const [name, pattern] of patterns.entries()) {
+            routesObject[name] = pattern;
+          }
+
+          routesEntries.push({
+            prefix: "",
+            staticPrefix: "",
+            routes: routesObject as ResolvedRouteMap<any>,
+            trailingSlash: trailingSlashConfig,
+            handler: urlPatterns.handler,
+            mountIndex: currentMountIndex,
+          });
+        }
 
         // Build route map from registered patterns
         for (const [name, pattern] of patterns.entries()) {

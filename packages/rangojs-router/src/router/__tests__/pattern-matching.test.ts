@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { compilePattern, findMatch } from "../pattern-matching";
+import { compilePattern, extractStaticPrefix, findMatch } from "../pattern-matching";
 import type { RouteEntry, TrailingSlashMode } from "../../types";
 
 // Helper to create route entries for testing
@@ -9,6 +9,7 @@ const createRouteEntry = (
   trailingSlash?: Record<string, TrailingSlashMode>
 ): RouteEntry => ({
   prefix,
+  staticPrefix: extractStaticPrefix(prefix),
   routes: routes as any,
   trailingSlash,
   handler: () => [],

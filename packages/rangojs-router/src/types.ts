@@ -945,6 +945,18 @@ export interface MatchResult {
  */
 export interface RouteEntry<TEnv = any> {
   prefix: string;
+  /**
+   * Pre-computed static prefix for fast short-circuit matching.
+   * Extracted from prefix at registration time (everything before first param).
+   *
+   * Examples:
+   * - "/api" → staticPrefix = "/api"
+   * - "/site/:locale" → staticPrefix = "/site"
+   * - "/:locale" → staticPrefix = "" (empty, can't optimize)
+   *
+   * At runtime: if staticPrefix && !pathname.startsWith(staticPrefix), skip entry.
+   */
+  staticPrefix: string;
   routes: ResolvedRouteMap<any>;
   /**
    * Trailing slash config per route key

@@ -17,16 +17,24 @@
  * - /bench/last - AFTER all includes (worst case: checks all 14,000+ routes)
  */
 import { urls } from "@rangojs/router";
-import type { HandlerContext } from "@rangojs/router/server";
+import {
+  enableMatchDebug,
+  getMatchDebugStats,
+  type HandlerContext,
+} from "@rangojs/router/server";
 import { includedPatterns } from "./included-patterns.js";
 import { localizedPatterns } from "./localized-patterns.js";
 import { HomePage } from "./pages/benchmark.js";
 
-// Benchmark handler - bypasses RSC, returns raw JSON
+// Enable debug for all requests
+enableMatchDebug(true);
+
+// Benchmark handler - bypasses RSC, returns raw JSON with debug stats
 const BenchmarkHandler = async (ctx: HandlerContext) => {
   const now = Date.now();
   const start = ctx.var.dateStart ?? 0;
   const elapsed = now - start;
+  const matchStats = getMatchDebugStats();
 
   throw new Response(
     JSON.stringify({
@@ -37,6 +45,7 @@ const BenchmarkHandler = async (ctx: HandlerContext) => {
         elapsed: `${elapsed}ms`,
         note: elapsed === 0 ? "sub-millisecond (CF time frozen)" : "actual",
       },
+      matchStats,
     }),
     { headers: { "Content-Type": "application/json" } }
   );

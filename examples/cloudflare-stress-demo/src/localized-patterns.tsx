@@ -7,18 +7,19 @@
  */
 import { urls } from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";
-import type { HandlerContext } from "@rangojs/router/server";
+import { getMatchDebugStats, type HandlerContext } from "@rangojs/router/server";
 import type { AppEnv } from "./env.js";
 
-// Benchmark route - returns raw Response, bypasses RSC
+// Benchmark route - returns raw Response with debug stats, bypasses RSC
 const BenchmarkHandler = async (ctx: HandlerContext<AppEnv>) => {
   const now = Date.now();
   const start = ctx.var.dateStart ?? 0;
   const elapsed = now - start;
+  const matchStats = getMatchDebugStats();
 
   throw new Response(
     JSON.stringify({
-      route: "benchmark",
+      route: ctx.pathname,
       params: ctx.params,
       timing: {
         requestStart: start,
@@ -26,6 +27,7 @@ const BenchmarkHandler = async (ctx: HandlerContext<AppEnv>) => {
         elapsed: `${elapsed}ms`,
         note: elapsed === 0 ? "sub-millisecond (CF time frozen)" : "actual",
       },
+      matchStats,
     }),
     {
       headers: { "Content-Type": "application/json" },

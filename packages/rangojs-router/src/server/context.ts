@@ -194,6 +194,8 @@ interface HelperContext {
   isSSR?: boolean;
   /** URL patterns map for path() routes (route name -> pattern) */
   patterns?: Map<string, string>;
+  /** URL patterns grouped by include prefix for separate entry creation */
+  patternsByPrefix?: Map<string, Map<string, string>>;
   /** Trailing slash config per route name */
   trailingSlash?: Map<string, "never" | "always" | "ignore">;
   /** URL prefix from include() - applied to all path() patterns */
@@ -243,6 +245,7 @@ export const getContext = (): {
           forRoute,
           counters: {},
           patterns: new Map<string, string>(),
+          patternsByPrefix: new Map<string, Map<string, string>>(),
           trailingSlash: new Map<string, "never" | "always" | "ignore">(),
         } satisfies HelperContext;
       }
