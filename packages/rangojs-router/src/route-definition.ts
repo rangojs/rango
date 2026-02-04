@@ -712,13 +712,14 @@ const cache: RouteHelpers<any, any>["cache"] = (
     }
 
     // Create orphan cache entry (like orphan layout)
+    // Subsequent siblings in the same array will attach to this entry
     const namespace = `${ctx.namespace}.${store.getNextIndex("cache")}`;
 
     const entry = {
       id: namespace,
       shortCode: store.getShortCode("cache"),
       type: "cache",
-      parent: null, // orphan - no parent pointer
+      parent: parent, // link to current parent for hierarchy
       cache: cacheConfig,
       handler: RootLayout,
       middleware: [],
@@ -735,6 +736,10 @@ const cache: RouteHelpers<any, any>["cache"] = (
     if (parent && "layout" in parent) {
       parent.layout.push(entry);
     }
+
+    // Update context parent so subsequent siblings attach to this cache entry
+    // This makes cache() act as sugar for cache(() => [...])
+    ctx.parent = entry;
 
     return { name: namespace, type: "cache" } as CacheItem;
   }
