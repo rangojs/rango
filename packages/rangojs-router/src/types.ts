@@ -289,7 +289,7 @@ export type Handler<T = {}, TEnv = DefaultEnv> = (
  * }
  * ```
  */
-export type HandlerContext<TParams = {}, TEnv = any> = {
+export type HandlerContext<TParams = {}, TEnv = DefaultEnv> = {
   /**
    * Route parameters extracted from the URL pattern.
    * Type-safe when using Handler<"/path/:param"> or Handler<{ param: string }>.
@@ -477,7 +477,7 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
  * Use `HandlerContext` for user-facing code.
  * @internal
  */
-export type InternalHandlerContext<TParams = {}, TEnv = any> = HandlerContext<TParams, TEnv> & {
+export type InternalHandlerContext<TParams = {}, TEnv = DefaultEnv> = HandlerContext<TParams, TEnv> & {
   /** Raw request with all system parameters intact. */
   _originalRequest: Request;
   /** Current segment ID for handle data attribution. */
@@ -1233,7 +1233,7 @@ export interface EntryCacheConfig {
  * });
  * ```
  */
-export type LoaderContext<TParams = Record<string, string | undefined>, TEnv = any, TBody = unknown> = {
+export type LoaderContext<TParams = Record<string, string | undefined>, TEnv = DefaultEnv, TBody = unknown> = {
   params: TParams;
   request: Request;
   searchParams: URLSearchParams;
@@ -1287,7 +1287,7 @@ export type LoaderContext<TParams = Record<string, string | undefined>, TEnv = a
  * };
  * ```
  */
-export type LoaderFn<T, TParams = Record<string, string | undefined>, TEnv = any> = (
+export type LoaderFn<T, TParams = Record<string, string | undefined>, TEnv = DefaultEnv> = (
   ctx: LoaderContext<TParams, TEnv>
 ) => Promise<T> | T;
 

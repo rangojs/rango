@@ -1,10 +1,9 @@
 /**
  * Timing middleware - captures request start time
  */
-import type { MiddlewareFn } from "@rangojs/router";
-import type { AppEnv } from "./env.js";
+import type { Middleware } from "@rangojs/router";
 
-export const timingMiddleware: MiddlewareFn<AppEnv> = (ctx, next) => {
+export const timingMiddleware: Middleware = (ctx, next) => {
   ctx.set("requestStart", performance.now());
   return next();
 };
