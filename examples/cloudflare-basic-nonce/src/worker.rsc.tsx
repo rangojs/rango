@@ -1,5 +1,5 @@
 /// <reference types="@cloudflare/workers-types" />
-import { fetch as rscFetch } from "./router.js";
+import { router } from "./router.js";
 import type { AppBindings } from "./env.js";
 
 export default {
@@ -14,7 +14,7 @@ export default {
       return new Response(null, { status: 404 });
     }
 
-    // Use the handler from router (nonce and CSP handled automatically)
-    return rscFetch(request, { Bindings: env, Variables: {} });
+    // Use router.fetch directly (nonce and CSP handled automatically)
+    return router.fetch(request, { Bindings: env, Variables: {} });
   },
 } satisfies ExportedHandler<AppBindings>;

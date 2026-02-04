@@ -105,9 +105,9 @@ interface RSCRouterOptions<TEnv> {
 }
 ```
 
-## Creating the Request Handler
+## Using the Request Handler
 
-The router provides a `createHandler()` method to create the RSC request handler:
+The router provides a `fetch` method to handle RSC requests:
 
 ```typescript
 // src/router.tsx
@@ -115,14 +115,16 @@ import { createRouter } from "@rangojs/router";
 import { Document } from "./document";
 import { urlpatterns } from "./urls";
 
-const router = createRouter({
+export const router = createRouter({
   document: Document,
   urls: urlpatterns,
   nonce: () => true, // Auto-generate nonce for CSP
 });
 
-// Export the handler for your server
-export const fetch = router.createHandler();
+// src/worker.tsx (Cloudflare Workers)
+import { router } from "./router";
+
+export default { fetch: router.fetch };
 ```
 
 This replaces the older pattern of using `createRSCHandler` separately:
@@ -168,15 +170,12 @@ export const router = createRouter<AppEnv>({
   urls: urlpatterns,
 });
 
-// Export the handler
-export const fetch = router.createHandler();
-
 // src/worker.tsx
-import { fetch as rscFetch } from "./router";
+import { router } from "./router";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    return rscFetch(request, { Bindings: env, Variables: {}, ctx });
+    return router.fetch(request, { Bindings: env, Variables: {}, ctx });
   },
 };
 ```

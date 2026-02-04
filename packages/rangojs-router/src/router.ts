@@ -786,42 +786,30 @@ export interface RSCRouter<
   debugManifest(): Promise<SerializedManifest>;
 
   /**
-   * Create an RSC request handler.
+   * Handle an RSC request.
    *
-   * Returns a function that handles HTTP requests and returns RSC responses.
    * Uses the router's configuration (nonce, version, cache) automatically.
+   * The handler is lazily created on first call.
    *
-   * @example
+   * @example Cloudflare Workers
+   * ```tsx
+   * import { router } from "./router";
+   *
+   * export default { fetch: router.fetch };
+   * ```
+   *
+   * @example Direct export
    * ```tsx
    * const router = createRouter({
-   *   document: RootLayout,
+   *   document: Document,
    *   urls: urlpatterns,
    *   nonce: () => true,
    * });
    *
-   * export const fetch = router.createHandler();
-   * ```
-   *
-   * @example With custom options (overrides router config)
-   * ```tsx
-   * export const fetch = router.createHandler({
-   *   deps: customRscDeps,
-   *   loadSSRModule: () => import("./ssr"),
-   * });
+   * export const fetch = router.fetch;
    * ```
    */
-  createHandler(options?: {
-    /** RSC dependencies override (defaults to @vitejs/plugin-rsc/rsc) */
-    deps?: RSCDependencies;
-    /** SSR module loader override */
-    loadSSRModule?: LoadSSRModule;
-    /** Cache config override */
-    cache?: RSCRouterOptions<TEnv>["cache"];
-    /** Nonce provider override */
-    nonce?: NonceProvider<TEnv>;
-    /** Version string override */
-    version?: string;
-  }): (request: Request, env: TEnv & { ctx?: ExecutionContext }) => Promise<Response>;
+  fetch(request: Request, env: TEnv & { ctx?: ExecutionContext }): Promise<Response>;
 }
 
 /**
@@ -4030,20 +4018,20 @@ export function createRouter<TEnv = any>(
     matchError,
     previewMatch,
 
-    // Expose nonce provider for createHandler
+    // Expose nonce provider for fetch
     nonce,
 
-    // Expose version for createHandler
+    // Expose version for fetch
     version,
 
-    // Create RSC request handler
-    createHandler(handlerOptions = {}) {
+    // RSC request handler (lazily created on first call)
+    fetch: (() => {
       // Lazy import to avoid bundling RSC deps when not used
       const createRSCHandlerPromise = import("./rsc/handler.js").then(
         (m) => m.createRSCHandler
       );
 
-      // Return handler function that resolves createRSCHandler on first call
+      // Handler is created on first call and reused
       let handler: ((request: Request, env: TEnv & { ctx?: ExecutionContext }) => Promise<Response>) | null = null;
 
       return async (request: Request, env: TEnv & { ctx?: ExecutionContext }) => {
@@ -4051,16 +4039,14 @@ export function createRouter<TEnv = any>(
           const createRSCHandler = await createRSCHandlerPromise;
           handler = createRSCHandler({
             router: router as any,
-            deps: handlerOptions.deps,
-            loadSSRModule: handlerOptions.loadSSRModule,
-            cache: handlerOptions.cache ?? cache,
-            nonce: handlerOptions.nonce ?? nonce,
-            version: handlerOptions.version ?? version,
+            cache,
+            nonce,
+            version,
           });
         }
         return handler(request, env);
       };
-    },
+    })(),
 
     // Debug utility for manifest inspection
     async debugManifest(): Promise<SerializedManifest> {

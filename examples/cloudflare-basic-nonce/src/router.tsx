@@ -74,8 +74,6 @@ export const router = createRouter<AppEnv>({
   // Register all routes
   .routes(urlpatterns);
 
-// Create the RSC handler (uses router's nonce config automatically)
-export const fetch = router.createHandler();
 
 type AppRoutes = typeof router.routeMap;
 
