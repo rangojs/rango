@@ -9,6 +9,8 @@ export interface AppBindings {
 // Middleware-injected variables
 export interface AppVariables {
   requestId?: string;
+  requestStart?: number;
+  dateStart?: number;
 }
 
 // Combined app environment

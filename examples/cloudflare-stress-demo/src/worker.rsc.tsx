@@ -4,6 +4,8 @@ import type { AppBindings } from "./env.js";
 
 export default {
   async fetch(request, env, ctx) {
+    const requestStart = performance.now();
+    const dateStart = Date.now();
     const url = new URL(request.url);
 
     // Skip browser metadata requests
@@ -14,6 +16,10 @@ export default {
       return new Response(null, { status: 404 });
     }
 
-    return router.fetch(request, { Bindings: env, Variables: {}, ctx });
+    return router.fetch(request, {
+      Bindings: env,
+      Variables: { requestStart, dateStart },
+      ctx,
+    });
   },
 } satisfies ExportedHandler<AppBindings>;
