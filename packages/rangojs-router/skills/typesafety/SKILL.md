@@ -199,7 +199,13 @@ Handles have typed data:
 // handles/breadcrumbs.ts
 import { createHandle } from "@rangojs/router";
 
+// Simple handle - collects values into an array
 export const Breadcrumbs = createHandle<{ label: string; href: string }>();
+
+// Handle with reducer - runs on the client to transform collected values
+export const PageTitle = createHandle<string, string>({
+  reducer: (titles) => titles[titles.length - 1] ?? "My App",
+});
 
 // In route definition - use handle() DSL
 import { urls } from "@rangojs/router";
@@ -207,13 +213,19 @@ import { urls } from "@rangojs/router";
 export const urlpatterns = urls(({ path, handle }) => [
   path("/shop/product/:slug", ProductPage, { name: "product" }, () => [
     handle(Breadcrumbs, { label: "Products", href: "/shop/products" }),
+    handle(PageTitle, "Product Details"),
   ]),
 ]);
 
-// In client - typed array
+// In client - typed values
 function BreadcrumbNav() {
   const crumbs = useHandle(Breadcrumbs);
   // crumbs: Array<{ label: string; href: string }>
+}
+
+function DocumentTitle() {
+  const title = useHandle(PageTitle);
+  // title: string (reduced value)
 }
 ```
 
