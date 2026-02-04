@@ -33,6 +33,7 @@ import {
   LoaderEntry,
   getContext,
   RSCRouterContext,
+  runWithPrefixes,
 } from "./server/context";
 import { createHandleStore, type HandleStore } from "./server/handle-store.js";
 import { getRequestContext } from "./server/request-context.js";
@@ -90,7 +91,10 @@ import {
 import {
   extractStaticPrefix,
   findMatch as findRouteMatch,
+  isLazyEvaluationNeeded,
   traverseBack,
+  type LazyEvaluationNeeded,
+  type RouteMatchResult,
 } from "./router/pattern-matching.js";
 import { evaluateRevalidation } from "./router/revalidation.js";
 import {
@@ -1043,9 +1047,89 @@ export function createRouter<TEnv = any>(
     );
   }
 
+  /**
+   * Evaluate a lazy entry's patterns and populate its routes
+   * This runs the lazy patterns handler and updates the entry in-place
+   */
+  function evaluateLazyEntry(entry: RouteEntry<TEnv>): void {
+    if (!entry.lazy || entry.lazyEvaluated || !entry.lazyPatterns) {
+      return;
+    }
+
+    const lazyPatterns = entry.lazyPatterns as UrlPatterns<TEnv>;
+    const lazyContext = entry.lazyContext;
+
+    // Create a new context for evaluating the lazy patterns
+    const manifest = new Map<string, EntryData>();
+    const patterns = new Map<string, string>();
+    const patternsByPrefix = new Map<string, Map<string, string>>();
+    const trailingSlashMap = new Map<string, TrailingSlashMode>();
+
+    RSCRouterContext.run(
+      {
+        manifest,
+        patterns,
+        patternsByPrefix,
+        trailingSlash: trailingSlashMap,
+        namespace: "lazy",
+        parent: lazyContext?.parent as EntryData | null ?? null,
+        counters: {},
+      },
+      () => {
+        // Run the lazy patterns handler with the original context prefixes
+        // The prefix comes from the IncludeItem stored in lazyPatterns
+        const includePrefix = (entry as any)._lazyPrefix || "";
+        const fullPrefix = (lazyContext?.urlPrefix || "") + includePrefix;
+
+        if (fullPrefix || lazyContext?.namePrefix) {
+          runWithPrefixes(
+            fullPrefix,
+            lazyContext?.namePrefix,
+            () => {
+              lazyPatterns.handler();
+            }
+          );
+        } else {
+          lazyPatterns.handler();
+        }
+      }
+    );
+
+    // Populate the entry's routes from the patterns
+    const routesObject: Record<string, string> = {};
+    for (const [name, pattern] of patterns.entries()) {
+      routesObject[name] = pattern;
+      // Also add to merged route map for href() support
+      if (!mergedRouteMap[name]) {
+        mergedRouteMap[name] = pattern;
+      }
+    }
+
+    // Update the entry in-place
+    entry.routes = routesObject as ResolvedRouteMap<any>;
+    entry.lazyEvaluated = true;
+
+    // Update trailing slash config if available
+    if (trailingSlashMap.size > 0) {
+      entry.trailingSlash = Object.fromEntries(trailingSlashMap);
+    }
+
+    // Re-register route map for runtime href() usage
+    registerRouteMap(mergedRouteMap);
+  }
+
   // Wrapper for findMatch that uses routesEntries
-  function findMatch(pathname: string) {
-    return findRouteMatch(pathname, routesEntries);
+  // Handles lazy evaluation by evaluating lazy entries on first match
+  function findMatch(pathname: string): RouteMatchResult<TEnv> | null {
+    let result = findRouteMatch(pathname, routesEntries);
+
+    // If we hit a lazy entry that needs evaluation, evaluate and retry
+    while (isLazyEvaluationNeeded(result)) {
+      evaluateLazyEntry(result.lazyEntry);
+      result = findRouteMatch(pathname, routesEntries);
+    }
+
+    return result;
   }
 
   /**
@@ -3919,6 +4003,8 @@ export function createRouter<TEnv = any>(
 
         // Run the handler once to extract patterns for route matching
         // Note: loadManifest will re-run the handler to register entries in its context
+        // Lazy includes are detected in the return value and handled separately
+        let handlerResult: AllUseItems[] = [];
         RSCRouterContext.run(
           {
             manifest,
@@ -3931,7 +4017,7 @@ export function createRouter<TEnv = any>(
           },
           () => {
             // Execute the handler to collect patterns
-            urlPatterns.handler();
+            handlerResult = urlPatterns.handler() as AllUseItems[];
           }
         );
 
@@ -3990,6 +4076,69 @@ export function createRouter<TEnv = any>(
             );
           }
           mergedRouteMap[name] = pattern;
+        }
+
+        // Detect lazy includes in handler result and create placeholder entries
+        // Lazy includes are IncludeItem with lazy: true and _lazyContext
+        function findLazyIncludes(items: AllUseItems[]): Array<{
+          prefix: string;
+          patterns: UrlPatterns<TEnv>;
+          context: { urlPrefix: string; namePrefix: string | undefined; parent: unknown };
+        }> {
+          const lazyItems: Array<{
+            prefix: string;
+            patterns: UrlPatterns<TEnv>;
+            context: { urlPrefix: string; namePrefix: string | undefined; parent: unknown };
+          }> = [];
+
+          for (const item of items) {
+            if (!item) continue;
+            if (
+              item.type === "include" &&
+              (item as any).lazy === true &&
+              (item as any)._lazyContext
+            ) {
+              const lazyItem = item as any;
+              lazyItems.push({
+                prefix: lazyItem.prefix,
+                patterns: lazyItem.patterns,
+                context: lazyItem._lazyContext,
+              });
+            }
+            // Recursively check nested items (in layouts, etc.)
+            if ((item as any).uses && Array.isArray((item as any).uses)) {
+              lazyItems.push(...findLazyIncludes((item as any).uses));
+            }
+          }
+
+          return lazyItems;
+        }
+
+        const lazyIncludes = findLazyIncludes(handlerResult);
+
+        // Create placeholder RouteEntry for each lazy include
+        for (const lazyInclude of lazyIncludes) {
+          // Compute the full URL prefix (combining parent prefix if any)
+          const fullPrefix = lazyInclude.context.urlPrefix
+            ? lazyInclude.context.urlPrefix + lazyInclude.prefix
+            : lazyInclude.prefix;
+
+          const lazyEntry: RouteEntry<TEnv> & { _lazyPrefix?: string } = {
+            prefix: "",
+            staticPrefix: extractStaticPrefix(fullPrefix),
+            routes: {} as ResolvedRouteMap<any>, // Empty until first match
+            trailingSlash: trailingSlashConfig,
+            handler: urlPatterns.handler,
+            mountIndex: currentMountIndex,
+            // Lazy evaluation fields
+            lazy: true,
+            lazyPatterns: lazyInclude.patterns,
+            lazyContext: lazyInclude.context,
+            lazyEvaluated: false,
+            // Store the include prefix for evaluation
+            _lazyPrefix: lazyInclude.prefix,
+          };
+          routesEntries.push(lazyEntry);
         }
 
         // Auto-register route map for runtime href() usage

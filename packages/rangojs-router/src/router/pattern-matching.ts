@@ -216,22 +216,45 @@ export interface RouteMatchResult<TEnv = any> {
   redirectTo?: string;
 }
 
+/**
+ * Result when a lazy entry needs evaluation before matching
+ */
+export interface LazyEvaluationNeeded<TEnv = any> {
+  lazyEntry: RouteEntry<TEnv>;
+}
+
+/**
+ * Type guard to check if result is a lazy evaluation needed response
+ */
+export function isLazyEvaluationNeeded<TEnv>(
+  result: RouteMatchResult<TEnv> | LazyEvaluationNeeded<TEnv> | null
+): result is LazyEvaluationNeeded<TEnv> {
+  return result !== null && "lazyEntry" in result;
+}
+
+// Debug stats type for exports
+interface MatchDebugStats {
+  entriesChecked: number;
+  entriesSkipped: number;
+  routesChecked: number;
+}
+
 // Debug stats for route matching (only in debug mode)
 let debugEnabled = false;
 let debugStats = { entriesChecked: 0, entriesSkipped: 0, routesChecked: 0 };
 
-export function enableMatchDebug(enabled: boolean) {
+export function enableMatchDebug(enabled: boolean): void {
   debugEnabled = enabled;
 }
 
-export function getMatchDebugStats() {
-  return { ...debugStats };
+export function getMatchDebugStats(): MatchDebugStats {
+  return { entriesChecked: debugStats.entriesChecked, entriesSkipped: debugStats.entriesSkipped, routesChecked: debugStats.routesChecked };
 }
 
 export function findMatch<TEnv>(
   pathname: string,
   routesEntries: RouteEntry<TEnv>[]
-): RouteMatchResult<TEnv> | null {
+): RouteMatchResult<TEnv> | LazyEvaluationNeeded<TEnv> | null {
   if (debugEnabled) {
     debugStats = { entriesChecked: 0, entriesSkipped: 0, routesChecked: 0 };
     console.log(`[findMatch] pathname="${pathname}", entries=${routesEntries.length}`);
@@ -255,6 +278,15 @@ export function findMatch<TEnv>(
         console.log(`  SKIP entry prefix="${entry.prefix}" (staticPrefix="${entry.staticPrefix}" doesn't match)`);
       }
       continue;
+    }
+
+    // Check if this is a lazy entry that needs evaluation
+    // When staticPrefix matches but routes are not yet populated, signal caller to evaluate
+    if (entry.lazy && !entry.lazyEvaluated) {
+      if (debugEnabled) {
+        console.log(`  LAZY entry needs evaluation: staticPrefix="${entry.staticPrefix}"`);
+      }
+      return { lazyEntry: entry };
     }
 
     if (debugEnabled) {

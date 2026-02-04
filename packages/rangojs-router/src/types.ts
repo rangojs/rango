@@ -941,6 +941,15 @@ export interface MatchResult {
 }
 
 /**
+ * Context captured for lazy include evaluation
+ */
+export interface LazyIncludeContext {
+  urlPrefix: string;
+  namePrefix: string | undefined;
+  parent: unknown; // EntryData - avoid circular import
+}
+
+/**
  * Internal route entry stored in router
  */
 export interface RouteEntry<TEnv = any> {
@@ -957,6 +966,10 @@ export interface RouteEntry<TEnv = any> {
    * At runtime: if staticPrefix && !pathname.startsWith(staticPrefix), skip entry.
    */
   staticPrefix: string;
+  /**
+   * Route patterns map. For lazy entries, this starts as empty and is
+   * populated on first request.
+   */
   routes: ResolvedRouteMap<any>;
   /**
    * Trailing slash config per route key
@@ -968,6 +981,29 @@ export interface RouteEntry<TEnv = any> {
       | Promise<{ default: () => Array<AllUseItems> }>
       | Promise<() => Array<AllUseItems>>;
   mountIndex: number;
+
+  // === Lazy evaluation fields ===
+
+  /**
+   * Whether this entry is lazily evaluated.
+   * When true, routes are populated on first matching request.
+   */
+  lazy?: boolean;
+
+  /**
+   * For lazy entries: the UrlPatterns to evaluate
+   */
+  lazyPatterns?: unknown;
+
+  /**
+   * For lazy entries: captured context at definition time
+   */
+  lazyContext?: LazyIncludeContext;
+
+  /**
+   * For lazy entries: whether patterns have been evaluated
+   */
+  lazyEvaluated?: boolean;
 }
 
 

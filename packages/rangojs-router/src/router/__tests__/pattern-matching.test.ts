@@ -1,6 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { compilePattern, extractStaticPrefix, findMatch } from "../pattern-matching";
+import { compilePattern, extractStaticPrefix, findMatch as rawFindMatch, isLazyEvaluationNeeded, type RouteMatchResult } from "../pattern-matching";
 import type { RouteEntry, TrailingSlashMode } from "../../types";
+
+// Wrapper for findMatch that asserts it's not a lazy evaluation result
+// All tests in this file use non-lazy entries, so this is safe
+function findMatch<TEnv>(...args: Parameters<typeof rawFindMatch<TEnv>>): RouteMatchResult<TEnv> | null {
+  const result = rawFindMatch(...args);
+  if (result === null) return null;
+  if (isLazyEvaluationNeeded(result)) {
+    throw new Error("Unexpected lazy evaluation needed");
+  }
+  return result;
+}
 
 // Helper to create route entries for testing
 const createRouteEntry = (
@@ -573,6 +584,70 @@ describe("trailing slash handling", () => {
       // docs: always - redirect no trailing to trailing
       expect(findMatch("/docs/", entries)!.redirectTo).toBeUndefined();
       expect(findMatch("/docs", entries)!.redirectTo).toBe("/docs/");
+    });
+  });
+
+  describe("lazy entries", () => {
+    it("should return lazy evaluation needed when staticPrefix matches unevaluated lazy entry", () => {
+      const entries: RouteEntry[] = [
+        createRouteEntry("", { home: "/" }),
+        {
+          prefix: "",
+          staticPrefix: "/api",
+          routes: {} as any, // Empty - not evaluated yet
+          handler: () => [],
+          mountIndex: 1,
+          lazy: true,
+          lazyEvaluated: false,
+        },
+      ];
+
+      // Regular route should still match
+      expect(findMatch("/", entries)!.routeKey).toBe("home");
+
+      // Lazy entry should return lazy evaluation needed
+      const result = rawFindMatch("/api/users", entries);
+      expect(result).not.toBeNull();
+      expect(isLazyEvaluationNeeded(result!)).toBe(true);
+      expect((result as any).lazyEntry.staticPrefix).toBe("/api");
+    });
+
+    it("should skip lazy entries when staticPrefix does not match", () => {
+      const entries: RouteEntry[] = [
+        createRouteEntry("", { home: "/" }),
+        {
+          prefix: "",
+          staticPrefix: "/api",
+          routes: {} as any,
+          handler: () => [],
+          mountIndex: 1,
+          lazy: true,
+          lazyEvaluated: false,
+        },
+        createRouteEntry("", { about: "/about" }),
+      ];
+
+      // Should skip lazy entry and find about
+      expect(findMatch("/about", entries)!.routeKey).toBe("about");
+    });
+
+    it("should match normally when lazy entry has been evaluated", () => {
+      const entries: RouteEntry[] = [
+        {
+          prefix: "",
+          staticPrefix: "/api",
+          routes: { users: "/api/users" } as any,
+          handler: () => [],
+          mountIndex: 0,
+          lazy: true,
+          lazyEvaluated: true, // Already evaluated
+        },
+      ];
+
+      // Should match normally since entry has been evaluated
+      const result = findMatch("/api/users", entries);
+      expect(result).not.toBeNull();
+      expect(result!.routeKey).toBe("users");
     });
   });
 });
