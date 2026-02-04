@@ -667,10 +667,28 @@ function createIncludeHelper<TEnv>(): PathHelpers<TEnv>["include"] {
     const isLazy = options?.lazy === true;
     const name = `$include_${prefix.replace(/[/:*?]/g, "_")}`;
 
+    // Track this include for build-time manifest generation
+    const capturedUrlPrefix = getUrlPrefix();
+    const fullPrefix = capturedUrlPrefix ? capturedUrlPrefix + prefix : prefix;
+    const fullNamePrefix = namePrefix
+      ? getNamePrefix()
+        ? `${getNamePrefix()}.${namePrefix}`
+        : namePrefix
+      : getNamePrefix();
+
+    if (ctx.trackedIncludes) {
+      ctx.trackedIncludes.push({
+        prefix,
+        fullPrefix,
+        namePrefix: fullNamePrefix,
+        patterns,
+        lazy: isLazy,
+      });
+    }
+
     if (isLazy) {
       // LAZY: Don't expand patterns now - store for later evaluation
       // Capture current context state for when we do evaluate
-      const capturedUrlPrefix = getUrlPrefix();
       const capturedNamePrefix = getNamePrefix();
       const capturedParent = ctx.parent;
 

@@ -98,6 +98,10 @@
     "./theme": {
       "types": "./src/theme/index.ts",
       "default": "./src/theme/index.ts"
+    },
+    "./build": {
+      "types": "./src/build/index.ts",
+      "import": "./src/build/index.ts"
     }
   },
   "files": [

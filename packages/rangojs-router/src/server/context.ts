@@ -180,6 +180,17 @@ export type EntryData =
       EntryPropSegments);
 
 /**
+ * Tracked include info for build-time manifest generation
+ */
+export interface TrackedInclude {
+  prefix: string;
+  fullPrefix: string;
+  namePrefix?: string;
+  patterns: unknown; // UrlPatterns
+  lazy: boolean;
+}
+
+/**
  * Context stored in AsyncLocalStorage
  */
 interface HelperContext {
@@ -204,6 +215,8 @@ interface HelperContext {
   namePrefix?: string;
   /** Run helper for cleaner middleware code */
   run?: <T>(fn: () => T | Promise<T>) => T | Promise<T>;
+  /** Tracked includes for build-time manifest generation */
+  trackedIncludes?: TrackedInclude[];
 }
 export const RSCRouterContext: AsyncLocalStorage<HelperContext> =
   new AsyncLocalStorage<HelperContext>();

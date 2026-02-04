@@ -1,0 +1,191 @@
+/**
+ * Vite plugin for @rangojs/router build-time manifest generation
+ *
+ * Generates the prefix tree and route manifest at build time for:
+ * - Fast short-circuit checks without runtime evaluation
+ * - Complete href() support for all routes (including lazy ones)
+ */
+
+import type { Plugin } from "vite";
+import { generateManifest, generateManifestCode } from "./generate-manifest.js";
+import type { UrlPatterns } from "../urls.js";
+
+export interface RangoRouterPluginOptions {
+  /**
+   * Path to the module that exports urlpatterns
+   * @example "./src/urls.tsx"
+   */
+  urlpatternsPath: string;
+
+  /**
+   * Export name of the urlpatterns
+   * @default "urlpatterns"
+   */
+  exportName?: string;
+
+  /**
+   * Output path for generated manifest (relative to project root)
+   * @default "src/generated/route-manifest.ts"
+   */
+  outputPath?: string;
+
+  /**
+   * Whether to generate on dev server start
+   * @default true
+   */
+  generateOnDev?: boolean;
+
+  /**
+   * Whether to watch for changes and regenerate
+   * @default true
+   */
+  watch?: boolean;
+}
+
+/**
+ * Virtual module ID for the generated manifest
+ */
+export const VIRTUAL_MANIFEST_ID = "virtual:rangojs-route-manifest";
+const RESOLVED_VIRTUAL_ID = "\0" + VIRTUAL_MANIFEST_ID;
+
+/**
+ * Vite plugin for route manifest generation
+ *
+ * @example
+ * ```typescript
+ * // vite.config.ts
+ * import { rangoRouterPlugin } from "@rangojs/router/build";
+ *
+ * export default defineConfig({
+ *   plugins: [
+ *     rangoRouterPlugin({
+ *       urlpatternsPath: "./src/urls.tsx",
+ *     }),
+ *   ],
+ * });
+ * ```
+ *
+ * Then import the manifest:
+ * ```typescript
+ * import { prefixTree, routeManifest } from "virtual:rangojs-route-manifest";
+ * ```
+ */
+export function rangoRouterPlugin(options: RangoRouterPluginOptions): Plugin {
+  const {
+    urlpatternsPath,
+    exportName = "urlpatterns",
+    outputPath = "src/generated/route-manifest.ts",
+    generateOnDev = true,
+    watch = true,
+  } = options;
+
+  let cachedManifest: ReturnType<typeof generateManifest> | null = null;
+  let root: string;
+
+  return {
+    name: "rangojs-router",
+
+    configResolved(config) {
+      root = config.root;
+    },
+
+    resolveId(id) {
+      if (id === VIRTUAL_MANIFEST_ID) {
+        return RESOLVED_VIRTUAL_ID;
+      }
+    },
+
+    async load(id) {
+      if (id === RESOLVED_VIRTUAL_ID) {
+        // Dynamically import the urlpatterns module
+        try {
+          const fullPath = urlpatternsPath.startsWith(".")
+            ? `${root}/${urlpatternsPath}`
+            : urlpatternsPath;
+
+          // Use Vite's SSR import for the module
+          const module = await import(/* @vite-ignore */ fullPath);
+          const urlpatterns = module[exportName] as UrlPatterns<any, any>;
+
+          if (!urlpatterns || typeof urlpatterns.handler !== "function") {
+            throw new Error(
+              `Could not find valid urlpatterns export "${exportName}" in ${urlpatternsPath}`
+            );
+          }
+
+          cachedManifest = generateManifest(urlpatterns);
+
+          return `
+export const prefixTree = ${JSON.stringify(cachedManifest.prefixTree, null, 2)};
+export const routeManifest = ${JSON.stringify(cachedManifest.routeManifest, null, 2)};
+export const generatedAt = "${cachedManifest.generatedAt}";
+`;
+        } catch (error) {
+          console.error("[@rangojs/router] Failed to generate manifest:", error);
+          // Return empty manifest on error
+          return `
+export const prefixTree = {};
+export const routeManifest = {};
+export const generatedAt = "${new Date().toISOString()}";
+`;
+        }
+      }
+    },
+
+    // Watch the urlpatterns file for changes
+    configureServer(server) {
+      if (!watch) return;
+
+      const fullPath = urlpatternsPath.startsWith(".")
+        ? `${root}/${urlpatternsPath}`
+        : urlpatternsPath;
+
+      server.watcher.add(fullPath);
+
+      server.watcher.on("change", (changedPath) => {
+        if (changedPath.includes(urlpatternsPath.replace("./", ""))) {
+          // Invalidate the virtual module
+          const mod = server.moduleGraph.getModuleById(RESOLVED_VIRTUAL_ID);
+          if (mod) {
+            server.moduleGraph.invalidateModule(mod);
+          }
+          cachedManifest = null;
+        }
+      });
+    },
+
+    // Generate physical file during build
+    async writeBundle() {
+      if (!cachedManifest) return;
+
+      const fs = await import("fs");
+      const path = await import("path");
+
+      const fullOutputPath = path.resolve(root, outputPath);
+      const dir = path.dirname(fullOutputPath);
+
+      // Ensure directory exists
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      // Write the manifest file
+      const code = `/**
+ * Auto-generated route manifest
+ * Generated at: ${cachedManifest.generatedAt}
+ *
+ * DO NOT EDIT - This file is generated by @rangojs/router
+ */
+
+export const prefixTree = ${JSON.stringify(cachedManifest.prefixTree, null, 2)} as const;
+
+export const routeManifest = ${JSON.stringify(cachedManifest.routeManifest, null, 2)} as const;
+
+export type RouteNames = keyof typeof routeManifest;
+`;
+
+      fs.writeFileSync(fullOutputPath, code);
+      console.log(`[@rangojs/router] Generated route manifest: ${outputPath}`);
+    },
+  };
+}
