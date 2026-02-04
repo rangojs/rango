@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router";
+import { urls } from "@rangojs/router/server";
 import { Link } from "@rangojs/router/client";
 import { HrefTestClient } from "../components/HrefTestClient.js";
 

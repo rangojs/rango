@@ -73,8 +73,18 @@ export type { RSCRouterOptions } from "./router.js";
 export { createLoader } from "./loader.js";
 
 
-// Django-style URL patterns API
-export { urls, type UrlPatterns, type PathHelpers } from "./urls.js";
+// Django-style URL patterns API types (safe for client)
+export type { UrlPatterns, PathHelpers } from "./urls.js";
+
+/**
+ * Error-throwing stub for server-only `urls` function.
+ * Import from "@rangojs/router/server" or use within RSC context instead.
+ */
+export function urls(): never {
+  throw new Error(
+    'urls() is server-only. Import from "@rangojs/router/server" instead, or ensure you\'re using it in a server component.'
+  );
+}
 
 // Core router types
 export type { RSCRouter, RootLayoutProps } from "./router.js";

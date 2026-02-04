@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { urls } from "@rangojs/router";
+import { urls } from "@rangojs/router/server";
 import {
   BlogLayout,
   BlogIndexPage,

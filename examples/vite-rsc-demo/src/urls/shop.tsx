@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router";
+import { urls } from "@rangojs/router/server";
 import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 

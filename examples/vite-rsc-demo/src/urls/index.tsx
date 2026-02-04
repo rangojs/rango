@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router";
+import { urls } from "@rangojs/router/server";
 import { HomePage } from "../pages/home.js";
 import { AboutPage } from "../pages/about.js";
 

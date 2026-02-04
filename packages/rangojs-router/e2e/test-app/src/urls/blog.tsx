@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router";
+import { urls } from "@rangojs/router/server";
 import { BlogIndexHandler, BlogPostHandler } from "./blog.handlers.js";
 
 /**

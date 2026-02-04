@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router";
+import { urls } from "@rangojs/router/server";
 import { ShopLayout } from "../components/layouts/index.js";
 import {
   ShopIndexPage,
