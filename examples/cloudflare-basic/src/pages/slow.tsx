@@ -18,13 +18,18 @@ export async function SlowPage1() {
         Navigate between pages to see the loading indicator appear after 400ms.
       </p>
       <nav style={{ marginTop: "2rem", display: "flex", gap: "1rem" }}>
-        {/* @ts-expect-error - TypeScript inference limit with deeply nested urls() */}
-        <Link to={href("slow1")} style={{ color: "#0070f3" }}>Slow 1</Link>
-        {/* @ts-expect-error - TypeScript inference limit with deeply nested urls() */}
-        <Link to={href("slow2")} style={{ color: "#0070f3" }}>Slow 2</Link>
-        {/* @ts-expect-error - TypeScript inference limit with deeply nested urls() */}
-        <Link to={href("fast")} style={{ color: "#22c55e" }}>Fast</Link>
-        <Link to={href("home")} style={{ color: "#666" }}>Home</Link>
+        <Link to={href("slow1")} style={{ color: "#0070f3" }}>
+          Slow 1
+        </Link>
+        <Link to={href("slow2")} style={{ color: "#0070f3" }}>
+          Slow 2
+        </Link>
+        <Link to={href("fast")} style={{ color: "#22c55e" }}>
+          Fast
+        </Link>
+        <Link to={href("home")} style={{ color: "#666" }}>
+          Home
+        </Link>
       </nav>
     </div>
   );
@@ -43,13 +48,18 @@ export async function SlowPage2() {
         Navigate between pages to see the loading indicator appear after 400ms.
       </p>
       <nav style={{ marginTop: "2rem", display: "flex", gap: "1rem" }}>
-        {/* @ts-expect-error - TypeScript inference limit with deeply nested urls() */}
-        <Link to={href("slow1")} style={{ color: "#0070f3" }}>Slow 1</Link>
-        {/* @ts-expect-error - TypeScript inference limit with deeply nested urls() */}
-        <Link to={href("slow2")} style={{ color: "#0070f3" }}>Slow 2</Link>
-        {/* @ts-expect-error - TypeScript inference limit with deeply nested urls() */}
-        <Link to={href("fast")} style={{ color: "#22c55e" }}>Fast</Link>
-        <Link to={href("home")} style={{ color: "#666" }}>Home</Link>
+        <Link to={href("slow1")} style={{ color: "#0070f3" }}>
+          Slow 1
+        </Link>
+        <Link to={href("slow2")} style={{ color: "#0070f3" }}>
+          Slow 2
+        </Link>
+        <Link to={href("fast")} style={{ color: "#22c55e" }}>
+          Fast
+        </Link>
+        <Link to={href("home")} style={{ color: "#666" }}>
+          Home
+        </Link>
       </nav>
     </div>
   );
@@ -64,13 +74,18 @@ export function FastPage() {
         The progress bar should NOT appear when navigating here.
       </p>
       <nav style={{ marginTop: "2rem", display: "flex", gap: "1rem" }}>
-        {/* @ts-expect-error - TypeScript inference limit with deeply nested urls() */}
-        <Link to={href("slow1")} style={{ color: "#0070f3" }}>Slow 1</Link>
-        {/* @ts-expect-error - TypeScript inference limit with deeply nested urls() */}
-        <Link to={href("slow2")} style={{ color: "#0070f3" }}>Slow 2</Link>
-        {/* @ts-expect-error - TypeScript inference limit with deeply nested urls() */}
-        <Link to={href("fast")} style={{ color: "#22c55e" }}>Fast</Link>
-        <Link to={href("home")} style={{ color: "#666" }}>Home</Link>
+        <Link to={href("slow1")} style={{ color: "#0070f3" }}>
+          Slow 1
+        </Link>
+        <Link to={href("slow2")} style={{ color: "#0070f3" }}>
+          Slow 2
+        </Link>
+        <Link to={href("fast")} style={{ color: "#22c55e" }}>
+          Fast
+        </Link>
+        <Link to={href("home")} style={{ color: "#666" }}>
+          Home
+        </Link>
       </nav>
     </div>
   );
