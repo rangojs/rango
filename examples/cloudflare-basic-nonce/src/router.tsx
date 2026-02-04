@@ -1,6 +1,6 @@
 import { createRouter, type Middleware } from "@rangojs/router/server";
 import { urlpatterns } from "./urls.js";
-import { AppShell } from "./components/AppShell.js";
+import { Document } from "./components/Document.js";
 import type { AppEnv } from "./env.js";
 
 /**
@@ -46,7 +46,7 @@ const cspMiddleware: Middleware = async (ctx, next) => {
     return;
   }
 
-  // Get the nonce from shared variables (set by createRSCHandler when nonce option is used)
+  // Get the nonce from shared variables (set by router when nonce option is used)
   const nonce = ctx.get("nonce");
   if (!nonce) {
     return;
@@ -62,15 +62,18 @@ const cspMiddleware: Middleware = async (ctx, next) => {
 };
 
 // Create the router with document component
-// AppShell wraps both route content and error boundaries,
-// preventing the app shell from unmounting during errors (avoids FOUC)
+// Document wraps both route content and error boundaries,
+// preventing the document from unmounting during errors (avoids FOUC)
 export const router = createRouter<AppEnv>({
-  document: AppShell,
+  document: Document,
+  // Auto-generate a cryptographic nonce for each request (for CSP)
+  nonce: () => true,
 })
   // CSP middleware - adds Content-Security-Policy headers to all HTML responses
   .use(cspMiddleware)
   // Register all routes
   .routes(urlpatterns);
+
 
 type AppRoutes = typeof router.routeMap;
 

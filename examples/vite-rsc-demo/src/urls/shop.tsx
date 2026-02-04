@@ -96,8 +96,9 @@ export const shopPatterns = urls(
     intercept,
     when,
   }) => [
-    cache(() => [
-      // Orphan layouts for testing
+    cache(),
+
+    // Orphan layouts for testing
       layout(
         <>
           <Outlet />
@@ -280,6 +281,5 @@ export const shopPatterns = urls(
           () => [revalidate(orderDetailRevalidation)],
         ),
       ]),
-    ]),
   ],
 );

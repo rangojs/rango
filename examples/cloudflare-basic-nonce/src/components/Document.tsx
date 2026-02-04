@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { Link, MetaTags, useHref } from "@rangojs/router/client";
 
-export function AppShell({ children }: { children: ReactNode }) {
+export function Document({ children }: { children: ReactNode }) {
   const href = useHref();
 
   return (

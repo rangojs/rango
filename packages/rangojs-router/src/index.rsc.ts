@@ -88,9 +88,8 @@ export {
   type RootLayoutProps,
 } from "./router.js";
 
-// RSC handler (server-side)
-export { createRSCHandler } from "./rsc/handler.js";
-export type { CreateRSCHandlerOptions, HandlerCacheConfig } from "./rsc/types.js";
+// RSC handler types (server-side)
+export type { HandlerCacheConfig } from "./rsc/types.js";
 
 // Built-in handles (server-side)
 export { Meta } from "./handles/meta.js";

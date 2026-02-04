@@ -93,7 +93,38 @@ interface RSCRouterOptions<TEnv> {
 
   // Global cache configuration
   cache?: CacheConfig<TEnv>;
+
+  // Theme configuration
+  theme?: ThemeConfig | true;
+
+  // CSP nonce provider (for router.fetch)
+  nonce?: (request: Request, env: TEnv) => string | true | Promise<string | true>;
+
+  // RSC version string (for router.fetch)
+  version?: string;
 }
+```
+
+## Using the Request Handler
+
+The router provides a `fetch` method to handle RSC requests:
+
+```typescript
+// src/router.tsx
+import { createRouter } from "@rangojs/router";
+import { Document } from "./document";
+import { urlpatterns } from "./urls";
+
+export const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  nonce: () => true, // Auto-generate nonce for CSP
+});
+
+// src/worker.tsx (Cloudflare Workers)
+import { router } from "./router";
+
+export default { fetch: router.fetch };
 ```
 
 ## Document Component
@@ -121,12 +152,50 @@ export function Document({ children }: { children: ReactNode }) {
 ## Using with Cloudflare Workers
 
 ```typescript
+// src/router.tsx
+import { createRouter } from "@rangojs/router";
+import { Document } from "./document";
+import { urlpatterns } from "./urls";
+
+export const router = createRouter<AppEnv>({
+  document: Document,
+  urls: urlpatterns,
+});
+
 // src/worker.tsx
-import router from "./router";
+import { router } from "./router";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    return router.fetch(request, env, ctx);
+    return router.fetch(request, { Bindings: env, Variables: {}, ctx });
+  },
+};
+```
+
+### With Dynamic Cache Configuration
+
+For per-request cache configuration (e.g., Cloudflare Workers with ExecutionContext):
+
+```typescript
+// src/router.tsx
+import { createRouter } from "@rangojs/router";
+import { CFCacheStore } from "@rangojs/router/cache";
+
+export const router = createRouter<AppEnv>({
+  document: Document,
+  urls: urlpatterns,
+  // Cache config receives env with ctx for ExecutionContext access
+  cache: (env) => ({
+    store: new CFCacheStore({ ctx: env.ctx, defaults: { ttl: 60 } }),
+  }),
+});
+
+// src/worker.tsx
+import { router } from "./router";
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    return router.fetch(request, { Bindings: env, Variables: {}, ctx });
   },
 };
 ```
