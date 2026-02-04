@@ -49,7 +49,7 @@ test.describe("shop-intercept-background-preservation", () => {
     // Step 4: Click "Add to Cart" to trigger action (has ~3s delay)
     const addToCartButton = page
       .locator("button")
-      .filter({ hasText: "Add to Cart (useActionState)" })
+      .filter({ hasText: "Add to Cart (Fire & Forget)" })
       .first();
     await addToCartButton.click();
 
@@ -231,10 +231,10 @@ test.describe("shop-actions", () => {
     });
 
     // Click first add to cart button (Fire & Forget section)
-    // All buttons have text "Add to Cart (useActionState)"
+    // First "Add to Cart" button uses the Fire & Forget pattern
     const addToCartButton = page
       .locator("button")
-      .filter({ hasText: "Add to Cart (useActionState)" })
+      .filter({ hasText: "Add to Cart (Fire & Forget)" })
       .first();
     await addToCartButton.click();
 
@@ -794,7 +794,7 @@ test.describe("shop-shared-loader-freshness", () => {
     // Step 2: Add to cart - triggers CartLoader revalidation
     const addToCartButton = page
       .locator("button")
-      .filter({ hasText: "Add to Cart (useActionState)" })
+      .filter({ hasText: "Add to Cart (Fire & Forget)" })
       .first();
     await addToCartButton.click();
 
@@ -938,9 +938,9 @@ test.describe("shop-concurrent-actions", () => {
     });
 
     // Find both add to cart buttons
-    const useActionStateButton = page
+    const fireAndForgetButton = page
       .locator("button")
-      .filter({ hasText: "Add to Cart (useActionState)" })
+      .filter({ hasText: "Add to Cart (Fire & Forget)" })
       .first();
 
     const streamingButton = page
@@ -949,7 +949,7 @@ test.describe("shop-concurrent-actions", () => {
       .first();
 
     // Click both buttons in quick succession (concurrent actions)
-    await useActionStateButton.click();
+    await fireAndForgetButton.click();
     await streamingButton.click();
 
     // Wait for both actions to complete (streaming has 3s delay)
@@ -1112,7 +1112,7 @@ test.describe("shop-actions (production)", () => {
 
     const addToCartButton = page
       .locator("button")
-      .filter({ hasText: "Add to Cart (useActionState)" })
+      .filter({ hasText: "Add to Cart (Fire & Forget)" })
       .first();
     await addToCartButton.click();
 
