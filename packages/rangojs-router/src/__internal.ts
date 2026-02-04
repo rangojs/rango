@@ -157,3 +157,19 @@ export type {
  */
 export type { InternalHandlerContext } from "./types.js";
 
+// ============================================================================
+// Debug Utilities (Internal)
+// ============================================================================
+
+/**
+ * @internal
+ * Debug utilities for manifest inspection and comparison.
+ */
+export {
+  serializeManifest,
+  compareManifests,
+  formatManifestDiff,
+  type SerializedEntry,
+  type SerializedManifest,
+} from "./debug.js";
+

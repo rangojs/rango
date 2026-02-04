@@ -11,6 +11,7 @@ import {
   invariant,
   sanitizeError,
 } from "./errors";
+import { serializeManifest, type SerializedManifest } from "./debug.js";
 import {
   createHref,
   type HrefFunction,
@@ -703,6 +704,13 @@ export interface RSCRouter<
     error: unknown,
     segmentType?: ErrorInfo["segmentType"]
   ): Promise<MatchResult | null>;
+
+  /**
+   * @internal
+   * Debug utility to serialize the manifest for inspection
+   * Returns a JSON-friendly representation of all routes and layouts
+   */
+  debugManifest(): Promise<SerializedManifest>;
 }
 
 /**
@@ -3907,6 +3915,55 @@ export function createRouter<TEnv = any>(
     matchPartial,
     matchError,
     previewMatch,
+
+    // Debug utility for manifest inspection
+    async debugManifest(): Promise<SerializedManifest> {
+      const manifest = new Map<string, EntryData>();
+
+      for (const entry of routesEntries) {
+        const Store = {
+          manifest,
+          namespace: `debug.M${entry.mountIndex}`,
+          parent: null as EntryData | null,
+          counters: {} as Record<string, number>,
+          mountIndex: entry.mountIndex,
+          patterns: new Map<string, string>(),
+          trailingSlash: new Map<string, TrailingSlashMode>(),
+        };
+
+        await getContext().runWithStore(
+          Store,
+          `debug.M${entry.mountIndex}`,
+          null,
+          async () => {
+            const helpers = createRouteHelpers();
+
+            // Wrap handler execution in root layout (same as loadManifest)
+            let promiseResult: Promise<any> | null = null;
+            helpers.layout(MapRootLayout, () => {
+              const result = entry.handler();
+              if (result instanceof Promise) {
+                promiseResult = result;
+                return [];
+              }
+              return result;
+            });
+
+            if (promiseResult !== null) {
+              const load = await (promiseResult as Promise<any>);
+              if (load && typeof load === "object" && "default" in load) {
+                const useItems = load.default;
+                if (typeof useItems === "function") {
+                  useItems(helpers);
+                }
+              }
+            }
+          }
+        );
+      }
+
+      return serializeManifest(manifest);
+    },
   };
 
   return router;

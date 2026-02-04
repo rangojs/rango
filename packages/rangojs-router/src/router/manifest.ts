@@ -68,14 +68,22 @@ export async function loadManifest(
         // Create helpers for lazy-loaded handlers that need them
         const helpers = createRouteHelpers();
 
-        // Call handler - urls() API handlers don't need helpers,
-        // legacy map() handlers ignore extra args
-        const result = entry.handler();
+        // Wrap handler execution in root layout so routes get correct parent
+        // This ensures all routes are registered with the layout as their parent
+        let promiseResult: Promise<any> | null = null;
+        const wrappedItems = helpers.layout(MapRootLayout, () => {
+          const result = entry.handler();
+          if (result instanceof Promise) {
+            // Lazy handler detected - capture promise for async handling
+            promiseResult = result;
+            return []; // Return empty, we'll discard this wrapped result
+          }
+          return result;
+        });
 
-        // Handle based on return type
-        if (result instanceof Promise) {
-          // Lazy: () => import(...) - returns Promise
-          const load = await result;
+        // Handle lazy (Promise-based) handlers
+        if (promiseResult !== null) {
+          const load = await (promiseResult as Promise<any>);
           if (
             load &&
             load !== null &&
@@ -94,10 +102,8 @@ export async function loadManifest(
           return load;
         }
 
-        // Inline: ({ route }) => [...] - returns Array directly
-        // Wrap with layout (like map() from route-definition does)
-        // Flatten nested arrays from layout/route definitions
-        return [helpers.layout(MapRootLayout, () => result)].flat(3);
+        // Inline handler - routes were registered with correct parent inside layout
+        return [wrappedItems].flat(3);
       }
     );
 
