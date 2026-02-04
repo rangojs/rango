@@ -1,13 +1,20 @@
 /**
- * Type stress test: 35 routes per level × 6 levels = 210 routes
- * (Staying under 40 siblings per level due to TypeScript recursion limits)
+ * Type stress test:
+ * - 35 routes per level × 6 nested layouts = 210 routes
+ * - 300 routes included at root level
+ * - 300 routes included inside layout level 2
+ * - 300 routes included inside layout level 5
+ * Total: 1110 routes testing both nesting and include()
  */
 import { urls } from "@rangojs/router/server";
+import { patterns300 } from "./patterns-300";
 
 const Page = () => null;
 const Layout = <div />;
 
-const stressTestPatterns = urls(({ path, layout }) => [
+const stressTestPatterns = urls(({ path, layout, include }) => [
+  // Include at root level
+  include("/inc0", patterns300, { name: "inc0" }),
   path("/l1/1", Page, { name: "l1.r1" }),
   path("/l1/2", Page, { name: "l1.r2" }),
   path("/l1/3", Page, { name: "l1.r3" }),
@@ -79,6 +86,8 @@ const stressTestPatterns = urls(({ path, layout }) => [
     path("/l2/33", Page, { name: "l2.r33" }),
     path("/l2/34", Page, { name: "l2.r34" }),
     path("/l2/35", Page, { name: "l2.r35" }),
+    // Include at layout level 2
+    include("/inc2", patterns300, { name: "inc2" }),
     layout(Layout, () => [
       path("/l3/1", Page, { name: "l3.r1" }),
       path("/l3/2", Page, { name: "l3.r2" }),
@@ -187,6 +196,8 @@ const stressTestPatterns = urls(({ path, layout }) => [
           path("/l5/33", Page, { name: "l5.r33" }),
           path("/l5/34", Page, { name: "l5.r34" }),
           path("/l5/35", Page, { name: "l5.r35" }),
+          // Include at layout level 5
+          include("/inc5", patterns300, { name: "inc5" }),
           layout(Layout, () => [
             path("/l6/1", Page, { name: "l6.r1" }),
             path("/l6/2", Page, { name: "l6.r2" }),
@@ -231,13 +242,36 @@ const stressTestPatterns = urls(({ path, layout }) => [
 ]);
 
 type Routes = NonNullable<typeof stressTestPatterns["_routes"]>;
+
+// Test nested layout routes
 type T1 = Routes["l1.r1"];
 type T1_35 = Routes["l1.r35"];
 type T6_35 = Routes["l6.r35"];
 const _t1: T1 = "/l1/1";
 const _t1_35: T1_35 = "/l1/35";
 const _t6_35: T6_35 = "/l6/35";
+
+// Test include at root level
+type TInc0_1 = Routes["inc0.r1"];
+type TInc0_300 = Routes["inc0.r300"];
+const _inc0_1: TInc0_1 = "/inc0/r1";
+const _inc0_300: TInc0_300 = "/inc0/r300";
+
+// Test include at layout level 2
+type TInc2_1 = Routes["inc2.r1"];
+type TInc2_300 = Routes["inc2.r300"];
+const _inc2_1: TInc2_1 = "/inc2/r1";
+const _inc2_300: TInc2_300 = "/inc2/r300";
+
+// Test include at layout level 5
+type TInc5_1 = Routes["inc5.r1"];
+type TInc5_300 = Routes["inc5.r300"];
+const _inc5_1: TInc5_1 = "/inc5/r1";
+const _inc5_300: TInc5_300 = "/inc5/r300";
+
+// Verify no routes are lost
 type IsNever<T> = [T] extends [never] ? "FAIL" : "PASS";
 const _result: IsNever<keyof Routes> = "PASS";
 type RouteKeys = keyof Routes;
+
 export { stressTestPatterns };

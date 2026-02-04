@@ -143,10 +143,12 @@ export type IncludeItem = {
  */
 export type TypedIncludeItem<
   TRoutes extends Record<string, string> = Record<string, string>,
-  TNamePrefix extends string = string
+  TNamePrefix extends string = string,
+  TUrlPrefix extends string = string
 > = IncludeItem & {
   readonly __routes?: TRoutes;
   readonly __namePrefix?: TNamePrefix;
+  readonly __urlPrefix?: TUrlPrefix;
 };
 
 /**

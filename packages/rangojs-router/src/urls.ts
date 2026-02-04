@@ -203,11 +203,15 @@ type ExtractRoutesFromItem<T, D extends number = 40> = [D] extends [never]
         ? {} // Exclude unnamed routes from type map
         : { [K in TName]: TPattern }
       : {}
-    // TypedIncludeItem: extract prefixed routes
-    : T extends TypedIncludeItem<infer TRoutes, infer TPrefix>
-      ? TPrefix extends string
-        ? PrefixRoutes<TRoutes, TPrefix>
-        : TRoutes
+    // TypedIncludeItem: extract prefixed routes (both name and URL prefix)
+    : T extends TypedIncludeItem<infer TRoutes, infer TNamePrefix, infer TUrlPrefix>
+      ? TNamePrefix extends string
+        ? TUrlPrefix extends string
+          ? PrefixRoutes<PrefixPatterns<TRoutes, TUrlPrefix>, TNamePrefix>
+          : PrefixRoutes<TRoutes, TNamePrefix>
+        : TUrlPrefix extends string
+          ? PrefixPatterns<TRoutes, TUrlPrefix>
+          : TRoutes
       // TypedLayoutItem: extract child routes from phantom type
       : T extends TypedLayoutItem<infer TChildRoutes>
         ? TChildRoutes
@@ -296,12 +300,13 @@ export type PathHelpers<TEnv> = {
    */
   include: <
     TRoutes extends Record<string, string>,
+    const TUrlPrefix extends string,
     const TNamePrefix extends string = never
   >(
-    prefix: string,
+    prefix: TUrlPrefix,
     patterns: UrlPatterns<TEnv, TRoutes>,
     options?: IncludeOptions<TNamePrefix>
-  ) => TypedIncludeItem<TRoutes, TNamePrefix>;
+  ) => TypedIncludeItem<TRoutes, TNamePrefix, TUrlPrefix>;
 
   /**
    * Define parallel routes that render simultaneously in named slots
