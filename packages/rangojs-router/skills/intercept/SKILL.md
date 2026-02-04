@@ -11,7 +11,7 @@ Intercept routes render a different component during soft navigation (client-sid
 ## Basic Intercept
 
 ```typescript
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
 function ShopLayout() {
@@ -149,7 +149,7 @@ function ModalWrapper({ children }) {
 }
 
 // urls/shop.tsx
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 
 export const shopPatterns = urls(({
   path,

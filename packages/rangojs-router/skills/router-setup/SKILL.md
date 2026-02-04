@@ -10,7 +10,7 @@ argument-hint: [option]
 
 ```typescript
 // src/router.tsx
-import { createRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router";
 import { Document } from "./document";
 import { urlpatterns } from "./urls";
 
@@ -26,7 +26,7 @@ export default router;
 
 ```typescript
 // src/urls.tsx
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 import { HomePage } from "./pages/home";
 import { AboutPage } from "./pages/about";
 import { ProductPage } from "./pages/product";
@@ -135,7 +135,7 @@ export default {
 
 ```typescript
 // src/urls.tsx
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";
 
 // Pages
@@ -176,7 +176,7 @@ export const urlpatterns = urls(({ path, layout, parallel, loader, loading, cach
 
 ```typescript
 // src/router.tsx
-import { createRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router";
 import { Document } from "./document";
 import { urlpatterns } from "./urls";
 
@@ -206,7 +206,7 @@ export default router;
 
 ```typescript
 // src/urls/shop.tsx
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 
 export const shopPatterns = urls(({ path, layout }) => [
   path("/", ShopIndex, { name: "index" }),
@@ -214,7 +214,7 @@ export const shopPatterns = urls(({ path, layout }) => [
 ]);
 
 // src/urls.tsx
-import { urls, include } from "@rangojs/router/server";
+import { urls, include } from "@rangojs/router";
 import { shopPatterns } from "./urls/shop";
 
 export const urlpatterns = urls(({ path }) => [
@@ -226,7 +226,7 @@ export const urlpatterns = urls(({ path }) => [
 ## Environment Types
 
 ```typescript
-import type { RouterEnv } from "@rangojs/router/server";
+import type { RouterEnv } from "@rangojs/router";
 
 interface AppBindings {
   DB: D1Database;

@@ -11,7 +11,7 @@ Layouts wrap child routes and persist during navigation within their scope.
 ## Basic Layout
 
 ```typescript
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";
 
 function ShopLayout() {
@@ -164,7 +164,7 @@ layout(<CartLayout />, () => [
 ## Complete Example
 
 ```typescript
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
 function ShopLayout() {

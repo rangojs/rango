@@ -11,7 +11,7 @@ Loaders fetch data on the server and stream it to the client.
 ## Creating a Loader
 
 ```typescript
-import { createLoader } from "@rangojs/router/server";
+import { createLoader } from "@rangojs/router";
 
 export const ProductLoader = createLoader("product", async (ctx) => {
   const product = await ctx.env.Bindings.DB
@@ -26,7 +26,7 @@ export const ProductLoader = createLoader("product", async (ctx) => {
 ## Using Loaders in Routes
 
 ```typescript
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 import { ProductLoader } from "./loaders/product";
 
 export const urlpatterns = urls(({ path, loader }) => [
@@ -41,7 +41,7 @@ export const urlpatterns = urls(({ path, loader }) => [
 ### In Server Components
 
 ```typescript
-import { useLoader } from "@rangojs/router/server";
+import { useLoader } from "@rangojs/router";
 import { ProductLoader } from "./loaders/product";
 
 async function ProductPage() {
@@ -163,7 +163,7 @@ function ProductPage() {
 
 ```typescript
 // loaders/shop.ts
-import { createLoader } from "@rangojs/router/server";
+import { createLoader } from "@rangojs/router";
 
 export const ProductLoader = createLoader("product", async (ctx) => {
   const product = await ctx.env.Bindings.DB
@@ -202,7 +202,7 @@ export const urlpatterns = urls(({ path, layout, loader, loading, cache, revalid
 ]);
 
 // pages/product.tsx
-import { useLoader } from "@rangojs/router/server";
+import { useLoader } from "@rangojs/router";
 import { ProductLoader, CartLoader } from "./loaders/shop";
 
 async function ProductPage() {

@@ -9,7 +9,7 @@ argument-hint: [pattern]
 ## Basic Route
 
 ```typescript
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 
 export const urlpatterns = urls(({ path }) => [
   path("/", HomePage, { name: "home" }),
@@ -142,7 +142,7 @@ urls(({ path, layout }) => [
 ## Complete Example
 
 ```typescript
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 import { Breadcrumbs } from "./handles/breadcrumbs";
 
 export const urlpatterns = urls(({ path, layout, loader, loading }) => [

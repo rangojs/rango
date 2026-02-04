@@ -13,7 +13,7 @@ argument-hint: [setup]
 Use the `cache()` DSL function to cache routes:
 
 ```typescript
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 
 export const urlpatterns = urls(({ path, cache }) => [
   // Cache these routes for 60 seconds, SWR for 5 minutes
@@ -59,7 +59,7 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 Configure a cache store in the router:
 
 ```typescript
-import { createRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 
 const store = new MemorySegmentCacheStore({
@@ -145,7 +145,7 @@ cache({ store: checkoutCache }, () => [
 ## Complete Example
 
 ```typescript
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 
 // Custom store for checkout (short TTL)
