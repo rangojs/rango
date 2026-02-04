@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";
 import {
   ProtectedIndexPage,

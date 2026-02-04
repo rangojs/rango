@@ -29,6 +29,7 @@ export {
 // Re-export all types from types.ts (user-facing types only)
 export type {
   // Configuration types
+  DocumentProps,
   RouterEnv,
   DefaultEnv,
   RouteDefinition,
@@ -47,6 +48,11 @@ export type {
   LoaderDefinition,
   LoaderFn,
   LoaderContext,
+  FetchableLoaderOptions,
+  LoadOptions,
+  LoaderActionContext,
+  LoaderAction,
+  LoaderMiddlewareFn,
   // Error boundary types
   ErrorInfo,
   ErrorBoundaryFallbackProps,
@@ -88,3 +94,7 @@ export type { CreateRSCHandlerOptions, HandlerCacheConfig } from "./rsc/types.js
 
 // Built-in handles (server-side)
 export { Meta } from "./handles/meta.js";
+
+// Href type utilities for type-safe URL generation
+export type { ScopedHrefFunction, HrefFunction, ExtractLocalRoutes } from "./href.js";
+export { scopedHref } from "./href.js";

@@ -28,7 +28,7 @@
   "exports": {
     ".": {
       "react-server": "./src/index.rsc.ts",
-      "types": "./src/index.ts",
+      "types": "./src/index.rsc.ts",
       "default": "./src/index.ts"
     },
     "./server": {

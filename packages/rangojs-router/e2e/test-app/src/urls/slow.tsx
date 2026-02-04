@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { SlowLoader } from "../loaders.js";
 import { RevalidateButton } from "../components/RevalidateButton.js";
