@@ -14,3 +14,12 @@ export {
   AccountOrdersRoute,
   AccountOrderDetailRoute,
 } from "./account.js";
+export {
+  ReviewsIndexRoute,
+  ReviewDetailRoute,
+  ReviewEditRoute,
+} from "./reviews.js";
+export {
+  CategoryRouteWithBreadcrumbs,
+  ProductDetailRouteWithBreadcrumbs,
+} from "./with-breadcrumbs.js";
