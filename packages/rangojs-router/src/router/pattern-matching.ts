@@ -143,95 +143,6 @@ function escapeRegex(str: string): string {
 }
 
 /**
- * Check if a pathname can possibly match a prefix pattern.
- * Used to short-circuit route matching for include() groups.
- *
- * This is a fast, conservative check - it may return true for paths
- * that ultimately don't match any routes, but it should never return
- * false for paths that could match.
- *
- * @returns true if pathname could match prefix, false if definitely not
- */
-export function canPrefixMatch(pathname: string, prefix: string): boolean {
-  // Empty or root prefix always matches
-  if (!prefix || prefix === "/") return true;
-
-  // Parse prefix into segments
-  const segments = parsePattern(prefix);
-  if (segments.length === 0) return true;
-
-  // Check if prefix is entirely static (no params)
-  const allStatic = segments.every((s) => s.type === "static");
-
-  if (allStatic) {
-    // For static prefixes, pathname must start with the prefix
-    // Build the static prefix string
-    const staticPrefix = "/" + segments.map((s) => s.value).join("/");
-
-    // Check exact prefix match or prefix followed by /
-    if (pathname === staticPrefix) return true;
-    if (pathname.startsWith(staticPrefix + "/")) return true;
-
-    // Handle trailing slash in prefix
-    if (staticPrefix.endsWith("/")) {
-      const withoutSlash = staticPrefix.slice(0, -1);
-      if (pathname === withoutSlash) return true;
-      if (pathname.startsWith(withoutSlash + "/")) return true;
-    }
-
-    return false;
-  }
-
-  // For prefixes with params, do segment-by-segment checks
-  const pathnameSegments = pathname.split("/").filter(Boolean);
-
-  // Count minimum required segments in prefix
-  const minRequiredSegments = segments.filter((s) => !s.optional).length;
-
-  // If pathname doesn't have enough segments, can't match
-  if (pathnameSegments.length < minRequiredSegments) {
-    return false;
-  }
-
-  // Check each prefix segment against pathname
-  let pathnameIdx = 0;
-  for (const seg of segments) {
-    if (pathnameIdx >= pathnameSegments.length) {
-      // Ran out of pathname segments
-      // OK if remaining prefix segments are optional
-      if (!seg.optional) return false;
-      continue;
-    }
-
-    const pathSeg = pathnameSegments[pathnameIdx];
-
-    if (seg.type === "static") {
-      // Static segment must match exactly
-      if (seg.value !== pathSeg) {
-        return false;
-      }
-      pathnameIdx++;
-    } else if (seg.type === "param") {
-      // Param segment - check constraint if any
-      if (seg.constraint && !seg.constraint.includes(pathSeg)) {
-        return false;
-      }
-      // For optional params, only consume if there's a match or no constraint
-      if (seg.optional && seg.constraint && !seg.constraint.includes(pathSeg)) {
-        // Don't consume this segment, param is optional and doesn't match constraint
-        continue;
-      }
-      pathnameIdx++;
-    } else if (seg.type === "wildcard") {
-      // Wildcard matches anything - always OK
-      return true;
-    }
-  }
-
-  return true;
-}
-
-/**
  * Match a pathname against registered routes
  *
  * Note: Optional params that are absent in the path will have empty string value.
@@ -268,12 +179,6 @@ export function findMatch<TEnv>(
     : pathname + "/";
 
   for (const entry of routesEntries) {
-    // OPTIMIZATION: Skip this entry if prefix can't possibly match
-    // This short-circuits include() groups with non-matching prefixes
-    if (!canPrefixMatch(pathname, entry.prefix)) {
-      continue;
-    }
-
     const routeEntries = Object.entries(entry.routes);
 
     for (const [routeKey, pattern] of routeEntries) {
