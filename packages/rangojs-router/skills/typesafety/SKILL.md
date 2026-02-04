@@ -207,17 +207,19 @@ export const PageTitle = createHandle<string, string>({
   reducer: (titles) => titles[titles.length - 1] ?? "My App",
 });
 
-// In route definition - use handle() DSL
-import { urls } from "@rangojs/router";
+// In handler - push data to handle via ctx.use()
+async function ProductPage(ctx: HandlerContext) {
+  const pushBreadcrumb = ctx.use(Breadcrumbs);
+  pushBreadcrumb({ label: "Products", href: "/shop/products" });
 
-export const urlpatterns = urls(({ path, handle }) => [
-  path("/shop/product/:slug", ProductPage, { name: "product" }, () => [
-    handle(Breadcrumbs, { label: "Products", href: "/shop/products" }),
-    handle(PageTitle, "Product Details"),
-  ]),
-]);
+  const setTitle = ctx.use(PageTitle);
+  setTitle("Product Details");
 
-// In client - typed values
+  return <ProductDetails />;
+}
+
+// In client component - read handle values
+"use client";
 function BreadcrumbNav() {
   const crumbs = useHandle(Breadcrumbs);
   // crumbs: Array<{ label: string; href: string }>
