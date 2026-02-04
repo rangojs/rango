@@ -2,6 +2,9 @@
 
 Benchmark of @rangojs/router with 14,000+ routes on Cloudflare Workers.
 
+- **Date**: 2026-02-04
+- **Commit**: `ea2cfc7c8ad5e346f053d2feab21bfa66ee28077`
+
 ## Test Setup
 
 - **Routes**: ~14,000 total
@@ -13,7 +16,6 @@ Benchmark of @rangojs/router with 14,000+ routes on Cloudflare Workers.
   - 5,000 API routes via include()
 
 - **Environment**: Cloudflare Workers
-- **Date**: 2026-02-04
 
 ## Results
 
