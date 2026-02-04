@@ -1,0 +1,10 @@
+{
+  "name": "cloudflare-stress-demo",
+  "compatibility_date": "2025-01-13",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "./src/worker.rsc.tsx",
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS"
+  }
+}
