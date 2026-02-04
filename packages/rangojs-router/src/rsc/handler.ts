@@ -125,7 +125,10 @@ export function createRSCHandler<
     const matchedMiddleware = matchMiddleware(url.pathname, router.middleware);
 
     // Shared variables between middleware and route handlers
-    const variables: Record<string, any> = {};
+    // Initialize from env.Variables if provided (allows pre-seeding from worker entry)
+    const variables: Record<string, any> = {
+      ...((env as any)?.Variables ?? {}),
+    };
 
     // Store nonce in variables so middleware can access via ctx.get('nonce')
     if (nonce) {
