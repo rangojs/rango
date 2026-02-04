@@ -4030,17 +4030,13 @@ export function createRouter<TEnv = any>(
 
     // RSC request handler (lazily created on first call)
     fetch: (() => {
-      // Lazy import to avoid bundling RSC deps when not used
-      const createRSCHandlerPromise = import("./rsc/handler.js").then(
-        (m) => m.createRSCHandler
-      );
-
       // Handler is created on first call and reused
       let handler: ((request: Request, env: TEnv & { ctx?: ExecutionContext }) => Promise<Response>) | null = null;
 
       return async (request: Request, env: TEnv & { ctx?: ExecutionContext }) => {
         if (!handler) {
-          const createRSCHandler = await createRSCHandlerPromise;
+          // Lazy import deferred to first request to avoid dev mode issues
+          const { createRSCHandler } = await import("./rsc/handler.js");
           handler = createRSCHandler({
             router: router as any,
             cache,
