@@ -699,18 +699,44 @@ const cache: RouteHelpers<any, any>["cache"] = (
   const name = `$${store.getNextIndex("cache")}`;
   const cacheConfig = { options };
 
-  // If no children, attach cache config to current parent (for loader caching)
+  // If no children, create an orphan cache entry (like orphan layouts)
+  // This allows cache() to wrap subsequent siblings
   if (!children) {
-    // Check if we're inside a loader() use() callback
     const parent = ctx.parent as any;
-    if (parent && "cache" in parent) {
+
+    // Check if we're inside a loader() use() callback - special case for loader caching
+    if (parent && parent.type === "loader") {
       // Direct assignment to loader entry's cache field
       parent.cache = cacheConfig;
-    } else if (parent) {
-      // Attach to parent entry (layout/route/parallel)
-      parent.cache = cacheConfig;
+      return { name, type: "cache" } as CacheItem;
     }
-    return { name, type: "cache" } as CacheItem;
+
+    // Create orphan cache entry (like orphan layout)
+    const namespace = `${ctx.namespace}.${store.getNextIndex("cache")}`;
+
+    const entry = {
+      id: namespace,
+      shortCode: store.getShortCode("cache"),
+      type: "cache",
+      parent: null, // orphan - no parent pointer
+      cache: cacheConfig,
+      handler: RootLayout,
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+      layout: [],
+      parallel: [],
+      intercept: [],
+      loader: [],
+    } as EntryData;
+
+    // Attach to parent's layout array (cache entries are structural like layouts)
+    if (parent && "layout" in parent) {
+      parent.layout.push(entry);
+    }
+
+    return { name: namespace, type: "cache" } as CacheItem;
   }
 
   // With children: create a cache entry (like layout with caching semantics)
