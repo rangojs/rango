@@ -62,6 +62,8 @@ function ProductDetails() {
 }
 ```
 
+**Note**: For `useLoaderData` to work, the loader must be registered in the route definition using the `loader()` DSL function (in path, layout, parallel, or intercept children).
+
 ## Loader Context
 
 Loaders receive the same context as route handlers:

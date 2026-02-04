@@ -173,6 +173,11 @@ async function ProductPage(ctx: HandlerContext) {
   return <h1>{product.name}</h1>;
 }
 
+// Register loader in route definition to expose to client
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  loader(ProductLoader),  // Required for useLoaderData in client components
+])
+
 // In client component - same type
 "use client";
 import { useLoaderData } from "@rangojs/router/client";
@@ -183,6 +188,8 @@ function ProductPrice() {
   return <span>${product.price}</span>;
 }
 ```
+
+**Note**: Loaders must be registered via `loader()` in route children (path, layout, parallel, intercept) to be accessible in client components via `useLoaderData`.
 
 ## Handle Type Safety
 
