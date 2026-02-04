@@ -82,3 +82,6 @@ declare global {
     interface RegisteredRoutes extends AppRoutes {}
   }
 }
+
+// Export typed href function for use in components
+export const href = router.href;

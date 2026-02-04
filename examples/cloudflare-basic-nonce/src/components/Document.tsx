@@ -1,9 +1,11 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Link, MetaTags } from "@rangojs/router/client";
+import { Link, MetaTags, useHref } from "@rangojs/router/client";
 
 export function Document({ children }: { children: ReactNode }) {
+  const href = useHref();
+
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -27,9 +29,9 @@ export function Document({ children }: { children: ReactNode }) {
       </head>
       <body>
         <nav data-testid="nav">
-          <Link to="/" data-testid="nav-home">Home</Link>
-          <Link to="/about" data-testid="nav-about">About</Link>
-          <Link to="/counter" data-testid="nav-counter">Counter</Link>
+          <Link to={href("home")} data-testid="nav-home">Home</Link>
+          <Link to={href("about")} data-testid="nav-about">About</Link>
+          <Link to={href("counter")} data-testid="nav-counter">Counter</Link>
           <span className="csp-badge">CSP Enabled</span>
         </nav>
         {children}

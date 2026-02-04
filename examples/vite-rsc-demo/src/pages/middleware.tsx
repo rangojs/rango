@@ -1,6 +1,7 @@
 import type { Middleware, HandlerContext } from "@rangojs/router";
 import { Outlet, Link } from "@rangojs/router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
+import { href } from "../router.js";
 
 export function MiddlewareDemoLayout() {
   return (
@@ -36,7 +37,7 @@ export function MiddlewareDemoLayout() {
           }}
         >
           <Link
-            to="/middleware"
+            to={href("middleware.index")}
             style={{
               padding: "0.5rem 1rem",
               background: "#059669",
@@ -48,7 +49,7 @@ export function MiddlewareDemoLayout() {
             Index
           </Link>
           <Link
-            to="/middleware/dashboard"
+            to={href("middleware.dashboard")}
             style={{
               padding: "0.5rem 1rem",
               background: "#0d9488",
@@ -60,7 +61,7 @@ export function MiddlewareDemoLayout() {
             Dashboard (Auth)
           </Link>
           <Link
-            to="/middleware/timed"
+            to={href("middleware.timed")}
             style={{
               padding: "0.5rem 1rem",
               background: "#0891b2",
@@ -72,7 +73,7 @@ export function MiddlewareDemoLayout() {
             Timed (Route-level)
           </Link>
           <Link
-            to="/middleware/user/123"
+            to={href("middleware.user", { userId: "123" })}
             style={{
               padding: "0.5rem 1rem",
               background: "#6366f1",
@@ -84,7 +85,7 @@ export function MiddlewareDemoLayout() {
             User (Variables)
           </Link>
           <Link
-            to="/middleware/api/data"
+            to={href("middleware.api")}
             style={{
               padding: "0.5rem 1rem",
               background: "#8b5cf6",
@@ -247,7 +248,7 @@ export function MiddlewareDashboardPage(ctx: HandlerContext<{}, RSCRouter.Env>) 
 
         <div style={{ marginTop: "1rem" }}>
           <Link
-            to="/middleware/dashboard?auth=true"
+            to={`${href("middleware.dashboard")}?auth=true`}
             style={{
               display: "inline-block",
               padding: "0.5rem 1rem",
