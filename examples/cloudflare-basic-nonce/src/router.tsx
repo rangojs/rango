@@ -66,11 +66,16 @@ const cspMiddleware: Middleware = async (ctx, next) => {
 // preventing the app shell from unmounting during errors (avoids FOUC)
 export const router = createRouter<AppEnv>({
   document: AppShell,
+  // Auto-generate a cryptographic nonce for each request (for CSP)
+  nonce: () => true,
 })
   // CSP middleware - adds Content-Security-Policy headers to all HTML responses
   .use(cspMiddleware)
   // Register all routes
   .routes(urlpatterns);
+
+// Create the RSC handler (uses router's nonce config automatically)
+export const fetch = router.createHandler();
 
 type AppRoutes = typeof router.routeMap;
 

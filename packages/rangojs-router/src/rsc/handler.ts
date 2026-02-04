@@ -39,9 +39,18 @@ import { invokeOnError } from "../router/error-handling.js";
 /**
  * Create an RSC request handler.
  *
+ * **Recommended:** Use `router.createHandler()` instead for simpler setup:
+ * ```tsx
+ * const router = createRouter({ document, urls, nonce: () => true });
+ * export const fetch = router.createHandler();
+ * ```
+ *
+ * This function is still useful for advanced cases like per-request cache
+ * configuration (e.g., Cloudflare Workers with ExecutionContext).
+ *
  * @example Basic usage (deps and loadSSRModule have sensible defaults)
  * ```tsx
- * import { createRSCHandler } from "rsc-router/rsc";
+ * import { createRSCHandler } from "@rangojs/router/rsc";
  * import { router } from "./router.js";
  *
  * export default createRSCHandler({ router });
@@ -49,7 +58,7 @@ import { invokeOnError } from "../router/error-handling.js";
  *
  * @example With custom deps (advanced)
  * ```tsx
- * import { createRSCHandler } from "rsc-router/rsc";
+ * import { createRSCHandler } from "@rangojs/router/rsc";
  * import * as rsc from "@vitejs/plugin-rsc/rsc";
  * import { router } from "./router.js";
  *

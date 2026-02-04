@@ -93,7 +93,44 @@ interface RSCRouterOptions<TEnv> {
 
   // Global cache configuration
   cache?: CacheConfig<TEnv>;
+
+  // Theme configuration
+  theme?: ThemeConfig | true;
+
+  // CSP nonce provider (for createHandler)
+  nonce?: (request: Request, env: TEnv) => string | true | Promise<string | true>;
+
+  // RSC version string (for createHandler)
+  version?: string;
 }
+```
+
+## Creating the Request Handler
+
+The router provides a `createHandler()` method to create the RSC request handler:
+
+```typescript
+// src/router.tsx
+import { createRouter } from "@rangojs/router";
+import { Document } from "./document";
+import { urlpatterns } from "./urls";
+
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  nonce: () => true, // Auto-generate nonce for CSP
+});
+
+// Export the handler for your server
+export const fetch = router.createHandler();
+```
+
+This replaces the older pattern of using `createRSCHandler` separately:
+
+```typescript
+// Old pattern (still supported for advanced cases)
+import { createRSCHandler } from "@rangojs/router/rsc";
+const handler = createRSCHandler({ router, nonce: () => true });
 ```
 
 ## Document Component
@@ -121,12 +158,46 @@ export function Document({ children }: { children: ReactNode }) {
 ## Using with Cloudflare Workers
 
 ```typescript
+// src/router.tsx
+import { createRouter } from "@rangojs/router";
+import { Document } from "./document";
+import { urlpatterns } from "./urls";
+
+export const router = createRouter<AppEnv>({
+  document: Document,
+  urls: urlpatterns,
+});
+
+// Export the handler
+export const fetch = router.createHandler();
+
 // src/worker.tsx
-import router from "./router";
+import { fetch as rscFetch } from "./router";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    return router.fetch(request, env, ctx);
+    return rscFetch(request, { Bindings: env, Variables: {}, ctx });
+  },
+};
+```
+
+### With Dynamic Cache Configuration
+
+For per-request cache configuration (e.g., Cloudflare Workers with ExecutionContext):
+
+```typescript
+// src/worker.tsx
+import { createRSCHandler, CFCacheStore } from "@rangojs/router/rsc";
+import { router } from "./router";
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    const cacheStore = new CFCacheStore({ ctx, defaults: { ttl: 60 } });
+    const handler = createRSCHandler({
+      router,
+      cache: { store: cacheStore },
+    });
+    return handler(request, { Bindings: env, Variables: {}, ctx });
   },
 };
 ```

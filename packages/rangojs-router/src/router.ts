@@ -54,6 +54,8 @@ import type {
   ShouldRevalidateFn,
   TrailingSlashMode,
 } from "./types";
+import type { NonceProvider, RSCDependencies, LoadSSRModule } from "./rsc/types.js";
+import type { ExecutionContext } from "./server/request-context.js";
 
 // Extracted router utilities
 import {
@@ -336,6 +338,44 @@ export interface RSCRouterOptions<TEnv = any> {
    * ```
    */
   urls?: UrlPatterns<TEnv, any>;
+
+  /**
+   * Nonce provider for Content Security Policy (CSP).
+   *
+   * Can be:
+   * - A function that returns a nonce string
+   * - A function that returns `true` to auto-generate a nonce
+   * - Undefined to disable nonce (default)
+   *
+   * The nonce will be applied to inline scripts injected by the RSC payload.
+   * It's also available to middleware via `ctx.get('nonce')`.
+   *
+   * @example Auto-generate nonce
+   * ```tsx
+   * createRouter({
+   *   nonce: () => true,
+   * });
+   * ```
+   *
+   * @example Custom nonce from request context
+   * ```tsx
+   * createRouter({
+   *   nonce: (request, env) => env.nonce,
+   * });
+   * ```
+   */
+  nonce?: NonceProvider<TEnv>;
+
+  /**
+   * RSC version string included in metadata.
+   * The browser sends this back on partial requests to detect version mismatches.
+   *
+   * Defaults to the auto-generated VERSION from `@rangojs/router:version` virtual module.
+   * Only set this if you need a custom versioning strategy.
+   *
+   * @default VERSION from @rangojs/router:version
+   */
+  version?: string;
 }
 
 /**
@@ -681,6 +721,16 @@ export interface RSCRouter<
    */
   readonly middleware: MiddlewareEntry<TEnv>[];
 
+  /**
+   * Nonce provider for CSP (for internal use by createHandler)
+   */
+  readonly nonce?: NonceProvider<TEnv>;
+
+  /**
+   * RSC version string (for internal use by createHandler)
+   */
+  readonly version?: string;
+
   match(request: Request, context: TEnv): Promise<MatchResult>;
 
   /**
@@ -734,6 +784,44 @@ export interface RSCRouter<
    * Returns a JSON-friendly representation of all routes and layouts
    */
   debugManifest(): Promise<SerializedManifest>;
+
+  /**
+   * Create an RSC request handler.
+   *
+   * Returns a function that handles HTTP requests and returns RSC responses.
+   * Uses the router's configuration (nonce, version, cache) automatically.
+   *
+   * @example
+   * ```tsx
+   * const router = createRouter({
+   *   document: RootLayout,
+   *   urls: urlpatterns,
+   *   nonce: () => true,
+   * });
+   *
+   * export const fetch = router.createHandler();
+   * ```
+   *
+   * @example With custom options (overrides router config)
+   * ```tsx
+   * export const fetch = router.createHandler({
+   *   deps: customRscDeps,
+   *   loadSSRModule: () => import("./ssr"),
+   * });
+   * ```
+   */
+  createHandler(options?: {
+    /** RSC dependencies override (defaults to @vitejs/plugin-rsc/rsc) */
+    deps?: RSCDependencies;
+    /** SSR module loader override */
+    loadSSRModule?: LoadSSRModule;
+    /** Cache config override */
+    cache?: RSCRouterOptions<TEnv>["cache"];
+    /** Nonce provider override */
+    nonce?: NonceProvider<TEnv>;
+    /** Version string override */
+    version?: string;
+  }): (request: Request, env: TEnv & { ctx?: ExecutionContext }) => Promise<Response>;
 }
 
 /**
@@ -804,6 +892,8 @@ export function createRouter<TEnv = any>(
     cache,
     theme: themeOption,
     urls: urlsOption,
+    nonce,
+    version,
   } = options;
 
   // Resolve theme config (null if theme not enabled)
@@ -3939,6 +4029,38 @@ export function createRouter<TEnv = any>(
     matchPartial,
     matchError,
     previewMatch,
+
+    // Expose nonce provider for createHandler
+    nonce,
+
+    // Expose version for createHandler
+    version,
+
+    // Create RSC request handler
+    createHandler(handlerOptions = {}) {
+      // Lazy import to avoid bundling RSC deps when not used
+      const createRSCHandlerPromise = import("./rsc/handler.js").then(
+        (m) => m.createRSCHandler
+      );
+
+      // Return handler function that resolves createRSCHandler on first call
+      let handler: ((request: Request, env: TEnv & { ctx?: ExecutionContext }) => Promise<Response>) | null = null;
+
+      return async (request: Request, env: TEnv & { ctx?: ExecutionContext }) => {
+        if (!handler) {
+          const createRSCHandler = await createRSCHandlerPromise;
+          handler = createRSCHandler({
+            router: router as any,
+            deps: handlerOptions.deps,
+            loadSSRModule: handlerOptions.loadSSRModule,
+            cache: handlerOptions.cache ?? cache,
+            nonce: handlerOptions.nonce ?? nonce,
+            version: handlerOptions.version ?? version,
+          });
+        }
+        return handler(request, env);
+      };
+    },
 
     // Debug utility for manifest inspection
     async debugManifest(): Promise<SerializedManifest> {
