@@ -39,7 +39,7 @@ export const urlpatterns = urls(({ path, layout }) => [
 ]);
 
 // router.tsx
-import { createRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router";
 import { urlpatterns } from "./urls";
 
 export default createRouter({ document: Document }).urls(urlpatterns);

@@ -14,7 +14,7 @@ Register route types globally for type-safe `href()` and params:
 
 ```typescript
 // router.tsx
-import { createRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router";
 import { urlpatterns } from "./urls";
 
 const router = createRouter<AppEnv>({
@@ -41,7 +41,7 @@ export default router;
 
 ```typescript
 // urls.tsx
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 
 export const urlpatterns = urls(({ path, layout }) => [
   path("/", HomePage, { name: "home" }),
@@ -78,7 +78,7 @@ Define your app's environment for type-safe bindings and variables:
 
 ```typescript
 // env.ts
-import type { RouterEnv } from "@rangojs/router/server";
+import type { RouterEnv } from "@rangojs/router";
 
 // Cloudflare bindings
 interface AppBindings {
@@ -111,7 +111,7 @@ const router = createRouter<AppEnv>({
 });
 
 // middleware - typed ctx.env.Variables
-import { createMiddleware } from "@rangojs/router/server";
+import { createMiddleware } from "@rangojs/router";
 
 export const authMiddleware = createMiddleware(async (ctx, next) => {
   ctx.env.Variables.user = { id: "123", email: "user@example.com", role: "admin" };
@@ -167,7 +167,7 @@ export const ProductLoader = createLoader("product", async (ctx) => {
 });
 
 // In server component - type is inferred
-import { useLoader } from "@rangojs/router/server";
+import { useLoader } from "@rangojs/router";
 
 async function ProductPage() {
   const product = await useLoader(ProductLoader);
@@ -197,7 +197,7 @@ import { createHandle } from "@rangojs/router";
 export const Breadcrumbs = createHandle<{ label: string; href: string }>();
 
 // In route definition - use handle() DSL
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 
 export const urlpatterns = urls(({ path, handle }) => [
   path("/shop/product/:slug", ProductPage, { name: "product" }, () => [
@@ -251,7 +251,7 @@ function ProductHeader() {
 export type AppEnv = RouterEnv<AppBindings, AppVariables>;
 
 // 2. urls.tsx - Route definitions with names
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 
 export const urlpatterns = urls(({ path, layout, loader }) => [
   path("/", HomePage, { name: "home" }),

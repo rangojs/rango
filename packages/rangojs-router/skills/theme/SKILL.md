@@ -11,7 +11,7 @@ Opt-in theme system with FOUC prevention.
 ## Enable
 
 ```typescript
-import { createRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router";
 
 // Simple - all defaults
 const router = createRouter<Env>({
@@ -36,7 +36,7 @@ const router = createRouter<Env>({
 ## Server (in loaders/middleware)
 
 ```typescript
-import { createLoader, createMiddleware } from "@rangojs/router/server";
+import { createLoader, createMiddleware } from "@rangojs/router";
 
 // In a loader
 export const SettingsLoader = createLoader("settings", async (ctx) => {

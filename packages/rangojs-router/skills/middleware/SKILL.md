@@ -11,7 +11,7 @@ Middleware runs before/after route handlers using the onion model.
 ## Basic Middleware
 
 ```typescript
-import { createMiddleware } from "@rangojs/router/server";
+import { createMiddleware } from "@rangojs/router";
 
 export const authMiddleware = createMiddleware(async (ctx, next) => {
   const token = ctx.request.headers.get("Authorization");
@@ -30,7 +30,7 @@ export const authMiddleware = createMiddleware(async (ctx, next) => {
 ## Using Middleware in Routes
 
 ```typescript
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 import { authMiddleware, loggerMiddleware } from "./middleware";
 
 export const urlpatterns = urls(({ path, layout, middleware }) => [
@@ -155,7 +155,7 @@ export const rateLimitMiddleware = createMiddleware(async (ctx, next) => {
 
 ```typescript
 // middleware/index.ts
-import { createMiddleware } from "@rangojs/router/server";
+import { createMiddleware } from "@rangojs/router";
 
 export const loggerMiddleware = createMiddleware(async (ctx, next) => {
   console.log(`[${ctx.request.method}] ${ctx.url.pathname}`);
@@ -176,7 +176,7 @@ export const requireAuthMiddleware = createMiddleware(async (ctx, next) => {
 });
 
 // urls.tsx
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 import {
   loggerMiddleware,
   mockAuthMiddleware,
