@@ -5,6 +5,7 @@ import type { AppEnv } from "./env.js";
 
 export const router = createRouter<AppEnv>({
   document: Document,
+  debugPerformance: true, // Enable Server-Timing headers
 }).routes(urlpatterns);
 
 type AppRoutes = typeof router.routeMap;
