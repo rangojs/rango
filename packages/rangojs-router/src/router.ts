@@ -250,7 +250,6 @@ export interface RSCRouterOptions<TEnv = any> {
    * The store handles persistence (memory, KV, Redis, etc.).
    *
    * Can be a static config or a function receiving env for runtime bindings.
-   * Can be overridden in createRSCHandler.
    *
    * @example Static config
    * ```typescript

@@ -97,10 +97,10 @@ interface RSCRouterOptions<TEnv> {
   // Theme configuration
   theme?: ThemeConfig | true;
 
-  // CSP nonce provider (for createHandler)
+  // CSP nonce provider (for router.fetch)
   nonce?: (request: Request, env: TEnv) => string | true | Promise<string | true>;
 
-  // RSC version string (for createHandler)
+  // RSC version string (for router.fetch)
   version?: string;
 }
 ```
@@ -185,18 +185,25 @@ export default {
 For per-request cache configuration (e.g., Cloudflare Workers with ExecutionContext):
 
 ```typescript
+// src/router.tsx
+import { createRouter } from "@rangojs/router";
+import { CFCacheStore } from "@rangojs/router/cache";
+
+export const router = createRouter<AppEnv>({
+  document: Document,
+  urls: urlpatterns,
+  // Cache config receives env with ctx for ExecutionContext access
+  cache: (env) => ({
+    store: new CFCacheStore({ ctx: env.ctx, defaults: { ttl: 60 } }),
+  }),
+});
+
 // src/worker.tsx
-import { createRSCHandler, CFCacheStore } from "@rangojs/router/rsc";
 import { router } from "./router";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    const cacheStore = new CFCacheStore({ ctx, defaults: { ttl: 60 } });
-    const handler = createRSCHandler({
-      router,
-      cache: { store: cacheStore },
-    });
-    return handler(request, { Bindings: env, Variables: {}, ctx });
+    return router.fetch(request, { Bindings: env, Variables: {}, ctx });
   },
 };
 ```
