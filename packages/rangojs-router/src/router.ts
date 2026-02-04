@@ -635,7 +635,7 @@ export interface RSCRouter<
     patterns: T
   ): RSCRouter<
     TEnv,
-    TRoutes & (T extends UrlPatterns<any, infer R> ? R : Record<string, string>)
+    TRoutes & (T["_routes"] extends Record<string, string> ? T["_routes"] : Record<string, string>)
   >;
 
   /**

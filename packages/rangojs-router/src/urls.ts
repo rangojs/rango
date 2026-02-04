@@ -165,15 +165,36 @@ type PrefixPatterns<
 };
 
 /**
- * Depth counter for limiting recursion (max 5 levels to avoid infinite types)
+ * Depth counter for limiting recursion (max 40 levels)
+ * Supports up to 40 sibling items at any level of a urls() call
+ * Note: Higher values hit TypeScript's internal recursion limits
  */
-type Depth = [never, 0, 1, 2, 3, 4];
+type Depth = [
+  never,
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+  20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39
+];
+
+/**
+ * Force TypeScript to eagerly evaluate a type.
+ * This helps with interface extension by creating a "concrete" object type.
+ */
+type Simplify<T> = T extends Record<string, string>
+  ? { [K in keyof T]: T[K] }
+  : T;
+
+/**
+ * Convert a union type to an intersection type.
+ * Used to combine route maps from multiple siblings without recursive tuple processing.
+ */
+type UnionToIntersection<U> =
+  (U extends any ? (k: U) => void : never) extends ((k: infer I) => void) ? I : never;
 
 /**
  * Extract routes from a single item (path, include, layout, cache with children)
- * D is the current depth level (0-4), stops at 5
+ * D is the current depth level for nested layouts/caches
  */
-type ExtractRoutesFromItem<T, D extends number = 5> = [D] extends [never]
+type ExtractRoutesFromItem<T, D extends number = 40> = [D] extends [never]
   ? {} // Max depth reached, stop recursion
   : // TypedRouteItem: extract name -> pattern (exclude unnamed routes)
     T extends TypedRouteItem<infer TName, infer TPattern>
@@ -197,24 +218,30 @@ type ExtractRoutesFromItem<T, D extends number = 5> = [D] extends [never]
           : {};
 
 /**
- * Extract routes from an array of items (union of all extracted routes)
- * D is the current depth level
+ * Extract routes from an array of items using mapped types.
+ * Uses UnionToIntersection to combine routes without recursive tuple processing,
+ * removing the sibling limit that was caused by TypeScript recursion limits.
+ * D is passed to ExtractRoutesFromItem for nested depth tracking.
  */
 type ExtractRoutesFromItems<
   T extends readonly any[],
-  D extends number = 5
-> = [D] extends [never]
-  ? {} // Max depth reached
-  : T extends readonly [infer First, ...infer Rest]
-    ? ExtractRoutesFromItem<First, D> &
-        ExtractRoutesFromItems<Rest, Depth[D]>
-    : {};
+  D extends number = 40
+> = T extends readonly any[]
+  ? UnionToIntersection<
+      { [K in keyof T]: ExtractRoutesFromItem<T[K], D> }[number]
+    > extends infer R
+    ? R extends Record<string, string>
+      ? R
+      : {}
+    : {}
+  : {};
 
 /**
  * Main utility: extract route map from urls() callback return type
- * Supports up to 5 levels of nesting
+ * Uses mapped types for sibling processing (no sibling limit).
+ * Uses Simplify to force eager evaluation for interface extension compatibility.
  */
-export type ExtractRoutes<T extends readonly any[]> = ExtractRoutesFromItems<T, 5>;
+export type ExtractRoutes<T extends readonly any[]> = Simplify<ExtractRoutesFromItems<T, 40>>;
 
 // ============================================================================
 // Path Helpers Type

@@ -36,9 +36,8 @@ export function MiddlewareDemoLayout() {
             borderRadius: "8px",
           }}
         >
-          {/* TypeScript inference limit with deeply nested urls() - route names are correct */}
           <Link
-            to={href("middleware.index" as any)}
+            to={href("middleware.index")}
             style={{
               padding: "0.5rem 1rem",
               background: "#059669",
@@ -50,7 +49,7 @@ export function MiddlewareDemoLayout() {
             Index
           </Link>
           <Link
-            to={href("middleware.dashboard" as any)}
+            to={href("middleware.dashboard")}
             style={{
               padding: "0.5rem 1rem",
               background: "#0d9488",
@@ -62,7 +61,7 @@ export function MiddlewareDemoLayout() {
             Dashboard (Auth)
           </Link>
           <Link
-            to={href("middleware.timed" as any)}
+            to={href("middleware.timed")}
             style={{
               padding: "0.5rem 1rem",
               background: "#0891b2",
@@ -74,7 +73,7 @@ export function MiddlewareDemoLayout() {
             Timed (Route-level)
           </Link>
           <Link
-            to={href("middleware.user" as any, { userId: "123" })}
+            to={href("middleware.user", { userId: "123" })}
             style={{
               padding: "0.5rem 1rem",
               background: "#6366f1",
@@ -86,7 +85,7 @@ export function MiddlewareDemoLayout() {
             User (Variables)
           </Link>
           <Link
-            to={href("middleware.api" as any)}
+            to={href("middleware.api")}
             style={{
               padding: "0.5rem 1rem",
               background: "#8b5cf6",
@@ -249,7 +248,7 @@ export function MiddlewareDashboardPage(ctx: HandlerContext<{}, RSCRouter.Env>) 
 
         <div style={{ marginTop: "1rem" }}>
           <Link
-            to={`${href("middleware.dashboard" as any)}?auth=true`}
+            to={`${href("middleware.dashboard")}?auth=true`}
             style={{
               display: "inline-block",
               padding: "0.5rem 1rem",
