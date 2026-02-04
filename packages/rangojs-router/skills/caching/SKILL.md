@@ -59,14 +59,14 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 Configure a cache store in the router:
 
 ```typescript
-import { createRSCRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router/server";
 import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 
 const store = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 300 },
 });
 
-const router = createRSCRouter({
+const router = createRouter({
   document: Document,
   urls: urlpatterns,
   cache: {
@@ -98,7 +98,7 @@ For distributed caching on Cloudflare Workers:
 ```typescript
 import { CFCacheStore } from "@rangojs/router/cache/cf";
 
-const router = createRSCRouter({
+const router = createRouter({
   document: Document,
   urls: urlpatterns,
   cache: (env) => ({

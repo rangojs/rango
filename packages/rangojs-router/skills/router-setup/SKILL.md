@@ -1,20 +1,20 @@
 ---
 name: router-setup
-description: Create and configure the RSC router with createRSCRouter
+description: Create and configure the RSC router with createRouter
 argument-hint: [option]
 ---
 
-# Router Setup with createRSCRouter
+# Router Setup with createRouter
 
 ## Basic Router Creation
 
 ```typescript
 // src/router.tsx
-import { createRSCRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router/server";
 import { Document } from "./document";
 import { urlpatterns } from "./urls";
 
-const router = createRSCRouter({
+const router = createRouter({
   document: Document,
   urls: urlpatterns,
 });
@@ -176,11 +176,11 @@ export const urlpatterns = urls(({ path, layout, parallel, loader, loading, cach
 
 ```typescript
 // src/router.tsx
-import { createRSCRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router/server";
 import { Document } from "./document";
 import { urlpatterns } from "./urls";
 
-const router = createRSCRouter({
+const router = createRouter({
   document: Document,
   urls: urlpatterns,
 
@@ -239,7 +239,7 @@ interface AppVariables {
 
 type AppEnv = RouterEnv<AppBindings, AppVariables>;
 
-const router = createRSCRouter<AppEnv>({
+const router = createRouter<AppEnv>({
   document: Document,
   urls: urlpatterns,
 });

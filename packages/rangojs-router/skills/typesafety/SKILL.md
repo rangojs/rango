@@ -14,10 +14,10 @@ Register route types globally for type-safe `href()` and params:
 
 ```typescript
 // router.tsx
-import { createRSCRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router/server";
 import { urlpatterns } from "./urls";
 
-const router = createRSCRouter<AppEnv>({
+const router = createRouter<AppEnv>({
   document: Document,
   urls: urlpatterns,
 });
@@ -105,7 +105,7 @@ export type AppEnv = RouterEnv<AppBindings, AppVariables>;
 // router.tsx
 import type { AppEnv } from "./env";
 
-const router = createRSCRouter<AppEnv>({
+const router = createRouter<AppEnv>({
   document: Document,
   urls: urlpatterns,
 });
@@ -265,7 +265,7 @@ export const urlpatterns = urls(({ path, layout, loader }) => [
 ]);
 
 // 3. router.tsx - Registration
-const router = createRSCRouter<AppEnv>({
+const router = createRouter<AppEnv>({
   document: Document,
   urls: urlpatterns,
 });

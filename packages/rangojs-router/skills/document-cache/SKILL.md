@@ -13,11 +13,11 @@ Caches complete HTTP responses (HTML/RSC) at the edge based on Cache-Control hea
 Configure document cache in router:
 
 ```typescript
-import { createRSCRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router/server";
 import { CFCacheStore } from "@rangojs/router/cache/cf";
 import { urlpatterns } from "./urls";
 
-const router = createRSCRouter<AppEnv>({
+const router = createRouter<AppEnv>({
   document: Document,
   urls: urlpatterns,
   documentCache: (env) => ({
@@ -56,7 +56,7 @@ export const urlpatterns = urls(({ path, cache }) => [
 ## Document Cache Options
 
 ```typescript
-createRSCRouter({
+createRouter({
   // ...
   documentCache: (env) => ({
     // Cache store (required)
@@ -131,11 +131,11 @@ Segment hash ensures different cached responses for navigations from different s
 
 ```typescript
 // router.tsx
-import { createRSCRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router/server";
 import { CFCacheStore } from "@rangojs/router/cache/cf";
 import { urlpatterns } from "./urls";
 
-const router = createRSCRouter<AppEnv>({
+const router = createRouter<AppEnv>({
   document: Document,
   urls: urlpatterns,
   documentCache: (env) => ({

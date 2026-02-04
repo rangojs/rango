@@ -313,6 +313,29 @@ export interface RSCRouterOptions<TEnv = any> {
    * Use `theme: true` to enable with all defaults.
    */
   theme?: import("./theme/types.js").ThemeConfig | true;
+
+  /**
+   * URL patterns to register with the router.
+   *
+   * Alternative to calling `.routes()` method - allows passing patterns
+   * directly in the config for a more concise setup.
+   *
+   * @example
+   * ```typescript
+   * import { urls } from "@rangojs/router/server";
+   *
+   * const urlpatterns = urls(({ path, layout }) => [
+   *   path("/", HomePage, { name: "home" }),
+   *   path("/about", AboutPage, { name: "about" }),
+   * ]);
+   *
+   * const router = createRouter<AppEnv>({
+   *   document: Document,
+   *   urls: urlpatterns,
+   * });
+   * ```
+   */
+  urls?: UrlPatterns<TEnv, any>;
 }
 
 /**
@@ -780,6 +803,7 @@ export function createRouter<TEnv = any>(
     onError,
     cache,
     theme: themeOption,
+    urls: urlsOption,
   } = options;
 
   // Resolve theme config (null if theme not enabled)
@@ -3965,6 +3989,11 @@ export function createRouter<TEnv = any>(
       return serializeManifest(manifest);
     },
   };
+
+  // If urls option was provided, auto-register them
+  if (urlsOption) {
+    return router.routes(urlsOption) as RSCRouter<TEnv, {}>;
+  }
 
   return router;
 }
