@@ -171,7 +171,7 @@ export const authPlugin = definePlugin({
 });
 
 // Main app
-const router = createRSCRouter()
+const router = createRouter()
   .use(authPlugin)  // Adds routes + handlers
   .routes(appRoutes)
   .map(appHandlers);
@@ -182,7 +182,7 @@ const router = createRSCRouter()
 **Goal:** Include/exclude routes based on config
 
 ```typescript
-const router = createRSCRouter()
+const router = createRouter()
   .routes(baseRoutes)
   .map(baseHandlers)
   .when(config.enableBeta, (r) =>
@@ -340,7 +340,7 @@ const adminHandlers = map<typeof adminRoutes>(({ route }) => [
 ]);
 
 // Compose maps
-const router = createRSCRouter()
+const router = createRouter()
   .mount("/", shopRoutes, shopHandlers)
   .mount("/admin", adminRoutes, adminHandlers, {
     middleware: [adminAuthMiddleware],  // Applies to all admin routes

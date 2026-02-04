@@ -1,6 +1,6 @@
-import type { MiddlewareFn } from "@rangojs/router/server";
+import type { Middleware } from "@rangojs/router/server";
 
-export const permissionsMiddleware: MiddlewareFn[] = [
+export const permissionsMiddleware: Middleware[] = [
   (ctx, next) => {
     console.log("[Shop Middleware] Checking order view permissions");
     const user = ctx.get("user"); // Type-safe!

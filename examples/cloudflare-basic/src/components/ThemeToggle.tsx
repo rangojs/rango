@@ -1,6 +1,6 @@
 "use client";
 
-import { useTheme } from "@rangojs/router/theme";
+import { useTheme, type Theme } from "@rangojs/router/theme";
 
 export function ThemeToggle() {
   const { theme, setTheme, resolvedTheme, themes } = useTheme();
@@ -17,7 +17,7 @@ export function ThemeToggle() {
         {themes.map((t) => (
           <button
             key={t}
-            onClick={() => setTheme(t)}
+            onClick={() => setTheme(t as Theme)}
             className={theme === t ? "active" : ""}
           >
             {t}

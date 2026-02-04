@@ -9,6 +9,8 @@ import { invariant } from "../errors";
 
 /**
  * Performance metric entry for a single measured operation
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export interface PerformanceMetric {
   label: string;      // e.g., "route-matching", "loader:UserLoader"
@@ -18,6 +20,8 @@ export interface PerformanceMetric {
 
 /**
  * Request-scoped metrics store
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export interface MetricsStore {
   enabled: boolean;
@@ -32,6 +36,8 @@ export interface MetricsStore {
  * Cache configuration for an entry
  * When set, this entry and its children will use this cache config
  * unless overridden by a nested cache() call.
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export type EntryCacheConfig = {
   /** Cache options (false means caching disabled for this entry) - ttl is optional, uses defaults */
@@ -40,6 +46,8 @@ export type EntryCacheConfig = {
 
 /**
  * Entry data structure for manifest
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export type EntryPropCommon = {
   id: string;
@@ -48,15 +56,22 @@ export type EntryPropCommon = {
   /** Cache configuration for this entry (set by cache() DSL) */
   cache?: EntryCacheConfig;
 };
+
+/**
+ * @internal This type is an implementation detail and may change without notice.
+ */
 export type EntryPropDatas = {
   middleware: MiddlewareFn<any, any>[];
   revalidate: ShouldRevalidateFn<any, any>[];
   errorBoundary: (ReactNode | ErrorBoundaryHandler)[];
   notFoundBoundary: (ReactNode | NotFoundBoundaryHandler)[];
 };
+
 /**
  * Loader entry stored in EntryData
  * Contains the loader definition and its revalidation rules
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export type LoaderEntry = {
   loader: LoaderDefinition<any>;
@@ -68,6 +83,8 @@ export type LoaderEntry = {
 /**
  * Segments state for intercept context
  * Matches the structure from useSegments() for consistency
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export type InterceptSegmentsState = {
   /** URL path segments (e.g., /shop/products/123 → ["shop", "products", "123"]) */
@@ -82,6 +99,8 @@ export type InterceptSegmentsState = {
  *
  * Note: when() is evaluated during route matching, BEFORE middleware runs.
  * So ctx.get()/ctx.use() are not available, but env (platform bindings) is.
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export type InterceptSelectorContext<TEnv = any> = {
   from: URL;                              // Source URL (where user is coming from)
@@ -95,12 +114,16 @@ export type InterceptSelectorContext<TEnv = any> = {
 /**
  * Selector function for conditional interception
  * Returns true to intercept, false to skip and fall through to route handler
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export type InterceptWhenFn<TEnv = any> = (ctx: InterceptSelectorContext<TEnv>) => boolean;
 
 /**
  * Intercept entry stored in EntryData
  * Contains the slot name, route to intercept, and handler
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export type InterceptEntry = {
   slotName: `@${string}`;  // e.g., "@modal"

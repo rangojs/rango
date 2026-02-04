@@ -1,4 +1,4 @@
-import type { MiddlewareFn, GenericParams, HandlerContext, ShouldRevalidateFn, RevalidateParams } from "@rangojs/router";
+import type { Middleware, HandlerContext, Revalidate, RevalidateParams } from "@rangojs/router";
 import { Outlet, ParallelOutlet, Link } from "@rangojs/router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { SegmentTimer } from "../components/SegmentTimer.js";
@@ -199,7 +199,7 @@ export function BlogPostPage(ctx: HandlerContext<{ slug: string }>) {
 }
 
 // Logger middleware
-export const blogLoggerMiddleware: MiddlewareFn<RSCRouter.Env, GenericParams>[] = [
+export const blogLoggerMiddleware: Middleware[] = [
   (_ctx, next) => {
     console.log("Blog route accessed");
     next();
@@ -207,7 +207,7 @@ export const blogLoggerMiddleware: MiddlewareFn<RSCRouter.Env, GenericParams>[] 
 ];
 
 // Post revalidation
-export const postRevalidation: ShouldRevalidateFn<{ slug: string }, RSCRouter.Env> = ({
+export const postRevalidation: Revalidate<{ slug: string }, RSCRouter.Env> = ({
   currentParams,
   nextParams,
   defaultShouldRevalidate,

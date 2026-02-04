@@ -1,12 +1,13 @@
 {
-  "name": "rsc-router-e2e-test-app",
+  "name": "rangojs-router-e2e-test-app",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "react": "catalog:",

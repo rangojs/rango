@@ -14,7 +14,7 @@
     "src"
   ],
   "scripts": {
-    "type-check": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
@@ -29,7 +29,7 @@
     "lint:fix": "eslint src --ext .ts --fix",
     "format": "prettier --write \"src/**/*.{ts,json,md}\"",
     "format:check": "prettier --check \"src/**/*.{ts,json,md}\"",
-    "quality": "pnpm type-check && pnpm lint && pnpm format:check && pnpm test:all"
+    "quality": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test:all"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

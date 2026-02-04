@@ -10,6 +10,7 @@ import type { EntryData } from "../server/context";
 import type {
   ResolvedSegment,
   HandlerContext,
+  InternalHandlerContext,
   LoaderDefinition,
   LoaderContext,
   LoaderDataResult,
@@ -145,7 +146,7 @@ export function setupLoaderAccess<TEnv>(
     if (isHandle(item)) {
       const handle = item;
       const store = getHandleStore();
-      const segmentId = ctx._currentSegmentId;
+      const segmentId = (ctx as InternalHandlerContext)._currentSegmentId;
 
       if (!segmentId) {
         throw new Error(

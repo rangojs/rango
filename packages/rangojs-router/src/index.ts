@@ -3,7 +3,7 @@
  *
  * Universal exports - types and utilities safe for both server and client
  *
- * For server-only exports (route, map, createRSCRouter, etc.):
+ * For server-only exports (urls, createRouter, createLoader, etc.):
  *   import from "rsc-router/server"
  *
  * For client-only exports (Outlet, useOutlet, etc.):
@@ -29,30 +29,26 @@ export {
 
 // Types (safe to import anywhere - no runtime code)
 export type {
+  // Configuration types
   DocumentProps,
   RouterEnv,
   DefaultEnv,
   RouteDefinition,
-  ResolvedRouteMap,
-  Handler,
+  // Handler types
+  Handler,            // Supports params object, path pattern, or route name
   HandlerContext,
-  HandlersForRouteMap,
-  ResolvedSegment,
-  SegmentMetadata,
-  MatchResult,
   ExtractParams,
   GenericParams,
+  // Middleware types
+  Middleware,
+  // Revalidation types
   RevalidateParams,
-  ShouldRevalidateFn,
-  MiddlewareFn,
+  Revalidate,
   RouteKeys,
-  RouteHandler,
-  RouteRevalidateFn,
-  RouteMiddlewareFn,
+  // Loader types
   LoaderDefinition,
   LoaderFn,
   LoaderContext,
-  // Fetchable loader types
   FetchableLoaderOptions,
   LoadOptions,
   LoaderActionContext,
@@ -69,19 +65,32 @@ export type {
   NotFoundBoundaryHandler,
 } from "./types.js";
 
-// Router options type
-export type { RSCRouterOptions } from "./router.js";
-
-// Metrics types
-export type { PerformanceMetric, MetricsStore } from "./server/context.js";
-
 // Client-safe createLoader - only stores the $$id, function is not included
 // Use this when defining loaders that will be imported by client components
 export { createLoader } from "./loader.js";
 
-// Route pattern definition helper
-// Used to define route patterns in a shared routes.ts file
-export { route } from "./route-utils.js";
+/**
+ * Error-throwing stub for server-only `urls` function.
+ * Import from "@rangojs/router/server" or use within RSC context instead.
+ */
+export function urls(): never {
+  throw new Error(
+    'urls() is server-only. Import from "@rangojs/router/server" instead, or ensure you\'re using it in a server component.'
+  );
+}
 
-// Django-style URL patterns API - types only (urls() is in /server)
-export type { UrlPatterns, PathHelpers } from "./urls.js";
+/**
+ * Error-throwing stub for server-only `createRouter` function.
+ * Import from "@rangojs/router/server" instead.
+ */
+export function createRouter(): never {
+  throw new Error(
+    'createRouter() is server-only. Import from "@rangojs/router/server" instead.'
+  );
+}
+
+// Href type utilities for type-safe URL generation
+// ScopedHrefFunction is used with useHref<typeof patterns>() for composable modules
+export type { ScopedHrefFunction, HrefFunction, ExtractLocalRoutes } from "./href.js";
+// scopedHref() helper for handlers to get locally-typed href
+export { scopedHref } from "./href.js";

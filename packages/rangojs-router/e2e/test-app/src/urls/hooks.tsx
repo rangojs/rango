@@ -236,14 +236,15 @@ export const hooksPatterns = urls(({ path, loader }) => [
     "/inline-action",
     () => {
       // Inline action defined directly in the RSC component
-      async function inlineTestAction(formData: FormData) {
+      async function inlineTestAction(formData: FormData): Promise<void> {
         "use server";
         const value = formData.get("testValue") as string;
-        return {
+        // Process the action (return value not used when passed directly to form action)
+        console.log({
           success: true,
           receivedValue: value,
           timestamp: new Date().toISOString(),
-        };
+        });
       }
 
       return (

@@ -1,4 +1,4 @@
-import { createRSCRouter, type RouterEnv } from "@rangojs/router/server";
+import { createRouter, type RouterEnv } from "@rangojs/router/server";
 import { urlpatterns } from "./urls.js";
 
 /**
@@ -20,7 +20,7 @@ declare global {
  * - All route composition via include() in urlpatterns
  * - Route names are defined inline with path()
  */
-export const router = createRSCRouter<AppEnv>({})
+export const router = createRouter<AppEnv>({})
   .routes(urlpatterns);
 
 // Type declaration for route map

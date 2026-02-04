@@ -28,12 +28,12 @@
  * ```
  */
 
-import { createHandle, type Handle } from "../handle.ts";
+import { createHandle, type Handle } from "../handle.js";
 import type {
   MetaDescriptor,
   TitleDescriptor,
   UnsetDescriptor,
-} from "../router/types.ts";
+} from "../router/types.js";
 
 /**
  * Type guard for unset descriptor

@@ -24,45 +24,48 @@ export {
   NetworkError,
   isNetworkError,
   sanitizeError,
-  // Route pattern definition
-  route,
 } from "./index.js";
 
-// Re-export all types from index.ts
+// Re-export all types from types.ts (user-facing types only)
 export type {
+  // Configuration types
+  DocumentProps,
   RouterEnv,
   DefaultEnv,
   RouteDefinition,
-  ResolvedRouteMap,
+  // Handler types
   Handler,
   HandlerContext,
-  HandlersForRouteMap,
-  ResolvedSegment,
-  SegmentMetadata,
-  MatchResult,
   ExtractParams,
   GenericParams,
+  // Middleware types
+  Middleware,
+  // Revalidation types
   RevalidateParams,
-  ShouldRevalidateFn,
-  MiddlewareFn,
+  Revalidate,
   RouteKeys,
-  RouteHandler,
-  RouteRevalidateFn,
-  RouteMiddlewareFn,
+  // Loader types
   LoaderDefinition,
   LoaderFn,
   LoaderContext,
+  FetchableLoaderOptions,
+  LoadOptions,
+  LoaderActionContext,
+  LoaderAction,
+  LoaderMiddlewareFn,
+  // Error boundary types
   ErrorInfo,
   ErrorBoundaryFallbackProps,
   ErrorBoundaryHandler,
   ClientErrorBoundaryFallbackProps,
+  // NotFound boundary types
   NotFoundInfo,
   NotFoundBoundaryFallbackProps,
   NotFoundBoundaryHandler,
-  RSCRouterOptions,
-  PerformanceMetric,
-  MetricsStore,
-} from "./index.js";
+} from "./types.js";
+
+// Router options type (server-only, so import directly)
+export type { RSCRouterOptions } from "./router.js";
 
 // Server-side createLoader - includes the actual loader function
 // This is the key addition for RSC context
@@ -77,3 +80,21 @@ export {
   type IncludeOptions,
   type IncludeItem,
 } from "./urls.js";
+
+// Core router (server-side)
+export {
+  createRouter,
+  type RSCRouter,
+  type RootLayoutProps,
+} from "./router.js";
+
+// RSC handler (server-side)
+export { createRSCHandler } from "./rsc/handler.js";
+export type { CreateRSCHandlerOptions, HandlerCacheConfig } from "./rsc/types.js";
+
+// Built-in handles (server-side)
+export { Meta } from "./handles/meta.js";
+
+// Href type utilities for type-safe URL generation
+export type { ScopedHrefFunction, HrefFunction, ExtractLocalRoutes } from "./href.js";
+export { scopedHref } from "./href.js";

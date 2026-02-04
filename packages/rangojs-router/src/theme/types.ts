@@ -30,7 +30,7 @@ export type ThemeAttribute = "class" | `data-${string}`;
  *
  * @example
  * ```typescript
- * const router = createRSCRouter<Env>({
+ * const router = createRouter<Env>({
  *   theme: {
  *     defaultTheme: "system",
  *     themes: ["light", "dark"],

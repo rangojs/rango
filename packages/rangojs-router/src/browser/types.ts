@@ -19,11 +19,15 @@ export interface RscPayload<TMetadata = RscMetadata> {
 
 /**
  * Handle data structure: handleName -> segmentId -> entries[]
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export type HandleData = Record<string, Record<string, unknown[]>>;
 
 /**
  * Metadata included in RSC responses
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export interface RscMetadata {
   pathname: string;
@@ -73,6 +77,8 @@ export interface RscMetadata {
 
 /**
  * Result from server action execution
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export interface ActionResult {
   ok: boolean;
@@ -91,6 +97,8 @@ export type NavigationLocation = URL;
 
 /**
  * Inflight server action being tracked
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export interface InflightAction {
   /** Unique identifier for this action invocation */
@@ -105,6 +113,8 @@ export interface InflightAction {
 
 /**
  * Internal navigation state (includes inflight actions for store use)
+ *
+ * @internal This type is an implementation detail. Use PublicNavigationState instead.
  */
 export interface NavigationState {
   /** Navigation lifecycle state (idle or loading during navigation) */
@@ -141,6 +151,8 @@ export type ActionLifecycleState = "idle" | "loading" | "streaming";
 /**
  * State for a tracked server action
  * Used by useAction hook to observe action lifecycle
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export interface TrackedActionState {
   /** Current lifecycle state of the action */
@@ -161,12 +173,16 @@ export interface TrackedActionState {
 
 /**
  * Listener for action state changes
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export type ActionStateListener = (state: TrackedActionState) => void;
 
 /**
  * Cache interface for storing segments
  * Compatible with both Map and LRUCache
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export interface SegmentCache {
   get(key: string): ResolvedSegment | undefined;
@@ -179,6 +195,8 @@ export interface SegmentCache {
 
 /**
  * Internal segment state managed by the store
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export interface SegmentState {
   path: string;
@@ -188,6 +206,8 @@ export interface SegmentState {
 
 /**
  * Navigation update emitted when UI should re-render
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export interface NavigationUpdate {
   root: ReactNode | Promise<ReactNode>;

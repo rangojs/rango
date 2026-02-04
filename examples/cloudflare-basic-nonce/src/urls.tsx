@@ -1,6 +1,6 @@
 import { urls } from "@rangojs/router";
-import type { HandlerContext } from "@rangojs/router";
 import { Meta } from "@rangojs/router/server";
+import type { HandlerContext } from "@rangojs/router";
 import { Counter } from "./components/Counter.js";
 import { getCounter } from "./actions/counter.js";
 

@@ -2,7 +2,7 @@
  * Router Context using AsyncLocalStorage
  *
  * Provides clean dependency injection for router middleware without parameter drilling.
- * All closure functions from createRSCRouter() are made available via getRouterContext().
+ * All closure functions from createRouter() are made available via getRouterContext().
  */
 import { AsyncLocalStorage } from "async_hooks";
 import type { CacheScope } from "../cache/cache-scope.js";
@@ -49,7 +49,7 @@ export interface InterceptResult {
 /**
  * Router context available via AsyncLocalStorage
  *
- * Contains closure functions from createRSCRouter() that middleware needs access to.
+ * Contains closure functions from createRouter() that middleware needs access to.
  * Instead of passing 20+ parameters, middleware calls getRouterContext() to access them.
  */
 export interface RouterContext<TEnv = any> {
@@ -75,7 +75,9 @@ export interface RouterContext<TEnv = any> {
     searchParams: URLSearchParams,
     pathname: string,
     url: URL,
-    env: TEnv
+    bindings?: any,
+    routeMap?: Record<string, string>,
+    routeName?: string
   ) => HandlerContext<any, TEnv>;
 
   // Loader setup

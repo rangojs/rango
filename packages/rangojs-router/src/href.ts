@@ -8,7 +8,7 @@ export type SanitizePrefix<T extends string> = T extends `/${infer P}` ? P : T;
 
 /**
  * Helper type to merge multiple route definitions into a single accumulated type.
- * Note: When using createRSCRouter, types accumulate automatically through the
+ * Note: When using createRouter, types accumulate automatically through the
  * builder chain, so this type is typically not needed.
  *
  * @example
@@ -20,15 +20,15 @@ export type SanitizePrefix<T extends string> = T extends `/${infer P}` ? P : T;
  * ]>;
  *
  * // Preferred: Let router accumulate types automatically
- * const router = createRSCRouter<AppEnv>()
+ * const router = createRouter<AppEnv>()
  *   .routes(homeRoutes).map(...)
  *   .routes("/blog", blogRoutes).map(...);
  * type AppRoutes = typeof router.routeMap;
  * ```
  */
-export type MergeRoutes<T extends Record<string, string>[]> = T extends [
-  infer First extends Record<string, string>,
-  ...infer Rest extends Record<string, string>[]
+export type MergeRoutes<T extends unknown[]> = T extends [
+  infer First,
+  ...infer Rest
 ]
   ? First & MergeRoutes<Rest>
   : {};
@@ -38,7 +38,7 @@ export type MergeRoutes<T extends Record<string, string>[]> = T extends [
  * { "cart": "/cart" } with prefix "shop" -> { "shop.cart": "/shop/cart" }
  */
 export type PrefixRouteKeys<
-  T extends Record<string, string>,
+  T,
   Prefix extends string
 > = Prefix extends ""
   ? T
@@ -49,14 +49,16 @@ export type PrefixRouteKeys<
  * { "cart": "/cart" } with prefix "/shop" -> { "cart": "/shop/cart" }
  */
 export type PrefixRoutePatterns<
-  T extends Record<string, string>,
+  T,
   PathPrefix extends string
 > = {
   [K in keyof T]: PathPrefix extends "" | "/"
     ? T[K]
     : T[K] extends "/"
       ? PathPrefix
-      : `${PathPrefix}${T[K]}`;
+      : T[K] extends string
+        ? `${PathPrefix}${T[K]}`
+        : T[K];
 };
 
 /**
@@ -71,18 +73,25 @@ export type PrefixRoutePatterns<
  * ```
  */
 export type PrefixedRoutes<
-  T extends Record<string, string>,
+  T,
   KeyPrefix extends string,
   PathPrefix extends string = KeyPrefix extends "" ? "" : `/${KeyPrefix}`
 > = PrefixRouteKeys<PrefixRoutePatterns<T, PathPrefix>, KeyPrefix>;
 
 /**
+ * Helper to safely extract route patterns from a routes object
+ * Handles both Record<string, string> and interface types (like RegisteredRoutes)
+ */
+type RoutePatternFor<TRoutes, TName extends keyof TRoutes> =
+  TRoutes[TName] extends string ? TRoutes[TName] : string;
+
+/**
  * Extract params type for a route
  */
 export type ParamsFor<
-  TRoutes extends Record<string, string>,
+  TRoutes,
   TName extends keyof TRoutes
-> = TRoutes[TName] extends string ? ExtractParams<TRoutes[TName]> : never;
+> = ExtractParams<RoutePatternFor<TRoutes, TName>>;
 
 /**
  * Check if an object type has any keys
@@ -91,54 +100,123 @@ type IsEmptyObject<T> = keyof T extends never ? true : false;
 
 /**
  * Type-safe href function signature
- * Provides overloads for routes with and without params
+ *
+ * Validates route names and params at compile time.
+ * Use route names instead of raw paths for full type safety.
+ *
+ * @example
+ * ```typescript
+ * href("cart")                           // ✓ Validates route exists
+ * href("product.detail", { id: "123" })  // ✓ Validates route + params
+ * ```
  */
-export type HrefFunction<TRoutes extends Record<string, string>> = {
-  // Overload 1: Routes without params - second arg optional
+export type HrefFunction<TRoutes> = {
+  /**
+   * Route without params - validates route name exists
+   */
   <TName extends keyof TRoutes & string>(
-    name: IsEmptyObject<ParamsFor<TRoutes, TName>> extends true ? TName : never
+    name: IsEmptyObject<ExtractParams<RoutePatternFor<TRoutes, TName>>> extends true ? TName : never
   ): string;
 
-  // Overload 2: Routes with params - params required
+  /**
+   * Route with params - validates both route name and params
+   */
   <TName extends keyof TRoutes & string>(
     name: TName,
-    params: ParamsFor<TRoutes, TName>
+    params: ExtractParams<RoutePatternFor<TRoutes, TName>>
   ): string;
 };
 
 /**
  * Type-safe scoped href function signature for use with useHref<typeof patterns>()
- * Accepts local route names (from the patterns), absolute names (with dot), or path-based URLs.
+ *
+ * **Recommended: Use route names for type safety.**
+ * Route names validate both the route exists and params are correct.
+ * Path-based URLs (`/...`) are an escape hatch with no validation.
  *
  * @example
  * ```typescript
- * // In a component rendered by blog routes:
- * const href = useHref<typeof blogPatterns>();
+ * // RECOMMENDED: Use route names for type safety
+ * href("blog.post", { slug: "hello" })  // ✓ Validates route + params
+ * href("shop.cart")                      // ✓ Validates route exists
  *
- * href("index")                    // Local name → resolved with current prefix
- * href("post", { slug: "hello" })  // Local name with params
- * href("shop.cart")                // Absolute name → global lookup
- * href("/about")                   // Path-based → used directly
+ * // ESCAPE HATCH: Path-based URLs (no validation)
+ * href("/about")                         // ⚠ No type checking
+ * href("/typo/in/path")                  // ⚠ Won't catch errors
  * ```
  */
-export type ScopedHrefFunction<TLocalRoutes extends Record<string, string>> = {
-  // Overload 1: Local routes without params
+export type ScopedHrefFunction<TLocalRoutes> = {
+  /**
+   * Route without params - validates route name exists
+   * @recommended Use this for type-safe URL generation
+   */
   <TName extends keyof TLocalRoutes & string>(
-    name: IsEmptyObject<ParamsFor<TLocalRoutes, TName>> extends true ? TName : never
+    name: IsEmptyObject<ExtractParams<RoutePatternFor<TLocalRoutes, TName>>> extends true ? TName : never
   ): string;
 
-  // Overload 2: Local routes with params
+  /**
+   * Route with params - validates both route name and params
+   * @recommended Use this for type-safe URL generation with parameters
+   */
   <TName extends keyof TLocalRoutes & string>(
     name: TName,
-    params: ParamsFor<TLocalRoutes, TName>
+    params: ExtractParams<RoutePatternFor<TLocalRoutes, TName>>
   ): string;
 
-  // Overload 3: Absolute name (contains dot) - global lookup
+  /**
+   * Absolute route name (contains dot) - global lookup
+   * Use for cross-module navigation: "shop.cart", "blog.post"
+   */
   (name: `${string}.${string}`, params?: Record<string, string>): string;
 
-  // Overload 4: Path-based URL - used directly
+  /**
+   * Path-based URL - ESCAPE HATCH, no type validation
+   * Prefer route names for type safety. Only use paths when necessary.
+   */
   (name: `/${string}`, params?: Record<string, string>): string;
 };
+
+/**
+ * Extract local routes type from UrlPatterns
+ * Used with scopedHref() to get the routes type from patterns
+ */
+export type ExtractLocalRoutes<TPatterns> =
+  TPatterns extends { readonly _routes?: infer TRoutes } ? TRoutes : Record<string, string>;
+
+/**
+ * Get a locally-typed href function from ctx.href for composable modules.
+ *
+ * This is a type-only cast - ctx.href already resolves local names at runtime
+ * based on the current route prefix. This helper just provides type safety
+ * for local route names within a url module.
+ *
+ * @param href - The ctx.href function from HandlerContext
+ * @returns The same href function, but typed for local routes
+ *
+ * @example
+ * ```typescript
+ * // urls/blog.tsx
+ * export const blogPatterns = urls(({ path }) => [
+ *   path("/", (ctx) => {
+ *     // Get locally-typed href for this module's routes
+ *     const href = scopedHref<typeof blogPatterns>(ctx.href);
+ *
+ *     href("index");              // ✓ Type-safe local route
+ *     href("post", { slug: "x" }); // ✓ Type-safe with params
+ *     href("shop.cart");          // ✓ Cross-module (absolute name)
+ *
+ *     return <BlogIndex />;
+ *   }, { name: "index" }),
+ *
+ *   path("/:slug", BlogPost, { name: "post" }),
+ * ]);
+ * ```
+ */
+export function scopedHref<TPatterns>(
+  href: (name: string, params?: Record<string, string>) => string
+): ScopedHrefFunction<ExtractLocalRoutes<TPatterns>> {
+  return href as ScopedHrefFunction<ExtractLocalRoutes<TPatterns>>;
+}
 
 /**
  * Create a type-safe href function for URL generation
@@ -156,7 +234,7 @@ export type ScopedHrefFunction<TLocalRoutes extends Record<string, string>> = {
  */
 export function createHref<TRoutes extends Record<string, string>>(
   routeMap: TRoutes
-): HrefFunction<TRoutes> {
+): HrefFunction<TRoutes & Record<string, string>> {
   return ((name: string, params?: Record<string, string>) => {
     const pattern = routeMap[name];
     if (!pattern) {

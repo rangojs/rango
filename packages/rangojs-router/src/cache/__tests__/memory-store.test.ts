@@ -227,8 +227,8 @@ describe("MemoryCacheStore", () => {
       const stringResult = await store.match("string");
       const objectResult = await store.match("object");
 
-      expect(stringResult!.metadata.valueType).toBe("string");
-      expect(objectResult!.metadata.valueType).toBe("object");
+      expect(stringResult!.metadata!.valueType).toBe("string");
+      expect(objectResult!.metadata!.valueType).toBe("object");
     });
 
     it("should store custom metadata", async () => {
@@ -248,7 +248,7 @@ describe("MemoryCacheStore", () => {
       await store.put("key", "value", { ttl: 60 });
 
       const result = await store.match("key");
-      expect(result!.metadata.expiresAt).toBe(
+      expect(result!.metadata!.expiresAt).toBe(
         new Date("2024-01-01T00:00:00Z").getTime() + 60 * 1000
       );
     });
@@ -262,9 +262,9 @@ describe("MemoryCacheStore", () => {
       await store.put("key", response);
 
       const result = await store.match("key");
-      expect(result!.metadata.valueType).toBe("response");
-      expect(result!.metadata.responseStatus).toBe(404);
-      expect(result!.metadata.responseHeaders!["x-test"]).toBe("value");
+      expect(result!.metadata!.valueType).toBe("response");
+      expect(result!.metadata!.responseStatus).toBe(404);
+      expect(result!.metadata!.responseHeaders!["x-test"]).toBe("value");
     });
   });
 

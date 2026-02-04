@@ -1,6 +1,6 @@
 "use client";
 
-import { useTheme } from "@rangojs/router/theme";
+import { useTheme, type Theme } from "@rangojs/router/theme";
 
 interface ThemeToggleProps {
   testId: string;
@@ -28,7 +28,7 @@ export function ThemeToggle({ testId }: ThemeToggleProps) {
         {themes.map((t) => (
           <button
             key={t}
-            onClick={() => setTheme(t)}
+            onClick={() => setTheme(t as Theme)}
             data-testid={`${testId}-set-${t}`}
             style={{
               padding: "8px 16px",

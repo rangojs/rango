@@ -9,14 +9,14 @@
  * - MetaTags to check if theme is enabled and render script
  */
 
-import { createContext, useContext } from "react";
+import { createContext, useContext, type Context } from "react";
 import type { ResolvedThemeConfig, ThemeContextValue } from "./types.js";
 
 /**
  * React context for theme state
  * null when theme is not enabled in router config
  */
-export const ThemeContext = createContext<ThemeContextValue | null>(null);
+export const ThemeContext: Context<ThemeContextValue | null> = createContext<ThemeContextValue | null>(null);
 
 /**
  * SSR module-level state for theme config.
@@ -63,7 +63,7 @@ export function requireThemeContext(): ThemeContextValue {
     throw new Error(
       "useTheme must be used within a ThemeProvider. " +
         "Make sure theme is enabled in your router config: " +
-        "createRSCRouter({ theme: { ... } })"
+        "createRouter({ theme: { ... } })"
     );
   }
   return ctx;

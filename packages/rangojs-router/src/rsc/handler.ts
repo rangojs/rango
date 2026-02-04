@@ -224,6 +224,14 @@ export function createRSCHandler<
       return new Response(null, { status: 404 });
     }
 
+    // Debug endpoint - only in development
+    if (url.pathname === "/__debug_manifest" && process.env.NODE_ENV !== "production") {
+      const manifest = await router.debugManifest();
+      return new Response(JSON.stringify(manifest, null, 2), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
     const isPartial = url.searchParams.has("_rsc_partial");
     const isAction =
       request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");

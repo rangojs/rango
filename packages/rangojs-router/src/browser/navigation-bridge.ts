@@ -495,6 +495,19 @@ export function createNavigationBridge(
         eventController.abortNavigation();
       }
 
+      // Check if we're "leaving intercept" - navigating from intercept to same URL without intercept
+      // This happens when clicking "View Full Details" in an intercept modal
+      const currentHistoryState = window.history.state;
+      const isCurrentlyIntercept = currentHistoryState?.intercept === true;
+      const isSamePathNavigation = currentPath === targetPath;
+      const isLeavingIntercept = isCurrentlyIntercept && isSamePathNavigation;
+
+      if (isLeavingIntercept) {
+        console.log(`[Browser] Leaving intercept - same URL navigation from intercept`);
+        // Clear intercept source URL to ensure server doesn't treat this as intercept
+        store.setInterceptSourceUrl(null);
+      }
+
       // Before navigating away, update the source page's cache with the latest handleData.
       // This ensures the cache has correct handleData even if handles were streaming.
       const sourceHistoryKey = store.getHistoryKey();
@@ -537,11 +550,13 @@ export function createNavigationBridge(
       // Skip optimistic rendering for:
       // 1. intercept caches - interception depends on source page context
       // 2. routes that CAN be intercepted - we don't know if this navigation will intercept
+      // 3. when leaving intercept - we need fresh non-intercept segments from server
       const hasUsableCache =
         cachedSegments &&
         cachedSegments.length > 0 &&
         !isInterceptOnlyCache(cachedSegments) &&
-        !hasInterceptCache;
+        !hasInterceptCache &&
+        !isLeavingIntercept;
 
       using tx = createNavigationTransaction(store, eventController, url, {
         ...options,
@@ -567,7 +582,12 @@ export function createNavigationBridge(
           // Server decides what needs revalidation based on route matching and custom functions.
           // No need for staleRevalidation flag - we're sending the freshest segments we have.
           // Also pass cached handle data for restoring breadcrumbs when server returns empty diff.
-          hasUsableCache ? { targetCacheSegments: cachedSegments, targetCacheHandleData: cachedHandleData } : undefined
+          // When leaving intercept, pass the flag so fetchPartialUpdate knows to filter segments.
+          hasUsableCache
+            ? { targetCacheSegments: cachedSegments, targetCacheHandleData: cachedHandleData }
+            : isLeavingIntercept
+              ? { leavingIntercept: true }
+              : undefined
         );
       } catch (error) {
         // Ignore AbortError - navigation was cancelled by a newer navigation

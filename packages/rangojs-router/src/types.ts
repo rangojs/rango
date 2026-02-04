@@ -3,6 +3,9 @@ import type { AllUseItems } from "./route-types.js";
 import type { Handle } from "./handle.js";
 import type { MiddlewareFn } from "./router/middleware.js";
 import type { Theme } from "./theme/types.js";
+import type { ScopedHrefFunction } from "./href.js";
+
+// Re-export MiddlewareFn for internal/advanced use
 export type { MiddlewareFn } from "./router/middleware.js";
 
 /**
@@ -84,7 +87,7 @@ export type DefaultEnv = keyof RSCRouter.Env extends never ? any : RSCRouter.Env
  * }
  *
  * type AppEnv = RouterEnv<AppBindings, AppVariables>;
- * const router = createRSCRouter<AppEnv>();
+ * const router = createRouter<AppEnv>();
  * ```
  */
 export interface RouterEnv<TBindings = {}, TVariables = {}> {
@@ -134,17 +137,12 @@ type ParamFromInfo<Info> =
       : never;
 
 /**
- * Merge two param objects
+ * Merge two param objects preserving optionality
+ * Uses Pick to preserve the modifiers from source types
  */
-type MergeParams<A, B> = {
-  [K in keyof A | keyof B]: K extends keyof A
-    ? K extends keyof B
-      ? A[K] | B[K]
-      : A[K]
-    : K extends keyof B
-      ? B[K]
-      : never;
-};
+type MergeParams<A, B> = Pick<A, keyof A> & Pick<B, keyof B> extends infer O
+  ? { [K in keyof O]: O[K] }
+  : never;
 
 /**
  * Extract route params from a pattern with depth limit to prevent infinite recursion
@@ -243,11 +241,27 @@ type UnionToIntersection<U> = (
 export type ResolvedRouteMap<T extends RouteDefinition> = UnionToIntersection<FlattenRoutes<T>>;
 
 /**
- * Handler function that receives context and returns React content
+ * Handler function that receives context and returns React content or a Response
+ *
+ * @template T - Params object OR path pattern string
+ * @template TEnv - Environment type
+ *
+ * @example
+ * ```typescript
+ * // With explicit params object
+ * const handler: Handler<{ id: string }> = (ctx) => {
+ *   ctx.params.id // string
+ * }
+ *
+ * // With path pattern - params extracted automatically
+ * const handler: Handler<"/product/:id"> = (ctx) => {
+ *   ctx.params.id // string
+ * }
+ * ```
  */
-export type Handler<TParams = {}, TEnv = any> = (
-  ctx: HandlerContext<TParams, TEnv>
-) => ReactNode | Promise<ReactNode>;
+export type Handler<T = {}, TEnv = DefaultEnv> = (
+  ctx: HandlerContext<T extends string ? ExtractParams<T> : T, TEnv>
+) => ReactNode | Promise<ReactNode> | Response | Promise<Response>;
 
 /**
  * Context passed to handlers (Hono-inspired type-safe context)
@@ -259,8 +273,8 @@ export type Handler<TParams = {}, TEnv = any> = (
  * - Middleware variables (var.user, var.permissions)
  * - Getter/setter for variables (get('user'), set('user', ...))
  *
- * **Important:** System parameters (query params starting with `_rsc`) are filtered out.
- * Handlers see only user-facing query params. Access raw request via `_originalRequest`.
+ * **Note:** System parameters (query params starting with `_rsc`) are automatically
+ * filtered from `url`, `searchParams`, and `request.url` for cleaner access.
  *
  * @example
  * ```typescript
@@ -270,31 +284,69 @@ export type Handler<TParams = {}, TEnv = any> = (
  *   ctx.var.user           // Variable (User | undefined)
  *   ctx.get('user')        // Alternative getter
  *   ctx.set('user', {...}) // Setter
- *
- *   // Clean URLs (system params filtered):
- *   ctx.url                // No _rsc* params
- *   ctx.searchParams       // No _rsc* params
- *
- *   // Advanced: access raw request
- *   ctx._originalRequest   // Full request with all params
+ *   ctx.url                // Clean URL (no _rsc* params)
+ *   ctx.searchParams       // Clean params (no _rsc* params)
  * }
  * ```
  */
 export type HandlerContext<TParams = {}, TEnv = any> = {
+  /**
+   * Route parameters extracted from the URL pattern.
+   * Type-safe when using Handler<"/path/:param"> or Handler<{ param: string }>.
+   */
   params: TParams;
+  /**
+   * The incoming Request object.
+   * System params (`_rsc*`) are filtered from the URL for cleaner access.
+   */
   request: Request;
-  searchParams: URLSearchParams;  // Filtered (no _rsc* params)
+  /**
+   * Query parameters from the URL (system params like `_rsc*` are filtered).
+   * Use for user-facing query strings only.
+   */
+  searchParams: URLSearchParams;
+  /**
+   * The pathname portion of the request URL.
+   */
   pathname: string;
-  url: URL;                       // Filtered (no _rsc* params)
+  /**
+   * The full URL object (with system params filtered).
+   */
+  url: URL;
+  /**
+   * Platform bindings (DB, KV, secrets, etc.) from RouterEnv.
+   * Access resources like `ctx.env.DB`, `ctx.env.KV`.
+   */
   env: TEnv extends RouterEnv<infer B, any> ? B : {};
+  /**
+   * Middleware-injected variables from RouterEnv.
+   * Access values like `ctx.var.user`, `ctx.var.permissions`.
+   */
   var: TEnv extends RouterEnv<any, infer V> ? V : {};
+  /**
+   * Type-safe getter for middleware variables.
+   * Alternative to `ctx.var.key` with better autocomplete.
+   *
+   * @example
+   * ```typescript
+   * const user = ctx.get("user"); // Type-safe!
+   * ```
+   */
   get: TEnv extends RouterEnv<any, infer V>
     ? <K extends keyof V>(key: K) => V[K]
     : (key: string) => any;
+  /**
+   * Type-safe setter for middleware variables.
+   * Use in middleware to pass data to handlers.
+   *
+   * @example
+   * ```typescript
+   * ctx.set("user", { id: "123", name: "John" }); // Type-safe!
+   * ```
+   */
   set: TEnv extends RouterEnv<any, infer V>
     ? <K extends keyof V>(key: K, value: V[K]) => void
     : (key: string, value: any) => void;
-  _originalRequest: Request;      // Raw request (includes all system params)
   /**
    * Stub response for setting headers/cookies.
    * Headers set here are merged into the final response.
@@ -371,12 +423,6 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
     ) => void;
   };
   /**
-   * Internal: Current segment ID for handle data attribution.
-   * Set by the router before calling each handler.
-   * @internal
-   */
-  _currentSegmentId?: string;
-  /**
    * Current theme (from cookie or default).
    * Only available when theme is enabled in router config.
    *
@@ -407,26 +453,35 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
    */
   setTheme?: (theme: Theme) => void;
   /**
-   * Generate URLs from route names with scoped resolution.
+   * Generate URLs from route names.
    *
-   * Resolution priority:
-   * 1. Path-based (`/about`) → Use directly
-   * 2. Absolute name (`shop.cart`) → Global lookup (contains dot)
-   * 3. Local name (`index`) → Prepend current name prefix, then lookup
+   * **Recommended: Use route names for type safety.**
+   * Route names validate both the route exists and params are correct.
+   * Path-based URLs (`/...`) are an escape hatch with no validation.
    *
    * @example
    * ```typescript
-   * // In a handler within blogPatterns (mounted at /blog with name "blog"):
-   * route("post", (ctx) => {
-   *   const homeUrl = ctx.href("index");           // → "/blog/"
-   *   const postUrl = ctx.href("post", { slug: "hello" }); // → "/blog/hello"
-   *   const cartUrl = ctx.href("shop.cart");       // → "/shop/cart"
-   *   const aboutUrl = ctx.href("/about");         // → "/about"
-   *   return <PostPage />;
-   * });
+   * // RECOMMENDED: Use route names for type safety
+   * ctx.href("shop.cart")                    // ✓ Validates route exists
+   * ctx.href("blog.post", { slug: "hello" }) // ✓ Validates route + params
+   *
+   * // ESCAPE HATCH: Path-based URLs (no validation)
+   * ctx.href("/about")                       // ⚠ No type checking
    * ```
    */
-  href: (name: string, params?: Record<string, string>) => string;
+  href: ScopedHrefFunction<GetRegisteredRoutes>;
+};
+
+/**
+ * Internal handler context with additional props for router internals.
+ * Use `HandlerContext` for user-facing code.
+ * @internal
+ */
+export type InternalHandlerContext<TParams = {}, TEnv = any> = HandlerContext<TParams, TEnv> & {
+  /** Raw request with all system parameters intact. */
+  _originalRequest: Request;
+  /** Current segment ID for handle data attribution. */
+  _currentSegmentId?: string;
 };
 
 /**
@@ -762,6 +817,8 @@ export type NotFoundBoundaryHandler = (props: NotFoundBoundaryFallbackProps) => 
  * - loader: Data segment (no visual rendering, carries loaderData)
  * - error: Error fallback segment (replaces failed segment with error UI)
  * - notFound: Not found fallback segment (replaces segment when data not found)
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export interface ResolvedSegment {
   id: string;
@@ -790,6 +847,8 @@ export interface ResolvedSegment {
 
 /**
  * Segment metadata (without component)
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export interface SegmentMetadata {
   id: string;
@@ -808,6 +867,8 @@ export interface SegmentMetadata {
 /**
  * State of a named slot (e.g., @modal, @sidebar)
  * Used for intercepting routes where slots render alternative content
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export interface SlotState {
   /**
@@ -829,6 +890,8 @@ export interface RootLayoutProps {
 
 /**
  * Router match result
+ *
+ * @internal This type is an implementation detail and may change without notice.
  */
 export interface MatchResult {
   segments: ResolvedSegment[];
@@ -895,113 +958,61 @@ export interface RouteEntry<TEnv = any> {
   mountIndex: number;
 }
 
-/**
- * Type-safe route handler helper for specific routes
- *
- * Automatically extracts the correct param types from your route definition.
- *
- * @template TRoutes - Your route definition object (e.g., typeof shopRoutes)
- * @template K - The route key (e.g., "cart", "products.detail")
- * @template TEnv - Environment type (defaults to global RSCRouter.Env)
- *
- * @example
- * ```typescript
- * import { RouteHandler } from "rsc-router";
- * import { shopRoutes } from "./routes.js";
- *
- * export const cartRoute: RouteHandler<typeof shopRoutes, "cart"> = (ctx) => {
- *   // ctx.params is typed correctly for the cart route
- *   // ctx.get('user') is type-safe via global augmentation
- *   return <CartPage />;
- * }
- *
- * export const productRoute: RouteHandler<typeof shopRoutes, "products.detail"> = (ctx) => {
- *   // ctx.params.slug is automatically typed as string
- *   return <ProductDetail slug={ctx.params.slug} />;
- * }
- * ```
- */
-export type RouteHandler<
-  TRoutes extends RouteDefinition,
-  K extends keyof TRoutes,
-  TEnv = DefaultEnv
-> = Handler<ExtractRouteParams<TRoutes, K & string>, TEnv>;
 
 /**
- * Type-safe revalidation function helper for specific routes
+ * Revalidation function with typed params
  *
- * Automatically extracts the correct param types from your route definition.
- *
- * @template TRoutes - Your route definition object (e.g., typeof shopRoutes)
- * @template K - The route key (e.g., "cart", "products.detail")
- * @template TEnv - Environment type (defaults to global RSCRouter.Env)
+ * @template T - Params object
+ * @template TEnv - Environment type
  *
  * @example
  * ```typescript
- * import { RouteRevalidateFn } from "rsc-router";
- * import { shopRoutes } from "./routes.js";
- *
- * export const cartRevalidation: RouteRevalidateFn<typeof shopRoutes, "cart"> = ({
- *   currentParams,
- *   nextParams
- * }) => {
- *   // params are typed correctly for the cart route
- *   return true; // Always revalidate cart
- * }
- *
- * export const productRevalidation: RouteRevalidateFn<typeof shopRoutes, "products.detail"> = ({
- *   currentParams,
- *   nextParams
- * }) => {
- *   // currentParams.slug and nextParams.slug are automatically typed
+ * const revalidate: Revalidate<{ slug: string }> = ({ currentParams, nextParams }) => {
  *   return currentParams.slug !== nextParams.slug;
  * }
  * ```
  */
-export type RouteRevalidateFn<
-  TRoutes extends RouteDefinition,
-  K extends keyof TRoutes,
-  TEnv = DefaultEnv
-> = ShouldRevalidateFn<ExtractRouteParams<TRoutes, K & string>, TEnv>;
+export type Revalidate<T = GenericParams, TEnv = DefaultEnv> = ShouldRevalidateFn<T, TEnv>;
 
 /**
- * Type-safe middleware function helper for specific routes
+ * Middleware function with typed params and environment
  *
- * Automatically extracts the correct param types from your route definition.
- *
- * @template TRoutes - Your route definition object (e.g., typeof shopRoutes)
- * @template K - The route key (e.g., "checkout.index", "account.orders")
+ * @template TParams - Params object (defaults to generic)
  * @template TEnv - Environment type (defaults to global RSCRouter.Env)
+ *
+ * Note: Middleware cannot directly use route names for params typing because
+ * middleware is defined during router setup, before RegisteredRoutes is populated.
+ * Use ExtractParams<"/path/:id"> for typed params from a path pattern.
  *
  * @example
  * ```typescript
- * import { RouteMiddlewareFn } from "rsc-router";
- * import { shopRoutes } from "./routes.js";
- *
- * export const checkoutMiddleware: RouteMiddlewareFn<typeof shopRoutes, "checkout.index"> = async (ctx, next) => {
- *   // ctx.params is typed correctly for checkout.index route
- *   // ctx.get('user') is type-safe via global augmentation
- *   if (!ctx.get('user')) {
- *     return redirect('/login');
- *   }
+ * // Basic middleware (uses global RSCRouter.Env via module augmentation)
+ * const middleware: Middleware = async (ctx, next) => {
+ *   ctx.set("user", { id: "123" }); // Type-safe!
  *   await next();
- *   // ctx.res available here for header modification
  * }
  *
- * export const productMiddleware: RouteMiddlewareFn<typeof shopRoutes, "products.detail"> = async (ctx, next) => {
- *   // ctx.params.slug is automatically typed as string
- *   console.log('Viewing product:', ctx.params.slug);
- *   const response = await next();
- *   response.headers.set('X-Product', ctx.params.slug);
- *   return response;
+ * // With explicit params (most common)
+ * const middleware: Middleware<{ id: string }> = async (ctx, next) => {
+ *   console.log(ctx.params.id);
+ *   await next();
+ * }
+ *
+ * // With params from path pattern
+ * const middleware: Middleware<ExtractParams<"/products/:id">> = async (ctx, next) => {
+ *   console.log(ctx.params.id);
+ *   await next();
+ * }
+ *
+ * // With both params and explicit env
+ * const middleware: Middleware<{ id: string }, AppEnv> = async (ctx, next) => {
+ *   ctx.set("user", { id: ctx.params.id });
+ *   await next();
  * }
  * ```
  */
-export type RouteMiddlewareFn<
-  TRoutes extends RouteDefinition,
-  K extends keyof TRoutes,
-  TEnv = DefaultEnv
-> = MiddlewareFn<TEnv, ExtractRouteParams<TRoutes, K & string>>;
+export type Middleware<TParams = GenericParams, TEnv = DefaultEnv> = MiddlewareFn<TEnv, TParams>;
+
 
 // ============================================================================
 // Cache Types
@@ -1247,6 +1258,11 @@ export type LoaderContext<TParams = Record<string, string | undefined>, TEnv = a
    * Available when loader is called via load({ method: "POST", body: {...} })
    */
   body: TBody | undefined;
+  /**
+   * Form data when loader is invoked via action (fetchable loaders)
+   * Available when loader is called via form submission
+   */
+  formData?: FormData;
 };
 
 /**
@@ -1407,7 +1423,7 @@ export type ErrorPhase =
  *
  * @example
  * ```typescript
- * const router = createRSCRouter<AppEnv>({
+ * const router = createRouter<AppEnv>({
  *   onError: (context) => {
  *     // Log to error tracking service
  *     errorTracker.capture({

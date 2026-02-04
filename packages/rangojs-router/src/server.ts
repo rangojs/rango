@@ -7,15 +7,10 @@
 
 // Route definition helpers (server-only)
 export {
-  route,
-  map,
   createLoader,
   redirect,
   type RouteHelpers,
   type RouteHandlers,
-  type InterceptSelectorContext,
-  type InterceptSegmentsState,
-  type InterceptWhenFn,
 } from "./route-definition.js";
 
 // Django-style URL patterns (server-only)
@@ -32,7 +27,7 @@ export type { IncludeItem } from "./route-types.js";
 
 // Core router (server-only)
 export {
-  createRSCRouter,
+  createRouter,
   type RSCRouter,
   type RSCRouterOptions,
   type RootLayoutProps,
@@ -76,10 +71,8 @@ export {
 // Meta types
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 
-// Middleware types
+// Middleware context types (Middleware type is exported from types.ts)
 export type {
-  MiddlewareFn,
-  MiddlewareFn as AppMiddlewareFn, // Alias for backwards compatibility
   MiddlewareContext,
   CookieOptions,
 } from "./router/middleware.js";
@@ -102,34 +95,30 @@ export {
   assertClientComponent,
 } from "./component-utils.js";
 
-// Types (re-exported for convenience)
+// Types (re-exported for convenience - user-facing only)
 export type {
+  // Configuration types
   RouterEnv,
   DefaultEnv,
   RouteDefinition,
   RouteConfig,
   RouteDefinitionOptions,
   TrailingSlashMode,
-  ResolvedRouteMap,
-  Handler,
+  // Handler types
+  Handler,            // Supports params object, path pattern, or route name
   HandlerContext,
-  HandlersForRouteMap,
-  ResolvedSegment,
-  SegmentMetadata,
-  MatchResult,
-  SlotState,
   ExtractParams,
   GenericParams,
+  // Middleware types (also exported from router/middleware.js above)
+  Middleware,         // Supports env type and optional route name for params
+  // Revalidation types
   RevalidateParams,
-  ShouldRevalidateFn,
+  Revalidate,
   RouteKeys,
-  RouteHandler,
-  RouteRevalidateFn,
-  RouteMiddlewareFn,
+  // Loader types
   LoaderDefinition,
   LoaderFn,
   LoaderContext,
-  GetRegisteredRoutes,
   // Error boundary types
   ErrorInfo,
   ErrorBoundaryFallbackProps,

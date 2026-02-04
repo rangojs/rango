@@ -12,10 +12,11 @@ export const hrefPatterns = urls(({ path, include }) => [
     "/",
     (ctx) => {
       // Server-side ctx.href tests
-      const localIndexHref = ctx.href("index"); // Should resolve to /href (local)
-      const localDetailHref = ctx.href("detail", { id: "123" }); // Should resolve to /href/123
-      const absoluteBlogHref = ctx.href("blog.index"); // Should resolve to /blog (absolute)
-      const pathBasedHref = ctx.href("/about"); // Should return /about (path-based)
+      // Using absolute names for type safety (local names work at runtime but aren't type-safe)
+      const localIndexHref = ctx.href("href.index"); // Absolute name for /href
+      const localDetailHref = ctx.href("href.detail", { id: "123" }); // Absolute name for /href/123
+      const absoluteBlogHref = ctx.href("blog.index"); // Absolute name for /blog
+      const pathBasedHref = ctx.href("/about"); // Path-based (always allowed)
 
       return (
         <div data-testid="href-index-page">
@@ -90,8 +91,9 @@ export const hrefPatterns = urls(({ path, include }) => [
     "/:id",
     (ctx) => {
       // Test ctx.href inside detail route
-      const backToIndex = ctx.href("index");
-      const siblingDetail = ctx.href("detail", { id: "sibling-item" });
+      // Using absolute names for type safety
+      const backToIndex = ctx.href("href.index");
+      const siblingDetail = ctx.href("href.detail", { id: "sibling-item" });
 
       return (
         <div data-testid="href-detail-page">
@@ -138,9 +140,10 @@ const nestedHrefPatterns = urls(({ path }) => [
     "/",
     (ctx) => {
       // From nested context, test href resolution
-      const nestedIndex = ctx.href("index"); // Should resolve to /href/nested
-      const parentIndex = ctx.href("href.index"); // Should resolve to /href (absolute)
-      const parentDetail = ctx.href("href.detail", { id: "from-nested" }); // Should resolve to /href/from-nested
+      // Using absolute names for type safety
+      const nestedIndex = ctx.href("href.nested.index"); // Absolute name for /href/nested
+      const parentIndex = ctx.href("href.index"); // Absolute name for /href
+      const parentDetail = ctx.href("href.detail", { id: "from-nested" }); // Absolute name for /href/from-nested
 
       return (
         <div data-testid="href-nested-page">

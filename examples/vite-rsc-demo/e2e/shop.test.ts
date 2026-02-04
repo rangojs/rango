@@ -49,7 +49,7 @@ test.describe("shop-intercept-background-preservation", () => {
     // Step 4: Click "Add to Cart" to trigger action (has ~3s delay)
     const addToCartButton = page
       .locator("button")
-      .filter({ hasText: "Add to Cart (useActionState)" })
+      .filter({ hasText: "Add to Cart (Fire & Forget)" })
       .first();
     await addToCartButton.click();
 
@@ -199,6 +199,55 @@ test.describe("shop-navigation", () => {
       page.locator("text=Test Revalidation Behavior")
     ).toBeVisible({ timeout: 3000 });
   });
+
+  test("should navigate from intercept modal to full product page multiple times", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/shop"));
+    await waitForHydration(page);
+
+    // First attempt: Open modal and navigate to full details
+    await page
+      .locator('a[href="/shop/product/wireless-headphones"]')
+      .first()
+      .click();
+    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 3000 });
+    await page.locator("text=View Full Details").click();
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 3000 });
+    await expect(page.locator("text=Test Revalidation Behavior")).toBeVisible({ timeout: 3000 });
+
+    // Go back to shop
+    await page.locator('a[href="/shop"]').first().click();
+    await expect(page.locator("text=All Products")).toBeVisible({ timeout: 3000 });
+
+    // Second attempt: Open different product modal and navigate to full details
+    await page
+      .locator('a[href="/shop/product/running-shoes"]')
+      .first()
+      .click();
+    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 3000 });
+    // Check the modal header has the product name
+    await expect(page.locator("h2:has-text('Running Shoes')")).toBeVisible({ timeout: 3000 });
+    await page.locator("text=View Full Details").click();
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 3000 });
+    await expect(page.locator("text=Test Revalidation Behavior")).toBeVisible({ timeout: 3000 });
+
+    // Go back to shop again
+    await page.locator('a[href="/shop"]').first().click();
+    await expect(page.locator("text=All Products")).toBeVisible({ timeout: 3000 });
+
+    // Third attempt: Open same product again and verify it works
+    await page
+      .locator('a[href="/shop/product/wireless-headphones"]')
+      .first()
+      .click();
+    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 3000 });
+    await page.locator("text=View Full Details").click();
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 3000 });
+    await expect(page.locator("text=Test Revalidation Behavior")).toBeVisible({ timeout: 3000 });
+  });
 });
 
 /**
@@ -230,21 +279,21 @@ test.describe("shop-actions", () => {
       timeout: 5000,
     });
 
-    // Click first add to cart button (Fire & Forget section)
-    // All buttons have text "Add to Cart (useActionState)"
+    // Click "Add to Cart (With Result)" button to verify action success
     const addToCartButton = page
       .locator("button")
-      .filter({ hasText: "Add to Cart (useActionState)" })
+      .filter({ hasText: "Add to Cart (With Result)" })
       .first();
     await addToCartButton.click();
 
-    // Wait for action to process
-    await page.waitForTimeout(2000);
+    // Wait for action to complete - button changes from "Adding..." back to normal
+    await expect(addToCartButton).not.toHaveText("Adding...", { timeout: 10000 });
 
-    // Page should still be functional
-    await expect(
-      page.locator("h2:has-text('Wireless Headphones')")
-    ).toBeVisible();
+    // Verify action succeeded - success message should appear
+    await expect(page.locator("h4:has-text('Success')")).toBeVisible({ timeout: 5000 });
+
+    // Verify cart details are shown
+    await expect(page.locator("text=Total items in cart:")).toBeVisible();
   });
 
   test("should show streaming action updates", async ({ page }) => {
@@ -794,12 +843,15 @@ test.describe("shop-shared-loader-freshness", () => {
     // Step 2: Add to cart - triggers CartLoader revalidation
     const addToCartButton = page
       .locator("button")
-      .filter({ hasText: "Add to Cart (useActionState)" })
+      .filter({ hasText: "Add to Cart (With Result)" })
       .first();
     await addToCartButton.click();
 
     // Wait for action to complete
-    await page.waitForTimeout(2000);
+    await expect(addToCartButton).not.toHaveText("Adding...", { timeout: 10000 });
+
+    // Verify action succeeded before navigating
+    await expect(page.locator("h4:has-text('Success')")).toBeVisible({ timeout: 5000 });
 
     // Step 3: Navigate to cart page (shares CartLoader with product page)
     await page.locator('a[href="/shop/cart"]').click();
@@ -937,10 +989,10 @@ test.describe("shop-concurrent-actions", () => {
       timeout: 5000,
     });
 
-    // Find both add to cart buttons
-    const useActionStateButton = page
+    // Find both add to cart buttons - use "With Result" to verify action success
+    const withResultButton = page
       .locator("button")
-      .filter({ hasText: "Add to Cart (useActionState)" })
+      .filter({ hasText: "Add to Cart (With Result)" })
       .first();
 
     const streamingButton = page
@@ -949,13 +1001,19 @@ test.describe("shop-concurrent-actions", () => {
       .first();
 
     // Click both buttons in quick succession (concurrent actions)
-    await useActionStateButton.click();
+    await withResultButton.click();
     await streamingButton.click();
 
-    // Wait for both actions to complete (streaming has 3s delay)
-    await page.waitForTimeout(5000);
+    // Wait for "With Result" action to complete
+    await expect(withResultButton).not.toHaveText("Adding...", { timeout: 10000 });
 
-    // Page should still be functional
+    // Verify the "With Result" action succeeded
+    await expect(page.locator("h4:has-text('Success')")).toBeVisible({ timeout: 5000 });
+
+    // Wait for streaming action to complete (has ~1s delay)
+    await page.waitForTimeout(2000);
+
+    // Page should still be functional after both concurrent actions
     await expect(
       page.locator("h2:has-text('Wireless Headphones')")
     ).toBeVisible();
@@ -1110,17 +1168,21 @@ test.describe("shop-actions (production)", () => {
     // Wait for event handlers to attach
     await page.waitForTimeout(100);
 
+    // Click "Add to Cart (With Result)" button to verify action success
     const addToCartButton = page
       .locator("button")
-      .filter({ hasText: "Add to Cart (useActionState)" })
+      .filter({ hasText: "Add to Cart (With Result)" })
       .first();
     await addToCartButton.click();
 
-    await page.waitForTimeout(3000);
+    // Wait for action to complete - button changes from "Adding..." back to normal
+    await expect(addToCartButton).not.toHaveText("Adding...", { timeout: 10000 });
 
-    await expect(
-      page.locator("h2:has-text('Wireless Headphones')")
-    ).toBeVisible();
+    // Verify action succeeded - success message should appear
+    await expect(page.locator("h4:has-text('Success')")).toBeVisible({ timeout: 5000 });
+
+    // Verify cart details are shown
+    await expect(page.locator("text=Total items in cart:")).toBeVisible();
   });
 
   test("should update cart quantity from intercept modal", async ({ page }) => {

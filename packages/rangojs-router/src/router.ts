@@ -11,6 +11,7 @@ import {
   invariant,
   sanitizeError,
 } from "./errors";
+import { serializeManifest, type SerializedManifest } from "./debug.js";
 import {
   createHref,
   type HrefFunction,
@@ -40,6 +41,7 @@ import type {
   ErrorInfo,
   ErrorPhase,
   HandlerContext,
+  InternalHandlerContext,
   LoaderDataResult,
   MatchResult,
   NotFoundBoundaryHandler,
@@ -150,7 +152,7 @@ export interface RSCRouterOptions<TEnv = any> {
    * }
    *
    * // router.tsx
-   * const router = createRSCRouter<AppEnv>({
+   * const router = createRouter<AppEnv>({
    *   document: Document,
    * });
    * ```
@@ -182,13 +184,13 @@ export interface RSCRouterOptions<TEnv = any> {
    * @example
    * ```typescript
    * // Simple static component
-   * const router = createRSCRouter<AppEnv>({
+   * const router = createRouter<AppEnv>({
    *   document: AppShell,
    *   notFound: <NotFound404 />,
    * });
    *
    * // Dynamic component with pathname
-   * const router = createRSCRouter<AppEnv>({
+   * const router = createRouter<AppEnv>({
    *   document: AppShell,
    *   notFound: ({ pathname }) => (
    *     <div>
@@ -219,7 +221,7 @@ export interface RSCRouterOptions<TEnv = any> {
    *
    * @example
    * ```typescript
-   * const router = createRSCRouter<AppEnv>({
+   * const router = createRouter<AppEnv>({
    *   onError: (context) => {
    *     // Send to error tracking service
    *     Sentry.captureException(context.error, {
@@ -252,7 +254,7 @@ export interface RSCRouterOptions<TEnv = any> {
    * ```typescript
    * import { MemorySegmentCacheStore } from "rsc-router/rsc";
    *
-   * const router = createRSCRouter({
+   * const router = createRouter({
    *   cache: {
    *     store: new MemorySegmentCacheStore({ defaults: { ttl: 60 } }),
    *   },
@@ -261,7 +263,7 @@ export interface RSCRouterOptions<TEnv = any> {
    *
    * @example Dynamic config with env
    * ```typescript
-   * const router = createRSCRouter<AppEnv>({
+   * const router = createRouter<AppEnv>({
    *   cache: (env) => ({
    *     store: new KVSegmentCacheStore(env.Bindings.MY_CACHE),
    *   }),
@@ -283,7 +285,7 @@ export interface RSCRouterOptions<TEnv = any> {
    *
    * @example
    * ```typescript
-   * const router = createRSCRouter<AppEnv>({
+   * const router = createRouter<AppEnv>({
    *   theme: {
    *     defaultTheme: "system",
    *     themes: ["light", "dark"],
@@ -558,7 +560,7 @@ export interface RSCRouter<
    *
    * @example
    * ```typescript
-   * createRSCRouter({})
+   * createRouter({})
    *   .routes(urlpatterns)  // Single call with urls() result
    * ```
    */
@@ -575,7 +577,7 @@ export interface RSCRouter<
    *
    * @example
    * ```typescript
-   * createRSCRouter({ document: RootLayout })
+   * createRouter({ document: RootLayout })
    *   .use(loggerMiddleware)           // All routes
    *   .use("/api/*", rateLimiter)      // Pattern match
    *   .routes(homeRoutes)
@@ -607,7 +609,7 @@ export interface RSCRouter<
    *
    * @example
    * ```typescript
-   * const _router = createRSCRouter<AppEnv>()
+   * const _router = createRouter<AppEnv>()
    *   .routes(homeRoutes).map(() => import('./home'))
    *   .routes('/shop', shopRoutes).map(() => import('./shop'));
    *
@@ -702,6 +704,13 @@ export interface RSCRouter<
     error: unknown,
     segmentType?: ErrorInfo["segmentType"]
   ): Promise<MatchResult | null>;
+
+  /**
+   * @internal
+   * Debug utility to serialize the manifest for inspection
+   * Returns a JSON-friendly representation of all routes and layouts
+   */
+  debugManifest(): Promise<SerializedManifest>;
 }
 
 /**
@@ -715,7 +724,7 @@ export interface RSCRouter<
  *   user?: User;
  * }
  *
- * const router = createRSCRouter<AppContext>({
+ * const router = createRouter<AppContext>({
  *   debugPerformance: true  // Enable metrics
  * });
  *
@@ -732,7 +741,34 @@ export interface RSCRouter<
  * router.href("cart"); // "/shop/cart"
  * ```
  */
-export function createRSCRouter<TEnv = any>(
+
+/**
+ * Helper to handle Response returns from handlers.
+ * When a handler returns a Response (e.g., redirect), throw it to trigger
+ * the short-circuit mechanism. Otherwise return the ReactNode.
+ *
+ * @param result - Result from calling a handler
+ * @returns ReactNode if result is not a Response
+ * @throws Response if result is a Response
+ */
+function handleHandlerResult(
+  result: ReactNode | Response | Promise<ReactNode> | Promise<Response>
+): ReactNode | Promise<ReactNode> {
+  if (result instanceof Response) {
+    throw result;
+  }
+  if (result instanceof Promise) {
+    return result.then((resolved) => {
+      if (resolved instanceof Response) {
+        throw resolved;
+      }
+      return resolved;
+    }) as Promise<ReactNode>;
+  }
+  return result;
+}
+
+export function createRouter<TEnv = any>(
   options: RSCRouterOptions<TEnv> = {}
 ): RSCRouter<TEnv, {}> {
   const {
@@ -1121,10 +1157,10 @@ export function createRSCRouter<TEnv = any>(
 
       // Step 4: Execute layout handler and emit layout segment
       // Set current segment ID for handle data attribution
-      context._currentSegmentId = entry.shortCode;
+      (context as InternalHandlerContext)._currentSegmentId = entry.shortCode;
       const component =
         typeof entry.handler === "function"
-          ? await entry.handler(context)
+          ? handleHandlerResult(await entry.handler(context))
           : entry.handler;
 
       segments.push({
@@ -1191,13 +1227,13 @@ export function createRSCRouter<TEnv = any>(
       // If loading is defined, wrap in Suspense for RSC streaming
       // This allows the fallback to be sent immediately while content streams in
       // Set current segment ID for handle data attribution
-      context._currentSegmentId = entry.shortCode;
+      (context as InternalHandlerContext)._currentSegmentId = entry.shortCode;
       let component: ReactNode | Promise<ReactNode>;
       if (entry.loading) {
-        const result = entry.handler(context);
+        const result = handleHandlerResult(entry.handler(context));
         component = result instanceof Promise ? trackHandler(result) : result;
       } else {
-        component = await entry.handler(context);
+        component = handleHandlerResult(await entry.handler(context));
       }
 
       segments.push({
@@ -1260,7 +1296,7 @@ export function createRSCRouter<TEnv = any>(
     // Step 4: Execute orphan handler and emit layout segment
     const component =
       typeof orphan.handler === "function"
-        ? await orphan.handler(context)
+        ? handleHandlerResult(await orphan.handler(context))
         : orphan.handler;
 
     segments.push({
@@ -1512,17 +1548,23 @@ export function createRSCRouter<TEnv = any>(
     // Get handler result - don't await if we have loading (enables streaming)
     const handlerResult =
       typeof interceptEntry.handler === "function"
-        ? interceptEntry.handler(context)
+        ? handleHandlerResult(interceptEntry.handler(context))
         : interceptEntry.handler;
 
     // Step 4: Prepare layout element (if defined)
     // Layout will be applied in segment-system, not here
     let layoutElement: ReactNode | undefined;
     if (interceptEntry.layout) {
-      layoutElement =
-        typeof interceptEntry.layout === "function"
-          ? await interceptEntry.layout(context)
-          : interceptEntry.layout;
+      if (typeof interceptEntry.layout === "function") {
+        const layoutResult = await interceptEntry.layout(context);
+        // Check if layout returned a Response (redirect) and throw it
+        if (layoutResult instanceof Response) {
+          throw layoutResult;
+        }
+        layoutElement = layoutResult;
+      } else {
+        layoutElement = interceptEntry.layout;
+      }
     }
 
     // Determine if we should await the handler result and loaders
@@ -2474,10 +2516,10 @@ export function createRSCRouter<TEnv = any>(
       },
       async () => {
         // Set current segment ID for handle data attribution
-        context._currentSegmentId = entry.shortCode;
+        (context as InternalHandlerContext)._currentSegmentId = entry.shortCode;
         if (entry.type === "layout" || entry.type === "cache") {
           return typeof entry.handler === "function"
-            ? await entry.handler(context)
+            ? handleHandlerResult(await entry.handler(context))
             : entry.handler;
         }
         // entry.type === "route" - handler is always callable
@@ -2485,11 +2527,11 @@ export function createRSCRouter<TEnv = any>(
         // For routes with loading: keep promise pending for navigation (not actions)
         // This allows client's use() to suspend and show loading skeleton
         if (!routeEntry.loading) {
-          return await routeEntry.handler(context);
+          return handleHandlerResult(await routeEntry.handler(context));
         }
         if (!actionContext) {
           // NOT awaited - keeps promise pending, but track for completion
-          const result = routeEntry.handler(context);
+          const result = handleHandlerResult(routeEntry.handler(context));
           return {
             content: result instanceof Promise ? trackHandler(result) : result,
           };
@@ -2501,7 +2543,7 @@ export function createRSCRouter<TEnv = any>(
         // This ensures component instanceof Promise is false in segment-system,
         // avoiding RouteContentWrapper/Suspense and maintaining consistent tree structure
         return {
-          content: Promise.resolve(await routeEntry.handler(context)),
+          content: Promise.resolve(handleHandlerResult(await routeEntry.handler(context))),
         };
       },
       () => null
@@ -2856,7 +2898,7 @@ export function createRSCRouter<TEnv = any>(
       },
       async () =>
         typeof orphan.handler === "function"
-          ? await orphan.handler(context)
+          ? handleHandlerResult(await orphan.handler(context))
           : orphan.handler,
       () => null
     );
@@ -3873,6 +3915,55 @@ export function createRSCRouter<TEnv = any>(
     matchPartial,
     matchError,
     previewMatch,
+
+    // Debug utility for manifest inspection
+    async debugManifest(): Promise<SerializedManifest> {
+      const manifest = new Map<string, EntryData>();
+
+      for (const entry of routesEntries) {
+        const Store = {
+          manifest,
+          namespace: `debug.M${entry.mountIndex}`,
+          parent: null as EntryData | null,
+          counters: {} as Record<string, number>,
+          mountIndex: entry.mountIndex,
+          patterns: new Map<string, string>(),
+          trailingSlash: new Map<string, TrailingSlashMode>(),
+        };
+
+        await getContext().runWithStore(
+          Store,
+          `debug.M${entry.mountIndex}`,
+          null,
+          async () => {
+            const helpers = createRouteHelpers();
+
+            // Wrap handler execution in root layout (same as loadManifest)
+            let promiseResult: Promise<any> | null = null;
+            helpers.layout(MapRootLayout, () => {
+              const result = entry.handler();
+              if (result instanceof Promise) {
+                promiseResult = result;
+                return [];
+              }
+              return result;
+            });
+
+            if (promiseResult !== null) {
+              const load = await (promiseResult as Promise<any>);
+              if (load && typeof load === "object" && "default" in load) {
+                const useItems = load.default;
+                if (typeof useItems === "function") {
+                  useItems(helpers);
+                }
+              }
+            }
+          }
+        );
+      }
+
+      return serializeManifest(manifest);
+    },
   };
 
   return router;

@@ -69,6 +69,9 @@ export type PartialUpdater = (
     /** Cached handle data for the target URL. When server returns empty diff and we're
      * rendering from cache, this is passed to the UI to restore breadcrumbs etc. */
     targetCacheHandleData?: Record<string, Record<string, unknown[]>>;
+    /** When true, we're leaving an intercept state - don't use current segment IDs
+     * as fallback and force a fresh render from server */
+    leavingIntercept?: boolean;
   },
 ) => Promise<Promise<void>>;
 
@@ -129,6 +132,7 @@ export function createPartialUpdater(
       interceptSourceUrl?: string;
       targetCacheSegments?: ResolvedSegment[];
       targetCacheHandleData?: Record<string, Record<string, unknown[]>>;
+      leavingIntercept?: boolean;
     },
   ): Promise<Promise<void>> {
     const {
@@ -137,13 +141,27 @@ export function createPartialUpdater(
       interceptSourceUrl,
       targetCacheSegments,
       targetCacheHandleData,
+      leavingIntercept = false,
     } = options || {};
     const segmentState = store.getSegmentState();
     const url = targetUrl || window.location.href;
 
     // Capture history key at start for stale revalidation consistency check
     const historyKeyAtStart = store.getHistoryKey();
-    const segments = segmentIds ?? segmentState.currentSegmentIds;
+
+    // When leaving intercept, don't send current segment IDs - we need fresh non-intercept segments
+    // Filter out intercept-related segments (parallel slots like @modal) from current segments
+    let segments: string[];
+    if (leavingIntercept) {
+      // When leaving intercept, only send segments that aren't intercept-specific
+      // The server will return the non-intercept version of the route
+      const currentSegments = segmentIds ?? segmentState.currentSegmentIds;
+      // Filter out modal/intercept segments - keep only the base route segments
+      segments = currentSegments.filter(id => !id.includes('.@modal'));
+      console.log(`[Browser] Leaving intercept - filtered segments: ${segments.join(", ")}`);
+    } else {
+      segments = segmentIds ?? segmentState.currentSegmentIds;
+    }
 
     // For intercept revalidation, use the intercept source URL as previousUrl
     // This tells the server the route should be treated as an intercept
@@ -242,6 +260,29 @@ export function createPartialUpdater(
           });
 
           console.log(`[Browser] Navigation complete (rendered from cache)\n`);
+          return streamComplete;
+        }
+
+        // When leaving intercept, force re-render even with empty diff
+        // The matched segments are the non-intercept segments, which we need to render
+        // to remove the modal from the UI
+        if (leavingIntercept) {
+          console.log(
+            `[Browser] Leaving intercept - forcing re-render to remove modal`,
+          );
+
+          const newTree = await renderSegments(existingSegments, {
+            forceAwait: true,
+          });
+
+          tx.commit(matchedIds, existingSegments);
+
+          onUpdate({
+            root: newTree,
+            metadata: payload.metadata,
+          });
+
+          console.log(`[Browser] Navigation complete (left intercept)\n`);
           return streamComplete;
         }
 

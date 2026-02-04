@@ -17,14 +17,20 @@ type ActionState = {
 export function AddToCartForm({
   productId,
   action,
+  buttonText = "Add to Cart",
+  showResult = false,
+  progressive = false,
 }: {
   productId: string | number;
-  action: (productId: string | number, quantity: number) => Promise<any>;
+  action: (productId: string, quantity?: number) => Promise<any>;
+  buttonText?: string;
+  showResult?: boolean;
+  progressive?: boolean;
 }) {
   const [state, formAction, isPending] = useActionState<ActionState, FormData>(
     async (_prevState, formData) => {
       try {
-        const result = await action(productId, 1);
+        const result = await action(String(productId), 1);
         console.log("[AddToCartForm] Action result:", result);
         return result;
       } catch (error) {
@@ -53,7 +59,7 @@ export function AddToCartForm({
             marginTop: "1rem",
           }}
         >
-          {isPending ? "Adding..." : "Add to Cart (useActionState)"}
+          {isPending ? "Adding..." : buttonText}
         </button>
       </form>
 

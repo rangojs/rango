@@ -334,7 +334,7 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
               <h3>Streaming Action (3s delay)</h3>
               <StreamingActionStatus />
               <StreamingActionButton
-                productId={product.id}
+                productId={product.id!}
                 testId="slow-modal-streaming-btn"
               />
             </div>

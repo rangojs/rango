@@ -23,14 +23,7 @@ import type {
 import type { EventController } from "./event-controller.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 
-// Vite HMR types
-declare global {
-  interface ImportMeta {
-    hot?: {
-      on(event: string, callback: () => void): void;
-    };
-  }
-}
+// Vite HMR types are provided by vite/client
 
 /**
  * Options for initializing the browser app

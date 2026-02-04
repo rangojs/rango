@@ -4,7 +4,7 @@
  * Creates the handler context object passed to route handlers, middleware, and loaders.
  */
 
-import type { HandlerContext } from "../types";
+import type { HandlerContext, InternalHandlerContext } from "../types";
 import { getRequestContext } from "../server/request-context.js";
 
 /**
@@ -68,7 +68,7 @@ export function createHandlerContext<TEnv>(
   bindings: any = {},
   routeMap: Record<string, string> = {},
   routeName?: string
-): HandlerContext<any, TEnv> {
+): InternalHandlerContext<any, TEnv> {
   // Get variables from request context - this is the unified context
   // shared between middleware and route handlers
   const requestContext = getRequestContext();

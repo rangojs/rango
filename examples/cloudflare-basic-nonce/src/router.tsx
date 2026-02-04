@@ -1,4 +1,4 @@
-import { createRSCRouter, type AppMiddlewareFn } from "@rangojs/router/server";
+import { createRouter, type Middleware } from "@rangojs/router/server";
 import { urlpatterns } from "./urls.js";
 import { AppShell } from "./components/AppShell.js";
 import type { AppEnv } from "./env.js";
@@ -37,7 +37,7 @@ function isDevelopment(url: URL): boolean {
  * - In development: Uses Report-Only mode to avoid blocking HMR scripts
  * - In production: Uses enforcing CSP
  */
-const cspMiddleware: AppMiddlewareFn<AppEnv> = async (ctx, next) => {
+const cspMiddleware: Middleware = async (ctx, next) => {
   await next();
 
   // Only add CSP to HTML responses
@@ -64,7 +64,7 @@ const cspMiddleware: AppMiddlewareFn<AppEnv> = async (ctx, next) => {
 // Create the router with document component
 // AppShell wraps both route content and error boundaries,
 // preventing the app shell from unmounting during errors (avoids FOUC)
-export const router = createRSCRouter<AppEnv>({
+export const router = createRouter<AppEnv>({
   document: AppShell,
 })
   // CSP middleware - adds Content-Security-Policy headers to all HTML responses

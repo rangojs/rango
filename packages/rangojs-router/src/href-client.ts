@@ -82,13 +82,21 @@ type WithSuffix<T extends string> =
   | `${T}?${string}#${string}`;
 
 /**
+ * Helper type to get pattern from routes, handling both Record and interface types
+ */
+type RoutePattern<TRoutes, K extends keyof TRoutes> =
+  TRoutes[K] extends string ? TRoutes[K] : string;
+
+/**
  * Union of all valid paths from registered routes
  *
  * Generated from RSCRouter.RegisteredRoutes via module augmentation.
  * Allows optional query strings and hash fragments.
  */
-export type ValidPaths<TRoutes extends Record<string, string> = GetRegisteredRoutes> =
-  WithSuffix<PatternToPath<TRoutes[keyof TRoutes]>>;
+export type ValidPaths<TRoutes = GetRegisteredRoutes> =
+  keyof TRoutes extends never
+    ? `/${string}` // Fallback when no routes are registered
+    : WithSuffix<PatternToPath<RoutePattern<TRoutes, keyof TRoutes>>>;
 
 /**
  * Type-safe href function for client-side use

@@ -509,6 +509,21 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
   };
 };
 
+/**
+ * Check if an item contains routes (directly or inside nested structures like cache).
+ * Used to determine if a layout or cache should be treated as an orphan.
+ */
+const hasRoutesInItem = (item: AllUseItems): boolean => {
+  if (item.type === "route") return true;
+  if (item.type === "cache" && item.uses) {
+    return item.uses.some((child) => hasRoutesInItem(child));
+  }
+  if (item.type === "layout" && item.uses) {
+    return item.uses.some((child) => hasRoutesInItem(child));
+  }
+  return false;
+};
+
 const revalidate: RouteHelpers<any, any>["revalidate"] = (fn) => {
   const ctx = getContext().getStore();
   if (!ctx) throw new Error("revalidate() must be called inside map()");
@@ -727,11 +742,11 @@ const cache: RouteHelpers<any, any>["cache"] = (
     `cache() children callback must return an array of use items [${namespace}]`
   );
 
-  // Check if this cache has routes (similar to layout logic)
+  // Check if this cache has routes (including nested caches/layouts)
   const hasRoutes =
     result &&
     Array.isArray(result) &&
-    result.some((item) => item.type === "route");
+    result.some((item) => hasRoutesInItem(item));
 
   if (!hasRoutes) {
     const parent = ctx.parent;
@@ -1043,11 +1058,11 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     );
   }
 
-  // Check if this is an orphan layout (no routes in children)
+  // Check if this is an orphan layout (no routes in children, including nested caches)
   const hasRoutes =
     result &&
     Array.isArray(result) &&
-    result.some((item) => item.type === "route");
+    result.some((item) => hasRoutesInItem(item));
 
   if (!hasRoutes) {
     const parent = ctx.parent;
@@ -1113,11 +1128,7 @@ const isValidUseItem = (item: any): item is AllUseItems | undefined | null => {
 const isOrphanLayout = (item: AllUseItems): boolean => {
   return (
     item.type === "layout" &&
-    !item.uses?.some(
-      (item) =>
-        item.type === "route" ||
-        (item.type === "layout" && !isOrphanLayout(item))
-    )
+    !item.uses?.some((child) => hasRoutesInItem(child))
   );
 };
 

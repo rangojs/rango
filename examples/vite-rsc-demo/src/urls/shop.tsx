@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
@@ -11,8 +11,6 @@ import { Breadcrumbs } from "../handles/breadcrumbs.js";
 // Route components
 import {
   IndexRoute as ShopIndexRoute,
-  ProductsCategoryRoute,
-  ProductsDetailRoute,
   CartRoute,
   CheckoutIndexRoute,
   CheckoutPaymentRoute,
@@ -20,6 +18,11 @@ import {
   AccountIndexRoute,
   AccountOrdersRoute,
   AccountOrderDetailRoute,
+  ReviewsIndexRoute,
+  ReviewDetailRoute,
+  ReviewEditRoute,
+  CategoryRouteWithBreadcrumbs,
+  ProductDetailRouteWithBreadcrumbs,
 } from "../handlers/shop/routes/index.js";
 
 // Components
@@ -40,6 +43,10 @@ import {
   ProductModalContentSkeleton,
 } from "../handlers/shop/components/ProductModal.js";
 import { CartNotification } from "../handlers/shop/components/CartNotification.js";
+import { PromoBanner } from "../handlers/shop/components/PromoBanner.js";
+
+// Conditions
+import { shouldInterceptProductModal } from "../handlers/shop/conditions/index.js";
 
 // Middleware
 import {
@@ -91,8 +98,18 @@ export const shopPatterns = urls(
   }) => [
     cache(() => [
       // Orphan layouts for testing
-      layout(<><Outlet /></>, () => [revalidate(() => false)]),
-      layout(<><Outlet /></>, () => [revalidate(() => false)]),
+      layout(
+        <>
+          <Outlet />
+        </>,
+        () => [revalidate(() => false)],
+      ),
+      layout(
+        <>
+          <Outlet />
+        </>,
+        () => [revalidate(() => false)],
+      ),
 
       revalidate(shopGlobalRevalidation),
 
@@ -122,11 +139,7 @@ export const shopPatterns = urls(
         },
         () => [
           parallel({
-            "@promoBanner": () => (
-              <div style={{ background: "#d1e7dd", padding: "0.5rem", textAlign: "center" }}>
-                <p>🔥 Summer Sale! Up to 50% off on selected items! 🔥</p>
-              </div>
-            ),
+            "@promoBanner": () => <PromoBanner />,
             "@notification": () => <CartNotification />,
           }),
 
@@ -137,72 +150,67 @@ export const shopPatterns = urls(
             "products.detail.view",
             <ProductModalContent />,
             () => [
-              when(({ from }) => !from.pathname.startsWith("/shop/products/")),
+              when(shouldInterceptProductModal),
               layout(<ModalWrapper />),
               loading(<ProductModalContentSkeleton />),
               loader(ProductLoader, () => [cache()]),
               loader(ProductCartLoader, () => [revalidate(() => true)]),
               loader(ModalRecommendationsLoader, () => [
-                revalidate(({ actionId }) => actionId?.includes("addToCart") ?? false),
+                revalidate(
+                  ({ actionId }) => actionId?.includes("addToCart") ?? false,
+                ),
               ]),
-            ]
+            ],
           ),
 
           // Shop index
           path("/", ShopIndexRoute, { name: "index" }, () => [
-            parallel({ "@sidebar": () => <CategorySidebar /> }, () => [revalidate(() => false)]),
+            parallel({ "@sidebar": () => <CategorySidebar /> }, () => [
+              revalidate(() => false),
+            ]),
           ]),
 
           // Category
-          path("/products/:category", (ctx) => {
-            const push = ctx.use(Breadcrumbs);
-            const title = ctx.params.category
-              .split("-")
-              .map((w: string) => w[0].toUpperCase() + w.slice(1))
-              .join(" ");
-            push({ label: title, href: `/shop/products/${ctx.params.category}` });
-            return ProductsCategoryRoute(ctx);
-          }, { name: "products.category" }),
+          path(
+            "/products/:category",
+            CategoryRouteWithBreadcrumbs,
+            { name: "products.category" },
+          ),
 
           // Product detail
-          path("/product/:slug", (ctx) => {
-            const push = ctx.use(Breadcrumbs);
-            const title = ctx.params.slug
-              .split("-")
-              .map((w: string) => w[0].toUpperCase() + w.slice(1))
-              .join(" ");
-            push({ label: title, href: `/shop/product/${ctx.params.slug}` });
-            return ProductsDetailRoute(ctx);
-          }, { name: "products.detail.view" }, () => [
-            loading(<ProductDetailSkeleton />, { ssr: true }),
-            loader(ProductLoader, () => [revalidate(() => false), cache()]),
-            loader(RelatedProductsLoader, () => [revalidate(() => false)]),
-            revalidate(productDetailRevalidation),
-            parallel({ "@related": (ctx) => <RelatedProducts slug={ctx.params.slug} /> }),
-          ]),
+          path(
+            "/product/:slug",
+            ProductDetailRouteWithBreadcrumbs,
+            { name: "products.detail.view" },
+            () => [
+              loading(<ProductDetailSkeleton />, { ssr: true }),
+              loader(ProductLoader, () => [revalidate(() => false), cache()]),
+              loader(RelatedProductsLoader, () => [revalidate(() => false)]),
+              revalidate(productDetailRevalidation),
+              parallel({
+                "@related": (ctx) => <RelatedProducts slug={ctx.params.slug} />,
+              }),
+            ],
+          ),
 
           // Reviews routes
-          path("/product/:slug/reviews", (ctx) => (
-            <div>
-              <h2>Reviews for {ctx.params.slug}</h2>
-              <p>All reviews for this product</p>
-            </div>
-          ), { name: "products.detail.reviews.index" }),
+          path(
+            "/product/:slug/reviews",
+            ReviewsIndexRoute,
+            { name: "products.detail.reviews.index" },
+          ),
 
-          path("/product/:slug/reviews/:reviewId", (ctx) => (
-            <div>
-              <h2>Review {ctx.params.reviewId}</h2>
-              <p>For product: {ctx.params.slug}</p>
-            </div>
-          ), { name: "products.detail.reviews.detail" }),
+          path(
+            "/product/:slug/reviews/:reviewId",
+            ReviewDetailRoute,
+            { name: "products.detail.reviews.detail" },
+          ),
 
-          path("/product/:slug/reviews/:reviewId/edit", (ctx) => (
-            <div>
-              <h2>Edit Review {ctx.params.reviewId}</h2>
-              <p>For product: {ctx.params.slug}</p>
-              <p>4 levels deep!</p>
-            </div>
-          ), { name: "products.detail.reviews.edit.index" }),
+          path(
+            "/product/:slug/reviews/:reviewId/edit",
+            ReviewEditRoute,
+            { name: "products.detail.reviews.edit.index" },
+          ),
 
           // Cart
           path("/cart", CartRoute, { name: "cart" }, () => [
@@ -210,7 +218,7 @@ export const shopPatterns = urls(
             revalidate(cartRevalidation),
             parallel({ "@summary": () => <OrderSummary variant="cart" /> }),
           ]),
-        ]
+        ],
       ),
 
       // Checkout routes with dedicated cache store
@@ -219,17 +227,34 @@ export const shopPatterns = urls(
           loading(<CheckoutSkeleton />),
           middleware(...requireAuthMiddleware),
 
-          path("/checkout", CheckoutIndexRoute, { name: "checkout.index" }, () => [
-            parallel({ "@summary": () => <OrderSummary variant="checkout" /> }),
-          ]),
+          path(
+            "/checkout",
+            CheckoutIndexRoute,
+            { name: "checkout.index" },
+            () => [
+              parallel({
+                "@summary": () => <OrderSummary variant="checkout" />,
+              }),
+            ],
+          ),
 
-          path("/checkout/payment", CheckoutPaymentRoute, { name: "checkout.payment" }, () => [
-            parallel({ "@summary": () => <OrderSummary variant="payment" /> }),
-          ]),
+          path(
+            "/checkout/payment",
+            CheckoutPaymentRoute,
+            { name: "checkout.payment" },
+            () => [
+              parallel({
+                "@summary": () => <OrderSummary variant="payment" />,
+              }),
+            ],
+          ),
 
-          path("/checkout/confirm", CheckoutConfirmRoute, { name: "checkout.confirm" }, () => [
-            revalidate(checkoutConfirmRevalidation),
-          ]),
+          path(
+            "/checkout/confirm",
+            CheckoutConfirmRoute,
+            { name: "checkout.confirm" },
+            () => [revalidate(checkoutConfirmRevalidation)],
+          ),
         ]),
       ]),
 
@@ -241,14 +266,20 @@ export const shopPatterns = urls(
           parallel({ "@orders": () => <RecentOrders /> }),
         ]),
 
-        path("/account/orders", AccountOrdersRoute, { name: "account.orders" }, () => [
-          middleware(...permissionsMiddleware),
-        ]),
+        path(
+          "/account/orders",
+          AccountOrdersRoute,
+          { name: "account.orders" },
+          () => [middleware(...permissionsMiddleware)],
+        ),
 
-        path("/account/orders/:id", AccountOrderDetailRoute, { name: "account.orderDetail" }, () => [
-          revalidate(orderDetailRevalidation),
-        ]),
+        path(
+          "/account/orders/:id",
+          AccountOrderDetailRoute,
+          { name: "account.orderDetail" },
+          () => [revalidate(orderDetailRevalidation)],
+        ),
       ]),
     ]),
-  ]
+  ],
 );

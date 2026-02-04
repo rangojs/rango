@@ -1,4 +1,4 @@
-import { createRSCRouter, type RouterEnv, redirect, type MiddlewareFn } from "@rangojs/router/server";
+import { createRouter, type RouterEnv, redirect, type Middleware } from "@rangojs/router/server";
 import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 import { urlpatterns } from "./urls.js";
 
@@ -7,7 +7,26 @@ export const cacheStore = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 120 },
 });
 
-export type AppEnv = RouterEnv<{}, {}>;
+/**
+ * App-level bindings (platform resources like DB, KV, etc.)
+ */
+export interface AppBindings {}
+
+/**
+ * App-level variables (middleware-injected context)
+ * These are typed for ctx.get() and ctx.set() throughout the app
+ */
+export interface AppVariables {
+  user?: { id: string; name: string };
+  visitCount?: number;
+  middlewareParams?: Record<string, string | undefined>;
+  // Route-level middleware variables
+  routeMiddlewareApplied?: string;
+  middlewareRouteId?: string;
+  paramsAvailableInMiddleware?: string;
+}
+
+export type AppEnv = RouterEnv<AppBindings, AppVariables>;
 
 declare global {
   namespace RSCRouter {
@@ -17,8 +36,9 @@ declare global {
 
 /**
  * Global middleware - adds X-Global-Middleware header to all responses
+ * Note: Middleware defaults to RSCRouter.Env (via DefaultEnv) so no type parameter needed
  */
-const globalMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
+const globalMiddleware: Middleware = async (ctx, next) => {
   const response = await next();
   response.headers.set("X-Global-Middleware", "applied");
   return response;
@@ -27,7 +47,7 @@ const globalMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
 /**
  * Timing middleware - measures request duration and adds X-Request-Duration header
  */
-const timingMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
+const timingMiddleware: Middleware = async (ctx, next) => {
   const start = Date.now();
   await next();
   const duration = Date.now() - start;
@@ -38,7 +58,7 @@ const timingMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
  * Auth middleware - pattern-based, only applies to /middleware-test/protected/*
  * Checks for auth cookie, redirects to /middleware-test if not authenticated
  */
-const authMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
+const authMiddleware: Middleware = async (ctx, next) => {
   const authToken = ctx.cookie("auth-token");
   if (!authToken) {
     // Set a header to indicate redirect happened (for test verification)
@@ -53,7 +73,7 @@ const authMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
  * Error handling middleware - catches errors and returns custom error response
  * Only applies to /middleware-test/error-handler/*
  */
-const errorMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
+const errorMiddleware: Middleware = async (ctx, next) => {
   try {
     await next();
   } catch (error) {
@@ -71,7 +91,7 @@ const errorMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
  * Cookie middleware - sets a response cookie
  * Only applies to /middleware-test/cookies
  */
-const cookieMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
+const cookieMiddleware: Middleware = async (ctx, next) => {
   // Read existing cookie
   const visitCount = parseInt(ctx.cookie("visit-count") || "0", 10);
 
@@ -91,7 +111,7 @@ const cookieMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
  * Params middleware - extracts params from pattern
  * Pattern: /middleware-test/params/:id
  */
-const paramsMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
+const paramsMiddleware: Middleware = async (ctx, next) => {
   // ctx.params contains extracted route params
   ctx.set("middlewareParams", ctx.params);
   await next();
@@ -101,12 +121,12 @@ const paramsMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
 /**
  * Header shorthand middleware - uses ctx.header() shorthand
  */
-const headerShorthandMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {
+const headerShorthandMiddleware: Middleware = async (ctx, next) => {
   await next();
   ctx.header("X-Header-Shorthand", "works");
 };
 
-export const router = createRSCRouter<AppEnv>({
+export const router = createRouter<AppEnv>({
   cache: { store: cacheStore },
   theme: {
     defaultTheme: "system",

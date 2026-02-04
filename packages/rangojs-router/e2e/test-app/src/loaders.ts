@@ -45,7 +45,7 @@ export const ProductDetailLoader = createLoader(async (ctx) => {
  * Load cart quantity for a product
  */
 export const CartQuantityLoader = createLoader(async (ctx) => {
-  const productId = ctx.params.productId;
+  const productId = ctx.params.productId!;
   // Import dynamically to avoid "use server" directive issues
   const { getCartQuantity } = await import("./actions.jsx");
   const quantity = await getCartQuantity(productId);

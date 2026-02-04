@@ -1,6 +1,6 @@
-import type { ShouldRevalidateFn } from "@rangojs/router/server";
+import type { Revalidate } from "@rangojs/router/server";
 
-export const productDetailRevalidation: ShouldRevalidateFn<{ slug: string }> = ({
+export const productDetailRevalidation: Revalidate<{ slug: string }> = ({
   currentParams,
   nextParams,
   method,

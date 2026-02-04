@@ -9,6 +9,33 @@
  * - Forgiving API: if middleware doesn't return, original response is used
  */
 
+import type { RouterEnv } from "../types.js";
+
+/**
+ * Helper type to extract Variables from RouterEnv
+ * Uses 0 extends 1 & TEnv to detect `any` type and fall back to Record<string, unknown>
+ */
+type ExtractVariables<TEnv> = 0 extends 1 & TEnv
+  ? Record<string, unknown>  // TEnv is any
+  : TEnv extends RouterEnv<unknown, infer V>
+    ? V
+    : Record<string, unknown>;
+
+/**
+ * Get variable function type
+ */
+type GetVariableFn<TEnv> = <K extends keyof ExtractVariables<TEnv>>(
+  key: K
+) => ExtractVariables<TEnv>[K];
+
+/**
+ * Set variable function type
+ */
+type SetVariableFn<TEnv> = <K extends keyof ExtractVariables<TEnv>>(
+  key: K,
+  value: ExtractVariables<TEnv>[K]
+) => void;
+
 /**
  * Cookie options for setting cookies
  */
@@ -25,7 +52,7 @@ export interface CookieOptions {
 /**
  * Context passed to middleware
  *
- * @template TEnv - Environment type (bindings, variables)
+ * @template TEnv - Environment type (bindings, variables) - defaults to any for internal flexibility
  * @template TParams - URL params type (typed for route middleware, Record<string, string> for global middleware)
  */
 export interface MiddlewareContext<
@@ -45,7 +72,7 @@ export interface MiddlewareContext<
   searchParams: URLSearchParams;
 
   /** Platform bindings (Cloudflare, etc.) */
-  env: TEnv;
+  env: TEnv extends RouterEnv<infer B, unknown> ? B : {};
 
   /** URL params extracted from route/middleware pattern */
   params: TParams;
@@ -88,10 +115,10 @@ export interface MiddlewareContext<
   ): void;
 
   /** Get a context variable (shared with route handlers) */
-  get<K extends string>(key: K): any;
+  get: GetVariableFn<TEnv>;
 
   /** Set a context variable (shared with route handlers) */
-  set<K extends string>(key: K, value: any): void;
+  set: SetVariableFn<TEnv>;
 
   /**
    * Set a response header - can be called before or after `next()`
@@ -106,16 +133,29 @@ export interface MiddlewareContext<
 /**
  * Middleware function signature
  *
- * @template TEnv - Environment type
+ * @template TEnv - Environment type - defaults to any for internal flexibility
  * @template TParams - URL params type (typed for route middleware)
+ *
+ * When using middleware with global augmentation (RSCRouter.Env), explicitly
+ * annotate your middleware functions, or the types will be inferred from context:
+ *
+ * @example
+ * ```typescript
+ * // With explicit annotation (recommended for reusable middleware)
+ * const authMiddleware: MiddlewareFn<AppEnv> = async (ctx, next) => {...}
+ *
+ * // Types inferred from router.use() call
+ * router.use((ctx, next) => {...}) // ctx is typed from router's TEnv
+ * ```
  */
 export type MiddlewareFn<TEnv = any, TParams = Record<string, string>> = (
   ctx: MiddlewareContext<TEnv, TParams>,
   next: () => Promise<Response>
-) => Response | Promise<Response> | void | Promise<void>;
+) => Response | void | Promise<Response | void>;
 
 /**
  * Stored middleware entry with pattern matching info
+ * @internal - uses any for internal flexibility
  */
 export interface MiddlewareEntry<TEnv = any> {
   /** Original pattern string */
@@ -254,24 +294,29 @@ export interface ResponseHolder {
 
 /**
  * Create middleware context
+ *
+ * Note: The implementation uses runtime values while the interface provides
+ * compile-time type safety. The env/get/set types are resolved at call sites
+ * via conditional types based on TEnv extending RouterEnv.
  */
 export function createMiddlewareContext<TEnv>(
   request: Request,
   env: TEnv,
   params: Record<string, string>,
-  variables: Record<string, any>,
+  variables: Record<string, unknown>,
   responseHolder: ResponseHolder
 ): MiddlewareContext<TEnv> {
   const url = new URL(request.url);
   const cookieHeader = request.headers.get("Cookie");
   let parsedCookies: Record<string, string> | null = null;
 
+  // The runtime implementation - types are enforced at call sites via MiddlewareContext<TEnv>
   return {
     request,
     url,
     pathname: url.pathname,
     searchParams: url.searchParams,
-    env,
+    env: env as MiddlewareContext<TEnv>["env"],
     params,
 
     // res getter - returns the stub or real response (always available)
@@ -330,13 +375,11 @@ export function createMiddlewareContext<TEnv>(
       );
     },
 
-    get<K extends string>(key: K): any {
-      return variables[key];
-    },
+    get: ((key: string) => variables[key]) as MiddlewareContext<TEnv>["get"],
 
-    set<K extends string>(key: K, value: any): void {
+    set: ((key: string, value: unknown) => {
       variables[key] = value;
-    },
+    }) as MiddlewareContext<TEnv>["set"],
 
     header(name: string, value: string): void {
       if (!responseHolder.response) {

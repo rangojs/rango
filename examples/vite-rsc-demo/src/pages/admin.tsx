@@ -1,4 +1,4 @@
-import type { HandlerContext, ShouldRevalidateFn, GenericParams, RevalidateParams } from "@rangojs/router";
+import type { HandlerContext, Revalidate, GenericParams, RevalidateParams } from "@rangojs/router";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 
 export function AdminIndexPage() {
@@ -170,12 +170,12 @@ export function AdminSettingsPage() {
 }
 
 // Revalidation functions
-export const globalRevalidation: ShouldRevalidateFn<GenericParams, RSCRouter.Env> = () => {
+export const globalRevalidation: Revalidate<GenericParams, RSCRouter.Env> = () => {
   console.log("[Admin] Global: SOFT decision - suggest revalidate=true, continue...");
   return { defaultShouldRevalidate: true };
 };
 
-export const settingsRevalidation: ShouldRevalidateFn<GenericParams, RSCRouter.Env> = () => {
+export const settingsRevalidation: Revalidate<GenericParams, RSCRouter.Env> = () => {
   console.log("[Admin] Settings: HARD decision - never revalidate");
   return false;
 };
