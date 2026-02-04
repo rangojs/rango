@@ -1,20 +1,17 @@
 /**
- * Stress test URL patterns: 14,000+ routes with complex patterns
+ * Stress test URL patterns: 10,000+ routes with complex patterns
  *
  * Structure designed to test prefix short-circuit optimization:
- * - /site/:locale/* - 9,000+ localized routes (static prefix enables optimization)
- * - /api/* - 5,000 API routes (static prefix enables optimization)
+ * - /site/:locale/* - 5,000+ localized routes (staticPrefix: "/site")
+ * - /api/* - 5,000 API routes (staticPrefix: "/api")
+ * - /shop/* - Nested includes demo (staticPrefix: "/shop")
+ *   - /shop/product/* - 100 routes (staticPrefix: "/shop/product")
+ *   - /shop/category/* - 100 routes (staticPrefix: "/shop/category")
  *
- * When requesting /api/*, the router can skip ALL /site routes
- * by checking that pathname doesn't start with "/site".
- *
- * Benchmark routes:
- * - /bench/first - before any includes (baseline)
- * - /site/en/bench/first - early in site routes
- * - /site/en/bench/last - late in site routes (after 9000+ patterns)
- * - /api/v1/resource1/test - early API route (skips 9000+ site routes)
- * - /api/v4/static/1000 - late API route
- * - /bench/last - AFTER all includes (worst case: checks all 14,000+ routes)
+ * Key optimizations:
+ * - /api/* requests skip ALL /site and /shop routes
+ * - /shop/product/* requests skip /shop/category routes (nested optimization!)
+ * - 404s for non-prefixed paths skip ~10,000 routes
  */
 import { urls } from "@rangojs/router";
 import {
@@ -24,6 +21,7 @@ import {
 } from "@rangojs/router/server";
 import { includedPatterns } from "./included-patterns.js";
 import { localizedPatterns } from "./localized-patterns.js";
+import { shopPatterns } from "./shop-patterns.js";
 import { HomePage } from "./pages/benchmark.js";
 
 // Enable debug for all requests
@@ -58,7 +56,7 @@ export const urlpatterns = urls(({ path, include }) => [
   // Home page (outside prefixes)
   path("/", HomePage, { name: "home" }),
 
-  // === LOCALIZED ROUTES (9,000+ under /site/:locale) ===
+  // === LOCALIZED ROUTES (5,000+ under /site/:locale) ===
   // Static "/site" prefix enables short-circuit optimization
   include("/site/:locale", localizedPatterns, { name: "site" }),
 
@@ -66,6 +64,12 @@ export const urlpatterns = urls(({ path, include }) => [
   // Static "/api" prefix enables short-circuit optimization
   include("/api", includedPatterns, { name: "api" }),
 
-  // === BENCHMARK: Last route (after ALL 14,000+ routes) ===
+  // === SHOP ROUTES (nested includes demo) ===
+  // Demonstrates nested include optimization:
+  // - /shop/product/* (staticPrefix: "/shop/product") skips /shop/category
+  // - /shop/category/* (staticPrefix: "/shop/category") skips /shop/product
+  include("/shop", shopPatterns, { name: "shop" }),
+
+  // === BENCHMARK: Last route (after ALL routes) ===
   path("/bench/last", BenchmarkHandler, { name: "benchLast" }),
 ]);
