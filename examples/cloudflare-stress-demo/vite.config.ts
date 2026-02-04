@@ -1,13 +1,19 @@
 import { cloudflare } from "@cloudflare/vite-plugin";
-import { rscRouter } from "@rangojs/router/vite";
+import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { rscRouter } from "@rangojs/router/vite";
 
 export default defineConfig({
+  server: {
+    port: 5002, // Different port to avoid conflicts
+    host: process.env.CI ? "0.0.0.0" : undefined,
+  },
   plugins: [
-    rscRouter(),
+    react(),
+    rscRouter({ preset: "cloudflare" }),
     cloudflare({
-      viteEnvironment: { name: "ssr" },
-      persistState: false,
+      configPath: "./wrangler.json",
+      viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
     }),
   ],
 });

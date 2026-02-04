@@ -20,6 +20,7 @@
     "@cloudflare/workers-types": "^4.20260114.0",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "latest",
     "typescript": "^5.7.0",
     "vite": "catalog:",
     "wrangler": "^4.59.2"
