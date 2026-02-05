@@ -30,8 +30,6 @@ import { Meta } from "./meta.js";
 import type { MetaDescriptor, MetaDescriptorBase } from "../router/types.js";
 import { getSSRThemeConfig } from "../theme/theme-context.js";
 import { generateThemeScript } from "../theme/theme-script.js";
-import { getSSRWarmupEnabled } from "../warmup/warmup-context.js";
-import { ConnectionWarmup } from "../warmup/connection-warmup.js";
 
 // Type guards for MetaDescriptorBase variants
 function hasCharSet(d: MetaDescriptorBase): d is { charSet: "utf-8" } {
@@ -175,7 +173,6 @@ function AsyncMetaTag({ promise, index }: { promise: Promise<MetaDescriptorBase>
 export function MetaTags(): React.ReactNode {
   const descriptors = useHandle(Meta) as MetaDescriptor[];
   const themeConfig = getSSRThemeConfig();
-  const warmupEnabled = getSSRWarmupEnabled();
 
   return (
     <>
@@ -191,7 +188,6 @@ export function MetaTags(): React.ReactNode {
         }
         return renderMetaDescriptor(descriptor, index);
       })}
-      {warmupEnabled && <ConnectionWarmup />}
     </>
   );
 }

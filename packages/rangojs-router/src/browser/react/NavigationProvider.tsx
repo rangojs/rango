@@ -23,6 +23,7 @@ import { RootErrorBoundary } from "../../root-error-boundary.js";
 import type { HandleData } from "../types.js";
 import { ThemeProvider } from "../../theme/ThemeProvider.js";
 import type { ResolvedThemeConfig, Theme } from "../../theme/types.js";
+import { ConnectionWarmup } from "../../warmup/connection-warmup.js";
 
 /**
  * Process handles from an async generator, updating the event controller
@@ -120,6 +121,12 @@ export interface NavigationProviderProps {
    * Only used when themeConfig is provided
    */
   initialTheme?: Theme;
+
+  /**
+   * Whether connection warmup is enabled.
+   * When true, renders ConnectionWarmup to keep TLS alive after idle periods.
+   */
+  warmupEnabled?: boolean;
 }
 
 /**
@@ -150,6 +157,7 @@ export function NavigationProvider({
   bridge,
   themeConfig,
   initialTheme,
+  warmupEnabled,
 }: NavigationProviderProps): ReactNode {
   // Track current payload for rendering (this triggers re-renders)
   const [payload, setPayload] = useState(initialPayload);
@@ -252,6 +260,7 @@ export function NavigationProvider({
   return (
     <NavigationStoreContext.Provider value={contextValue}>
       {content}
+      {warmupEnabled && <ConnectionWarmup />}
     </NavigationStoreContext.Provider>
   );
 }

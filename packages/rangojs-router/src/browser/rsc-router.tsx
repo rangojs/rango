@@ -13,7 +13,6 @@ import { createServerActionBridge } from "./server-action-bridge.js";
 import { createNavigationBridge } from "./navigation-bridge.js";
 import { NavigationProvider, initHandleDataSync, initSegmentsSync } from "./react/index.js";
 import { initThemeConfigSync } from "../theme/theme-context.js";
-import { initWarmupSync } from "../warmup/warmup-context.js";
 import type {
   RscPayload,
   RscBrowserDependencies,
@@ -105,6 +104,8 @@ export interface BrowserAppContext {
   themeConfig?: ResolvedThemeConfig | null;
   /** Initial theme from server */
   initialTheme?: Theme;
+  /** Whether connection warmup is enabled */
+  warmupEnabled?: boolean;
 }
 
 // Module-level state for the initialized app
@@ -157,9 +158,6 @@ export async function initBrowserApp(
 
   // Initialize theme config for MetaTags (must match SSR state)
   initThemeConfigSync(effectiveThemeConfig);
-
-  // Initialize warmup config for MetaTags (must match SSR state)
-  initWarmupSync(initialPayload.metadata?.warmupEnabled ?? true);
 
   // Initialize event controller with segment order (even without handles)
   eventController.setHandleData({}, initialPayload.metadata?.matched);
@@ -279,6 +277,7 @@ export async function initBrowserApp(
     initialTree,
     themeConfig: effectiveThemeConfig,
     initialTheme: effectiveInitialTheme,
+    warmupEnabled: initialPayload.metadata?.warmupEnabled ?? true,
   };
   browserAppContext = context;
 
@@ -334,7 +333,7 @@ export interface RSCRouterProps {}
  * ```
  */
 export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
-  const { store, eventController, bridge, initialPayload, initialTree, themeConfig, initialTheme } =
+  const { store, eventController, bridge, initialPayload, initialTree, themeConfig, initialTheme, warmupEnabled } =
     getBrowserAppContext();
 
   return (
@@ -345,6 +344,7 @@ export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
       bridge={bridge}
       themeConfig={themeConfig}
       initialTheme={initialTheme}
+      warmupEnabled={warmupEnabled}
     />
   );
 }
