@@ -9,7 +9,7 @@
  *
  * Cold detection: 60s of no user interaction marks the connection as cold.
  * Warmup triggers: on visibility change or first user interaction after cold,
- * debounced 150ms, sends HEAD /?_rsc_warmup to re-establish TLS.
+ * debounced 150ms, sends HEAD ?_rsc_warmup (relative to current path) to re-establish TLS.
  */
 
 import { useEffect } from "react";
@@ -39,7 +39,7 @@ export function ConnectionWarmup(): null {
       if (!isCold) return;
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
-        fetch("/?_rsc_warmup", { method: "HEAD" }).catch(() => {});
+        fetch("?_rsc_warmup", { method: "HEAD", keepalive: true }).catch(() => {});
         isCold = false;
         // Detach warmup listeners until next cold period
         detachWarmupListeners();

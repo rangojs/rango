@@ -977,7 +977,6 @@ export function createRSCHandler<
             handles: handleStore.stream(),
             version,
             themeConfig: router.themeConfig,
-            warmupEnabled: router.warmupEnabled,
             initialTheme: requireRequestContext().theme,
           },
         };
@@ -1035,7 +1034,6 @@ export function createRSCHandler<
           handles: handleStore.stream(),
           version,
           themeConfig: router.themeConfig,
-          warmupEnabled: router.warmupEnabled,
           initialTheme: requireRequestContext().theme,
         },
       };

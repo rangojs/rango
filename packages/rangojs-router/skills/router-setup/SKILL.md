@@ -97,6 +97,9 @@ interface RSCRouterOptions<TEnv> {
   // Theme configuration
   theme?: ThemeConfig | true;
 
+  // Connection warmup (default: true)
+  warmup?: boolean;
+
   // CSP nonce provider (for router.fetch)
   nonce?: (request: Request, env: TEnv) => string | true | Promise<string | true>;
 
@@ -313,3 +316,31 @@ const router = createRouter<AppEnv>({
   urls: urlpatterns,
 });
 ```
+
+## Connection Warmup
+
+Enabled by default. Keeps TCP+TLS connections alive so navigations after idle periods
+don't pay handshake costs.
+
+After 60s of no user interaction, the connection is marked cold. When the user returns
+(tab becomes visible or first mouse/touch), a `HEAD ?_rsc_warmup` request re-establishes
+the TLS connection before the next navigation. The server responds with 204 No Content
+before any middleware or routing runs.
+
+```typescript
+// Enabled by default
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+});
+
+// Disable warmup
+const router = createRouter({
+  document: Document,
+  urls: urlpatterns,
+  warmup: false,
+});
+```
+
+The warmup request is relative to the current page path, so it works correctly
+with subpath deployments (reverse proxy, base path).
