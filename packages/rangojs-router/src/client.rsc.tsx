@@ -73,15 +73,8 @@ export {
   type LocationStateEntry,
 } from "./browser/react/location-state-shared.js";
 
-// Re-export useHref and HrefProvider - these are "use client" hooks/components
-// that can be imported from RSC (bundler creates client references)
-export {
-  useHref,
-  HrefProvider,
-  HrefContext,
-  type HrefContextValue,
-  type HrefFn,
-} from "./browser/react/use-href.js";
+// Re-export useHref - it's a "use client" hook
+export { useHref } from "./browser/react/use-href.js";
 
 // Re-export useHandle - it's a "use client" hook
 export { useHandle } from "./browser/react/use-handle.js";
