@@ -23,7 +23,6 @@ import { RootErrorBoundary } from "../../root-error-boundary.js";
 import type { HandleData } from "../types.js";
 import { ThemeProvider } from "../../theme/ThemeProvider.js";
 import type { ResolvedThemeConfig, Theme } from "../../theme/types.js";
-import { ConnectionWarmup } from "../../warmup/connection-warmup.js";
 
 /**
  * Process handles from an async generator, updating the event controller
@@ -190,6 +189,73 @@ export function NavigationProvider({
     []
   );
 
+  // Connection warmup: keep TLS alive after idle periods
+  useEffect(() => {
+    if (!warmupEnabled) return;
+
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+    let isCold = false;
+    let warmupListenersAttached = false;
+
+    function resetIdleTimer(): void {
+      isCold = false;
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        isCold = true;
+        attachWarmupListeners();
+      }, 60_000);
+    }
+
+    function triggerWarmup(): void {
+      if (!isCold) return;
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        fetch("/?_rsc_warmup", { method: "HEAD" }).catch(() => {});
+        isCold = false;
+        detachWarmupListeners();
+        resetIdleTimer();
+      }, 150);
+    }
+
+    function onVisibilityChange(): void {
+      if (document.visibilityState === "visible" && isCold) {
+        triggerWarmup();
+      }
+    }
+
+    function attachWarmupListeners(): void {
+      if (warmupListenersAttached) return;
+      warmupListenersAttached = true;
+      document.addEventListener("visibilitychange", onVisibilityChange);
+      document.addEventListener("mousemove", triggerWarmup, { once: true });
+      document.addEventListener("touchstart", triggerWarmup, { once: true });
+    }
+
+    function detachWarmupListeners(): void {
+      if (!warmupListenersAttached) return;
+      warmupListenersAttached = false;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      document.removeEventListener("mousemove", triggerWarmup);
+      document.removeEventListener("touchstart", triggerWarmup);
+    }
+
+    const activityEvents = ["mousemove", "keydown", "touchstart", "scroll"] as const;
+    for (const event of activityEvents) {
+      document.addEventListener(event, resetIdleTimer, { passive: true });
+    }
+    resetIdleTimer();
+
+    return () => {
+      clearTimeout(idleTimer);
+      clearTimeout(debounceTimer);
+      detachWarmupListeners();
+      for (const event of activityEvents) {
+        document.removeEventListener(event, resetIdleTimer);
+      }
+    };
+  }, [warmupEnabled]);
+
   // Subscribe to UI updates (for re-rendering the tree)
   useEffect(() => {
     const unsubscribe = store.onUpdate((update) => {
@@ -260,7 +326,6 @@ export function NavigationProvider({
   return (
     <NavigationStoreContext.Provider value={contextValue}>
       {content}
-      {warmupEnabled && <ConnectionWarmup />}
     </NavigationStoreContext.Provider>
   );
 }
