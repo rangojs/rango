@@ -23,6 +23,7 @@ import { includedPatterns } from "./included-patterns.js";
 import { localizedPatterns } from "./localized-patterns.js";
 import { shopPatterns } from "./shop-patterns.js";
 import { HomePage } from "./pages/benchmark.js";
+import { AppEnv } from "./env.js";
 
 // Enable debug for all requests
 enableMatchDebug(true);
@@ -44,8 +45,10 @@ const BenchmarkHandler = async (ctx: HandlerContext) => {
         note: elapsed === 0 ? "sub-millisecond (CF time frozen)" : "actual",
       },
       matchStats,
+      // Test href() for routes from lazy includes
+      testHref: ctx.href("api.benchFirst"),
     }),
-    { headers: { "Content-Type": "application/json" } }
+    { headers: { "Content-Type": "application/json" } },
   );
 };
 

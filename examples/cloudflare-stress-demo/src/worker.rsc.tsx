@@ -2,6 +2,9 @@
 import { router } from "./router.js";
 import type { AppBindings } from "./env.js";
 
+// Route manifest is now loaded at runtime on first request (if urlpatterns provided)
+// This app doesn't use href(), so no manifestCache option is needed
+
 export default {
   async fetch(request, env, ctx) {
     const requestStart = performance.now();

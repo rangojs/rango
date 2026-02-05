@@ -17,7 +17,7 @@ import {
   type HrefFunction,
   type PrefixRoutePatterns,
 } from "./href.js";
-import { registerRouteMap } from "./route-map-builder.js";
+import { registerRouteMap, getGlobalRouteMap } from "./route-map-builder.js";
 import {
   createRouteHelpers,
   type RouteHelpers,
@@ -34,6 +34,7 @@ import {
   getContext,
   RSCRouterContext,
   runWithPrefixes,
+  type TrackedInclude,
 } from "./server/context";
 import { createHandleStore, type HandleStore } from "./server/handle-store.js";
 import { getRequestContext } from "./server/request-context.js";
@@ -385,6 +386,25 @@ export interface RSCRouterOptions<TEnv = any> {
    * @default VERSION from @rangojs/router:version
    */
   version?: string;
+
+  /**
+   * Enable runtime route manifest generation for href() support.
+   *
+   * Only enable this if your app uses href() with lazy includes.
+   * Adds ~100ms cold boot overhead on first request per isolate.
+   *
+   * When enabled, uses the same cache store as segment caching (from `cache` option).
+   * If no cache store is configured, falls back to memory-only caching.
+   *
+   * @example Enable manifest caching (uses cache store if configured)
+   * ```typescript
+   * const router = createRouter<AppEnv>({
+   *   cache: (env) => ({ store: new CFCacheStore({ ctx: env.ctx! }) }),
+   *   manifestCache: true, // Uses the same CFCacheStore
+   * });
+   * ```
+   */
+  manifestCache?: boolean;
 }
 
 /**
@@ -740,6 +760,12 @@ export interface RSCRouter<
    */
   readonly version?: string;
 
+  /**
+   * URL patterns reference for runtime manifest generation
+   * @internal
+   */
+  readonly urlpatterns?: UrlPatterns<TEnv, any>;
+
   match(request: Request, context: TEnv): Promise<MatchResult>;
 
   /**
@@ -891,6 +917,7 @@ export function createRouter<TEnv = any>(
     urls: urlsOption,
     nonce,
     version,
+    manifestCache,
   } = options;
 
   // Resolve theme config (null if theme not enabled)
@@ -922,6 +949,9 @@ export function createRouter<TEnv = any>(
 
   // Track if .routes() has been called (for single-call enforcement in @rangojs/router)
   let routesCalled = false;
+
+  // Store reference to urlpatterns for runtime manifest generation
+  let storedUrlPatterns: UrlPatterns<TEnv, any> | null = null;
 
   // Global middleware storage
   const globalMiddleware: MiddlewareEntry<TEnv>[] = [];
@@ -3437,7 +3467,8 @@ export function createRouter<TEnv = any>(
       pathname,
       url,
       bindings,
-      mergedRouteMap,
+      // Use getGlobalRouteMap() to include routes from lazy includes (if manifest caching enabled)
+      getGlobalRouteMap(),
       matched.routeKey
     );
 
@@ -3490,7 +3521,7 @@ export function createRouter<TEnv = any>(
         : matched.routeKey,
       handlerContext,
       loaderPromises,
-      routeMap: mergedRouteMap,
+      routeMap: getGlobalRouteMap(),
       metricsStore,
       Store,
       interceptContextMatch: null,
@@ -3622,7 +3653,8 @@ export function createRouter<TEnv = any>(
       pathname,
       url,
       bindings,
-      mergedRouteMap,
+      // Use getGlobalRouteMap() to include routes from lazy includes (if manifest caching enabled)
+      getGlobalRouteMap(),
       matched.routeKey
     );
 
@@ -3752,7 +3784,7 @@ export function createRouter<TEnv = any>(
       localRouteName,
       handlerContext,
       loaderPromises,
-      routeMap: mergedRouteMap,
+      routeMap: getGlobalRouteMap(),
       metricsStore,
       Store,
       interceptContextMatch,
@@ -3993,6 +4025,8 @@ export function createRouter<TEnv = any>(
         typeof (prefixOrRoutes as UrlPatterns<TEnv>).handler === "function"
       ) {
         const urlPatterns = prefixOrRoutes as UrlPatterns<TEnv>;
+        // Store reference for runtime manifest generation
+        storedUrlPatterns = urlPatterns;
         const currentMountIndex = mountIndex++;
 
         // Create manifest and patterns maps for route registration
@@ -4205,6 +4239,11 @@ export function createRouter<TEnv = any>(
     // Expose version for fetch
     version,
 
+    // Expose urlpatterns for runtime manifest generation
+    get urlpatterns() {
+      return storedUrlPatterns ?? undefined;
+    },
+
     // RSC request handler (lazily created on first call)
     fetch: (() => {
       // Handler is created on first call and reused
@@ -4219,6 +4258,7 @@ export function createRouter<TEnv = any>(
             cache,
             nonce,
             version,
+            manifestCache,
           });
         }
         return handler(request, env);

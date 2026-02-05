@@ -13,6 +13,9 @@
  * ```
  */
 
+// Re-export createRSCHandler for custom handler setup
+export { createRSCHandler } from "./handler.js";
+
 // Re-export types
 export type {
   RscPayload,

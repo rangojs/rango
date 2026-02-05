@@ -35,6 +35,9 @@ import { generateNonce } from "./nonce.js";
 import { VERSION } from "@rangojs/router:version";
 import type { ErrorPhase } from "../types.js";
 import { invokeOnError } from "../router/error-handling.js";
+import { getGlobalRouteMap, hasCachedManifest } from "../route-map-builder.js";
+import { getRouteManifestData } from "../server/route-manifest-cache.js";
+import { generateManifest } from "../build/generate-manifest.js";
 
 /**
  * Create an RSC request handler.
@@ -74,9 +77,6 @@ export function createRSCHandler<
   TRoutes extends Record<string, string> = Record<string, string>,
 >(options: CreateRSCHandlerOptions<TEnv, TRoutes>) {
   const { router, version = VERSION, nonce: nonceProvider } = options;
-
-  // Get the route map for useHref() - converts route names to URL patterns
-  const routeMap = router.routeMap as Record<string, string>;
 
   // Use provided deps or default to @vitejs/plugin-rsc/rsc exports
   const deps = options.deps ?? rscDeps;
@@ -148,6 +148,27 @@ export function createRSCHandler<
         cacheStore = cacheConfig.store;
       }
     }
+
+    // Load route manifest on first request if manifestCache is enabled
+    // This enables href() for all routes including lazy includes
+    // Uses the same cache store as segment caching (if configured)
+    if (options.manifestCache && router.urlpatterns) {
+      if (hasCachedManifest()) {
+        console.log("[route-manifest] HIT memory (same isolate)");
+      } else {
+        await getRouteManifestData(
+          () => generateManifest(router.urlpatterns!),
+          version,
+          {
+            store: cacheStore, // Reuse the cache store from cache option
+            waitUntil: env.ctx?.waitUntil.bind(env.ctx),
+          },
+        );
+      }
+    }
+
+    // Note: Route map for useHref() is loaded lazily via getGlobalRouteMap()
+    // This allows it to include all routes from lazy includes after manifest loading
 
     // Create unified request context with all methods
     // Includes: stub response, handle store, loader memoization, use(), cookies, headers, cache store
@@ -368,7 +389,7 @@ export function createRSCHandler<
         // Render with rootLayout to maintain app shell
         const root = await renderSegments([notFoundSegment], {
           rootLayout: router.rootLayout,
-          routeMap,
+          routeMap: getGlobalRouteMap(),
           // No routeName for not-found routes
         });
 
@@ -384,7 +405,7 @@ export function createRSCHandler<
             version,
             themeConfig: router.themeConfig,
             initialTheme: requireRequestContext().theme,
-            routeMap,
+            routeMap: getGlobalRouteMap(),
             // No routeName for not-found routes
           },
         };
@@ -542,7 +563,7 @@ export function createRSCHandler<
 
     const root = renderSegments(match.segments, {
       rootLayout: router.rootLayout,
-      routeMap,
+      routeMap: getGlobalRouteMap(),
       routeName: match.routeName,
     });
 
@@ -559,7 +580,7 @@ export function createRSCHandler<
         version,
         themeConfig: router.themeConfig,
         initialTheme: requireRequestContext().theme,
-        routeMap,
+        routeMap: getGlobalRouteMap(),
         routeName: match.routeName,
       },
       formState: actionResult,
@@ -658,7 +679,7 @@ export function createRSCHandler<
             isError: true,
             handles: handleStore.stream(),
             version,
-            routeMap,
+            routeMap: getGlobalRouteMap(),
             routeName: errorResult.routeName,
           },
           returnValue,
@@ -705,7 +726,7 @@ export function createRSCHandler<
       const root = renderSegments(fullMatch.segments, {
         rootLayout: router.rootLayout,
         isAction: true,
-        routeMap,
+        routeMap: getGlobalRouteMap(),
         routeName: fullMatch.routeName,
       });
       const renderDuration = performance.now() - renderStart;
@@ -722,7 +743,7 @@ export function createRSCHandler<
           diff: fullMatch.diff,
           handles: handleStore.stream(),
           version,
-          routeMap,
+          routeMap: getGlobalRouteMap(),
           routeName: fullMatch.routeName,
         },
         returnValue,
@@ -766,7 +787,7 @@ export function createRSCHandler<
         slots: matchResult.slots,
         handles: handleStore.stream(),
         version,
-        routeMap,
+        routeMap: getGlobalRouteMap(),
         routeName: matchResult.routeName,
       },
       returnValue,
@@ -946,7 +967,7 @@ export function createRSCHandler<
         const renderStart = performance.now();
         const root = renderSegments(match.segments, {
           rootLayout: router.rootLayout,
-          routeMap,
+          routeMap: getGlobalRouteMap(),
           routeName: match.routeName,
         });
         const renderDuration = performance.now() - renderStart;
@@ -966,7 +987,7 @@ export function createRSCHandler<
             version,
             themeConfig: router.themeConfig,
             initialTheme: requireRequestContext().theme,
-            routeMap,
+            routeMap: getGlobalRouteMap(),
             routeName: match.routeName,
           },
         };
@@ -985,7 +1006,7 @@ export function createRSCHandler<
             slots: result.slots,
             handles: handleStore.stream(),
             version,
-            routeMap,
+            routeMap: getGlobalRouteMap(),
             routeName: result.routeName,
           },
         };
@@ -1008,7 +1029,7 @@ export function createRSCHandler<
       const renderStart = performance.now();
       const root = renderSegments(match.segments, {
         rootLayout: router.rootLayout,
-        routeMap,
+        routeMap: getGlobalRouteMap(),
         routeName: match.routeName,
       });
       const renderDuration = performance.now() - renderStart;
@@ -1029,7 +1050,7 @@ export function createRSCHandler<
           version,
           themeConfig: router.themeConfig,
           initialTheme: requireRequestContext().theme,
-          routeMap,
+          routeMap: getGlobalRouteMap(),
           routeName: match.routeName,
         },
       };

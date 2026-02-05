@@ -45,7 +45,8 @@ describe("generateManifest", () => {
 
     const urlpatterns = urls(({ path, include }) => [
       path("/", () => null, { name: "home" }),
-      include("/shop", lazyPatterns, { name: "shop", lazy: true }),
+      // All includes are lazy by default
+      include("/shop", lazyPatterns, { name: "shop" }),
     ]);
 
     const manifest = generateManifest(urlpatterns);
