@@ -1,10 +1,8 @@
 import React from "react";
-import { invariant } from "../errors.js";
 import { initHandleDataSync } from "../browser/react/use-handle.js";
 import { initSegmentsSync } from "../browser/react/use-segments.js";
 import { initThemeConfigSync } from "../theme/theme-context.js";
 import { ThemeProvider } from "../theme/ThemeProvider.js";
-import { HrefProvider } from "../browser/react/use-href.js";
 import { NavigationStoreContext } from "../browser/react/context.js";
 import type { NavigationStoreContextValue } from "../browser/react/context.js";
 import type { HandleData } from "../browser/types.js";
@@ -110,8 +108,6 @@ interface RscPayload {
     pathname?: string;
     themeConfig?: ResolvedThemeConfig | null;
     initialTheme?: Theme;
-    routeMap?: Record<string, string>;
-    routeName?: string;
   };
 }
 
@@ -250,7 +246,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
         };
 
         // Build content tree with all necessary providers
-        // Order must match NavigationProvider: NavigationStoreContext > HrefProvider > ThemeProvider > content
+        // Order must match NavigationProvider: NavigationStoreContext > ThemeProvider > content
         let content: React.ReactNode = resolved.root;
 
         // Wrap content with ThemeProvider if theme is enabled
@@ -261,14 +257,6 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
             </ThemeProvider>
           );
         }
-
-        // Wrap with HrefProvider for useHref() support during SSR
-        invariant(resolved.metadata?.routeMap, "SSR payload must include routeMap in metadata");
-        content = (
-          <HrefProvider routeMap={resolved.metadata.routeMap} routeName={resolved.metadata.routeName}>
-            {content}
-          </HrefProvider>
-        );
 
         // Wrap with NavigationStoreContext for useNavigation hook
         return (
