@@ -1219,7 +1219,25 @@ export function createRouter<TEnv = any>(
         // Store the include prefix for evaluation
         _lazyPrefix: lazyInclude.prefix,
       };
-      routesEntries.push(nestedEntry);
+      // Insert nested lazy entry before any entry whose staticPrefix is a
+      // prefix of (but shorter than) this lazy entry's staticPrefix.
+      // This ensures more specific lazy includes are matched before
+      // less specific eager entries (e.g., "/href/nested" before "/href/:id").
+      const nestedPrefix = nestedEntry.staticPrefix;
+      let insertIndex = routesEntries.length;
+      if (nestedPrefix) {
+        for (let i = 0; i < routesEntries.length; i++) {
+          const existing = routesEntries[i]!;
+          if (
+            nestedPrefix.startsWith(existing.staticPrefix) &&
+            nestedPrefix.length > existing.staticPrefix.length
+          ) {
+            insertIndex = i;
+            break;
+          }
+        }
+      }
+      routesEntries.splice(insertIndex, 0, nestedEntry);
     }
 
     // Re-register route map for runtime href() usage
@@ -4252,7 +4270,25 @@ export function createRouter<TEnv = any>(
             // Store the include prefix for evaluation
             _lazyPrefix: lazyInclude.prefix,
           };
-          routesEntries.push(lazyEntry);
+          // Insert lazy entry before any entry whose staticPrefix is a
+          // prefix of (but shorter than) this lazy entry's staticPrefix.
+          // This ensures more specific lazy includes are matched before
+          // less specific eager entries (e.g., "/href/nested" before "/href/:id").
+          const lazyPrefix = lazyEntry.staticPrefix;
+          let insertIndex = routesEntries.length;
+          if (lazyPrefix) {
+            for (let i = 0; i < routesEntries.length; i++) {
+              const existing = routesEntries[i]!;
+              if (
+                lazyPrefix.startsWith(existing.staticPrefix) &&
+                lazyPrefix.length > existing.staticPrefix.length
+              ) {
+                insertIndex = i;
+                break;
+              }
+            }
+          }
+          routesEntries.splice(insertIndex, 0, lazyEntry);
         }
 
         // Auto-register route map for runtime href() usage

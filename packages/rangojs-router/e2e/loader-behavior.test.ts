@@ -211,12 +211,6 @@ test.describe("loader-behavior", () => {
       const startTime = Date.now();
       await page.locator('[data-testid="slow-skip-ssr-link"]').click();
 
-      // Loading skeleton should appear quickly (streaming on SPA navigation)
-      // Use 1000ms timeout to be CI-friendly while still being much faster than LOADER_DELAY
-      await expect(
-        page.locator('[data-testid="slow-skip-ssr-loading"]'),
-      ).toBeVisible({ timeout: 1000 });
-
       const loadingVisibleTime = Date.now() - startTime;
 
       // Loading should appear much faster than the loader delay

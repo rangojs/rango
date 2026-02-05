@@ -1,11 +1,16 @@
 import React from "react";
+import { invariant } from "../errors.js";
 import { initHandleDataSync } from "../browser/react/use-handle.js";
 import { initSegmentsSync } from "../browser/react/use-segments.js";
 import { initThemeConfigSync } from "../theme/theme-context.js";
 import { ThemeProvider } from "../theme/ThemeProvider.js";
+import { HrefProvider } from "../browser/react/use-href.js";
+import { NavigationStoreContext } from "../browser/react/context.js";
+import type { NavigationStoreContextValue } from "../browser/react/context.js";
 import type { HandleData } from "../browser/types.js";
 import type { ErrorPhase } from "../types.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
+import type { EventController, DerivedNavigationState } from "../browser/event-controller.js";
 
 /**
  * Options for injectRSCPayload
@@ -105,6 +110,8 @@ interface RscPayload {
     pathname?: string;
     themeConfig?: ResolvedThemeConfig | null;
     initialTheme?: Theme;
+    routeMap?: Record<string, string>;
+    routeName?: string;
   };
 }
 
@@ -120,6 +127,48 @@ async function consumeAsyncGenerator(
     lastData = data;
   }
   return lastData;
+}
+
+/**
+ * Create a minimal event controller for SSR.
+ * This provides the correct pathname so useNavigation returns the right value during SSR.
+ */
+function createSsrEventController(pathname: string): EventController {
+  const location = new URL(pathname, "http://localhost");
+  const state: DerivedNavigationState = {
+    state: "idle",
+    isStreaming: false,
+    location,
+    pendingUrl: null,
+    inflightActions: [],
+  };
+
+  return {
+    getState: () => state,
+    subscribe: () => () => {},
+    getActionState: () => ({
+      state: "idle",
+      actionId: null,
+      payload: null,
+      error: null,
+      result: null,
+    }),
+    subscribeToAction: () => () => {},
+    subscribeToHandles: () => () => {},
+    setHandleData: () => {},
+    getHandleState: () => ({ data: {}, segmentOrder: [] }),
+    setLocation: () => {},
+    startNavigation: () => {
+      throw new Error("Navigation not supported during SSR");
+    },
+    abortNavigation: () => {},
+    startAction: () => {
+      throw new Error("Actions not supported during SSR");
+    },
+    abortAllActions: () => {},
+    getCurrentNavigation: () => null,
+    getInflightActions: () => new Map(),
+  };
 }
 
 /**
@@ -171,6 +220,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       // Deserialize RSC stream to React tree
       let payload: Promise<RscPayload> | undefined;
       let handlesPromise: Promise<HandleData> | undefined;
+      let ssrContextValue: NavigationStoreContextValue | undefined;
       function SsrRoot() {
         payload ??= createFromReadableStream<RscPayload>(rscStream1);
         const resolved = React.use(payload);
@@ -191,17 +241,41 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
           initHandleDataSync(handleData, resolved.metadata.matched);
         }
 
+        // Create SSR context with correct pathname for useNavigation
+        ssrContextValue ??= {
+          store: null as any,
+          eventController: createSsrEventController(resolved.metadata?.pathname ?? "/"),
+          navigate: async () => {},
+          refresh: async () => {},
+        };
+
+        // Build content tree with all necessary providers
+        // Order must match NavigationProvider: NavigationStoreContext > HrefProvider > ThemeProvider > content
+        let content: React.ReactNode = resolved.root;
+
         // Wrap content with ThemeProvider if theme is enabled
-        // This provides the theme context for client components that use useTheme
         if (themeConfig) {
-          return (
+          content = (
             <ThemeProvider config={themeConfig} initialTheme={resolved.metadata?.initialTheme}>
-              {resolved.root}
+              {content}
             </ThemeProvider>
           );
         }
 
-        return resolved.root;
+        // Wrap with HrefProvider for useHref() support during SSR
+        invariant(resolved.metadata?.routeMap, "SSR payload must include routeMap in metadata");
+        content = (
+          <HrefProvider routeMap={resolved.metadata.routeMap} routeName={resolved.metadata.routeName}>
+            {content}
+          </HrefProvider>
+        );
+
+        // Wrap with NavigationStoreContext for useNavigation hook
+        return (
+          <NavigationStoreContext.Provider value={ssrContextValue}>
+            {content}
+          </NavigationStoreContext.Provider>
+        );
       }
 
       // Get bootstrap script content

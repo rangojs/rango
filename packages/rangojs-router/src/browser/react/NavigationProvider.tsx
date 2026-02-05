@@ -23,7 +23,7 @@ import { RootErrorBoundary } from "../../root-error-boundary.js";
 import type { HandleData } from "../types.js";
 import { ThemeProvider } from "../../theme/ThemeProvider.js";
 import type { ResolvedThemeConfig, Theme } from "../../theme/types.js";
-import { HrefContext, type HrefContextValue } from "./use-href.js";
+import { HrefProvider, type HrefContextValue } from "./use-href.js";
 
 /**
  * Process handles from an async generator, updating the event controller
@@ -258,12 +258,15 @@ export function NavigationProvider({
     return { routeMap, routeName };
   }, [payload.metadata?.routeMap, payload.metadata?.routeName]);
 
-  // Wrap with HrefContext when routeMap is available
+  // Wrap with HrefProvider when routeMap is available
   if (hrefContextValue) {
     content = (
-      <HrefContext.Provider value={hrefContextValue}>
+      <HrefProvider
+        routeMap={hrefContextValue.routeMap}
+        routeName={hrefContextValue.routeName}
+      >
         {content}
-      </HrefContext.Provider>
+      </HrefProvider>
     );
   }
 

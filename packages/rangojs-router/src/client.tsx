@@ -79,6 +79,7 @@ export function Outlet({ name }: { name?: `@${string}` } = {}): ReactNode {
               : Promise.resolve(segment.component)
           }
           fallback={segment.loading}
+          segmentId={segment.id}
         />
       );
     } else {
@@ -193,6 +194,7 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
             : Promise.resolve(segment.component)
         }
         fallback={segment.loading}
+        segmentId={segment.id}
       />
     );
   } else {

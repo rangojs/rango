@@ -671,7 +671,7 @@ export function createServerActionBridge(
         interceptSegments:
           interceptSegments.length > 0 ? interceptSegments : undefined,
       };
-      const newTree = renderSegments(mainSegments, renderOptions);
+      const newTree = await renderSegments(mainSegments, renderOptions);
 
       // Re-check if user navigated away (could happen during async wait)
       const currentPathnameNow = window.location.pathname;
@@ -693,8 +693,6 @@ export function createServerActionBridge(
         handle.complete(returnData);
         return returnData;
       }
-
-      console.log("Update", id);
 
       startTransition(() => {
         onUpdate({ root: newTree, metadata: metadata! });

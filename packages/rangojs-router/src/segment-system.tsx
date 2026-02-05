@@ -1,6 +1,5 @@
 import { createElement, type ReactNode, type ComponentType } from "react";
 import { OutletProvider } from "./client.js";
-import { HrefProvider } from "./browser/react/use-href.js";
 import type {
   ResolvedSegment,
   LoaderDataResult,
@@ -149,6 +148,7 @@ export async function renderSegments(
     routeMap,
     routeName,
   } = options || {};
+
   const temporalLazyRefs: Promise<any>[] = [];
 
   /**
@@ -221,6 +221,7 @@ export async function renderSegments(
     if (isAction && component instanceof Promise) {
       resolvedComponent = await component;
     }
+
     let nodeContent: ReactNode | Promise<ReactNode> =
       loading !== null && loading
         ? createElement(RouteContentWrapper, {
@@ -230,9 +231,9 @@ export async function renderSegments(
                 ? resolvedComponent
                 : Promise.resolve(resolvedComponent),
             fallback: loading,
+            segmentId: id,
           })
         : registerLazyRef(resolvedComponent);
-    if (loading === null) await Promise.resolve(resolvedComponent);
     // Common props for OutletProvider
     const outletContent: ReactNode =
       node.segment.type === "layout" ? content : null;
@@ -306,7 +307,6 @@ export async function renderSegments(
     children: content,
   });
   if (typeof window === "object") {
-    console.log("wait all temporalLazyRefs");
     await Promise.allSettled(temporalLazyRefs);
   }
 
@@ -318,16 +318,6 @@ export async function renderSegments(
   if (RootLayout) {
     result = createElement(RootLayout, {
       children: errorBoundaryWrapped,
-    });
-  }
-
-  // Wrap with HrefProvider for useHref() to work during SSR
-  // This provides route info to client components during server rendering
-  if (routeMap) {
-    result = createElement(HrefProvider, {
-      routeMap,
-      routeName,
-      children: result,
     });
   }
 
