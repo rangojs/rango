@@ -108,6 +108,20 @@ function ProductPrice() {
 
 **Precondition**: Loader must be registered on route via `loader()` helper.
 
+Loaders can also be passed as props from server to client components:
+
+```tsx
+"use client";
+import { useLoader } from "@rangojs/router/client";
+import type { ProductLoader } from "../loaders";
+
+// typeof infers the full data type from the loader definition
+function ProductCard({ loader }: { loader: typeof ProductLoader }) {
+  const { data } = useLoader(loader);
+  return <h2>{data.product.name}</h2>;
+}
+```
+
 ### useFetchLoader()
 
 Access loader with on-demand fetching (flexible):
@@ -193,6 +207,31 @@ function BreadcrumbNav() {
 // With selector
 const lastCrumb = useHandle(Breadcrumbs, data => data.at(-1));
 ```
+
+Handles can be passed as props from server to client components:
+
+```tsx
+// Server component
+path("/dashboard", (ctx) => {
+  const push = ctx.use(Breadcrumbs);
+  push({ label: "Dashboard", href: "/dashboard" });
+  return <DashboardNav handle={Breadcrumbs} />;
+})
+
+// Client component — typeof infers the full Handle<T> type
+"use client";
+import { useHandle } from "@rangojs/router/client";
+import type { Breadcrumbs } from "../handles";
+
+function DashboardNav({ handle }: { handle: typeof Breadcrumbs }) {
+  const crumbs = useHandle(handle);
+  return <nav>{crumbs.map(c => <a href={c.href}>{c.label}</a>)}</nav>;
+}
+```
+
+RSC serialization strips the `collect` function via `toJSON()`. On the client,
+`useHandle()` recovers it from the module-level registry (populated when
+`createHandle()` runs during module initialization).
 
 ## Action Hooks
 

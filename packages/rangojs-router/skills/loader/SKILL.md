@@ -138,6 +138,33 @@ layout(<ShopLayout />, () => [
 ])
 ```
 
+## Passing Loaders as Props
+
+Loaders can be passed as props from server to client components. RSC serialization
+uses `toJSON()` to send only `{ __brand, $$id }` — the loader function is stripped.
+
+```typescript
+// Server component (route handler)
+import { SlowLoader } from "../loaders";
+
+path("/dashboard", () => <DashboardContent loader={SlowLoader} />, { name: "dashboard" }, () => [
+  loader(SlowLoader),
+  loading(<DashboardSkeleton />),
+])
+
+// Client component — use typeof for type-safe props
+"use client";
+import { useLoader } from "@rangojs/router/client";
+import type { SlowLoader } from "../loaders";
+
+function DashboardContent({ loader }: { loader: typeof SlowLoader }) {
+  const { data } = useLoader(loader);
+  return <div>{data.message}</div>;
+}
+```
+
+Use `typeof MyLoader` for the prop type — it infers the full generic automatically.
+
 ## Streaming with Suspense
 
 Loaders stream data. Use Suspense for loading states:

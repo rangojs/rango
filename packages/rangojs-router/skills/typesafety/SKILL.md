@@ -223,6 +223,43 @@ function BreadcrumbNav() {
 }
 ```
 
+## Ref Prop Type Safety (Loaders & Handles)
+
+Loaders and handles can be passed as props from server to client components.
+Use `typeof` to get the full typed definition without manually specifying generics:
+
+```typescript
+// loaders.ts
+export const ProductLoader = createLoader(async (ctx) => {
+  return { product: await fetchProduct(ctx.params.slug) };
+});
+
+// handles.ts
+export const Breadcrumbs = createHandle<{ label: string; href: string }>();
+
+// Client component — typeof infers all generics
+"use client";
+import { useLoader, useHandle } from "@rangojs/router/client";
+import type { ProductLoader } from "../loaders";
+import type { Breadcrumbs } from "../handles";
+
+function MyComponent({
+  loader,
+  handle,
+}: {
+  loader: typeof ProductLoader;   // LoaderDefinition<{ product: Product }>
+  handle: typeof Breadcrumbs;     // Handle<{ label: string; href: string }>
+}) {
+  const { data } = useLoader(loader);   // data is typed
+  const crumbs = useHandle(handle);     // crumbs is typed array
+  // ...
+}
+```
+
+RSC Flight serialization calls `toJSON()` on both loaders and handles,
+sending only `{ __brand, $$id }` to the client. The hooks recover the
+full functionality from module-level registries.
+
 ## Location State Type Safety
 
 ```typescript
