@@ -221,8 +221,8 @@ export async function renderSegments(
     if (isAction && component instanceof Promise) {
       resolvedComponent = await component;
     }
-    let nodeContent: ReactNode =
-      loading || loading === null || resolvedComponent instanceof Promise
+    let nodeContent: ReactNode | Promise<ReactNode> =
+      loading !== null && loading
         ? createElement(RouteContentWrapper, {
             key: `suspense-loading-${id}`,
             content:
@@ -232,7 +232,7 @@ export async function renderSegments(
             fallback: loading,
           })
         : registerLazyRef(resolvedComponent);
-
+    if (loading === null) await Promise.resolve(resolvedComponent);
     // Common props for OutletProvider
     const outletContent: ReactNode =
       node.segment.type === "layout" ? content : null;
@@ -254,7 +254,7 @@ export async function renderSegments(
     // This ensures cached segments (which may not have loader segments) have the same
     // tree structure as fresh segments, preventing React remounts
     // If forceAwait or isAction is set, pre-resolve promises so LoaderBoundary won't suspend
-    if (loading !== undefined) {
+    if (loading !== undefined && loading !== null) {
       content = createElement(LoaderBoundary, {
         key: `loader-boundary-${key}`,
         loaderDataPromise:
@@ -305,7 +305,8 @@ export async function renderSegments(
   const errorBoundaryWrapped = createElement(RootErrorBoundary, {
     children: content,
   });
-  if (typeof window === "object" || typeof document === "object") {
+  if (typeof window === "object") {
+    console.log("wait all temporalLazyRefs");
     await Promise.allSettled(temporalLazyRefs);
   }
 

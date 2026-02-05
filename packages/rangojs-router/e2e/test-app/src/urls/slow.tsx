@@ -2,6 +2,10 @@ import { urls } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { SlowLoader } from "../loaders.js";
 import { RevalidateButton } from "../components/RevalidateButton.js";
+import {
+  SlowStreamingContent,
+  SlowSkipSsrContent,
+} from "../components/SlowStreamingContent.js";
 
 /**
  * Slow routes URL patterns - for testing loader behavior
@@ -32,64 +36,30 @@ export const slowPatternsWithoutDetail = urls(({ path, loader, loading }) => [
       );
     },
     { name: "slow" },
-    () => [loader(SlowLoader)]
+    () => [loader(SlowLoader)],
   ),
 
   // Slow route WITH loading - loader should stream (non-blocking)
+  // Uses client component with useLoader() so loading skeleton shows immediately
   path(
     "/slow-streaming",
-    async (ctx) => {
-      const { message, count, loadedAt } = await ctx.use(SlowLoader);
-      return (
-        <div data-testid="slow-streaming-page">
-          <Link to="/" data-testid="back-link">
-            ← Back to Home
-          </Link>
-          <h1 data-testid="slow-streaming-title">
-            Slow Route (With Loading)
-          </h1>
-          <p data-testid="slow-streaming-message">{message}</p>
-          <p data-testid="slow-streaming-count">Load count: {count}</p>
-          <p data-testid="slow-streaming-loaded-at">Loaded: {loadedAt}</p>
-          <div data-testid="slow-streaming-actions">
-            <RevalidateButton testId="slow-streaming-revalidate-btn" />
-          </div>
-        </div>
-      );
-    },
+    () => <SlowStreamingContent />,
     { name: "slowStreaming" },
     () => [
       loader(SlowLoader),
       loading(
         <div data-testid="slow-streaming-loading">
           <p>Loading slow data...</p>
-        </div>
+        </div>,
       ),
-    ]
+    ],
   ),
 
   // Slow route WITH loading skipSSR - awaited on SSR, streams on navigation
+  // Uses client component with useLoader() so loading skeleton shows on navigation
   path(
     "/slow-streaming-skip-ssr",
-    async (ctx) => {
-      const { message, count, loadedAt } = await ctx.use(SlowLoader);
-      return (
-        <div data-testid="slow-skip-ssr-page">
-          <Link to="/" data-testid="back-link">
-            ← Back to Home
-          </Link>
-          <h1 data-testid="slow-skip-ssr-title">
-            Slow Route (Skip SSR Loading)
-          </h1>
-          <p data-testid="slow-skip-ssr-message">{message}</p>
-          <p data-testid="slow-skip-ssr-count">Load count: {count}</p>
-          <p data-testid="slow-skip-ssr-loaded-at">Loaded: {loadedAt}</p>
-          <div data-testid="slow-skip-ssr-actions">
-            <RevalidateButton testId="slow-skip-ssr-revalidate-btn" />
-          </div>
-        </div>
-      );
-    },
+    () => <SlowSkipSsrContent />,
     { name: "slowStreamingSkipSsr" },
     () => [
       loader(SlowLoader),
@@ -97,9 +67,9 @@ export const slowPatternsWithoutDetail = urls(({ path, loader, loading }) => [
         <div data-testid="slow-skip-ssr-loading">
           <p>Loading slow data...</p>
         </div>,
-        { ssr: false }
+        { ssr: false },
       ),
-    ]
+    ],
   ),
 ]);
 

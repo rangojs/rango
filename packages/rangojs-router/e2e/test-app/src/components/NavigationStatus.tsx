@@ -9,11 +9,6 @@ import { useState, useEffect } from "react";
  */
 export function NavigationStatus({ testId }: { testId: string }) {
   const nav = useNavigation();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   return (
     <div data-testid={testId}>
@@ -22,7 +17,7 @@ export function NavigationStatus({ testId }: { testId: string }) {
         streaming:{nav.isStreaming ? "true" : "false"}
       </span>
       <span data-testid={`${testId}-pathname`}>
-        path:{mounted ? nav.location.pathname : ""}
+        path:{nav.location.pathname}
       </span>
     </div>
   );
@@ -42,6 +37,8 @@ export function NavigationStateOnly({ testId }: { testId: string }) {
 export function NavigationStreamingOnly({ testId }: { testId: string }) {
   const isStreaming = useNavigation((nav) => nav.isStreaming);
   return (
-    <span data-testid={testId}>nav-streaming:{isStreaming ? "true" : "false"}</span>
+    <span data-testid={testId}>
+      nav-streaming:{isStreaming ? "true" : "false"}
+    </span>
   );
 }

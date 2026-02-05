@@ -39,7 +39,7 @@ test.describe("loader-behavior", () => {
       // Page should be fully rendered (loader was awaited)
       await expect(page.locator('[data-testid="slow-page"]')).toBeVisible();
       await expect(page.locator('[data-testid="slow-message"]')).toContainText(
-        "Slow data loaded"
+        "Slow data loaded",
       );
 
       // Should have taken at least the loader delay
@@ -62,7 +62,7 @@ test.describe("loader-behavior", () => {
       // Wait for the slow page to appear
       await expect(page.locator('[data-testid="slow-page"]')).toBeVisible();
       await expect(page.locator('[data-testid="slow-message"]')).toContainText(
-        "Slow data loaded"
+        "Slow data loaded",
       );
 
       const elapsed = Date.now() - startTime;
@@ -89,7 +89,7 @@ test.describe("loader-behavior", () => {
       // Loading skeleton should appear quickly (not waiting for loader)
       // Use 1000ms timeout to be CI-friendly while still being much faster than LOADER_DELAY
       await expect(
-        page.locator('[data-testid="slow-streaming-loading"]')
+        page.locator('[data-testid="slow-streaming-loading"]'),
       ).toBeVisible({ timeout: 1000 });
 
       const loadingVisibleTime = Date.now() - startTime;
@@ -99,10 +99,10 @@ test.describe("loader-behavior", () => {
 
       // Wait for actual content to replace loading
       await expect(
-        page.locator('[data-testid="slow-streaming-page"]')
+        page.locator('[data-testid="slow-streaming-page"]'),
       ).toBeVisible({ timeout: 5000 });
       await expect(
-        page.locator('[data-testid="slow-streaming-message"]')
+        page.locator('[data-testid="slow-streaming-message"]'),
       ).toContainText("Slow data loaded");
 
       const totalTime = Date.now() - startTime;
@@ -127,7 +127,7 @@ test.describe("loader-behavior", () => {
       // Eventually the page should be fully loaded
       await waitForHydration(page);
       await expect(
-        page.locator('[data-testid="slow-streaming-page"]')
+        page.locator('[data-testid="slow-streaming-page"]'),
       ).toBeVisible();
     });
 
@@ -184,10 +184,10 @@ test.describe("loader-behavior", () => {
 
       // Page should be fully rendered immediately (no loading visible)
       await expect(
-        page.locator('[data-testid="slow-skip-ssr-page"]')
+        page.locator('[data-testid="slow-skip-ssr-page"]'),
       ).toBeVisible();
       await expect(
-        page.locator('[data-testid="slow-skip-ssr-message"]')
+        page.locator('[data-testid="slow-skip-ssr-message"]'),
       ).toContainText("Slow data loaded");
 
       // Should have taken at least the loader delay (was awaited)
@@ -214,7 +214,7 @@ test.describe("loader-behavior", () => {
       // Loading skeleton should appear quickly (streaming on SPA navigation)
       // Use 1000ms timeout to be CI-friendly while still being much faster than LOADER_DELAY
       await expect(
-        page.locator('[data-testid="slow-skip-ssr-loading"]')
+        page.locator('[data-testid="slow-skip-ssr-loading"]'),
       ).toBeVisible({ timeout: 1000 });
 
       const loadingVisibleTime = Date.now() - startTime;
@@ -224,7 +224,7 @@ test.describe("loader-behavior", () => {
 
       // Wait for actual content
       await expect(
-        page.locator('[data-testid="slow-skip-ssr-page"]')
+        page.locator('[data-testid="slow-skip-ssr-page"]'),
       ).toBeVisible({ timeout: 5000 });
     });
   });
@@ -248,14 +248,15 @@ test.describe("loader-behavior", () => {
 
       // Wait for action to complete
       await expect(
-        page.locator('[data-testid="slow-revalidate-btn-result"]')
+        page.locator('[data-testid="slow-revalidate-btn-result"]'),
       ).toBeVisible({ timeout: 5000 });
 
       // Wait for loader to revalidate by polling until count changes
       // (loader takes 1s, use 8s timeout for CI reliability)
-      await expect(
-        page.locator('[data-testid="slow-count"]')
-      ).not.toHaveText(`Load count: ${initialNum}`, { timeout: 8000 });
+      await expect(page.locator('[data-testid="slow-count"]')).not.toHaveText(
+        `Load count: ${initialNum}`,
+        { timeout: 8000 },
+      );
 
       // Verify count incremented
       const newCountText = await page
@@ -276,7 +277,7 @@ test.describe("loader-behavior", () => {
 
       await page.locator('[data-testid="slow-streaming-link"]').click();
       await expect(
-        page.locator('[data-testid="slow-streaming-page"]')
+        page.locator('[data-testid="slow-streaming-page"]'),
       ).toBeVisible({ timeout: 5000 });
 
       // Get initial load count
@@ -292,13 +293,13 @@ test.describe("loader-behavior", () => {
 
       // Wait for action to complete
       await expect(
-        page.locator('[data-testid="slow-streaming-revalidate-btn-result"]')
+        page.locator('[data-testid="slow-streaming-revalidate-btn-result"]'),
       ).toBeVisible({ timeout: 5000 });
 
       // Wait for loader to revalidate by polling until count changes
       // (loader takes 1s, use 8s timeout for CI reliability)
       await expect(
-        page.locator('[data-testid="slow-streaming-count"]')
+        page.locator('[data-testid="slow-streaming-count"]'),
       ).not.toHaveText(`Load count: ${initialNum}`, { timeout: 8000 });
 
       // Verify count incremented
@@ -331,7 +332,7 @@ test.describe("loader-behavior (production)", () => {
     // Products should be loaded from SSR
     await expect(page.locator('[data-testid="product-list"]')).toBeVisible();
     await expect(
-      page.locator('[data-testid="product-link-product-a"]')
+      page.locator('[data-testid="product-link-product-a"]'),
     ).toBeVisible();
   });
 
@@ -351,12 +352,12 @@ test.describe("loader-behavior (production)", () => {
 
     // Loading skeleton should appear
     await expect(
-      page.locator('[data-testid="slow-streaming-loading"]')
+      page.locator('[data-testid="slow-streaming-loading"]'),
     ).toBeVisible({ timeout: 2000 });
 
     // Eventually content loads
     await expect(
-      page.locator('[data-testid="slow-streaming-page"]')
+      page.locator('[data-testid="slow-streaming-page"]'),
     ).toBeVisible({ timeout: 5000 });
   });
 
@@ -368,7 +369,7 @@ test.describe("loader-behavior (production)", () => {
 
     // Wait for content
     await expect(
-      page.locator('[data-testid="slow-streaming-page"]')
+      page.locator('[data-testid="slow-streaming-page"]'),
     ).toBeVisible({ timeout: 5000 });
 
     // Get initial count
@@ -382,7 +383,7 @@ test.describe("loader-behavior (production)", () => {
 
     // Wait for action to complete
     await expect(
-      page.locator('[data-testid="slow-streaming-revalidate-btn-result"]')
+      page.locator('[data-testid="slow-streaming-revalidate-btn-result"]'),
     ).toBeVisible({ timeout: 5000 });
 
     // Count should increment
@@ -412,12 +413,12 @@ test.describe("loader-behavior (production)", () => {
     // Content should eventually load (skipSSR streams on SPA nav)
     // Note: Loading skeleton may or may not be visible depending on timing
     await expect(
-      page.locator('[data-testid="slow-skip-ssr-page"]')
+      page.locator('[data-testid="slow-skip-ssr-page"]'),
     ).toBeVisible({ timeout: 5000 });
 
     // Verify loader data is present
     await expect(
-      page.locator('[data-testid="slow-skip-ssr-message"]')
+      page.locator('[data-testid="slow-skip-ssr-message"]'),
     ).toContainText("Slow data loaded");
   });
 });

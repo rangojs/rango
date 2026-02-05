@@ -96,7 +96,8 @@ export function useNavigation<T>(
   // Base state for useOptimistic
   const [baseValue, setBaseValue] = useState<T | PublicNavigationState>(() => {
     if (typeof document === "undefined" || !ctx) {
-      return selector ? selector(SSR_DEFAULT_STATE) : SSR_DEFAULT_STATE;
+      const ssrState = getSsrDefaultState();
+      return selector ? selector(ssrState) : ssrState;
     }
     const publicState = toPublicState(ctx.eventController.getState());
     return selector ? selector(publicState) : publicState;

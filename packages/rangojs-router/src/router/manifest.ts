@@ -49,10 +49,15 @@ export async function loadManifest(
       ? `#router.M${mountIndex}`
       : "#router";
 
+    // For lazy entries, use the captured parent from include() context
+    // This ensures routes are registered under the correct layout hierarchy
+    const lazyContext = entry.lazy && entry.lazyPatterns ? entry.lazyContext : null;
+    const parentForContext = lazyContext?.parent as EntryData | null ?? Store.parent;
+
     const useItems = await getContext().runWithStore(
       Store,
       Store.namespace || namespaceWithMount,
-      Store.parent,
+      parentForContext,
       async () => {
         // Create helpers for lazy-loaded handlers that need them
         const helpers = createRouteHelpers();
@@ -60,7 +65,6 @@ export async function loadManifest(
         // For lazy entries, use lazyPatterns.handler() with proper prefixes
         if (entry.lazy && entry.lazyPatterns) {
           const lazyPatterns = entry.lazyPatterns as UrlPatterns<any>;
-          const lazyContext = entry.lazyContext;
           const includePrefix = (entry as any)._lazyPrefix || "";
           const fullPrefix = (lazyContext?.urlPrefix || "") + includePrefix;
 

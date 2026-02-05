@@ -56,7 +56,11 @@ import type {
   ShouldRevalidateFn,
   TrailingSlashMode,
 } from "./types";
-import type { NonceProvider, RSCDependencies, LoadSSRModule } from "./rsc/types.js";
+import type {
+  NonceProvider,
+  RSCDependencies,
+  LoadSSRModule,
+} from "./rsc/types.js";
 import type { ExecutionContext } from "./server/request-context.js";
 
 // Extracted router utilities
@@ -282,9 +286,10 @@ export interface RSCRouterOptions<TEnv = any> {
    */
   cache?:
     | { store: SegmentCacheStore; enabled?: boolean }
-    | ((
-        env: TEnv & { ctx?: ExecutionContext }
-      ) => { store: SegmentCacheStore; enabled?: boolean });
+    | ((env: TEnv & { ctx?: ExecutionContext }) => {
+        store: SegmentCacheStore;
+        enabled?: boolean;
+      });
 
   /**
    * Theme configuration for automatic theme management.
@@ -386,7 +391,6 @@ export interface RSCRouterOptions<TEnv = any> {
    * @default VERSION from @rangojs/router:version
    */
   version?: string;
-
 }
 
 /**
@@ -422,10 +426,10 @@ type RouteConflictError<TConflicts extends string> = {
   conflictingKeys: TConflicts;
   // These methods require `never` so calling them produces an error at the call site
   routes: (
-    __conflict: `Fix route key conflict: "${TConflicts}" is already defined with a different URL pattern`
+    __conflict: `Fix route key conflict: "${TConflicts}" is already defined with a different URL pattern`,
   ) => never;
   map: (
-    __conflict: `Fix route key conflict: "${TConflicts}" is already defined with a different URL pattern`
+    __conflict: `Fix route key conflict: "${TConflicts}" is already defined with a different URL pattern`,
   ) => never;
 };
 
@@ -437,10 +441,7 @@ type RouteConflictError<TConflicts extends string> = {
  * The main type safety is in the `route` helper which enforces valid route names.
  * For full type safety, use the standard map() API with separate handler files.
  */
-type InlineRouteHelpers<
-  TRoutes extends Record<string, string>,
-  TEnv,
-> = {
+type InlineRouteHelpers<TRoutes extends Record<string, string>, TEnv> = {
   /**
    * Define a route handler for a specific route pattern
    */
@@ -448,29 +449,37 @@ type InlineRouteHelpers<
     name: K,
     handler:
       | ((ctx: HandlerContext<{}, TEnv>) => ReactNode | Promise<ReactNode>)
-      | ReactNode
+      | ReactNode,
   ) => AllUseItems;
 
   /**
    * Define a layout that wraps child routes
    */
   layout: (
-    component: ReactNode | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>),
-    use?: () => AllUseItems[]
+    component:
+      | ReactNode
+      | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>),
+    use?: () => AllUseItems[],
   ) => AllUseItems;
 
   /**
    * Define parallel routes
    */
   parallel: (
-    slots: Record<`@${string}`, ReactNode | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>)>,
-    use?: () => AllUseItems[]
+    slots: Record<
+      `@${string}`,
+      | ReactNode
+      | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>)
+    >,
+    use?: () => AllUseItems[],
   ) => AllUseItems;
 
   /**
    * Define route middleware
    */
-  middleware: (fn: (ctx: any, next: () => Promise<void>) => Promise<void>) => AllUseItems;
+  middleware: (
+    fn: (ctx: any, next: () => Promise<void>) => Promise<void>,
+  ) => AllUseItems;
 
   /**
    * Define revalidation handlers
@@ -491,14 +500,14 @@ type InlineRouteHelpers<
    * Define error boundaries
    */
   errorBoundary: (
-    handler: ReactNode | ((props: { error: Error }) => ReactNode)
+    handler: ReactNode | ((props: { error: Error }) => ReactNode),
   ) => AllUseItems;
 
   /**
    * Define not found boundaries
    */
   notFoundBoundary: (
-    handler: ReactNode | ((props: { pathname: string }) => ReactNode)
+    handler: ReactNode | ((props: { pathname: string }) => ReactNode),
   ) => AllUseItems;
 
   /**
@@ -506,8 +515,10 @@ type InlineRouteHelpers<
    */
   intercept: (
     name: string,
-    handler: ReactNode | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>),
-    use?: () => AllUseItems[]
+    handler:
+      | ReactNode
+      | ((ctx: HandlerContext<any, TEnv>) => ReactNode | Promise<ReactNode>),
+    use?: () => AllUseItems[],
   ) => AllUseItems;
 
   /**
@@ -518,7 +529,10 @@ type InlineRouteHelpers<
   /**
    * Define cache configuration
    */
-  cache: (config: { ttl?: number; swr?: number } | false, use?: () => AllUseItems[]) => AllUseItems;
+  cache: (
+    config: { ttl?: number; swr?: number } | false,
+    use?: () => AllUseItems[],
+  ) => AllUseItems;
 };
 
 /**
@@ -546,7 +560,7 @@ interface RouteBuilder<
    */
   use(
     patternOrMiddleware: string | MiddlewareFn<TEnv>,
-    middleware?: MiddlewareFn<TEnv>
+    middleware?: MiddlewareFn<TEnv>,
   ): RouteBuilder<T, TEnv, TRoutes, TLocalRoutes>;
 
   /**
@@ -571,15 +585,19 @@ interface RouteBuilder<
    */
   // Inline definition overload - handler receives helpers (must be first for correct inference)
   // Uses TLocalRoutes so route names don't need the prefix
-  map<H extends (helpers: InlineRouteHelpers<TLocalRoutes, TEnv>) => Array<AllUseItems>>(
-    handler: H
+  map<
+    H extends (
+      helpers: InlineRouteHelpers<TLocalRoutes, TEnv>,
+    ) => Array<AllUseItems>,
+  >(
+    handler: H,
   ): RSCRouter<TEnv, TRoutes>;
   // Lazy loading overload - verifies imported handlers match route definition
   map(
     handler: () =>
       | Array<AllUseItems>
       | Promise<{ default: RouteHandlers<TLocalRoutes> }>
-      | Promise<RouteHandlers<TLocalRoutes>>
+      | Promise<RouteHandlers<TLocalRoutes>>,
   ): RSCRouter<TEnv, TRoutes>;
 
   /**
@@ -606,7 +624,7 @@ export interface RSCRouter<
    */
   routes<const TPrefix extends string, const T extends Record<string, string>>(
     prefix: TPrefix,
-    routes: T
+    routes: T,
   ): ConflictingKeys<TRoutes, PrefixRoutePatterns<T, TPrefix>> extends never
     ? RouteBuilder<
         RouteDefinition,
@@ -614,7 +632,9 @@ export interface RSCRouter<
         TRoutes & PrefixRoutePatterns<T, TPrefix>,
         T
       >
-    : RouteConflictError<ConflictingKeys<TRoutes, PrefixRoutePatterns<T, TPrefix>> & string>;
+    : RouteConflictError<
+        ConflictingKeys<TRoutes, PrefixRoutePatterns<T, TPrefix>> & string
+      >;
 
   /**
    * Register routes without a prefix
@@ -623,7 +643,7 @@ export interface RSCRouter<
    * @throws Compile-time error if route keys conflict with previously registered routes
    */
   routes<const T extends Record<string, string>>(
-    routes: T
+    routes: T,
   ): ConflictingKeys<TRoutes, T> extends never
     ? RouteBuilder<RouteDefinition, TEnv, TRoutes & T, T>
     : RouteConflictError<ConflictingKeys<TRoutes, T> & string>;
@@ -639,10 +659,13 @@ export interface RSCRouter<
    * ```
    */
   routes<T extends UrlPatterns<TEnv, any>>(
-    patterns: T
+    patterns: T,
   ): RSCRouter<
     TEnv,
-    TRoutes & (T["_routes"] extends Record<string, string> ? T["_routes"] : Record<string, string>)
+    TRoutes &
+      (T["_routes"] extends Record<string, string>
+        ? T["_routes"]
+        : Record<string, string>)
   >;
 
   /**
@@ -660,7 +683,7 @@ export interface RSCRouter<
    */
   use(
     patternOrMiddleware: string | MiddlewareFn<TEnv>,
-    middleware?: MiddlewareFn<TEnv>
+    middleware?: MiddlewareFn<TEnv>,
   ): RSCRouter<TEnv, TRoutes>;
 
   /**
@@ -756,7 +779,7 @@ export interface RSCRouter<
    */
   previewMatch(
     request: Request,
-    context: TEnv
+    context: TEnv,
   ): Promise<{
     routeMiddleware?: Array<{
       handler: import("./router/middleware.js").MiddlewareFn;
@@ -772,7 +795,7 @@ export interface RSCRouter<
       actionUrl?: URL;
       actionResult?: any;
       formData?: FormData;
-    }
+    },
   ): Promise<MatchResult | null>;
 
   /**
@@ -792,7 +815,7 @@ export interface RSCRouter<
     request: Request,
     context: TEnv,
     error: unknown,
-    segmentType?: ErrorInfo["segmentType"]
+    segmentType?: ErrorInfo["segmentType"],
   ): Promise<MatchResult | null>;
 
   /**
@@ -826,7 +849,10 @@ export interface RSCRouter<
    * export const fetch = router.fetch;
    * ```
    */
-  fetch(request: Request, env: TEnv & { ctx?: ExecutionContext }): Promise<Response>;
+  fetch(
+    request: Request,
+    env: TEnv & { ctx?: ExecutionContext },
+  ): Promise<Response>;
 }
 
 /**
@@ -868,7 +894,7 @@ export interface RSCRouter<
  * @throws Response if result is a Response
  */
 function handleHandlerResult(
-  result: ReactNode | Response | Promise<ReactNode> | Promise<Response>
+  result: ReactNode | Response | Promise<ReactNode> | Promise<Response>,
 ): ReactNode | Promise<ReactNode> {
   if (result instanceof Response) {
     throw result;
@@ -885,7 +911,7 @@ function handleHandlerResult(
 }
 
 export function createRouter<TEnv = any>(
-  options: RSCRouterOptions<TEnv> = {}
+  options: RSCRouterOptions<TEnv> = {},
 ): RSCRouter<TEnv, {}> {
   const {
     debugPerformance = false,
@@ -913,7 +939,7 @@ export function createRouter<TEnv = any>(
   function callOnError(
     error: unknown,
     phase: ErrorPhase,
-    context: Parameters<typeof invokeOnError<TEnv>>[3]
+    context: Parameters<typeof invokeOnError<TEnv>>[3],
   ): void {
     invokeOnError(onError, error, phase, context, "Router");
   }
@@ -941,7 +967,7 @@ export function createRouter<TEnv = any>(
   function addMiddleware(
     patternOrMiddleware: string | MiddlewareFn<TEnv>,
     middleware?: MiddlewareFn<TEnv>,
-    mountPrefix: string | null = null
+    mountPrefix: string | null = null,
   ): void {
     let pattern: string | null = null;
     let handler: MiddlewareFn<TEnv>;
@@ -951,7 +977,7 @@ export function createRouter<TEnv = any>(
       pattern = patternOrMiddleware;
       if (!middleware) {
         throw new Error(
-          "Middleware function required when pattern is provided"
+          "Middleware function required when pattern is provided",
         );
       }
       handler = middleware;
@@ -1028,7 +1054,7 @@ export function createRouter<TEnv = any>(
       env?: TEnv;
       isPartial?: boolean;
       requestStartTime?: number;
-    }
+    },
   ): Promise<LoaderDataResult<T>> {
     return wrapLoaderWithErrorHandling(
       promise,
@@ -1054,7 +1080,7 @@ export function createRouter<TEnv = any>(
               requestStartTime: errorContext.requestStartTime,
             });
           }
-        : undefined
+        : undefined,
     );
   }
 
@@ -1064,12 +1090,20 @@ export function createRouter<TEnv = any>(
   function findLazyIncludes(items: AllUseItems[]): Array<{
     prefix: string;
     patterns: UrlPatterns<TEnv>;
-    context: { urlPrefix: string; namePrefix: string | undefined; parent: unknown };
+    context: {
+      urlPrefix: string;
+      namePrefix: string | undefined;
+      parent: unknown;
+    };
   }> {
     const lazyItems: Array<{
       prefix: string;
       patterns: UrlPatterns<TEnv>;
-      context: { urlPrefix: string; namePrefix: string | undefined; parent: unknown };
+      context: {
+        urlPrefix: string;
+        namePrefix: string | undefined;
+        parent: unknown;
+      };
     }> = [];
 
     for (const item of items) {
@@ -1124,7 +1158,7 @@ export function createRouter<TEnv = any>(
         patternsByPrefix,
         trailingSlash: trailingSlashMap,
         namespace: "lazy",
-        parent: lazyContext?.parent as EntryData | null ?? null,
+        parent: (lazyContext?.parent as EntryData | null) ?? null,
         counters: {},
       },
       () => {
@@ -1134,17 +1168,13 @@ export function createRouter<TEnv = any>(
         const fullPrefix = (lazyContext?.urlPrefix || "") + includePrefix;
 
         if (fullPrefix || lazyContext?.namePrefix) {
-          runWithPrefixes(
-            fullPrefix,
-            lazyContext?.namePrefix,
-            () => {
-              handlerResult = lazyPatterns.handler() as AllUseItems[];
-            }
-          );
+          runWithPrefixes(fullPrefix, lazyContext?.namePrefix, () => {
+            handlerResult = lazyPatterns.handler() as AllUseItems[];
+          });
         } else {
           handlerResult = lazyPatterns.handler() as AllUseItems[];
         }
-      }
+      },
     );
 
     // Populate the entry's routes from the patterns
@@ -1222,7 +1252,7 @@ export function createRouter<TEnv = any>(
     entry: EntryData,
     ctx: HandlerContext<any, TEnv>,
     belongsToRoute: boolean,
-    shortCodeOverride?: string
+    shortCodeOverride?: string,
   ): Promise<ResolvedSegment[]> {
     const loaderEntries = entry.loader ?? [];
     if (loaderEntries.length === 0) return [];
@@ -1246,15 +1276,15 @@ export function createRouter<TEnv = any>(
           component: null, // Loaders don't render directly
           params: ctx.params,
           loaderId: loader.$$id,
-          loaderData: await wrapLoaderPromise(
+          loaderData: wrapLoaderPromise(
             loadingDisabled ? await ctx.use(loader) : ctx.use(loader),
             entry,
             segmentId,
-            ctx.pathname
+            ctx.pathname,
           ),
           belongsToRoute,
         };
-      })
+      }),
     );
   }
 
@@ -1294,7 +1324,7 @@ export function createRouter<TEnv = any>(
       formData?: FormData;
     },
     shortCodeOverride?: string,
-    stale?: boolean
+    stale?: boolean,
   ): Promise<LoaderRevalidationResult> {
     const loaderEntries = entry.loader ?? [];
     if (loaderEntries.length === 0) return { segments: [], matchedIds: [] };
@@ -1308,7 +1338,7 @@ export function createRouter<TEnv = any>(
         loaderRevalidateFns,
         segmentId: `${shortCode}D${i}.${loader.$$id}`,
         index: i,
-      })
+      }),
     );
 
     const matchedIds = loaderMeta.map((m) => m.segmentId);
@@ -1353,11 +1383,11 @@ export function createRouter<TEnv = any>(
               });
             },
             async () => true,
-            () => false
+            () => false,
           );
           return { shouldRun, loader, segmentId, index };
-        }
-      )
+        },
+      ),
     );
 
     // Phase 2: Build segments for loaders that need revalidation
@@ -1376,10 +1406,10 @@ export function createRouter<TEnv = any>(
           ctx.use(loader),
           entry,
           segmentId,
-          ctx.pathname
+          ctx.pathname,
         ),
         belongsToRoute,
-      })
+      }),
     );
 
     return { segments, matchedIds };
@@ -1395,7 +1425,7 @@ export function createRouter<TEnv = any>(
     params: Record<string, string>,
     context: HandlerContext<any, TEnv>,
     loaderPromises: Map<string, Promise<any>>,
-    isRouteEntry: boolean = false
+    isRouteEntry: boolean = false,
   ): Promise<ResolvedSegment[]> {
     const segments: ResolvedSegment[] = [];
 
@@ -1408,7 +1438,7 @@ export function createRouter<TEnv = any>(
       const loaderSegments = await resolveLoaders(
         entry,
         context,
-        false // Parent chain layouts don't belong to specific route
+        false, // Parent chain layouts don't belong to specific route
       );
       segments.push(...loaderSegments);
 
@@ -1419,7 +1449,7 @@ export function createRouter<TEnv = any>(
           params,
           context,
           false, // Parent chain parallels don't belong to specific route
-          entry.shortCode // Pass parent layout's shortCode for segment ID association
+          entry.shortCode, // Pass parent layout's shortCode for segment ID association
         );
         segments.push(...parallelSegments);
       }
@@ -1451,7 +1481,7 @@ export function createRouter<TEnv = any>(
           params,
           context,
           loaderPromises,
-          false // Parent chain layouts don't belong to specific route
+          false, // Parent chain layouts don't belong to specific route
         );
         segments.push(...orphanSegments);
       }
@@ -1464,7 +1494,7 @@ export function createRouter<TEnv = any>(
       const loaderSegments = await resolveLoaders(
         entry,
         context,
-        true // Route loaders belong to the route
+        true, // Route loaders belong to the route
       );
       segments.push(...loaderSegments);
 
@@ -1475,7 +1505,7 @@ export function createRouter<TEnv = any>(
           params,
           context,
           loaderPromises,
-          true // Route's orphan layouts belong to the route
+          true, // Route's orphan layouts belong to the route
         );
         segments.push(...orphanSegments);
       }
@@ -1487,7 +1517,7 @@ export function createRouter<TEnv = any>(
           params,
           context,
           true, // Route's parallels belong to the route
-          entry.shortCode // Pass parent route's shortCode for segment ID association
+          entry.shortCode, // Pass parent route's shortCode for segment ID association
         );
         segments.push(...parallelSegments);
       }
@@ -1531,12 +1561,12 @@ export function createRouter<TEnv = any>(
     params: Record<string, string>,
     context: HandlerContext<any, TEnv>,
     loaderPromises: Map<string, Promise<any>>,
-    belongsToRoute: boolean
+    belongsToRoute: boolean,
   ): Promise<ResolvedSegment[]> {
     // Orphans must be layouts or cache entries
     invariant(
       orphan.type === "layout" || orphan.type === "cache",
-      `Expected orphan to be a layout or cache, got: ${orphan.type}`
+      `Expected orphan to be a layout or cache, got: ${orphan.type}`,
     );
 
     // Orphan Loader → Orphan Parallels → Orphan Handler
@@ -1546,7 +1576,7 @@ export function createRouter<TEnv = any>(
     const loaderSegments = await resolveLoaders(
       orphan,
       context,
-      belongsToRoute
+      belongsToRoute,
     );
 
     // Step 3: Process and emit orphan parallel segments
@@ -1557,7 +1587,7 @@ export function createRouter<TEnv = any>(
         params,
         context,
         belongsToRoute,
-        orphan.shortCode // Pass parent orphan layout's shortCode for segment ID association
+        orphan.shortCode, // Pass parent orphan layout's shortCode for segment ID association
       );
       segments.push(...parallelSegments);
     }
@@ -1595,7 +1625,7 @@ export function createRouter<TEnv = any>(
   function evaluateInterceptWhen(
     intercept: InterceptEntry,
     selectorContext: InterceptSelectorContext | null,
-    isAction: boolean
+    isAction: boolean,
   ): boolean {
     // During action revalidation, skip when() evaluation - preserve current state
     // The intercept was already activated during navigation
@@ -1635,7 +1665,7 @@ export function createRouter<TEnv = any>(
     targetRouteKey: string,
     fromEntry: EntryData | null,
     selectorContext: InterceptSelectorContext | null = null,
-    isAction: boolean = false
+    isAction: boolean = false,
   ): { intercept: InterceptEntry; entry: EntryData } | null {
     let current: EntryData | null = fromEntry;
 
@@ -1711,7 +1741,7 @@ export function createRouter<TEnv = any>(
         formData?: FormData;
       };
       stale?: boolean;
-    }
+    },
   ): Promise<ResolvedSegment[]> {
     const segments: ResolvedSegment[] = [];
 
@@ -1721,7 +1751,7 @@ export function createRouter<TEnv = any>(
       const requestCtx = getRequestContext();
       if (!requestCtx?.res) {
         throw new Error(
-          "Request context with stubResponse is required for intercept middleware"
+          "Request context with stubResponse is required for intercept middleware",
         );
       }
       const middlewareResponse = await executeInterceptMiddleware(
@@ -1730,7 +1760,7 @@ export function createRouter<TEnv = any>(
         context.env,
         params,
         context.var as Record<string, any>,
-        requestCtx.res
+        requestCtx.res,
       );
       if (middlewareResponse) throw middlewareResponse;
     }
@@ -1792,12 +1822,12 @@ export function createRouter<TEnv = any>(
 
           if (!shouldRevalidate) {
             console.log(
-              `[Router] Intercept loader ${loader.$$id} skipped (revalidation=false)`
+              `[Router] Intercept loader ${loader.$$id} skipped (revalidation=false)`,
             );
             continue;
           }
           console.log(
-            `[Router] Intercept loader ${loader.$$id} revalidating (stale=${stale})`
+            `[Router] Intercept loader ${loader.$$id} revalidating (stale=${stale})`,
           );
         }
       }
@@ -1808,8 +1838,8 @@ export function createRouter<TEnv = any>(
           context.use(loader),
           parentEntry,
           segmentId,
-          context.pathname
-        )
+          context.pathname,
+        ),
       );
     }
 
@@ -1910,7 +1940,7 @@ export function createRouter<TEnv = any>(
         formData?: FormData;
       };
       stale?: boolean;
-    }
+    },
   ): Promise<{
     loaderDataPromise: Promise<any[]> | any[];
     loaderIds: string[];
@@ -1972,12 +2002,12 @@ export function createRouter<TEnv = any>(
 
         if (!shouldRevalidate) {
           console.log(
-            `[Router] Intercept loader ${loader.$$id} skipped (cache hit, revalidation=false)`
+            `[Router] Intercept loader ${loader.$$id} skipped (cache hit, revalidation=false)`,
           );
           continue;
         }
         console.log(
-          `[Router] Intercept loader ${loader.$$id} revalidating on cache hit (stale=${stale})`
+          `[Router] Intercept loader ${loader.$$id} revalidating on cache hit (stale=${stale})`,
         );
       }
 
@@ -1987,8 +2017,8 @@ export function createRouter<TEnv = any>(
           context.use(loader),
           parentEntry,
           segmentId,
-          context.pathname
-        )
+          context.pathname,
+        ),
       );
     }
 
@@ -2018,11 +2048,11 @@ export function createRouter<TEnv = any>(
     params: Record<string, string>,
     context: HandlerContext<any, TEnv>,
     belongsToRoute: boolean,
-    parentShortCode: string
+    parentShortCode: string,
   ): Promise<ResolvedSegment[]> {
     invariant(
       parallelEntry.type === "parallel",
-      `Expected parallel entry, got: ${parallelEntry.type}`
+      `Expected parallel entry, got: ${parallelEntry.type}`,
     );
 
     const segments: ResolvedSegment[] = [];
@@ -2072,7 +2102,7 @@ export function createRouter<TEnv = any>(
         parallelEntry,
         context,
         belongsToRoute,
-        parentShortCode
+        parentShortCode,
       );
       segments.push(...loaderSegments);
     }
@@ -2105,7 +2135,7 @@ export function createRouter<TEnv = any>(
       env?: TEnv;
       isPartial?: boolean;
       requestStartTime?: number;
-    }
+    },
   ): Promise<ResolvedSegment[]> {
     try {
       return await resolveFn();
@@ -2125,7 +2155,7 @@ export function createRouter<TEnv = any>(
             error,
             entry.shortCode,
             entry.type,
-            context.pathname
+            context.pathname,
           );
 
           // Invoke onError with notFound context
@@ -2145,13 +2175,16 @@ export function createRouter<TEnv = any>(
 
           console.log(
             `[Router] NotFound caught by notFoundBoundary in ${entry.shortCode}:`,
-            notFoundInfo.message
+            notFoundInfo.message,
           );
 
           // Set response status to 404 for notFound
           const reqCtx = getRequestContext();
           if (reqCtx) {
-            reqCtx.res = new Response(null, { status: 404, headers: reqCtx.res.headers });
+            reqCtx.res = new Response(null, {
+              status: 404,
+              headers: reqCtx.res.headers,
+            });
           }
 
           // Create and return notFound segment
@@ -2159,7 +2192,7 @@ export function createRouter<TEnv = any>(
             notFoundInfo,
             notFoundFallback,
             entry,
-            params
+            params,
           );
           return [notFoundSegment];
         }
@@ -2194,14 +2227,17 @@ export function createRouter<TEnv = any>(
 
       console.log(
         `[Router] Error caught by ${fallback ? "error boundary" : "default fallback"} in ${entry.shortCode}:`,
-        errorInfo.message
+        errorInfo.message,
       );
 
       // Set response status to 500 for error
       {
         const reqCtx = getRequestContext();
         if (reqCtx) {
-          reqCtx.res = new Response(null, { status: 500, headers: reqCtx.res.headers });
+          reqCtx.res = new Response(null, {
+            status: 500,
+            headers: reqCtx.res.headers,
+          });
         }
       }
 
@@ -2210,7 +2246,7 @@ export function createRouter<TEnv = any>(
         errorInfo,
         effectiveFallback,
         entry,
-        params
+        params,
       );
       return [errorSegment];
     }
@@ -2225,7 +2261,7 @@ export function createRouter<TEnv = any>(
     routeKey: string,
     params: Record<string, string>,
     context: HandlerContext<any, TEnv>,
-    loaderPromises: Map<string, Promise<any>>
+    loaderPromises: Map<string, Promise<any>>,
   ): Promise<ResolvedSegment[]> {
     const allSegments: ResolvedSegment[] = [];
 
@@ -2236,7 +2272,7 @@ export function createRouter<TEnv = any>(
         params,
         context,
         loaderPromises,
-        () => resolveSegment(entry, routeKey, params, context, loaderPromises)
+        () => resolveSegment(entry, routeKey, params, context, loaderPromises),
       );
       allSegments.push(...resolvedSegments);
     }
@@ -2250,7 +2286,7 @@ export function createRouter<TEnv = any>(
    */
   async function resolveLoadersOnly(
     entries: EntryData[],
-    context: HandlerContext<any, TEnv>
+    context: HandlerContext<any, TEnv>,
   ): Promise<ResolvedSegment[]> {
     const loaderSegments: ResolvedSegment[] = [];
 
@@ -2276,7 +2312,7 @@ export function createRouter<TEnv = any>(
     prevUrl: URL,
     nextUrl: URL,
     routeKey: string,
-    actionContext?: ActionContext
+    actionContext?: ActionContext,
   ): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
     const allLoaderSegments: ResolvedSegment[] = [];
     const allMatchedIds: string[] = [];
@@ -2293,7 +2329,7 @@ export function createRouter<TEnv = any>(
         prevUrl,
         nextUrl,
         routeKey,
-        actionContext
+        actionContext,
       );
       allLoaderSegments.push(...segments);
       allMatchedIds.push(...matchedIds);
@@ -2307,9 +2343,15 @@ export function createRouter<TEnv = any>(
    * Used to look up revalidation rules for cached segments
    */
   function buildEntryRevalidateMap(
-    entries: EntryData[]
-  ): Map<string, { entry: EntryData; revalidate: ShouldRevalidateFn<any, any>[] }> {
-    const map = new Map<string, { entry: EntryData; revalidate: ShouldRevalidateFn<any, any>[] }>();
+    entries: EntryData[],
+  ): Map<
+    string,
+    { entry: EntryData; revalidate: ShouldRevalidateFn<any, any>[] }
+  > {
+    const map = new Map<
+      string,
+      { entry: EntryData; revalidate: ShouldRevalidateFn<any, any>[] }
+    >();
 
     function processEntry(entry: EntryData, parentShortCode?: string) {
       // Map main entry
@@ -2324,7 +2366,10 @@ export function createRouter<TEnv = any>(
             for (const slot of slots) {
               // Segment ID uses parallelEntry.shortCode, not parent entry.shortCode
               const parallelId = `${parallelEntry.shortCode}.${slot}`;
-              map.set(parallelId, { entry: parallelEntry, revalidate: parallelEntry.revalidate });
+              map.set(parallelId, {
+                entry: parallelEntry,
+                revalidate: parallelEntry.revalidate,
+              });
             }
           }
         }
@@ -2361,7 +2406,7 @@ export function createRouter<TEnv = any>(
     actionContext: ActionContext | undefined,
     interceptResult: { intercept: InterceptEntry; entry: EntryData } | null,
     localRouteName: string,
-    pathname: string
+    pathname: string,
   ): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
     const allSegments: ResolvedSegment[] = [];
     const matchedIds: string[] = [];
@@ -2370,7 +2415,7 @@ export function createRouter<TEnv = any>(
       // When intercepting, skip route entries - intercept replaces route handler
       if (entry.type === "route" && interceptResult) {
         console.log(
-          `[Router.matchPartial] Intercepting "${localRouteName}" - skipping route handler`
+          `[Router.matchPartial] Intercepting "${localRouteName}" - skipping route handler`,
         );
         matchedIds.push(entry.shortCode);
         continue;
@@ -2397,9 +2442,9 @@ export function createRouter<TEnv = any>(
             nextUrl,
             loaderPromises,
             actionContext,
-            false // stale = false for fresh resolution
+            false, // stale = false for fresh resolution
           ),
-        pathname
+        pathname,
       );
 
       allSegments.push(...resolved.segments);
@@ -2425,7 +2470,7 @@ export function createRouter<TEnv = any>(
       env?: TEnv;
       isPartial?: boolean;
       requestStartTime?: number;
-    }
+    },
   ): Promise<SegmentRevalidationResult> {
     try {
       return await resolveFn();
@@ -2445,7 +2490,7 @@ export function createRouter<TEnv = any>(
             error,
             entry.shortCode,
             entry.type,
-            pathname
+            pathname,
           );
 
           // Invoke onError with notFound context
@@ -2467,13 +2512,16 @@ export function createRouter<TEnv = any>(
 
           console.log(
             `[Router] NotFound caught by notFoundBoundary in ${entry.shortCode}:`,
-            notFoundInfo.message
+            notFoundInfo.message,
           );
 
           // Set response status to 404 for notFound
           const reqCtx = getRequestContext();
           if (reqCtx) {
-            reqCtx.res = new Response(null, { status: 404, headers: reqCtx.res.headers });
+            reqCtx.res = new Response(null, {
+              status: 404,
+              headers: reqCtx.res.headers,
+            });
           }
 
           // Create notFound segment
@@ -2481,7 +2529,7 @@ export function createRouter<TEnv = any>(
             notFoundInfo,
             notFoundFallback,
             entry,
-            params
+            params,
           );
 
           // Return with the notFound segment and its ID as matched
@@ -2523,14 +2571,17 @@ export function createRouter<TEnv = any>(
 
       console.log(
         `[Router] Error caught by ${fallback ? "error boundary" : "default fallback"} in ${entry.shortCode}:`,
-        errorInfo.message
+        errorInfo.message,
       );
 
       // Set response status to 500 for error
       {
         const reqCtx = getRequestContext();
         if (reqCtx) {
-          reqCtx.res = new Response(null, { status: 500, headers: reqCtx.res.headers });
+          reqCtx.res = new Response(null, {
+            status: 500,
+            headers: reqCtx.res.headers,
+          });
         }
       }
 
@@ -2539,7 +2590,7 @@ export function createRouter<TEnv = any>(
         errorInfo,
         effectiveFallback,
         entry,
-        params
+        params,
       );
 
       // Return with the error segment and its ID as matched
@@ -2585,7 +2636,7 @@ export function createRouter<TEnv = any>(
     nextUrl: URL,
     routeKey: string,
     actionContext?: ActionContext,
-    stale?: boolean
+    stale?: boolean,
   ): Promise<SegmentRevalidationResult> {
     const segments: ResolvedSegment[] = [];
     const matchedIds: string[] = [];
@@ -2593,7 +2644,7 @@ export function createRouter<TEnv = any>(
     for (const parallelEntry of entry.parallel) {
       invariant(
         parallelEntry.type === "parallel",
-        `Expected parallel entry, got: ${parallelEntry.type}`
+        `Expected parallel entry, got: ${parallelEntry.type}`,
       );
 
       // Step 1: Process each slot handler FIRST (they trigger loaders via ctx.use())
@@ -2674,7 +2725,7 @@ export function createRouter<TEnv = any>(
               ? await handler(context)
               : handler;
           },
-          () => null
+          () => null,
         );
 
         segments.push({
@@ -2708,7 +2759,7 @@ export function createRouter<TEnv = any>(
           routeKey,
           actionContext,
           entry.shortCode, // Pass parent's shortCode for segment ID association
-          stale
+          stale,
         );
         segments.push(...loaderResult.segments);
         matchedIds.push(...loaderResult.matchedIds);
@@ -2734,7 +2785,7 @@ export function createRouter<TEnv = any>(
     nextUrl: URL,
     routeKey: string,
     actionContext?: ActionContext,
-    stale?: boolean
+    stale?: boolean,
   ): Promise<{ segment: ResolvedSegment; matchedId: string }> {
     const matchedId = entry.shortCode;
 
@@ -2742,7 +2793,7 @@ export function createRouter<TEnv = any>(
       async () => {
         const hasSegment = clientSegmentIds.has(entry.shortCode);
         console.log(
-          `[Router.resolveEntryHandler] ${entry.shortCode} (${entry.type}): client has=${hasSegment}, belongsToRoute=${belongsToRoute}`
+          `[Router.resolveEntryHandler] ${entry.shortCode} (${entry.type}): client has=${hasSegment}, belongsToRoute=${belongsToRoute}`,
         );
         if (!hasSegment) return true;
 
@@ -2779,7 +2830,7 @@ export function createRouter<TEnv = any>(
           stale,
         });
         console.log(
-          `[Router.resolveEntryHandler] ${entry.shortCode}: evaluateRevalidation returned ${shouldRevalidate}`
+          `[Router.resolveEntryHandler] ${entry.shortCode}: evaluateRevalidation returned ${shouldRevalidate}`,
         );
         return shouldRevalidate;
       },
@@ -2806,16 +2857,18 @@ export function createRouter<TEnv = any>(
           };
         }
         console.log(
-          `[Router] Resolving action route with awaited value: ${entry.id}`
+          `[Router] Resolving action route with awaited value: ${entry.id}`,
         );
         // For actions: await handler and return value directly (not wrapped in Promise)
         // This ensures component instanceof Promise is false in segment-system,
         // avoiding RouteContentWrapper/Suspense and maintaining consistent tree structure
         return {
-          content: Promise.resolve(handleHandlerResult(await routeEntry.handler(context))),
+          content: Promise.resolve(
+            handleHandlerResult(await routeEntry.handler(context)),
+          ),
         };
       },
-      () => null
+      () => null,
     );
 
     // Extract component from wrapper object if needed (used to prevent promise auto-resolution)
@@ -2861,7 +2914,7 @@ export function createRouter<TEnv = any>(
     nextUrl: URL,
     loaderPromises: Map<string, Promise<any>>,
     actionContext?: ActionContext,
-    stale?: boolean
+    stale?: boolean,
   ): Promise<SegmentRevalidationResult> {
     const segments: ResolvedSegment[] = [];
     const matchedIds: string[] = [];
@@ -2883,7 +2936,7 @@ export function createRouter<TEnv = any>(
       routeKey,
       actionContext,
       undefined, // shortCodeOverride
-      stale
+      stale,
     );
     segments.push(...loaderResult.segments);
     matchedIds.push(...loaderResult.matchedIds);
@@ -2904,7 +2957,7 @@ export function createRouter<TEnv = any>(
           loaderPromises,
           true, // Route's orphan layouts belong to the route
           actionContext,
-          stale
+          stale,
         );
         segments.push(...orphanResult.segments);
         matchedIds.push(...orphanResult.matchedIds);
@@ -2924,7 +2977,7 @@ export function createRouter<TEnv = any>(
       nextUrl,
       routeKey,
       actionContext,
-      stale
+      stale,
     );
     segments.push(...parallelResult.segments);
     matchedIds.push(...parallelResult.matchedIds);
@@ -2945,7 +2998,7 @@ export function createRouter<TEnv = any>(
           loaderPromises,
           false, // Parent chain layouts don't belong to specific route
           actionContext,
-          stale
+          stale,
         );
         segments.push(...orphanResult.segments);
         matchedIds.push(...orphanResult.matchedIds);
@@ -2965,7 +3018,7 @@ export function createRouter<TEnv = any>(
       nextUrl,
       routeKey,
       actionContext,
-      stale
+      stale,
     );
     segments.push(handlerResult.segment);
     matchedIds.push(handlerResult.matchedId);
@@ -2995,11 +3048,11 @@ export function createRouter<TEnv = any>(
       actionResult?: any;
       formData?: FormData;
     },
-    stale?: boolean
+    stale?: boolean,
   ): Promise<SegmentRevalidationResult> {
     invariant(
       orphan.type === "layout" || orphan.type === "cache",
-      `Expected orphan to be a layout or cache, got: ${orphan.type}`
+      `Expected orphan to be a layout or cache, got: ${orphan.type}`,
     );
 
     const segments: ResolvedSegment[] = [];
@@ -3020,7 +3073,7 @@ export function createRouter<TEnv = any>(
       routeKey,
       actionContext,
       undefined, // shortCodeOverride
-      stale
+      stale,
     );
     segments.push(...loaderResult.segments);
     matchedIds.push(...loaderResult.matchedIds);
@@ -3030,7 +3083,7 @@ export function createRouter<TEnv = any>(
     for (const parallelEntry of orphan.parallel) {
       invariant(
         parallelEntry.type === "parallel",
-        `Expected parallel entry, got: ${parallelEntry.type}`
+        `Expected parallel entry, got: ${parallelEntry.type}`,
       );
 
       // Step 3a: Resolve parallel's loaders with revalidation
@@ -3046,7 +3099,7 @@ export function createRouter<TEnv = any>(
         routeKey,
         actionContext,
         undefined, // shortCodeOverride
-        stale
+        stale,
       );
       segments.push(...loaderResult.segments);
       matchedIds.push(...loaderResult.matchedIds);
@@ -3110,7 +3163,7 @@ export function createRouter<TEnv = any>(
               ? await handler(context)
               : handler;
           },
-          () => null
+          () => null,
         );
 
         segments.push({
@@ -3169,7 +3222,7 @@ export function createRouter<TEnv = any>(
         typeof orphan.handler === "function"
           ? handleHandlerResult(await orphan.handler(context))
           : orphan.handler,
-      () => null
+      () => null,
     );
 
     segments.push({
@@ -3271,7 +3324,7 @@ export function createRouter<TEnv = any>(
     request: Request,
     _context: TEnv,
     error: unknown,
-    segmentType: ErrorInfo["segmentType"] = "route"
+    segmentType: ErrorInfo["segmentType"] = "route",
   ): Promise<MatchResult | null> {
     const url = new URL(request.url);
     const pathname = url.pathname;
@@ -3291,7 +3344,7 @@ export function createRouter<TEnv = any>(
       matched.routeKey,
       pathname,
       undefined, // No metrics for error matching
-      false // Not SSR
+      false, // Not SSR
     );
 
     // Find the nearest error boundary in the entry chain
@@ -3303,7 +3356,7 @@ export function createRouter<TEnv = any>(
     const errorInfo = createErrorInfo(
       error,
       manifestEntry.shortCode || "unknown",
-      segmentType
+      segmentType,
     );
 
     // Find which entry has the error boundary
@@ -3405,7 +3458,10 @@ export function createRouter<TEnv = any>(
     // Set response status to 500 for error
     const reqCtx = getRequestContext();
     if (reqCtx) {
-      reqCtx.res = new Response(null, { status: 500, headers: reqCtx.res.headers });
+      reqCtx.res = new Response(null, {
+        status: 500,
+        headers: reqCtx.res.headers,
+      });
     }
 
     // Create the error segment using user's fallback or default
@@ -3416,17 +3472,17 @@ export function createRouter<TEnv = any>(
       errorInfo,
       effectiveFallback,
       outletEntry, // Use outletEntry so error content renders in the boundary's outlet
-      matched.params
+      matched.params,
     );
 
     if (useDefaultFallback) {
       console.log(
-        `[Router.matchError] Using default error boundary (no user-defined boundary found)`
+        `[Router.matchError] Using default error boundary (no user-defined boundary found)`,
       );
     }
 
     console.log(
-      `[Router.matchError] Boundary: ${boundaryEntry.shortCode}, outlet replaced: ${outletEntry.shortCode}`
+      `[Router.matchError] Boundary: ${boundaryEntry.shortCode}, outlet replaced: ${outletEntry.shortCode}`,
     );
 
     // Error segment replaces the outlet content, not the boundary layout itself
@@ -3449,7 +3505,7 @@ export function createRouter<TEnv = any>(
    */
   async function createMatchContextForFull(
     request: Request,
-    env: TEnv
+    env: TEnv,
   ): Promise<MatchContext<TEnv> | { type: "redirect"; redirectUrl: string }> {
     const url = new URL(request.url);
     const pathname = url.pathname;
@@ -3489,7 +3545,7 @@ export function createRouter<TEnv = any>(
       matched.routeKey,
       pathname,
       metricsStore,
-      true // isSSR
+      true, // isSSR
     );
     if (metricsStore) {
       metricsStore.metrics.push({
@@ -3502,7 +3558,7 @@ export function createRouter<TEnv = any>(
     // Collect route-level middleware
     const routeMiddleware = collectRouteMiddleware(
       traverseBack(manifestEntry),
-      matched.params
+      matched.params,
     );
 
     // Extract bindings from context
@@ -3517,7 +3573,7 @@ export function createRouter<TEnv = any>(
       bindings,
       // Use getGlobalRouteMap() to include routes from lazy includes (if manifest caching enabled)
       getGlobalRouteMap(),
-      matched.routeKey
+      matched.routeKey,
     );
 
     // Create request-scoped loader promises map
@@ -3532,7 +3588,7 @@ export function createRouter<TEnv = any>(
         Store,
         Store.namespace || "#router",
         Store.parent,
-        fn
+        fn,
       );
     if (metricsStore) {
       Store.metrics = metricsStore;
@@ -3602,7 +3658,7 @@ export function createRouter<TEnv = any>(
   async function createMatchContextForPartial(
     request: Request,
     env: TEnv,
-    actionContext?: ActionContext
+    actionContext?: ActionContext,
   ): Promise<MatchContext<TEnv> | null> {
     const url = new URL(request.url);
     const pathname = url.pathname;
@@ -3621,7 +3677,7 @@ export function createRouter<TEnv = any>(
       request.headers.get("X-RSC-Router-Client-Path") ||
       request.headers.get("Referer");
     const interceptSourceUrl = request.headers.get(
-      "X-RSC-Router-Intercept-Source"
+      "X-RSC-Router-Intercept-Source",
     );
 
     if (!previousUrl) {
@@ -3664,7 +3720,7 @@ export function createRouter<TEnv = any>(
     // Check if routes are from different route groups
     if (prevMatch && prevMatch.entry !== matched.entry) {
       console.log(
-        `[Router.matchPartial] Route group changed: ${prevMatch.routeKey} → ${matched.routeKey}, falling back to full render`
+        `[Router.matchPartial] Route group changed: ${prevMatch.routeKey} → ${matched.routeKey}, falling back to full render`,
       );
       return null;
     }
@@ -3676,7 +3732,7 @@ export function createRouter<TEnv = any>(
       matched.routeKey,
       pathname,
       metricsStore,
-      false
+      false,
     );
     if (metricsStore) {
       metricsStore.metrics.push({
@@ -3689,7 +3745,7 @@ export function createRouter<TEnv = any>(
     // Collect route middleware
     const routeMiddleware = collectRouteMiddleware(
       traverseBack(manifestEntry),
-      matched.params
+      matched.params,
     );
 
     // Create handler context
@@ -3703,13 +3759,13 @@ export function createRouter<TEnv = any>(
       bindings,
       // Use getGlobalRouteMap() to include routes from lazy includes (if manifest caching enabled)
       getGlobalRouteMap(),
-      matched.routeKey
+      matched.routeKey,
     );
 
     const clientSegmentSet = new Set(clientSegmentIds);
     console.log(
       `[Router.matchPartial] Client segments:`,
-      Array.from(clientSegmentSet)
+      Array.from(clientSegmentSet),
     );
 
     // Set up loader promises
@@ -3724,7 +3780,7 @@ export function createRouter<TEnv = any>(
         Store,
         Store.namespace || "#router",
         Store.parent,
-        fn
+        fn,
       );
     if (metricsStore) {
       Store.metrics = metricsStore;
@@ -3770,7 +3826,7 @@ export function createRouter<TEnv = any>(
 
     // Find intercept
     const clientHasInterceptSegments = [...clientSegmentSet].some((id) =>
-      id.includes(".@")
+      id.includes(".@"),
     );
     const skipInterceptForAction = isAction && !clientHasInterceptSegments;
     const interceptResult =
@@ -3780,14 +3836,14 @@ export function createRouter<TEnv = any>(
             matched.routeKey,
             manifestEntry.parent,
             interceptSelectorContext,
-            isAction
+            isAction,
           ) ||
           (localRouteName !== matched.routeKey
             ? findInterceptForRoute(
                 localRouteName,
                 manifestEntry.parent,
                 interceptSelectorContext,
-                isAction
+                isAction,
               )
             : null);
 
@@ -3795,9 +3851,13 @@ export function createRouter<TEnv = any>(
     // Only trigger when interceptSourceUrl is set - this means the client is currently
     // viewing the route via intercept (modal) and now navigating to see it directly.
     // For query-only changes (same route, no intercept), don't force re-render.
-    if (isSameRouteNavigation && manifestEntry.type === "route" && interceptSourceUrl) {
+    if (
+      isSameRouteNavigation &&
+      manifestEntry.type === "route" &&
+      interceptSourceUrl
+    ) {
       console.log(
-        `[Router.matchPartial] Leaving intercept - forcing route segment render: ${manifestEntry.shortCode}`
+        `[Router.matchPartial] Leaving intercept - forcing route segment render: ${manifestEntry.shortCode}`,
       );
       clientSegmentSet.delete(manifestEntry.shortCode);
     }
@@ -3861,7 +3921,7 @@ export function createRouter<TEnv = any>(
   async function matchPartial(
     request: Request,
     context: TEnv,
-    actionContext?: ActionContext
+    actionContext?: ActionContext,
   ): Promise<MatchResult | null> {
     // Build RouterContext with all closure functions needed by middleware
     const routerCtx: RouterContext<TEnv> = {
@@ -3890,7 +3950,7 @@ export function createRouter<TEnv = any>(
       const ctx = await createMatchContextForPartial(
         request,
         context,
-        actionContext
+        actionContext,
       );
       if (!ctx) return null;
 
@@ -3920,7 +3980,7 @@ export function createRouter<TEnv = any>(
    */
   async function previewMatch(
     request: Request,
-    context: TEnv
+    context: TEnv,
   ): Promise<{
     routeMiddleware?: Array<{
       handler: import("./router/middleware.js").MiddlewareFn;
@@ -3947,14 +4007,14 @@ export function createRouter<TEnv = any>(
       matched.routeKey,
       pathname,
       undefined, // No metrics store for preview
-      false // isSSR - doesn't matter for preview
+      false, // isSSR - doesn't matter for preview
     );
 
     // Collect route-level middleware from entry tree
     // Includes middleware from orphan layouts (inline layouts within routes)
     const routeMiddleware = collectRouteMiddleware(
       traverseBack(manifestEntry),
-      matched.params
+      matched.params,
     );
 
     return {
@@ -3968,7 +4028,7 @@ export function createRouter<TEnv = any>(
    */
   function createRouteBuilder<TNewRoutes extends Record<string, string>>(
     prefix: string,
-    routes: TNewRoutes
+    routes: TNewRoutes,
   ): RouteBuilder<RouteDefinition, TEnv, any, TNewRoutes> {
     const currentMountIndex = mountIndex++;
 
@@ -3986,10 +4046,13 @@ export function createRouter<TEnv = any>(
 
       // Runtime validation: warn if key already exists with different pattern
       const existingPattern = mergedRouteMap[key];
-      if (existingPattern !== undefined && existingPattern !== prefixedPattern) {
+      if (
+        existingPattern !== undefined &&
+        existingPattern !== prefixedPattern
+      ) {
         console.warn(
           `[rsc-router] Route key conflict: "${key}" already maps to "${existingPattern}", ` +
-            `overwriting with "${prefixedPattern}". Use unique key names to avoid this.`
+            `overwriting with "${prefixedPattern}". Use unique key names to avoid this.`,
         );
       }
 
@@ -4009,7 +4072,7 @@ export function createRouter<TEnv = any>(
     const builder: RouteBuilder<RouteDefinition, TEnv, any, TNewRoutes> = {
       use(
         patternOrMiddleware: string | MiddlewareFn<TEnv>,
-        middleware?: MiddlewareFn<TEnv>
+        middleware?: MiddlewareFn<TEnv>,
       ) {
         // Mount-scoped middleware - prefix is the mount prefix
         addMiddleware(patternOrMiddleware, middleware, prefix || null);
@@ -4018,11 +4081,13 @@ export function createRouter<TEnv = any>(
 
       map(
         handler:
-          | ((helpers: InlineRouteHelpers<TNewRoutes, TEnv>) => Array<AllUseItems>)
+          | ((
+              helpers: InlineRouteHelpers<TNewRoutes, TEnv>,
+            ) => Array<AllUseItems>)
           | (() =>
               | Array<AllUseItems>
               | Promise<{ default: () => Array<AllUseItems> }>
-              | Promise<() => Array<AllUseItems>>)
+              | Promise<() => Array<AllUseItems>>),
       ) {
         // Store handler as-is - detection happens at call time based on return type
         // Both patterns use the same signature:
@@ -4058,7 +4123,7 @@ export function createRouter<TEnv = any>(
   const router: RSCRouter<TEnv, {}> = {
     routes(
       prefixOrRoutes: string | Record<string, string> | UrlPatterns<TEnv>,
-      maybeRoutes?: Record<string, string>
+      maybeRoutes?: Record<string, string>,
     ): any {
       // Note: Multiple .routes() calls are allowed for backwards compatibility
       // with the old map() pattern. For new code, prefer urls() with include().
@@ -4100,14 +4165,15 @@ export function createRouter<TEnv = any>(
           () => {
             // Execute the handler to collect patterns
             handlerResult = urlPatterns.handler() as AllUseItems[];
-          }
+          },
         );
 
         // Store the ORIGINAL handler - loadManifest will re-run it to register manifest entries
         // Convert trailingSlash map to object for the router
-        const trailingSlashConfig = trailingSlashMap.size > 0
-          ? Object.fromEntries(trailingSlashMap)
-          : undefined;
+        const trailingSlashConfig =
+          trailingSlashMap.size > 0
+            ? Object.fromEntries(trailingSlashMap)
+            : undefined;
 
         // Create separate RouteEntry for each URL prefix group
         // This enables prefix-based short-circuit optimization
@@ -4154,7 +4220,7 @@ export function createRouter<TEnv = any>(
           if (existingPattern !== undefined && existingPattern !== pattern) {
             console.warn(
               `[@rangojs/router] Route name conflict: "${name}" already maps to "${existingPattern}", ` +
-                `overwriting with "${pattern}". Use unique route names to avoid this.`
+                `overwriting with "${pattern}". Use unique route names to avoid this.`,
             );
           }
           mergedRouteMap[name] = pattern;
@@ -4207,7 +4273,7 @@ export function createRouter<TEnv = any>(
 
     use(
       patternOrMiddleware: string | MiddlewareFn<TEnv>,
-      middleware?: MiddlewareFn<TEnv>
+      middleware?: MiddlewareFn<TEnv>,
     ): any {
       // Global middleware - no mount prefix
       addMiddleware(patternOrMiddleware, middleware, null);
@@ -4261,9 +4327,17 @@ export function createRouter<TEnv = any>(
     // RSC request handler (lazily created on first call)
     fetch: (() => {
       // Handler is created on first call and reused
-      let handler: ((request: Request, env: TEnv & { ctx?: ExecutionContext }) => Promise<Response>) | null = null;
+      let handler:
+        | ((
+            request: Request,
+            env: TEnv & { ctx?: ExecutionContext },
+          ) => Promise<Response>)
+        | null = null;
 
-      return async (request: Request, env: TEnv & { ctx?: ExecutionContext }) => {
+      return async (
+        request: Request,
+        env: TEnv & { ctx?: ExecutionContext },
+      ) => {
         if (!handler) {
           // Lazy import deferred to first request to avoid dev mode issues
           const { createRSCHandler } = await import("./rsc/handler.js");
@@ -4320,7 +4394,7 @@ export function createRouter<TEnv = any>(
                 }
               }
             }
-          }
+          },
         );
       }
 
