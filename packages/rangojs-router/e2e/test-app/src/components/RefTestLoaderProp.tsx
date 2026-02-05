@@ -1,24 +1,20 @@
 "use client";
 
-import { useLoader } from "@rangojs/router/client";
-import { Link } from "@rangojs/router/client";
-import type { LoaderDefinition } from "@rangojs/router";
+import { useLoader, Link } from "@rangojs/router/client";
+import type { SlowLoader } from "../loaders.js";
 import { RevalidateButton } from "./RevalidateButton.js";
-
-type SlowLoaderData = {
-  message: string;
-  count: number;
-  loadedAt: string;
-};
 
 /**
  * Client component that receives a loader as a prop (passed from server component).
  * Tests that loader refs survive RSC serialization via toJSON.
+ *
+ * Uses `typeof SlowLoader` for the prop type -- this infers the full generic
+ * from the loader definition, so the data type is automatically type-checked.
  */
 export function RefTestLoaderProp({
   loader,
 }: {
-  loader: LoaderDefinition<SlowLoaderData>;
+  loader: typeof SlowLoader;
 }) {
   const {
     data: { message, count, loadedAt },

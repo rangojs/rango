@@ -1,22 +1,20 @@
 "use client";
 
 import { useHandle, Link } from "@rangojs/router/client";
-import type { Handle } from "@rangojs/router/client";
-
-interface BreadcrumbItem {
-  label: string;
-  href: string;
-}
+import type { Breadcrumbs } from "../handles.js";
 
 /**
  * Client component that receives a handle as a prop (passed from server component).
  * Tests that handle refs survive RSC serialization via toJSON, and that
  * the collect function is recovered from the registry.
+ *
+ * Uses `typeof Breadcrumbs` for the prop type -- this infers the full generic
+ * from the handle definition, so the accumulated data type is automatically type-checked.
  */
 export function RefTestHandleProp({
   handle,
 }: {
-  handle: Handle<BreadcrumbItem>;
+  handle: typeof Breadcrumbs;
 }) {
   const breadcrumbs = useHandle(handle);
   return (
