@@ -24,7 +24,7 @@ import {
   type RouteHandlers,
 } from "./route-definition.js";
 import MapRootLayout from "./server/root-layout.js";
-import type { AllUseItems } from "./route-types.js";
+import type { AllUseItems, IncludeItem } from "./route-types.js";
 import type { UrlPatterns } from "./urls.js";
 import {
   EntryData,
@@ -895,17 +895,20 @@ export interface RSCRouter<
  */
 function handleHandlerResult(
   result: ReactNode | Response | Promise<ReactNode> | Promise<Response>,
-): ReactNode | Promise<ReactNode> {
+): ReactNode {
   if (result instanceof Response) {
     throw result;
   }
   if (result instanceof Promise) {
+    // Handler promises resolve to concrete elements (not nested promises),
+    // so the cast to ReactNode is safe — React 19's ReactNode includes
+    // Promise<AwaitedReactNode> and the resolved value is always AwaitedReactNode.
     return result.then((resolved) => {
       if (resolved instanceof Response) {
         throw resolved;
       }
       return resolved;
-    }) as Promise<ReactNode>;
+    }) as ReactNode;
   }
   return result;
 }
@@ -1108,17 +1111,15 @@ export function createRouter<TEnv = any>(
 
     for (const item of items) {
       if (!item) continue;
-      if (
-        item.type === "include" &&
-        (item as any).lazy === true &&
-        (item as any)._lazyContext
-      ) {
-        const lazyItem = item as any;
-        lazyItems.push({
-          prefix: lazyItem.prefix,
-          patterns: lazyItem.patterns,
-          context: lazyItem._lazyContext,
-        });
+      if (item.type === "include") {
+        const includeItem = item as IncludeItem;
+        if (includeItem.lazy === true && includeItem._lazyContext) {
+          lazyItems.push({
+            prefix: includeItem.prefix,
+            patterns: includeItem.patterns as UrlPatterns<TEnv>,
+            context: includeItem._lazyContext,
+          });
+        }
       }
       // Recursively check nested items (in layouts, etc.)
       if ((item as any).uses && Array.isArray((item as any).uses)) {
@@ -1138,6 +1139,11 @@ export function createRouter<TEnv = any>(
     if (!entry.lazy || entry.lazyEvaluated || !entry.lazyPatterns) {
       return;
     }
+
+    // Mark as evaluated immediately to prevent concurrent evaluation.
+    // JS is single-threaded but handlers.handler() could theoretically yield,
+    // and the while-loop in findMatch retries after evaluation.
+    entry.lazyEvaluated = true;
 
     const lazyPatterns = entry.lazyPatterns as UrlPatterns<TEnv>;
     const lazyContext = entry.lazyContext;
@@ -1182,14 +1188,22 @@ export function createRouter<TEnv = any>(
     for (const [name, pattern] of patterns.entries()) {
       routesObject[name] = pattern;
       // Also add to merged route map for href() support
-      if (!mergedRouteMap[name]) {
-        mergedRouteMap[name] = pattern;
+      const existingPattern = mergedRouteMap[name];
+      if (existingPattern !== undefined && existingPattern !== pattern) {
+        console.warn(
+          `[@rangojs/router] Route name conflict: "${name}" already maps to "${existingPattern}", ` +
+            `overwriting with "${pattern}" (from lazy include). Use unique route names to avoid this.`,
+        );
       }
+      mergedRouteMap[name] = pattern;
     }
 
     // Update the entry in-place
     entry.routes = routesObject as ResolvedRouteMap<any>;
-    entry.lazyEvaluated = true;
+
+    // Free references no longer needed after evaluation
+    entry.lazyPatterns = undefined;
+    entry.lazyContext = undefined;
 
     // Update trailing slash config if available
     if (trailingSlashMap.size > 0) {
@@ -1209,7 +1223,7 @@ export function createRouter<TEnv = any>(
         staticPrefix: extractStaticPrefix(fullPrefix),
         routes: {} as ResolvedRouteMap<any>, // Empty until first match
         trailingSlash: entry.trailingSlash,
-        handler: lazyPatterns.handler,
+        handler: (lazyInclude.patterns as UrlPatterns<TEnv>).handler,
         mountIndex: entry.mountIndex,
         // Lazy evaluation fields
         lazy: true,
@@ -1249,8 +1263,18 @@ export function createRouter<TEnv = any>(
   function findMatch(pathname: string): RouteMatchResult<TEnv> | null {
     let result = findRouteMatch(pathname, routesEntries);
 
-    // If we hit a lazy entry that needs evaluation, evaluate and retry
+    // If we hit a lazy entry that needs evaluation, evaluate and retry.
+    // Cap iterations to prevent infinite loops from pathological nesting.
+    const MAX_LAZY_ITERATIONS = 100;
+    let iterations = 0;
     while (isLazyEvaluationNeeded(result)) {
+      if (++iterations > MAX_LAZY_ITERATIONS) {
+        console.error(
+          `[@rangojs/router] Exceeded ${MAX_LAZY_ITERATIONS} lazy evaluation iterations ` +
+            `for pathname "${pathname}". This likely indicates circular lazy includes.`,
+        );
+        return null;
+      }
       evaluateLazyEntry(result.lazyEntry);
       result = findRouteMatch(pathname, routesEntries);
     }
@@ -1545,7 +1569,7 @@ export function createRouter<TEnv = any>(
       // This allows the fallback to be sent immediately while content streams in
       // Set current segment ID for handle data attribution
       (context as InternalHandlerContext)._currentSegmentId = entry.shortCode;
-      let component: ReactNode | Promise<ReactNode>;
+      let component: ReactNode;
       if (entry.loading) {
         const result = handleHandlerResult(entry.handler(context));
         component = result instanceof Promise ? trackHandler(result) : result;
@@ -1886,16 +1910,15 @@ export function createRouter<TEnv = any>(
 
     // Determine if we should await the handler result and loaders
     // If we have loading, DON'T await - let Suspense handle streaming
-    let component: ReactNode | Promise<ReactNode>;
+    let component: ReactNode;
     let loaderDataPromise: Promise<any[]> | any[] | undefined;
 
     if (interceptEntry.loading && loaderPromises.length > 0) {
       // Has loading skeleton - keep everything as Promises for streaming
       // Don't track intercept handlers - they're parallels and shouldn't block handle data
-      component =
-        handlerResult instanceof Promise
-          ? handlerResult
-          : Promise.resolve(handlerResult);
+      component = handlerResult instanceof Promise
+        ? handlerResult
+        : (Promise.resolve(handlerResult) as ReactNode);
       loaderDataPromise = Promise.all(loaderPromises);
     } else if (loaderPromises.length > 0) {
       // No loading skeleton - await loaders and component
@@ -2086,11 +2109,12 @@ export function createRouter<TEnv = any>(
     for (const [slot, handler] of Object.entries(slots)) {
       // If loading is defined, don't await the handler (stream with Suspense)
       // Don't track parallel handlers - they shouldn't block handle data
-      let component: ReactNode | Promise<ReactNode>;
+      let component: ReactNode;
       if (parallelEntry.loading) {
         const result =
           typeof handler === "function" ? handler(context) : handler;
-        component = result;
+        // Handler promises resolve to concrete elements, safe to cast
+        component = result as ReactNode;
       } else {
         component =
           typeof handler === "function" ? await handler(context) : handler;

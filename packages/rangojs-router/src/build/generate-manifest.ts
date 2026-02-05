@@ -44,14 +44,29 @@ export interface GeneratedManifest {
 }
 
 /**
- * Build prefix tree node by running the patterns with proper context
+ * Build prefix tree node by running the patterns with proper context.
+ * Uses a visited set to detect circular includes and prevent infinite recursion.
  */
 function buildPrefixTreeNode(
   urlPrefix: string,
   namePrefix: string | undefined,
   patterns: UrlPatterns<any>,
-  routeManifest: Record<string, string>
+  routeManifest: Record<string, string>,
+  visited: Set<unknown> = new Set()
 ): PrefixTreeNode {
+  if (visited.has(patterns)) {
+    console.warn(
+      `[@rangojs/router] Circular include detected at prefix "${urlPrefix}". Skipping.`
+    );
+    return {
+      staticPrefix: extractStaticPrefix(urlPrefix),
+      fullPrefix: urlPrefix,
+      namePrefix: namePrefix || undefined,
+      children: {},
+      routes: [],
+    };
+  }
+  visited.add(patterns);
   // Create context for running patterns with include tracking
   const manifest = new Map<string, EntryData>();
   const patternsMap = new Map<string, string>();
@@ -93,7 +108,8 @@ function buildPrefixTreeNode(
       include.fullPrefix,
       include.namePrefix,
       include.patterns as UrlPatterns<any>,
-      routeManifest
+      routeManifest,
+      visited
     );
 
     children[include.fullPrefix] = childNode;
@@ -162,13 +178,15 @@ export function generateManifest<TEnv>(
     routeManifest[name] = pattern;
   }
 
-  // Build prefix tree from tracked includes
+  // Build prefix tree from tracked includes (shared visited set for cycle detection)
+  const visited = new Set<unknown>();
   for (const include of trackedIncludes) {
     const node = buildPrefixTreeNode(
       include.fullPrefix,
       include.namePrefix,
       include.patterns as UrlPatterns<any>,
-      routeManifest
+      routeManifest,
+      visited
     );
 
     prefixTree[include.fullPrefix] = node;

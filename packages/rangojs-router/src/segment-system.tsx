@@ -222,7 +222,7 @@ export async function renderSegments(
       resolvedComponent = await component;
     }
 
-    let nodeContent: ReactNode | Promise<ReactNode> =
+    let nodeContent: ReactNode =
       loading !== null && loading
         ? createElement(RouteContentWrapper, {
             key: `suspense-loading-${id}`,

@@ -825,7 +825,7 @@ export interface ResolvedSegment {
   namespace: string; // Optional namespace for segment (used for parallel groups)
   type: "layout" | "route" | "parallel" | "loader" | "error" | "notFound";
   index: number;
-  component: ReactNode | Promise<ReactNode>; // Component or handler promise
+  component: ReactNode; // Component, handler promise, or resolved element
   loading?: ReactNode; // Loading component for this segment (shown during navigation)
   layout?: ReactNode; // Layout element to wrap content (used by intercept segments)
   params?: Record<string, string>;
