@@ -1077,9 +1077,47 @@ export function createRouter<TEnv = any>(
     );
   }
 
+  // Detect lazy includes in handler result and create placeholder entries
+  // Lazy includes are IncludeItem with lazy: true and _lazyContext
+  // Moved to outer scope so it can be reused by evaluateLazyEntry for nested includes
+  function findLazyIncludes(items: AllUseItems[]): Array<{
+    prefix: string;
+    patterns: UrlPatterns<TEnv>;
+    context: { urlPrefix: string; namePrefix: string | undefined; parent: unknown };
+  }> {
+    const lazyItems: Array<{
+      prefix: string;
+      patterns: UrlPatterns<TEnv>;
+      context: { urlPrefix: string; namePrefix: string | undefined; parent: unknown };
+    }> = [];
+
+    for (const item of items) {
+      if (!item) continue;
+      if (
+        item.type === "include" &&
+        (item as any).lazy === true &&
+        (item as any)._lazyContext
+      ) {
+        const lazyItem = item as any;
+        lazyItems.push({
+          prefix: lazyItem.prefix,
+          patterns: lazyItem.patterns,
+          context: lazyItem._lazyContext,
+        });
+      }
+      // Recursively check nested items (in layouts, etc.)
+      if ((item as any).uses && Array.isArray((item as any).uses)) {
+        lazyItems.push(...findLazyIncludes((item as any).uses));
+      }
+    }
+
+    return lazyItems;
+  }
+
   /**
    * Evaluate a lazy entry's patterns and populate its routes
    * This runs the lazy patterns handler and updates the entry in-place
+   * Also detects nested lazy includes and registers them as new entries
    */
   function evaluateLazyEntry(entry: RouteEntry<TEnv>): void {
     if (!entry.lazy || entry.lazyEvaluated || !entry.lazyPatterns) {
@@ -1094,6 +1132,9 @@ export function createRouter<TEnv = any>(
     const patterns = new Map<string, string>();
     const patternsByPrefix = new Map<string, Map<string, string>>();
     const trailingSlashMap = new Map<string, TrailingSlashMode>();
+
+    // Capture the handler result to detect nested lazy includes
+    let handlerResult: AllUseItems[] = [];
 
     RSCRouterContext.run(
       {
@@ -1116,11 +1157,11 @@ export function createRouter<TEnv = any>(
             fullPrefix,
             lazyContext?.namePrefix,
             () => {
-              lazyPatterns.handler();
+              handlerResult = lazyPatterns.handler() as AllUseItems[];
             }
           );
         } else {
-          lazyPatterns.handler();
+          handlerResult = lazyPatterns.handler() as AllUseItems[];
         }
       }
     );
@@ -1142,6 +1183,32 @@ export function createRouter<TEnv = any>(
     // Update trailing slash config if available
     if (trailingSlashMap.size > 0) {
       entry.trailingSlash = Object.fromEntries(trailingSlashMap);
+    }
+
+    // Detect nested lazy includes and register them as new entries
+    const nestedLazyIncludes = findLazyIncludes(handlerResult);
+    for (const lazyInclude of nestedLazyIncludes) {
+      // Compute the full URL prefix (combining parent prefix if any)
+      const fullPrefix = lazyInclude.context.urlPrefix
+        ? lazyInclude.context.urlPrefix + lazyInclude.prefix
+        : lazyInclude.prefix;
+
+      const nestedEntry: RouteEntry<TEnv> & { _lazyPrefix?: string } = {
+        prefix: "",
+        staticPrefix: extractStaticPrefix(fullPrefix),
+        routes: {} as ResolvedRouteMap<any>, // Empty until first match
+        trailingSlash: entry.trailingSlash,
+        handler: lazyPatterns.handler,
+        mountIndex: entry.mountIndex,
+        // Lazy evaluation fields
+        lazy: true,
+        lazyPatterns: lazyInclude.patterns,
+        lazyContext: lazyInclude.context,
+        lazyEvaluated: false,
+        // Store the include prefix for evaluation
+        _lazyPrefix: lazyInclude.prefix,
+      };
+      routesEntries.push(nestedEntry);
     }
 
     // Re-register route map for runtime href() usage
@@ -4113,41 +4180,7 @@ export function createRouter<TEnv = any>(
         }
 
         // Detect lazy includes in handler result and create placeholder entries
-        // Lazy includes are IncludeItem with lazy: true and _lazyContext
-        function findLazyIncludes(items: AllUseItems[]): Array<{
-          prefix: string;
-          patterns: UrlPatterns<TEnv>;
-          context: { urlPrefix: string; namePrefix: string | undefined; parent: unknown };
-        }> {
-          const lazyItems: Array<{
-            prefix: string;
-            patterns: UrlPatterns<TEnv>;
-            context: { urlPrefix: string; namePrefix: string | undefined; parent: unknown };
-          }> = [];
-
-          for (const item of items) {
-            if (!item) continue;
-            if (
-              item.type === "include" &&
-              (item as any).lazy === true &&
-              (item as any)._lazyContext
-            ) {
-              const lazyItem = item as any;
-              lazyItems.push({
-                prefix: lazyItem.prefix,
-                patterns: lazyItem.patterns,
-                context: lazyItem._lazyContext,
-              });
-            }
-            // Recursively check nested items (in layouts, etc.)
-            if ((item as any).uses && Array.isArray((item as any).uses)) {
-              lazyItems.push(...findLazyIncludes((item as any).uses));
-            }
-          }
-
-          return lazyItems;
-        }
-
+        // Uses findLazyIncludes from outer scope (shared with evaluateLazyEntry)
         const lazyIncludes = findLazyIncludes(handlerResult);
 
         // Create placeholder RouteEntry for each lazy include
