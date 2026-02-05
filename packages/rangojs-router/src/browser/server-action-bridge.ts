@@ -403,6 +403,18 @@ export function createServerActionBridge(
               );
               return { ...fromServer, component: cached.component };
             }
+            // Preserve cached loading value to maintain consistent tree structure.
+            // SSR may set loading=false for skipSSR routes, but actions set
+            // loading=<skeleton> (isSSR=false). Changing loading between renders
+            // alters the React tree (with/without RouteContentWrapper), causing
+            // remounts that destroy useActionState.
+            if (
+              cached &&
+              cached.loading !== undefined &&
+              fromServer.loading !== cached.loading
+            ) {
+              return { ...fromServer, loading: cached.loading };
+            }
             return fromServer;
           }
 

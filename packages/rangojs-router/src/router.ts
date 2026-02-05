@@ -1201,9 +1201,9 @@ export function createRouter<TEnv = any>(
     // Update the entry in-place
     entry.routes = routesObject as ResolvedRouteMap<any>;
 
-    // Free references no longer needed after evaluation
-    entry.lazyPatterns = undefined;
-    entry.lazyContext = undefined;
+    // Note: Do NOT clear lazyPatterns/lazyContext here.
+    // loadManifest() needs them on every request to re-run the handler
+    // in the correct AsyncLocalStorage context (Store.manifest).
 
     // Update trailing slash config if available
     if (trailingSlashMap.size > 0) {

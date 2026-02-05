@@ -303,6 +303,72 @@ test.describe("loader-behavior", () => {
       const newNum = parseInt(newCount?.match(/\d+/)?.[0] || "0");
       expect(newNum).toBeGreaterThan(initialNum);
     });
+
+    test("action on skipSSR route after SPA navigation should preserve useActionState", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      // Navigate via SPA to the skipSSR route (in a lazy include)
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      await page.locator('[data-testid="slow-skip-ssr-link"]').click();
+      await expect(
+        page.locator('[data-testid="slow-skip-ssr-page"]'),
+      ).toBeVisible({ timeout: 5000 });
+
+      // Get initial load count
+      const initialCount = await page
+        .locator('[data-testid="slow-skip-ssr-count"]')
+        .textContent();
+      const initialNum = parseInt(initialCount?.match(/\d+/)?.[0] || "0");
+
+      // Trigger revalidation action
+      await page
+        .locator('[data-testid="slow-skip-ssr-revalidate-btn"]')
+        .click();
+
+      // useActionState result should be visible (component must NOT remount)
+      await expect(
+        page.locator('[data-testid="slow-skip-ssr-revalidate-btn-result"]'),
+      ).toBeVisible({ timeout: 5000 });
+
+      // Loader should also be revalidated (count incremented)
+      await expect(
+        page.locator('[data-testid="slow-skip-ssr-count"]'),
+      ).not.toHaveText(`Load count: ${initialNum}`, { timeout: 8000 });
+
+      const newCount = await page
+        .locator('[data-testid="slow-skip-ssr-count"]')
+        .textContent();
+      const newNum = parseInt(newCount?.match(/\d+/)?.[0] || "0");
+      expect(newNum).toBeGreaterThan(initialNum);
+    });
+
+    test("action on skipSSR route after direct load should preserve useActionState", async ({
+      page,
+    }) => {
+      using _ = expectNoPageError(page);
+
+      // Direct load (SSR) to the skipSSR route
+      await page.goto(f.url("/slow-streaming-skip-ssr"));
+      await waitForHydration(page);
+
+      await expect(
+        page.locator('[data-testid="slow-skip-ssr-page"]'),
+      ).toBeVisible();
+
+      // Trigger revalidation action
+      await page
+        .locator('[data-testid="slow-skip-ssr-revalidate-btn"]')
+        .click();
+
+      // useActionState result should be visible (component must NOT remount)
+      await expect(
+        page.locator('[data-testid="slow-skip-ssr-revalidate-btn-result"]'),
+      ).toBeVisible({ timeout: 5000 });
+    });
   });
 });
 
