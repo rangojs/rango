@@ -335,6 +335,7 @@ export const getContext = (): {
           trailingSlash: store.trailingSlash,
           urlPrefix: store.urlPrefix,
           namePrefix: store.namePrefix,
+          trackedIncludes: store.trackedIncludes,
         },
         callback
       );
@@ -364,6 +365,7 @@ export const getContext = (): {
           trailingSlash,
           urlPrefix: store?.urlPrefix,
           namePrefix: store?.namePrefix,
+          trackedIncludes: store?.trackedIncludes,
         },
         callback
       );

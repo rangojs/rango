@@ -1,14 +1,9 @@
 /**
  * Build-time utilities for @rangojs/router
  *
- * Note: Build-time manifest generation is optional. For most apps,
- * use runtime manifest caching via the `manifestCache` option instead:
- *
- * ```typescript
- * router.fetch(request, {
- *   manifestCache: true, // Memory-only caching
- * });
- * ```
+ * Note: Route manifest is automatically generated at runtime on first request.
+ * These build-time utilities are only needed for advanced use cases like
+ * custom tooling or pre-generating manifests.
  *
  * @example Generate manifest programmatically (for custom tooling)
  * ```typescript

@@ -235,19 +235,4 @@ export interface CreateRSCHandlerOptions<
    */
   nonce?: NonceProvider<TEnv>;
 
-  /**
-   * Enable runtime route manifest generation for href() support.
-   *
-   * Only enable this if your app uses href() with lazy includes.
-   * Adds ~100ms cold boot overhead on first request per isolate.
-   *
-   * When enabled, uses the same cache store as segment caching (from `cache` option).
-   * If no cache store is configured, falls back to memory-only caching.
-   *
-   * @example Enable manifest caching
-   * ```typescript
-   * manifestCache: true // Uses the same store as segment caching
-   * ```
-   */
-  manifestCache?: boolean;
 }

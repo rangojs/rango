@@ -149,22 +149,18 @@ export function createRSCHandler<
       }
     }
 
-    // Load route manifest on first request if manifestCache is enabled
+    // Load route manifest on first request (always enabled when urlpatterns exist)
     // This enables href() for all routes including lazy includes
-    // Uses the same cache store as segment caching (if configured)
-    if (options.manifestCache && router.urlpatterns) {
-      if (hasCachedManifest()) {
-        console.log("[route-manifest] HIT memory (same isolate)");
-      } else {
-        await getRouteManifestData(
-          () => generateManifest(router.urlpatterns!),
-          version,
-          {
-            store: cacheStore, // Reuse the cache store from cache option
-            waitUntil: env.ctx?.waitUntil.bind(env.ctx),
-          },
-        );
-      }
+    // Manifest is regenerated when version changes (HMR in dev mode)
+    if (router.urlpatterns) {
+      await getRouteManifestData(
+        () => generateManifest(router.urlpatterns!),
+        version,
+        {
+          store: cacheStore,
+          waitUntil: env.ctx?.waitUntil.bind(env.ctx),
+        },
+      );
     }
 
     // Note: Route map for useHref() is loaded lazily via getGlobalRouteMap()

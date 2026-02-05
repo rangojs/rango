@@ -387,24 +387,6 @@ export interface RSCRouterOptions<TEnv = any> {
    */
   version?: string;
 
-  /**
-   * Enable runtime route manifest generation for href() support.
-   *
-   * Only enable this if your app uses href() with lazy includes.
-   * Adds ~100ms cold boot overhead on first request per isolate.
-   *
-   * When enabled, uses the same cache store as segment caching (from `cache` option).
-   * If no cache store is configured, falls back to memory-only caching.
-   *
-   * @example Enable manifest caching (uses cache store if configured)
-   * ```typescript
-   * const router = createRouter<AppEnv>({
-   *   cache: (env) => ({ store: new CFCacheStore({ ctx: env.ctx! }) }),
-   *   manifestCache: true, // Uses the same CFCacheStore
-   * });
-   * ```
-   */
-  manifestCache?: boolean;
 }
 
 /**
@@ -917,7 +899,6 @@ export function createRouter<TEnv = any>(
     urls: urlsOption,
     nonce,
     version,
-    manifestCache,
   } = options;
 
   // Resolve theme config (null if theme not enabled)
@@ -4291,7 +4272,6 @@ export function createRouter<TEnv = any>(
             cache,
             nonce,
             version,
-            manifestCache,
           });
         }
         return handler(request, env);
