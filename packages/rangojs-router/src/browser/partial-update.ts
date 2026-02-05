@@ -12,6 +12,7 @@ import {
   needsLoaderMerge,
   insertMissingDiffSegments,
 } from "./merge-segment-loaders.js";
+import { assertSegmentStructure } from "./segment-structure-assert.js";
 import type { BoundTransaction } from "./navigation-bridge.js";
 
 /**
@@ -323,6 +324,10 @@ export function createPartialUpdater(
             // For partial revalidation (stale or action), merge server's new loader data
             // with cached loader data when server returns fewer loaders than cached
             const fromCache = currentSegmentMap.get(id);
+            // Dev-mode assertion: warn if tree structure would change
+            if (fromCache) {
+              assertSegmentStructure(fromCache, fromServer, "partial-update");
+            }
             if (
               (staleRevalidation || isAction) &&
               needsLoaderMerge(fromServer, fromCache)

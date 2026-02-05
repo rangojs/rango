@@ -2,18 +2,31 @@
 
 import { useLoader } from "@rangojs/router/client";
 import { Link } from "@rangojs/router/client";
-import { SlowLoader } from "../loaders.js";
+import type { LoaderDefinition } from "@rangojs/router";
 import { RevalidateButton } from "./RevalidateButton.js";
+
+type SlowLoaderData = {
+  message: string;
+  count: number;
+  loadedAt: string;
+};
 
 /**
  * Client component for slow-streaming route content.
  * Uses useLoader() to get loader data, allowing the loading skeleton
  * to show immediately while this component suspends waiting for data.
+ *
+ * The loader is passed as a prop from the server component.
+ * The RSC loader's toJSON() ensures only { __brand, $$id } is serialized.
  */
-export function SlowStreamingContent() {
+export function SlowStreamingContent({
+  loader,
+}: {
+  loader: LoaderDefinition<SlowLoaderData>;
+}) {
   const {
     data: { message, count, loadedAt },
-  } = useLoader(SlowLoader);
+  } = useLoader(loader);
   return (
     <div data-testid="slow-streaming-page">
       <Link to="/" data-testid="back-link">
@@ -33,10 +46,14 @@ export function SlowStreamingContent() {
 /**
  * Client component for slow-streaming-skip-ssr route content.
  */
-export function SlowSkipSsrContent() {
+export function SlowSkipSsrContent({
+  loader,
+}: {
+  loader: LoaderDefinition<SlowLoaderData>;
+}) {
   const {
     data: { message, count, loadedAt },
-  } = useLoader(SlowLoader);
+  } = useLoader(loader);
   return (
     <div data-testid="slow-skip-ssr-page">
       <Link to="/" data-testid="back-link">

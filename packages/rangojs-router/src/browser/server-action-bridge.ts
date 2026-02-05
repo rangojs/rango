@@ -11,6 +11,7 @@ import {
   mergeSegmentLoaders,
   needsLoaderMerge,
 } from "./merge-segment-loaders.js";
+import { assertSegmentStructure } from "./segment-structure-assert.js";
 import { startTransition, createElement } from "react";
 import type { EventController, ActionHandle } from "./event-controller.js";
 import { NetworkError, isNetworkError } from "../errors.js";
@@ -402,6 +403,10 @@ export function createServerActionBridge(
                 `[Browser] Preserving cached component for layout ${segId} (server returned null)`
               );
               return { ...fromServer, component: cached.component };
+            }
+            // Dev-mode assertion: warn if tree structure would change
+            if (cached) {
+              assertSegmentStructure(cached, fromServer, "action-bridge");
             }
             // Preserve cached loading value to maintain consistent tree structure.
             // SSR may set loading=false for skipSSR routes, but actions set

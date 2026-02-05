@@ -43,7 +43,7 @@ export const slowPatternsWithoutDetail = urls(({ path, loader, loading }) => [
   // Uses client component with useLoader() so loading skeleton shows immediately
   path(
     "/slow-streaming",
-    () => <SlowStreamingContent />,
+    () => <SlowStreamingContent loader={SlowLoader} />,
     { name: "slowStreaming" },
     () => [
       loader(SlowLoader),
@@ -59,7 +59,7 @@ export const slowPatternsWithoutDetail = urls(({ path, loader, loading }) => [
   // Uses client component with useLoader() so loading skeleton shows on navigation
   path(
     "/slow-streaming-skip-ssr",
-    () => <SlowSkipSsrContent />,
+    () => <SlowSkipSsrContent loader={SlowLoader} />,
     { name: "slowStreamingSkipSsr" },
     () => [
       loader(SlowLoader),

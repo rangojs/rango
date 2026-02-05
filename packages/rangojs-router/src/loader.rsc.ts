@@ -96,12 +96,17 @@ export function createLoader<T>(
   // For fetchable loaders, __injectedId is also passed as a parameter
   const loaderId = __injectedId || "";
 
+  // Serializes to just { __brand, $$id } when passed as a prop to client components.
+  // RSC Flight protocol calls toJSON when serializing objects.
+  const toJSON = () => ({ __brand: "loader" as const, $$id: loaderId });
+
   // If not fetchable, return a simple stub with fn included
   if (fetchable === undefined) {
     return {
       __brand: "loader",
       $$id: loaderId,
       fn: fn as LoaderFn<Awaited<T>, Record<string, string | undefined>, any>,
+      toJSON,
     };
   }
 
@@ -200,5 +205,6 @@ export function createLoader<T>(
     __brand: "loader",
     $$id: loaderId,
     action: loaderAction,
+    toJSON,
   };
 }
