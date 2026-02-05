@@ -9,6 +9,10 @@ import { waitForHydration, expectNoPageError, testId } from "./helper";
  * the collect function (for handles) from the module-level registry.
  */
 
+// Loader routes use loading() which means content streams in after skeleton.
+// On CI the SlowLoader (1s delay) needs generous timeouts.
+const STREAM_TIMEOUT = 15000;
+
 test.describe("ref-serialization", () => {
   const f = useFixture({
     root: "./e2e/test-app",
@@ -26,10 +30,13 @@ test.describe("ref-serialization", () => {
       await page.goto(f.url("/ref-test/loader-prop"));
       await waitForHydration(page);
 
-      // Loader data should be rendered
-      await expect(testId(page, "ref-test-loader-page")).toBeVisible();
+      // Wait for streamed loader data (loading skeleton shows first)
+      await expect(testId(page, "ref-test-loader-page")).toBeVisible({
+        timeout: STREAM_TIMEOUT,
+      });
       await expect(testId(page, "ref-test-loader-message")).toContainText(
         "Slow data loaded",
+        { timeout: STREAM_TIMEOUT },
       );
       await expect(testId(page, "ref-test-loader-count")).toContainText(
         "Load count:",
@@ -54,12 +61,13 @@ test.describe("ref-serialization", () => {
         window.dispatchEvent(new PopStateEvent("popstate"));
       });
 
-      // Wait for loader data to appear
+      // Wait for loader data to appear (streams after loading skeleton)
       await expect(testId(page, "ref-test-loader-page")).toBeVisible({
-        timeout: 10000,
+        timeout: STREAM_TIMEOUT,
       });
       await expect(testId(page, "ref-test-loader-message")).toContainText(
         "Slow data loaded",
+        { timeout: STREAM_TIMEOUT },
       );
     });
 
@@ -70,6 +78,11 @@ test.describe("ref-serialization", () => {
 
       await page.goto(f.url("/ref-test/loader-prop"));
       await waitForHydration(page);
+
+      // Wait for initial loader data to stream in
+      await expect(testId(page, "ref-test-loader-count")).toBeVisible({
+        timeout: STREAM_TIMEOUT,
+      });
 
       // Get initial count
       const initialCount = await testId(
@@ -85,7 +98,7 @@ test.describe("ref-serialization", () => {
         .poll(
           async () =>
             await testId(page, "ref-test-loader-count").textContent(),
-          { timeout: 10000 },
+          { timeout: STREAM_TIMEOUT },
         )
         .not.toBe(initialCount);
     });
@@ -100,7 +113,7 @@ test.describe("ref-serialization", () => {
       await page.goto(f.url("/ref-test/handle-prop"));
       await waitForHydration(page);
 
-      // Handle data should be rendered
+      // Handle data should be rendered (no loader, no streaming delay)
       await expect(testId(page, "ref-test-handle-page")).toBeVisible();
       await expect(testId(page, "ref-test-handle-list")).toBeVisible();
 
@@ -151,12 +164,15 @@ test.describe("ref-serialization", () => {
       await page.goto(f.url("/ref-test/both-props"));
       await waitForHydration(page);
 
-      // Both components should be rendered
-      await expect(testId(page, "ref-test-both-page")).toBeVisible();
+      // Wait for streamed content (both-props uses loading())
+      await expect(testId(page, "ref-test-both-page")).toBeVisible({
+        timeout: STREAM_TIMEOUT,
+      });
 
-      // Loader data
+      // Loader data (streams in)
       await expect(testId(page, "ref-test-loader-message")).toContainText(
         "Slow data loaded",
+        { timeout: STREAM_TIMEOUT },
       );
 
       // Handle data - root layout pushes "Home", route pushes "Home" + "Both Props"
@@ -183,12 +199,13 @@ test.describe("ref-serialization", () => {
         window.dispatchEvent(new PopStateEvent("popstate"));
       });
 
-      // Wait for both components to appear
+      // Wait for both components to appear (streams after loading skeleton)
       await expect(testId(page, "ref-test-both-page")).toBeVisible({
-        timeout: 10000,
+        timeout: STREAM_TIMEOUT,
       });
       await expect(testId(page, "ref-test-loader-message")).toContainText(
         "Slow data loaded",
+        { timeout: STREAM_TIMEOUT },
       );
       await expect(testId(page, "ref-test-handle-item-0")).toContainText(
         "Home",
@@ -214,9 +231,13 @@ test.describe("ref-serialization (production)", () => {
     await page.goto(f.url("/ref-test/loader-prop"));
     await waitForHydration(page);
 
-    await expect(testId(page, "ref-test-loader-page")).toBeVisible();
+    // Wait for streamed loader data
+    await expect(testId(page, "ref-test-loader-page")).toBeVisible({
+      timeout: STREAM_TIMEOUT,
+    });
     await expect(testId(page, "ref-test-loader-message")).toContainText(
       "Slow data loaded",
+      { timeout: STREAM_TIMEOUT },
     );
   });
 
@@ -239,9 +260,13 @@ test.describe("ref-serialization (production)", () => {
     await page.goto(f.url("/ref-test/both-props"));
     await waitForHydration(page);
 
-    await expect(testId(page, "ref-test-both-page")).toBeVisible();
+    // Wait for streamed content
+    await expect(testId(page, "ref-test-both-page")).toBeVisible({
+      timeout: STREAM_TIMEOUT,
+    });
     await expect(testId(page, "ref-test-loader-message")).toContainText(
       "Slow data loaded",
+      { timeout: STREAM_TIMEOUT },
     );
     await expect(testId(page, "ref-test-handle-item-0")).toContainText("Home");
   });
