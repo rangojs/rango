@@ -20,6 +20,7 @@ import type {
 import {
   getContext,
   getNamePrefix,
+  getUrlPrefix,
   type EntryData,
   type InterceptEntry,
   type InterceptWhenFn,
@@ -714,6 +715,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
     // Create orphan cache entry (like orphan layout)
     // Subsequent siblings in the same array will attach to this entry
     const namespace = `${ctx.namespace}.${store.getNextIndex("cache")}`;
+    const cacheUrlPrefix = getUrlPrefix();
 
     const entry = {
       id: namespace,
@@ -730,6 +732,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
       parallel: [],
       intercept: [],
       loader: [],
+      ...(cacheUrlPrefix ? { mountPath: cacheUrlPrefix } : {}),
     } as EntryData;
 
     // Attach to parent's layout array (cache entries are structural like layouts)
@@ -746,6 +749,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
 
   // With children: create a cache entry (like layout with caching semantics)
   const namespace = `${ctx.namespace}.${store.getNextIndex("cache")}`;
+  const cacheUrlPrefix2 = getUrlPrefix();
 
   const entry = {
     id: namespace,
@@ -763,6 +767,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
     parallel: [],
     intercept: [],
     loader: [],
+    ...(cacheUrlPrefix2 ? { mountPath: cacheUrlPrefix2 } : {}),
   } as EntryData;
 
   // Run children with cache entry as parent
@@ -817,6 +822,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
   const namespace = `${ctx.namespace}.$${store.getNextIndex("parallel")}`;
 
   // Create full EntryData for parallel with its own loaders/revalidate/loading
+  const parallelUrlPrefix = getUrlPrefix();
   const entry = {
     id: namespace,
     shortCode: store.getShortCode("parallel"),
@@ -832,6 +838,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     parallel: [],
     intercept: [],
     loader: [],
+    ...(parallelUrlPrefix ? { mountPath: parallelUrlPrefix } : {}),
   } satisfies EntryData;
 
   // Run use callback if provided to collect loaders, revalidate, loading
@@ -1061,6 +1068,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     isRoot ? "$root" : store.getNextIndex("layout")
   }`;
 
+  const urlPrefix = getUrlPrefix();
   const entry = {
     id: namespace,
     shortCode: store.getShortCode("layout"),
@@ -1076,6 +1084,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     intercept: [],
     layout: [],
     loader: [],
+    ...(urlPrefix ? { mountPath: urlPrefix } : {}),
   } satisfies EntryData;
 
   // Run use callback if provided

@@ -23,7 +23,6 @@ import { RootErrorBoundary } from "../../root-error-boundary.js";
 import type { HandleData } from "../types.js";
 import { ThemeProvider } from "../../theme/ThemeProvider.js";
 import type { ResolvedThemeConfig, Theme } from "../../theme/types.js";
-import { HrefProvider, type HrefContextValue } from "./use-href.js";
 
 /**
  * Process handles from an async generator, updating the event controller
@@ -247,26 +246,6 @@ export function NavigationProvider({
       <ThemeProvider config={themeConfig} initialTheme={initialTheme}>
         {content}
       </ThemeProvider>
-    );
-  }
-
-  // Build href context value from metadata (routeMap and routeName)
-  // This enables useHref() to resolve local route names with the current prefix
-  const hrefContextValue = useMemo<HrefContextValue | null>(() => {
-    const { routeMap, routeName } = payload.metadata || {};
-    if (!routeMap) return null;
-    return { routeMap, routeName };
-  }, [payload.metadata?.routeMap, payload.metadata?.routeName]);
-
-  // Wrap with HrefProvider when routeMap is available
-  if (hrefContextValue) {
-    content = (
-      <HrefProvider
-        routeMap={hrefContextValue.routeMap}
-        routeName={hrefContextValue.routeName}
-      >
-        {content}
-      </HrefProvider>
     );
   }
 

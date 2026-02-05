@@ -8,9 +8,7 @@ argument-hint: [setup]
 
 @rangojs/router provides end-to-end type safety for routes, parameters, and environment.
 
-## Route Type Registration
-
-Register route types globally for type-safe `href()` and params:
+## Router Setup
 
 ```typescript
 // router.tsx
@@ -22,17 +20,8 @@ const router = createRouter<AppEnv>({
   urls: urlpatterns,
 });
 
-// Extract route types for href()
+// Server-side named-route href (type-safe via routeMap)
 export const href = router.href;
-
-// Register globally via module augmentation
-type AppRoutes = typeof router.routeMap;
-
-declare global {
-  namespace RSCRouter {
-    interface RegisteredRoutes extends AppRoutes {}
-  }
-}
 
 export default router;
 ```
@@ -56,21 +45,44 @@ export const urlpatterns = urls(({ path, layout }) => [
 
 ## Type-Safe href()
 
-After registration, `href()` has full autocomplete:
+### Server: ctx.href + scopedHref
+
+In route handlers, use `scopedHref()` for local route name autocomplete:
 
 ```typescript
-import { href } from "./router";
+import { scopedHref } from "@rangojs/router";
 
-// Autocomplete shows all registered route names
-href("home");                          // "/"
-href("products");                      // "/products"
-href("product", { slug: "widget" });   // "/product/widget"
+path("/product/:slug", (ctx) => {
+  const href = scopedHref<typeof shopPatterns>(ctx.href);
 
-// TypeScript errors for:
-href("invalid");                       // Error: not a valid route name
-href("product");                       // Error: missing required param 'slug'
-href("product", { wrong: "param" });   // Error: 'wrong' not in params
+  href("cart");                        // Type-safe local name
+  href("product", { slug: "widget" }); // Type-safe with params
+  href("blog.post");                   // Absolute names always allowed
+
+  return <ProductPage slug={ctx.params.slug} />;
+}, { name: "product" })
 ```
+
+### Client: href + useHref
+
+On the client, `href()` validates paths against registered route patterns at compile time:
+
+```typescript
+"use client";
+import { href, useHref, Link } from "@rangojs/router/client";
+
+// href() validates absolute paths via PatternToPath types
+href("/about");                        // Valid path
+href("/blog/hello");                   // Matches /blog/:slug
+
+// useHref() auto-prefixes with include() mount
+function ShopNav() {
+  const href = useHref();
+  return <Link to={href("/cart")}>Cart</Link>; // "/shop/cart"
+}
+```
+
+See `/links` for full URL generation guide.
 
 ## Environment Type Setup
 
@@ -126,7 +138,7 @@ export const UserLoader = createLoader("user", async (ctx) => {
 });
 ```
 
-## Global Type Registration
+## Global Environment Registration
 
 Register environment types globally for implicit typing:
 
@@ -134,7 +146,6 @@ Register environment types globally for implicit typing:
 // router.tsx
 declare global {
   namespace RSCRouter {
-    interface RegisteredRoutes extends AppRoutes {}
     interface Env extends AppEnv {}
   }
 }
@@ -244,6 +255,53 @@ function ProductHeader() {
 }
 ```
 
+## Multi-Project tsconfig Setup
+
+For monorepos or multi-app setups, use a shared base tsconfig. Each app only needs
+to extend the base and add its `router.tsx` to `files` so TypeScript picks up the
+global type declarations (like `RSCRouter.Env`).
+
+```jsonc
+// tsconfig.base.json (root)
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true
+  }
+}
+```
+
+```jsonc
+// apps/shop/tsconfig.json
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["src"],
+  "files": ["src/router.tsx"]
+}
+```
+
+```jsonc
+// apps/blog/tsconfig.json
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["src"],
+  "files": ["src/router.tsx"]
+}
+```
+
+The `files` array ensures `router.tsx` (which contains `declare global { namespace RSCRouter { ... } }`)
+is always included in the compilation even if nothing directly imports it. Each app gets its own
+typed environment without interfering with other apps.
+
 ## Complete Type-Safe Setup
 
 ```typescript
@@ -270,17 +328,13 @@ const router = createRouter<AppEnv>({
   urls: urlpatterns,
 });
 
-type AppRoutes = typeof router.routeMap;
-
 declare global {
   namespace RSCRouter {
-    interface RegisteredRoutes extends AppRoutes {}
     interface Env extends AppEnv {}
   }
 }
 
 export default router;
-export const href = router.href;
 
 // 4. loaders/*.ts - Type-safe loaders
 export const ProductLoader = createLoader("product", async (ctx) => {
@@ -290,6 +344,14 @@ export const ProductLoader = createLoader("product", async (ctx) => {
   return { product: await fetchProduct(ctx.params.slug) };
 });
 
-// 5. components/*.tsx - Type-safe client code
-<Link to={href("product", { slug: "widget" })}>Widget</Link>
+// 5. Server: ctx.href for named routes
+path("/product/:slug", (ctx) => {
+  const href = scopedHref<typeof urlpatterns>(ctx.href);
+  return <Link to={href("shop")}>Back to Shop</Link>;
+}, { name: "product" })
+
+// 6. Client: useHref for mounted paths, href for absolute
+"use client";
+import { useHref, href, Link } from "@rangojs/router/client";
+<Link to={href("/shop/product/widget")}>Widget</Link>
 ```

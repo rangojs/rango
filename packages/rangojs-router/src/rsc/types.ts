@@ -33,10 +33,6 @@ export interface RscPayload {
     themeConfig?: ResolvedThemeConfig | null;
     /** Initial theme from cookie (for SSR hydration) */
     initialTheme?: Theme;
-    /** Route map for useHref() - maps route names to URL patterns */
-    routeMap?: Record<string, string>;
-    /** Current matched route name (for local name resolution in useHref) */
-    routeName?: string;
   };
   returnValue?: { ok: boolean; data: unknown };
   formState?: unknown;

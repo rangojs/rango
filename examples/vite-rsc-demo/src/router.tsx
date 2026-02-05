@@ -71,21 +71,7 @@ const router = createRouter<AppEnv>({
 }).routes(urlpatterns);
 
 /**
- * Extract route types directly from the router chain
- */
-type AppRoutes = typeof router.routeMap;
-
-/**
- * Module augmentation - register types globally for type-safe href
- */
-declare global {
-  namespace RSCRouter {
-    interface RegisteredRoutes extends AppRoutes {}
-  }
-}
-/**
- * Export the router and type-safe href.
- * Import href from here for type safety: `import { href } from "./router.js"`
+ * Export the router and type-safe href for server components.
  */
 export { router };
 export const href = router.href;

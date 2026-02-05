@@ -13,6 +13,7 @@
     "isolatedModules": true,
     "types": ["@cloudflare/workers-types", "vite/client", "@rangojs/router/types"]
   },
+  "files": ["src/router.tsx"],
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }

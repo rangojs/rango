@@ -5,8 +5,8 @@ import { waitForHydration, expectNoPageError, testId } from "./helper";
 /**
  * Tests for scoped href resolution
  * - Server-side ctx.href in route handlers
- * - Client-side useHref hook
- * - Local, absolute, and path-based name resolution
+ * - Client-side href() + useMount()
+ * - Local, absolute, and path-based resolution
  */
 test.describe("Scoped Href Resolution", () => {
   const f = useFixture({
@@ -98,36 +98,36 @@ test.describe("Scoped Href Resolution", () => {
     });
   });
 
-  test.describe("Client-side useHref", () => {
-    test("should resolve local route name to correct path", async ({ page }) => {
+  test.describe("Client-side href + useMount", () => {
+    test("should resolve mount-relative path to correct URL", async ({ page }) => {
       using _ = expectNoPageError(page);
 
       await page.goto(f.url("/href"));
       await waitForHydration(page);
 
-      // Client-side local "index" should resolve to /href
+      // Client-side href("/", mount) where mount="/href" -> "/href/"
       const clientLocalIndex = testId(page, "client-local-index");
-      await expect(clientLocalIndex).toContainText("/href");
+      await expect(clientLocalIndex).toContainText("/href/");
     });
 
-    test("should resolve local route name with params", async ({ page }) => {
+    test("should resolve mount-relative path with dynamic segment", async ({ page }) => {
       using _ = expectNoPageError(page);
 
       await page.goto(f.url("/href"));
       await waitForHydration(page);
 
-      // Client-side useHref computes detail with id: "from-client"
+      // Client-side href("/from-client", mount) -> "/href/from-client"
       const clientLocalDetail = testId(page, "client-local-detail");
       await expect(clientLocalDetail).toContainText("/href/from-client");
     });
 
-    test("should resolve absolute route name (with dot)", async ({ page }) => {
+    test("should resolve absolute path without mount", async ({ page }) => {
       using _ = expectNoPageError(page);
 
       await page.goto(f.url("/href"));
       await waitForHydration(page);
 
-      // Client-side absolute "blog.index" should resolve to /blog
+      // Client-side href("/blog") -> "/blog" (no mount prefix)
       const clientAbsoluteBlog = testId(page, "client-absolute-blog");
       await expect(clientAbsoluteBlog).toContainText("/blog");
     });
@@ -138,12 +138,12 @@ test.describe("Scoped Href Resolution", () => {
       await page.goto(f.url("/href"));
       await waitForHydration(page);
 
-      // Client-side path-based "/about" should remain /about
+      // Client-side href("/about") -> "/about"
       const clientPathBased = testId(page, "client-path-based");
       await expect(clientPathBased).toContainText("/about");
     });
 
-    test("should update href context after navigation", async ({ page }) => {
+    test("should maintain mount context after navigation", async ({ page }) => {
       using _ = expectNoPageError(page);
 
       await page.goto(f.url("/href"));
@@ -155,7 +155,7 @@ test.describe("Scoped Href Resolution", () => {
       await expect(testId(page, "href-detail-page")).toBeVisible();
 
       // After navigation, client href resolves with isDetailPage=true
-      // So it uses id: "client-item" instead of "from-client"
+      // So it uses "/client-item" instead of "/from-client"
       const clientLocalDetail = testId(page, "client-local-detail");
       await expect(clientLocalDetail).toContainText("/href/client-item");
     });
@@ -245,8 +245,8 @@ test.describe("Scoped Href Resolution (production)", () => {
     await expect(testId(page, "server-absolute-blog")).toContainText("/blog");
     await expect(testId(page, "server-path-based")).toContainText("/about");
 
-    // Client-side hrefs (useHref works during SSR)
-    await expect(testId(page, "client-local-index")).toContainText("/href");
+    // Client-side hrefs (href + useMount)
+    await expect(testId(page, "client-local-index")).toContainText("/href/");
     await expect(testId(page, "client-local-detail")).toContainText("/href/from-client");
     await expect(testId(page, "client-absolute-blog")).toContainText("/blog");
     await expect(testId(page, "client-path-based")).toContainText("/about");

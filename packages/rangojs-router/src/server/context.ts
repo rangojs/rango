@@ -55,6 +55,8 @@ export type EntryPropCommon = {
   parent: EntryData | null;
   /** Cache configuration for this entry (set by cache() DSL) */
   cache?: EntryCacheConfig;
+  /** URL prefix from include() scope, used for MountContext on client */
+  mountPath?: string;
 };
 
 /**

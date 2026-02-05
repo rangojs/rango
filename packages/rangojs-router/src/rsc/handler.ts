@@ -385,7 +385,6 @@ export function createRSCHandler<
         // Render with rootLayout to maintain app shell
         const root = await renderSegments([notFoundSegment], {
           rootLayout: router.rootLayout,
-          routeMap: getGlobalRouteMap(),
           // No routeName for not-found routes
         });
 
@@ -401,7 +400,6 @@ export function createRSCHandler<
             version,
             themeConfig: router.themeConfig,
             initialTheme: requireRequestContext().theme,
-            routeMap: getGlobalRouteMap(),
             // No routeName for not-found routes
           },
         };
@@ -559,8 +557,6 @@ export function createRSCHandler<
 
     const root = renderSegments(match.segments, {
       rootLayout: router.rootLayout,
-      routeMap: getGlobalRouteMap(),
-      routeName: match.routeName,
     });
 
     const payload: RscPayload = {
@@ -576,8 +572,6 @@ export function createRSCHandler<
         version,
         themeConfig: router.themeConfig,
         initialTheme: requireRequestContext().theme,
-        routeMap: getGlobalRouteMap(),
-        routeName: match.routeName,
       },
       formState: actionResult,
     };
@@ -675,8 +669,6 @@ export function createRSCHandler<
             isError: true,
             handles: handleStore.stream(),
             version,
-            routeMap: getGlobalRouteMap(),
-            routeName: errorResult.routeName,
           },
           returnValue,
         };
@@ -722,8 +714,6 @@ export function createRSCHandler<
       const root = renderSegments(fullMatch.segments, {
         rootLayout: router.rootLayout,
         isAction: true,
-        routeMap: getGlobalRouteMap(),
-        routeName: fullMatch.routeName,
       });
       const renderDuration = performance.now() - renderStart;
       const serverTiming = fullMatch.serverTiming
@@ -739,8 +729,6 @@ export function createRSCHandler<
           diff: fullMatch.diff,
           handles: handleStore.stream(),
           version,
-          routeMap: getGlobalRouteMap(),
-          routeName: fullMatch.routeName,
         },
         returnValue,
       };
@@ -783,8 +771,6 @@ export function createRSCHandler<
         slots: matchResult.slots,
         handles: handleStore.stream(),
         version,
-        routeMap: getGlobalRouteMap(),
-        routeName: matchResult.routeName,
       },
       returnValue,
     };
@@ -963,8 +949,6 @@ export function createRSCHandler<
         const renderStart = performance.now();
         const root = renderSegments(match.segments, {
           rootLayout: router.rootLayout,
-          routeMap: getGlobalRouteMap(),
-          routeName: match.routeName,
         });
         const renderDuration = performance.now() - renderStart;
         serverTiming = match.serverTiming
@@ -983,8 +967,6 @@ export function createRSCHandler<
             version,
             themeConfig: router.themeConfig,
             initialTheme: requireRequestContext().theme,
-            routeMap: getGlobalRouteMap(),
-            routeName: match.routeName,
           },
         };
       } else {
@@ -1002,8 +984,6 @@ export function createRSCHandler<
             slots: result.slots,
             handles: handleStore.stream(),
             version,
-            routeMap: getGlobalRouteMap(),
-            routeName: result.routeName,
           },
         };
       }
@@ -1025,8 +1005,6 @@ export function createRSCHandler<
       const renderStart = performance.now();
       const root = renderSegments(match.segments, {
         rootLayout: router.rootLayout,
-        routeMap: getGlobalRouteMap(),
-        routeName: match.routeName,
       });
       const renderDuration = performance.now() - renderStart;
       serverTiming = match.serverTiming
@@ -1046,8 +1024,6 @@ export function createRSCHandler<
           version,
           themeConfig: router.themeConfig,
           initialTheme: requireRequestContext().theme,
-          routeMap: getGlobalRouteMap(),
-          routeName: match.routeName,
         },
       };
     }

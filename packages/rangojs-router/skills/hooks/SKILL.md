@@ -343,10 +343,54 @@ function ConditionalLayout() {
 }
 ```
 
+## URL Hooks
+
+### useHref()
+
+Mount-aware href for client components inside `include()` scopes:
+
+```tsx
+"use client";
+import { useHref, href, Link } from "@rangojs/router/client";
+
+// Inside include("/shop", shopPatterns)
+function ShopNav() {
+  const href = useHref();
+
+  return (
+    <>
+      {/* Local paths - auto-prefixed with /shop */}
+      <Link to={href("/cart")}>Cart</Link>
+      <Link to={href("/product/widget")}>Widget</Link>
+    </>
+  );
+}
+```
+
+Use `useHref()` for local navigation. Use the bare `href()` function for absolute paths.
+
+### useMount()
+
+Returns the current `include()` mount path:
+
+```tsx
+"use client";
+import { useMount } from "@rangojs/router/client";
+
+function MountInfo() {
+  const mount = useMount(); // "/shop" inside include("/shop", ...)
+  return <span>Mounted at: {mount}</span>;
+}
+```
+
+See `/links` for full URL generation guide including server-side `ctx.href`.
+
 ## Hook Summary
 
 | Hook | Purpose | Returns |
 |------|---------|---------|
+| `useHref()` | Mount-aware href | `(path) => string` |
+| `useMount()` | Current include() mount path | `string` |
 | `useNavigation()` | Navigation state & control | state, navigate, refresh |
 | `useSegments()` | URL path & segment IDs | path, segmentIds, location |
 | `useLinkStatus()` | Link pending state | { pending } |

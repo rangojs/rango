@@ -7,9 +7,9 @@
 
 import type { Handler, HandlerContext } from "@rangojs/router";
 
-// Test 1: ctx.href in handlers accepts valid route names
+// Test 1: ctx.href in handlers accepts route names
 const testHandlerHref: Handler = (ctx) => {
-  // Should work - valid route names from RegisteredRoutes
+  // Should work - ctx.href accepts any string for named route resolution
   const _homeUrl = ctx.href("home");
   const _aboutUrl = ctx.href("about");
   const _blogUrl = ctx.href("blog");
@@ -54,12 +54,12 @@ type _AssertHrefCallable = CheckCtxHref extends (
   : never;
 const _checkHrefCallable: _AssertHrefCallable = true;
 
-// Test 5: Verify that route names from global augmentation are available
-// This relies on the global namespace augmentation in router.tsx
+// Test 5: Verify ctx.href accepts various route name formats
+// ctx.href is (name: string, params?) => string, accepts any route name
 declare function testGlobalRoutes(): void;
 if (false as boolean) {
   testGlobalRoutes();
-  // If RegisteredRoutes is properly augmented, these should all type-check
+  // ctx.href accepts any string - named routes resolve at runtime via server routeMap
   const ctx = {} as HandlerContext;
   ctx.href("/blog");
   ctx.href("about");
@@ -68,9 +68,9 @@ if (false as boolean) {
 }
 
 // =============================================================================
-// Test 6: useHref<typeof localPatterns>() composability pattern
+// Test 6: ScopedHrefFunction composability pattern
 // =============================================================================
-// This tests that included url modules can use useHref with their own patterns
+// This tests that included url modules can use scopedHref with their own patterns
 // to get type-safe href for just their local routes.
 // UrlPatterns is only available from server (it requires server context)
 import type { UrlPatterns } from "@rangojs/router/server";
@@ -87,11 +87,7 @@ type LocalRoutes = {
 };
 type LocalPatternsType = UrlPatterns<unknown, LocalRoutes>;
 
-// Type-level assertion: useHref<typeof myPatterns>() should extract local routes
-// The useHref hook signature is:
-//   useHref<TPatterns>(): TPatterns extends UrlPatterns<any, infer TRoutes>
-//     ? ScopedHrefFunction<TRoutes>
-//     : HrefFn
+// Type-level assertion: scopedHref should extract local routes from UrlPatterns
 type ExtractedHref = LocalPatternsType extends UrlPatterns<any, infer TRoutes>
   ? ScopedHrefFunction<TRoutes>
   : never;
@@ -133,7 +129,7 @@ type _AssertSettingsHasNoParams = keyof SettingsParams extends never ? true : ne
 const _checkSettingsHasNoParams: _AssertSettingsHasNoParams = true;
 
 // Test 9: Composability - multiple independent url modules
-// Each module can use useHref<typeof itsPatterns>() with its own local routes
+// Each module can use scopedHref<typeof itsPatterns>(ctx.href) with local routes
 type BlogRoutes = { index: "/"; post: "/:postId" };
 type ShopRoutes = { index: "/"; cart: "/cart"; product: "/product/:sku" };
 

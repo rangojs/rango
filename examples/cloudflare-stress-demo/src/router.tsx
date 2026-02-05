@@ -16,13 +16,3 @@ export const router = createRouter<AppEnv>({
     console.error("Router error:", error);
   },
 }).routes(urlpatterns);
-
-type AppRoutes = typeof router.routeMap;
-
-declare global {
-  namespace RSCRouter {
-    interface RegisteredRoutes extends AppRoutes {}
-  }
-}
-
-export const href = router.href;

@@ -7,9 +7,9 @@
 
 import type { Handler, HandlerContext, Middleware, Revalidate, GenericParams } from "@rangojs/router";
 
-// Test 1: ctx.href in handlers accepts valid route names
+// Test 1: ctx.href in handlers accepts route names
 const testHandlerHref: Handler = (ctx) => {
-  // Should work - valid route names from RegisteredRoutes
+  // Should work - ctx.href accepts any string for named route resolution
   const _indexUrl = ctx.href("index");
   const _blogUrl = ctx.href("blog.index");
 
@@ -74,12 +74,12 @@ const testGenericHandler: Handler<GenericParams> = (ctx) => {
   return null;
 };
 
-// Test 9: Verify that route names from global augmentation are available
-// This relies on the global namespace augmentation in router.tsx
+// Test 9: Verify ctx.href accepts various route name formats
+// ctx.href is (name: string, params?) => string, accepts any route name
 declare function testGlobalRoutes(): void;
 if (false as boolean) {
   testGlobalRoutes();
-  // If RegisteredRoutes is properly augmented, these should all type-check
+  // ctx.href accepts any string - named routes resolve at runtime via server routeMap
   const ctx = {} as HandlerContext;
   ctx.href("index");
   ctx.href("blog.index");
@@ -90,9 +90,9 @@ if (false as boolean) {
 }
 
 // =============================================================================
-// Test 10: useHref<typeof localPatterns>() composability pattern
+// Test 10: ScopedHrefFunction composability pattern
 // =============================================================================
-// This tests that included url modules can use useHref with their own patterns
+// This tests that included url modules can use scopedHref with their own patterns
 // to get type-safe href for just their local routes.
 // UrlPatterns is only available from server (it requires server context)
 import type { UrlPatterns } from "@rangojs/router/server";
@@ -108,7 +108,7 @@ type LocalBlogRoutes = {
 };
 type BlogPatternsType = UrlPatterns<unknown, LocalBlogRoutes>;
 
-// Type-level assertion: useHref<typeof blogPatterns>() should extract local routes
+// Type-level assertion: scopedHref should extract local routes from UrlPatterns
 type ExtractedHref = BlogPatternsType extends UrlPatterns<any, infer TRoutes>
   ? ScopedHrefFunction<TRoutes>
   : never;
@@ -120,7 +120,7 @@ type _AssertExtractsLocalRoutes = ExtractedHref extends ScopedHrefFunction<Local
 const _checkExtractsLocalRoutes: _AssertExtractsLocalRoutes = true;
 
 // Test 11: Local route name validation in ScopedHrefFunction
-// When using useHref<typeof blogPatterns>(), these should type-check:
+// When using scopedHref<typeof blogPatterns>(ctx.href), these should type-check:
 declare const localHref: ScopedHrefFunction<LocalBlogRoutes>;
 
 // Valid local route without params

@@ -23,11 +23,3 @@ declare global {
 export const router = createRouter<AppEnv>({})
   .routes(urlpatterns);
 
-// Type declaration for route map
-type AppRoutes = typeof router.routeMap;
-
-declare global {
-  namespace RSCRouter {
-    interface RegisteredRoutes extends AppRoutes {}
-  }
-}

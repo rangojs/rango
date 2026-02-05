@@ -128,7 +128,7 @@ export type HrefFunction<TRoutes> = {
 };
 
 /**
- * Type-safe scoped href function signature for use with useHref<typeof patterns>()
+ * Type-safe scoped href function signature for use with scopedHref<typeof patterns>()
  *
  * **Recommended: Use route names for type safety.**
  * Route names validate both the route exists and params are correct.

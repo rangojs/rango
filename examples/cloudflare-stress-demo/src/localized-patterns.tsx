@@ -8,10 +8,9 @@
 import { urls } from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";
 import { getMatchDebugStats, type HandlerContext } from "@rangojs/router/server";
-import type { AppEnv } from "./env.js";
 
 // Benchmark route - returns raw Response with debug stats, bypasses RSC
-const BenchmarkHandler = async (ctx: HandlerContext<AppEnv>) => {
+const BenchmarkHandler = async (ctx: HandlerContext) => {
   const now = Date.now();
   const start = ctx.var.dateStart ?? 0;
   const elapsed = now - start;
@@ -36,7 +35,7 @@ const BenchmarkHandler = async (ctx: HandlerContext<AppEnv>) => {
 };
 
 // Page component that displays route params and timing
-const ParamPage = async (ctx: HandlerContext<AppEnv>) => {
+const ParamPage = async (ctx: HandlerContext) => {
   // setTimeout(0) to unfreeze Cloudflare's time
   await new Promise((r) => setTimeout(r, 1));
 
@@ -56,7 +55,7 @@ const ParamPage = async (ctx: HandlerContext<AppEnv>) => {
 };
 
 // Simple page component for stress routes
-const StressPage = async (ctx: HandlerContext<AppEnv>) => {
+const StressPage = async (ctx: HandlerContext) => {
   await new Promise((r) => setTimeout(r, 1));
 
   const renderTime = Date.now();

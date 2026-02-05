@@ -9,7 +9,7 @@ import { getRequestContext } from "../server/request-context.js";
 
 /**
  * Resolve route name with namespace prefix support.
- * Same logic as client-side useHref for consistency.
+ * Supports local names, absolute names (dot notation), and path-based URLs.
  */
 function resolveRouteName(
   name: string,
