@@ -39,6 +39,12 @@ export interface Handle<TData, TAccumulated = TData[]> {
    * @returns The accumulated value
    */
   readonly collect: (segments: TData[][]) => TAccumulated;
+
+  /**
+   * RSC serialization - strips collect function, keeps only brand + id.
+   * When passed as a prop to a client component, RSC Flight calls toJSON.
+   */
+  toJSON?: () => { __brand: "handle"; $$id: string };
 }
 
 /**
@@ -46,6 +52,19 @@ export interface Handle<TData, TAccumulated = TData[]> {
  */
 function defaultCollect<T>(segments: T[][]): T[] {
   return segments.flat();
+}
+
+// Module-level registry mapping $$id to collect functions.
+// Populated when createHandle() runs (both server and client).
+// Used by useHandle() to recover collect when handle is deserialized from RSC prop.
+const collectRegistry = new Map<string, (segments: unknown[][]) => unknown>();
+
+/**
+ * Look up a collect function from the registry by handle $$id.
+ * Returns undefined if not registered (falls back to defaultCollect in useHandle).
+ */
+export function getCollectFn(id: string): ((segments: unknown[][]) => unknown) | undefined {
+  return collectRegistry.get(id);
 }
 
 /**
@@ -98,12 +117,20 @@ export function createHandle<TData, TAccumulated = TData[]>(
     );
   }
 
+  const collectFn = collect ??
+    (defaultCollect as unknown as (segments: TData[][]) => TAccumulated);
+
+  // Register collect in module-level registry so useHandle() can recover it
+  // when the handle is deserialized from RSC props (toJSON strips collect).
+  if (handleId) {
+    collectRegistry.set(handleId, collectFn as (segments: unknown[][]) => unknown);
+  }
+
   return {
     __brand: "handle" as const,
     $$id: handleId,
-    collect:
-      collect ??
-      (defaultCollect as unknown as (segments: TData[][]) => TAccumulated),
+    collect: collectFn,
+    toJSON: () => ({ __brand: "handle" as const, $$id: handleId }),
   };
 }
 

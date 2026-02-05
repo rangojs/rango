@@ -9,6 +9,7 @@ import {
   startTransition,
 } from "react";
 import type { Handle } from "../../handle.js";
+import { getCollectFn } from "../../handle.js";
 import type { HandleData } from "../types.js";
 import { NavigationStoreContext } from "./context.js";
 
@@ -33,6 +34,35 @@ function filterSegmentOrder(matched: string[]): string[] {
 }
 
 /**
+ * Resolve the collect function for a handle.
+ * When a handle is passed as a prop via RSC, toJSON strips the collect function.
+ * In that case, look up collect from the registry (populated when createHandle runs
+ * on the client), then fall back to flat array default.
+ */
+function resolveCollect<T, A>(handle: Handle<T, A>): (segments: T[][]) => A {
+  if (typeof handle.collect === "function") {
+    return handle.collect;
+  }
+
+  // Handle was deserialized from RSC prop (toJSON stripped collect).
+  // Try the registry first (populated if the handle module was imported on client).
+  const registered = getCollectFn(handle.$$id);
+  if (registered) {
+    return registered as (segments: T[][]) => A;
+  }
+
+  // Fall back to default flat collect with a dev warning.
+  if (process.env.NODE_ENV !== "production") {
+    console.warn(
+      `[rsc-router] Handle "${handle.$$id}" was passed as a prop but its collect ` +
+      `function could not be resolved. Falling back to flat array. ` +
+      `Import the handle module in a client component to register its collect function.`
+    );
+  }
+  return ((segments: unknown[][]) => segments.flat()) as unknown as (segments: T[][]) => A;
+}
+
+/**
  * Collect handle data from segments and transform to final value.
  */
 function collectHandle<T, A>(
@@ -40,13 +70,14 @@ function collectHandle<T, A>(
   data: HandleData,
   segmentOrder: string[]
 ): A {
+  const collect = resolveCollect(handle);
   const segmentData = data[handle.$$id];
 
   if (!segmentData) {
-    return handle.collect([]);
+    return collect([]);
   }
 
-  // Build array of segment arrays in parent → child order
+  // Build array of segment arrays in parent -> child order
   const segmentArrays: T[][] = [];
   for (const segmentId of segmentOrder) {
     const entries = segmentData[segmentId];
@@ -56,7 +87,7 @@ function collectHandle<T, A>(
   }
 
   // Call collect once with all segment data
-  return handle.collect(segmentArrays);
+  return collect(segmentArrays);
 }
 
 /**
