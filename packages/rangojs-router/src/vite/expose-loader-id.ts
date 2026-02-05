@@ -76,6 +76,66 @@ function countCreateLoaderArgs(code: string, startPos: number, endPos: number): 
  * If the user only provides fn, we inject: undefined, "id"
  * If the user provides fn and fetchable, we inject: , "id"
  */
+/**
+ * Generate lightweight client stubs for loader files.
+ *
+ * When a loader file is imported from a client component (e.g., for useLoader()),
+ * the client only needs { __brand: "loader", $$id: "..." } objects.
+ * This function replaces the entire file contents with just those stub exports,
+ * preventing server-only data (constants, DB queries, etc.) from leaking into
+ * the client bundle.
+ *
+ * Only applies when ALL named exports are createLoader() calls (plus type exports
+ * which are erased at compile time). Files with mixed exports are left untouched.
+ */
+function generateClientLoaderStubs(
+  code: string,
+  filePath: string,
+  isBuild: boolean
+): { code: string; map?: undefined } | null {
+  const loaderPattern = /export\s+const\s+(\w+)\s*=\s*createLoader\s*\(/g;
+  const loaders: string[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = loaderPattern.exec(code)) !== null) {
+    loaders.push(match[1]);
+  }
+
+  if (loaders.length === 0) {
+    return null;
+  }
+
+  // Check that every non-type export is a createLoader call.
+  // If the file exports other values, we can't safely replace it.
+  const allExports = /export\s+(const|let|var|function|class|default)\s+(\w+)/g;
+  let exportMatch: RegExpExecArray | null;
+  const nonLoaderExports: string[] = [];
+
+  while ((exportMatch = allExports.exec(code)) !== null) {
+    const name = exportMatch[2];
+    if (!loaders.includes(name)) {
+      nonLoaderExports.push(name);
+    }
+  }
+
+  if (nonLoaderExports.length > 0) {
+    // Mixed exports - fall back to normal transform (inject $$id only)
+    return null;
+  }
+
+  // Generate stub file: only $$id references, no server code
+  const stubs = loaders.map((name) => {
+    const loaderId = isBuild
+      ? hashLoaderId(filePath, name)
+      : `${filePath}#${name}`;
+    return `export const ${name} = { __brand: "loader", $$id: "${loaderId}" };`;
+  });
+
+  return {
+    code: stubs.join("\n") + "\n",
+  };
+}
+
 function transformLoaderExports(
   code: string,
   filePath: string,
@@ -349,8 +409,17 @@ ${lazyImports.join(",\n")}
         }
       }
 
-      // Transform: inject $$id in all environments
-      // In build mode, IDs are hashed; in dev mode, they're readable
+      // In client/ssr environments, replace loader files with lightweight stubs.
+      // This prevents server-only data (product lists, DB queries, etc.) from
+      // leaking into the client bundle. The client only needs { $$id } references.
+      if (!isRscEnv) {
+        const stubResult = generateClientLoaderStubs(code, relativePath, isBuild);
+        if (stubResult) {
+          return stubResult;
+        }
+      }
+
+      // RSC environment: inject $$id into createLoader calls, keeping full implementation
       return transformLoaderExports(code, relativePath, id, isBuild);
     },
   };
