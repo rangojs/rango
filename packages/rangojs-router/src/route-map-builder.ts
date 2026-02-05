@@ -111,13 +111,18 @@ export function createRouteMap(): RouteMapBuilder<{}> {
   return builder;
 }
 
-// Singleton route map instance - populated when routes.ts is imported
+// Singleton route map instance - populated incrementally as routes are encountered
 let globalRouteMap: Record<string, string> = {};
+
+// Cached complete manifest - includes all routes (including lazy includes)
+// Set from runtime cache or build-time import
+let cachedManifest: Record<string, string> | null = null;
 
 /**
  * Register the route map globally for href to use at runtime
  *
  * Call this after building your route map to make it available to href.
+ * Routes are merged with any existing registered routes.
  *
  * @param map - The route map to register
  *
@@ -131,16 +136,52 @@ let globalRouteMap: Record<string, string> = {};
  * ```
  */
 export function registerRouteMap(map: Record<string, string>): void {
-  globalRouteMap = map;
+  // Always merge with existing map (don't replace)
+  globalRouteMap = { ...globalRouteMap, ...map };
 }
 
 /**
  * Get the globally registered route map
  *
  * Used internally by href to resolve route names to URLs at runtime.
+ * Returns the cached manifest if available (complete with lazy includes),
+ * otherwise returns the runtime-accumulated route map.
  *
  * @returns The registered route map
  */
 export function getGlobalRouteMap(): Record<string, string> {
+  // Cached manifest is complete (includes lazy routes), so prefer it
+  if (cachedManifest) {
+    return cachedManifest;
+  }
   return globalRouteMap;
+}
+
+/**
+ * Set the cached manifest (for runtime cache integration)
+ *
+ * This sets the complete route manifest from a runtime cache.
+ * The cached manifest includes all routes (including lazy includes)
+ * and takes precedence over the incrementally-built globalRouteMap.
+ *
+ * @param manifest - The complete route manifest to cache
+ */
+export function setCachedManifest(manifest: Record<string, string>): void {
+  cachedManifest = manifest;
+}
+
+/**
+ * Check if a cached manifest is loaded
+ *
+ * @returns true if a complete manifest is available
+ */
+export function hasCachedManifest(): boolean {
+  return cachedManifest !== null;
+}
+
+/**
+ * Clear the cached manifest (for testing)
+ */
+export function clearCachedManifest(): void {
+  cachedManifest = null;
 }

@@ -1,4 +1,4 @@
-import { createLoader } from "@rangojs/router/server";
+import { createLoader } from "@rangojs/router";
 
 // Product data
 const products = [
@@ -117,7 +117,7 @@ export const FetchableTestLoader = createLoader(
       timestamp: new Date().toISOString(),
     };
   },
-  true // Enable fetchable (GET-based fetching)
+  true, // Enable fetchable (GET-based fetching)
 );
 
 // ============================================================================
@@ -144,7 +144,7 @@ export const HookTestLoader = createLoader(
       timestamp: new Date().toISOString(),
     };
   },
-  true // Fetchable - allows passing to client components
+  true, // Fetchable - allows passing to client components
 );
 
 export type HookTestLoaderData = {
@@ -173,7 +173,7 @@ export const HookTestLoaderB = createLoader(
       timestamp: new Date().toISOString(),
     };
   },
-  true // Fetchable - allows passing to client components
+  true, // Fetchable - allows passing to client components
 );
 
 /**
@@ -192,25 +192,22 @@ export const UnregisteredLoader = createLoader(
       timestamp: new Date().toISOString(),
     };
   },
-  true // Fetchable - for client-side load() calls
+  true, // Fetchable - for client-side load() calls
 );
 
 /**
  * Loader that throws an error - for testing error state handling
  */
-export const ErrorLoader = createLoader(
-  async (ctx) => {
-    const shouldFail = ctx.params.shouldFail !== "false";
-    if (shouldFail) {
-      throw new Error("Intentional loader error for testing");
-    }
-    return {
-      message: "Success - error was bypassed",
-      timestamp: new Date().toISOString(),
-    };
-  },
-  true
-);
+export const ErrorLoader = createLoader(async (ctx) => {
+  const shouldFail = ctx.params.shouldFail !== "false";
+  if (shouldFail) {
+    throw new Error("Intentional loader error for testing");
+  }
+  return {
+    message: "Success - error was bypassed",
+    timestamp: new Date().toISOString(),
+  };
+}, true);
 
 /**
  * Protected loader with middleware - for testing security
@@ -234,7 +231,7 @@ export const ProtectedLoader = createLoader(
         await next();
       },
     ],
-  }
+  },
 );
 
 // ============================================================================
@@ -263,7 +260,8 @@ function resetCountersIfNewRequest(timestamp: string) {
  */
 export const BaseNonFetchableLoader = createLoader(async (ctx) => {
   // Use request timestamp to detect new requests
-  const requestTimestamp = ctx.request.headers.get("x-request-id") || Date.now().toString();
+  const requestTimestamp =
+    ctx.request.headers.get("x-request-id") || Date.now().toString();
   resetCountersIfNewRequest(requestTimestamp);
   baseNonFetchableCount++;
 
@@ -282,7 +280,8 @@ export const BaseNonFetchableLoader = createLoader(async (ctx) => {
 export const BaseFetchableLoader = createLoader(
   async (ctx) => {
     // Use request timestamp to detect new requests
-    const requestTimestamp = ctx.request.headers.get("x-request-id") || Date.now().toString();
+    const requestTimestamp =
+      ctx.request.headers.get("x-request-id") || Date.now().toString();
     resetCountersIfNewRequest(requestTimestamp);
     baseFetchableCount++;
 
@@ -293,22 +292,24 @@ export const BaseFetchableLoader = createLoader(
       invocationCount: baseFetchableCount,
     };
   },
-  true // fetchable
+  true, // fetchable
 );
 
 /**
  * Non-fetchable loader that uses another non-fetchable loader via ctx.use()
  */
-export const ComposingNonFetchableUsesNonFetchable = createLoader(async (ctx) => {
-  const base = await ctx.use(BaseNonFetchableLoader);
-  return {
-    composerType: "non-fetchable",
-    dependencyType: "non-fetchable",
-    baseValue: base.value,
-    baseInvocationCount: base.invocationCount,
-    computed: base.value * 2,
-  };
-});
+export const ComposingNonFetchableUsesNonFetchable = createLoader(
+  async (ctx) => {
+    const base = await ctx.use(BaseNonFetchableLoader);
+    return {
+      composerType: "non-fetchable",
+      dependencyType: "non-fetchable",
+      baseValue: base.value,
+      baseInvocationCount: base.invocationCount,
+      computed: base.value * 2,
+    };
+  },
+);
 
 /**
  * Non-fetchable loader that uses a fetchable loader via ctx.use()
@@ -338,7 +339,7 @@ export const ComposingFetchableUsesFetchable = createLoader(
       computed: base.value * 3,
     };
   },
-  true // fetchable
+  true, // fetchable
 );
 
 /**
@@ -355,7 +356,7 @@ export const ComposingFetchableUsesNonFetchable = createLoader(
       computed: base.value * 3,
     };
   },
-  true // fetchable
+  true, // fetchable
 );
 
 // ============================================================================
@@ -412,7 +413,7 @@ export const InterceptCacheTestLoader = createLoader(
       loadedAt: new Date().toISOString(),
     };
   },
-  true // fetchable - allows useLoader to get fresh data
+  true, // fetchable - allows useLoader to get fresh data
 );
 
 export type InterceptCacheTestLoaderData = {
@@ -420,4 +421,3 @@ export type InterceptCacheTestLoaderData = {
   message: string;
   loadedAt: string;
 };
-

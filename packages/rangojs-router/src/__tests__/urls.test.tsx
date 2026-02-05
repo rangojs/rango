@@ -1,6 +1,39 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { urls } from "../urls.js";
-import { RSCRouterContext, type EntryData } from "../server/context.js";
+import { urls, type IncludeItem } from "../urls.js";
+import { RSCRouterContext, runWithPrefixes, type EntryData } from "../server/context.js";
+
+/**
+ * Helper to simulate lazy include evaluation.
+ * In the actual router, this happens when a request matches the include's prefix.
+ * For testing, we manually trigger it by calling runWithPrefixes with the captured context.
+ */
+function evaluateLazyInclude(
+  includeItem: IncludeItem & { _lazyContext?: { urlPrefix: string; namePrefix: string | undefined } },
+  manifest: Map<string, EntryData>,
+  patterns: Map<string, string>
+): any[] {
+  const urlPrefix = (includeItem._lazyContext?.urlPrefix || "") + includeItem.prefix;
+  // _lazyContext.namePrefix already includes the include's own name (fullNamePrefix)
+  // so we use it directly without adding the name again
+  const namePrefix = includeItem._lazyContext?.namePrefix;
+
+  let items: any[] = [];
+  RSCRouterContext.run(
+    {
+      manifest,
+      patterns,
+      namespace: "test",
+      parent: null,
+      counters: {},
+    },
+    () => {
+      items = runWithPrefixes(urlPrefix, namePrefix, () => {
+        return (includeItem.patterns as any).handler();
+      });
+    }
+  );
+  return items;
+}
 
 describe("urls()", () => {
   describe("basic structure", () => {
@@ -205,7 +238,7 @@ describe("urls()", () => {
   });
 
   describe("include() helper", () => {
-    it("should return IncludeItem with correct structure", () => {
+    it("should return IncludeItem with correct structure (always lazy)", () => {
       const blogPatterns = urls(({ path }) => [
         path("/", () => <div>Blog Index</div>, { name: "index" }),
       ]);
@@ -225,13 +258,20 @@ describe("urls()", () => {
         () => {
           // Test include() directly within context
           const urlPatterns = urls(({ include }) => {
-            const includeItem = include("/blog", blogPatterns, { name: "blog" });
+            const includeItem = include("/blog", blogPatterns, { name: "blog" }) as IncludeItem & {
+              lazy: boolean;
+              _lazyContext: any;
+            };
 
             // Verify include item structure
             expect(includeItem.type).toBe("include");
             expect(includeItem.prefix).toBe("/blog");
             expect(includeItem.options?.name).toBe("blog");
             expect(includeItem.patterns).toBe(blogPatterns);
+
+            // All includes are lazy by default
+            expect(includeItem.lazy).toBe(true);
+            expect(includeItem._lazyContext).toBeDefined();
 
             return [includeItem];
           });
@@ -242,14 +282,16 @@ describe("urls()", () => {
       );
     });
 
-    it("should apply URL prefix to nested patterns", () => {
+    it("should NOT register routes until include is evaluated (lazy behavior)", () => {
       const blogPatterns = urls(({ path }) => [
         path("/", () => <div>Blog Index</div>, { name: "index" }),
-        path("/:slug", () => <div>Blog Post</div>, { name: "post" }),
+        path("/post", () => <div>Post</div>, { name: "post" }),
       ]);
 
       const manifest = new Map<string, EntryData>();
       const patterns = new Map<string, string>();
+
+      let capturedInclude: IncludeItem | undefined;
 
       RSCRouterContext.run(
         {
@@ -264,11 +306,62 @@ describe("urls()", () => {
             include("/blog", blogPatterns, { name: "blog" }),
           ]);
 
-          urlPatterns.handler();
+          const items = urlPatterns.handler();
+          capturedInclude = items[0] as IncludeItem;
         }
       );
 
-      // Routes should be prefixed with "blog."
+      // Before evaluation: routes should NOT be in manifest
+      expect(manifest.has("blog.index")).toBe(false);
+      expect(manifest.has("blog.post")).toBe(false);
+      expect(manifest.size).toBe(0);
+
+      // After evaluation: routes should be in manifest
+      evaluateLazyInclude(capturedInclude!, manifest, patterns);
+
+      expect(manifest.has("blog.index")).toBe(true);
+      expect(manifest.has("blog.post")).toBe(true);
+      expect(manifest.size).toBe(2);
+    });
+
+    it("should apply URL prefix to nested patterns when evaluated", () => {
+      const blogPatterns = urls(({ path }) => [
+        path("/", () => <div>Blog Index</div>, { name: "index" }),
+        path("/:slug", () => <div>Blog Post</div>, { name: "post" }),
+      ]);
+
+      const manifest = new Map<string, EntryData>();
+      const patterns = new Map<string, string>();
+
+      let capturedInclude: IncludeItem | undefined;
+
+      RSCRouterContext.run(
+        {
+          manifest,
+          patterns,
+          namespace: "test",
+          parent: null,
+          counters: {},
+        },
+        () => {
+          const urlPatterns = urls(({ include }) => [
+            include("/blog", blogPatterns, { name: "blog" }),
+          ]);
+
+          const items = urlPatterns.handler();
+          // Capture the lazy include item
+          capturedInclude = items[0] as IncludeItem;
+        }
+      );
+
+      // Routes should NOT be registered yet (lazy)
+      expect(manifest.has("blog.index")).toBe(false);
+      expect(manifest.has("blog.post")).toBe(false);
+
+      // Now simulate router evaluating the lazy include
+      evaluateLazyInclude(capturedInclude!, manifest, patterns);
+
+      // Routes should now be prefixed with "blog."
       expect(manifest.has("blog.index")).toBe(true);
       expect(manifest.has("blog.post")).toBe(true);
 
@@ -277,7 +370,7 @@ describe("urls()", () => {
       expect(patterns.get("blog.post")).toBe("/blog/:slug");
     });
 
-    it("should apply name prefix to nested route names", () => {
+    it("should apply name prefix to nested route names when evaluated", () => {
       const shopPatterns = urls(({ path }) => [
         path("/", () => <div>Shop</div>, { name: "index" }),
         path("/cart", () => <div>Cart</div>, { name: "cart" }),
@@ -286,6 +379,8 @@ describe("urls()", () => {
 
       const manifest = new Map<string, EntryData>();
       const patterns = new Map<string, string>();
+
+      let capturedInclude: IncludeItem | undefined;
 
       RSCRouterContext.run(
         {
@@ -300,9 +395,13 @@ describe("urls()", () => {
             include("/shop", shopPatterns, { name: "shop" }),
           ]);
 
-          urlPatterns.handler();
+          const items = urlPatterns.handler();
+          capturedInclude = items[0] as IncludeItem;
         }
       );
+
+      // Simulate router evaluating the lazy include
+      evaluateLazyInclude(capturedInclude!, manifest, patterns);
 
       // All route names should be prefixed with "shop."
       expect(manifest.has("shop.index")).toBe(true);
@@ -314,7 +413,7 @@ describe("urls()", () => {
       expect(patterns.get("shop.product")).toBe("/shop/product/:id");
     });
 
-    it("should work without name prefix (routes keep local names)", () => {
+    it("should work without name prefix (routes keep local names) when evaluated", () => {
       const adminPatterns = urls(({ path }) => [
         path("/", () => <div>Admin</div>, { name: "index" }),
         path("/users", () => <div>Users</div>, { name: "users" }),
@@ -322,6 +421,8 @@ describe("urls()", () => {
 
       const manifest = new Map<string, EntryData>();
       const patterns = new Map<string, string>();
+
+      let capturedInclude: IncludeItem | undefined;
 
       RSCRouterContext.run(
         {
@@ -337,9 +438,13 @@ describe("urls()", () => {
             include("/admin", adminPatterns),
           ]);
 
-          urlPatterns.handler();
+          const items = urlPatterns.handler();
+          capturedInclude = items[0] as IncludeItem;
         }
       );
+
+      // Simulate router evaluating the lazy include
+      evaluateLazyInclude(capturedInclude!, manifest, patterns);
 
       // Routes should keep local names (no prefix)
       expect(manifest.has("index")).toBe(true);
@@ -350,7 +455,7 @@ describe("urls()", () => {
       expect(patterns.get("users")).toBe("/admin/users");
     });
 
-    it("should support nested includes", () => {
+    it("should support nested includes when evaluated", () => {
       const postPatterns = urls(({ path }) => [
         path("/", () => <div>Posts</div>, { name: "index" }),
         path("/:id", () => <div>Post</div>, { name: "detail" }),
@@ -363,6 +468,8 @@ describe("urls()", () => {
 
       const manifest = new Map<string, EntryData>();
       const patterns = new Map<string, string>();
+
+      let capturedBlogInclude: IncludeItem | undefined;
 
       RSCRouterContext.run(
         {
@@ -377,13 +484,27 @@ describe("urls()", () => {
             include("/blog", blogPatterns, { name: "blog" }),
           ]);
 
-          urlPatterns.handler();
+          const items = urlPatterns.handler();
+          capturedBlogInclude = items[0] as IncludeItem;
         }
       );
 
-      // Top level blog routes
+      // Evaluate outer include (blog) - this will register blog.home and return nested posts include
+      const blogItems = evaluateLazyInclude(capturedBlogInclude!, manifest, patterns);
+
+      // Top level blog routes should be registered
       expect(manifest.has("blog.home")).toBe(true);
       expect(patterns.get("blog.home")).toBe("/blog");
+
+      // Get the nested posts include from the returned items
+      const capturedPostsInclude = blogItems.find(
+        (item: any) => item?.type === "include"
+      ) as IncludeItem | undefined;
+
+      // Evaluate nested posts include
+      if (capturedPostsInclude) {
+        evaluateLazyInclude(capturedPostsInclude, manifest, patterns);
+      }
 
       // Nested posts routes (blog.posts.index, blog.posts.detail)
       expect(manifest.has("blog.posts.index")).toBe(true);
@@ -392,7 +513,7 @@ describe("urls()", () => {
       expect(patterns.get("blog.posts.detail")).toBe("/blog/posts/:id");
     });
 
-    it("should reuse same patterns with different prefixes", () => {
+    it("should reuse same patterns with different prefixes when evaluated", () => {
       // Same pattern module can be included multiple times with different prefixes
       const contentPatterns = urls(({ path }) => [
         path("/", () => <div>Index</div>, { name: "index" }),
@@ -401,6 +522,8 @@ describe("urls()", () => {
 
       const manifest = new Map<string, EntryData>();
       const patterns = new Map<string, string>();
+
+      let capturedIncludes: IncludeItem[] = [];
 
       RSCRouterContext.run(
         {
@@ -416,9 +539,15 @@ describe("urls()", () => {
             include("/news", contentPatterns, { name: "news" }),
           ]);
 
-          urlPatterns.handler();
+          const items = urlPatterns.handler();
+          capturedIncludes = items as IncludeItem[];
         }
       );
+
+      // Evaluate both includes
+      for (const includeItem of capturedIncludes) {
+        evaluateLazyInclude(includeItem, manifest, patterns);
+      }
 
       // Both should have their own prefixed routes
       expect(manifest.has("blog.index")).toBe(true);

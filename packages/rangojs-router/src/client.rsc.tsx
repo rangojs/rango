@@ -73,19 +73,18 @@ export {
   type LocationStateEntry,
 } from "./browser/react/location-state-shared.js";
 
-// Stub exports for client-only hooks
-// These satisfy esbuild's dependency scan but throw if accidentally used in RSC
-function clientOnlyHookError(hookName: string): never {
-  throw new Error(
-    `${hookName}() can only be used in client components. ` +
-      `Add "use client" directive at the top of your file.`
-  );
-}
+// Re-export useHref and HrefProvider - these are "use client" hooks/components
+// that can be imported from RSC (bundler creates client references)
+export {
+  useHref,
+  HrefProvider,
+  HrefContext,
+  type HrefContextValue,
+  type HrefFn,
+} from "./browser/react/use-href.js";
 
-export function useHandle(): never {
-  return clientOnlyHookError("useHandle");
-}
+// Re-export useHandle - it's a "use client" hook
+export { useHandle } from "./browser/react/use-handle.js";
 
-export function useLocationState(): never {
-  return clientOnlyHookError("useLocationState");
-}
+// Re-export useLocationState - it's a "use client" hook
+export { useLocationState } from "./browser/react/location-state.js";

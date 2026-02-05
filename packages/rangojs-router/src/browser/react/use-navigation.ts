@@ -39,14 +39,6 @@ function shallowEqual<T>(a: T, b: T): boolean {
   return true;
 }
 
-// SSR-safe default state (public version without internal properties)
-const SSR_DEFAULT_STATE: PublicNavigationState = {
-  state: "idle",
-  isStreaming: false,
-  location: new URL("/", "http://localhost"),
-  pendingUrl: null,
-};
-
 /**
  * Convert derived state to public version (strips inflightActions)
  */
@@ -55,9 +47,6 @@ function toPublicState(state: DerivedNavigationState): PublicNavigationState {
   return publicState;
 }
 
-// No-op functions for SSR
-const noopNavigate = async () => {};
-const noopRefresh = async () => {};
 
 /**
  * Navigation methods returned by useNavigation
@@ -86,18 +75,21 @@ export type NavigationValue = PublicNavigationState & NavigationMethods;
  */
 export function useNavigation(): NavigationValue;
 export function useNavigation<T>(
-  selector: (state: PublicNavigationState) => T
+  selector: (state: PublicNavigationState) => T,
 ): T;
 export function useNavigation<T>(
-  selector?: (state: PublicNavigationState) => T
+  selector?: (state: PublicNavigationState) => T,
 ): T | NavigationValue {
   const ctx = useContext(NavigationStoreContext);
 
+  if (!ctx) {
+    throw new Error(
+      "useNavigation must be used within NavigationStoreContext.Provider"
+    );
+  }
+
   // Base state for useOptimistic
   const [baseValue, setBaseValue] = useState<T | PublicNavigationState>(() => {
-    if (typeof document === "undefined" || !ctx) {
-      return selector ? selector(SSR_DEFAULT_STATE) : SSR_DEFAULT_STATE;
-    }
     const publicState = toPublicState(ctx.eventController.getState());
     return selector ? selector(publicState) : publicState;
   });
@@ -108,8 +100,6 @@ export function useNavigation<T>(
 
   // Subscribe to event controller state changes (only runs on client)
   useEffect(() => {
-    if (!ctx) return;
-
     // Subscribe to updates from event controller
     return ctx.eventController.subscribe(() => {
       const currentState = ctx.eventController.getState();
@@ -141,8 +131,8 @@ export function useNavigation<T>(
   if (!selector) {
     return {
       ...(value as PublicNavigationState),
-      navigate: ctx?.navigate ?? noopNavigate,
-      refresh: ctx?.refresh ?? noopRefresh,
+      navigate: ctx.navigate,
+      refresh: ctx.refresh,
     };
   }
 

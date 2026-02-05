@@ -521,6 +521,15 @@ function createPathHelper<TEnv>(): PathHelpers<TEnv>["path"] {
       ctx.patterns.set(routeName, prefixedPattern);
     }
 
+    // Store pattern grouped by URL prefix for separate entry creation
+    if (ctx.patternsByPrefix) {
+      const urlPrefix = getUrlPrefix() || "";
+      if (!ctx.patternsByPrefix.has(urlPrefix)) {
+        ctx.patternsByPrefix.set(urlPrefix, new Map());
+      }
+      ctx.patternsByPrefix.get(urlPrefix)!.set(routeName, prefixedPattern);
+    }
+
     // Store trailing slash config if specified
     if (options?.trailingSlash && ctx.trailingSlash) {
       ctx.trailingSlash.set(routeName, options.trailingSlash);
@@ -559,6 +568,8 @@ function processIncludeItem(item: IncludeItem): AllUseItems[] {
 /**
  * Recursively process items, expanding any IncludeItems
  * Returns items with IncludeItems expanded into actual route items
+ *
+ * Lazy includes are kept as-is (not expanded) for the router to handle later.
  */
 function processItems(items: readonly AllUseItems[]): AllUseItems[] {
   const result: AllUseItems[] = [];
@@ -567,9 +578,18 @@ function processItems(items: readonly AllUseItems[]): AllUseItems[] {
     if (!item) continue;
 
     if (item.type === "include") {
-      // Include items are already expanded during include() call
-      // Just extract the expanded items
-      const includeItem = item as IncludeItem & { _expanded?: AllUseItems[] };
+      const includeItem = item as IncludeItem & {
+        _expanded?: AllUseItems[];
+        lazy?: boolean;
+      };
+
+      // Lazy includes are NOT expanded here - kept for router to handle
+      if (includeItem.lazy) {
+        result.push(item);
+        continue;
+      }
+
+      // Eager includes are already expanded during include() call
       if (includeItem._expanded) {
         // Items were expanded immediately - just process them recursively
         result.push(...processItems(includeItem._expanded));
@@ -594,10 +614,13 @@ function processItems(items: readonly AllUseItems[]): AllUseItems[] {
 /**
  * Create include() helper for composing URL patterns
  *
- * Unlike other helpers that return items for later processing,
- * include() IMMEDIATELY expands the nested patterns. This ensures
+ * By default, include() IMMEDIATELY expands the nested patterns. This ensures
  * that routes from included patterns inherit the correct parent context
  * (the layout they're included in).
+ *
+ * With `lazy: true`, patterns are NOT expanded at definition time. Instead,
+ * they're evaluated on first request that matches the prefix. This improves
+ * cold start time for apps with many routes.
  */
 function createIncludeHelper<TEnv>(): PathHelpers<TEnv>["include"] {
   return (
@@ -610,25 +633,45 @@ function createIncludeHelper<TEnv>(): PathHelpers<TEnv>["include"] {
     if (!ctx) throw new Error("include() must be called inside urls()");
 
     const namePrefix = options?.name;
-
-    // IMMEDIATELY expand the nested patterns with the current context
-    // This ensures routes inherit the correct parent (e.g., UserRootLayout)
-    const expandedItems = runWithPrefixes(prefix, namePrefix, () => {
-      return (patterns as UrlPatterns).handler();
-    });
-
-    // Return a marker item that contains the expanded items
-    // processItems will extract these expanded items
     const name = `$include_${prefix.replace(/[/:*?]/g, "_")}`;
+
+    // Capture context for deferred evaluation
+    const capturedUrlPrefix = getUrlPrefix();
+    const capturedNamePrefix = getNamePrefix();
+    const capturedParent = ctx.parent;
+    const fullPrefix = capturedUrlPrefix ? capturedUrlPrefix + prefix : prefix;
+    const fullNamePrefix = namePrefix
+      ? capturedNamePrefix
+        ? `${capturedNamePrefix}.${namePrefix}`
+        : namePrefix
+      : capturedNamePrefix;
+
+    // Track this include for build-time manifest generation
+    if (ctx.trackedIncludes) {
+      ctx.trackedIncludes.push({
+        prefix,
+        fullPrefix,
+        namePrefix: fullNamePrefix,
+        patterns,
+        lazy: true,
+      });
+    }
+
+    // All includes are lazy - patterns are evaluated on first matching request
+    // This improves cold start time significantly for large route sets
     return {
       type: "include",
       name,
       prefix,
       patterns,
       options,
-      // Store expanded items for processItems to extract
-      _expanded: expandedItems,
-    } as IncludeItem & { _expanded: AllUseItems[] };
+      lazy: true,
+      _lazyContext: {
+        urlPrefix: capturedUrlPrefix,
+        namePrefix: fullNamePrefix,
+        parent: capturedParent,
+      },
+    } as IncludeItem;
   };
 }
 

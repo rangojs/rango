@@ -73,6 +73,9 @@ import { VERSION } from "@rangojs/router:version";
 // might not be imported before a GET request arrives
 import "virtual:rsc-router/loader-manifest";
 
+// Route manifest is now loaded at runtime on first request via getRouteManifestData()
+// This eliminates the need for build-time manifest generation
+
 export default createRSCHandler({
   router,
   version: VERSION,

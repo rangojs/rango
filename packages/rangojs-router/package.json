@@ -98,6 +98,10 @@
     "./theme": {
       "types": "./src/theme/index.ts",
       "default": "./src/theme/index.ts"
+    },
+    "./build": {
+      "types": "./src/build/index.ts",
+      "import": "./src/build/index.ts"
     }
   },
   "files": [
@@ -144,11 +148,12 @@
     "@types/node": "^24.10.1",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
+    "esbuild": "^0.27.0",
+    "jiti": "^2.6.1",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "esbuild": "^0.27.0",
     "tinyexec": "^0.3.2",
     "typescript": "^5.3.0",
-    "vitest": "^2.1.8"
+    "vitest": "^4.0.0"
   }
 }

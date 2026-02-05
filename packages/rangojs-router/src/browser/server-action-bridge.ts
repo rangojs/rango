@@ -403,6 +403,18 @@ export function createServerActionBridge(
               );
               return { ...fromServer, component: cached.component };
             }
+            // Preserve cached loading value to maintain consistent tree structure.
+            // SSR may set loading=false for skipSSR routes, but actions set
+            // loading=<skeleton> (isSSR=false). Changing loading between renders
+            // alters the React tree (with/without RouteContentWrapper), causing
+            // remounts that destroy useActionState.
+            if (
+              cached &&
+              cached.loading !== undefined &&
+              fromServer.loading !== cached.loading
+            ) {
+              return { ...fromServer, loading: cached.loading };
+            }
             return fromServer;
           }
 
@@ -671,7 +683,7 @@ export function createServerActionBridge(
         interceptSegments:
           interceptSegments.length > 0 ? interceptSegments : undefined,
       };
-      const newTree = renderSegments(mainSegments, renderOptions);
+      const newTree = await renderSegments(mainSegments, renderOptions);
 
       // Re-check if user navigated away (could happen during async wait)
       const currentPathnameNow = window.location.pathname;
@@ -693,8 +705,6 @@ export function createServerActionBridge(
         handle.complete(returnData);
         return returnData;
       }
-
-      console.log("Update", id);
 
       startTransition(() => {
         onUpdate({ root: newTree, metadata: metadata! });

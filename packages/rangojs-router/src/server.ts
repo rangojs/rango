@@ -59,6 +59,9 @@ export { Meta } from "./handles/meta.js";
 // Loader registry (for GET-based loader fetching)
 export { registerLoaderById, setLoaderImports } from "./server/loader-registry.js";
 
+// Route map builder (for build-time manifest registration)
+export { registerRouteMap, setCachedManifest } from "./route-map-builder.js";
+
 // Request context (for accessing request data in server components/actions)
 export {
   getRequestContext,
@@ -94,6 +97,12 @@ export {
   isClientComponent,
   assertClientComponent,
 } from "./component-utils.js";
+
+// Debug utilities for route matching (development only)
+export {
+  enableMatchDebug,
+  getMatchDebugStats,
+} from "./router/pattern-matching.js";
 
 // Types (re-exported for convenience - user-facing only)
 export type {

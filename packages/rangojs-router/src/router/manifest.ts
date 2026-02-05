@@ -6,19 +6,18 @@
 
 import { invariant, RouteNotFoundError } from "../errors";
 import { createRouteHelpers } from "../route-definition";
-import { getContext, type EntryData, type MetricsStore } from "../server/context";
+import { getContext, runWithPrefixes, type EntryData, type MetricsStore } from "../server/context";
 import MapRootLayout from "../server/root-layout";
 import type { RouteEntry } from "../types";
-
-/**
- * Module-level cache for manifests per mount index.
- * Only used in production - dev mode skips caching for HMR support.
- */
-const manifestCache = new Map<number, Map<string, EntryData>>();
+import type { UrlPatterns } from "../urls";
 
 /**
  * Load manifest from route entry with AsyncLocalStorage context
  * Handles lazy imports, unwrapping, and validation
+ *
+ * Note: We don't cache manifests at the module level because includes are
+ * lazily evaluated. Caching an incomplete manifest would cause cache misses
+ * for routes in not-yet-evaluated includes.
  */
 export async function loadManifest(
   entry: RouteEntry<any>,
@@ -28,16 +27,6 @@ export async function loadManifest(
   isSSR?: boolean
 ): Promise<EntryData> {
   const mountIndex = entry.mountIndex;
-  const isDev = process.env.NODE_ENV !== "production";
-
-  // In production, check cache first
-  if (!isDev) {
-    const cachedManifest = manifestCache.get(mountIndex);
-    if (cachedManifest && cachedManifest.has(routeKey)) {
-      return cachedManifest.get(routeKey)!;
-    }
-  }
-
   const Store = getContext().getOrCreateStore(routeKey);
 
   // Set mount index in store for unique shortCode prefixes
@@ -60,13 +49,39 @@ export async function loadManifest(
       ? `#router.M${mountIndex}`
       : "#router";
 
+    // For lazy entries, use the captured parent from include() context
+    // This ensures routes are registered under the correct layout hierarchy
+    const lazyContext = entry.lazy && entry.lazyPatterns ? entry.lazyContext : null;
+    const parentForContext = lazyContext?.parent as EntryData | null ?? Store.parent;
+
     const useItems = await getContext().runWithStore(
       Store,
       Store.namespace || namespaceWithMount,
-      Store.parent,
+      parentForContext,
       async () => {
         // Create helpers for lazy-loaded handlers that need them
         const helpers = createRouteHelpers();
+
+        // For lazy entries, use lazyPatterns.handler() with proper prefixes
+        if (entry.lazy && entry.lazyPatterns) {
+          const lazyPatterns = entry.lazyPatterns as UrlPatterns<any>;
+          const includePrefix = (entry as any)._lazyPrefix || "";
+          const fullPrefix = (lazyContext?.urlPrefix || "") + includePrefix;
+
+          // Wrap in root layout and run with prefixes
+          const wrappedItems = helpers.layout(MapRootLayout, () => {
+            if (fullPrefix || lazyContext?.namePrefix) {
+              return runWithPrefixes(
+                fullPrefix,
+                lazyContext?.namePrefix,
+                () => lazyPatterns.handler()
+              );
+            }
+            return lazyPatterns.handler();
+          });
+
+          return [wrappedItems].flat(3);
+        }
 
         // Wrap handler execution in root layout so routes get correct parent
         // This ensures all routes are registered with the layout as their parent
@@ -120,11 +135,6 @@ export async function loadManifest(
       Store.manifest.has(routeKey),
       `Route must be registered for ${routeKey}`
     );
-
-    // Cache manifest in production after successful build
-    if (!isDev) {
-      manifestCache.set(mountIndex, new Map(Store.manifest));
-    }
 
     return Store.manifest.get(routeKey)!;
   } catch (e) {

@@ -289,7 +289,7 @@ export type Handler<T = {}, TEnv = DefaultEnv> = (
  * }
  * ```
  */
-export type HandlerContext<TParams = {}, TEnv = any> = {
+export type HandlerContext<TParams = {}, TEnv = DefaultEnv> = {
   /**
    * Route parameters extracted from the URL pattern.
    * Type-safe when using Handler<"/path/:param"> or Handler<{ param: string }>.
@@ -477,7 +477,7 @@ export type HandlerContext<TParams = {}, TEnv = any> = {
  * Use `HandlerContext` for user-facing code.
  * @internal
  */
-export type InternalHandlerContext<TParams = {}, TEnv = any> = HandlerContext<TParams, TEnv> & {
+export type InternalHandlerContext<TParams = {}, TEnv = DefaultEnv> = HandlerContext<TParams, TEnv> & {
   /** Raw request with all system parameters intact. */
   _originalRequest: Request;
   /** Current segment ID for handle data attribution. */
@@ -825,7 +825,7 @@ export interface ResolvedSegment {
   namespace: string; // Optional namespace for segment (used for parallel groups)
   type: "layout" | "route" | "parallel" | "loader" | "error" | "notFound";
   index: number;
-  component: ReactNode | Promise<ReactNode>; // Component or handler promise
+  component: ReactNode; // Component, handler promise, or resolved element
   loading?: ReactNode; // Loading component for this segment (shown during navigation)
   layout?: ReactNode; // Layout element to wrap content (used by intercept segments)
   params?: Record<string, string>;
@@ -938,10 +938,35 @@ export interface MatchResult {
 }
 
 /**
+ * Context captured for lazy include evaluation
+ */
+export interface LazyIncludeContext {
+  urlPrefix: string;
+  namePrefix: string | undefined;
+  parent: unknown; // EntryData - avoid circular import
+}
+
+/**
  * Internal route entry stored in router
  */
 export interface RouteEntry<TEnv = any> {
   prefix: string;
+  /**
+   * Pre-computed static prefix for fast short-circuit matching.
+   * Extracted from prefix at registration time (everything before first param).
+   *
+   * Examples:
+   * - "/api" → staticPrefix = "/api"
+   * - "/site/:locale" → staticPrefix = "/site"
+   * - "/:locale" → staticPrefix = "" (empty, can't optimize)
+   *
+   * At runtime: if staticPrefix && !pathname.startsWith(staticPrefix), skip entry.
+   */
+  staticPrefix: string;
+  /**
+   * Route patterns map. For lazy entries, this starts as empty and is
+   * populated on first request.
+   */
   routes: ResolvedRouteMap<any>;
   /**
    * Trailing slash config per route key
@@ -953,6 +978,29 @@ export interface RouteEntry<TEnv = any> {
       | Promise<{ default: () => Array<AllUseItems> }>
       | Promise<() => Array<AllUseItems>>;
   mountIndex: number;
+
+  // === Lazy evaluation fields ===
+
+  /**
+   * Whether this entry is lazily evaluated.
+   * When true, routes are populated on first matching request.
+   */
+  lazy?: boolean;
+
+  /**
+   * For lazy entries: the UrlPatterns to evaluate
+   */
+  lazyPatterns?: unknown;
+
+  /**
+   * For lazy entries: captured context at definition time
+   */
+  lazyContext?: LazyIncludeContext;
+
+  /**
+   * For lazy entries: whether patterns have been evaluated
+   */
+  lazyEvaluated?: boolean;
 }
 
 
@@ -1230,7 +1278,7 @@ export interface EntryCacheConfig {
  * });
  * ```
  */
-export type LoaderContext<TParams = Record<string, string | undefined>, TEnv = any, TBody = unknown> = {
+export type LoaderContext<TParams = Record<string, string | undefined>, TEnv = DefaultEnv, TBody = unknown> = {
   params: TParams;
   request: Request;
   searchParams: URLSearchParams;
@@ -1284,7 +1332,7 @@ export type LoaderContext<TParams = Record<string, string | undefined>, TEnv = a
  * };
  * ```
  */
-export type LoaderFn<T, TParams = Record<string, string | undefined>, TEnv = any> = (
+export type LoaderFn<T, TParams = Record<string, string | undefined>, TEnv = DefaultEnv> = (
   ctx: LoaderContext<TParams, TEnv>
 ) => Promise<T> | T;
 

@@ -133,7 +133,15 @@ export type IncludeItem = {
   name: string;
   prefix: string;
   patterns: unknown; // UrlPatterns - avoid circular ref
-  options?: { name?: string };
+  options?: { name?: string; lazy?: boolean };
+  /** Whether this include should be lazily evaluated on first request */
+  lazy?: boolean;
+  /** Captured context for deferred lazy evaluation */
+  _lazyContext?: {
+    urlPrefix: string;
+    namePrefix: string | undefined;
+    parent: unknown; // EntryData - avoid circular import
+  };
   [IncludeBrand]: void;
 };
 

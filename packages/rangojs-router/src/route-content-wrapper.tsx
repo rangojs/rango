@@ -26,16 +26,13 @@ export function RouteContentWrapper({
   fallback?: ReactNode;
   segmentId?: string;
 }): ReactNode {
-  // Use server-provided segmentId for stable keys, fall back to useId for backwards compat
-  const generatedId = useId();
-  const id = segmentId || generatedId;
   if (!content) {
     // Already resolved
     return content as ReactNode;
   }
   return (
-    <Suspense fallback={fallback ?? null} key={"route-content-suspense-" + id}>
-      <Suspender content={content} key={id} />
+    <Suspense fallback={fallback ?? null} key={segmentId ? "route-content-suspense-" + segmentId : undefined}>
+      <Suspender content={content} key={segmentId} />
     </Suspense>
   );
 }
@@ -125,10 +122,8 @@ export function LoaderBoundary({
   parallel,
   children,
 }: LoaderBoundaryProps): ReactNode {
-  const id = useId();
-
   return (
-    <Suspense fallback={fallback ?? null} key={`loader-boundary-${id}`}>
+    <Suspense fallback={fallback ?? null} key={`loader-boundary-${outletKey}`}>
       <LoaderResolver
         loaderDataPromise={loaderDataPromise}
         loaderIds={loaderIds}

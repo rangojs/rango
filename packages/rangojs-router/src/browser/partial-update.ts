@@ -157,8 +157,12 @@ export function createPartialUpdater(
       // The server will return the non-intercept version of the route
       const currentSegments = segmentIds ?? segmentState.currentSegmentIds;
       // Filter out modal/intercept segments - keep only the base route segments
-      segments = currentSegments.filter(id => !id.includes('.@modal'));
-      console.log(`[Browser] Leaving intercept - filtered segments: ${segments.join(", ")}`);
+
+      // TODO: why this?
+      segments = currentSegments.filter((id) => !id.includes(".@"));
+      console.log(
+        `[Browser] Leaving intercept - filtered segments: ${segments.join(", ")}`,
+      );
     } else {
       segments = segmentIds ?? segmentState.currentSegmentIds;
     }
@@ -250,7 +254,8 @@ export function createPartialUpdater(
           // IMPORTANT: Remove `handles` from metadata to prevent NavigationProvider from
           // processing an empty handles stream, which would clear the cached breadcrumbs.
           // When rendering from cache with empty diff, we want to use cachedHandleData instead.
-          const { handles: _unusedHandles, ...metadataWithoutHandles } = payload.metadata!;
+          const { handles: _unusedHandles, ...metadataWithoutHandles } =
+            payload.metadata!;
           onUpdate({
             root: newTree,
             metadata: {
@@ -524,6 +529,11 @@ export function createPartialUpdater(
       return streamComplete;
     } else {
       // Full update (fallback)
+      // Use client-side renderSegments instead of payload.root to ensure
+      // consistent component references with action revalidation.
+      // Server-rendered RSC tree has different component references than
+      // client-created tree, which causes React to remount LoaderBoundary
+      // when actions trigger revalidation.
       console.warn(`[Browser] Full update (fallback)`);
 
       const segments = payload.metadata?.segments || [];
@@ -534,25 +544,10 @@ export function createPartialUpdater(
         return streamComplete;
       }
 
-      // Await loader data from segments before committing URL
-      // This ensures URL only updates after loaders resolve
-      const loaderSegments = segments.filter(
-        (s: ResolvedSegment) =>
-          s.type === "loader" && s.loaderData !== undefined,
-      );
-      if (loaderSegments.length > 0) {
-        console.log(`[Browser] Awaiting ${loaderSegments.length} loader(s)...`);
-        await Promise.all(
-          loaderSegments.map((s: ResolvedSegment) =>
-            s.loaderData instanceof Promise
-              ? s.loaderData
-              : Promise.resolve(s.loaderData),
-          ),
-        );
-        console.log(`[Browser] Loaders resolved`);
-      }
-
       const segmentIds = segments.map((s: ResolvedSegment) => s.id);
+
+      // Render on client for consistent component references
+      const newTree = await renderSegments(segments);
 
       // Final abort check before committing - another navigation may have started
       if (signal?.aborted) {
@@ -572,20 +567,20 @@ export function createPartialUpdater(
         await rawStreamComplete;
         startTransition(() => {
           onUpdate({
-            root: payload.root,
+            root: newTree,
             metadata: payload.metadata!,
           });
         });
       } else if (isAction) {
         startTransition(async () => {
           onUpdate({
-            root: payload.root,
+            root: newTree,
             metadata: payload.metadata!,
           });
         });
       } else {
         onUpdate({
-          root: payload.root,
+          root: newTree,
           metadata: payload.metadata!,
         });
       }

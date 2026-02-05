@@ -230,4 +230,5 @@ export interface CreateRSCHandlerOptions<
    * ```
    */
   nonce?: NonceProvider<TEnv>;
+
 }

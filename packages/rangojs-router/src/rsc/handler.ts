@@ -35,6 +35,9 @@ import { generateNonce } from "./nonce.js";
 import { VERSION } from "@rangojs/router:version";
 import type { ErrorPhase } from "../types.js";
 import { invokeOnError } from "../router/error-handling.js";
+import { getGlobalRouteMap, hasCachedManifest } from "../route-map-builder.js";
+import { getRouteManifestData } from "../server/route-manifest-cache.js";
+import { generateManifest } from "../build/generate-manifest.js";
 
 /**
  * Create an RSC request handler.
@@ -122,7 +125,10 @@ export function createRSCHandler<
     const matchedMiddleware = matchMiddleware(url.pathname, router.middleware);
 
     // Shared variables between middleware and route handlers
-    const variables: Record<string, any> = {};
+    // Initialize from env.Variables if provided (allows pre-seeding from worker entry)
+    const variables: Record<string, any> = {
+      ...((env as any)?.Variables ?? {}),
+    };
 
     // Store nonce in variables so middleware can access via ctx.get('nonce')
     if (nonce) {
@@ -142,6 +148,23 @@ export function createRSCHandler<
         cacheStore = cacheConfig.store;
       }
     }
+
+    // Load route manifest on first request (always enabled when urlpatterns exist)
+    // This enables href() for all routes including lazy includes
+    // Manifest is regenerated when version changes (HMR in dev mode)
+    if (router.urlpatterns) {
+      await getRouteManifestData(
+        () => generateManifest(router.urlpatterns!),
+        version,
+        {
+          store: cacheStore,
+          waitUntil: env.ctx?.waitUntil.bind(env.ctx),
+        },
+      );
+    }
+
+    // Note: Route map for useHref() is loaded lazily via getGlobalRouteMap()
+    // This allows it to include all routes from lazy includes after manifest loading
 
     // Create unified request context with all methods
     // Includes: stub response, handle store, loader memoization, use(), cookies, headers, cache store
