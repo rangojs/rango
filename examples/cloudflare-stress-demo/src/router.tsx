@@ -7,12 +7,10 @@ import type { AppEnv } from "./env.js";
 export const router = createRouter<AppEnv>({
   document: Document,
   debugPerformance: true, // Enable Server-Timing headers
-  // CF cache store for segment caching and manifest caching
+  // CF cache store for segment caching
   cache: (env) => ({
     store: new CFCacheStore({ ctx: env.ctx! }),
   }),
-  // Enable manifest caching - uses the same cache store as above
-  manifestCache: true,
   onError: (error) => {
     // Log errors to console (can be extended to use external logging services)
     console.error("Router error:", error);
