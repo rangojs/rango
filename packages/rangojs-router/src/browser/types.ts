@@ -63,6 +63,8 @@ export interface RscMetadata {
    * Included when theme is enabled in router config.
    */
   initialTheme?: Theme;
+  /** Whether connection warmup is enabled */
+  warmupEnabled?: boolean;
 }
 
 /**

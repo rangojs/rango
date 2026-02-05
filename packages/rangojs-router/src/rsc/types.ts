@@ -33,6 +33,8 @@ export interface RscPayload {
     themeConfig?: ResolvedThemeConfig | null;
     /** Initial theme from cookie (for SSR hydration) */
     initialTheme?: Theme;
+    /** Whether connection warmup is enabled */
+    warmupEnabled?: boolean;
   };
   returnValue?: { ok: boolean; data: unknown };
   formState?: unknown;

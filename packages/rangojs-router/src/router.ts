@@ -391,6 +391,17 @@ export interface RSCRouterOptions<TEnv = any> {
    * @default VERSION from @rangojs/router:version
    */
   version?: string;
+
+  /**
+   * Enable connection warmup to keep TCP+TLS alive after idle periods.
+   *
+   * When enabled, the client sends a HEAD request after the user returns
+   * from an idle period (60s+), prewarming the TLS connection before
+   * the next navigation.
+   *
+   * @default true
+   */
+  warmup?: boolean;
 }
 
 /**
@@ -750,6 +761,13 @@ export interface RSCRouter<
   readonly themeConfig: import("./theme/types.js").ResolvedThemeConfig | null;
 
   /**
+   * Whether connection warmup is enabled.
+   * When true, the client sends HEAD /?_rsc_warmup after idle periods
+   * and the server responds with 204 No Content.
+   */
+  readonly warmupEnabled: boolean;
+
+  /**
    * App-level middleware entries (for internal use by RSC handler)
    * These wrap the entire request/response cycle
    */
@@ -928,7 +946,11 @@ export function createRouter<TEnv = any>(
     urls: urlsOption,
     nonce,
     version,
+    warmup: warmupOption,
   } = options;
+
+  // Resolve warmup enabled flag (default: true)
+  const warmupEnabled = warmupOption !== false;
 
   // Resolve theme config (null if theme not enabled)
   const resolvedThemeConfig = themeOption
@@ -4391,6 +4413,9 @@ export function createRouter<TEnv = any>(
 
     // Expose resolved theme configuration for NavigationProvider and MetaTags
     themeConfig: resolvedThemeConfig,
+
+    // Expose warmup enabled flag for handler and client
+    warmupEnabled,
 
     // Expose global middleware for RSC handler
     middleware: globalMiddleware,

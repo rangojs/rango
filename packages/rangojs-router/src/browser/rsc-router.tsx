@@ -13,6 +13,7 @@ import { createServerActionBridge } from "./server-action-bridge.js";
 import { createNavigationBridge } from "./navigation-bridge.js";
 import { NavigationProvider, initHandleDataSync, initSegmentsSync } from "./react/index.js";
 import { initThemeConfigSync } from "../theme/theme-context.js";
+import { initWarmupSync } from "../warmup/warmup-context.js";
 import type {
   RscPayload,
   RscBrowserDependencies,
@@ -156,6 +157,9 @@ export async function initBrowserApp(
 
   // Initialize theme config for MetaTags (must match SSR state)
   initThemeConfigSync(effectiveThemeConfig);
+
+  // Initialize warmup config for MetaTags (must match SSR state)
+  initWarmupSync(initialPayload.metadata?.warmupEnabled ?? true);
 
   // Initialize event controller with segment order (even without handles)
   eventController.setHandleData({}, initialPayload.metadata?.matched);

@@ -112,6 +112,14 @@ export function createRSCHandler<
       ctx?: ExecutionContext;
     },
   ): Promise<Response> {
+    // Connection warmup: return 204 immediately before any processing
+    if (router.warmupEnabled && request.method === "HEAD") {
+      const warmupUrl = new URL(request.url);
+      if (warmupUrl.searchParams.has("_rsc_warmup")) {
+        return new Response(null, { status: 204 });
+      }
+    }
+
     // Resolve nonce if provider is set
     let nonce: string | undefined;
     if (nonceProvider) {
@@ -400,6 +408,7 @@ export function createRSCHandler<
             handles: handleStore.stream(),
             version,
             themeConfig: router.themeConfig,
+            warmupEnabled: router.warmupEnabled,
             initialTheme: requireRequestContext().theme,
             // No routeName for not-found routes
           },
@@ -572,6 +581,7 @@ export function createRSCHandler<
         handles: handleStore.stream(),
         version,
         themeConfig: router.themeConfig,
+        warmupEnabled: router.warmupEnabled,
         initialTheme: requireRequestContext().theme,
       },
       formState: actionResult,
@@ -967,6 +977,7 @@ export function createRSCHandler<
             handles: handleStore.stream(),
             version,
             themeConfig: router.themeConfig,
+            warmupEnabled: router.warmupEnabled,
             initialTheme: requireRequestContext().theme,
           },
         };
@@ -1024,6 +1035,7 @@ export function createRSCHandler<
           handles: handleStore.stream(),
           version,
           themeConfig: router.themeConfig,
+          warmupEnabled: router.warmupEnabled,
           initialTheme: requireRequestContext().theme,
         },
       };
