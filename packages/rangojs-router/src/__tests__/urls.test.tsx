@@ -11,14 +11,13 @@ function evaluateLazyInclude(
   includeItem: IncludeItem & { _lazyContext?: { urlPrefix: string; namePrefix: string | undefined } },
   manifest: Map<string, EntryData>,
   patterns: Map<string, string>
-) {
+): any[] {
   const urlPrefix = (includeItem._lazyContext?.urlPrefix || "") + includeItem.prefix;
-  const namePrefix = includeItem.options?.name
-    ? includeItem._lazyContext?.namePrefix
-      ? `${includeItem._lazyContext.namePrefix}.${includeItem.options.name}`
-      : includeItem.options.name
-    : includeItem._lazyContext?.namePrefix;
+  // _lazyContext.namePrefix already includes the include's own name (fullNamePrefix)
+  // so we use it directly without adding the name again
+  const namePrefix = includeItem._lazyContext?.namePrefix;
 
+  let items: any[] = [];
   RSCRouterContext.run(
     {
       manifest,
@@ -28,11 +27,12 @@ function evaluateLazyInclude(
       counters: {},
     },
     () => {
-      runWithPrefixes(urlPrefix, namePrefix, () => {
+      items = runWithPrefixes(urlPrefix, namePrefix, () => {
         return (includeItem.patterns as any).handler();
       });
     }
   );
+  return items;
 }
 
 describe("urls()", () => {
@@ -490,45 +490,20 @@ describe("urls()", () => {
       );
 
       // Evaluate outer include (blog) - this will register blog.home and return nested posts include
-      evaluateLazyInclude(capturedBlogInclude!, manifest, patterns);
+      const blogItems = evaluateLazyInclude(capturedBlogInclude!, manifest, patterns);
 
       // Top level blog routes should be registered
       expect(manifest.has("blog.home")).toBe(true);
       expect(patterns.get("blog.home")).toBe("/blog");
 
-      // Now we need to evaluate the nested posts include
-      // The nested include is returned from blogPatterns.handler()
-      let capturedPostsInclude: IncludeItem | undefined;
-      RSCRouterContext.run(
-        {
-          manifest,
-          patterns,
-          namespace: "test",
-          parent: null,
-          counters: {},
-        },
-        () => {
-          runWithPrefixes("/blog", "blog", () => {
-            const items = blogPatterns.handler();
-            capturedPostsInclude = items.find(
-              (item: any) => item?.type === "include"
-            ) as IncludeItem;
-            return items;
-          });
-        }
-      );
+      // Get the nested posts include from the returned items
+      const capturedPostsInclude = blogItems.find(
+        (item: any) => item?.type === "include"
+      ) as IncludeItem | undefined;
 
       // Evaluate nested posts include
       if (capturedPostsInclude) {
-        // Manually set the context for nested include
-        const nestedInclude = capturedPostsInclude as IncludeItem & {
-          _lazyContext?: { urlPrefix: string; namePrefix: string | undefined };
-        };
-        nestedInclude._lazyContext = {
-          urlPrefix: "/blog",
-          namePrefix: "blog",
-        };
-        evaluateLazyInclude(nestedInclude, manifest, patterns);
+        evaluateLazyInclude(capturedPostsInclude, manifest, patterns);
       }
 
       // Nested posts routes (blog.posts.index, blog.posts.detail)

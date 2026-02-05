@@ -154,6 +154,6 @@
     "react-dom": "catalog:",
     "tinyexec": "^0.3.2",
     "typescript": "^5.3.0",
-    "vitest": "^2.1.8"
+    "vitest": "^4.0.0"
   }
 }
