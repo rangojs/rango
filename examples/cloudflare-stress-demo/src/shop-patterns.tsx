@@ -28,7 +28,7 @@ const ShopBenchmarkHandler = async (ctx: HandlerContext<AppEnv>) => {
 const ProductPage = async (ctx: HandlerContext<AppEnv>) => {
   return (
     <div>
-      <h1>Product {ctx.params.id}</h1>
+      <h1>Product {ctx.pathname}</h1>
       <p>Product details page</p>
       <pre>{JSON.stringify(ctx.params, null, 2)}</pre>
     </div>
@@ -39,7 +39,7 @@ const ProductPage = async (ctx: HandlerContext<AppEnv>) => {
 const CategoryPage = async (ctx: HandlerContext<AppEnv>) => {
   return (
     <div>
-      <h1>Category {ctx.params.id}</h1>
+      <h1>Category {ctx.pathname}</h1>
       <p>Category listing page</p>
       <pre>{JSON.stringify(ctx.params, null, 2)}</pre>
     </div>
