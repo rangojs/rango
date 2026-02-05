@@ -666,9 +666,11 @@ function createIncludeHelper<TEnv>(): PathHelpers<TEnv>["include"] {
       options,
       lazy: true,
       // Store context for deferred evaluation
+      // Note: namePrefix should be fullNamePrefix (includes this include's name)
+      // so that routes inside get the proper prefixed names
       _lazyContext: {
         urlPrefix: capturedUrlPrefix,
-        namePrefix: capturedNamePrefix,
+        namePrefix: fullNamePrefix,
         parent: capturedParent,
       },
     } as IncludeItem & {
