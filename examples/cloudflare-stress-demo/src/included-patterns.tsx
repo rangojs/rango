@@ -3,10 +3,9 @@
  */
 import { urls } from "@rangojs/router";
 import { getMatchDebugStats, type HandlerContext } from "@rangojs/router/server";
-import type { AppEnv } from "./env.js";
 
 // Benchmark handler for API routes - returns debug stats
-const ApiBenchmarkHandler = async (ctx: HandlerContext<AppEnv>) => {
+const ApiBenchmarkHandler = async (ctx: HandlerContext) => {
   const matchStats = getMatchDebugStats();
   throw new Response(
     JSON.stringify({
@@ -21,7 +20,7 @@ const ApiBenchmarkHandler = async (ctx: HandlerContext<AppEnv>) => {
   );
 };
 
-const ParamPage = async (ctx: HandlerContext<AppEnv>) => {
+const ParamPage = async (ctx: HandlerContext) => {
   await new Promise((r) => setTimeout(r, 1));
 
   const renderTime = Date.now();

@@ -9,10 +9,9 @@
  */
 import { urls } from "@rangojs/router";
 import { getMatchDebugStats, type HandlerContext } from "@rangojs/router/server";
-import type { AppEnv } from "./env.js";
 
 // Benchmark handler - returns JSON with matchStats
-const ShopBenchmarkHandler = async (ctx: HandlerContext<AppEnv>) => {
+const ShopBenchmarkHandler = async (ctx: HandlerContext) => {
   const matchStats = getMatchDebugStats();
   throw new Response(
     JSON.stringify({
@@ -25,7 +24,7 @@ const ShopBenchmarkHandler = async (ctx: HandlerContext<AppEnv>) => {
 };
 
 // Product page handler
-const ProductPage = async (ctx: HandlerContext<AppEnv>) => {
+const ProductPage = async (ctx: HandlerContext) => {
   return (
     <div>
       <h1>Product {ctx.pathname}</h1>
@@ -36,7 +35,7 @@ const ProductPage = async (ctx: HandlerContext<AppEnv>) => {
 };
 
 // Category page handler
-const CategoryPage = async (ctx: HandlerContext<AppEnv>) => {
+const CategoryPage = async (ctx: HandlerContext) => {
   return (
     <div>
       <h1>Category {ctx.pathname}</h1>

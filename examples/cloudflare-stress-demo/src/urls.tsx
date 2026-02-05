@@ -13,7 +13,7 @@
  * - /shop/product/* requests skip /shop/category routes (nested optimization!)
  * - 404s for non-prefixed paths skip ~10,000 routes
  */
-import { urls } from "@rangojs/router";
+import { urls, scopedHref } from "@rangojs/router";
 import {
   enableMatchDebug,
   getMatchDebugStats,
@@ -23,7 +23,7 @@ import { includedPatterns } from "./included-patterns.js";
 import { localizedPatterns } from "./localized-patterns.js";
 import { shopPatterns } from "./shop-patterns.js";
 import { HomePage } from "./pages/benchmark.js";
-import { AppEnv } from "./env.js";
+import { LinksDemo } from "./pages/links-demo.js";
 
 // Enable debug for all requests
 enableMatchDebug(true);
@@ -45,10 +45,58 @@ const BenchmarkHandler = async (ctx: HandlerContext) => {
         note: elapsed === 0 ? "sub-millisecond (CF time frozen)" : "actual",
       },
       matchStats,
-      // Test href() for routes from lazy includes
+      // Test ctx.href() for routes from lazy includes
       testHref: ctx.href("api.benchFirst"),
     }),
     { headers: { "Content-Type": "application/json" } },
+  );
+};
+
+// Links demo handler - showcases ctx.href() and scopedHref() on the server
+const LinksDemoHandler = async (ctx: HandlerContext) => {
+  const href = scopedHref<typeof urlpatterns>(ctx.href);
+
+  // ctx.href with global named routes
+  const homeUrl = ctx.href("home");
+  const apiBench = ctx.href("api.benchFirst");
+  const shopHome = ctx.href("shop.home");
+  const shopProduct1 = ctx.href("shop.product.item1");
+  const shopCat1 = ctx.href("shop.category.cat1");
+
+  // scopedHref with local route names
+  const localHome = href("home");
+  const localBenchFirst = href("benchFirst");
+
+  // scopedHref with cross-module dot-prefixed names
+  const crossModuleApi = href("api.benchLast");
+
+  return (
+    <div style={{ maxWidth: "800px", margin: "0 auto", padding: "2rem" }}>
+      <h1>Links Demo (14k+ routes)</h1>
+      <p style={{ color: "#666" }}>
+        Server-side ctx.href() and scopedHref() with type-safe route resolution
+        across 14,000+ routes.
+      </p>
+
+      <h2>ctx.href() - Global Named Routes</h2>
+      <ul>
+        <li>home: <code>{homeUrl}</code></li>
+        <li>api.benchFirst: <code>{apiBench}</code></li>
+        <li>shop.home: <code>{shopHome}</code></li>
+        <li>shop.product.item1: <code>{shopProduct1}</code></li>
+        <li>shop.category.cat1: <code>{shopCat1}</code></li>
+      </ul>
+
+      <h2>scopedHref() - Local Route Names</h2>
+      <ul>
+        <li>home (local): <code>{localHome}</code></li>
+        <li>benchFirst (local): <code>{localBenchFirst}</code></li>
+        <li>api.benchLast (cross-module): <code>{crossModuleApi}</code></li>
+      </ul>
+
+      <h2>Client-Side href() and useHref()</h2>
+      <LinksDemo />
+    </div>
   );
 };
 
@@ -58,6 +106,9 @@ export const urlpatterns = urls(({ path, include }) => [
 
   // Home page (outside prefixes)
   path("/", HomePage, { name: "home" }),
+
+  // Links demo - showcases all href APIs with typecheck coverage
+  path("/links", LinksDemoHandler, { name: "links" }),
 
   // === LOCALIZED ROUTES (5,000+ under /site/:locale) ===
   // Static "/site" prefix enables short-circuit optimization
