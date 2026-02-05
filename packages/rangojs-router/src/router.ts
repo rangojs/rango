@@ -1258,9 +1258,20 @@ export function createRouter<TEnv = any>(
     registerRouteMap(mergedRouteMap);
   }
 
+  // Single-entry cache for findMatch to avoid redundant matching within the same request.
+  // previewMatch and match both call findMatch with the same pathname — this ensures
+  // the route matching work (which may check thousands of routes) only happens once.
+  let lastFindMatchPathname: string | null = null;
+  let lastFindMatchResult: RouteMatchResult<TEnv> | null = null;
+
   // Wrapper for findMatch that uses routesEntries
   // Handles lazy evaluation by evaluating lazy entries on first match
   function findMatch(pathname: string): RouteMatchResult<TEnv> | null {
+    // Return cached result if same pathname (avoids double-match per request)
+    if (lastFindMatchPathname === pathname) {
+      return lastFindMatchResult;
+    }
+
     let result = findRouteMatch(pathname, routesEntries);
 
     // If we hit a lazy entry that needs evaluation, evaluate and retry.
@@ -1273,12 +1284,16 @@ export function createRouter<TEnv = any>(
           `[@rangojs/router] Exceeded ${MAX_LAZY_ITERATIONS} lazy evaluation iterations ` +
             `for pathname "${pathname}". This likely indicates circular lazy includes.`,
         );
+        lastFindMatchPathname = pathname;
+        lastFindMatchResult = null;
         return null;
       }
       evaluateLazyEntry(result.lazyEntry);
       result = findRouteMatch(pathname, routesEntries);
     }
 
+    lastFindMatchPathname = pathname;
+    lastFindMatchResult = result;
     return result;
   }
 

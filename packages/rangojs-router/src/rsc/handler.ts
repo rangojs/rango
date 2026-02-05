@@ -152,7 +152,8 @@ export function createRSCHandler<
     // Load route manifest on first request (always enabled when urlpatterns exist)
     // This enables href() for all routes including lazy includes
     // Manifest is regenerated when version changes (HMR in dev mode)
-    if (router.urlpatterns) {
+    // Skip when already cached in memory to avoid async overhead on every request
+    if (router.urlpatterns && !hasCachedManifest()) {
       await getRouteManifestData(
         () => generateManifest(router.urlpatterns!),
         version,
