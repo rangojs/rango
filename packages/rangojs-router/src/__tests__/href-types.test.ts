@@ -1,5 +1,5 @@
 /**
- * Type-level tests for href and useHref
+ * Type-level tests for href type system
  *
  * These tests verify that the type system works correctly at compile time.
  * They use expectTypeOf() from vitest which performs compile-time type checking.

@@ -843,6 +843,8 @@ export interface ResolvedSegment {
   error?: ErrorInfo; // For error segments: the error information
   // NotFound-specific fields
   notFoundInfo?: NotFoundInfo; // For notFound segments: the not found information
+  // Mount path from include() scope, used for MountContext.Provider wrapping
+  mountPath?: string;
 }
 
 /**
@@ -904,14 +906,9 @@ export interface MatchResult {
   params: Record<string, string>;
   /**
    * The matched route name (includes name prefix from include()).
-   * Used by useHref() for local name resolution.
+   * Used by ctx.href() for local name resolution.
    */
   routeName?: string;
-  /**
-   * Map of route names to URL patterns.
-   * Used by useHref() to resolve route names to URLs.
-   */
-  routeMap?: Record<string, string>;
   /**
    * Server-Timing header value (only present when debugPerformance is enabled)
    * Can be added to response headers for DevTools integration

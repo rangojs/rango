@@ -90,7 +90,7 @@ export function createRouter(): never {
 }
 
 // Href type utilities for type-safe URL generation
-// ScopedHrefFunction is used with useHref<typeof patterns>() for composable modules
+// ScopedHrefFunction is used with scopedHref<typeof patterns>() for composable modules
 export type { ScopedHrefFunction, HrefFunction, ExtractLocalRoutes } from "./href.js";
 // scopedHref() helper for handlers to get locally-typed href
 export { scopedHref } from "./href.js";

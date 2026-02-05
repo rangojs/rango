@@ -4,7 +4,7 @@ import { HrefTestClient } from "../components/HrefTestClient.js";
 
 /**
  * Href URL patterns for testing scoped href resolution
- * Tests both ctx.href (server-side) and useHref (client-side)
+ * Tests ctx.href (server-side) and href()+useMount() (client-side)
  */
 export const hrefPatterns = urls(({ path, include }) => [
   // Index route - shows local href links
@@ -56,7 +56,7 @@ export const hrefPatterns = urls(({ path, include }) => [
           </section>
 
           <section data-testid="client-href-section">
-            <h2>Client-side useHref</h2>
+            <h2>Client-side href + useMount</h2>
             <HrefTestClient />
           </section>
 
@@ -112,7 +112,7 @@ export const hrefPatterns = urls(({ path, include }) => [
           </section>
 
           <section data-testid="detail-client-href">
-            <h2>Client-side useHref (from detail route)</h2>
+            <h2>Client-side href + useMount (from detail route)</h2>
             <HrefTestClient isDetailPage />
           </section>
 

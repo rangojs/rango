@@ -75,9 +75,6 @@ export function createRSCHandler<
 >(options: CreateRSCHandlerOptions<TEnv, TRoutes>) {
   const { router, version = VERSION, nonce: nonceProvider } = options;
 
-  // Get the route map for useHref() - converts route names to URL patterns
-  const routeMap = router.routeMap as Record<string, string>;
-
   // Use provided deps or default to @vitejs/plugin-rsc/rsc exports
   const deps = options.deps ?? rscDeps;
   const {
@@ -365,7 +362,6 @@ export function createRSCHandler<
         // Render with rootLayout to maintain app shell
         const root = await renderSegments([notFoundSegment], {
           rootLayout: router.rootLayout,
-          routeMap,
           // No routeName for not-found routes
         });
 
@@ -381,7 +377,6 @@ export function createRSCHandler<
             version,
             themeConfig: router.themeConfig,
             initialTheme: requireRequestContext().theme,
-            routeMap,
             // No routeName for not-found routes
           },
         };
@@ -539,8 +534,6 @@ export function createRSCHandler<
 
     const root = renderSegments(match.segments, {
       rootLayout: router.rootLayout,
-      routeMap,
-      routeName: match.routeName,
     });
 
     const payload: RscPayload = {
@@ -556,8 +549,6 @@ export function createRSCHandler<
         version,
         themeConfig: router.themeConfig,
         initialTheme: requireRequestContext().theme,
-        routeMap,
-        routeName: match.routeName,
       },
       formState: actionResult,
     };
@@ -655,8 +646,6 @@ export function createRSCHandler<
             isError: true,
             handles: handleStore.stream(),
             version,
-            routeMap,
-            routeName: errorResult.routeName,
           },
           returnValue,
         };
@@ -702,8 +691,6 @@ export function createRSCHandler<
       const root = renderSegments(fullMatch.segments, {
         rootLayout: router.rootLayout,
         isAction: true,
-        routeMap,
-        routeName: fullMatch.routeName,
       });
       const renderDuration = performance.now() - renderStart;
       const serverTiming = fullMatch.serverTiming
@@ -719,8 +706,6 @@ export function createRSCHandler<
           diff: fullMatch.diff,
           handles: handleStore.stream(),
           version,
-          routeMap,
-          routeName: fullMatch.routeName,
         },
         returnValue,
       };
@@ -763,8 +748,6 @@ export function createRSCHandler<
         slots: matchResult.slots,
         handles: handleStore.stream(),
         version,
-        routeMap,
-        routeName: matchResult.routeName,
       },
       returnValue,
     };
@@ -943,8 +926,6 @@ export function createRSCHandler<
         const renderStart = performance.now();
         const root = renderSegments(match.segments, {
           rootLayout: router.rootLayout,
-          routeMap,
-          routeName: match.routeName,
         });
         const renderDuration = performance.now() - renderStart;
         serverTiming = match.serverTiming
@@ -963,8 +944,6 @@ export function createRSCHandler<
             version,
             themeConfig: router.themeConfig,
             initialTheme: requireRequestContext().theme,
-            routeMap,
-            routeName: match.routeName,
           },
         };
       } else {
@@ -982,8 +961,6 @@ export function createRSCHandler<
             slots: result.slots,
             handles: handleStore.stream(),
             version,
-            routeMap,
-            routeName: result.routeName,
           },
         };
       }
@@ -1005,8 +982,6 @@ export function createRSCHandler<
       const renderStart = performance.now();
       const root = renderSegments(match.segments, {
         rootLayout: router.rootLayout,
-        routeMap,
-        routeName: match.routeName,
       });
       const renderDuration = performance.now() - renderStart;
       serverTiming = match.serverTiming
@@ -1026,8 +1001,6 @@ export function createRSCHandler<
           version,
           themeConfig: router.themeConfig,
           initialTheme: requireRequestContext().theme,
-          routeMap,
-          routeName: match.routeName,
         },
       };
     }

@@ -101,36 +101,32 @@ export type ValidPaths<TRoutes = GetRegisteredRoutes> =
 /**
  * Type-safe href function for client-side use
  *
- * This is an identity function - it returns the path unchanged.
- * The value is in TypeScript validation: invalid paths cause compile errors.
- *
- * Works with:
- * - Static paths: href("/about")
- * - Dynamic segments: href("/blog/my-post")
- * - Multiple segments: href("/shop/product/widget/reviews/123")
- *
- * Does NOT validate:
- * - Query strings (passed through as-is)
- * - Hash fragments (passed through as-is)
+ * Without mount: identity function, validates absolute paths at compile time.
+ * With mount: prepends mount path, for use with useMount() inside include() scopes.
  *
  * @param path - A valid path matching one of the registered route patterns
- * @returns The path unchanged
+ * @param mount - Optional mount prefix from useMount() for include-scoped paths
+ * @returns The resolved path
  *
  * @example
  * ```typescript
- * // Valid paths (compile)
- * href("/blog/hello");                    // matches /blog/:slug
- * href("/shop/product/widget");           // matches /shop/product/:slug
- * href("/shop/product/widget/reviews");   // matches /shop/product/:slug/reviews
+ * // Absolute paths (type-safe)
+ * href("/blog/hello");           // "/blog/hello"
+ * href("/shop/product/widget");  // "/shop/product/widget"
  *
- * // Query strings and hashes pass through (not validated)
+ * // With mount (inside an include)
+ * const mount = useMount();      // "/articles"
+ * href("/", mount);              // "/articles/"
+ * href("/my-post", mount);       // "/articles/my-post"
+ *
+ * // Query strings and hashes pass through
  * href("/blog/hello?page=1");
  * href("/about#contact");
- *
- * // Invalid paths (TypeScript error)
- * href("/nonexistent");  // Error: not assignable to ValidPaths
  * ```
  */
-export function href<T extends ValidPaths>(path: T): T {
+export function href<T extends ValidPaths>(path: T, mount?: string): string {
+  if (mount && mount !== "/") {
+    return mount + path;
+  }
   return path;
 }

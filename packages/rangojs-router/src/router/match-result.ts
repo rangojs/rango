@@ -184,7 +184,6 @@ export function buildMatchResult<TEnv>(
     diff: segmentsToRender.map((s) => s.id),
     params: ctx.matched.params,
     routeName: ctx.routeKey,
-    routeMap: ctx.routeMap,
     serverTiming,
     slots: Object.keys(state.slots).length > 0 ? state.slots : undefined,
     routeMiddleware:

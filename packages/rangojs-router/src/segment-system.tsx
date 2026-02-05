@@ -1,6 +1,6 @@
 import { createElement, type ReactNode, type ComponentType } from "react";
 import { OutletProvider } from "./client.js";
-import { HrefProvider } from "./browser/react/use-href.js";
+import { MountContext } from "./browser/react/mount-context.js";
 import type {
   ResolvedSegment,
   LoaderDataResult,
@@ -84,18 +84,6 @@ export interface RenderSegmentsOptions {
    * preventing the app shell from unmounting during errors (avoids FOUC).
    */
   rootLayout?: ComponentType<RootLayoutProps>;
-
-  /**
-   * Route map for useHref() during SSR.
-   * Maps route names to URL patterns.
-   */
-  routeMap?: Record<string, string>;
-
-  /**
-   * Current matched route name for useHref() during SSR.
-   * Used for local name resolution.
-   */
-  routeName?: string;
 }
 
 /**
@@ -146,8 +134,6 @@ export async function renderSegments(
     interceptSegments,
     forceAwait,
     rootLayout: RootLayout,
-    routeMap,
-    routeName,
   } = options || {};
   const temporalLazyRefs: Promise<any>[] = [];
 
@@ -267,11 +253,7 @@ export async function renderSegments(
         parallel: node.parallel,
         children: nodeContent,
       });
-      continue;
-    }
-
-    // No loading skeleton defined - use OutletProvider directly
-    if (loaderEntries.length === 0) {
+    } else if (loaderEntries.length === 0) {
       // No loaders, no loading - simple OutletProvider
       content = createElement(OutletProvider, {
         key,
@@ -280,24 +262,31 @@ export async function renderSegments(
         parallel: node.parallel,
         children: nodeContent,
       });
-      continue;
+    } else {
+      // Has loaders but no loading skeleton - await loaders and render directly
+      const resolvedData = await loaderDataPromise;
+      const { loaderData, errorFallback } = resolveLoaderData(
+        resolvedData,
+        loaderIds,
+      );
+
+      content = createElement(OutletProvider, {
+        key,
+        content: outletContent,
+        segment: node.segment,
+        parallel: node.parallel,
+        loaderData: Object.keys(loaderData).length > 0 ? loaderData : undefined,
+        children: errorFallback ?? nodeContent,
+      });
     }
 
-    // Has loaders but no loading skeleton - await loaders and render directly
-    const resolvedData = await loaderDataPromise;
-    const { loaderData, errorFallback } = resolveLoaderData(
-      resolvedData,
-      loaderIds,
-    );
-
-    content = createElement(OutletProvider, {
-      key,
-      content: outletContent,
-      segment: node.segment,
-      parallel: node.parallel,
-      loaderData: Object.keys(loaderData).length > 0 ? loaderData : undefined,
-      children: errorFallback ?? nodeContent,
-    });
+    // Wrap with MountContext.Provider for include() scoped components
+    if (node.segment.mountPath && node.segment.type === "layout") {
+      content = createElement(MountContext.Provider, {
+        value: node.segment.mountPath,
+        children: content,
+      });
+    }
   }
 
   // Always wrap with root error boundary to prevent white screens
@@ -317,16 +306,6 @@ export async function renderSegments(
   if (RootLayout) {
     result = createElement(RootLayout, {
       children: errorBoundaryWrapped,
-    });
-  }
-
-  // Wrap with HrefProvider for useHref() to work during SSR
-  // This provides route info to client components during server rendering
-  if (routeMap) {
-    result = createElement(HrefProvider, {
-      routeMap,
-      routeName,
-      children: result,
     });
   }
 

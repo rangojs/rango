@@ -1279,6 +1279,7 @@ export function createRouter<TEnv = any>(
         params,
         belongsToRoute: false, // Parent chain layouts/cache don't belong to specific route
         layoutName: entry.id,
+        ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
       });
 
       // Step 5: Process orphan layouts
@@ -1351,6 +1352,7 @@ export function createRouter<TEnv = any>(
         loading: entry.loading === false ? null : entry.loading,
         params,
         belongsToRoute: true, // Route always belongs to itself
+        ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
       });
     } else {
       throw new Error(`Unknown entry type: ${(entry as any).type}`);
@@ -1415,6 +1417,7 @@ export function createRouter<TEnv = any>(
       belongsToRoute,
       layoutName: orphan.id,
       loading: orphan.loading === false ? null : orphan.loading,
+      ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
     });
 
     return segments;
@@ -1897,6 +1900,7 @@ export function createRouter<TEnv = any>(
         slot,
         belongsToRoute,
         parallelName: `${parallelEntry.id}.${slot}`,
+        ...(parallelEntry.mountPath ? { mountPath: parallelEntry.mountPath } : {}),
       });
     }
 
@@ -2479,6 +2483,7 @@ export function createRouter<TEnv = any>(
               slot,
               belongsToRoute,
               parallelName: `${parallelEntry.id}.${slot}`,
+              ...(parallelEntry.mountPath ? { mountPath: parallelEntry.mountPath } : {}),
             };
 
             // Use parallel's own revalidate functions
@@ -2526,6 +2531,7 @@ export function createRouter<TEnv = any>(
           slot,
           belongsToRoute,
           parallelName: `${parallelEntry.id}.${slot}`,
+          ...(parallelEntry.mountPath ? { mountPath: parallelEntry.mountPath } : {}),
         });
       }
 
@@ -2597,6 +2603,7 @@ export function createRouter<TEnv = any>(
           ...(entry.type === "layout" || entry.type === "cache"
             ? { layoutName: entry.id }
             : {}),
+          ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
         };
 
         const shouldRevalidate = await evaluateRevalidation({
@@ -2674,6 +2681,7 @@ export function createRouter<TEnv = any>(
       ...(entry.type === "layout" || entry.type === "cache"
         ? { layoutName: entry.id }
         : {}),
+      ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
     };
 
     return { segment, matchedId };
@@ -2915,6 +2923,7 @@ export function createRouter<TEnv = any>(
               slot,
               belongsToRoute,
               parallelName: `${parallelEntry.id}.${slot}`,
+              ...(parallelEntry.mountPath ? { mountPath: parallelEntry.mountPath } : {}),
             };
 
             // Use parallel's own revalidate functions
@@ -2962,6 +2971,7 @@ export function createRouter<TEnv = any>(
           slot,
           belongsToRoute,
           parallelName: `${parallelEntry.id}.${slot}`,
+          ...(parallelEntry.mountPath ? { mountPath: parallelEntry.mountPath } : {}),
         });
       }
     }
@@ -2983,6 +2993,7 @@ export function createRouter<TEnv = any>(
           params,
           belongsToRoute,
           layoutName: orphan.id,
+          ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
         };
 
         return await evaluateRevalidation({
@@ -3019,6 +3030,7 @@ export function createRouter<TEnv = any>(
       belongsToRoute,
       layoutName: orphan.id,
       loading: orphan.loading === false ? null : orphan.loading,
+      ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
     });
 
     return { segments, matchedIds };

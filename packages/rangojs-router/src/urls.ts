@@ -504,6 +504,7 @@ function createPathHelper<TEnv>(): PathHelpers<TEnv>["path"] {
       parallel: [],
       intercept: [],
       loader: [],
+      ...(urlPrefix ? { mountPath: urlPrefix } : {}),
     };
 
     // Check for duplicate route names (TypeScript should catch this, but runtime check too)

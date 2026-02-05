@@ -63,16 +63,6 @@ export interface RscMetadata {
    * Included when theme is enabled in router config.
    */
   initialTheme?: Theme;
-  /**
-   * Route map for useHref() - maps route names to URL patterns.
-   * Used for type-safe URL generation on the client.
-   */
-  routeMap?: Record<string, string>;
-  /**
-   * Current matched route name (for local name resolution in useHref).
-   * When using include() with name prefix, this contains the full prefixed name.
-   */
-  routeName?: string;
 }
 
 /**

@@ -605,16 +605,14 @@ export {
 // Type-safe href for client-side path validation
 export { href, type ValidPaths, type PatternToPath } from "./href-client.js";
 
-// useHref hook for Django-style route name resolution
-export {
-  useHref,
-  HrefProvider,
-  HrefContext,
-  type HrefFn,
-  type HrefContextValue,
-} from "./browser/react/use-href.js";
+// Mount context for include() scoped components
+export { useMount } from "./browser/react/use-mount.js";
+export { MountContext } from "./browser/react/mount-context.js";
 
-// Type-safe scoped href function for useHref<typeof patterns>()
+// Mount-aware href hook - auto-prefixes paths with include() mount
+export { useHref } from "./browser/react/use-href.js";
+
+// Type-safe scoped href function for scopedHref<typeof patterns>()
 export type { ScopedHrefFunction } from "./href.js";
 
 // Loader definition type - for typing loader props in client components

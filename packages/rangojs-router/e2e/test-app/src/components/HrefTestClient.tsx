@@ -1,31 +1,31 @@
 "use client";
 
-import { useHref, Link } from "@rangojs/router/client";
+import { href, Link, useHref } from "@rangojs/router/client";
 
 interface HrefTestClientProps {
   isDetailPage?: boolean;
 }
 
 /**
- * Client component for testing useHref hook
+ * Client component for testing useHref() (mount-aware) and href() (absolute)
  *
- * With HrefContext.Provider wrapping the RSC render, useHref() now works
- * during SSR without hydration mismatch. No need for server-provided initial props.
+ * useHref() auto-prefixes with the include() mount path.
+ * href() is used for absolute paths outside the current mount.
  */
 export function HrefTestClient({ isDetailPage }: HrefTestClientProps) {
-  const href = useHref();
+  const localHref = useHref();
 
-  // useHref works during SSR because HrefContext is provided by renderSegments
-  const localIndex = href("index");
-  const absoluteBlog = href("blog.index");
+  // useHref() auto-prefixes with mount from include("/href", ...)
+  const localIndex = localHref("/");
+  const absoluteBlog = href("/blog");
   const pathBased = href("/about");
   const localDetail = isDetailPage
-    ? href("detail", { id: "client-item" })
-    : href("detail", { id: "from-client" });
+    ? localHref(`/client-item`)
+    : localHref(`/from-client`);
 
   return (
     <div data-testid="client-href-test">
-      <h3>Resolved URLs (useHref)</h3>
+      <h3>Resolved URLs (href + useMount)</h3>
       <ul>
         <li data-testid="client-local-index">
           Local index: <code>{localIndex}</code>
