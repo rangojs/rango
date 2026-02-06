@@ -31,5 +31,13 @@ export const router = createRouter<AppEnv>({
   // Register all routes
   .routes(urlpatterns);
 
+type AppRoutes = typeof router.routeMap;
+
+declare global {
+  namespace RSCRouter {
+    interface RegisteredRoutes extends AppRoutes {}
+  }
+}
+
 // Export typed href function for use in server components
 export const href = router.href;
