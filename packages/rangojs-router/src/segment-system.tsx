@@ -286,7 +286,7 @@ export async function renderSegments(
     // Must use MountContextProvider (a proper "use client" export) instead of
     // MountContext.Provider directly, because .Provider is a property on the
     // context object and resolves to undefined through RSC client reference proxies.
-    if (node.segment.mountPath && node.segment.type === "layout") {
+    if (node.segment.mountPath) {
       content = createElement(MountContextProvider, {
         value: node.segment.mountPath,
         children: content,
