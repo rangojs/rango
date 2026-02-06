@@ -1,6 +1,7 @@
 import type { Plugin, PluginOption } from "vite";
 import * as Vite from "vite";
 import { resolve } from "node:path";
+import { createRequire } from "node:module";
 import { exposeActionId } from "./expose-action-id.ts";
 import { exposeLoaderId } from "./expose-loader-id.ts";
 import { exposeHandleId } from "./expose-handle-id.ts";
@@ -100,6 +101,12 @@ interface RangoBaseOptions {
    * @default true
    */
   exposeActionId?: boolean;
+
+  /**
+   * Show startup banner. Set to false to disable.
+   * @default true
+   */
+  banner?: boolean;
 }
 
 /**
@@ -408,6 +415,41 @@ function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
   };
 }
 
+const _require = createRequire(import.meta.url);
+const _rangoVersion: string = _require("../../package.json").version;
+
+let _bannerPrinted = false;
+
+function printBanner(
+  mode: "dev" | "build",
+  preset: string,
+  version: string
+): void {
+  if (_bannerPrinted) return;
+  _bannerPrinted = true;
+
+  // ANSI codes
+  const dim = "\x1b[2m";
+  const bold = "\x1b[1m";
+  const reset = "\x1b[0m";
+
+  const banner = `
+${dim}   ✦        ✦          ✧.           .          .${reset}
+${dim}  ╱${reset}   ${bold}╔═╗${reset}${dim}             ╱                   ✦             *${reset}
+${dim}      ${reset}${bold}║ ║${reset}${dim} ${reset}${bold}╔═╗${reset}${dim}                    *                ✧.   ╱${reset}
+${dim}   ${reset}${bold}╔╗ ║ ║ ║ ║  ╦═╗╔═╗╔╗╔╔═╗╔═╗${reset}${dim}             ✧              ✦${reset}
+${dim}   ${reset}${bold}║║ ║ ╠═╝ ║  ╠╦╝╠═╣║║║║ ╦║ ║${reset}${dim}        *           ✧${reset}
+${dim}   ${reset}${bold}║╚═╝ ╔═══╝  ╩╚═╩ ╩╝╚╝╚═╝╚═╝${reset}${dim}            ✦          .      *${reset}
+${dim}   ${reset}${bold}╚══╗ ║${reset}${dim}        RSC Wrangler         ✧                ✦${reset}
+${dim}      ${reset}${bold}║ ║${reset}${dim}                          *            ✧.    ╱${reset}
+${dim}      ${reset}${bold}╚═╝${reset}${dim}                               ✦            *${reset}
+
+   v${version} · ${preset} · ${mode}
+`;
+
+  console.log(banner);
+}
+
 /**
  * Vite plugin for @rangojs/router.
  *
@@ -437,6 +479,7 @@ export async function rango(
 ): Promise<PluginOption[]> {
   const preset = options.preset ?? "node";
   const enableExposeActionId = options.exposeActionId ?? true;
+  const showBanner = options.banner ?? true;
 
   const plugins: PluginOption[] = [];
 
@@ -526,6 +569,13 @@ export async function rango(
             },
           },
         };
+      },
+
+      configResolved(config) {
+        if (showBanner) {
+          const mode = config.command === "serve" ? "dev" : "build";
+          printBanner(mode, "cloudflare", _rangoVersion);
+        }
       },
     });
 
@@ -637,6 +687,11 @@ export async function rango(
         },
 
         configResolved(config) {
+          if (showBanner) {
+            const mode = config.command === "serve" ? "dev" : "build";
+            printBanner(mode, "node", _rangoVersion);
+          }
+
           // Count how many RSC base plugins there are (rsc:minimal is the main one)
           const rscMinimalCount = config.plugins.filter(
             (p) => p.name === "rsc:minimal"
