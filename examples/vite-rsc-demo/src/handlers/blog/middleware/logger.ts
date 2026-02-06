@@ -1,6 +1,6 @@
-import type { MiddlewareFn, GenericParams } from "@ivogt/rsc-router/server";
+import type { Middleware } from "@rangojs/router/server";
 
-export const loggerMiddleware: MiddlewareFn<RSCRouter.Env, GenericParams>[] = [
+export const loggerMiddleware: Middleware[] = [
   (_ctx, next) => {
     console.log("Blog route accessed");
     next();

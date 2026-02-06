@@ -1,0 +1,43 @@
+import type { Handler } from "@rangojs/router/server";
+import { Breadcrumbs } from "@/handles/breadcrumbs.js";
+import { ProductsCategoryRoute, ProductsDetailRoute } from "./product.js";
+
+/**
+ * Helper to convert slug to title case
+ * e.g., "wireless-headphones" -> "Wireless Headphones"
+ */
+function slugToTitle(slug: string): string {
+  return slug
+    .split("-")
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+/**
+ * Category route with breadcrumb support
+ * Adds category breadcrumb then renders ProductsCategoryRoute
+ */
+export const CategoryRouteWithBreadcrumbs: Handler<{ category: string }> = (
+  ctx
+) => {
+  const push = ctx.use(Breadcrumbs);
+  const title = slugToTitle(ctx.params.category);
+  push({
+    label: title,
+    href: `/shop/products/${ctx.params.category}`,
+  });
+  return ProductsCategoryRoute(ctx);
+};
+
+/**
+ * Product detail route with breadcrumb support
+ * Adds product breadcrumb then renders ProductsDetailRoute
+ */
+export const ProductDetailRouteWithBreadcrumbs: Handler<{ slug: string }> = (
+  ctx
+) => {
+  const push = ctx.use(Breadcrumbs);
+  const title = slugToTitle(ctx.params.slug);
+  push({ label: title, href: `/shop/product/${ctx.params.slug}` });
+  return ProductsDetailRoute(ctx);
+};

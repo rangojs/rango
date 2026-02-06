@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { createLoader } from "@ivogt/rsc-router";
+import { createLoader } from "@rangojs/router";
 import {
   usersStore,
   notesStore,
@@ -136,6 +136,13 @@ export type UserSearchLoaderData = {
   searchedAt: string;
 };
 
+export type RSCContentLoaderData = {
+  content: ReactNode;
+  style: string;
+  count: number;
+  renderedAt: string;
+};
+
 /**
  * RSCContentLoader - Fetchable loader that returns React Server Component content
  *
@@ -144,8 +151,8 @@ export type UserSearchLoaderData = {
  *
  * Use case: Server-rendered UI that should be fetched on-demand
  */
-export const RSCContentLoader = createLoader(
-  async (ctx) => {
+export const RSCContentLoader = createLoader<RSCContentLoaderData>(
+  async (ctx): Promise<RSCContentLoaderData> => {
     "use server";
 
     // Simulate server-side data fetching
@@ -260,13 +267,6 @@ export const RSCContentLoader = createLoader(
   },
   true // Enable fetchable
 );
-
-export type RSCContentLoaderData = {
-  content: ReactNode;
-  style: string;
-  count: number;
-  renderedAt: string;
-};
 
 /**
  * NotesLoader - Demonstrates loader as both GET and form action

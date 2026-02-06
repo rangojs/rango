@@ -1,7 +1,7 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import path from "path";
-import { rscRouter } from "@ivogt/rsc-router/vite";
+import { rscRouter } from "@rangojs/router/vite";
 import devtoolsJson from "vite-plugin-devtools-json";
 
 export default defineConfig({

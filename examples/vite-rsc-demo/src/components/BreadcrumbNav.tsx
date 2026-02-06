@@ -1,6 +1,6 @@
 "use client";
 
-import { Link, useHandle } from "@ivogt/rsc-router/client";
+import { Link, useHandle } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import { Fragment, ReactNode, Suspense, use } from "react";
 

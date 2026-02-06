@@ -1,6 +1,6 @@
-import type { ShouldRevalidateFn, GenericParams } from "@ivogt/rsc-router/server";
+import type { Revalidate, GenericParams } from "@rangojs/router/server";
 
-export const globalRevalidation: ShouldRevalidateFn<
+export const globalRevalidation: Revalidate<
   GenericParams,
   RSCRouter.Env
 > = ({ defaultShouldRevalidate }) => {

@@ -2,7 +2,7 @@
 
 import { use, useActionState, Suspense, startTransition } from "react";
 import { StreamingAction } from "../actions/test.actions";
-import { useAction } from "@ivogt/rsc-router/client";
+import { useAction } from "@rangojs/router/client";
 export const StreamingActionStatus = () => {
   const status = useAction(StreamingAction);
   console.log("StreamingActionStatus", status.state);
@@ -22,9 +22,9 @@ export const ActionStatus = ({
   fn: ((...args: any[]) => any) | string;
 }) => {
   const status = useAction(fn);
-  const name = fn.$$id;
+  const name = (fn as any).$$id;
   console.log({
-    name: fn.$$id,
+    name: (fn as any).$$id,
     $$typeof: (fn as any).$$typeof,
     $$id: (fn as any).$$id,
     $$bound: (fn as any).$$bound,
@@ -48,11 +48,11 @@ export function StreamingActionForm({
   children,
 }: {
   productId: string | number;
-  action: (productId: string, quantity: number) => Promise<any>;
+  action: (productId: string, quantity?: number) => Promise<any>;
   children?: React.ReactNode;
 }) {
   const [state, formAction, isPending] = useActionState(
-    async (_prevState, formData) => {
+    async (_prevState: unknown, formData: FormData) => {
       try {
         console.log("StreamingActionForm data set", { isPending, state });
         const result = await StreamingAction(formData);
@@ -63,9 +63,7 @@ export function StreamingActionForm({
         return { success: false, error: String(error) };
       }
     },
-    {
-      promise: null,
-    }
+    null
   );
 
   return (
@@ -88,7 +86,7 @@ export function StreamingActionForm({
           {isPending ? "Processing..." : <>{children}</>}
         </button>
       </form>
-      {state.promise && (
+      {state && "promise" in state && (
         <div
           style={{
             marginTop: "1rem",
@@ -127,7 +125,7 @@ export function StreamingActionForm({
               </div>
             }
           >
-            <PromiseResolver promise={state.promise} />
+            <PromiseResolver promise={(state as { promise: Promise<any> }).promise} />
           </Suspense>
         </div>
       )}

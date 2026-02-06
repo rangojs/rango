@@ -1,4 +1,4 @@
-import { createLocationState } from "@ivogt/rsc-router/client";
+import { createLocationState } from "@rangojs/router/client";
 
 export interface FeatureState {
   name: string;

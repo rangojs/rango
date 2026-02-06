@@ -1,11 +1,10 @@
-import type { RouteHandler } from "@ivogt/rsc-router/server";
-import type { shopRoutes } from "@/routes.js";
+import type { Handler } from "@rangojs/router/server";
 import { products } from "@/handlers/shop/data.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
-import { ParallelOutlet } from "@ivogt/rsc-router/client";
+import { ParallelOutlet } from "@rangojs/router/client";
 
-export const CartRoute: RouteHandler<typeof shopRoutes, "shop.cart"> = () => (
+export const CartRoute: Handler = () => (
   <DebugSegmentWrapper type="route" name="Cart">
     <div style={{ display: "flex", gap: "2rem" }}>
       <div style={{ flex: 1 }}>
@@ -96,7 +95,7 @@ export const CartRoute: RouteHandler<typeof shopRoutes, "shop.cart"> = () => (
           cart data.
         </p>
         <p>Try navigating away and back - you'll see the segment re-renders.</p>
-        <SegmentTimer />
+        <SegmentTimer serverRenderTime={new Date().toISOString()} />
       </div>
     </div>
       {/* Order summary - parallel route */}

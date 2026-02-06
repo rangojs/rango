@@ -1,6 +1,6 @@
 "use client";
 
-import { useLocationState } from "@ivogt/rsc-router/client";
+import { useLocationState } from "@rangojs/router/client";
 import { FeatureLocationState } from "../location-states.js";
 
 /**

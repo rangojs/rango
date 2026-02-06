@@ -1,5 +1,5 @@
-import { createRSCRouter, type RouterEnv } from "@ivogt/rsc-router/server";
-import { MemorySegmentCacheStore } from "@ivogt/rsc-router/rsc";
+import { createRouter, type RouterEnv } from "@rangojs/router/server";
+import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 import { RootLayout } from "./layouts/RootLayout.js";
 
 // Create cache store with defaults (persists across HMR via globalThis)
@@ -8,20 +8,9 @@ const cacheStore = new MemorySegmentCacheStore({
     ttl: 600000, // Default TTL for all cache() boundaries (~7 days)
   },
 });
-import {
-  homeRoutes,
-  blogRoutes,
-  aboutRoutes,
-  dashboardRoutes,
-  shopRoutes,
-  adminRoutes,
-  protectedRoutes,
-  todosRoutes,
-  errorRoutes,
-  kanbanRoutes,
-  loadersRoutes,
-  middlewareRoutes,
-} from "./routes.js";
+
+// Django-style URL patterns (composed from separate modules)
+import { urlpatterns } from "./urls/index.js";
 
 /**
  * Platform bindings (Cloudflare Workers, environment variables, etc.)
@@ -73,67 +62,18 @@ declare global {
 
 /**
  * Create and configure the router with type-safe context.
- * Route types are accumulated through the builder chain.
+ * All routes are defined using the Django-style urls() API.
  */
-const router = createRSCRouter<AppEnv>({
+const router = createRouter<AppEnv>({
   debugPerformance: true,
   document: RootLayout,
   cache: { store: cacheStore },
-})
-  .routes(homeRoutes)
-  .map(() => import("./handlers/home.js"))
-
-  .routes("/blog", blogRoutes) // Mount blog routes at /blog prefix
-  .map(() => import("./handlers/blog.js"))
-
-  .routes(aboutRoutes)
-  .map(() => import("./handlers/about.js"))
-
-  .routes("/dashboard", dashboardRoutes) // Dashboard with parallel routes
-  .map(() => import("./handlers/dashboard.js"))
-
-  .routes("/shop", shopRoutes) // Shop - comprehensive ecommerce example
-  .map(() => import("./handlers/shop.js"))
-
-  .routes("/admin", adminRoutes) // Admin - demonstrates soft/hard revalidation
-  .map(() => import("./handlers/admin.js"))
-
-  .routes("/protected", protectedRoutes) // Protected - demonstrates middleware short-circuit
-  .map(() => import("./handlers/protected.js"))
-
-  .routes("/todos", todosRoutes) // Todos - demonstrates loaders, actions, streaming
-  .map(() => import("./handlers/todos.js"))
-
-  .routes("/errors", errorRoutes) // Errors - demonstrates error boundary handling
-  .map(() => import("./handlers/error.js"))
-
-  .routes("/kanban", kanbanRoutes) // Kanban - demonstrates optimistic updates
-  .map(() => import("./handlers/kanban.js"))
-
-  .routes("/loaders", loadersRoutes) // Loaders - demonstrates useLoader & useFetchLoader
-  .map(() => import("./handlers/loaders-demo.js"))
-
-  .routes("/middleware", middlewareRoutes) // Middleware - comprehensive middleware examples
-  .map(() => import("./handlers/middleware.js"));
+}).routes(urlpatterns);
 
 /**
- * Extract route types directly from the router chain
- */
-type AppRoutes = typeof router.routeMap;
-
-/**
- * Module augmentation - register types globally for type-safe href
- */
-declare global {
-  namespace RSCRouter {
-    interface RegisteredRoutes extends AppRoutes {}
-  }
-}
-/**
- * Export the router and type-safe href.
- * Import href from here for type safety: `import { href } from "./router.js"`
+ * Export the router and type-safe href for server components.
  */
 export { router };
 export const href = router.href;
 
-console.log("[Router] Configured with 12 route groups (lazy-loaded handlers)");
+console.log("[Router] Configured with Django-style urls() API");

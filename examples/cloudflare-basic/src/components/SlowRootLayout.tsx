@@ -1,4 +1,4 @@
-import { Outlet } from "@ivogt/rsc-router/client";
+import { Outlet } from "@rangojs/router/client";
 import { NavigationProgress } from "./NavigationProgress.js";
 
 export function RootLayout() {

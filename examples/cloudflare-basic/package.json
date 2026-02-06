@@ -9,11 +9,12 @@
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
-    "@ivogt/rsc-router": "workspace:*",
+    "@rangojs/router": "workspace:*",
     "react": "catalog:",
     "react-dom": "catalog:",
     "spin-delay": "^2.0.1"

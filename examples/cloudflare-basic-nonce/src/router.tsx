@@ -1,28 +1,7 @@
-import { createRSCRouter, type RouterEnv, type AppMiddlewareFn } from "@ivogt/rsc-router/server";
-import { homeRoutes, aboutRoutes, counterRoutes } from "./routes.js";
-import { AppShell } from "./components/AppShell.js";
-
-// Cloudflare Workers bindings (D1, KV, etc.)
-export interface AppBindings {
-  // Add your bindings here:
-  // DB?: D1Database;
-  // KV?: KVNamespace;
-}
-
-// Middleware-injected variables
-export interface AppVariables {
-  requestId?: string;
-}
-
-// Combined app environment
-export type AppEnv = RouterEnv<AppBindings, AppVariables>;
-
-// Module augmentation for global type inference
-declare global {
-  namespace RSCRouter {
-    interface Env extends AppEnv {}
-  }
-}
+import { createRouter, type Middleware } from "@rangojs/router/server";
+import { urlpatterns } from "./urls.js";
+import { Document } from "./components/Document.js";
+import type { AppEnv } from "./env.js";
 
 /**
  * Build CSP header with nonce for script-src
@@ -58,7 +37,7 @@ function isDevelopment(url: URL): boolean {
  * - In development: Uses Report-Only mode to avoid blocking HMR scripts
  * - In production: Uses enforcing CSP
  */
-const cspMiddleware: AppMiddlewareFn<AppEnv> = async (ctx, next) => {
+const cspMiddleware: Middleware = async (ctx, next) => {
   await next();
 
   // Only add CSP to HTML responses
@@ -67,7 +46,7 @@ const cspMiddleware: AppMiddlewareFn<AppEnv> = async (ctx, next) => {
     return;
   }
 
-  // Get the nonce from shared variables (set by createRSCHandler when nonce option is used)
+  // Get the nonce from shared variables (set by router when nonce option is used)
   const nonce = ctx.get("nonce");
   if (!nonce) {
     return;
@@ -83,29 +62,18 @@ const cspMiddleware: AppMiddlewareFn<AppEnv> = async (ctx, next) => {
 };
 
 // Create the router with document component
-// AppShell wraps both route content and error boundaries,
-// preventing the app shell from unmounting during errors (avoids FOUC)
-export const router = createRSCRouter<AppEnv>({
-  document: AppShell,
+// Document wraps both route content and error boundaries,
+// preventing the document from unmounting during errors (avoids FOUC)
+export const router = createRouter<AppEnv>({
+  document: Document,
+  // Auto-generate a cryptographic nonce for each request (for CSP)
+  nonce: () => true,
 })
   // CSP middleware - adds Content-Security-Policy headers to all HTML responses
-  .use(cspMiddleware);
+  .use(cspMiddleware)
+  // Register all routes
+  .routes(urlpatterns);
 
-// Register routes with lazy-loaded handlers
-router
-  .routes(homeRoutes)
-  .map(() => import("./handlers/home.js"))
 
-  .routes(aboutRoutes)
-  .map(() => import("./handlers/about.js"))
-
-  .routes(counterRoutes)
-  .map(() => import("./handlers/counter.js"));
-
-type AppRoutes = typeof router.routeMap;
-
-declare global {
-  namespace RSCRouter {
-    interface RegisteredRoutes extends AppRoutes {}
-  }
-}
+// Export typed href function for use in server components
+export const href = router.href;

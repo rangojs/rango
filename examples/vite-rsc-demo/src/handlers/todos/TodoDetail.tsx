@@ -1,9 +1,8 @@
 "use client";
 
-import { useLoader } from "@ivogt/rsc-router/client";
+import { useLoader } from "@rangojs/router/client";
 import { TodoDetailLoader } from "./loader.js";
 import { DebugSegmentWrapper } from "../../components/DebugSegmentWrapper.js";
-import { SegmentTimer } from "../../components/SegmentTimer.js";
 
 export function TodoDetailContent() {
   const { data: todo } = useLoader(TodoDetailLoader);
@@ -57,17 +56,6 @@ export function TodoDetailContent() {
           </div>
         </div>
 
-        <div
-          style={{
-            marginTop: "2rem",
-            padding: "1rem",
-            background: "#f5f5f5",
-            borderRadius: "8px",
-          }}
-        >
-          <h4 style={{ margin: "0 0 0.5rem 0" }}>Performance</h4>
-          <SegmentTimer />
-        </div>
       </div>
     </DebugSegmentWrapper>
   );

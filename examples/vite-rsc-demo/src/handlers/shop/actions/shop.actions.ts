@@ -1,21 +1,69 @@
 "use server";
 
+import { getRequestContext } from "@rangojs/router/server";
+
 /**
  * Shop Actions - Server-side mutations
  *
  * These actions demonstrate React Server Actions in the RSC router:
  * - Use 'use server' directive for automatic action registration
- * - Mutations happen server-side (in-memory for demo, use DB in production)
+ * - Mutations happen server-side with cookie-based cart ID for test isolation
  * - No return values needed - revalidation triggers UI updates
  * - Actions are serialized and can be passed to client components
  */
 
-// Simple in-memory cart for demo (replace with database in real app)
-const carts = new Map<
-  string,
-  { items: Array<{ productId: string; quantity: number }> }
->();
-export const getCart = async () => carts.get("demo-cart");
+// Cart type definition
+type Cart = { items: Array<{ productId: string; quantity: number }> };
+
+const CART_ID_COOKIE_NAME = "shop-cart-id";
+
+// In-memory cart storage keyed by cart ID for rapid updates
+// Cookie stores the cart ID, not the cart data
+const carts = new Map<string, Cart>();
+
+// Generate a unique cart ID
+function generateCartId(): string {
+  return `cart-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+}
+
+// Helper to get or create cart ID from cookie
+function getOrCreateCartId(): string {
+  const ctx = getRequestContext();
+  if (!ctx) {
+    return "demo-cart"; // Fallback for non-request context
+  }
+
+  const cookies = ctx.cookies();
+  let cartId = cookies[CART_ID_COOKIE_NAME];
+
+  if (!cartId) {
+    cartId = generateCartId();
+    ctx.setCookie(CART_ID_COOKIE_NAME, cartId, {
+      path: "/",
+      httpOnly: false,
+      maxAge: 60 * 60 * 24, // 24 hours
+    });
+    console.log(`[Cart] Created new cart ID: ${cartId}`);
+  }
+
+  return cartId;
+}
+
+// Helper to get cart by ID
+function getCartById(cartId: string): Cart {
+  let cart = carts.get(cartId);
+  if (!cart) {
+    cart = { items: [] };
+    carts.set(cartId, cart);
+  }
+  return cart;
+}
+
+export const getCart = async () => {
+  const cartId = getOrCreateCartId();
+  return getCartById(cartId);
+};
+
 /**
  * Add item to shopping cart
  *
@@ -25,14 +73,8 @@ export const getCart = async () => carts.get("demo-cart");
 export async function addToCart(productId: string, quantity: number = 1) {
   console.log(`[Action] addToCart: ${productId} x${quantity}`);
 
-  // Get or create cart (in real app: get from session/user context)
-  const cartId = "demo-cart";
-  let cart = carts.get(cartId);
-
-  if (!cart) {
-    cart = { items: [] };
-    carts.set(cartId, cart);
-  }
+  const cartId = getOrCreateCartId();
+  const cart = getCartById(cartId);
 
   // Add or update item
   const existing = cart.items.find((item) => item.productId === productId);
@@ -46,7 +88,7 @@ export async function addToCart(productId: string, quantity: number = 1) {
     console.log(`[Action] Added new item: ${productId} x${quantity}`);
   }
 
-  console.log(`[Action] Cart updated:`, cart);
+  console.log(`[Action] Cart ${cartId} updated:`, cart);
 
   // No return value needed - revalidation will update the UI
 }
@@ -59,15 +101,14 @@ export async function addToCart(productId: string, quantity: number = 1) {
 export async function removeFromCart(productId: string) {
   console.log(`[Action] removeFromCart: ${productId}`);
 
-  const cartId = "demo-cart";
-  const cart = carts.get(cartId);
+  const cartId = getOrCreateCartId();
+  const cart = getCartById(cartId);
 
-  if (cart) {
-    cart.items = cart.items.filter((item) => item.productId !== productId);
-    console.log(
-      `[Action] Removed ${productId}, cart now has ${cart.items.length} items`
-    );
-  }
+  cart.items = cart.items.filter((item) => item.productId !== productId);
+
+  console.log(
+    `[Action] Removed ${productId}, cart ${cartId} now has ${cart.items.length} items`
+  );
 }
 
 /**
@@ -85,13 +126,8 @@ export async function updateCartQuantity(
   await delay(1000); // Simulate network delay
   console.log(`[Action] updateCartQuantity: ${productId} delta=${delta}`);
 
-  const cartId = "demo-cart";
-  let cart = carts.get(cartId);
-
-  if (!cart) {
-    cart = { items: [] };
-    carts.set(cartId, cart);
-  }
+  const cartId = getOrCreateCartId();
+  const cart = getCartById(cartId);
 
   const existing = cart.items.find((item) => item.productId === productId);
 
@@ -101,18 +137,18 @@ export async function updateCartQuantity(
     if (existing.quantity <= 0) {
       // Remove item from cart
       cart.items = cart.items.filter((item) => item.productId !== productId);
-      console.log(`[Action] Removed ${productId} from cart (quantity <= 0)`);
+      console.log(`[Action] Removed ${productId} from cart ${cartId} (quantity <= 0)`);
       return 0;
     }
 
     console.log(
-      `[Action] Updated ${productId} quantity to ${existing.quantity}`
+      `[Action] Updated ${productId} quantity to ${existing.quantity} in cart ${cartId}`
     );
     return existing.quantity;
   } else if (delta > 0) {
     // Item not in cart, add it
     cart.items.push({ productId, quantity: delta });
-    console.log(`[Action] Added new item ${productId} with quantity ${delta}`);
+    console.log(`[Action] Added new item ${productId} with quantity ${delta} to cart ${cartId}`);
     return delta;
   }
 
@@ -125,13 +161,11 @@ export async function updateCartQuantity(
 export async function clearCart() {
   console.log(`[Action] clearCart`);
 
-  const cartId = "demo-cart";
-  const cart = carts.get(cartId);
+  const cartId = getOrCreateCartId();
+  const cart = getCartById(cartId);
+  cart.items = [];
 
-  if (cart) {
-    cart.items = [];
-    console.log(`[Action] Cart cleared`);
-  }
+  console.log(`[Action] Cart ${cartId} cleared`);
 }
 
 /**
@@ -141,9 +175,10 @@ export async function clearCart() {
  * @returns Total number of items in cart
  */
 export async function getCartCount(): Promise<number> {
-  const cart = carts.get("demo-cart");
-  const count = cart?.items.reduce((sum, item) => sum + item.quantity, 0) || 0;
-  console.log(`[Action] getCartCount: ${count}`);
+  const cartId = getOrCreateCartId();
+  const cart = getCartById(cartId);
+  const count = cart.items.reduce((sum, item) => sum + item.quantity, 0);
+  console.log(`[Action] getCartCount for ${cartId}: ${count}`);
   return count;
 }
 
@@ -156,8 +191,9 @@ export async function getCartCount(): Promise<number> {
 export async function getCartItems(): Promise<
   Array<{ productId: string; quantity: number }>
 > {
-  const cart = carts.get("demo-cart");
-  return cart?.items || [];
+  const cartId = getOrCreateCartId();
+  const cart = getCartById(cartId);
+  return cart.items;
 }
 
 // Helper function for delay
@@ -194,14 +230,8 @@ export async function addToCartWithResult(
     throw new Error("Cannot add more than 10 items at once");
   }
 
-  // Get or create cart
-  const cartId = "demo-cart";
-  let cart = carts.get(cartId);
-
-  if (!cart) {
-    cart = { items: [] };
-    carts.set(cartId, cart);
-  }
+  const cartId = getOrCreateCartId();
+  const cart = getCartById(cartId);
 
   // Add or update item
   const existing = cart.items.find((item) => item.productId === productId);
@@ -216,7 +246,7 @@ export async function addToCartWithResult(
   const newQuantity = existing?.quantity || quantity;
   const totalItems = cart.items.reduce((sum, item) => sum + item.quantity, 0);
 
-  console.log(`[Action] Cart updated. Total items: ${totalItems}`);
+  console.log(`[Action] Cart ${cartId} updated. Total items: ${totalItems}`);
   await delay(3000);
 
   // Return success with cart summary

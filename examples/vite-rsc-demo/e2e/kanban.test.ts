@@ -90,14 +90,12 @@ test.describe("kanban-intercept-routes", () => {
     await cardLink.click();
     await expect(testId(page, "card-modal")).toBeVisible();
 
-    // Click close button
+    // Click close button and wait for navigation
     await testId(page, "card-modal-close").click();
+    await page.waitForURL(/\/kanban\/?$/);
 
     // Modal should be closed
     await expect(testId(page, "card-modal")).not.toBeVisible();
-
-    // Should navigate back to board
-    await expect(page).toHaveURL(/\/kanban$/);
   });
 
   test("should close modal when clicking Back to Board button", async ({
@@ -113,14 +111,12 @@ test.describe("kanban-intercept-routes", () => {
     await cardLink.click();
     await expect(testId(page, "card-modal")).toBeVisible();
 
-    // Click Back to Board button
+    // Click Back to Board button and wait for navigation
     await testId(page, "back-to-board").click();
+    await page.waitForURL(/\/kanban\/?$/);
 
     // Modal should be closed
     await expect(testId(page, "card-modal")).not.toBeVisible();
-
-    // Should navigate back to board
-    await expect(page).toHaveURL(/\/kanban$/);
   });
 
   test("should display card title in modal", async ({ page }) => {

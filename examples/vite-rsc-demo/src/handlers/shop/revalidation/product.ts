@@ -1,10 +1,6 @@
-import type { RouteRevalidateFn } from "@ivogt/rsc-router/server";
-import type { shopRoutes } from "@/routes.js";
+import type { Revalidate } from "@rangojs/router/server";
 
-export const productDetailRevalidation: RouteRevalidateFn<
-  typeof shopRoutes,
-  "shop.products.detail.view"
-> = ({
+export const productDetailRevalidation: Revalidate<{ slug: string }> = ({
   currentParams,
   nextParams,
   method,

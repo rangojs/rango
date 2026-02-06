@@ -43,7 +43,7 @@ pnpm dev
 ## Quick Example
 
 ```typescript
-import { route, map, createRSCRouter } from "rsc-router/server";
+import { route, map, createRouter } from "rsc-router/server";
 
 // Define routes
 export const shopRoutes = route({
@@ -52,7 +52,7 @@ export const shopRoutes = route({
 });
 
 // Create router
-const router = createRSCRouter();
+const router = createRouter();
 router.route("/shop", shopRoutes).map(() => import("./handlers/shop"));
 
 // Define handlers

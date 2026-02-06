@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useOptimistic, startTransition } from "react";
-import { Outlet, useLoader, Link, useLocationState } from "@ivogt/rsc-router/client";
+import { Outlet, useLoader, Link, useLocationState } from "@rangojs/router/client";
 import { ProductLoader } from "../loaders/product.js";
 import { ModalRecommendationsLoader } from "../loaders/modal-recommendations.js";
 import { ProductCartLoader } from "../loaders/product-cart.js";

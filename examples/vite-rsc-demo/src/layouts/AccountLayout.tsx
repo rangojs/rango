@@ -1,4 +1,4 @@
-import { Outlet, ParallelOutlet } from '@ivogt/rsc-router/client';
+import { Outlet, ParallelOutlet } from '@rangojs/router/client';
 import { DebugSegmentWrapper } from '../components/DebugSegmentWrapper.js';
 
 export function AccountLayout() {

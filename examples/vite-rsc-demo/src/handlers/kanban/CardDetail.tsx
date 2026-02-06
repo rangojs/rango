@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition, useEffect, useOptimistic } from "react";
-import { useLoader, Link, useNavigation } from "@ivogt/rsc-router/client";
+import { useLoader, Link, useNavigation, href } from "@rangojs/router/client";
 import { CardDetailLoader } from "./loader.js";
 import { kanbanUpdateCard, kanbanDeleteCard } from "./actions.js";
 import { labelColors } from "./data.js";
@@ -426,7 +426,7 @@ export function CardDetailContent() {
               paddingTop: "1rem",
             }}
           >
-            <Link to="/kanban" style={{ textDecoration: "none" }}>
+            <Link to={href("/kanban/")} style={{ textDecoration: "none" }}>
               <button style={styles.cancelButton} data-testid="back-to-board">Back to Board</button>
             </Link>
             <button style={styles.deleteButton} onClick={handleDelete} data-testid="delete-card">

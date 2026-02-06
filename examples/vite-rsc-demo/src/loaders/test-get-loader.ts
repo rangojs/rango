@@ -1,4 +1,4 @@
-import { createLoader } from "@ivogt/rsc-router";
+import { createLoader } from "@rangojs/router";
 
 /**
  * Test fetchable loader for GET-based fetching

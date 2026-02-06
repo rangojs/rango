@@ -1,10 +1,6 @@
-import type { RouteMiddlewareFn } from "@ivogt/rsc-router/server";
-import type { shopRoutes } from "@/routes.js";
+import type { Middleware } from "@rangojs/router/server";
 
-export const permissionsMiddleware: RouteMiddlewareFn<
-  typeof shopRoutes,
-  "shop.account.orders"
->[] = [
+export const permissionsMiddleware: Middleware[] = [
   (ctx, next) => {
     console.log("[Shop Middleware] Checking order view permissions");
     const user = ctx.get("user"); // Type-safe!

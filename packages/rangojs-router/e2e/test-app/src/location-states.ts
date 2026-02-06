@@ -1,0 +1,8 @@
+import { createLocationState } from "@rangojs/router/client";
+
+export interface SlowProductState {
+  productName: string;
+  productPrice: number;
+}
+
+export const SlowProductLocationState = createLocationState<SlowProductState>();

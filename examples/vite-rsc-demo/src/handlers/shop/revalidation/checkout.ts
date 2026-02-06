@@ -1,10 +1,6 @@
-import type { RouteRevalidateFn } from "@ivogt/rsc-router/server";
-import type { shopRoutes } from "@/routes.js";
+import type { Revalidate } from "@rangojs/router/server";
 
-export const checkoutConfirmRevalidation: RouteRevalidateFn<
-  typeof shopRoutes,
-  "shop.checkout.confirm"
-> = () => {
-    console.log("[Shop] Checkout confirmation never revalidates");
-    return false; // Static confirmation page
-  };
+export const checkoutConfirmRevalidation: Revalidate = () => {
+  console.log("[Shop] Checkout confirmation never revalidates");
+  return false; // Static confirmation page
+};

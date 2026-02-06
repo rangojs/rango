@@ -1,12 +1,9 @@
-import type { RouteHandler } from "@ivogt/rsc-router/server";
-import type { shopRoutes } from "@/routes.js";
+import type { Handler } from "@rangojs/router/server";
+import type { AppEnv } from "@/router.js";
 import { orders } from "@/handlers/shop/data.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 
-export const AccountIndexRoute: RouteHandler<
-  typeof shopRoutes,
-  "shop.account.index"
-> = (ctx) => {
+export const AccountIndexRoute: Handler<{}, AppEnv> = (ctx) => {
   // Type-safe context access!
   const user = ctx.get("user") || {
     id: "guest",
@@ -82,16 +79,13 @@ export const AccountIndexRoute: RouteHandler<
         <p>
           All <code>account.*</code> routes share the same AccountLayout
         </p>
-        <SegmentTimer />
+        <SegmentTimer serverRenderTime={new Date().toISOString()} />
       </div>
     </div>
   );
 };
 
-export const AccountOrdersRoute: RouteHandler<
-  typeof shopRoutes,
-  "shop.account.orders"
-> = () => (
+export const AccountOrdersRoute: Handler = () => (
   <div>
     <h2>Order History</h2>
     <p className="segment-id">Segment: Account Orders</p>
@@ -146,15 +140,12 @@ export const AccountOrdersRoute: RouteHandler<
       <p>
         This route uses <code>[middleware("shop.account.orders", "permissions")]</code>
       </p>
-      <SegmentTimer />
+      <SegmentTimer serverRenderTime={new Date().toISOString()} />
     </div>
   </div>
 );
 
-export const AccountOrderDetailRoute: RouteHandler<
-  typeof shopRoutes,
-  "shop.account.orderDetail"
-> = (ctx) => {
+export const AccountOrderDetailRoute: Handler<{ id: string }> = (ctx) => {
   const order = orders.find((o) => o.id === ctx.params.id);
 
   if (!order) {
@@ -244,7 +235,7 @@ export const AccountOrderDetailRoute: RouteHandler<
         <p>
           <strong>Current Order ID:</strong> {ctx.params.id}
         </p>
-        <SegmentTimer />
+        <SegmentTimer serverRenderTime={new Date().toISOString()} />
       </div>
 
       <div style={{ marginTop: "1rem" }}>

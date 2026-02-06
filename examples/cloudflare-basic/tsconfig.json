@@ -11,7 +11,7 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "types": ["@cloudflare/workers-types", "vite/client", "rsc-router/types"]
+    "types": ["@cloudflare/workers-types", "vite/client", "@rangojs/router/types"]
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

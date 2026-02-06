@@ -1,7 +1,6 @@
-import type { RouteRevalidateFn } from "@ivogt/rsc-router/server";
-import type { blogRoutes } from "@/routes.js";
+import type { Revalidate } from "@rangojs/router/server";
 
-export const postRevalidation: RouteRevalidateFn<typeof blogRoutes, "blog.post"> = ({
+export const postRevalidation: Revalidate<{ slug: string }> = ({
   currentParams,
   nextParams,
   defaultShouldRevalidate,

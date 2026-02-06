@@ -1,11 +1,10 @@
-import type { RouteHandler } from "@ivogt/rsc-router/server";
-import type { blogRoutes } from "@/routes.js";
+import type { Handler } from "@rangojs/router/server";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 import { CurrentURL } from "@/components/CurrentURL.js";
-import { Link } from "@ivogt/rsc-router/client";
+import { Link } from "@rangojs/router/client";
 
-export const PostRoute: RouteHandler<typeof blogRoutes, "blog.post"> = (ctx) => {
+export const PostRoute: Handler<{ slug: string }> = (ctx) => {
   const renderTime = new Date().toISOString();
   const queryParams: [string, string][] = Array.from(
     ctx.searchParams.entries()
@@ -85,10 +84,7 @@ export const PostRoute: RouteHandler<typeof blogRoutes, "blog.post"> = (ctx) => 
           </p>
         </div>
 
-        <SegmentTimer
-          segmentId="R2.1 (Blog Post)"
-          serverRenderTime={renderTime}
-        />
+<SegmentTimer serverRenderTime={renderTime} />
 
         <div
           style={{

@@ -1,4 +1,4 @@
-import { createLoader } from "@ivogt/rsc-router";
+import { createLoader } from "@rangojs/router";
 
 export type BlogSidebarData = {
   recentPosts: { slug: string; title: string; date: string }[];

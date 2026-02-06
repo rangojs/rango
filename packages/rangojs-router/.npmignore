@@ -1,0 +1,21 @@
+# Test files
+**/__tests__/
+**/__mocks__/
+**/*.test.ts
+**/*.test.tsx
+
+# E2E tests
+e2e/
+
+# Playwright
+playwright.config.ts
+playwright-report/
+test-results/
+
+# Build configs
+vitest.config.ts
+tsconfig.json
+
+# Development
+.turbo/
+.claude/

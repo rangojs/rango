@@ -7,13 +7,13 @@
  * The shop example now uses framework types directly:
  * - RouteHandler<typeof shopRoutes, "cart">
  * - RouteRevalidateFn<typeof shopRoutes, "cart">
- * - RouteMiddlewareFn<typeof shopRoutes, "cart">
+ * - RouteMiddleware<typeof shopRoutes, "cart">
  *
  * You can create aliases like these if you prefer shorter syntax:
  *
  * @example
  * ```typescript
- * import type { RouteHandler } from "@ivogt/rsc-router/server";
+ * import type { RouteHandler } from "@rangojs/router/server";
  * import type { shopRoutes } from "../../routes.js";
  *
  * // Create convenience alias (OPTIONAL)

@@ -1,5 +1,5 @@
 /// <reference types="@cloudflare/workers-types" />
-import type { RouterEnv } from "@ivogt/rsc-router/server";
+import type { RouterEnv } from "@rangojs/router/server";
 
 // Cloudflare Workers bindings (D1, KV, etc.)
 export interface AppBindings {
