@@ -1,4 +1,4 @@
-import type { Middleware } from "@rangojs/router/server";
+import type { Middleware } from "@rangojs/router";
 
 /**
  * Mock authentication middleware - adds a mock user to context

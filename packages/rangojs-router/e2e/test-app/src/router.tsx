@@ -1,4 +1,4 @@
-import { createRouter, type RouterEnv, redirect, type Middleware } from "@rangojs/router/server";
+import { createRouter, type RouterEnv, redirect, type Middleware } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 import { urlpatterns } from "./urls.js";
 

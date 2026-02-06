@@ -1,5 +1,4 @@
-import { urls } from "@rangojs/router";
-import { Meta } from "@rangojs/router/server";
+import { urls, Meta } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import {
   MetaTemplateLayout,

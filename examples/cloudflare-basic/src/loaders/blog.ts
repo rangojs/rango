@@ -1,4 +1,4 @@
-import { createLoader } from "@rangojs/router/server";
+import { createLoader } from "@rangojs/router";
 
 /**
  * Blog post data structure

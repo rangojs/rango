@@ -1,5 +1,5 @@
 import type { HandlerContext } from "@rangojs/router";
-import { createLoader, notFound } from "@rangojs/router/server";
+import { createLoader, notFound } from "@rangojs/router";
 
 /**
  * Handler that throws an error

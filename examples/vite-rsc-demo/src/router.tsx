@@ -1,4 +1,4 @@
-import { createRouter, type RouterEnv } from "@rangojs/router/server";
+import { createRouter, type RouterEnv } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 import { RootLayout } from "./layouts/RootLayout.js";
 

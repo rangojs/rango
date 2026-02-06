@@ -6,7 +6,7 @@
  * - 300 routes included inside layout level 5
  * Total: 1110 routes testing both nesting and include()
  */
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 import { patterns300 } from "./patterns-300";
 
 const Page = () => null;

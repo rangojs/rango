@@ -1,4 +1,4 @@
-import type { Handler } from "@rangojs/router/server";
+import type { Handler } from "@rangojs/router";
 import { Breadcrumbs } from "@/handles/breadcrumbs.js";
 import { ProductsCategoryRoute, ProductsDetailRoute } from "./product.js";
 

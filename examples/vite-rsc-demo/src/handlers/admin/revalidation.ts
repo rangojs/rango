@@ -1,4 +1,4 @@
-import type { Revalidate, GenericParams } from "@rangojs/router/server";
+import type { Revalidate, GenericParams } from "@rangojs/router";
 
 // Global soft decision: suggests revalidation but allows override
 export const globalRevalidation: Revalidate<GenericParams, RSCRouter.Env> = () => {

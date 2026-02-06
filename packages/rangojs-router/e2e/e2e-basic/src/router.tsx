@@ -1,4 +1,4 @@
-import { createRouter, type RouterEnv } from "@rangojs/router/server";
+import { createRouter, type RouterEnv } from "@rangojs/router";
 import { urlpatterns } from "./urls.js";
 
 /**
