@@ -125,6 +125,63 @@ At build time the plugin:
 - Pre-render candidates are per-router
 - No route name collisions between routers (each has its own namespace)
 
+## Static Output: Separate Files Per Router
+
+Each router produces its own isolated static output. No shared files, no
+cross-contamination. A router rebuild only regenerates its own artifacts.
+
+### Build output structure
+
+```
+dist/
+  static/
+    app/                              # app-router output
+      manifest.json                   # route map + prefix tree
+      pages/
+        index.html                    # pre-rendered /
+        about.html                    # pre-rendered /about
+        shop/
+          index.html
+          cart.html
+          checkout/
+            index.html
+            payment.html
+    docs/                             # docs-router output
+      manifest.json                   # separate route map + prefix tree
+      pages/
+        index.html                    # pre-rendered /docs
+        getting-started.html
+        api-reference.html
+    api/                              # api-router output (no pre-render, just manifest)
+      manifest.json
+```
+
+### Why separate static files matter
+
+1. **Independent deployment** - docs on CDN, app on server, API on edge
+2. **Incremental rebuilds** - changing docs routes doesn't rebuild app pages
+3. **Runtime serving** - the server checks `dist/static/{routerId}/pages/{path}.html`
+   before hitting RSC; prefix tree tells it which router owns which prefix
+4. **Cache isolation** - each router's static files have their own cache headers
+5. **No collisions** - `app:home.index` and `docs:home.index` write to different dirs
+
+### Manifest file format (per router)
+
+```json
+{
+  "id": "app",
+  "generatedAt": "2026-02-06T...",
+  "routeManifest": {
+    "home.index": "/",
+    "about.index": "/about",
+    "shop.index": "/shop"
+  },
+  "prefixTree": { ... },
+  "preRendered": ["/", "/about", "/shop", "/shop/cart"],
+  "dynamic": ["shop.products.detail.view", "blog.post"]
+}
+```
+
 ## Pre-rendering API (Future)
 
 With the live router at build time:
@@ -152,7 +209,32 @@ The plugin would:
 3. Filter static routes (no `:params`)
 4. Add user-provided paths from `preRenderPaths`
 5. For each path: call `router.match(new Request(path), env)` -> get segments
-6. Render segments to HTML -> write to `dist/`
+6. Render segments to HTML -> write to `dist/static/{routerId}/pages/`
+7. Write manifest to `dist/static/{routerId}/manifest.json`
+
+### Runtime static file serving
+
+```ts
+// In the server handler (simplified)
+async function handleRequest(req: Request) {
+  const url = new URL(req.url);
+
+  // Check each router's manifest for a pre-rendered match
+  for (const manifest of loadedManifests) {
+    if (url.pathname.startsWith(manifest.prefixTree.staticPrefix)) {
+      const htmlPath = `dist/static/${manifest.id}/pages${url.pathname}.html`;
+      if (existsSync(htmlPath)) {
+        return new Response(readFileSync(htmlPath), {
+          headers: { "content-type": "text/html" },
+        });
+      }
+    }
+  }
+
+  // No static match -> fall through to RSC rendering
+  return router.fetch(req, env);
+}
+```
 
 ## Implementation Path
 
@@ -162,4 +244,6 @@ The plugin would:
 4. In rscRouter plugin's `buildStart` or `configureServer`:
    load router files via `server.environments.rsc.runner.import()`
 5. Extract manifests, prefix trees per router
-6. Pre-render static routes via `router.match()` + RSC rendering
+6. Write separate `dist/static/{id}/manifest.json` per router
+7. Pre-render static routes via `router.match()` + RSC rendering
+8. Write HTML to `dist/static/{id}/pages/` per router
