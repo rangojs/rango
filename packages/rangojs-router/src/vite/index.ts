@@ -421,7 +421,7 @@ const _rangoVersion: string = _require("../../package.json").version;
 let _bannerPrinted = false;
 
 function printBanner(
-  mode: "dev" | "build",
+  mode: "dev" | "build" | "preview",
   preset: string,
   version: string
 ): void {
@@ -434,15 +434,16 @@ function printBanner(
   const reset = "\x1b[0m";
 
   const banner = `
-${dim}   ✦        ✦          ✧.           .          .${reset}
-${dim}  ╱${reset}   ${bold}╔═╗${reset}${dim}             ╱                   ✦             *${reset}
-${dim}      ${reset}${bold}║ ║${reset}${dim} ${reset}${bold}╔═╗${reset}${dim}                    *                ✧.   ╱${reset}
-${dim}   ${reset}${bold}╔╗ ║ ║ ║ ║  ╦═╗╔═╗╔╗╔╔═╗╔═╗${reset}${dim}             ✧              ✦${reset}
-${dim}   ${reset}${bold}║║ ║ ╠═╝ ║  ╠╦╝╠═╣║║║║ ╦║ ║${reset}${dim}        *           ✧${reset}
+${dim}  ✦        ✦          ✧.           .          .${reset}
+${dim} ╱${reset}    ${bold}╔═╗${reset}${dim}      *      ╱                   ✦             *${reset}
+${dim}      ${reset}${bold}║ ║${reset} ${bold}╔═╗${reset}${dim}                    *                ✧.   ╱${reset}
+${dim}   ${reset}${bold}╔╗ ║ ║ ║ ║${reset}${dim}                          *               ╱${reset}
+${dim}   ${reset}${bold}║║ ║ ║ ║ ║  ╦═╗╔═╗╔╗╔╔═╗╔═╗${reset}${dim}             ✧              ✦${reset}
+${dim}  ${reset}${bold}═╣║ ║ ╠═╝ ║  ╠╦╝╠═╣║║║║ ╦║ ║${reset}${dim}        *           ✧${reset}
 ${dim}   ${reset}${bold}║╚═╝ ╔═══╝  ╩╚═╩ ╩╝╚╝╚═╝╚═╝${reset}${dim}            ✦          .      *${reset}
-${dim}   ${reset}${bold}╚══╗ ║${reset}${dim}        RSC Wrangler         ✧                ✦${reset}
-${dim}      ${reset}${bold}║ ║${reset}${dim}                          *            ✧.    ╱${reset}
-${dim}      ${reset}${bold}╚═╝${reset}${dim}                               ✦            *${reset}
+${dim}   ${reset}${bold}╚══╗ ║${reset}${dim} *      RSC Wrangler         ✧                ✦${reset}
+${dim}  *   ${reset}${bold}║ ╠═${reset}${dim}                         *            ✧.    ╱${reset}
+${bold}══════╝ ╚═════════╩═══${reset}${dim}                  ✦            *${reset}
 
    v${version} · ${preset} · ${mode}
 `;
@@ -573,7 +574,7 @@ export async function rango(
 
       configResolved(config) {
         if (showBanner) {
-          const mode = config.command === "serve" ? "dev" : "build";
+          const mode = config.command === "serve" ? (process.argv.includes("preview") ? "preview" : "dev") : "build";
           printBanner(mode, "cloudflare", _rangoVersion);
         }
       },
@@ -688,7 +689,7 @@ export async function rango(
 
         configResolved(config) {
           if (showBanner) {
-            const mode = config.command === "serve" ? "dev" : "build";
+            const mode = config.command === "serve" ? (process.argv.includes("preview") ? "preview" : "dev") : "build";
             printBanner(mode, "node", _rangoVersion);
           }
 
