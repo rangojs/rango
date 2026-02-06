@@ -1,4 +1,4 @@
-import type { Handler } from "@rangojs/router/server";
+import type { Handler } from "@rangojs/router";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 import { CurrentURL } from "@/components/CurrentURL.js";

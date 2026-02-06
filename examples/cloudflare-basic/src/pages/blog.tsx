@@ -1,4 +1,4 @@
-import { Meta, notFound } from "@rangojs/router/server";
+import { Meta, notFound } from "@rangojs/router";
 import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import type { HandlerContext } from "@rangojs/router";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";

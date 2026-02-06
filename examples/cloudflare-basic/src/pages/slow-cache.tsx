@@ -1,4 +1,4 @@
-import { Meta } from "@rangojs/router/server";
+import { Meta } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
 
 async function DataTable() {

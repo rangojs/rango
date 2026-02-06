@@ -1,5 +1,4 @@
-import { urls } from "@rangojs/router";
-import { redirect, notFound } from "@rangojs/router/server";
+import { urls, redirect, notFound } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import {
   NonCachedTestLoader,

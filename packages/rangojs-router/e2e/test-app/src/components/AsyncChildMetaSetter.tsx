@@ -1,4 +1,4 @@
-import type { MetaDescriptor } from "@rangojs/router/server";
+import type { MetaDescriptor } from "@rangojs/router";
 
 interface AsyncChildMetaSetterProps {
   meta: (descriptor: MetaDescriptor) => void;

@@ -1,7 +1,7 @@
 /**
  * 300 routes for include() stress testing
  */
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 
 const Page = () => null;
 

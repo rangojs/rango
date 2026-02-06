@@ -1,4 +1,4 @@
-import { createRouter, type Middleware } from "@rangojs/router/server";
+import { createRouter, type Middleware } from "@rangojs/router";
 import { urlpatterns } from "./urls.js";
 import { Document } from "./components/Document.js";
 import type { AppEnv } from "./env.js";

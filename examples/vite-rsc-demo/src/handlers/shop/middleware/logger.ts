@@ -1,4 +1,4 @@
-import type { Middleware } from "@rangojs/router/server";
+import type { Middleware } from "@rangojs/router";
 
 export const loggerMiddleware: Middleware[] = [
   (ctx, next) => {
