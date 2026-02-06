@@ -78,5 +78,3 @@ const router = createRouter<AppEnv>({
  */
 export { router };
 export const href = router.href;
-
-console.log("[Router] Configured with Django-style urls() API");
