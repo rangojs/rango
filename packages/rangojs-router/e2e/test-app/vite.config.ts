@@ -1,11 +1,11 @@
 import { defineConfig } from "vite";
 import path from "path";
-import { rscRouter } from "@rangojs/router/vite";
+import { rango } from "@rangojs/router/vite";
 import devtoolsJson from "vite-plugin-devtools-json";
 
 export default defineConfig({
   plugins: [
-    rscRouter({
+    rango({
       router: "./src/router.tsx",
       // Using virtual entries (no explicit entries specified)
     }),

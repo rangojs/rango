@@ -1,7 +1,7 @@
 import { cloudflare } from "@cloudflare/vite-plugin";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
-import { rscRouter } from "@rangojs/router/vite";
+import { rango } from "@rangojs/router/vite";
 
 export default defineConfig({
   server: {
@@ -10,7 +10,7 @@ export default defineConfig({
   },
   plugins: [
     react(),
-    rscRouter({ preset: "cloudflare" }),
+    rango({ preset: "cloudflare" }),
     cloudflare({
       configPath: "./wrangler.json",
       viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },

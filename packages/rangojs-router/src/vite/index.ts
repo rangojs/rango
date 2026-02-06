@@ -93,7 +93,7 @@ export interface RscPluginOptions {
 /**
  * Base options shared by all presets
  */
-interface RscRouterBaseOptions {
+interface RangoBaseOptions {
   /**
    * Expose $$id property on server action functions.
    * Required for action-based revalidation to work.
@@ -105,7 +105,7 @@ interface RscRouterBaseOptions {
 /**
  * Options for Node.js deployment (default)
  */
-export interface RscRouterNodeOptions extends RscRouterBaseOptions {
+export interface RangoNodeOptions extends RangoBaseOptions {
   /**
    * Deployment preset. Defaults to 'node' when not specified.
    */
@@ -117,7 +117,7 @@ export interface RscRouterNodeOptions extends RscRouterBaseOptions {
    *
    * @example
    * ```ts
-   * rscRouter({ router: './src/router.tsx' })
+   * rango({ router: './src/router.tsx' })
    * ```
    */
   router: string;
@@ -141,7 +141,7 @@ export interface RscRouterNodeOptions extends RscRouterBaseOptions {
 /**
  * Options for Cloudflare Workers deployment
  */
-export interface RscRouterCloudflareOptions extends RscRouterBaseOptions {
+export interface RangoCloudflareOptions extends RangoBaseOptions {
   /**
    * Deployment preset for Cloudflare Workers.
    * When using cloudflare preset:
@@ -153,9 +153,9 @@ export interface RscRouterCloudflareOptions extends RscRouterBaseOptions {
 }
 
 /**
- * Options for rscRouter plugin
+ * Options for rango() Vite plugin
  */
-export type RscRouterOptions = RscRouterNodeOptions | RscRouterCloudflareOptions;
+export type RangoOptions = RangoNodeOptions | RangoCloudflareOptions;
 
 /**
  * Create a virtual modules plugin for default entry files.
@@ -409,7 +409,7 @@ function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
 }
 
 /**
- * Vite plugin for rsc-router.
+ * Vite plugin for @rangojs/router.
  *
  * Includes @vitejs/plugin-rsc and all necessary transforms for the router
  * to function correctly with React Server Components.
@@ -417,7 +417,7 @@ function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
  * @example Node.js (default)
  * ```ts
  * export default defineConfig({
- *   plugins: [react(), rscRouter({ router: './src/router.tsx' })],
+ *   plugins: [react(), rango({ router: './src/router.tsx' })],
  * });
  * ```
  *
@@ -426,14 +426,14 @@ function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
  * export default defineConfig({
  *   plugins: [
  *     react(),
- *     rscRouter({ preset: 'cloudflare' }),
+ *     rango({ preset: 'cloudflare' }),
  *     cloudflare({ viteEnvironment: { name: 'rsc' } }),
  *   ],
  * });
  * ```
  */
-export async function rscRouter(
-  options: RscRouterOptions
+export async function rango(
+  options: RangoOptions
 ): Promise<PluginOption[]> {
   const preset = options.preset ?? "node";
   const enableExposeActionId = options.exposeActionId ?? true;
@@ -441,7 +441,7 @@ export async function rscRouter(
   const plugins: PluginOption[] = [];
 
   // Get package resolution info (workspace vs npm install)
-  const rscRouterAliases = getPackageAliases();
+  const rangoAliases = getPackageAliases();
   const excludeDeps = getExcludeDeps();
 
   // Track RSC entry path for version injection
@@ -474,7 +474,7 @@ export async function rscRouter(
             esbuildOptions: sharedEsbuildOptions,
           },
           resolve: {
-            alias: rscRouterAliases,
+            alias: rangoAliases,
           },
           environments: {
             client: {
@@ -544,7 +544,7 @@ export async function rscRouter(
     );
   } else {
     // Node preset: full RSC plugin integration
-    const nodeOptions = options as RscRouterNodeOptions;
+    const nodeOptions = options as RangoNodeOptions;
     const routerPath = nodeOptions.router;
     const rscOption = nodeOptions.rsc ?? true;
 
@@ -590,7 +590,7 @@ export async function rscRouter(
               esbuildOptions: sharedEsbuildOptions,
             },
             resolve: {
-              alias: rscRouterAliases,
+              alias: rangoAliases,
             },
             environments: {
               client: {
@@ -646,7 +646,7 @@ export async function rscRouter(
             hasWarnedDuplicate = true;
             console.warn(
               "[rsc-router] Duplicate @vitejs/plugin-rsc detected. " +
-                "Remove rsc() from your config or use rscRouter({ rsc: false }) for manual configuration."
+                "Remove rsc() from your config or use rango({ rsc: false }) for manual configuration."
             );
           }
         },
