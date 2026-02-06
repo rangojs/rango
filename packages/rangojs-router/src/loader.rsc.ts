@@ -199,12 +199,22 @@ export function createLoader<T>(
     return registered.fn(ctx);
   }
 
+  // For fetchable loaders, include action in toJSON so it survives RSC serialization.
+  // loaderAction has "use server" so RSC Flight serializes it as a server action reference.
+  // Without this, passing a loader as a prop to a client component would lose the action,
+  // breaking useActionState() which needs loader.action for progressive enhancement.
+  const fetchableToJSON = () => ({
+    __brand: "loader" as const,
+    $$id: loaderId,
+    action: loaderAction,
+  });
+
   // Return a loader object with action for form-based fetching
   // The exposeLoaderId plugin will set $$id on this object
   return {
     __brand: "loader",
     $$id: loaderId,
     action: loaderAction,
-    toJSON,
+    toJSON: fetchableToJSON,
   };
 }

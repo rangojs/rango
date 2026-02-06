@@ -1428,7 +1428,7 @@ export type LoaderDefinition<T = any, TParams = Record<string, string | undefine
   $$id: string;  // Injected by Vite plugin (exposeLoaderId) - unique identifier
   fn?: LoaderFn<T, TParams, any>;  // Optional - stripped on client via "use server"
   action?: LoaderAction<T>;  // Optional - for fetchable loaders
-  toJSON?: () => { __brand: "loader"; $$id: string };  // RSC serialization
+  toJSON?: () => { __brand: "loader"; $$id: string; action?: LoaderAction<T> };  // RSC serialization
 };
 
 // ============================================================================
