@@ -356,14 +356,59 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
 
     // Import the router package to access the registry
     const serverMod = await rscEnv.runner.import("@rangojs/router/server");
-    const registry: Map<string, any> = serverMod.RouterRegistry;
+    let registry: Map<string, any> = serverMod.RouterRegistry;
 
     if (!registry || registry.size === 0) {
-      console.warn(
-        "[rsc-router] No routers found in registry after importing",
-        entryPath
-      );
-      return serverMod;
+      // No RSC routers found directly. Check for host routers with lazy handlers
+      // that need to be resolved to trigger sub-app createRouter() calls.
+      try {
+        const hostMod = await rscEnv.runner.import("@rangojs/router/host");
+        const hostRegistry: Map<string, any> | undefined = hostMod.HostRouterRegistry;
+
+        if (hostRegistry && hostRegistry.size > 0) {
+          console.log(
+            `[rsc-router] Found ${hostRegistry.size} host router(s), resolving lazy handlers...`
+          );
+
+          for (const [, entry] of hostRegistry) {
+            for (const route of entry.routes) {
+              if (typeof route.handler === 'function') {
+                try {
+                  await route.handler();
+                } catch {
+                  // Lazy handler may fail in temp server context, that's OK
+                }
+              }
+            }
+            if (entry.fallback && typeof entry.fallback.handler === 'function') {
+              try {
+                await entry.fallback.handler();
+              } catch {
+                // Fallback handler may fail in temp server context
+              }
+            }
+          }
+
+          // Re-read RouterRegistry - sub-app createRouter() calls should have populated it
+          const freshServerMod = await rscEnv.runner.import("@rangojs/router/server");
+          const freshRegistry: Map<string, any> = freshServerMod.RouterRegistry;
+
+          if (freshRegistry && freshRegistry.size > 0) {
+            // Update references so the manifest generation below uses the fresh data
+            Object.assign(serverMod, freshServerMod);
+            registry = freshRegistry;
+          }
+        }
+      } catch {
+        // @rangojs/router/host not available or import failed, skip
+      }
+
+      // If still no routers after host router resolution, fail
+      if (!registry || registry.size === 0) {
+        throw new Error(
+          `[rsc-router] No routers found in registry after importing ${entryPath}`
+        );
+      }
     }
 
     // Import build utilities for manifest generation
@@ -481,6 +526,10 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
           // Use the resolved aliases from the real config (includes user's path aliases
           // like @/ -> src/ AND package aliases from rsc-router)
           resolve: { alias: userResolveAlias },
+          // Enable automatic JSX runtime so .tsx files don't need `import React`.
+          // Without this, esbuild defaults to classic mode (React.createElement)
+          // which fails when lazy host-router handlers load sub-app modules with JSX.
+          esbuild: { jsx: "automatic", jsxImportSource: "react" },
           plugins: [
             rsc({ entries: { client: "virtual:entry-client", ssr: "virtual:entry-ssr", rsc: entryPath } }),
             createVersionPlugin(),
@@ -500,7 +549,12 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
 
         await discoverRouters(rscEnv);
       } catch (err: any) {
-        console.warn(
+        // Clean up before re-throwing so the temp server doesn't leak
+        delete (globalThis as any).__rscRouterDiscoveryActive;
+        if (tempServer) {
+          await tempServer.close();
+        }
+        throw new Error(
           `[rsc-router] Build-time router discovery failed: ${err.message}`
         );
       } finally {
@@ -986,6 +1040,9 @@ export async function rscRouter(
 
   return plugins;
 }
+
+/** Alias for backwards compatibility */
+export const rango = rscRouter;
 
 /**
  * Transform CJS vendor files from @vitejs/plugin-rsc to ESM for browser compatibility.
