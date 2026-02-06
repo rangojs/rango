@@ -245,7 +245,7 @@ type ExtractRoutesFromItems<
  * Uses mapped types for sibling processing (no sibling limit).
  * Uses Simplify to force eager evaluation for interface extension compatibility.
  */
-export type ExtractRoutes<T extends readonly any[]> = Simplify<ExtractRoutesFromItems<T, 40>>;
+export type ExtractRoutes<T extends readonly any[]> = ExtractRoutesFromItems<T, 40>;
 
 // ============================================================================
 // Path Helpers Type
@@ -282,10 +282,13 @@ export type PathHelpers<TEnv> = {
   /**
    * Define a layout that wraps child routes
    */
-  layout: <const TChildren extends readonly LayoutUseItem[] = readonly LayoutUseItem[]>(
-    component: ReactNode | Handler<any, TEnv>,
-    use?: () => TChildren
-  ) => TypedLayoutItem<ExtractRoutes<TChildren>>;
+  layout: {
+    (component: ReactNode | Handler<any, TEnv>): TypedLayoutItem<{}>;
+    <const TChildren extends readonly LayoutUseItem[]>(
+      component: ReactNode | Handler<any, TEnv>,
+      use: () => TChildren
+    ): TypedLayoutItem<ExtractRoutes<TChildren>>;
+  };
 
   /**
    * Include nested URL patterns with optional name prefix
@@ -374,12 +377,13 @@ export type PathHelpers<TEnv> = {
    */
   cache: {
     (): CacheItem;
-    <const TChildren extends readonly AllUseItems[] = readonly AllUseItems[]>(
+    <const TChildren extends readonly AllUseItems[]>(
       children: () => TChildren
     ): TypedCacheItem<ExtractRoutes<TChildren>>;
-    <const TChildren extends readonly AllUseItems[] = readonly AllUseItems[]>(
+    (options: PartialCacheOptions | false): TypedCacheItem<{}>;
+    <const TChildren extends readonly AllUseItems[]>(
       options: PartialCacheOptions | false,
-      use?: () => TChildren
+      use: () => TChildren
     ): TypedCacheItem<ExtractRoutes<TChildren>>;
   };
 };

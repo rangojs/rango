@@ -88,6 +88,13 @@ type RoutePattern<TRoutes, K extends keyof TRoutes> =
   TRoutes[K] extends string ? TRoutes[K] : string;
 
 /**
+ * Strip trailing slash from a path (e.g., "/blog/" -> "/blog" | "/blog/")
+ * Allows navigation to include() prefixes without requiring trailing slash
+ */
+type OptionalTrailingSlash<T extends string> =
+  T extends `${infer Base}/` ? (Base extends "" ? T : Base | T) : T;
+
+/**
  * Union of all valid paths from registered routes
  *
  * Generated from RSCRouter.RegisteredRoutes via module augmentation.
@@ -96,7 +103,9 @@ type RoutePattern<TRoutes, K extends keyof TRoutes> =
 export type ValidPaths<TRoutes = GetRegisteredRoutes> =
   keyof TRoutes extends never
     ? `/${string}` // Fallback when no routes are registered
-    : WithSuffix<PatternToPath<RoutePattern<TRoutes, keyof TRoutes>>>;
+    : WithSuffix<{
+        [K in keyof TRoutes]: OptionalTrailingSlash<PatternToPath<RoutePattern<TRoutes, K>>>
+      }[keyof TRoutes]>;
 
 /**
  * Type-safe href function for client-side use

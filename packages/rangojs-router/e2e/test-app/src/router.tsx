@@ -28,9 +28,12 @@ export interface AppVariables {
 
 export type AppEnv = RouterEnv<AppBindings, AppVariables>;
 
+type AppRoutes = typeof router.routeMap;
+
 declare global {
   namespace RSCRouter {
     interface Env extends AppEnv {}
+    interface RegisteredRoutes extends AppRoutes {}
   }
 }
 

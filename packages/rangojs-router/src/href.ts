@@ -213,7 +213,7 @@ export type ExtractLocalRoutes<TPatterns> =
  * ```
  */
 export function scopedHref<TPatterns>(
-  href: (name: string, params?: Record<string, string>) => string
+  href: ((...args: any[]) => string)
 ): ScopedHrefFunction<ExtractLocalRoutes<TPatterns>> {
   return href as ScopedHrefFunction<ExtractLocalRoutes<TPatterns>>;
 }
