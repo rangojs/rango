@@ -17,7 +17,7 @@ import {
   type HrefFunction,
   type PrefixRoutePatterns,
 } from "./href.js";
-import { registerRouteMap, getGlobalRouteMap } from "./route-map-builder.js";
+import { registerRouteMap, getGlobalRouteMap, getPrecomputedEntries } from "./route-map-builder.js";
 import {
   createRouteHelpers,
   type RouteHelpers,
@@ -1081,6 +1081,14 @@ export function createRouter<TEnv = any>(
   // Track all registered routes with their prefixes for href()
   const mergedRouteMap: Record<string, string> = {};
 
+  // Build a Map from precomputed entries for O(1) lookup by staticPrefix.
+  // The array is set at import time (from the virtual module) before createRouter runs.
+  const precomputedEntriesRaw = getPrecomputedEntries();
+  const precomputedByPrefix: Map<string, Record<string, string>> | null =
+    precomputedEntriesRaw
+      ? new Map(precomputedEntriesRaw.map(e => [e.staticPrefix, e.routes]))
+      : null;
+
   // Wrapper to pass debugPerformance to external createMetricsStore
   const getMetricsStore = () => createMetricsStore(debugPerformance);
 
@@ -1198,6 +1206,22 @@ export function createRouter<TEnv = any>(
   function evaluateLazyEntry(entry: RouteEntry<TEnv>): void {
     if (!entry.lazy || entry.lazyEvaluated || !entry.lazyPatterns) {
       return;
+    }
+
+    // Check for pre-computed routes from build-time data.
+    // Only leaf nodes (no nested includes) are precomputed, so entries with
+    // nested lazy includes fall through to the handler below.
+    if (precomputedByPrefix) {
+      const routes = precomputedByPrefix.get(entry.staticPrefix);
+      if (routes) {
+        entry.lazyEvaluated = true;
+        entry.routes = routes as ResolvedRouteMap<any>;
+        for (const [name, pattern] of Object.entries(routes)) {
+          mergedRouteMap[name] = pattern;
+        }
+        registerRouteMap(mergedRouteMap);
+        return;
+      }
     }
 
     // Mark as evaluated immediately to prevent concurrent evaluation.

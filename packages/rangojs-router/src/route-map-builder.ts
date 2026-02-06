@@ -118,6 +118,13 @@ let globalRouteMap: Record<string, string> = {};
 // Set from runtime cache or build-time import
 let cachedManifest: Record<string, string> | null = null;
 
+// Pre-computed route entries from build-time prefix tree leaf nodes.
+// Used by evaluateLazyEntry() to skip running the handler for route matching.
+let cachedPrecomputedEntries: Array<{
+  staticPrefix: string;
+  routes: Record<string, string>;
+}> | null = null;
+
 /**
  * Register the route map globally for href to use at runtime
  *
@@ -184,4 +191,26 @@ export function hasCachedManifest(): boolean {
  */
 export function clearCachedManifest(): void {
   cachedManifest = null;
+}
+
+/**
+ * Set pre-computed route entries from build-time data.
+ *
+ * Each entry corresponds to a leaf node in the prefix tree (no nested includes).
+ * evaluateLazyEntry() checks these before running the handler, avoiding the
+ * 5-50ms cost of handler evaluation for route matching on the first request.
+ *
+ * @param entries - Array of { staticPrefix, routes } from build-time prefix tree leaves
+ */
+export function setPrecomputedEntries(
+  entries: Array<{ staticPrefix: string; routes: Record<string, string> }> | null,
+): void {
+  cachedPrecomputedEntries = entries;
+}
+
+/**
+ * Get pre-computed route entries (if available)
+ */
+export function getPrecomputedEntries(): typeof cachedPrecomputedEntries {
+  return cachedPrecomputedEntries;
 }

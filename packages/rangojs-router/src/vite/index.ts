@@ -325,6 +325,41 @@ function createVersionPlugin(): Plugin {
 }
 
 /**
+ * Flatten prefix tree leaf nodes into precomputed route entries.
+ * Leaf nodes have no children (no nested includes), so their routes can be
+ * used directly by evaluateLazyEntry() without running the handler.
+ * Non-leaf nodes are skipped because they have nested lazy includes that
+ * require the handler to run for discovery.
+ */
+function flattenLeafEntries(
+  prefixTree: Record<string, any>,
+  routeManifest: Record<string, string>,
+  result: Array<{ staticPrefix: string; routes: Record<string, string> }>,
+): void {
+  function visit(node: any): void {
+    const children = node.children || {};
+    if (Object.keys(children).length === 0 && node.routes && node.routes.length > 0) {
+      // Leaf node: collect its routes from the manifest
+      const routes: Record<string, string> = {};
+      for (const name of node.routes) {
+        if (name in routeManifest) {
+          routes[name] = routeManifest[name];
+        }
+      }
+      result.push({ staticPrefix: node.staticPrefix, routes });
+    } else {
+      // Non-leaf: recurse into children
+      for (const child of Object.values(children)) {
+        visit(child);
+      }
+    }
+  }
+  for (const node of Object.values(prefixTree)) {
+    visit(node);
+  }
+}
+
+/**
  * Plugin that discovers router instances at dev/build time via the RSC environment.
  *
  * Uses `server.environments.rsc.runner.import()` to load the user's router file
@@ -345,6 +380,14 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
   // Populated during discovery (dev: configureServer, build: buildStart).
   // Read by the virtual module's load hook to emit setCachedManifest() call.
   let mergedRouteManifest: Record<string, string> | null = null;
+
+  // Pre-computed route entries from prefix tree leaf nodes.
+  // Leaf nodes have no nested includes, so their routes can be used directly
+  // by evaluateLazyEntry() without running the handler.
+  let mergedPrecomputedEntries: Array<{
+    staticPrefix: string;
+    routes: Record<string, string>;
+  }> | null = null;
 
   // Shared discovery logic: import entry via RSC runner, generate manifests,
   // write static files, and populate mergedRouteManifest.
@@ -416,6 +459,7 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
     const generateManifest = buildMod.generateManifest;
 
     mergedRouteManifest = {};
+    mergedPrecomputedEntries = [];
 
     for (const [id, router] of registry) {
       if (!router.urlpatterns || !generateManifest) {
@@ -431,6 +475,11 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
 
       // Merge into the combined manifest
       Object.assign(mergedRouteManifest, manifest.routeManifest);
+
+      // Flatten prefix tree leaf nodes into precomputed entries.
+      // Leaf nodes (no children) can have their routes used directly by
+      // evaluateLazyEntry() without running the handler at runtime.
+      flattenLeafEntries(manifest.prefixTree, manifest.routeManifest, mergedPrecomputedEntries);
 
       // Write static files for this router
       const hash = hashRouterId(id);
@@ -486,6 +535,9 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
           // so href() works immediately without first-request penalty
           if (mergedRouteManifest && serverMod?.setCachedManifest) {
             serverMod.setCachedManifest(mergedRouteManifest);
+          }
+          if (mergedPrecomputedEntries && mergedPrecomputedEntries.length > 0 && serverMod?.setPrecomputedEntries) {
+            serverMod.setPrecomputedEntries(mergedPrecomputedEntries);
           }
         } catch (err: any) {
           console.warn(
@@ -578,10 +630,14 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
       if (id === "\0" + VIRTUAL_ROUTES_MANIFEST_ID) {
         const hasManifest = mergedRouteManifest && Object.keys(mergedRouteManifest).length > 0;
         if (hasManifest) {
-          return [
-            `import { setCachedManifest } from "@rangojs/router/server";`,
+          const lines = [
+            `import { setCachedManifest, setPrecomputedEntries } from "@rangojs/router/server";`,
             `setCachedManifest(${JSON.stringify(mergedRouteManifest)});`,
-          ].join("\n");
+          ];
+          if (mergedPrecomputedEntries && mergedPrecomputedEntries.length > 0) {
+            lines.push(`setPrecomputedEntries(${JSON.stringify(mergedPrecomputedEntries)});`);
+          }
+          return lines.join("\n");
         }
         // No manifest available yet (dev mode: discovery hasn't completed)
         return `// Route manifest will be populated at runtime`;
