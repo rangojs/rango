@@ -1,6 +1,8 @@
 import type { Plugin, PluginOption } from "vite";
 import * as Vite from "vite";
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
+import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { exposeActionId } from "./expose-action-id.ts";
 import { exposeLoaderId } from "./expose-loader-id.ts";
 import { exposeHandleId } from "./expose-handle-id.ts";
@@ -333,15 +335,16 @@ function createVersionPlugin(): Plugin {
  * @internal
  */
 function createRouterDiscoveryPlugin(routerPath: string): Plugin {
-  const RSC_ROUTER_BRAND = "__rsc_router__";
+  let projectRoot = "";
 
   return {
     name: "@rangojs/router:discovery",
 
+    configResolved(config) {
+      projectRoot = config.root;
+    },
+
     configureServer(server) {
-      // Run discovery after server is ready. The RSC environment's module runner
-      // is available once configureServer completes. We schedule it to run after
-      // all plugins have initialized.
       const discover = async () => {
         const rscEnv = (server.environments as any)?.rsc;
         if (!rscEnv?.runner) {
@@ -370,26 +373,45 @@ function createRouterDiscoveryPlugin(routerPath: string): Plugin {
           const generateManifest = buildMod.generateManifest;
 
           for (const [id, router] of registry) {
-            console.log(`[rsc-router] Discovered router: "${id}"`);
+            if (!router.urlpatterns || !generateManifest) {
+              continue;
+            }
 
-            if (router.urlpatterns && generateManifest) {
-              const manifest = generateManifest(router.urlpatterns);
-              const routeCount = Object.keys(manifest.routeManifest).length;
-              const staticRoutes = Object.values(manifest.routeManifest).filter(
-                (p: any) => !p.includes(":") && !p.includes("*")
-              ).length;
-              const dynamicRoutes = routeCount - staticRoutes;
+            const manifest = generateManifest(router.urlpatterns);
+            const routeCount = Object.keys(manifest.routeManifest).length;
+            const staticRoutes = Object.values(manifest.routeManifest).filter(
+              (p: any) => !p.includes(":") && !p.includes("*")
+            ).length;
+            const dynamicRoutes = routeCount - staticRoutes;
 
-              console.log(
-                `[rsc-router]   ${routeCount} routes (${staticRoutes} static, ${dynamicRoutes} dynamic)`
-              );
+            // Write static files for this router
+            const hash = hashRouterId(id);
+            const outDir = join(projectRoot, "dist", "static", `__${hash}`);
+            mkdirSync(outDir, { recursive: true });
 
-              // Populate the route map so href() works immediately
-              // without waiting for the first request to trigger lazy evaluation
-              const setCachedManifest = serverMod.setCachedManifest;
-              if (setCachedManifest) {
-                setCachedManifest(manifest.routeManifest);
-              }
+            // routes.json: route name -> URL pattern (for href() bootstrap)
+            writeFileSync(
+              join(outDir, "routes.json"),
+              JSON.stringify(manifest.routeManifest, null, 2) + "\n"
+            );
+
+            // prefixes.json: prefix tree (for short-circuit route matching)
+            writeFileSync(
+              join(outDir, "prefixes.json"),
+              JSON.stringify(manifest.prefixTree, null, 2) + "\n"
+            );
+
+            console.log(
+              `[rsc-router] Router "${id}" -> ${routeCount} routes ` +
+              `(${staticRoutes} static, ${dynamicRoutes} dynamic) ` +
+              `-> dist/static/__${hash}/`
+            );
+
+            // Populate the route map so href() works immediately
+            // without waiting for the first request to trigger lazy evaluation
+            const setCachedManifest = serverMod.setCachedManifest;
+            if (setCachedManifest) {
+              setCachedManifest(manifest.routeManifest);
             }
           }
         } catch (err: any) {
@@ -406,6 +428,14 @@ function createRouterDiscoveryPlugin(routerPath: string): Plugin {
       setTimeout(discover, 0);
     },
   };
+}
+
+/**
+ * Generate a deterministic 12-char hex hash from a router id.
+ * Used to create collision-free directory names for per-router static output.
+ */
+function hashRouterId(id: string): string {
+  return createHash("sha256").update(id).digest("hex").slice(0, 12);
 }
 
 /**
