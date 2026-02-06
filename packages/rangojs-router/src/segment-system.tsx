@@ -1,6 +1,6 @@
 import { createElement, type ReactNode, type ComponentType } from "react";
 import { OutletProvider } from "./client.js";
-import { MountContext } from "./browser/react/mount-context.js";
+import { MountContextProvider } from "./browser/react/mount-context.js";
 import type {
   ResolvedSegment,
   LoaderDataResult,
@@ -282,9 +282,12 @@ export async function renderSegments(
       });
     }
 
-    // Wrap with MountContext.Provider for include() scoped components
+    // Wrap with MountContextProvider for include() scoped components.
+    // Must use MountContextProvider (a proper "use client" export) instead of
+    // MountContext.Provider directly, because .Provider is a property on the
+    // context object and resolves to undefined through RSC client reference proxies.
     if (node.segment.mountPath && node.segment.type === "layout") {
-      content = createElement(MountContext.Provider, {
+      content = createElement(MountContextProvider, {
         value: node.segment.mountPath,
         children: content,
       });
