@@ -27,6 +27,6 @@ export function MountContextProvider({
 }: {
   value: string;
   children: ReactNode;
-}) {
+}): ReactNode {
   return createElement(MountContext, { value }, children);
 }
