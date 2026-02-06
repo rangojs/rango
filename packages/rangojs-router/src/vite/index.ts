@@ -1,8 +1,9 @@
 import type { Plugin, PluginOption } from "vite";
+import { createServer as createViteServer } from "vite";
 import * as Vite from "vite";
 import { resolve, join } from "node:path";
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { exposeActionId } from "./expose-action-id.ts";
 import { exposeLoaderId } from "./expose-loader-id.ts";
 import { exposeHandleId } from "./expose-handle-id.ts";
@@ -150,6 +151,7 @@ export interface RscRouterCloudflareOptions extends RscRouterBaseOptions {
    * - @vitejs/plugin-rsc is NOT added (cloudflare plugin adds it)
    * - Your worker entry (e.g., worker.rsc.tsx) imports the router directly
    * - Browser and SSR use virtual entries
+   * - Build-time manifest generation is auto-detected from wrangler.json main entry
    */
   preset: "cloudflare";
 }
@@ -334,17 +336,98 @@ function createVersionPlugin(): Plugin {
  *
  * @internal
  */
-function createRouterDiscoveryPlugin(routerPath: string): Plugin {
+function createRouterDiscoveryPlugin(entryPath: string): Plugin {
   let projectRoot = "";
+  let isBuildMode = false;
+  let userResolveAlias: any = undefined;
+
+  // Merged route manifest from all discovered routers.
+  // Populated during discovery (dev: configureServer, build: buildStart).
+  // Read by the virtual module's load hook to emit setCachedManifest() call.
+  let mergedRouteManifest: Record<string, string> | null = null;
+
+  // Shared discovery logic: import entry via RSC runner, generate manifests,
+  // write static files, and populate mergedRouteManifest.
+  async function discoverRouters(rscEnv: any) {
+    // Import the entry file via RSC environment.
+    // For node preset: this is the router file (createRouter() registers in RouterRegistry).
+    // For cloudflare preset: this is the worker entry (which imports the router).
+    await rscEnv.runner.import(entryPath);
+
+    // Import the router package to access the registry
+    const serverMod = await rscEnv.runner.import("@rangojs/router/server");
+    const registry: Map<string, any> = serverMod.RouterRegistry;
+
+    if (!registry || registry.size === 0) {
+      console.warn(
+        "[rsc-router] No routers found in registry after importing",
+        entryPath
+      );
+      return serverMod;
+    }
+
+    // Import build utilities for manifest generation
+    const buildMod = await rscEnv.runner.import("@rangojs/router/build");
+    const generateManifest = buildMod.generateManifest;
+
+    mergedRouteManifest = {};
+
+    for (const [id, router] of registry) {
+      if (!router.urlpatterns || !generateManifest) {
+        continue;
+      }
+
+      const manifest = generateManifest(router.urlpatterns);
+      const routeCount = Object.keys(manifest.routeManifest).length;
+      const staticRoutes = Object.values(manifest.routeManifest).filter(
+        (p: any) => !p.includes(":") && !p.includes("*")
+      ).length;
+      const dynamicRoutes = routeCount - staticRoutes;
+
+      // Merge into the combined manifest
+      Object.assign(mergedRouteManifest, manifest.routeManifest);
+
+      // Write static files for this router
+      const hash = hashRouterId(id);
+      const outDir = join(projectRoot, "dist", "static", `__${hash}`);
+      mkdirSync(outDir, { recursive: true });
+
+      writeFileSync(
+        join(outDir, "routes.json"),
+        JSON.stringify(manifest.routeManifest, null, 2) + "\n"
+      );
+
+      writeFileSync(
+        join(outDir, "prefixes.json"),
+        JSON.stringify(manifest.prefixTree, null, 2) + "\n"
+      );
+
+      console.log(
+        `[rsc-router] Router "${id}" -> ${routeCount} routes ` +
+        `(${staticRoutes} static, ${dynamicRoutes} dynamic) ` +
+        `-> dist/static/__${hash}/`
+      );
+    }
+
+    return serverMod;
+  }
 
   return {
     name: "@rangojs/router:discovery",
 
     configResolved(config) {
       projectRoot = config.root;
+      isBuildMode = config.command === "build";
+      // Capture user's resolve aliases for the temp server
+      userResolveAlias = config.resolve.alias;
     },
 
+    // Dev mode: discover routers and populate manifest in memory.
+    // Skipped in build mode (buildStart handles it).
     configureServer(server) {
+      if (isBuildMode) return;
+      // Skip if this is a temp server created by buildStart
+      if ((globalThis as any).__rscRouterDiscoveryActive) return;
       const discover = async () => {
         const rscEnv = (server.environments as any)?.rsc;
         if (!rscEnv?.runner) {
@@ -352,80 +435,165 @@ function createRouterDiscoveryPlugin(routerPath: string): Plugin {
         }
 
         try {
-          // Import the user's router file via RSC environment.
-          // This triggers createRouter() which registers in RouterRegistry.
-          await rscEnv.runner.import(routerPath);
+          const serverMod = await discoverRouters(rscEnv);
 
-          // Import the router package to access the registry
-          const serverMod = await rscEnv.runner.import("@rangojs/router/server");
-          const registry: Map<string, any> = serverMod.RouterRegistry;
-
-          if (!registry || registry.size === 0) {
-            console.warn(
-              "[rsc-router] No routers found in registry after importing",
-              routerPath
-            );
-            return;
-          }
-
-          // Import build utilities for manifest generation
-          const buildMod = await rscEnv.runner.import("@rangojs/router/build");
-          const generateManifest = buildMod.generateManifest;
-
-          for (const [id, router] of registry) {
-            if (!router.urlpatterns || !generateManifest) {
-              continue;
-            }
-
-            const manifest = generateManifest(router.urlpatterns);
-            const routeCount = Object.keys(manifest.routeManifest).length;
-            const staticRoutes = Object.values(manifest.routeManifest).filter(
-              (p: any) => !p.includes(":") && !p.includes("*")
-            ).length;
-            const dynamicRoutes = routeCount - staticRoutes;
-
-            // Write static files for this router
-            const hash = hashRouterId(id);
-            const outDir = join(projectRoot, "dist", "static", `__${hash}`);
-            mkdirSync(outDir, { recursive: true });
-
-            // routes.json: route name -> URL pattern (for href() bootstrap)
-            writeFileSync(
-              join(outDir, "routes.json"),
-              JSON.stringify(manifest.routeManifest, null, 2) + "\n"
-            );
-
-            // prefixes.json: prefix tree (for short-circuit route matching)
-            writeFileSync(
-              join(outDir, "prefixes.json"),
-              JSON.stringify(manifest.prefixTree, null, 2) + "\n"
-            );
-
-            console.log(
-              `[rsc-router] Router "${id}" -> ${routeCount} routes ` +
-              `(${staticRoutes} static, ${dynamicRoutes} dynamic) ` +
-              `-> dist/static/__${hash}/`
-            );
-
-            // Populate the route map so href() works immediately
-            // without waiting for the first request to trigger lazy evaluation
-            const setCachedManifest = serverMod.setCachedManifest;
-            if (setCachedManifest) {
-              setCachedManifest(manifest.routeManifest);
-            }
+          // In dev mode, also populate the route map in the RSC env
+          // so href() works immediately without first-request penalty
+          if (mergedRouteManifest && serverMod?.setCachedManifest) {
+            serverMod.setCachedManifest(mergedRouteManifest);
           }
         } catch (err: any) {
-          // Non-fatal: discovery failure shouldn't break the dev server
           console.warn(
             `[rsc-router] Router discovery failed: ${err.message}`
           );
         }
       };
 
-      // Schedule discovery after the current event loop tick.
-      // This ensures all plugins have finished configureServer before we
-      // attempt to use the RSC environment's module runner.
+      // Schedule after all plugins have finished configureServer
       setTimeout(discover, 0);
+    },
+
+    // Build mode: create a temporary Vite dev server to access the RSC
+    // environment's module runner, then discover routers and generate manifests.
+    // The manifest data is stored for the virtual module's load hook.
+    async buildStart() {
+      if (!isBuildMode) return;
+      // Only run once across environment builds
+      if (mergedRouteManifest !== null) return;
+
+      let tempServer: any = null;
+      try {
+        // Prevent the temp server's plugin instances from running discovery
+        (globalThis as any).__rscRouterDiscoveryActive = true;
+
+        // Create a minimal Vite server with just the RSC plugin.
+        // We bypass the user's config file because:
+        // - Custom environments (e.g., CloudflareDevEnvironment) may not expose
+        //   a module runner compatible with runner.import()
+        // - The temp server only needs RSC conditions to import the router
+        const { default: rsc } = await import("@vitejs/plugin-rsc");
+        tempServer = await createViteServer({
+          root: projectRoot,
+          configFile: false,
+          server: { middlewareMode: true },
+          appType: "custom",
+          logLevel: "silent",
+          // Use the resolved aliases from the real config (includes user's path aliases
+          // like @/ -> src/ AND package aliases from rsc-router)
+          resolve: { alias: userResolveAlias },
+          plugins: [
+            rsc({ entries: { client: "virtual:entry-client", ssr: "virtual:entry-ssr", rsc: entryPath } }),
+            createVersionPlugin(),
+            // Stub virtual modules that the RSC entry may import
+            // (e.g., virtual:rsc-router/routes-manifest, virtual:rsc-router/loader-manifest)
+            createVirtualStubPlugin(),
+          ],
+        });
+
+        const rscEnv = (tempServer.environments as any)?.rsc;
+        if (!rscEnv?.runner) {
+          console.warn(
+            "[rsc-router] RSC environment runner not available during build, skipping manifest generation"
+          );
+          return;
+        }
+
+        await discoverRouters(rscEnv);
+      } catch (err: any) {
+        console.warn(
+          `[rsc-router] Build-time router discovery failed: ${err.message}`
+        );
+      } finally {
+        delete (globalThis as any).__rscRouterDiscoveryActive;
+        if (tempServer) {
+          await tempServer.close();
+        }
+      }
+    },
+
+    // Virtual module: provides the pre-generated route manifest as a JS module
+    // that calls setCachedManifest() at import time.
+    resolveId(id) {
+      if (id === VIRTUAL_ROUTES_MANIFEST_ID) {
+        return "\0" + VIRTUAL_ROUTES_MANIFEST_ID;
+      }
+      return null;
+    },
+
+    load(id) {
+      if (id === "\0" + VIRTUAL_ROUTES_MANIFEST_ID) {
+        const hasManifest = mergedRouteManifest && Object.keys(mergedRouteManifest).length > 0;
+        if (hasManifest) {
+          return [
+            `import { setCachedManifest } from "@rangojs/router/server";`,
+            `setCachedManifest(${JSON.stringify(mergedRouteManifest)});`,
+          ].join("\n");
+        }
+        // No manifest available yet (dev mode: discovery hasn't completed)
+        return `// Route manifest will be populated at runtime`;
+      }
+      return null;
+    },
+  };
+}
+
+const VIRTUAL_ROUTES_MANIFEST_ID = "virtual:rsc-router/routes-manifest";
+
+/**
+ * Resolve the entry path for build-time router discovery.
+ * - Node preset: uses the required `router` option.
+ * - Cloudflare preset: reads the `main` field from wrangler.json.
+ */
+function resolveDiscoveryEntryPath(options: RscRouterOptions): string | undefined {
+  if (options.preset === "cloudflare") {
+    // Auto-detect from wrangler.json
+    const wranglerPaths = ["wrangler.json", "wrangler.jsonc"];
+    for (const filename of wranglerPaths) {
+      if (existsSync(filename)) {
+        try {
+          const raw = readFileSync(filename, "utf-8");
+          // Strip JSON comments for .jsonc
+          const cleaned = raw.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+          const config = JSON.parse(cleaned);
+          if (config.main) {
+            return config.main;
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      }
+    }
+    return undefined;
+  }
+  // Node preset: router is required
+  return (options as RscRouterNodeOptions).router;
+}
+
+/**
+ * Stub plugin for virtual modules in the temp discovery server.
+ * The RSC entry may import virtual modules (routes-manifest, loader-manifest)
+ * that aren't available in the temp server. The RSC plugin also requires
+ * client/ssr entries which don't need real content for discovery.
+ */
+function createVirtualStubPlugin(): Plugin {
+  const STUB_PREFIXES = [
+    "virtual:rsc-router/",
+    "virtual:entry-",
+    "virtual:vite-rsc/",
+  ];
+  return {
+    name: "@rangojs/router:virtual-stubs",
+    resolveId(id) {
+      if (STUB_PREFIXES.some((p) => id.startsWith(p))) {
+        return "\0stub:" + id;
+      }
+      return null;
+    },
+    load(id) {
+      if (id.startsWith("\0stub:")) {
+        return "export default {}";
+      }
+      return null;
     },
   };
 }
@@ -808,10 +976,12 @@ export async function rscRouter(
   // optimizeDeps.include doesn't work because the file is loaded after initial optimization
   plugins.push(createCjsToEsmPlugin());
 
-  // Add router discovery plugin for node preset (uses RSC env to import router)
-  if (preset === "node") {
-    const nodeOptions = options as RscRouterNodeOptions;
-    plugins.push(createRouterDiscoveryPlugin(nodeOptions.router));
+  // Add router discovery plugin for build-time manifest generation.
+  // Node preset: uses the required router path.
+  // Cloudflare preset: auto-detects RSC entry from wrangler.json main field.
+  const discoveryEntryPath = resolveDiscoveryEntryPath(options);
+  if (discoveryEntryPath) {
+    plugins.push(createRouterDiscoveryPlugin(discoveryEntryPath));
   }
 
   return plugins;

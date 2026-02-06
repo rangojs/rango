@@ -2,8 +2,9 @@
 import { router } from "./router.js";
 import type { AppBindings } from "./env.js";
 
-// Route manifest is now loaded at runtime on first request (if urlpatterns provided)
-// This app doesn't use href(), so no manifestCache option is needed
+// Pre-generated route manifest: eliminates ~98ms first-request cost of
+// evaluating lazy includes. Generated at build time by the discovery plugin.
+import "virtual:rsc-router/routes-manifest";
 
 export default {
   async fetch(request, env, ctx) {
