@@ -28,6 +28,8 @@ export type { IncludeItem } from "./route-types.js";
 // Core router (server-only)
 export {
   createRouter,
+  RSC_ROUTER_BRAND,
+  RouterRegistry,
   type RSCRouter,
   type RSCRouterOptions,
   type RootLayoutProps,

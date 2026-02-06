@@ -321,6 +321,94 @@ function createVersionPlugin(): Plugin {
 }
 
 /**
+ * Plugin that discovers router instances at dev/build time via the RSC environment.
+ *
+ * Uses `server.environments.rsc.runner.import()` to load the user's router file
+ * with full TS/TSX compilation. This triggers `createRouter()` which populates
+ * the `RouterRegistry`. The plugin then generates manifests for each router.
+ *
+ * In dev mode, this runs in `configureServer` (post-middleware setup).
+ * In build mode, this will run in `buildStart` (future).
+ *
+ * @internal
+ */
+function createRouterDiscoveryPlugin(routerPath: string): Plugin {
+  const RSC_ROUTER_BRAND = "__rsc_router__";
+
+  return {
+    name: "@rangojs/router:discovery",
+
+    configureServer(server) {
+      // Run discovery after server is ready. The RSC environment's module runner
+      // is available once configureServer completes. We schedule it to run after
+      // all plugins have initialized.
+      const discover = async () => {
+        const rscEnv = (server.environments as any)?.rsc;
+        if (!rscEnv?.runner) {
+          return;
+        }
+
+        try {
+          // Import the user's router file via RSC environment.
+          // This triggers createRouter() which registers in RouterRegistry.
+          await rscEnv.runner.import(routerPath);
+
+          // Import the router package to access the registry
+          const serverMod = await rscEnv.runner.import("@rangojs/router/server");
+          const registry: Map<string, any> = serverMod.RouterRegistry;
+
+          if (!registry || registry.size === 0) {
+            console.warn(
+              "[rsc-router] No routers found in registry after importing",
+              routerPath
+            );
+            return;
+          }
+
+          // Import build utilities for manifest generation
+          const buildMod = await rscEnv.runner.import("@rangojs/router/build");
+          const generateManifest = buildMod.generateManifest;
+
+          for (const [id, router] of registry) {
+            console.log(`[rsc-router] Discovered router: "${id}"`);
+
+            if (router.urlpatterns && generateManifest) {
+              const manifest = generateManifest(router.urlpatterns);
+              const routeCount = Object.keys(manifest.routeManifest).length;
+              const staticRoutes = Object.values(manifest.routeManifest).filter(
+                (p: any) => !p.includes(":") && !p.includes("*")
+              ).length;
+              const dynamicRoutes = routeCount - staticRoutes;
+
+              console.log(
+                `[rsc-router]   ${routeCount} routes (${staticRoutes} static, ${dynamicRoutes} dynamic)`
+              );
+
+              // Populate the route map so href() works immediately
+              // without waiting for the first request to trigger lazy evaluation
+              const setCachedManifest = serverMod.setCachedManifest;
+              if (setCachedManifest) {
+                setCachedManifest(manifest.routeManifest);
+              }
+            }
+          }
+        } catch (err: any) {
+          // Non-fatal: discovery failure shouldn't break the dev server
+          console.warn(
+            `[rsc-router] Router discovery failed: ${err.message}`
+          );
+        }
+      };
+
+      // Schedule discovery after the current event loop tick.
+      // This ensures all plugins have finished configureServer before we
+      // attempt to use the RSC environment's module runner.
+      setTimeout(discover, 0);
+    },
+  };
+}
+
+/**
  * Plugin that auto-injects VERSION into custom entry.rsc files.
  * If a custom entry.rsc file uses createRSCHandler but doesn't pass version,
  * this transform adds the import and property automatically.
@@ -689,6 +777,12 @@ export async function rscRouter(
   // Transform CJS vendor files to ESM for browser compatibility
   // optimizeDeps.include doesn't work because the file is loaded after initial optimization
   plugins.push(createCjsToEsmPlugin());
+
+  // Add router discovery plugin for node preset (uses RSC env to import router)
+  if (preset === "node") {
+    const nodeOptions = options as RscRouterNodeOptions;
+    plugins.push(createRouterDiscoveryPlugin(nodeOptions.router));
+  }
 
   return plugins;
 }

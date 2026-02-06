@@ -126,7 +126,30 @@ export interface RootLayoutProps {
 /**
  * Router configuration options
  */
+/**
+ * Brand marker for identifying router instances at build time.
+ * Used by the Vite plugin to auto-discover routers from module exports.
+ */
+export const RSC_ROUTER_BRAND: "__rsc_router__" = "__rsc_router__";
+
+/**
+ * Global registry of all router instances created via createRouter().
+ * Each router is keyed by its id (auto-generated or user-provided).
+ * Used by the Vite plugin at build time to discover routers and extract
+ * manifests, prefix trees, and pre-render candidates.
+ */
+export const RouterRegistry: Map<string, RSCRouter<any, any>> = new Map();
+
+let routerAutoId = 0;
+
 export interface RSCRouterOptions<TEnv = any> {
+  /**
+   * Unique identifier for this router instance.
+   * Used to namespace static output files and route maps.
+   * Auto-generated if not provided.
+   */
+  id?: string;
+
   /**
    * Enable performance metrics collection
    * When enabled, metrics are output to console and available via Server-Timing header
@@ -627,6 +650,18 @@ export interface RSCRouter<
   TRoutes extends Record<string, string> = Record<string, string>,
 > {
   /**
+   * Brand marker for build-time discovery.
+   * The Vite plugin uses this to identify router instances in module exports.
+   */
+  readonly __brand: typeof RSC_ROUTER_BRAND;
+
+  /**
+   * Unique identifier for this router instance.
+   * Used to namespace static output and isolate route maps between routers.
+   */
+  readonly id: string;
+
+  /**
    * Register routes with a prefix
    * Route keys stay unchanged, only URL patterns get the prefix applied.
    * This enables composable route modules that work regardless of mount point.
@@ -935,6 +970,7 @@ export function createRouter<TEnv = any>(
   options: RSCRouterOptions<TEnv> = {},
 ): RSCRouter<TEnv, {}> {
   const {
+    id: userProvidedId,
     debugPerformance = false,
     document: documentOption,
     defaultErrorBoundary,
@@ -948,6 +984,8 @@ export function createRouter<TEnv = any>(
     version,
     warmup: warmupOption,
   } = options;
+
+  const routerId = userProvidedId ?? `router_${routerAutoId++}`;
 
   // Resolve warmup enabled flag (default: true)
   const warmupEnabled = warmupOption !== false;
@@ -4212,6 +4250,9 @@ export function createRouter<TEnv = any>(
    * Initial TRoutes is {} (empty) to avoid poisoning accumulated types with Record<string, string>
    */
   const router: RSCRouter<TEnv, {}> = {
+    __brand: RSC_ROUTER_BRAND,
+    id: routerId,
+
     routes(
       prefixOrRoutes: string | Record<string, string> | UrlPatterns<TEnv>,
       maybeRoutes?: Record<string, string>,
@@ -4513,6 +4554,9 @@ export function createRouter<TEnv = any>(
       return serializeManifest(manifest);
     },
   };
+
+  // Register router in the global registry for build-time discovery
+  RouterRegistry.set(routerId, router);
 
   // If urls option was provided, auto-register them
   if (urlsOption) {
