@@ -132,44 +132,68 @@ cross-contamination. A router rebuild only regenerates its own artifacts.
 
 ### Build output structure
 
+Static files use hashed directory names (`__<hash>`) derived from the router's
+file path or id. This avoids collisions with user routes (e.g., a route literally
+named `/app`) and clearly marks framework-owned files.
+
 ```
 dist/
   static/
-    app/                              # app-router output
-      manifest.json                   # route map + prefix tree
+    __ec387bc704d4/                    # app-router (hash of file path / id)
+      manifest.json                    # route map: name -> pattern
+      prefixes.json                    # prefix tree for short-circuit matching
+      routes.json                      # route name list for href() bootstrap
       pages/
-        index.html                    # pre-rendered /
-        about.html                    # pre-rendered /about
+        index.html                     # pre-rendered /
+        about.html                     # pre-rendered /about
         shop/
           index.html
           cart.html
-          checkout/
-            index.html
-            payment.html
-    docs/                             # docs-router output
-      manifest.json                   # separate route map + prefix tree
-      pages/
-        index.html                    # pre-rendered /docs
-        getting-started.html
-        api-reference.html
-    api/                              # api-router output (no pre-render, just manifest)
+    __6ff6aac5e201/                    # docs-router (different hash)
       manifest.json
+      prefixes.json
+      routes.json
+      pages/
+        index.html
+        getting-started.html
+    __a1b2c3d4e5f6/                    # api-router (no pre-render, metadata only)
+      manifest.json
+      prefixes.json
+      routes.json
 ```
+
+The hash is deterministic — same input always produces the same directory name,
+so rebuilds are stable and cache-friendly. The manifest.json contains the
+human-readable `id` for debugging.
+
+### Metadata files (per router)
+
+These replace runtime-computed values with pre-built static files:
+
+- **manifest.json** - full route map + generation metadata. Replaces the runtime
+  `registerRouteMap()` call that evaluates lazy includes on first request.
+- **prefixes.json** - pre-computed prefix tree for `findRouteMatch()` short-circuit
+  optimization. Currently built on the fly at startup.
+- **routes.json** - flat route name list for `href()` bootstrap. Currently populated
+  incrementally as routes are visited.
+
+Cold start goes from "evaluate all route definitions" to "read JSON files."
 
 ### Why separate static files matter
 
 1. **Independent deployment** - docs on CDN, app on server, API on edge
 2. **Incremental rebuilds** - changing docs routes doesn't rebuild app pages
-3. **Runtime serving** - the server checks `dist/static/{routerId}/pages/{path}.html`
+3. **Runtime serving** - the server checks `dist/static/__<hash>/pages/{path}.html`
    before hitting RSC; prefix tree tells it which router owns which prefix
 4. **Cache isolation** - each router's static files have their own cache headers
-5. **No collisions** - `app:home.index` and `docs:home.index` write to different dirs
+5. **No collisions** - hashed dirs can't clash with user routes or each other
 
-### Manifest file format (per router)
+### Manifest file format
 
 ```json
 {
   "id": "app",
+  "hash": "ec387bc704d4",
   "generatedAt": "2026-02-06T...",
   "routeManifest": {
     "home.index": "/",
@@ -209,20 +233,21 @@ The plugin would:
 3. Filter static routes (no `:params`)
 4. Add user-provided paths from `preRenderPaths`
 5. For each path: call `router.match(new Request(path), env)` -> get segments
-6. Render segments to HTML -> write to `dist/static/{routerId}/pages/`
-7. Write manifest to `dist/static/{routerId}/manifest.json`
+6. Render segments to HTML -> write to `dist/static/__<hash>/pages/`
+7. Write metadata to `dist/static/__<hash>/{manifest,prefixes,routes}.json`
 
 ### Runtime static file serving
 
 ```ts
 // In the server handler (simplified)
+// loadedManifests is read once at startup from dist/static/__*/manifest.json
 async function handleRequest(req: Request) {
   const url = new URL(req.url);
 
-  // Check each router's manifest for a pre-rendered match
+  // Check each router's prefix tree for a pre-rendered match
   for (const manifest of loadedManifests) {
     if (url.pathname.startsWith(manifest.prefixTree.staticPrefix)) {
-      const htmlPath = `dist/static/${manifest.id}/pages${url.pathname}.html`;
+      const htmlPath = `dist/static/__${manifest.hash}/pages${url.pathname}.html`;
       if (existsSync(htmlPath)) {
         return new Response(readFileSync(htmlPath), {
           headers: { "content-type": "text/html" },
@@ -239,11 +264,14 @@ async function handleRequest(req: Request) {
 ## Implementation Path
 
 1. Add `__brand: "rsc-router"` to `createRouter()` return value
-2. Add `id` option to `createRouter()`
+2. Add `id` option to `createRouter()`; derive deterministic hash from id/file path
 3. Create `RouterRegistry` (scoped `registerRouteMap` per router)
 4. In rscRouter plugin's `buildStart` or `configureServer`:
    load router files via `server.environments.rsc.runner.import()`
 5. Extract manifests, prefix trees per router
-6. Write separate `dist/static/{id}/manifest.json` per router
+6. Write metadata to `dist/static/__<hash>/` per router
+   (manifest.json, prefixes.json, routes.json)
 7. Pre-render static routes via `router.match()` + RSC rendering
-8. Write HTML to `dist/static/{id}/pages/` per router
+8. Write HTML to `dist/static/__<hash>/pages/` per router
+9. At runtime, load metadata from `dist/static/__*/manifest.json` on startup
+   (replaces runtime route evaluation with static file reads)
