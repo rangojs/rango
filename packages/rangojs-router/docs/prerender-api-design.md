@@ -294,23 +294,22 @@ system resources and API pressure:
 rango({
   prerender: {
     // Max concurrent render operations. Each render executes loaders
-    // and renders the B segment subtree. Low values protect against
-    // memory exhaustion and API rate limits.
+    // and renders segments. Low values protect against memory exhaustion
+    // and API rate limits.
     // Default: 5
     concurrency: 5,
 
     // Per-render timeout in ms. Kills renders that hang on slow APIs.
     // Default: 30000
     timeout: 30_000,
-
-    // What to do when a single render fails (loader throws, timeout, etc.)
-    // "skip": log warning, continue with remaining params (partial pre-render)
-    // "fail": abort the entire build
-    // Default: "skip"
-    onError: "skip",
   },
 })
 ```
+
+Error handling during pre-render uses the router's existing `onError`
+handler. A failed pre-render for a specific param set is treated like
+a runtime render error — the route simply won't have a pre-rendered
+version for those params and falls back to live rendering at request time.
 
 These controls are critical for production builds with large param sets.
 A blog with 10,000 posts hitting a CMS API at `concurrency: 50` could
