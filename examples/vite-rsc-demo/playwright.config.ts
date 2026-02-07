@@ -20,22 +20,27 @@ export default defineConfig({
   },
   projects: [
     {
+      name: "build",
+      testMatch: "**/build-test-app.setup.ts",
+    },
+    {
       name: "dev",
       grep: /^(?!.*\(production\))/,
+      testIgnore: ["**/*.setup.ts"],
       use: browserConfig,
     },
     {
       name: "production",
       grep: /\(production\)/,
+      testIgnore: ["**/*.setup.ts"],
       use: browserConfig,
       // Run production tests serially to avoid port conflicts
       // Each test file spins up its own preview server
       fullyParallel: false,
-      // Use single worker to prevent parallel server startups
-      metadata: { workers: 1 },
+      dependencies: ["build"],
     },
   ],
-  workers: process.env.CI ? 2 : 4,
+  workers: process.env.CI ? 3 : 4,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   reporter: [
