@@ -125,14 +125,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Dev tests sharded across 3 jobs
+          # Dev tests sharded across 2 jobs
           - project: dev
             shard: 1
           - project: dev
             shard: 2
-          - project: dev
-            shard: 3
-          # Production tests run in single job
+          # Production tests run in single job (build-once via setup project)
           - project: production
           # HMR tests run in single job
           - project: hmr
@@ -161,7 +159,7 @@ jobs:
       - name: Run rangojs-router e2e tests (${{ matrix.project }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
         run: |
           if [ -n "${{ matrix.shard }}" ]; then
-            pnpm --filter @rangojs/router test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/3
+            pnpm --filter @rangojs/router test --project=${{ matrix.project }} --shard=${{ matrix.shard }}/2
           else
             pnpm --filter @rangojs/router test --project=${{ matrix.project }}
           fi
