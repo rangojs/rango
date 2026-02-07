@@ -35,7 +35,17 @@ import { generateNonce } from "./nonce.js";
 import { VERSION } from "@rangojs/router:version";
 import type { ErrorPhase } from "../types.js";
 import { invokeOnError } from "../router/error-handling.js";
-import { getGlobalRouteMap, hasCachedManifest, setCachedManifest, getRouteTrie, setRouteTrie, getRouteAncestry, setRouteAncestry, getPrecomputedEntries, waitForManifestReady } from "../route-map-builder.js";
+import {
+  getGlobalRouteMap,
+  hasCachedManifest,
+  setCachedManifest,
+  getRouteTrie,
+  setRouteTrie,
+  getRouteAncestry,
+  setRouteAncestry,
+  getPrecomputedEntries,
+  waitForManifestReady,
+} from "../route-map-builder.js";
 
 /**
  * Create an RSC request handler.
@@ -175,10 +185,14 @@ export function createRSCHandler<
       }
       if (!hasCachedManifest() && router.urlpatterns) {
         // Cloudflare dev: generate manifest inline (no caching needed)
-        const { generateManifest } = await import("../build/generate-manifest.js");
+        const { generateManifest } =
+          await import("../build/generate-manifest.js");
         const generated = generateManifest(router.urlpatterns);
         setCachedManifest(generated.routeManifest);
-        if (generated.routeAncestry && Object.keys(generated.routeAncestry).length > 0) {
+        if (
+          generated.routeAncestry &&
+          Object.keys(generated.routeAncestry).length > 0
+        ) {
           setRouteAncestry(generated.routeAncestry);
           const { buildRouteTrie } = await import("../build/route-trie.js");
           const routeToStaticPrefix: Record<string, string> = {};
@@ -305,28 +319,6 @@ export function createRSCHandler<
     variables: Record<string, any>,
     nonce: string | undefined,
   ): Promise<Response> {
-    // Early return for static file requests that don't need RSC handling
-    if (url.pathname === "/favicon.ico" || url.pathname === "/robots.txt") {
-      return new Response(null, { status: 404 });
-    }
-
-    // Debug manifest endpoint: ?__debug_manifest on any route.
-    // Always available in dev, requires allowDebugManifest option in production.
-    const isDev = process.env.NODE_ENV !== "production";
-    if (
-      url.searchParams.has("__debug_manifest") &&
-      (isDev || router.allowDebugManifest)
-    ) {
-      return new Response(JSON.stringify({
-        routeManifest: getGlobalRouteMap(),
-        routeAncestry: getRouteAncestry(),
-        routeTrie: getRouteTrie(),
-        precomputedEntries: getPrecomputedEntries(),
-      }, null, 2), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
     const isPartial = url.searchParams.has("_rsc_partial");
     const isAction =
       request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
@@ -364,6 +356,29 @@ export function createRSCHandler<
           "content-type": "text/x-component;charset=utf-8",
         },
       });
+    }
+    // Debug manifest endpoint: ?__debug_manifest on any route.
+    // Always available in dev, requires allowDebugManifest option in production.
+    const isDev = process.env.NODE_ENV !== "production";
+    if (
+      url.searchParams.has("__debug_manifest") &&
+      (isDev || router.allowDebugManifest)
+    ) {
+      return new Response(
+        JSON.stringify(
+          {
+            routeManifest: getGlobalRouteMap(),
+            routeAncestry: getRouteAncestry(),
+            routeTrie: getRouteTrie(),
+            precomputedEntries: getPrecomputedEntries(),
+          },
+          null,
+          2,
+        ),
+        {
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     }
 
     // Get handle store from request context (created at start of request)

@@ -17,7 +17,12 @@ import {
   type HrefFunction,
   type PrefixRoutePatterns,
 } from "./href.js";
-import { registerRouteMap, getGlobalRouteMap, getPrecomputedEntries, getRouteTrie } from "./route-map-builder.js";
+import {
+  registerRouteMap,
+  getGlobalRouteMap,
+  getPrecomputedEntries,
+  getRouteTrie,
+} from "./route-map-builder.js";
 import { tryTrieMatch } from "./router/trie-matching.js";
 import {
   createRouteHelpers,
@@ -841,7 +846,6 @@ export interface RSCRouter<
    */
   readonly urlpatterns?: UrlPatterns<TEnv, any>;
 
-
   match(request: Request, context: TEnv): Promise<MatchResult>;
 
   /**
@@ -1105,8 +1109,13 @@ export function createRouter<TEnv = any>(
   const precomputedEntriesRaw = getPrecomputedEntries();
   const precomputedByPrefix: Map<string, Record<string, string>> | null =
     precomputedEntriesRaw
-      ? new Map(precomputedEntriesRaw.map(e => [e.staticPrefix, e.routes]))
+      ? new Map(precomputedEntriesRaw.map((e) => [e.staticPrefix, e.routes]))
       : null;
+  console.log(
+    "precomputedByPrefix",
+    precomputedByPrefix,
+    precomputedEntriesRaw,
+  );
 
   // Wrapper to pass debugPerformance to external createMetricsStore
   const getMetricsStore = () => createMetricsStore(debugPerformance);
@@ -1371,7 +1380,10 @@ export function createRouter<TEnv = any>(
   // Handles lazy evaluation by evaluating lazy entries on first match.
   // Phase 1: try O(path_length) trie match.
   // Phase 2: fall back to regex iteration.
-  function findMatch(pathname: string, ms?: MetricsStore): RouteMatchResult<TEnv> | null {
+  function findMatch(
+    pathname: string,
+    ms?: MetricsStore,
+  ): RouteMatchResult<TEnv> | null {
     // Return cached result if same pathname (avoids double-match per request)
     if (lastFindMatchPathname === pathname) {
       return lastFindMatchResult;
@@ -1408,7 +1420,10 @@ export function createRouter<TEnv = any>(
           if (e.staticPrefix !== trieResult.sp) continue;
           if (!fallbackEntry) fallbackEntry = e;
           evaluateLazyEntry(e);
-          if (e.routes && trieResult.routeKey in (e.routes as Record<string, unknown>)) {
+          if (
+            e.routes &&
+            trieResult.routeKey in (e.routes as Record<string, unknown>)
+          ) {
             entry = e;
             break;
           }
@@ -1421,15 +1436,17 @@ export function createRouter<TEnv = any>(
 
         // If entry not found (nested include not yet discovered), evaluate parent
         if (!entry) {
-          const parent = routesEntries.find(e =>
-            trieResult.sp.startsWith(e.staticPrefix) && e.staticPrefix !== trieResult.sp
+          const parent = routesEntries.find(
+            (e) =>
+              trieResult.sp.startsWith(e.staticPrefix) &&
+              e.staticPrefix !== trieResult.sp,
           );
           if (parent) {
             const lazyStart = performance.now();
             evaluateLazyEntry(parent);
             pushMetric?.("match:lazy-eval", lazyStart);
           }
-          entry = routesEntries.find(e => e.staticPrefix === trieResult.sp);
+          entry = routesEntries.find((e) => e.staticPrefix === trieResult.sp);
         }
         pushMetric?.("match:entry-resolve", entryStart);
 
@@ -2113,9 +2130,10 @@ export function createRouter<TEnv = any>(
     if (interceptEntry.loading && loaderPromises.length > 0) {
       // Has loading skeleton - keep everything as Promises for streaming
       // Don't track intercept handlers - they're parallels and shouldn't block handle data
-      component = handlerResult instanceof Promise
-        ? handlerResult
-        : (Promise.resolve(handlerResult) as ReactNode);
+      component =
+        handlerResult instanceof Promise
+          ? handlerResult
+          : (Promise.resolve(handlerResult) as ReactNode);
       loaderDataPromise = Promise.all(loaderPromises);
     } else if (loaderPromises.length > 0) {
       // No loading skeleton - await loaders and component
@@ -2329,7 +2347,9 @@ export function createRouter<TEnv = any>(
         slot,
         belongsToRoute,
         parallelName: `${parallelEntry.id}.${slot}`,
-        ...(parallelEntry.mountPath ? { mountPath: parallelEntry.mountPath } : {}),
+        ...(parallelEntry.mountPath
+          ? { mountPath: parallelEntry.mountPath }
+          : {}),
       });
     }
 
@@ -2933,7 +2953,9 @@ export function createRouter<TEnv = any>(
               slot,
               belongsToRoute,
               parallelName: `${parallelEntry.id}.${slot}`,
-              ...(parallelEntry.mountPath ? { mountPath: parallelEntry.mountPath } : {}),
+              ...(parallelEntry.mountPath
+                ? { mountPath: parallelEntry.mountPath }
+                : {}),
             };
 
             // Use parallel's own revalidate functions
@@ -2981,7 +3003,9 @@ export function createRouter<TEnv = any>(
           slot,
           belongsToRoute,
           parallelName: `${parallelEntry.id}.${slot}`,
-          ...(parallelEntry.mountPath ? { mountPath: parallelEntry.mountPath } : {}),
+          ...(parallelEntry.mountPath
+            ? { mountPath: parallelEntry.mountPath }
+            : {}),
         });
       }
 
@@ -3375,7 +3399,9 @@ export function createRouter<TEnv = any>(
               slot,
               belongsToRoute,
               parallelName: `${parallelEntry.id}.${slot}`,
-              ...(parallelEntry.mountPath ? { mountPath: parallelEntry.mountPath } : {}),
+              ...(parallelEntry.mountPath
+                ? { mountPath: parallelEntry.mountPath }
+                : {}),
             };
 
             // Use parallel's own revalidate functions
@@ -3423,7 +3449,9 @@ export function createRouter<TEnv = any>(
           slot,
           belongsToRoute,
           parallelName: `${parallelEntry.id}.${slot}`,
-          ...(parallelEntry.mountPath ? { mountPath: parallelEntry.mountPath } : {}),
+          ...(parallelEntry.mountPath
+            ? { mountPath: parallelEntry.mountPath }
+            : {}),
         });
       }
     }
