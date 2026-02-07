@@ -2,18 +2,18 @@
 
 ## Overview
 
-Pre-render route segments at build time. The primary use case is static content
-that requires no runtime server — documentation sites, marketing pages, blogs
-built from local markdown files. Content that is available locally at build time
-and doesn't depend on any API.
+Pre-render route segments at build time. The primary use case is content that
+exists locally at build time but not on the runtime server — markdown files,
+config, static text, documentation. You don't want to bundle and ship all that
+content to the server just to render it on every request. Pre-rendering
+processes it at build time and stores the Flight payload to serve at runtime
+without needing the source files on the server.
 
-For hybrid apps (server exists but some routes are static), parent layouts stay
-live (dynamic user data, A/B tests, cart) while only the route's own subtree
-(handler, child layouts, parallels, loaders) is pre-rendered.
+Parent layouts stay live (dynamic user data, A/B tests, cart) while only the
+route's own subtree (handler, child layouts, parallels, loaders) is pre-rendered.
 
 Pre-rendering is an optimization, not a restriction. If a pre-rendered version
-is not found for the matched params, the route renders live as normal (when a
-server is available).
+is not found for the matched params, the route renders live as normal.
 
 ## DSL API
 
