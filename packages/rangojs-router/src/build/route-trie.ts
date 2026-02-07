@@ -110,6 +110,36 @@ function insertRoute(
  * For optional params, we add a terminal at the current node (param absent)
  * AND continue inserting into the param child (param present).
  */
+/**
+ * Extract ancestry map from a built trie by visiting all leaf nodes.
+ * Returns { routeName: ancestryShortCodes[] } for every route in the trie.
+ */
+export function extractAncestryFromTrie(
+  root: TrieNode,
+): Record<string, string[]> {
+  const result: Record<string, string[]> = {};
+
+  function visit(node: TrieNode): void {
+    if (node.r) {
+      result[node.r.n] = node.r.a;
+    }
+    if (node.w) {
+      result[node.w.n] = node.w.a;
+    }
+    if (node.s) {
+      for (const child of Object.values(node.s)) {
+        visit(child);
+      }
+    }
+    if (node.p) {
+      visit(node.p.c);
+    }
+  }
+
+  visit(root);
+  return result;
+}
+
 function insertSegments(
   node: TrieNode,
   segments: ParsedSegment[],

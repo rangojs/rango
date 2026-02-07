@@ -3621,7 +3621,6 @@ export function createRouter<TEnv = any>(
       pathname,
       undefined, // No metrics for error matching
       false, // Not SSR
-      matched.ancestry,
     );
 
     // Find the nearest error boundary in the entry chain
@@ -3823,7 +3822,6 @@ export function createRouter<TEnv = any>(
       pathname,
       metricsStore,
       true, // isSSR
-      matched.ancestry,
     );
     if (metricsStore) {
       metricsStore.metrics.push({
@@ -4011,7 +4009,6 @@ export function createRouter<TEnv = any>(
       pathname,
       metricsStore,
       false,
-      matched.ancestry,
     );
     if (metricsStore) {
       metricsStore.metrics.push({
@@ -4287,7 +4284,6 @@ export function createRouter<TEnv = any>(
       pathname,
       undefined, // No metrics store for preview
       false, // isSSR - doesn't matter for preview
-      matched.ancestry,
     );
 
     // Collect route-level middleware from entry tree

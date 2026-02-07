@@ -41,8 +41,6 @@ export interface GeneratedManifest {
   prefixTree: Record<string, PrefixTreeNode>;
   /** Complete route name → pattern mapping for href() */
   routeManifest: Record<string, string>;
-  /** Route name → ancestry shortCodes (root to route) for layout pruning */
-  routeAncestry: Record<string, string[]>;
   /** Route name → trailing slash mode for trie redirect handling */
   routeTrailingSlash?: Record<string, string>;
   /** Generation timestamp */
@@ -58,7 +56,7 @@ function buildPrefixTreeNode(
   namePrefix: string | undefined,
   patterns: UrlPatterns<any>,
   routeManifest: Record<string, string>,
-  routeAncestry: Record<string, string[]>,
+  routeAncestry: Record<string, string[]>,  // internal: feeds trie building, not exported
   mountIndex: number,
   visited: Set<unknown> = new Set(),
   routeTrailingSlash?: Record<string, string>,
@@ -204,7 +202,7 @@ function captureAncestry(
 export function generateManifest<TEnv>(
   urlpatterns: UrlPatterns<TEnv, any>,
   mountIndex: number = 0,
-): GeneratedManifest {
+): GeneratedManifest & { _routeAncestry: Record<string, string[]> } {
   const routeManifest: Record<string, string> = {};
   const routeAncestry: Record<string, string[]> = {};
   const prefixTree: Record<string, PrefixTreeNode> = {};
@@ -277,9 +275,10 @@ export function generateManifest<TEnv>(
   return {
     prefixTree,
     routeManifest,
-    routeAncestry,
     routeTrailingSlash: Object.keys(routeTrailingSlash).length > 0 ? routeTrailingSlash : undefined,
     generatedAt: new Date().toISOString(),
+    // Internal: routeAncestry is used only for trie building, not exported
+    _routeAncestry: routeAncestry,
   };
 }
 

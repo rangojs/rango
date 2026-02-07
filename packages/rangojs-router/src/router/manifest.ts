@@ -38,7 +38,6 @@ export async function loadManifest(
   path: string,
   metricsStore?: MetricsStore,
   isSSR?: boolean,
-  ancestryArr?: string[],
 ): Promise<EntryData> {
   // Helper to push a metric entry
   const pushMetric = metricsStore

@@ -416,8 +416,6 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
 
   // Route trie for O(path_length) matching at runtime.
   let mergedRouteTrie: any = null;
-  // Route ancestry map for layout pruning.
-  let mergedRouteAncestry: Record<string, string[]> | null = null;
 
   // Shared discovery logic: import entry via RSC runner, generate manifests,
   // write static files, and populate mergedRouteManifest.
@@ -490,7 +488,7 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
 
     mergedRouteManifest = {};
     mergedPrecomputedEntries = [];
-    mergedRouteAncestry = {};
+    let mergedRouteAncestry: Record<string, string[]> = {};
     let mergedRouteTrailingSlash: Record<string, string> = {};
 
     let routerMountIndex = 0;
@@ -514,9 +512,9 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
       // Merge into the combined manifest
       Object.assign(mergedRouteManifest, manifest.routeManifest);
 
-      // Merge ancestry
-      if (manifest.routeAncestry) {
-        Object.assign(mergedRouteAncestry, manifest.routeAncestry);
+      // Merge ancestry (internal field, used only for trie building)
+      if (manifest._routeAncestry) {
+        Object.assign(mergedRouteAncestry, manifest._routeAncestry);
       }
       // Merge trailing slash config
       if (manifest.routeTrailingSlash) {
@@ -630,9 +628,6 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
           if (mergedRouteTrie && serverMod?.setRouteTrie) {
             serverMod.setRouteTrie(mergedRouteTrie);
           }
-          if (mergedRouteAncestry && serverMod?.setRouteAncestry) {
-            serverMod.setRouteAncestry(mergedRouteAncestry);
-          }
         } catch (err: any) {
           console.warn(
             `[rsc-router] Router discovery failed: ${err.message}\n${err.stack}`
@@ -737,7 +732,7 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
         const hasManifest = mergedRouteManifest && Object.keys(mergedRouteManifest).length > 0;
         if (hasManifest) {
           const lines = [
-            `import { setCachedManifest, setPrecomputedEntries, setRouteTrie, setRouteAncestry } from "@rangojs/router/server";`,
+            `import { setCachedManifest, setPrecomputedEntries, setRouteTrie } from "@rangojs/router/server";`,
             `setCachedManifest(${JSON.stringify(mergedRouteManifest)});`,
           ];
           if (mergedPrecomputedEntries && mergedPrecomputedEntries.length > 0) {
@@ -745,9 +740,6 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
           }
           if (mergedRouteTrie) {
             lines.push(`setRouteTrie(${JSON.stringify(mergedRouteTrie)});`);
-          }
-          if (mergedRouteAncestry && Object.keys(mergedRouteAncestry).length > 0) {
-            lines.push(`setRouteAncestry(${JSON.stringify(mergedRouteAncestry)});`);
           }
           return lines.join("\n");
         }

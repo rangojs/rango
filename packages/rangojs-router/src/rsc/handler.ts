@@ -41,8 +41,6 @@ import {
   setCachedManifest,
   getRouteTrie,
   setRouteTrie,
-  getRouteAncestry,
-  setRouteAncestry,
   getPrecomputedEntries,
   waitForManifestReady,
 } from "../route-map-builder.js";
@@ -190,10 +188,9 @@ export function createRSCHandler<
         const generated = generateManifest(router.urlpatterns);
         setCachedManifest(generated.routeManifest);
         if (
-          generated.routeAncestry &&
-          Object.keys(generated.routeAncestry).length > 0
+          generated._routeAncestry &&
+          Object.keys(generated._routeAncestry).length > 0
         ) {
-          setRouteAncestry(generated.routeAncestry);
           const { buildRouteTrie } = await import("../build/route-trie.js");
           const routeToStaticPrefix: Record<string, string> = {};
           for (const name of Object.keys(generated.routeManifest)) {
@@ -201,7 +198,7 @@ export function createRSCHandler<
           }
           const trie = buildRouteTrie(
             generated.routeManifest,
-            generated.routeAncestry,
+            generated._routeAncestry,
             routeToStaticPrefix,
             generated.routeTrailingSlash,
           );
@@ -364,12 +361,14 @@ export function createRSCHandler<
       url.searchParams.has("__debug_manifest") &&
       (isDev || router.allowDebugManifest)
     ) {
+      const trie = getRouteTrie();
+      const { extractAncestryFromTrie } = await import("../build/route-trie.js");
       return new Response(
         JSON.stringify(
           {
             routeManifest: getGlobalRouteMap(),
-            routeAncestry: getRouteAncestry(),
-            routeTrie: getRouteTrie(),
+            routeAncestry: trie ? extractAncestryFromTrie(trie) : {},
+            routeTrie: trie,
             precomputedEntries: getPrecomputedEntries(),
           },
           null,
