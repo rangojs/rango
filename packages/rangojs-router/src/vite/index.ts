@@ -765,7 +765,7 @@ const VIRTUAL_ROUTES_MANIFEST_ID = "virtual:rsc-router/routes-manifest";
  * - Node preset: uses the required `router` option.
  * - Cloudflare preset: reads the `main` field from wrangler.json.
  */
-function resolveDiscoveryEntryPath(options: RscRouterOptions): string | undefined {
+function resolveDiscoveryEntryPath(options: RangoOptions): string | undefined {
   if (options.preset === "cloudflare") {
     // Auto-detect from wrangler.json
     const wranglerPaths = ["wrangler.json", "wrangler.jsonc"];
@@ -787,7 +787,7 @@ function resolveDiscoveryEntryPath(options: RscRouterOptions): string | undefine
     return undefined;
   }
   // Node preset: router is required
-  return (options as RscRouterNodeOptions).router;
+  return (options as RangoNodeOptions).router;
 }
 
 /**
