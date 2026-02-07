@@ -15,6 +15,7 @@ test.describe("useFetchLoader", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
+    isolatedServer: true,
   });
 
   test.setTimeout(30000);

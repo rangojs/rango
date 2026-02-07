@@ -17,6 +17,7 @@ test.describe("cache-server-logs", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
+    isolatedServer: true,
   });
 
   /**
@@ -249,6 +250,7 @@ test.describe("cache-loader-behavior", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
+    isolatedServer: true,
   });
 
   test("non-cached loader should run on every request (default behavior)", async ({
@@ -317,6 +319,7 @@ test.describe("cache-intercept-routes", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
+    isolatedServer: true,
   });
 
   /**
@@ -504,6 +507,7 @@ test.describe("useLoader-with-loader-registration", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
+    isolatedServer: true,
   });
 
   test("useLoader works on direct navigation to detail page (regular route)", async ({
@@ -586,6 +590,7 @@ test.describe("proactive-caching", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
+    isolatedServer: true,
   });
 
   test("proactive caching triggers when navigating within cached layout", async ({

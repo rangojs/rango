@@ -80,6 +80,18 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
   };
 }
 
+async function waitForReady(url: string, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return;
+    } catch {}
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(`Server not ready after ${timeoutMs}ms: ${url}`);
+}
+
 export type Fixture = ReturnType<typeof useFixture>;
 
 export function useFixture(options: {
@@ -88,6 +100,7 @@ export function useFixture(options: {
   command?: string;
   buildCommand?: string;
   cliOptions?: SpawnOptions;
+  isolatedServer?: boolean;
 }) {
   let cleanup: (() => Promise<void>) | undefined;
   let baseURL!: string;
@@ -97,18 +110,25 @@ export function useFixture(options: {
 
   test.beforeAll(async ({}, testInfo) => {
     if (options.mode === "dev") {
-      proc = runCli({
-        command: options.command ?? `pnpm dev`,
-        label: `${options.root}:dev`,
-        cwd,
-        ...options.cliOptions,
-      });
-      const port = await proc.findPort();
-      baseURL = `http://localhost:${port}`;
-      cleanup = async () => {
-        proc.kill();
-        await proc.done;
-      };
+      const sharedURL =
+        !options.isolatedServer && testInfo.project.use.baseURL;
+      if (sharedURL) {
+        baseURL = sharedURL;
+      } else {
+        proc = runCli({
+          command: options.command ?? `pnpm dev`,
+          label: `${options.root}:dev`,
+          cwd,
+          ...options.cliOptions,
+        });
+        const port = await proc.findPort();
+        baseURL = `http://localhost:${port}`;
+        await waitForReady(baseURL);
+        cleanup = async () => {
+          proc.kill();
+          await proc.done;
+        };
+      }
     }
     if (options.mode === "build") {
       const hasBuildDep =

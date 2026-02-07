@@ -6,11 +6,19 @@ const browserConfig = {
   deviceScaleFactor: undefined,
 };
 
+const DEV_SERVER_PORT = 5188;
+
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,
   globalTimeout: 600000, // 10 minutes max
   timeout: process.env.CI ? 60000 : 30000, // 60s on CI, 30s locally
+  webServer: {
+    command: `rm -rf node_modules/.vite && pnpm dev --port ${DEV_SERVER_PORT}`,
+    cwd: "./e2e/test-app",
+    port: DEV_SERVER_PORT,
+    reuseExistingServer: !process.env.CI,
+  },
   use: {
     screenshot: "only-on-failure",
     trace: "on-all-retries",
@@ -24,11 +32,17 @@ export default defineConfig({
       testMatch: "**/build-test-app.setup.ts",
     },
     {
+      name: "dev-warmup",
+      testMatch: "**/dev-warmup.setup.ts",
+      use: { ...browserConfig, baseURL: `http://localhost:${DEV_SERVER_PORT}` },
+    },
+    {
       name: "dev",
       // Exclude production tests (by test name) and HMR test files (by file name)
       grep: /^(?!.*\(production\))/,
       testIgnore: ["**/hmr.test.ts", "**/loader-hmr.test.ts", "**/*.setup.ts"],
-      use: browserConfig,
+      use: { ...browserConfig, baseURL: `http://localhost:${DEV_SERVER_PORT}` },
+      dependencies: ["dev-warmup"],
     },
     {
       name: "production",

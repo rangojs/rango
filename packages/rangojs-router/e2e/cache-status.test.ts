@@ -22,6 +22,7 @@ test.describe("cache-status-behavior", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
+    isolatedServer: true,
   });
 
   /**
