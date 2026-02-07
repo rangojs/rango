@@ -4,6 +4,8 @@
 
 Pre-render route segments at build time. Layouts stay live (dynamic user data, A/B tests, cart). Only the route's own subtree (handler, child layouts, parallels, loaders) is pre-rendered.
 
+Pre-rendering is an optimization, not a restriction. If a pre-rendered version is not found for the matched params, the route renders live as normal.
+
 ## DSL API
 
 `prerender()` is a `RouteUseItem` — only valid inside `path()`.
@@ -61,23 +63,12 @@ path("/blog/:slug", <BlogPost />, {}, () => [
 ])
 ```
 
-Pre-rendered segments for `/blog/hello-world`:
-```
-/blog/:slug route     (L0L0R0)     — PRE-RENDERED
-  PostLayout           (L0L0R0L0)   — PRE-RENDERED
-  @sidebar parallel    (L0L0R0.@s)  — PRE-RENDERED
-  @comments parallel   (L0L0R0.@c)  — PRE-RENDERED
-```
+### Revalidation
 
-Parent layouts stay live:
-```
-Root layout            (L0)         — LIVE (user session, cart)
-Blog layout            (L0L0)       — LIVE (dynamic banners, A/B)
-```
-
-### Revalidation as opt-out
-
-`revalidate()` already exists in the DSL. When paired with `prerender()`, it acts as a runtime opt-out — if revalidate returns `true`, render live instead of serving pre-rendered:
+`revalidate()` and `cache()` work on pre-rendered segments exactly like any
+other segment. No special ISR concept — it's stale-while-revalidate as usual.
+If `revalidate()` returns `true`, the pre-rendered version is skipped and the
+route renders live.
 
 ```ts
 path("/blog/:slug", <BlogPost />, {}, () => [
@@ -86,12 +77,6 @@ path("/blog/:slug", <BlogPost />, {}, () => [
   revalidate(({ actionId }) => actionId?.includes("Blog") ?? false),
 ])
 ```
-
-Flow:
-1. Build: pre-render all segments for each slug
-2. Runtime request: check pre-rendered cache for these params
-3. Check `revalidate()` — if returns `true`, render live (update cache)
-4. If not revalidated, serve pre-rendered segments
 
 ## Function Signature
 
@@ -107,19 +92,68 @@ function prerender<TParams>(
 
 `TParams` is inferred from the parent `path()` pattern via `ExtractParams<TPattern>`.
 
-## Segment Scope
+## Build Segment: `B` type
 
-`prerender()` applies to the route's entire subtree — all segments owned by the `path()`:
+`prerender()` introduces a new segment type: `B` (build). The `B` segment wraps
+the route's subtree, similar to how child layouts wrap routes. It is the atomic
+unit of pre-rendering — the entire `B` segment is served from cache or rendered
+live, never partially.
 
-- The route handler segment itself
-- Child layouts nested under this route
-- Parallel slots under this route
-- All loaders in these segments
+### Segment tree
 
-It does NOT apply to:
-- Parent layouts (they stay live)
-- Sibling routes
-- Anything outside this `path()` definition
+```
+L0 (root layout)              — LIVE (user session, cart)
+  L0L0 (blog layout)          — LIVE (dynamic banners, A/B)
+    L0L0B0 (build boundary)   — pre-render unit
+      L0L0B0R0 (route)
+      L0L0B0R0L0 (post layout)
+      L0L0B0R0.@sidebar
+      L0L0B0R0.@comments
+```
+
+Parent layouts above `B` are always live. Everything inside `B` is pre-rendered
+as one unit at build time.
+
+### Runtime behavior
+
+When the segment resolver encounters a `B` segment:
+
+1. Derive cache key from router id + route name + param hash
+2. Look up pre-rendered Flight payload
+3. If found and `revalidate()` returns `false` — serve entire `B` subtree from cache
+4. If not found or revalidated — render live (same as if `prerender()` wasn't there)
+5. `cache()` works on the `B` segment like any other — stale-while-revalidate for ISR
+
+The `B` segment is transparent to the client. The client receives segments
+and assembles them into the React tree as usual — it doesn't know or care
+whether segments were pre-rendered or live-rendered.
+
+## Storage Layout
+
+Pre-rendered Flight payloads are stored in the build output, keyed by
+`{router-id}/{route-name}/{param-hash}`:
+
+```
+dist/static/__<hash>/
+  routes.json          (existing — route manifest)
+  prefixes.json        (existing — prefix tree)
+  prerender/
+    main/                              # router id (mount index)
+      blog.post/                       # route name
+        a1b2c3d4.flight                # hash of { slug: "hello-world" }
+        e5f6a7b8.flight                # hash of { slug: "getting-started" }
+      products.detail/                 # route name
+        c9d0e1f2.flight                # hash of { category: "shoes", id: "nike-1" }
+      about/                           # static route (no params)
+        _.flight                       # single entry, no param hash needed
+    admin/                             # second router
+      admin.dashboard/
+        _.flight
+```
+
+Each router has its own namespace. The param hash is a deterministic hash of
+the sorted param key-value pairs so the runtime can reconstruct the lookup key
+from matched params without an index file.
 
 ## Build Pipeline
 
@@ -141,22 +175,13 @@ For each, resolve the params function to get the list of param sets.
 For each pre-rendered route + param combination:
 1. Build a synthetic request context (no real request — public data only)
 2. Execute the route's loaders with those params
-3. Render the route's segments (handler, child layouts, parallels) to RSC Flight payload
-4. Store the Flight payload keyed by route name + params
+3. Render the route's `B` segment subtree (handler, child layouts, parallels) to RSC Flight payload
+4. Store the Flight payload keyed by router id + route name + param hash
 
-### Step 7: Write to manifest
+### Step 7: Write to build output
 
-Add pre-rendered Flight payloads to the build output:
-```
-dist/static/__<hash>/
-  routes.json          (existing — route manifest)
-  prefixes.json        (existing — prefix tree)
-  prerender/
-    blog--hello-world.flight    (Flight payload for /blog/hello-world)
-    blog--getting-started.flight
-    products--shoes--nike-1.flight
-    ...
-```
+Write pre-rendered Flight payloads to `dist/static/__<hash>/prerender/`
+following the storage layout above.
 
 ### Step 8: Extend trie with prerender metadata
 
@@ -166,26 +191,10 @@ interface TrieLeaf {
   n: string;       // route name
   sp: string;      // static prefix
   a: string[];     // ancestry
-  pr?: true;       // pre-rendered flag
+  pr?: true;       // has pre-rendered B segment
   // ...existing fields
 }
 ```
-
-## Runtime Resolution
-
-When the server matches a request to a pre-rendered route:
-
-1. Trie match finds the route, sees `pr` flag
-2. Derive cache key from route name + matched params
-3. Look up pre-rendered Flight payload
-4. Check `revalidate()` — if returns `true`, skip pre-rendered, render live
-5. If pre-rendered payload exists and not revalidated:
-   - Render parent layouts live (they have fresh user data)
-   - Splice pre-rendered segments into the segment tree
-   - Stream the assembled response
-6. If no pre-rendered payload (new params after build):
-   - Render live as normal (fallback to SSR)
-   - Optionally cache the result for next request
 
 ## Constraints
 
@@ -215,16 +224,17 @@ For dynamic routes, a request may arrive with params not in the pre-rendered set
 - Render live as normal (SSR fallback)
 - No 404 — pre-rendering is an optimization, not a restriction
 - The live-rendered result can be cached by `cache()` if configured
+- The `B` segment is still created at runtime, it just isn't pre-populated
 
 ## Interaction with Existing DSL
 
 | DSL item       | Interaction with `prerender()`                          |
 |----------------|--------------------------------------------------------|
 | `loader()`     | Loaders are executed at build time during pre-render    |
-| `revalidate()` | Acts as runtime opt-out from pre-rendered cache         |
-| `cache()`      | Orthogonal — cache handles runtime caching, prerender handles build-time |
-| `layout()`     | Child layouts are pre-rendered, parent layouts are not  |
-| `parallel()`   | Parallel slots are pre-rendered as part of the subtree  |
+| `revalidate()` | Returns `true` to skip pre-rendered, render live        |
+| `cache()`      | Works on `B` segment like any other — enables ISR via stale-while-revalidate |
+| `layout()`     | Child layouts inside `B` are pre-rendered, parent layouts are live |
+| `parallel()`   | Parallel slots inside `B` are pre-rendered              |
 | `middleware()`  | Skipped during pre-render (no request to middleware against) |
 | `loading()`    | Not relevant — pre-rendered segments don't suspend      |
 | `intercept()`  | Not pre-rendered (intercepts are navigation-triggered)  |
