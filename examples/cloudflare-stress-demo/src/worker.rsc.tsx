@@ -19,6 +19,11 @@ export default {
     ) {
       return new Response(null, { status: 404 });
     }
+    if (url.pathname === "/robots.txt") {
+      return new Response("User-agent: *\nDisallow: /", {
+        headers: { "Content-Type": "text/plain" },
+      });
+    }
 
     // Handle /timing/* convenience route: makes internal sub-request,
     // returns Server-Timing as structured JSON
