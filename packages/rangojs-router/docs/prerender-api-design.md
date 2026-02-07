@@ -63,6 +63,41 @@ path("/blog/:slug", <BlogPost />, {}, () => [
 ])
 ```
 
+### Controlling the pre-render boundary
+
+The `B` segment boundary is exactly what's inside the `path()` that has
+`prerender()`. The developer controls what gets pre-rendered by placing
+content inside or outside the path:
+
+```ts
+// Option A: parallel INSIDE the path — pre-rendered with the route
+path("/blog/:id", <Blog />, {}, () => [
+  layout(<BlogLayout />, () => [
+    parallel({ "@recent": <RecentBlogs /> }),  // inside B segment
+  ]),
+  prerender(async () => getIds()),
+])
+
+// Option B: parallel OUTSIDE in parent layout — live, cache() available
+layout(<BlogLayout />, () => [
+  parallel({ "@recent": <RecentBlogs /> }, () => [
+    cache({ ttl: 300 }),  // normal runtime cache, not pre-rendered
+  ]),
+  path("/blog/:id", <Blog />, {}, () => [
+    prerender(async () => getIds()),  // only the route handler
+  ]),
+])
+```
+
+In Option A, `@recent` is part of the `B` segment and gets pre-rendered
+at build time with the blog post. In Option B, `@recent` lives in the
+parent layout, renders live on every request, and can use `cache()` for
+runtime caching independently.
+
+This gives fine-grained control: attach content inside the path to
+pre-render it, or keep it in a parent layout for live rendering with
+optional runtime caching.
+
 ### Revalidation
 
 `revalidate()` and `cache()` work on pre-rendered segments exactly like any
