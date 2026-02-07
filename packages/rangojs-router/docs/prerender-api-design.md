@@ -77,9 +77,16 @@ Properties that depend on a real HTTP request (`req`, `headers`, `cookies`,
 `env`) are not available and throw descriptive errors if accessed, guiding
 the developer to move request-dependent logic elsewhere.
 
-Loaders are not available in `BuildContext`. They run at request time and
-are not part of the pre-render pipeline. Data needed at build time should
-be fetched directly in the handler (e.g., `fs.readFile`, inline queries).
+**All use items inside the path receive `BuildContext` during pre-rendering.**
+This includes child layouts, parallels, and any `createPrerenderHandler`
+used as sub-components. They all run at build time with no request — the
+entire B segment tree operates in build context. This is different from
+the normal server context these items would receive at runtime.
+
+Loaders are the exception — they are not part of the pre-render pipeline.
+They run at request time with the full server context and are bundled
+normally. Data needed at build time should be fetched directly in the
+handler (e.g., `fs.readFile`, inline queries).
 
 ### Examples
 
@@ -493,8 +500,10 @@ re-render of the handler itself.
 - `ctx.use(handle)` returns push function for handle data
 - Accessing `ctx.req`, `ctx.headers`, `ctx.cookies`, `ctx.env` throws
   descriptive errors at build time (not silent undefined)
-- Sub-use items (child `createPrerenderHandler` for parallels) receive
-  the same params from the parent path
+- Sub-use items (child layouts, parallels, `createPrerenderHandler` for
+  parallels) all receive `BuildContext` during pre-rendering, not the
+  normal server context — request APIs throw in all of them
+- Sub-use items receive the same params from the parent path
 
 ### Middleware is skipped during pre-rendering
 - Middleware on the route does NOT run at build time (no request)
