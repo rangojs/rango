@@ -106,42 +106,178 @@ optional runtime caching.
 
 ### Restrictions
 
-`prerender()` is incompatible with `revalidate()` on the same path.
-Pre-rendered routes are static — they don't re-render at runtime.
-Using both produces a build-time warning.
+Without `passthrough: true`, `prerender()` is incompatible with
+`revalidate()` on the same path. The handler is eliminated from the
+bundle — there is nothing to re-render at runtime. Using both produces
+a build-time warning.
+
+With `passthrough: true`, `revalidate()` is allowed since the handler
+stays in the bundle and can render live.
 
 Server actions on pre-rendered pages work but are handled client-side
 only. Actions do not cause the `B` segment to re-render — the
-pre-rendered content stays as-is.
+pre-rendered content stays as-is (unless `passthrough: true` and
+`revalidate()` triggers a live re-render).
 
-## Handler Elimination
+## Handler and Loader Replacement (passthrough mode)
 
-The route handler and its loaders run at build time only. The Vite plugin
-strips them from the server bundle after pre-rendering. This is critical
-for the primary use case: a handler that reads markdown via `node:fs`
-cannot ship to Cloudflare Workers. Pre-rendering processes the content
-at build time and eliminates the handler from the runtime bundle.
+By default (`passthrough: false`), the route handler and its loaders run at
+build time only. This is the most complex part of the implementation.
+
+The problem: the handler component (e.g., `<BlogPost />`) imports `node:fs` to
+read markdown files. If the handler stays in the server bundle, the entire
+import chain ships to Cloudflare Workers and breaks. Tree-shaking alone is not
+sufficient — unused imports may still be bundled if the module has side effects,
+and the handler IS referenced by the route definition.
+
+### The Vite plugin must replace, not tree-shake
+
+The plugin replaces the handler and loaders with stubs that read from the
+pre-rendered Flight payload store. This eliminates the entire import chain:
 
 ```ts
-// This handler uses node:fs — cannot run on Cloudflare Workers
+// --- What the user writes ---
+
+// blog-post.tsx (imports node:fs)
+import fs from "node:fs";
+import { markdownToJsx } from "./markdown-parser";
+
 const BlogPost = async (ctx) => {
   const md = await fs.readFile(`content/${ctx.params.slug}.md`, "utf-8");
-  return <Article content={md} />;
+  return <Article content={markdownToJsx(md)} />;
 };
 
+const BlogLoader = createLoader(async (ctx) => {
+  const meta = JSON.parse(
+    await fs.readFile(`content/${ctx.params.slug}.json`, "utf-8")
+  );
+  return meta;
+});
+
+// urls.tsx
 path("/blog/:slug", <BlogPost />, {}, () => [
+  loader(BlogLoader),
   prerender(async () => {
     const files = await glob("content/blog/*.md");
     return files.map(f => ({ slug: basename(f, ".md") }));
   }),
 ])
-// After build: BlogPost and node:fs are NOT in the server bundle.
-// Only the pre-rendered Flight payloads exist at runtime.
 ```
 
-If a request arrives for params not in the pre-rendered set, the `B`
-segment has no handler to fall back to. The behavior depends on
-configuration (404 or a generic fallback page).
+```ts
+// --- What the Vite plugin produces for the server bundle ---
+
+// blog-post.tsx is NOT imported. node:fs is NOT imported.
+// markdown-parser.ts is NOT imported.
+
+// The handler is replaced with a stub that reads pre-rendered data:
+const BlogPost_prerender_stub = createPrerenderStub("blog.post");
+
+// The loader is replaced with a stub:
+const BlogLoader_prerender_stub = createPrerenderLoaderStub("blog.post");
+
+// urls.tsx (transformed)
+path("/blog/:slug", <BlogPost_prerender_stub />, {}, () => [
+  loader(BlogLoader_prerender_stub),
+  // prerender() item retained for trie metadata, params fn removed
+])
+```
+
+### How replacement works
+
+The Vite plugin operates during the server bundle build (after pre-rendering
+has completed in an earlier build phase):
+
+1. **Identify pre-rendered routes**: from the manifest, the plugin knows which
+   routes have `prerender()` and their `passthrough` mode.
+
+2. **Replace handler imports**: for `passthrough: false` routes, the plugin
+   transforms the module that defines the route. The handler component import
+   is replaced with a stub component. The original module (blog-post.tsx) is
+   never imported, so its transitive dependencies (node:fs, markdown-parser)
+   are naturally excluded from the bundle.
+
+3. **Replace loader imports**: similarly, `createLoader(fn)` calls for
+   pre-rendered routes are replaced with `createPrerenderLoaderStub(routeName)`.
+   The loader function and its imports are excluded.
+
+4. **Replace prerender() params fn**: the params function ran at build time
+   and is no longer needed. It may also import node APIs (glob, fs). The
+   plugin replaces it with metadata-only (route knows it's pre-rendered but
+   doesn't need the params fn at runtime).
+
+### Stub implementations
+
+```ts
+// Handler stub: reads pre-rendered Flight segments from the store
+function createPrerenderStub(routeName: string) {
+  return function PrerenderStub(ctx) {
+    // This component never actually renders — the B segment resolver
+    // intercepts and serves the pre-rendered Flight payload before
+    // the component is called. The stub exists only to keep the route
+    // definition valid and the segment tree stable.
+    throw new Error(
+      `Pre-rendered route "${routeName}" was called but no ` +
+      `pre-rendered data found. This is a bug.`
+    );
+  };
+}
+
+// Loader stub: no-op, data comes from pre-rendered segments
+function createPrerenderLoaderStub(routeName: string) {
+  return createLoader(() => {
+    throw new Error(
+      `Pre-rendered loader for "${routeName}" was called but should ` +
+      `never execute at runtime.`
+    );
+  });
+}
+```
+
+The stubs are never actually called in production — the `B` segment resolver
+serves the pre-rendered payload before reaching the handler. The stubs exist
+to maintain a valid route definition and stable segment tree structure. The
+`throw` is a safety net for bugs.
+
+### passthrough: true (handler kept)
+
+When `passthrough: true` is set, the handler and loaders stay in the bundle.
+No replacement occurs. The pre-rendered data is a cache that can be bypassed:
+
+```ts
+path("/products/:id", <Product />, {}, () => [
+  loader(ProductLoader),
+  prerender(async () => getTopProducts(), { passthrough: true }),
+  revalidate(({ actionId }) => actionId?.includes("Product") ?? false),
+])
+```
+
+- Handler and loaders ship to the server (no node-specific APIs allowed)
+- Pre-rendered params are served from cache
+- Unknown params render live via the handler
+- `revalidate()` is allowed — can trigger live re-render
+
+### Complexity assessment
+
+Handler replacement is the hardest part of this feature because:
+
+1. **Import graph analysis**: the plugin must identify which imports are
+   exclusively used by pre-rendered handlers and can be safely excluded.
+   If a module is shared between a pre-rendered route and a live route,
+   it must stay in the bundle.
+
+2. **Build ordering**: pre-rendering must complete before the server bundle
+   build. The plugin needs the Flight payloads to exist before it can
+   replace handlers with stubs. This means a two-phase build:
+   - Phase 1: build with handlers intact, execute pre-renders
+   - Phase 2: rebuild server bundle with handlers replaced by stubs
+
+3. **Source map accuracy**: replacement must produce correct source maps
+   so errors in stubs point to the right location.
+
+4. **HMR in dev mode**: in dev, no replacement happens — handlers run
+   normally. The replacement is production-build only. Dev mode uses
+   on-demand rendering (handler runs live on each request).
 
 ## Dev Mode
 
@@ -188,12 +324,20 @@ but defers validation to the build step.
 ### Function signature
 
 ```ts
+interface PrerenderOptions {
+  // Keep handler in server bundle for live fallback (default: false)
+  // false: handler replaced with stub, node APIs excluded from bundle
+  // true: handler stays in bundle, unknown params render live
+  passthrough?: boolean;
+}
+
 // Static route — no params needed
-function prerender(): PrerenderItem;
+function prerender(options?: PrerenderOptions): PrerenderItem;
 
 // Dynamic route — params matching the path pattern
 function prerender<TParams>(
-  getParams: () => Promise<TParams[]> | TParams[]
+  getParams: () => Promise<TParams[]> | TParams[],
+  options?: PrerenderOptions
 ): PrerenderItem;
 ```
 
@@ -336,11 +480,13 @@ pre-rendered content is public.
 
 If a route needs request-dependent data, don't use `prerender()`.
 
-### No revalidate() with prerender()
+### No revalidate() without passthrough
 
-`revalidate()` is incompatible with `prerender()`. The handler is eliminated
-from the bundle — there is nothing to re-render at runtime. Using both
-produces a build-time warning.
+`revalidate()` is incompatible with `prerender()` when `passthrough: false`
+(the default). The handler is eliminated from the bundle — there is nothing
+to re-render at runtime. Using both produces a build-time warning.
+
+With `passthrough: true`, `revalidate()` works normally.
 
 ### Handle data is frozen
 
@@ -390,8 +536,8 @@ version for those params.
 
 | DSL item       | Interaction with `prerender()`                          |
 |----------------|--------------------------------------------------------|
-| `loader()`     | Loaders executed at build time, eliminated from bundle  |
-| `revalidate()` | Not allowed with `prerender()` — build-time warning     |
+| `loader()`     | Executed at build time. Eliminated without passthrough, kept with passthrough |
+| `revalidate()` | Not allowed without passthrough. Allowed with `passthrough: true` |
 | `cache()`      | Orthogonal — use on parent layouts, not on pre-rendered routes |
 | `layout()`     | Child layouts inside `B` are pre-rendered, parent layouts are live |
 | `parallel()`   | Parallel slots inside `B` are pre-rendered              |
@@ -401,9 +547,17 @@ version for those params.
 
 ## Open Questions
 
-- **Fallback for unknown params**: handler is eliminated — what happens for
-  params not in the pre-rendered set? 404? Generic fallback component?
+- **Fallback for unknown params without passthrough**: handler is eliminated —
+  what happens for params not in the pre-rendered set? 404? Generic fallback?
+  (With `passthrough: true` this is solved — render live.)
 - **Incremental builds**: add one blog post — re-render all 10,000 or diff
   against existing output and render only new/changed?
 - **Client navigation to pre-rendered routes**: partial update system needs
   to serve pre-rendered Flight payload for `B` segments during RSC fetch.
+- **Two-phase build**: pre-rendering requires handlers to exist (phase 1),
+  then the server bundle replaces them with stubs (phase 2). How does this
+  interact with Vite's build pipeline? Can it be done in a single build
+  pass with deferred replacement?
+- **Shared module detection**: if a module is imported by both a pre-rendered
+  handler and a live handler, the plugin must NOT exclude it from the bundle.
+  Accurate import graph analysis is required.
