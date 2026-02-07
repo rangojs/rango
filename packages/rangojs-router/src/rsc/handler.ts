@@ -317,24 +317,12 @@ export function createRSCHandler<
       url.searchParams.has("__debug_manifest") &&
       (isDev || router.allowDebugManifest)
     ) {
-      const debug: Record<string, unknown> = {
-        url: url.pathname,
+      return new Response(JSON.stringify({
         routeManifest: getGlobalRouteMap(),
         routeAncestry: getRouteAncestry(),
         routeTrie: getRouteTrie(),
         precomputedEntries: getPrecomputedEntries(),
-        hasCachedManifest: hasCachedManifest(),
-      };
-      // Only run the full handler-based manifest if no cached data exists,
-      // since re-running handlers would hit duplicate route name invariants.
-      if (!hasCachedManifest()) {
-        try {
-          debug.runtimeManifest = await router.debugManifest();
-        } catch {
-          debug.runtimeManifest = "unavailable (handler execution failed)";
-        }
-      }
-      return new Response(JSON.stringify(debug, null, 2), {
+      }, null, 2), {
         headers: { "Content-Type": "application/json" },
       });
     }
