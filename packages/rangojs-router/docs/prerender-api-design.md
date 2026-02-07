@@ -486,6 +486,23 @@ re-render of the handler itself.
 - Dynamic route (with params): multiple md files, each slug resolves to correct content
 - Dev mode: same routes render on-demand, no stubbing
 
+### BuildContext type safety
+- Handler receives `BuildContext`, not the full runtime context
+- `ctx.params` is typed from the route pattern
+- `ctx.url` and `ctx.pathname` are synthetic (built from pattern + params)
+- `ctx.use(handle)` returns push function for handle data
+- Accessing `ctx.req`, `ctx.headers`, `ctx.cookies`, `ctx.env` throws
+  descriptive errors at build time (not silent undefined)
+- Sub-use items (child `createPrerenderHandler` for parallels) receive
+  the same params from the parent path
+
+### Middleware is skipped during pre-rendering
+- Middleware on the route does NOT run at build time (no request)
+- Middleware variables are not available in `BuildContext`
+- Middleware still runs at request time for live loaders on the same route
+- Route with middleware + pre-rendered handler: middleware runs for loaders,
+  handler output comes from pre-rendered cache
+
 ### Handler elimination
 - Production build does NOT contain `node:fs` or markdown imports from handler
 - Handler stub is a plain object with `$$id`
@@ -512,6 +529,17 @@ re-render of the handler itself.
 - Parallel slot inside path is pre-rendered
 - Parallel using `createPrerenderHandler` (node APIs) is stubbed correctly
 - Content outside the path (parent layouts) stays live
+
+### Edge cases
+- Empty `getParams` returns (no params to pre-render): no Flight payloads written, no error
+- `getParams` throws: build fails with clear error via router `onError`
+- Handler throws for one param set: that param fails, others succeed
+- Duplicate params in `getParams`: deduplicated by param hash
+- Route with no `name` in path options: build error (name required for storage key)
+- Pre-rendered route with no matching Flight payload at runtime (deleted/corrupted):
+  graceful fallback vs 500
+- Mixed file: module exports both `createPrerenderHandler` and a normal export —
+  plugin must NOT eliminate the entire module
 
 ## Open Questions
 
