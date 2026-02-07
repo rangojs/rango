@@ -2,9 +2,18 @@
 
 ## Overview
 
-Pre-render route segments at build time. Layouts stay live (dynamic user data, A/B tests, cart). Only the route's own subtree (handler, child layouts, parallels, loaders) is pre-rendered.
+Pre-render route segments at build time. The primary use case is static content
+that requires no runtime server — documentation sites, marketing pages, blogs
+built from local markdown files. Content that is available locally at build time
+and doesn't depend on any API.
 
-Pre-rendering is an optimization, not a restriction. If a pre-rendered version is not found for the matched params, the route renders live as normal.
+For hybrid apps (server exists but some routes are static), parent layouts stay
+live (dynamic user data, A/B tests, cart) while only the route's own subtree
+(handler, child layouts, parallels, loaders) is pre-rendered.
+
+Pre-rendering is an optimization, not a restriction. If a pre-rendered version
+is not found for the matched params, the route renders live as normal (when a
+server is available).
 
 ## DSL API
 
