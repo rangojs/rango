@@ -181,6 +181,28 @@ L0 (root layout)              — LIVE (user session, cart)
 Parent layouts above `B` are always live. Everything inside `B` is pre-rendered
 as one unit at build time.
 
+### Tree structure stability
+
+The `B` segment is always present in the tree, regardless of whether pre-rendered
+data exists. Whether the cache is warm (serve from build) or cold (render live),
+the segment tree has the same shape:
+
+```
+Pre-rendered:   L0 → L0L0 → L0L0B0 → L0L0B0R0  (B served from cache)
+Live rendered:  L0 → L0L0 → L0L0B0 → L0L0B0R0  (B rendered on request)
+Navigation:     L0 → L0L0 → L0L0B0 → L0L0B0R0  (partial update)
+Action:         L0 → L0L0 → L0L0B0 → L0L0B0R0  (same tree)
+```
+
+No conditional tree depth. React never sees a structural difference.
+
+### `B` is server-only, renders nothing on the client
+
+The `B` segment has no component and renders no DOM. It is a server-side
+resolution boundary only — a transparent pass-through. The client never
+sees `B`, never hydrates it, has no knowledge of it. The client receives
+the inner segments (route, layouts, parallels) directly.
+
 ### Runtime behavior
 
 When the segment resolver encounters a `B` segment:
@@ -190,10 +212,6 @@ When the segment resolver encounters a `B` segment:
 3. If found and `revalidate()` returns `false` — serve entire `B` subtree from cache
 4. If not found or revalidated — render live (same as if `prerender()` wasn't there)
 5. `cache()` works on the `B` segment like any other — stale-while-revalidate for ISR
-
-The `B` segment is transparent to the client. The client receives segments
-and assembles them into the React tree as usual — it doesn't know or care
-whether segments were pre-rendered or live-rendered.
 
 ## Storage Layout
 
