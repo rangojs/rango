@@ -390,6 +390,8 @@ export interface FetchPartialOptions {
   interceptSourceUrl?: string;
   /** RSC version for cache invalidation detection */
   version?: string;
+  /** If true, this is an HMR refetch - server should invalidate manifest cache */
+  hmr?: boolean;
 }
 
 /**

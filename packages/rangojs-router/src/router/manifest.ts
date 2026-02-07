@@ -10,12 +10,17 @@ import { getContext, runWithPrefixes, type EntryData, type MetricsStore } from "
 import MapRootLayout from "../server/root-layout";
 import type { RouteEntry } from "../types";
 import type { UrlPatterns } from "../urls";
+import { VERSION } from "@rangojs/router:version";
 
 // Module-level manifest cache: avoids re-executing DSL handler on every request.
 // Handler execution is deterministic (components, loaders, middleware are module-level
 // stable references), so the resulting EntryData tree can be safely cached and reused
-// across requests within the same isolate. Cache is keyed by (mountIndex, routeKey, isSSR)
-// since isSSR affects loading() property for routes using ssr:false.
+// across requests within the same isolate.
+//
+// Cache is keyed by (VERSION, mountIndex, routeKey, isSSR). VERSION comes from the
+// @rangojs/router:version virtual module which Vite invalidates on RSC module HMR.
+// When VERSION changes, this module re-evaluates and the cache is recreated empty.
+// Including VERSION in the key is additional defense against stale entries.
 const manifestModuleCache = new Map<string, Map<string, EntryData>>();
 
 /**
@@ -26,6 +31,14 @@ const manifestModuleCache = new Map<string, Map<string, EntryData>>();
  * for the same (routeKey, isSSR) within the same isolate return cached data
  * without re-executing the DSL handler.
  */
+/**
+ * Clear the module-level manifest cache.
+ * Called on HMR to ensure stale handler references are discarded.
+ */
+export function clearManifestCache(): void {
+  manifestModuleCache.clear();
+}
+
 export async function loadManifest(
   entry: RouteEntry<any>,
   routeKey: string,
@@ -47,7 +60,7 @@ export async function loadManifest(
   const mountIndex = entry.mountIndex;
 
   // Check module-level cache (persists across requests within same isolate)
-  const cacheKey = `${mountIndex ?? ''}:${routeKey}:${isSSR ? 1 : 0}`;
+  const cacheKey = `${VERSION}:${mountIndex ?? ''}:${routeKey}:${isSSR ? 1 : 0}`;
   const cached = manifestModuleCache.get(cacheKey);
   if (cached) {
     const cacheStart = performance.now();

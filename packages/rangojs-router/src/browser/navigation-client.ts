@@ -53,6 +53,7 @@ export function createNavigationClient(
         staleRevalidation,
         interceptSourceUrl,
         version,
+        hmr,
       } = options;
 
       console.log(`\n[Browser] >>> NAVIGATION`);
@@ -89,6 +90,7 @@ export function createNavigationClient(
           ...(interceptSourceUrl && {
             "X-RSC-Router-Intercept-Source": interceptSourceUrl,
           }),
+          ...(hmr && { "X-RSC-HMR": "1" }),
         },
         signal,
       }).then((response) => {

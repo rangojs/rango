@@ -16,7 +16,7 @@ import {
 } from "./error-handling.js";
 import { createHandlerContext } from "./handler-context.js";
 import { setupLoaderAccess } from "./loader-resolution.js";
-import { loadManifest } from "./manifest.js";
+import { loadManifest, clearManifestCache } from "./manifest.js";
 import { collectRouteMiddleware } from "./middleware.js";
 import { traverseBack } from "./pattern-matching.js";
 import { DefaultErrorFallback } from "../default-error-boundary.js";
@@ -207,6 +207,11 @@ export async function createMatchContextForPartial<TEnv>(
   const interceptSourceUrl = request.headers.get(
     "X-RSC-Router-Intercept-Source",
   );
+
+  // HMR: clear manifest cache so stale handler references are discarded
+  if (request.headers.get("X-RSC-HMR")) {
+    clearManifestCache();
+  }
 
   if (!previousUrl) {
     return null;
