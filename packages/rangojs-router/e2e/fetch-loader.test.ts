@@ -126,10 +126,7 @@ test.describe("useFetchLoader (production)", () => {
     mode: "build",
   });
 
-  test.setTimeout(60000); // Build takes time
-
-  // TODO: Add preview script to test-app for production testing
-  test.skip("should work in production build", async ({ page }) => {
+  test("should work in production build", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/fetch-loader"));
