@@ -10,7 +10,10 @@ processes it at build time and stores the Flight payload to serve at runtime
 without needing the source files on the server.
 
 Parent layouts stay live (dynamic user data, A/B tests, cart) while only the
-route's own subtree (handler, child layouts, parallels, loaders) is pre-rendered.
+route's own subtree (handler, child layouts, parallels) is pre-rendered.
+Loaders are not affected — they run at request time as normal and are
+bundled into the server build. Users should not use APIs in loaders that
+won't exist on the target deployment.
 
 ## API: `createPrerenderHandler`
 
@@ -57,9 +60,6 @@ interface BuildContext<TParams> {
   // Params extracted from the route pattern (populated from getParams)
   params: TParams;
 
-  // Access loader data (loaders run at build time too)
-  use: <T>(loader: LoaderDefinition<T>) => T;
-
   // Push handle data (frozen into pre-rendered output)
   use: <T>(handle: Handle<T>) => (data: T) => void;
 
@@ -76,6 +76,10 @@ interface BuildContext<TParams> {
 Properties that depend on a real HTTP request (`req`, `headers`, `cookies`,
 `env`) are not available and throw descriptive errors if accessed, guiding
 the developer to move request-dependent logic elsewhere.
+
+Loaders are not available in `BuildContext`. They run at request time and
+are not part of the pre-render pipeline. Data needed at build time should
+be fetched directly in the handler (e.g., `fs.readFile`, inline queries).
 
 ### Examples
 
@@ -187,7 +191,7 @@ and gets pre-rendered:
 ```ts
 path("/blog/:slug", BlogPost, { name: "blog.post" }, () => [
   layout(<PostLayout />, () => [        // inside B → pre-rendered
-    loader(PostMetaLoader),              // stubbable via createLoader
+    loader(PostMetaLoader),              // live at runtime, bundled normally
   ]),
   parallel({ "@sidebar": <Sidebar /> }),  // inside B → pre-rendered
 ])
@@ -377,7 +381,7 @@ pattern as `exposeLoaderId`). Builds registry: file path → export names.
 For each handler in the registry:
 1. Resolve the params function to get the list of param sets
 2. For each param set, create a `BuildContext` with those params
-3. Execute the handler and its loaders
+3. Execute the handler (loaders are not executed — they run at request time)
 4. Render the `B` segment subtree to RSC Flight payload
 5. Store keyed by router id + route name + param hash
 
@@ -430,10 +434,13 @@ Error handling uses the router's existing `onError` handler.
 
 ## Constraints
 
-### Loaders must be request-independent
+### Loaders are live, not pre-rendered
 
-Pre-rendered loaders run at build time with `BuildContext`. No request context
-available. If a loader reads `ctx.req`, it throws at build time.
+Loaders run at request time as normal, even on pre-rendered routes. They are
+bundled into the server build and need `cache()` for caching — same as any
+other route. Users should not use APIs in loaders that won't exist on the
+target deployment (e.g., don't use `node:fs` in a loader deploying to
+Cloudflare).
 
 ### No revalidate() without passthrough
 
@@ -447,17 +454,22 @@ With `passthrough: true`, `revalidate()` works normally.
 
 Handle values pushed during pre-rendering are baked into the Flight payload.
 
-### Server actions are client-side only
+### Server actions and loaders
 
-Server actions on pre-rendered pages work but do not cause the `B` segment
-to re-render. The pre-rendered content stays as-is (unless `passthrough: true`
-and `revalidate()` triggers a live re-render).
+Server actions on pre-rendered pages work. The pre-rendered handler output
+(the `B` segment) stays as-is — it is not re-rendered. However, since
+loaders are live and bundled, actions can trigger loader revalidation
+normally. This means a pre-rendered page can have dynamic loader data
+that updates via actions, while the handler's static shell remains frozen.
+
+With `passthrough: true`, `revalidate()` can also trigger a full live
+re-render of the handler itself.
 
 ## Interaction with Existing DSL
 
 | DSL item       | Interaction with `createPrerenderHandler`               |
 |----------------|--------------------------------------------------------|
-| `loader()`     | Executed at build time. Stubbed without passthrough     |
+| `loader()`     | Live at runtime, bundled normally. Use `cache()` for caching |
 | `revalidate()` | Not allowed without passthrough. Allowed with passthrough |
 | `cache()`      | Orthogonal — use on parent layouts, not on pre-rendered routes |
 | `layout()`     | Child layouts inside `B` are pre-rendered, parent layouts are live |
