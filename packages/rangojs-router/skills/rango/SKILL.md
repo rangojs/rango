@@ -25,6 +25,7 @@ Django-inspired RSC router with composable URL patterns, type-safe href, and ser
 | `/links` | URL generation: ctx.href, href, useHref, useMount, scopedHref |
 | `/hooks` | Client-side React hooks |
 | `/typesafety` | Type-safe routes, params, href, and environment |
+| `/host-router` | Multi-app host routing with domain/subdomain patterns |
 
 ## Quick Start
 
