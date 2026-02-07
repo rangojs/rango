@@ -113,7 +113,39 @@ path("/blog/:slug", <BlogPost />, {}, () => [
 ])
 ```
 
-## Function Signature
+## Type Safety
+
+### Params type inference
+
+`prerender()` params must match the path pattern. The `path()` function carries
+`TPattern` as a phantom type. The challenge is threading that type into
+`prerender()` inside the `use()` callback.
+
+The `use()` callback currently returns `RouteUseItem[]` — all items are untyped.
+To make `prerender()` type-safe, the callback needs to receive the pattern type:
+
+```ts
+// Option A: generic use callback (preferred)
+// path() passes TPattern to the use callback, which passes it to prerender()
+path("/blog/:slug", <BlogPost />, {}, (use) => [
+  use.prerender(async () => [
+    { slug: "hello-world" },  // TS enforces { slug: string }
+  ]),
+])
+
+// Option B: prerender() is standalone, validated via Vite plugin
+// Less ergonomic but doesn't change the use() signature
+path("/blog/:slug", <BlogPost />, {}, () => [
+  prerender(async () => [
+    { slug: "hello-world" },  // validated at build time, not compile time
+  ]),
+])
+```
+
+Option A gives compile-time safety. Option B keeps the existing DSL shape
+but defers validation to the build step.
+
+### Function signature
 
 ```ts
 // Static route — no params needed
@@ -249,7 +281,41 @@ This is fine for static handle data like breadcrumbs but worth noting.
 ### Build time scales with params
 
 10,000 blog posts = 10,000 loader + render executions at build time.
-The build step should support concurrency controls.
+Without controls this can exhaust system memory or overwhelm third-party
+APIs (CMS, database, CDN).
+
+## Vite Plugin Configuration
+
+Build-time pre-rendering is controlled via the Vite plugin to manage
+system resources and API pressure:
+
+```ts
+// vite.config.ts
+rango({
+  prerender: {
+    // Max concurrent render operations. Each render executes loaders
+    // and renders the B segment subtree. Low values protect against
+    // memory exhaustion and API rate limits.
+    // Default: 5
+    concurrency: 5,
+
+    // Per-render timeout in ms. Kills renders that hang on slow APIs.
+    // Default: 30000
+    timeout: 30_000,
+
+    // What to do when a single render fails (loader throws, timeout, etc.)
+    // "skip": log warning, continue with remaining params (partial pre-render)
+    // "fail": abort the entire build
+    // Default: "skip"
+    onError: "skip",
+  },
+})
+```
+
+These controls are critical for production builds with large param sets.
+A blog with 10,000 posts hitting a CMS API at `concurrency: 50` could
+trigger rate limiting. The defaults are conservative — users can tune
+up based on their infrastructure.
 
 ## Fallback Behavior
 
