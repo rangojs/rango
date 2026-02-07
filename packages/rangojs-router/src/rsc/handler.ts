@@ -35,9 +35,7 @@ import { generateNonce } from "./nonce.js";
 import { VERSION } from "@rangojs/router:version";
 import type { ErrorPhase } from "../types.js";
 import { invokeOnError } from "../router/error-handling.js";
-import { getGlobalRouteMap, hasCachedManifest } from "../route-map-builder.js";
-import { getRouteManifestData } from "../server/route-manifest-cache.js";
-import { generateManifest } from "../build/generate-manifest.js";
+import { getGlobalRouteMap, hasCachedManifest, setCachedManifest, getRouteTrie, setRouteTrie, getRouteAncestry, setRouteAncestry, getPrecomputedEntries, waitForManifestReady } from "../route-map-builder.js";
 
 /**
  * Create an RSC request handler.
@@ -163,20 +161,44 @@ export function createRSCHandler<
       }
     }
 
-    // Load route manifest on first request (always enabled when urlpatterns exist)
-    // This enables href() for all routes including lazy includes
-    // Manifest is regenerated when version changes (HMR in dev mode)
-    // Skip when already cached in memory to avoid async overhead on every request
+    // Route manifest is populated at startup via the virtual module
+    // (virtual:rsc-router/routes-manifest). In build/production, it's inlined
+    // into the bundle. In dev mode (Node), the discovery plugin populates it
+    // via setManifestReadyPromise(). In dev mode (Cloudflare), Miniflare runs
+    // in a separate isolate where module-level state doesn't carry over, so
+    // we generate inline from the router's urlpatterns.
     const manifestCacheStart = performance.now();
-    if (router.urlpatterns && !hasCachedManifest()) {
-      await getRouteManifestData(
-        () => generateManifest(router.urlpatterns!),
-        version,
-        {
-          store: cacheStore,
-          waitUntil: env.ctx?.waitUntil.bind(env.ctx),
-        },
-      );
+    if (!hasCachedManifest()) {
+      const readyPromise = waitForManifestReady();
+      if (readyPromise) {
+        await readyPromise;
+      }
+      if (!hasCachedManifest() && router.urlpatterns) {
+        // Cloudflare dev: generate manifest inline (no caching needed)
+        const { generateManifest } = await import("../build/generate-manifest.js");
+        const generated = generateManifest(router.urlpatterns);
+        setCachedManifest(generated.routeManifest);
+        if (generated.routeAncestry && Object.keys(generated.routeAncestry).length > 0) {
+          setRouteAncestry(generated.routeAncestry);
+          const { buildRouteTrie } = await import("../build/route-trie.js");
+          const routeToStaticPrefix: Record<string, string> = {};
+          for (const name of Object.keys(generated.routeManifest)) {
+            routeToStaticPrefix[name] = "";
+          }
+          const trie = buildRouteTrie(
+            generated.routeManifest,
+            generated.routeAncestry,
+            routeToStaticPrefix,
+            generated.routeTrailingSlash,
+          );
+          setRouteTrie(trie);
+        }
+      }
+      if (!hasCachedManifest()) {
+        throw new Error(
+          'Route manifest not available. Ensure "virtual:rsc-router/routes-manifest" is imported in your entry file.',
+        );
+      }
     }
     const manifestCacheDur = performance.now() - manifestCacheStart;
 
@@ -288,10 +310,31 @@ export function createRSCHandler<
       return new Response(null, { status: 404 });
     }
 
-    // Debug endpoint - only in development
-    if (url.pathname === "/__debug_manifest" && process.env.NODE_ENV !== "production") {
-      const manifest = await router.debugManifest();
-      return new Response(JSON.stringify(manifest, null, 2), {
+    // Debug manifest endpoint: ?__debug_manifest on any route.
+    // Always available in dev, requires allowDebugManifest option in production.
+    const isDev = process.env.NODE_ENV !== "production";
+    if (
+      url.searchParams.has("__debug_manifest") &&
+      (isDev || router.allowDebugManifest)
+    ) {
+      const debug: Record<string, unknown> = {
+        url: url.pathname,
+        routeManifest: getGlobalRouteMap(),
+        routeAncestry: getRouteAncestry(),
+        routeTrie: getRouteTrie(),
+        precomputedEntries: getPrecomputedEntries(),
+        hasCachedManifest: hasCachedManifest(),
+      };
+      // Only run the full handler-based manifest if no cached data exists,
+      // since re-running handlers would hit duplicate route name invariants.
+      if (!hasCachedManifest()) {
+        try {
+          debug.runtimeManifest = await router.debugManifest();
+        } catch {
+          debug.runtimeManifest = "unavailable (handler execution failed)";
+        }
+      }
+      return new Response(JSON.stringify(debug, null, 2), {
         headers: { "Content-Type": "application/json" },
       });
     }

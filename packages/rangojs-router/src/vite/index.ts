@@ -402,6 +402,10 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
   // Read by the virtual module's load hook to emit setCachedManifest() call.
   let mergedRouteManifest: Record<string, string> | null = null;
 
+  // Promise that resolves when dev-mode discovery completes.
+  // The virtual module's load hook awaits this to ensure data is available.
+  let discoveryDone: Promise<void> | null = null;
+
   // Pre-computed route entries from prefix tree leaf nodes.
   // Leaf nodes have no nested includes, so their routes can be used directly
   // by evaluateLazyEntry() without running the handler.
@@ -591,17 +595,32 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
       if (isBuildMode) return;
       // Skip if this is a temp server created by buildStart
       if ((globalThis as any).__rscRouterDiscoveryActive) return;
+
+      // Discovery promise that the handler can await if requests arrive
+      // before discovery completes
+      let resolveDiscovery: () => void;
+      const discoveryPromise = new Promise<void>((resolve) => {
+        resolveDiscovery = resolve;
+      });
+
       const discover = async () => {
         const rscEnv = (server.environments as any)?.rsc;
         if (!rscEnv?.runner) {
+          resolveDiscovery!();
           return;
         }
 
         try {
-          const serverMod = await discoverRouters(rscEnv);
+          // Set the readiness gate BEFORE discovery so early requests
+          // block until manifest is populated
+          const serverMod = await rscEnv.runner.import("@rangojs/router/server");
+          if (serverMod?.setManifestReadyPromise) {
+            serverMod.setManifestReadyPromise(discoveryPromise);
+          }
 
-          // In dev mode, also populate the route map in the RSC env
-          // so href() works immediately without first-request penalty
+          await discoverRouters(rscEnv);
+
+          // Populate the route map in the RSC env
           if (mergedRouteManifest && serverMod?.setCachedManifest) {
             serverMod.setCachedManifest(mergedRouteManifest);
           }
@@ -618,11 +637,16 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
           console.warn(
             `[rsc-router] Router discovery failed: ${err.message}\n${err.stack}`
           );
+        } finally {
+          resolveDiscovery!();
         }
       };
 
-      // Schedule after all plugins have finished configureServer
-      setTimeout(discover, 0);
+      // Schedule after all plugins have finished configureServer.
+      // Store the promise so the virtual module's load hook can await it.
+      discoveryDone = new Promise<void>((resolve) => {
+        setTimeout(() => discover().then(resolve, resolve), 0);
+      });
     },
 
     // Build mode: create a temporary Vite dev server to access the RSC
@@ -701,8 +725,15 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
       return null;
     },
 
-    load(id) {
+    async load(id) {
       if (id === "\0" + VIRTUAL_ROUTES_MANIFEST_ID) {
+        // In dev mode, wait for discovery to complete before emitting module content.
+        // This is critical for Cloudflare dev where the worker runs in a separate
+        // Miniflare process and can only receive manifest data via the virtual module.
+        if (discoveryDone) {
+          await discoveryDone;
+          console.log(`[rsc-router] Virtual module loaded after discovery (${mergedRouteManifest ? Object.keys(mergedRouteManifest).length + ' routes' : 'no data'})`);
+        }
         const hasManifest = mergedRouteManifest && Object.keys(mergedRouteManifest).length > 0;
         if (hasManifest) {
           const lines = [
@@ -798,9 +829,10 @@ function hashRouterId(id: string): string {
 }
 
 /**
- * Plugin that auto-injects VERSION into custom entry.rsc files.
+ * Plugin that auto-injects VERSION and routes-manifest into custom entry.rsc files.
  * If a custom entry.rsc file uses createRSCHandler but doesn't pass version,
  * this transform adds the import and property automatically.
+ * Also ensures the routes-manifest virtual module is always imported.
  * @internal
  */
 function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
@@ -825,57 +857,67 @@ function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
         return null;
       }
 
-      // Check if file uses createRSCHandler
-      if (!code.includes("createRSCHandler")) {
-        return null;
+      let newCode = code;
+      let changed = false;
+
+      // Auto-inject routes-manifest import if not already present.
+      // This ensures the build-time manifest is always loaded at startup,
+      // regardless of whether the user uses virtual entries or a custom worker entry.
+      if (!newCode.includes("virtual:rsc-router/routes-manifest")) {
+        const lastImportIndex = newCode.lastIndexOf("import ");
+        if (lastImportIndex !== -1) {
+          const afterLastImport = newCode.indexOf("\n", lastImportIndex);
+          if (afterLastImport !== -1) {
+            let insertIndex = afterLastImport + 1;
+            while (
+              insertIndex < newCode.length &&
+              (newCode.slice(insertIndex).match(/^\s*(from|import)\s/) ||
+                newCode[insertIndex] === "\n")
+            ) {
+              const nextNewline = newCode.indexOf("\n", insertIndex);
+              if (nextNewline === -1) break;
+              insertIndex = nextNewline + 1;
+            }
+            const manifestImport = `import "virtual:rsc-router/routes-manifest";\n`;
+            newCode = newCode.slice(0, insertIndex) + manifestImport + newCode.slice(insertIndex);
+            changed = true;
+          }
+        }
       }
 
-      // Check if VERSION is already imported
-      if (code.includes("@rangojs/router:version")) {
-        return null;
-      }
-
-      // Check if version property is already being passed
-      // Look for version: in the createRSCHandler call
-      const handlerCallMatch = code.match(/createRSCHandler\s*\(\s*\{/);
-      if (!handlerCallMatch) {
-        return null;
-      }
-
-      // Add VERSION import after the last import statement
-      const lastImportIndex = code.lastIndexOf("import ");
-      if (lastImportIndex === -1) {
-        return null;
-      }
-
-      // Find the end of the last import statement
-      const afterLastImport = code.indexOf("\n", lastImportIndex);
-      if (afterLastImport === -1) {
-        return null;
-      }
-
-      // Find next line that's not an import continuation
-      let insertIndex = afterLastImport + 1;
-      while (
-        insertIndex < code.length &&
-        (code.slice(insertIndex).match(/^\s*(from|import)\s/) ||
-          code[insertIndex] === "\n")
+      // Auto-inject VERSION if file uses createRSCHandler without version
+      if (
+        newCode.includes("createRSCHandler") &&
+        !newCode.includes("@rangojs/router:version") &&
+        newCode.match(/createRSCHandler\s*\(\s*\{/)
       ) {
-        const nextNewline = code.indexOf("\n", insertIndex);
-        if (nextNewline === -1) break;
-        insertIndex = nextNewline + 1;
+        const lastImportIndex = newCode.lastIndexOf("import ");
+        if (lastImportIndex !== -1) {
+          const afterLastImport = newCode.indexOf("\n", lastImportIndex);
+          if (afterLastImport !== -1) {
+            let insertIndex = afterLastImport + 1;
+            while (
+              insertIndex < newCode.length &&
+              (newCode.slice(insertIndex).match(/^\s*(from|import)\s/) ||
+                newCode[insertIndex] === "\n")
+            ) {
+              const nextNewline = newCode.indexOf("\n", insertIndex);
+              if (nextNewline === -1) break;
+              insertIndex = nextNewline + 1;
+            }
+            const versionImport = `import { VERSION } from "@rangojs/router:version";\n`;
+            newCode = newCode.slice(0, insertIndex) + versionImport + newCode.slice(insertIndex);
+          }
+        }
+
+        newCode = newCode.replace(
+          /createRSCHandler\s*\(\s*\{/,
+          "createRSCHandler({\n  version: VERSION,"
+        );
+        changed = true;
       }
 
-      // Insert VERSION import
-      const versionImport = `import { VERSION } from "@rangojs/router:version";\n`;
-      let newCode = code.slice(0, insertIndex) + versionImport + code.slice(insertIndex);
-
-      // Add version: VERSION to createRSCHandler call
-      // Find createRSCHandler({ and add version: VERSION right after the opening brace
-      newCode = newCode.replace(
-        /createRSCHandler\s*\(\s*\{/,
-        "createRSCHandler({\n  version: VERSION,"
-      );
+      if (!changed) return null;
 
       return {
         code: newCode,
@@ -1158,9 +1200,16 @@ export async function rscRouter(
   // Add version virtual module plugin for cache invalidation
   plugins.push(createVersionPlugin());
 
-  // Add version injector for custom entry.rsc files
-  if (rscEntryPath) {
-    plugins.push(createVersionInjectorPlugin(rscEntryPath));
+  // Resolve discovery entry path (used for both discovery and version injection).
+  // Node preset: uses the required router path.
+  // Cloudflare preset: auto-detects RSC entry from wrangler.json main field.
+  const discoveryEntryPath = resolveDiscoveryEntryPath(options);
+
+  // Add version injector for custom entry.rsc files.
+  // For Cloudflare preset, the RSC entry is the worker file (from wrangler.json).
+  const injectorEntryPath = rscEntryPath ?? (preset === "cloudflare" ? discoveryEntryPath : null);
+  if (injectorEntryPath) {
+    plugins.push(createVersionInjectorPlugin(injectorEntryPath));
   }
 
   // Transform CJS vendor files to ESM for browser compatibility
@@ -1168,9 +1217,6 @@ export async function rscRouter(
   plugins.push(createCjsToEsmPlugin());
 
   // Add router discovery plugin for build-time manifest generation.
-  // Node preset: uses the required router path.
-  // Cloudflare preset: auto-detects RSC entry from wrangler.json main field.
-  const discoveryEntryPath = resolveDiscoveryEntryPath(options);
   if (discoveryEntryPath) {
     plugins.push(createRouterDiscoveryPlugin(discoveryEntryPath));
   }

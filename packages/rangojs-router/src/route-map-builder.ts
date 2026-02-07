@@ -238,3 +238,17 @@ export function setRouteAncestry(map: typeof cachedRouteAncestry): void {
 export function getRouteAncestry(): typeof cachedRouteAncestry {
   return cachedRouteAncestry;
 }
+
+// Dev-mode manifest readiness gate.
+// The Vite discovery plugin calls setManifestReadyPromise() before starting
+// discovery, and resolves it when discovery completes. The handler awaits
+// waitForManifestReady() on first request if the manifest isn't yet available.
+let manifestReadyPromise: Promise<void> | null = null;
+
+export function setManifestReadyPromise(promise: Promise<void>): void {
+  manifestReadyPromise = promise;
+}
+
+export function waitForManifestReady(): Promise<void> | null {
+  return manifestReadyPromise;
+}

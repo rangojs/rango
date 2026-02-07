@@ -159,6 +159,14 @@ export interface RSCRouterOptions<TEnv = any> {
   debugPerformance?: boolean;
 
   /**
+   * Allow the `?__debug_manifest` query parameter to return route manifest data as JSON.
+   * In development mode this is always enabled regardless of this setting.
+   * Defaults to true. Set to false to disable in production.
+   * @internal
+   */
+  allowDebugManifest?: boolean;
+
+  /**
    * Document component that wraps the entire application.
    *
    * This component provides the HTML structure for your app and wraps
@@ -805,6 +813,13 @@ export interface RSCRouter<
   readonly warmupEnabled: boolean;
 
   /**
+   * Whether ?__debug_manifest is allowed in production.
+   * Always enabled in development.
+   * @internal
+   */
+  readonly allowDebugManifest: boolean;
+
+  /**
    * App-level middleware entries (for internal use by RSC handler)
    * These wrap the entire request/response cycle
    */
@@ -821,10 +836,11 @@ export interface RSCRouter<
   readonly version?: string;
 
   /**
-   * URL patterns reference for runtime manifest generation
+   * URL patterns reference for build-time manifest generation
    * @internal
    */
   readonly urlpatterns?: UrlPatterns<TEnv, any>;
+
 
   match(request: Request, context: TEnv): Promise<MatchResult>;
 
@@ -985,6 +1001,7 @@ export function createRouter<TEnv = any>(
     nonce,
     version,
     warmup: warmupOption,
+    allowDebugManifest: allowDebugManifestOption = true,
   } = options;
 
   const routerId = userProvidedId ?? `router_${routerAutoId++}`;
@@ -4563,6 +4580,9 @@ export function createRouter<TEnv = any>(
 
     // Expose warmup enabled flag for handler and client
     warmupEnabled,
+
+    // Expose debug manifest flag for handler
+    allowDebugManifest: allowDebugManifestOption,
 
     // Expose global middleware for RSC handler
     middleware: globalMiddleware,
