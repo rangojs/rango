@@ -1426,9 +1426,8 @@ export type LoaderAction<T> = (prevState: T | null, formData: FormData) => Promi
 export type LoaderDefinition<T = any, TParams = Record<string, string | undefined>> = {
   __brand: "loader";
   $$id: string;  // Injected by Vite plugin (exposeLoaderId) - unique identifier
-  fn?: LoaderFn<T, TParams, any>;  // Optional - stripped on client via "use server"
+  fn?: LoaderFn<T, TParams, any>;  // Optional - server-side only, stored in registry for RSC
   action?: LoaderAction<T>;  // Optional - for fetchable loaders
-  toJSON?: () => { __brand: "loader"; $$id: string; action?: LoaderAction<T> };  // RSC serialization
 };
 
 // ============================================================================
