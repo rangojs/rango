@@ -35,9 +35,15 @@ import { generateNonce } from "./nonce.js";
 import { VERSION } from "@rangojs/router:version";
 import type { ErrorPhase } from "../types.js";
 import { invokeOnError } from "../router/error-handling.js";
-import { getGlobalRouteMap, hasCachedManifest } from "../route-map-builder.js";
-import { getRouteManifestData } from "../server/route-manifest-cache.js";
-import { generateManifest } from "../build/generate-manifest.js";
+import {
+  getGlobalRouteMap,
+  hasCachedManifest,
+  setCachedManifest,
+  getRouteTrie,
+  setRouteTrie,
+  getPrecomputedEntries,
+  waitForManifestReady,
+} from "../route-map-builder.js";
 
 /**
  * Create an RSC request handler.
@@ -112,6 +118,8 @@ export function createRSCHandler<
       ctx?: ExecutionContext;
     },
   ): Promise<Response> {
+    const handlerStart = performance.now();
+
     // Connection warmup: return 204 immediately before any processing
     if (router.warmupEnabled && request.method === "HEAD") {
       const warmupUrl = new URL(request.url);
@@ -121,16 +129,20 @@ export function createRSCHandler<
     }
 
     // Resolve nonce if provider is set
+    const nonceStart = performance.now();
     let nonce: string | undefined;
     if (nonceProvider) {
       const result = await nonceProvider(request, env);
       nonce = result === true ? generateNonce() : result;
     }
+    const nonceDur = performance.now() - nonceStart;
 
     const url = new URL(request.url);
 
     // Match global middleware
+    const mwMatchStart = performance.now();
     const matchedMiddleware = matchMiddleware(url.pathname, router.middleware);
+    const mwMatchDur = performance.now() - mwMatchStart;
 
     // Shared variables between middleware and route handlers
     // Initialize from env.Variables if provided (allows pre-seeding from worker entry)
@@ -157,20 +169,49 @@ export function createRSCHandler<
       }
     }
 
-    // Load route manifest on first request (always enabled when urlpatterns exist)
-    // This enables href() for all routes including lazy includes
-    // Manifest is regenerated when version changes (HMR in dev mode)
-    // Skip when already cached in memory to avoid async overhead on every request
-    if (router.urlpatterns && !hasCachedManifest()) {
-      await getRouteManifestData(
-        () => generateManifest(router.urlpatterns!),
-        version,
-        {
-          store: cacheStore,
-          waitUntil: env.ctx?.waitUntil.bind(env.ctx),
-        },
-      );
+    // Route manifest is populated at startup via the virtual module
+    // (virtual:rsc-router/routes-manifest). In build/production, it's inlined
+    // into the bundle. In dev mode (Node), the discovery plugin populates it
+    // via setManifestReadyPromise(). In dev mode (Cloudflare), Miniflare runs
+    // in a separate isolate where module-level state doesn't carry over, so
+    // we generate inline from the router's urlpatterns.
+    const manifestCacheStart = performance.now();
+    if (!hasCachedManifest()) {
+      const readyPromise = waitForManifestReady();
+      if (readyPromise) {
+        await readyPromise;
+      }
+      if (!hasCachedManifest() && router.urlpatterns) {
+        // Cloudflare dev: generate manifest inline (no caching needed)
+        const { generateManifest } =
+          await import("../build/generate-manifest.js");
+        const generated = generateManifest(router.urlpatterns);
+        setCachedManifest(generated.routeManifest);
+        if (
+          generated._routeAncestry &&
+          Object.keys(generated._routeAncestry).length > 0
+        ) {
+          const { buildRouteTrie } = await import("../build/route-trie.js");
+          const routeToStaticPrefix: Record<string, string> = {};
+          for (const name of Object.keys(generated.routeManifest)) {
+            routeToStaticPrefix[name] = "";
+          }
+          const trie = buildRouteTrie(
+            generated.routeManifest,
+            generated._routeAncestry,
+            routeToStaticPrefix,
+            generated.routeTrailingSlash,
+          );
+          setRouteTrie(trie);
+        }
+      }
+      if (!hasCachedManifest()) {
+        throw new Error(
+          'Route manifest not available. Ensure "virtual:rsc-router/routes-manifest" is imported in your entry file.',
+        );
+      }
     }
+    const manifestCacheDur = performance.now() - manifestCacheStart;
 
     // Note: Route map for useHref() is loaded lazily via getGlobalRouteMap()
     // This allows it to include all routes from lazy includes after manifest loading
@@ -178,6 +219,7 @@ export function createRSCHandler<
     // Create unified request context with all methods
     // Includes: stub response, handle store, loader memoization, use(), cookies, headers, cache store
     // params starts empty, populated after route matching via setRequestContextParams
+    const ctxCreateStart = performance.now();
     const requestContext = createRequestContext({
       env,
       request,
@@ -187,6 +229,19 @@ export function createRSCHandler<
       executionContext: env.ctx,
       themeConfig: router.themeConfig,
     });
+    const ctxCreateDur = performance.now() - ctxCreateStart;
+
+    // Accumulate handler-level timing for Server-Timing header
+    const handlerTiming = [
+      `handler-nonce;dur=${nonceDur.toFixed(2)}`,
+      `handler-mw-match;dur=${mwMatchDur.toFixed(2)}`,
+      `handler-manifest-cache;dur=${manifestCacheDur.toFixed(2)}`,
+      `handler-ctx-create;dur=${ctxCreateDur.toFixed(2)}`,
+    ];
+
+    // Store timing data in variables for downstream access
+    variables.__handlerTiming = handlerTiming;
+    variables.__handlerStart = handlerStart;
 
     // Wrap entire request handling in request context
     // Makes context available via getRequestContext() throughout:
@@ -225,7 +280,11 @@ export function createRSCHandler<
     nonce: string | undefined,
   ): Promise<Response> {
     // First, check for route-level middleware
+    const previewStart = performance.now();
     const preview = await router.previewMatch(request, env);
+    const previewDur = performance.now() - previewStart;
+    const handlerTiming: string[] = variables.__handlerTiming || [];
+    handlerTiming.push(`handler-preview-match;dur=${previewDur.toFixed(2)}`);
     if (preview?.routeMiddleware && preview.routeMiddleware.length > 0) {
       // Convert route middleware to app middleware format for execution
       const middlewareEntries = preview.routeMiddleware.map((mw) => ({
@@ -257,19 +316,6 @@ export function createRSCHandler<
     variables: Record<string, any>,
     nonce: string | undefined,
   ): Promise<Response> {
-    // Early return for static file requests that don't need RSC handling
-    if (url.pathname === "/favicon.ico" || url.pathname === "/robots.txt") {
-      return new Response(null, { status: 404 });
-    }
-
-    // Debug endpoint - only in development
-    if (url.pathname === "/__debug_manifest" && process.env.NODE_ENV !== "production") {
-      const manifest = await router.debugManifest();
-      return new Response(JSON.stringify(manifest, null, 2), {
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
     const isPartial = url.searchParams.has("_rsc_partial");
     const isAction =
       request.headers.has("rsc-action") || url.searchParams.has("_rsc_action");
@@ -307,6 +353,31 @@ export function createRSCHandler<
           "content-type": "text/x-component;charset=utf-8",
         },
       });
+    }
+    // Debug manifest endpoint: ?__debug_manifest on any route.
+    // Always available in dev, requires allowDebugManifest option in production.
+    const isDev = process.env.NODE_ENV !== "production";
+    if (
+      url.searchParams.has("__debug_manifest") &&
+      (isDev || router.allowDebugManifest)
+    ) {
+      const trie = getRouteTrie();
+      const { extractAncestryFromTrie } = await import("../build/route-trie.js");
+      return new Response(
+        JSON.stringify(
+          {
+            routeManifest: getGlobalRouteMap(),
+            routeAncestry: trie ? extractAncestryFromTrie(trie) : {},
+            routeTrie: trie,
+            precomputedEntries: getPrecomputedEntries(),
+          },
+          null,
+          2,
+        ),
+        {
+          headers: { "Content-Type": "application/json" },
+        },
+      );
     }
 
     // Get handle store from request context (created at start of request)
@@ -938,6 +1009,11 @@ export function createRSCHandler<
     handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
     nonce: string | undefined,
   ): Promise<Response> {
+    // Retrieve handler-level timing from variables
+    const reqCtx = requireRequestContext();
+    const handlerTimingArr: string[] = reqCtx.var.__handlerTiming || [];
+    const handlerStart: number = reqCtx.var.__handlerStart || 0;
+
     let payload: RscPayload;
     let serverTiming: string | undefined;
 
@@ -977,7 +1053,7 @@ export function createRSCHandler<
             handles: handleStore.stream(),
             version,
             themeConfig: router.themeConfig,
-            initialTheme: requireRequestContext().theme,
+            initialTheme: reqCtx.theme,
           },
         };
       } else {
@@ -1034,13 +1110,15 @@ export function createRSCHandler<
           handles: handleStore.stream(),
           version,
           themeConfig: router.themeConfig,
-          initialTheme: requireRequestContext().theme,
+          initialTheme: reqCtx.theme,
         },
       };
     }
 
     // Serialize to RSC stream
+    const rscSerializeStart = performance.now();
     const rscStream = renderToReadableStream<RscPayload>(payload);
+    const rscSerializeDur = performance.now() - rscSerializeStart;
 
     // Determine if this is an RSC request or HTML request
     const isRscRequest =
@@ -1048,13 +1126,21 @@ export function createRSCHandler<
         !url.searchParams.has("__html")) ||
       url.searchParams.has("__rsc");
 
+    // Build complete Server-Timing: handler phases + match/manifest + rendering + RSC serialize
+    const timingParts: string[] = [...handlerTimingArr];
+    if (serverTiming) {
+      timingParts.push(serverTiming);
+    }
+    timingParts.push(`rsc-serialize;dur=${rscSerializeDur.toFixed(2)}`);
+
     if (isRscRequest) {
+      const fullTiming = timingParts.join(", ");
       const rscHeaders: Record<string, string> = {
         "content-type": "text/x-component;charset=utf-8",
         vary: "accept",
       };
-      if (serverTiming) {
-        rscHeaders["Server-Timing"] = serverTiming;
+      if (fullTiming) {
+        rscHeaders["Server-Timing"] = fullTiming;
       }
       return createResponseWithMergedHeaders(rscStream, {
         headers: rscHeaders,
@@ -1062,14 +1148,28 @@ export function createRSCHandler<
     }
 
     // Delegate to SSR for HTML response
+    const ssrModuleStart = performance.now();
     const ssrModule = await loadSSRModule();
-    const htmlStream = await ssrModule.renderHTML(rscStream, { nonce });
+    const ssrModuleDur = performance.now() - ssrModuleStart;
+    timingParts.push(`ssr-module-load;dur=${ssrModuleDur.toFixed(2)}`);
 
+    const ssrRenderStart = performance.now();
+    const htmlStream = await ssrModule.renderHTML(rscStream, { nonce });
+    const ssrRenderDur = performance.now() - ssrRenderStart;
+    timingParts.push(`ssr-render-html;dur=${ssrRenderDur.toFixed(2)}`);
+
+    // Add total handler duration
+    if (handlerStart) {
+      const totalHandler = performance.now() - handlerStart;
+      timingParts.push(`handler-total;dur=${totalHandler.toFixed(2)}`);
+    }
+
+    const fullTiming = timingParts.join(", ");
     const htmlHeaders: Record<string, string> = {
       "content-type": "text/html;charset=utf-8",
     };
-    if (serverTiming) {
-      htmlHeaders["Server-Timing"] = serverTiming;
+    if (fullTiming) {
+      htmlHeaders["Server-Timing"] = fullTiming;
     }
 
     return createResponseWithMergedHeaders(htmlStream, {

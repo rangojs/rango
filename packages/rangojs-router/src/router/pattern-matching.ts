@@ -10,7 +10,7 @@ import type { EntryData } from "../server/context";
 /**
  * Parsed segment info
  */
-interface ParsedSegment {
+export interface ParsedSegment {
   type: "static" | "param" | "wildcard";
   value: string; // static text, param name, or "*"
   optional: boolean;
@@ -28,7 +28,7 @@ interface ParsedSegment {
  * - Optional + Constrained: /:locale(en|gb)?
  * - Wildcard: /*
  */
-function parsePattern(pattern: string): ParsedSegment[] {
+export function parsePattern(pattern: string): ParsedSegment[] {
   const segments: ParsedSegment[] = [];
   // Match: /segment where segment can be:
   // - static text
@@ -214,6 +214,8 @@ export interface RouteMatchResult<TEnv = any> {
   params: Record<string, string>;
   optionalParams: Set<string>;
   redirectTo?: string;
+  /** Ancestry shortCodes for layout pruning (from trie match) */
+  ancestry?: string[];
 }
 
 /**

@@ -73,8 +73,10 @@ import { VERSION } from "@rangojs/router:version";
 // might not be imported before a GET request arrives
 import "virtual:rsc-router/loader-manifest";
 
-// Route manifest is now loaded at runtime on first request via getRouteManifestData()
-// This eliminates the need for build-time manifest generation
+// Import pre-generated route manifest so href() works immediately on cold start.
+// In build mode, this contains the full route map generated at build time.
+// In dev mode, this is a no-op (manifest is populated in-memory by the discovery plugin).
+import "virtual:rsc-router/routes-manifest";
 
 export default createRSCHandler({
   router,

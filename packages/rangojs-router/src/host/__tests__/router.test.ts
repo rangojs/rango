@@ -219,7 +219,7 @@ describe('router.test', () => {
   });
 });
 
-describe.skip('router.fallback', () => {
+describe('router.fallback', () => {
   it('should call fallback handler when cookie override fails', async () => {
     const router = createHostRouter({
       hostOverride: {
@@ -252,6 +252,8 @@ describe.skip('router.fallback', () => {
   });
 
   it('should pass error to fallback handler in context', async () => {
+    const { HostValidationError } = await import('../errors');
+
     const router = createHostRouter({
       hostOverride: {
         cookieName: 'x-requested-host',
@@ -263,8 +265,7 @@ describe.skip('router.fallback', () => {
     });
 
     const fallbackHandler = vi.fn((_req, ctx) => {
-      // Check that error is in context
-      expect(ctx.error).toBeInstanceOf(Error);
+      expect(ctx.error).toBeInstanceOf(HostValidationError);
       expect(ctx.error.message).toBe('Invalid host');
       return new Response('fallback');
     });

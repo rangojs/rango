@@ -485,6 +485,21 @@ function createPathHelper<TEnv>(): PathHelpers<TEnv>["path"] {
 
     const namespace = `${ctx.namespace}.${store.getNextIndex("route")}.${routeName}`;
 
+    // Per-request pruning: skip registration for routes that won't be rendered.
+    // forRoute is set by loadManifest() to the matched route name. During
+    // evaluateLazyEntry() (route matching), forRoute is unset so all routes
+    // register normally. We still increment counters to keep shortCodes stable
+    // across different routes (needed for segment reconciliation on navigation).
+    //
+    // include() does not need its own forRoute pruning. include() creates lazy
+    // entries that defer handler execution until route matching. When the lazy
+    // handler eventually runs inside loadManifest(), this path() check already
+    // covers all routes defined inside the include.
+    if (ctx.forRoute && routeName !== ctx.forRoute) {
+      store.getShortCode("route");
+      return { type: "route" } as RouteItem;
+    }
+
     // Ensure handler is always a function (wrap ReactNode if needed)
     const wrappedHandler: Handler<any, TEnv> =
       typeof handler === "function"

@@ -7,7 +7,7 @@
  *
  * @example
  * ```ts
- * import { createHostRouter } from 'host-router';
+ * import { createHostRouter } from '@rangojs/router/host';
  *
  * const router = createHostRouter();
  *
@@ -24,6 +24,9 @@
 
 // Core router
 export { createHostRouter } from './router.js';
+
+// Host router registry for build-time discovery
+export { HostRouterRegistry, type HostRouterRegistryEntry } from './router.js';
 
 // Utilities
 export { defineHosts } from './utils.js';

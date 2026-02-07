@@ -239,6 +239,7 @@ export async function initBrowserApp(
           targetUrl: window.location.href,
           segmentIds: [],
           previousUrl: store.getSegmentState().currentUrl,
+          hmr: true,
         });
 
         if (payload.metadata?.isPartial) {

@@ -748,12 +748,15 @@ const cache: RouteHelpers<any, any>["cache"] = (
   }
 
   // With children: create a cache entry (like layout with caching semantics)
-  const namespace = `${ctx.namespace}.${store.getNextIndex("cache")}`;
+  const cacheNextIndex = store.getNextIndex("cache");
+  const namespace = `${ctx.namespace}.${cacheNextIndex}`;
+  const cacheShortCode = store.getShortCode("cache");
+
   const cacheUrlPrefix2 = getUrlPrefix();
 
   const entry = {
     id: namespace,
-    shortCode: store.getShortCode("cache"),
+    shortCode: cacheShortCode,
     type: "cache",
     parent: ctx.parent,
     cache: cacheConfig,
@@ -1064,14 +1067,14 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
   const ctx = store.getStore();
   if (!ctx) throw new Error("layout() must be called inside map()");
   const isRoot = !ctx.parent || ctx.parent === null;
-  const namespace = `${ctx.namespace}.${
-    isRoot ? "$root" : store.getNextIndex("layout")
-  }`;
+  const nextIndex = isRoot ? "$root" : store.getNextIndex("layout");
+  const namespace = `${ctx.namespace}.${nextIndex}`;
+  const shortCode = store.getShortCode("layout");
 
   const urlPrefix = getUrlPrefix();
   const entry = {
     id: namespace,
-    shortCode: store.getShortCode("layout"),
+    shortCode,
     type: "layout",
     parent: ctx.parent,
     handler,

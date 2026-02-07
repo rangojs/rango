@@ -14,7 +14,7 @@ import { waitForHydration, expectNoPageError } from "./helper";
  * 8. Middleware can extract params from URL patterns
  */
 
-test.describe("app-middleware", () => {
+test.describe("app-middleware (dev)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
@@ -367,189 +367,174 @@ test.describe("app-middleware", () => {
       await waitForHydration(page);
     });
   });
-});
 
-test.describe("route-level-middleware", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
+  test.describe("route-level-middleware", () => {
+    test("route-level middleware should set response header", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      const responsePromise = page.waitForResponse(
+        (response) => response.url().includes("/middleware-test/route-level") &&
+                      !response.url().includes("/middleware-test/route-level/") &&
+                      response.status() === 200
+      );
+
+      await page.goto(f.url("/middleware-test/route-level"));
+      const response = await responsePromise;
+
+      // Route-level middleware should set this header
+      expect(response.headers()["x-route-level-middleware"]).toBe("applied");
+
+      // Global middleware should also apply
+      expect(response.headers()["x-global-middleware"]).toBe("applied");
+
+      await waitForHydration(page);
+      await expect(page.locator('[data-testid="route-level-title"]')).toBeVisible();
+    });
+
+    test("route-level middleware should share variables with handler", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/middleware-test/route-level"));
+      await waitForHydration(page);
+
+      // Handler should read the variable set by route-level middleware
+      await expect(page.locator('[data-testid="route-middleware-value"]')).toContainText("yes");
+    });
+
+    test("route-level middleware should have access to ctx.params", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      const responsePromise = page.waitForResponse(
+        (response) => response.url().includes("/middleware-test/route-level/test-route-123") && response.status() === 200
+      );
+
+      await page.goto(f.url("/middleware-test/route-level/test-route-123"));
+      const response = await responsePromise;
+
+      // Middleware should set header with the param value from ctx.params
+      expect(response.headers()["x-middleware-route-id"]).toBe("test-route-123");
+
+      await waitForHydration(page);
+
+      // Both handler and middleware should have access to the same param value
+      await expect(page.locator('[data-testid="handler-route-id"]')).toContainText("test-route-123");
+      await expect(page.locator('[data-testid="middleware-route-id"]')).toContainText("test-route-123");
+      await expect(page.locator('[data-testid="params-available"]')).toContainText("yes");
+    });
+
+    test("route-level middleware params should work with different values", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      const responsePromise = page.waitForResponse(
+        (response) => response.url().includes("/middleware-test/route-level/another-value-xyz") && response.status() === 200
+      );
+
+      await page.goto(f.url("/middleware-test/route-level/another-value-xyz"));
+      const response = await responsePromise;
+
+      // Verify different param value works
+      expect(response.headers()["x-middleware-route-id"]).toBe("another-value-xyz");
+
+      await waitForHydration(page);
+      await expect(page.locator('[data-testid="middleware-route-id"]')).toContainText("another-value-xyz");
+    });
   });
 
-  test("route-level middleware should set response header", async ({ page }) => {
-    using _ = expectNoPageError(page);
+  test.describe("intercept-middleware", () => {
+    test("intercept middleware should set header on modal navigation", async ({ page }) => {
+      using _ = expectNoPageError(page);
 
-    const responsePromise = page.waitForResponse(
-      (response) => response.url().includes("/middleware-test/route-level") &&
-                    !response.url().includes("/middleware-test/route-level/") &&
-                    response.status() === 200
-    );
+      // First go to index
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
 
-    await page.goto(f.url("/middleware-test/route-level"));
-    const response = await responsePromise;
+      // Click on a slow product to trigger intercept
+      // The intercept middleware runs after the loader completes
+      const responsePromise = page.waitForResponse(
+        (response) => response.url().includes("/slow-product/") && response.status() === 200
+      );
 
-    // Route-level middleware should set this header
-    expect(response.headers()["x-route-level-middleware"]).toBe("applied");
+      await page.click('[data-testid="slow-product-link"]');
+      const response = await responsePromise;
 
-    // Global middleware should also apply
-    expect(response.headers()["x-global-middleware"]).toBe("applied");
+      // Intercept middleware should set this header
+      expect(response.headers()["x-intercept-middleware"]).toBe("applied");
 
-    await waitForHydration(page);
-    await expect(page.locator('[data-testid="route-level-title"]')).toBeVisible();
+      // Wait for modal content to fully load (not just skeleton)
+      await expect(page.locator('[data-testid="slow-modal-product-name"]')).toBeVisible({ timeout: 10000 });
+    });
+
+    test("intercept middleware should set cookie", async ({ page, context }) => {
+      using _ = expectNoPageError(page);
+
+      // First go to index
+      await page.goto(f.url("/"));
+      await waitForHydration(page);
+
+      // Click on a slow product to trigger intercept
+      await page.click('[data-testid="slow-product-link"]');
+
+      // Wait for the full modal content to load (after the 2s loader delay)
+      // The cookie is set when the middleware runs during the full render
+      await expect(page.locator('[data-testid="slow-modal-product-name"]')).toBeVisible({ timeout: 10000 });
+
+      // Check that cookie was set by intercept middleware
+      const cookies = await context.cookies();
+      const interceptCookie = cookies.find(c => c.name === "intercept-visited");
+      expect(interceptCookie).toBeDefined();
+      expect(interceptCookie?.value).toBe("true");
+    });
   });
 
-  test("route-level middleware should share variables with handler", async ({ page }) => {
-    using _ = expectNoPageError(page);
+  test.describe("loader-middleware", () => {
+    test("loader middleware should reject unauthorized requests", async ({ request }) => {
+      // Try to fetch protected loader without auth token
+      const response = await request.get(
+        f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23ProtectedLoader"),
+        {
+          headers: { Accept: "text/x-component" },
+        }
+      );
 
-    await page.goto(f.url("/middleware-test/route-level"));
-    await waitForHydration(page);
+      // Should fail with unauthorized error
+      expect(response.status()).toBe(500);
+      const text = await response.text();
+      expect(text).toContain("Unauthorized");
+    });
 
-    // Handler should read the variable set by route-level middleware
-    await expect(page.locator('[data-testid="route-middleware-value"]')).toContainText("yes");
-  });
+    test("loader middleware should allow authorized requests", async ({ request }) => {
+      // Fetch protected loader with valid auth token
+      const response = await request.get(
+        f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23ProtectedLoader&_rsc_loader_params=" +
+          encodeURIComponent(JSON.stringify({ authToken: "valid-token" }))),
+        {
+          headers: { Accept: "text/x-component" },
+        }
+      );
 
-  test("route-level middleware should have access to ctx.params", async ({ page }) => {
-    using _ = expectNoPageError(page);
+      expect(response.status()).toBe(200);
+      const text = await response.text();
+      expect(text).toContain("protected");
+    });
 
-    const responsePromise = page.waitForResponse(
-      (response) => response.url().includes("/middleware-test/route-level/test-route-123") && response.status() === 200
-    );
+    test("loader middleware should reject invalid auth token", async ({ request }) => {
+      // Fetch protected loader with invalid auth token
+      const response = await request.get(
+        f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23ProtectedLoader&_rsc_loader_params=" +
+          encodeURIComponent(JSON.stringify({ authToken: "invalid-token" }))),
+        {
+          headers: { Accept: "text/x-component" },
+        }
+      );
 
-    await page.goto(f.url("/middleware-test/route-level/test-route-123"));
-    const response = await responsePromise;
-
-    // Middleware should set header with the param value from ctx.params
-    expect(response.headers()["x-middleware-route-id"]).toBe("test-route-123");
-
-    await waitForHydration(page);
-
-    // Both handler and middleware should have access to the same param value
-    await expect(page.locator('[data-testid="handler-route-id"]')).toContainText("test-route-123");
-    await expect(page.locator('[data-testid="middleware-route-id"]')).toContainText("test-route-123");
-    await expect(page.locator('[data-testid="params-available"]')).toContainText("yes");
-  });
-
-  test("route-level middleware params should work with different values", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    const responsePromise = page.waitForResponse(
-      (response) => response.url().includes("/middleware-test/route-level/another-value-xyz") && response.status() === 200
-    );
-
-    await page.goto(f.url("/middleware-test/route-level/another-value-xyz"));
-    const response = await responsePromise;
-
-    // Verify different param value works
-    expect(response.headers()["x-middleware-route-id"]).toBe("another-value-xyz");
-
-    await waitForHydration(page);
-    await expect(page.locator('[data-testid="middleware-route-id"]')).toContainText("another-value-xyz");
-  });
-});
-
-test.describe("intercept-middleware", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-  });
-
-  test("intercept middleware should set header on modal navigation", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    // First go to index
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    // Click on a slow product to trigger intercept
-    // The intercept middleware runs after the loader completes
-    const responsePromise = page.waitForResponse(
-      (response) => response.url().includes("/slow-product/") && response.status() === 200
-    );
-
-    await page.click('[data-testid="slow-product-link"]');
-    const response = await responsePromise;
-
-    // Intercept middleware should set this header
-    expect(response.headers()["x-intercept-middleware"]).toBe("applied");
-
-    // Wait for modal content to fully load (not just skeleton)
-    await expect(page.locator('[data-testid="slow-modal-product-name"]')).toBeVisible({ timeout: 10000 });
-  });
-
-  test("intercept middleware should set cookie", async ({ page, context }) => {
-    using _ = expectNoPageError(page);
-
-    // First go to index
-    await page.goto(f.url("/"));
-    await waitForHydration(page);
-
-    // Click on a slow product to trigger intercept
-    await page.click('[data-testid="slow-product-link"]');
-
-    // Wait for the full modal content to load (after the 2s loader delay)
-    // The cookie is set when the middleware runs during the full render
-    await expect(page.locator('[data-testid="slow-modal-product-name"]')).toBeVisible({ timeout: 10000 });
-
-    // Check that cookie was set by intercept middleware
-    const cookies = await context.cookies();
-    const interceptCookie = cookies.find(c => c.name === "intercept-visited");
-    expect(interceptCookie).toBeDefined();
-    expect(interceptCookie?.value).toBe("true");
-  });
-});
-
-test.describe("loader-middleware", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-  });
-
-  test("loader middleware should reject unauthorized requests", async ({ request }) => {
-    // Try to fetch protected loader without auth token
-    const response = await request.get(
-      f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23ProtectedLoader"),
-      {
-        headers: { Accept: "text/x-component" },
-      }
-    );
-
-    // Should fail with unauthorized error
-    expect(response.status()).toBe(500);
-    const text = await response.text();
-    expect(text).toContain("Unauthorized");
-  });
-
-  test("loader middleware should allow authorized requests", async ({ request }) => {
-    // Fetch protected loader with valid auth token
-    const response = await request.get(
-      f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23ProtectedLoader&_rsc_loader_params=" +
-        encodeURIComponent(JSON.stringify({ authToken: "valid-token" }))),
-      {
-        headers: { Accept: "text/x-component" },
-      }
-    );
-
-    expect(response.status()).toBe(200);
-    const text = await response.text();
-    expect(text).toContain("protected");
-  });
-
-  test("loader middleware should reject invalid auth token", async ({ request }) => {
-    // Fetch protected loader with invalid auth token
-    const response = await request.get(
-      f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23ProtectedLoader&_rsc_loader_params=" +
-        encodeURIComponent(JSON.stringify({ authToken: "invalid-token" }))),
-      {
-        headers: { Accept: "text/x-component" },
-      }
-    );
-
-    expect(response.status()).toBe(500);
-    const text = await response.text();
-    expect(text).toContain("Unauthorized");
+      expect(response.status()).toBe(500);
+      const text = await response.text();
+      expect(text).toContain("Unauthorized");
+    });
   });
 });
 
-test.describe("app-middleware-production", () => {
+test.describe("app-middleware (production)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "build",

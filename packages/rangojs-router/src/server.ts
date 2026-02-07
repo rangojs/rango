@@ -28,6 +28,8 @@ export type { IncludeItem } from "./route-types.js";
 // Core router (server-only)
 export {
   createRouter,
+  RSC_ROUTER_BRAND,
+  RouterRegistry,
   type RSCRouter,
   type RSCRouterOptions,
   type RootLayoutProps,
@@ -60,7 +62,7 @@ export { Meta } from "./handles/meta.js";
 export { registerLoaderById, setLoaderImports } from "./server/loader-registry.js";
 
 // Route map builder (for build-time manifest registration)
-export { registerRouteMap, setCachedManifest } from "./route-map-builder.js";
+export { registerRouteMap, setCachedManifest, setPrecomputedEntries, setRouteTrie, setManifestReadyPromise } from "./route-map-builder.js";
 
 // Request context (for accessing request data in server components/actions)
 export {

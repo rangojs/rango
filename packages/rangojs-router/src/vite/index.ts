@@ -1,7 +1,10 @@
 import type { Plugin, PluginOption } from "vite";
+import { createServer as createViteServer } from "vite";
 import * as Vite from "vite";
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { exposeActionId } from "./expose-action-id.ts";
 import { exposeLoaderId } from "./expose-loader-id.ts";
 import { exposeHandleId } from "./expose-handle-id.ts";
@@ -155,6 +158,7 @@ export interface RangoCloudflareOptions extends RangoBaseOptions {
    * - @vitejs/plugin-rsc is NOT added (cloudflare plugin adds it)
    * - Your worker entry (e.g., worker.rsc.tsx) imports the router directly
    * - Browser and SSR use virtual entries
+   * - Build-time manifest generation is auto-detected from wrangler.json main entry
    */
   preset: "cloudflare";
 }
@@ -328,9 +332,506 @@ function createVersionPlugin(): Plugin {
 }
 
 /**
- * Plugin that auto-injects VERSION into custom entry.rsc files.
+ * Flatten prefix tree leaf nodes into precomputed route entries.
+ * Leaf nodes have no children (no nested includes), so their routes can be
+ * used directly by evaluateLazyEntry() without running the handler.
+ * Non-leaf nodes are skipped because they have nested lazy includes that
+ * require the handler to run for discovery.
+ */
+function flattenLeafEntries(
+  prefixTree: Record<string, any>,
+  routeManifest: Record<string, string>,
+  result: Array<{ staticPrefix: string; routes: Record<string, string> }>,
+): void {
+  function visit(node: any): void {
+    const children = node.children || {};
+    if (Object.keys(children).length === 0 && node.routes && node.routes.length > 0) {
+      // Leaf node: collect its routes from the manifest
+      const routes: Record<string, string> = {};
+      for (const name of node.routes) {
+        if (name in routeManifest) {
+          routes[name] = routeManifest[name];
+        }
+      }
+      result.push({ staticPrefix: node.staticPrefix, routes });
+    } else {
+      // Non-leaf: recurse into children
+      for (const child of Object.values(children)) {
+        visit(child);
+      }
+    }
+  }
+  for (const node of Object.values(prefixTree)) {
+    visit(node);
+  }
+}
+
+/**
+ * Walk prefix tree to map each route name to its scope's staticPrefix.
+ */
+function buildRouteToStaticPrefix(
+  prefixTree: Record<string, any>,
+  result: Record<string, string>,
+): void {
+  function visit(node: any): void {
+    const sp = node.staticPrefix || "";
+    for (const name of (node.routes || [])) {
+      result[name] = sp;
+    }
+    for (const child of Object.values(node.children || {})) {
+      visit(child);
+    }
+  }
+  for (const node of Object.values(prefixTree)) {
+    visit(node);
+  }
+}
+
+/**
+ * Plugin that discovers router instances at dev/build time via the RSC environment.
+ *
+ * Uses `server.environments.rsc.runner.import()` to load the user's router file
+ * with full TS/TSX compilation. This triggers `createRouter()` which populates
+ * the `RouterRegistry`. The plugin then generates manifests for each router.
+ *
+ * In dev mode, this runs in `configureServer` (post-middleware setup).
+ * In build mode, this will run in `buildStart` (future).
+ *
+ * @internal
+ */
+function createRouterDiscoveryPlugin(entryPath: string): Plugin {
+  let projectRoot = "";
+  let isBuildMode = false;
+  let userResolveAlias: any = undefined;
+
+  // Merged route manifest from all discovered routers.
+  // Populated during discovery (dev: configureServer, build: buildStart).
+  // Read by the virtual module's load hook to emit setCachedManifest() call.
+  let mergedRouteManifest: Record<string, string> | null = null;
+
+  // Promise that resolves when dev-mode discovery completes.
+  // The virtual module's load hook awaits this to ensure data is available.
+  let discoveryDone: Promise<void> | null = null;
+
+  // Pre-computed route entries from prefix tree leaf nodes.
+  // Leaf nodes have no nested includes, so their routes can be used directly
+  // by evaluateLazyEntry() without running the handler.
+  let mergedPrecomputedEntries: Array<{
+    staticPrefix: string;
+    routes: Record<string, string>;
+  }> | null = null;
+
+  // Route trie for O(path_length) matching at runtime.
+  let mergedRouteTrie: any = null;
+
+  // Shared discovery logic: import entry via RSC runner, generate manifests,
+  // write static files, and populate mergedRouteManifest.
+  async function discoverRouters(rscEnv: any) {
+    // Import the entry file via RSC environment.
+    // For node preset: this is the router file (createRouter() registers in RouterRegistry).
+    // For cloudflare preset: this is the worker entry (which imports the router).
+    await rscEnv.runner.import(entryPath);
+
+    // Import the router package to access the registry
+    const serverMod = await rscEnv.runner.import("@rangojs/router/server");
+    let registry: Map<string, any> = serverMod.RouterRegistry;
+
+    if (!registry || registry.size === 0) {
+      // No RSC routers found directly. Check for host routers with lazy handlers
+      // that need to be resolved to trigger sub-app createRouter() calls.
+      try {
+        const hostMod = await rscEnv.runner.import("@rangojs/router/host");
+        const hostRegistry: Map<string, any> | undefined = hostMod.HostRouterRegistry;
+
+        if (hostRegistry && hostRegistry.size > 0) {
+          console.log(
+            `[rsc-router] Found ${hostRegistry.size} host router(s), resolving lazy handlers...`
+          );
+
+          for (const [, entry] of hostRegistry) {
+            for (const route of entry.routes) {
+              if (typeof route.handler === 'function') {
+                try {
+                  await route.handler();
+                } catch {
+                  // Lazy handler may fail in temp server context, that's OK
+                }
+              }
+            }
+            if (entry.fallback && typeof entry.fallback.handler === 'function') {
+              try {
+                await entry.fallback.handler();
+              } catch {
+                // Fallback handler may fail in temp server context
+              }
+            }
+          }
+
+          // Re-read RouterRegistry - sub-app createRouter() calls should have populated it
+          const freshServerMod = await rscEnv.runner.import("@rangojs/router/server");
+          const freshRegistry: Map<string, any> = freshServerMod.RouterRegistry;
+
+          if (freshRegistry && freshRegistry.size > 0) {
+            // Update references so the manifest generation below uses the fresh data
+            Object.assign(serverMod, freshServerMod);
+            registry = freshRegistry;
+          }
+        }
+      } catch {
+        // @rangojs/router/host not available or import failed, skip
+      }
+
+      // If still no routers after host router resolution, fail
+      if (!registry || registry.size === 0) {
+        throw new Error(
+          `[rsc-router] No routers found in registry after importing ${entryPath}`
+        );
+      }
+    }
+
+    // Import build utilities for manifest generation
+    const buildMod = await rscEnv.runner.import("@rangojs/router/build");
+    const generateManifest = buildMod.generateManifest;
+
+    mergedRouteManifest = {};
+    mergedPrecomputedEntries = [];
+    let mergedRouteAncestry: Record<string, string[]> = {};
+    let mergedRouteTrailingSlash: Record<string, string> = {};
+
+    let routerMountIndex = 0;
+    // Collect all manifests for trie building (avoid re-running generateManifest)
+    const allManifests: Array<{ id: string; manifest: any }> = [];
+
+    for (const [id, router] of registry) {
+      if (!router.urlpatterns || !generateManifest) {
+        continue;
+      }
+
+      const manifest = generateManifest(router.urlpatterns, routerMountIndex);
+      routerMountIndex++;
+      allManifests.push({ id, manifest });
+      const routeCount = Object.keys(manifest.routeManifest).length;
+      const staticRoutes = Object.values(manifest.routeManifest).filter(
+        (p: any) => !p.includes(":") && !p.includes("*")
+      ).length;
+      const dynamicRoutes = routeCount - staticRoutes;
+
+      // Merge into the combined manifest
+      Object.assign(mergedRouteManifest, manifest.routeManifest);
+
+      // Merge ancestry (internal field, used only for trie building)
+      if (manifest._routeAncestry) {
+        Object.assign(mergedRouteAncestry, manifest._routeAncestry);
+      }
+      // Merge trailing slash config
+      if (manifest.routeTrailingSlash) {
+        Object.assign(mergedRouteTrailingSlash, manifest.routeTrailingSlash);
+      }
+
+      // Flatten prefix tree leaf nodes into precomputed entries.
+      // Leaf nodes (no children) can have their routes used directly by
+      // evaluateLazyEntry() without running the handler at runtime.
+      flattenLeafEntries(manifest.prefixTree, manifest.routeManifest, mergedPrecomputedEntries);
+
+      // Write static files for this router
+      const hash = hashRouterId(id);
+      const outDir = join(projectRoot, "dist", "static", `__${hash}`);
+      mkdirSync(outDir, { recursive: true });
+
+      writeFileSync(
+        join(outDir, "routes.json"),
+        JSON.stringify(manifest.routeManifest, null, 2) + "\n"
+      );
+
+      writeFileSync(
+        join(outDir, "prefixes.json"),
+        JSON.stringify(manifest.prefixTree, null, 2) + "\n"
+      );
+
+      console.log(
+        `[rsc-router] Router "${id}" -> ${routeCount} routes ` +
+        `(${staticRoutes} static, ${dynamicRoutes} dynamic) ` +
+        `-> dist/static/__${hash}/`
+      );
+    }
+
+    // Build route trie from merged manifest + ancestry
+    if (mergedRouteManifest && Object.keys(mergedRouteManifest).length > 0) {
+      const buildRouteTrie = buildMod.buildRouteTrie;
+      if (buildRouteTrie && mergedRouteAncestry) {
+        // Build routeToStaticPrefix from saved manifests
+        const routeToStaticPrefix: Record<string, string> = {};
+        for (const { manifest } of allManifests) {
+          // Root-level routes have empty static prefix
+          for (const name of Object.keys(manifest.routeManifest)) {
+            if (!(name in routeToStaticPrefix)) {
+              routeToStaticPrefix[name] = "";
+            }
+          }
+          buildRouteToStaticPrefix(manifest.prefixTree, routeToStaticPrefix);
+        }
+
+        mergedRouteTrie = buildRouteTrie(
+          mergedRouteManifest,
+          mergedRouteAncestry,
+          routeToStaticPrefix,
+          Object.keys(mergedRouteTrailingSlash).length > 0 ? mergedRouteTrailingSlash : undefined,
+        );
+        // Trie built successfully
+      }
+    }
+
+    return serverMod;
+  }
+
+  return {
+    name: "@rangojs/router:discovery",
+
+    configResolved(config) {
+      projectRoot = config.root;
+      isBuildMode = config.command === "build";
+      // Capture user's resolve aliases for the temp server
+      userResolveAlias = config.resolve.alias;
+    },
+
+    // Dev mode: discover routers and populate manifest in memory.
+    // Skipped in build mode (buildStart handles it).
+    configureServer(server) {
+      if (isBuildMode) return;
+      // Skip if this is a temp server created by buildStart
+      if ((globalThis as any).__rscRouterDiscoveryActive) return;
+
+      // Discovery promise that the handler can await if requests arrive
+      // before discovery completes
+      let resolveDiscovery: () => void;
+      const discoveryPromise = new Promise<void>((resolve) => {
+        resolveDiscovery = resolve;
+      });
+
+      const discover = async () => {
+        const rscEnv = (server.environments as any)?.rsc;
+        if (!rscEnv?.runner) {
+          resolveDiscovery!();
+          return;
+        }
+
+        try {
+          // Set the readiness gate BEFORE discovery so early requests
+          // block until manifest is populated
+          const serverMod = await rscEnv.runner.import("@rangojs/router/server");
+          if (serverMod?.setManifestReadyPromise) {
+            serverMod.setManifestReadyPromise(discoveryPromise);
+          }
+
+          await discoverRouters(rscEnv);
+
+          // Populate the route map in the RSC env
+          if (mergedRouteManifest && serverMod?.setCachedManifest) {
+            serverMod.setCachedManifest(mergedRouteManifest);
+          }
+          if (mergedPrecomputedEntries && mergedPrecomputedEntries.length > 0 && serverMod?.setPrecomputedEntries) {
+            serverMod.setPrecomputedEntries(mergedPrecomputedEntries);
+          }
+          if (mergedRouteTrie && serverMod?.setRouteTrie) {
+            serverMod.setRouteTrie(mergedRouteTrie);
+          }
+        } catch (err: any) {
+          console.warn(
+            `[rsc-router] Router discovery failed: ${err.message}\n${err.stack}`
+          );
+        } finally {
+          resolveDiscovery!();
+        }
+      };
+
+      // Schedule after all plugins have finished configureServer.
+      // Store the promise so the virtual module's load hook can await it.
+      discoveryDone = new Promise<void>((resolve) => {
+        setTimeout(() => discover().then(resolve, resolve), 0);
+      });
+    },
+
+    // Build mode: create a temporary Vite dev server to access the RSC
+    // environment's module runner, then discover routers and generate manifests.
+    // The manifest data is stored for the virtual module's load hook.
+    async buildStart() {
+      if (!isBuildMode) return;
+      // Only run once across environment builds
+      if (mergedRouteManifest !== null) return;
+
+      let tempServer: any = null;
+      try {
+        // Prevent the temp server's plugin instances from running discovery
+        (globalThis as any).__rscRouterDiscoveryActive = true;
+
+        // Create a minimal Vite server with just the RSC plugin.
+        // We bypass the user's config file because:
+        // - Custom environments (e.g., CloudflareDevEnvironment) may not expose
+        //   a module runner compatible with runner.import()
+        // - The temp server only needs RSC conditions to import the router
+        const { default: rsc } = await import("@vitejs/plugin-rsc");
+        tempServer = await createViteServer({
+          root: projectRoot,
+          configFile: false,
+          server: { middlewareMode: true },
+          appType: "custom",
+          logLevel: "silent",
+          // Use the resolved aliases from the real config (includes user's path aliases
+          // like @/ -> src/ AND package aliases from rsc-router)
+          resolve: { alias: userResolveAlias },
+          // Enable automatic JSX runtime so .tsx files don't need `import React`.
+          // Without this, esbuild defaults to classic mode (React.createElement)
+          // which fails when lazy host-router handlers load sub-app modules with JSX.
+          esbuild: { jsx: "automatic", jsxImportSource: "react" },
+          plugins: [
+            rsc({ entries: { client: "virtual:entry-client", ssr: "virtual:entry-ssr", rsc: entryPath } }),
+            createVersionPlugin(),
+            // Stub virtual modules that the RSC entry may import
+            // (e.g., virtual:rsc-router/routes-manifest, virtual:rsc-router/loader-manifest)
+            createVirtualStubPlugin(),
+          ],
+        });
+
+        const rscEnv = (tempServer.environments as any)?.rsc;
+        if (!rscEnv?.runner) {
+          console.warn(
+            "[rsc-router] RSC environment runner not available during build, skipping manifest generation"
+          );
+          return;
+        }
+
+        await discoverRouters(rscEnv);
+      } catch (err: any) {
+        // Clean up before re-throwing so the temp server doesn't leak
+        delete (globalThis as any).__rscRouterDiscoveryActive;
+        if (tempServer) {
+          await tempServer.close();
+        }
+        throw new Error(
+          `[rsc-router] Build-time router discovery failed: ${err.message}`
+        );
+      } finally {
+        delete (globalThis as any).__rscRouterDiscoveryActive;
+        if (tempServer) {
+          await tempServer.close();
+        }
+      }
+    },
+
+    // Virtual module: provides the pre-generated route manifest as a JS module
+    // that calls setCachedManifest() at import time.
+    resolveId(id) {
+      if (id === VIRTUAL_ROUTES_MANIFEST_ID) {
+        return "\0" + VIRTUAL_ROUTES_MANIFEST_ID;
+      }
+      return null;
+    },
+
+    async load(id) {
+      if (id === "\0" + VIRTUAL_ROUTES_MANIFEST_ID) {
+        // In dev mode, wait for discovery to complete before emitting module content.
+        // This is critical for Cloudflare dev where the worker runs in a separate
+        // Miniflare process and can only receive manifest data via the virtual module.
+        if (discoveryDone) {
+          await discoveryDone;
+          console.log(`[rsc-router] Virtual module loaded after discovery (${mergedRouteManifest ? Object.keys(mergedRouteManifest).length + ' routes' : 'no data'})`);
+        }
+        const hasManifest = mergedRouteManifest && Object.keys(mergedRouteManifest).length > 0;
+        if (hasManifest) {
+          const lines = [
+            `import { setCachedManifest, setPrecomputedEntries, setRouteTrie } from "@rangojs/router/server";`,
+            `setCachedManifest(${JSON.stringify(mergedRouteManifest)});`,
+          ];
+          if (mergedPrecomputedEntries && mergedPrecomputedEntries.length > 0) {
+            lines.push(`setPrecomputedEntries(${JSON.stringify(mergedPrecomputedEntries)});`);
+          }
+          if (mergedRouteTrie) {
+            lines.push(`setRouteTrie(${JSON.stringify(mergedRouteTrie)});`);
+          }
+          return lines.join("\n");
+        }
+        // No manifest available yet (dev mode: discovery hasn't completed)
+        return `// Route manifest will be populated at runtime`;
+      }
+      return null;
+    },
+  };
+}
+
+const VIRTUAL_ROUTES_MANIFEST_ID = "virtual:rsc-router/routes-manifest";
+
+/**
+ * Resolve the entry path for build-time router discovery.
+ * - Node preset: uses the required `router` option.
+ * - Cloudflare preset: reads the `main` field from wrangler.json.
+ */
+function resolveDiscoveryEntryPath(options: RangoOptions): string | undefined {
+  if (options.preset === "cloudflare") {
+    // Auto-detect from wrangler.json
+    const wranglerPaths = ["wrangler.json", "wrangler.jsonc"];
+    for (const filename of wranglerPaths) {
+      if (existsSync(filename)) {
+        try {
+          const raw = readFileSync(filename, "utf-8");
+          // Strip JSON comments for .jsonc
+          const cleaned = raw.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+          const config = JSON.parse(cleaned);
+          if (config.main) {
+            return config.main;
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      }
+    }
+    return undefined;
+  }
+  // Node preset: router is required
+  return (options as RangoNodeOptions).router;
+}
+
+/**
+ * Stub plugin for virtual modules in the temp discovery server.
+ * The RSC entry may import virtual modules (routes-manifest, loader-manifest)
+ * that aren't available in the temp server. The RSC plugin also requires
+ * client/ssr entries which don't need real content for discovery.
+ */
+function createVirtualStubPlugin(): Plugin {
+  const STUB_PREFIXES = [
+    "virtual:rsc-router/",
+    "virtual:entry-",
+    "virtual:vite-rsc/",
+  ];
+  return {
+    name: "@rangojs/router:virtual-stubs",
+    resolveId(id) {
+      if (STUB_PREFIXES.some((p) => id.startsWith(p))) {
+        return "\0stub:" + id;
+      }
+      return null;
+    },
+    load(id) {
+      if (id.startsWith("\0stub:")) {
+        return "export default {}";
+      }
+      return null;
+    },
+  };
+}
+
+/**
+ * Generate a deterministic 12-char hex hash from a router id.
+ * Used to create collision-free directory names for per-router static output.
+ */
+function hashRouterId(id: string): string {
+  return createHash("sha256").update(id).digest("hex").slice(0, 12);
+}
+
+/**
+ * Plugin that auto-injects VERSION and routes-manifest into custom entry.rsc files.
  * If a custom entry.rsc file uses createRSCHandler but doesn't pass version,
  * this transform adds the import and property automatically.
+ * Also ensures the routes-manifest virtual module is always imported.
  * @internal
  */
 function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
@@ -355,57 +856,67 @@ function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
         return null;
       }
 
-      // Check if file uses createRSCHandler
-      if (!code.includes("createRSCHandler")) {
-        return null;
+      let newCode = code;
+      let changed = false;
+
+      // Auto-inject routes-manifest import if not already present.
+      // This ensures the build-time manifest is always loaded at startup,
+      // regardless of whether the user uses virtual entries or a custom worker entry.
+      if (!newCode.includes("virtual:rsc-router/routes-manifest")) {
+        const lastImportIndex = newCode.lastIndexOf("import ");
+        if (lastImportIndex !== -1) {
+          const afterLastImport = newCode.indexOf("\n", lastImportIndex);
+          if (afterLastImport !== -1) {
+            let insertIndex = afterLastImport + 1;
+            while (
+              insertIndex < newCode.length &&
+              (newCode.slice(insertIndex).match(/^\s*(from|import)\s/) ||
+                newCode[insertIndex] === "\n")
+            ) {
+              const nextNewline = newCode.indexOf("\n", insertIndex);
+              if (nextNewline === -1) break;
+              insertIndex = nextNewline + 1;
+            }
+            const manifestImport = `import "virtual:rsc-router/routes-manifest";\n`;
+            newCode = newCode.slice(0, insertIndex) + manifestImport + newCode.slice(insertIndex);
+            changed = true;
+          }
+        }
       }
 
-      // Check if VERSION is already imported
-      if (code.includes("@rangojs/router:version")) {
-        return null;
-      }
-
-      // Check if version property is already being passed
-      // Look for version: in the createRSCHandler call
-      const handlerCallMatch = code.match(/createRSCHandler\s*\(\s*\{/);
-      if (!handlerCallMatch) {
-        return null;
-      }
-
-      // Add VERSION import after the last import statement
-      const lastImportIndex = code.lastIndexOf("import ");
-      if (lastImportIndex === -1) {
-        return null;
-      }
-
-      // Find the end of the last import statement
-      const afterLastImport = code.indexOf("\n", lastImportIndex);
-      if (afterLastImport === -1) {
-        return null;
-      }
-
-      // Find next line that's not an import continuation
-      let insertIndex = afterLastImport + 1;
-      while (
-        insertIndex < code.length &&
-        (code.slice(insertIndex).match(/^\s*(from|import)\s/) ||
-          code[insertIndex] === "\n")
+      // Auto-inject VERSION if file uses createRSCHandler without version
+      if (
+        newCode.includes("createRSCHandler") &&
+        !newCode.includes("@rangojs/router:version") &&
+        newCode.match(/createRSCHandler\s*\(\s*\{/)
       ) {
-        const nextNewline = code.indexOf("\n", insertIndex);
-        if (nextNewline === -1) break;
-        insertIndex = nextNewline + 1;
+        const lastImportIndex = newCode.lastIndexOf("import ");
+        if (lastImportIndex !== -1) {
+          const afterLastImport = newCode.indexOf("\n", lastImportIndex);
+          if (afterLastImport !== -1) {
+            let insertIndex = afterLastImport + 1;
+            while (
+              insertIndex < newCode.length &&
+              (newCode.slice(insertIndex).match(/^\s*(from|import)\s/) ||
+                newCode[insertIndex] === "\n")
+            ) {
+              const nextNewline = newCode.indexOf("\n", insertIndex);
+              if (nextNewline === -1) break;
+              insertIndex = nextNewline + 1;
+            }
+            const versionImport = `import { VERSION } from "@rangojs/router:version";\n`;
+            newCode = newCode.slice(0, insertIndex) + versionImport + newCode.slice(insertIndex);
+          }
+        }
+
+        newCode = newCode.replace(
+          /createRSCHandler\s*\(\s*\{/,
+          "createRSCHandler({\n  version: VERSION,"
+        );
+        changed = true;
       }
 
-      // Insert VERSION import
-      const versionImport = `import { VERSION } from "@rangojs/router:version";\n`;
-      let newCode = code.slice(0, insertIndex) + versionImport + code.slice(insertIndex);
-
-      // Add version: VERSION to createRSCHandler call
-      // Find createRSCHandler({ and add version: VERSION right after the opening brace
-      newCode = newCode.replace(
-        /createRSCHandler\s*\(\s*\{/,
-        "createRSCHandler({\n  version: VERSION,"
-      );
+      if (!changed) return null;
 
       return {
         code: newCode,
@@ -737,17 +1248,30 @@ export async function rango(
   // Add version virtual module plugin for cache invalidation
   plugins.push(createVersionPlugin());
 
-  // Add version injector for custom entry.rsc files
-  if (rscEntryPath) {
-    plugins.push(createVersionInjectorPlugin(rscEntryPath));
+  // Resolve discovery entry path (used for both discovery and version injection).
+  // Node preset: uses the required router path.
+  // Cloudflare preset: auto-detects RSC entry from wrangler.json main field.
+  const discoveryEntryPath = resolveDiscoveryEntryPath(options);
+
+  // Add version injector for custom entry.rsc files.
+  // For Cloudflare preset, the RSC entry is the worker file (from wrangler.json).
+  const injectorEntryPath = rscEntryPath ?? (preset === "cloudflare" ? discoveryEntryPath : null);
+  if (injectorEntryPath) {
+    plugins.push(createVersionInjectorPlugin(injectorEntryPath));
   }
 
   // Transform CJS vendor files to ESM for browser compatibility
   // optimizeDeps.include doesn't work because the file is loaded after initial optimization
   plugins.push(createCjsToEsmPlugin());
 
+  // Add router discovery plugin for build-time manifest generation.
+  if (discoveryEntryPath) {
+    plugins.push(createRouterDiscoveryPlugin(discoveryEntryPath));
+  }
+
   return plugins;
 }
+
 
 /**
  * Transform CJS vendor files from @vitejs/plugin-rsc to ESM for browser compatibility.

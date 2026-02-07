@@ -32,6 +32,25 @@ import {
 } from './errors.js';
 
 /**
+ * Registry entry for a host router instance.
+ * Stores references to the live routes array and fallback, so the discovery
+ * plugin can iterate handlers registered after createHostRouter() returns.
+ */
+export interface HostRouterRegistryEntry {
+  routes: RouteEntry[];
+  fallback: RouteEntry | null;
+}
+
+/**
+ * Global registry for host routers (parallel to RouterRegistry for RSC routers).
+ * Populated by createHostRouter() so the build-time discovery plugin can find
+ * host routers and resolve their lazy handlers to trigger sub-app createRouter() calls.
+ */
+export const HostRouterRegistry: Map<string, HostRouterRegistryEntry> = new Map();
+
+let hostRouterAutoId = 0;
+
+/**
  * Create a host router
  */
 export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
@@ -98,7 +117,7 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
     for (const route of routes) {
       for (const pattern of route.patterns) {
         if (matchPattern(pattern, hostname, pathname, parts)) {
-          log(`Matched pattern: "${pattern}" ✓`);
+          log(`Matched pattern: "${pattern}"`);
           return route;
         }
       }
@@ -297,6 +316,15 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
       );
     },
   };
+
+  // Register in the global HostRouterRegistry for build-time discovery.
+  // The routes array and fallbackRoute ref are live - they reflect routes
+  // added via .host().map() after this point.
+  const registryId = `host-router-${hostRouterAutoId++}`;
+  HostRouterRegistry.set(registryId, {
+    get routes() { return routes; },
+    get fallback() { return fallbackRoute; },
+  });
 
   return router;
 }

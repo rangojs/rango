@@ -94,7 +94,8 @@ See `BENCHMARK-2026-02-05-33ff555.md` for full details.
 - `BENCHMARK-2026-02-04-39bd422-prefix-optimization.md` - First optimization attempt
 - `BENCHMARK-2026-02-05-33ff555.md` - Working prefix optimization
 - `BENCHMARK-2026-02-05-lazy-evaluation.md` - Lazy include evaluation
-- `BENCHMARK-2026-02-05-build-manifest.md` - Build-time manifest cold start impact (current)
+- `BENCHMARK-2026-02-05-build-manifest.md` - Build-time manifest cold start impact
+- `BENCHMARK-2026-02-06-build-time-discovery.md` - Vite discovery plugin (automatic build-time manifest) (current)
 
 ## Writing Benchmark Documentation
 

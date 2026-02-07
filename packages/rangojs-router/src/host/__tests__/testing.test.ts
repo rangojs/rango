@@ -18,7 +18,7 @@ describe('createTestRequest', () => {
     expect(request.url).toBe('http://example.com/admin');
   });
 
-  it.skip('should create a request with cookies', () => {
+  it('should create a request with cookies', () => {
     const request = createTestRequest({
       host: 'localhost',
       cookies: {

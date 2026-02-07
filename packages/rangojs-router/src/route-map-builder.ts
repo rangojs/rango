@@ -118,6 +118,13 @@ let globalRouteMap: Record<string, string> = {};
 // Set from runtime cache or build-time import
 let cachedManifest: Record<string, string> | null = null;
 
+// Pre-computed route entries from build-time prefix tree leaf nodes.
+// Used by evaluateLazyEntry() to skip running the handler for route matching.
+let cachedPrecomputedEntries: Array<{
+  staticPrefix: string;
+  routes: Record<string, string>;
+}> | null = null;
+
 /**
  * Register the route map globally for href to use at runtime
  *
@@ -184,4 +191,52 @@ export function hasCachedManifest(): boolean {
  */
 export function clearCachedManifest(): void {
   cachedManifest = null;
+}
+
+/**
+ * Set pre-computed route entries from build-time data.
+ *
+ * Each entry corresponds to a leaf node in the prefix tree (no nested includes).
+ * evaluateLazyEntry() checks these before running the handler, avoiding the
+ * 5-50ms cost of handler evaluation for route matching on the first request.
+ *
+ * @param entries - Array of { staticPrefix, routes } from build-time prefix tree leaves
+ */
+export function setPrecomputedEntries(
+  entries: Array<{ staticPrefix: string; routes: Record<string, string> }> | null,
+): void {
+  cachedPrecomputedEntries = entries;
+}
+
+/**
+ * Get pre-computed route entries (if available)
+ */
+export function getPrecomputedEntries(): typeof cachedPrecomputedEntries {
+  return cachedPrecomputedEntries;
+}
+
+// Route trie for O(path_length) matching at runtime.
+// Built at build time from the route manifest and serialized into the virtual module.
+let cachedRouteTrie: import("./build/route-trie.js").TrieNode | null = null;
+
+export function setRouteTrie(trie: typeof cachedRouteTrie): void {
+  cachedRouteTrie = trie;
+}
+
+export function getRouteTrie(): typeof cachedRouteTrie {
+  return cachedRouteTrie;
+}
+
+// Dev-mode manifest readiness gate.
+// The Vite discovery plugin calls setManifestReadyPromise() before starting
+// discovery, and resolves it when discovery completes. The handler awaits
+// waitForManifestReady() on first request if the manifest isn't yet available.
+let manifestReadyPromise: Promise<void> | null = null;
+
+export function setManifestReadyPromise(promise: Promise<void>): void {
+  manifestReadyPromise = promise;
+}
+
+export function waitForManifestReady(): Promise<void> | null {
+  return manifestReadyPromise;
 }

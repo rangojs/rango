@@ -14,6 +14,8 @@ import { extractStaticPrefix } from "../router/pattern-matching.js";
 import { RSCRouterContext, runWithPrefixes } from "../server/context.js";
 import type { EntryData, TrackedInclude } from "../server/context.js";
 import type { TrailingSlashMode } from "../types.js";
+import { createRouteHelpers } from "../route-definition.js";
+import MapRootLayout from "../server/root-layout.js";
 
 /**
  * Node in the prefix tree
@@ -39,6 +41,8 @@ export interface GeneratedManifest {
   prefixTree: Record<string, PrefixTreeNode>;
   /** Complete route name → pattern mapping for href() */
   routeManifest: Record<string, string>;
+  /** Route name → trailing slash mode for trie redirect handling */
+  routeTrailingSlash?: Record<string, string>;
   /** Generation timestamp */
   generatedAt: string;
 }
@@ -52,7 +56,10 @@ function buildPrefixTreeNode(
   namePrefix: string | undefined,
   patterns: UrlPatterns<any>,
   routeManifest: Record<string, string>,
-  visited: Set<unknown> = new Set()
+  routeAncestry: Record<string, string[]>,  // internal: feeds trie building, not exported
+  mountIndex: number,
+  visited: Set<unknown> = new Set(),
+  routeTrailingSlash?: Record<string, string>,
 ): PrefixTreeNode {
   if (visited.has(patterns)) {
     console.warn(
@@ -83,11 +90,18 @@ function buildPrefixTreeNode(
       namespace: "build",
       parent: null,
       counters: {},
+      mountIndex,
       trackedIncludes, // Enable nested include tracking
     },
     () => {
-      // Run patterns with the URL and name prefixes
-      runWithPrefixes(urlPrefix, namePrefix, () => {
+      const helpers = createRouteHelpers();
+      // Wrap in root layout for correct parent hierarchy (matches runtime)
+      helpers.layout(MapRootLayout, () => {
+        if (urlPrefix || namePrefix) {
+          return runWithPrefixes(urlPrefix, namePrefix, () => {
+            return patterns.handler() as AllUseItems[];
+          });
+        }
         return patterns.handler() as AllUseItems[];
       });
     }
@@ -100,7 +114,19 @@ function buildPrefixTreeNode(
     routeManifest[name] = pattern;
   }
 
-  // Build children from tracked nested includes
+  // Collect trailing slash config
+  if (routeTrailingSlash) {
+    for (const [name, mode] of trailingSlashMap.entries()) {
+      routeTrailingSlash[name] = mode;
+    }
+  }
+
+  // Capture ancestry from manifest entries' parent chains
+  captureAncestry(manifest, routeAncestry);
+
+  // Build children from tracked nested includes.
+  // Multiple includes can share the same fullPrefix (e.g., include("/", patternsA),
+  // include("/", patternsB)). Merge their routes instead of overwriting.
   const children: Record<string, PrefixTreeNode> = {};
 
   for (const include of trackedIncludes) {
@@ -109,10 +135,19 @@ function buildPrefixTreeNode(
       include.namePrefix,
       include.patterns as UrlPatterns<any>,
       routeManifest,
-      visited
+      routeAncestry,
+      mountIndex,
+      visited,
+      routeTrailingSlash,
     );
 
-    children[include.fullPrefix] = childNode;
+    const existing = children[include.fullPrefix];
+    if (existing) {
+      existing.routes.push(...childNode.routes);
+      Object.assign(existing.children, childNode.children);
+    } else {
+      children[include.fullPrefix] = childNode;
+    }
   }
 
   return {
@@ -122,6 +157,26 @@ function buildPrefixTreeNode(
     children,
     routes,
   };
+}
+
+/**
+ * Walk parent chains of route entries to extract ancestry shortCodes.
+ */
+function captureAncestry(
+  manifest: Map<string, EntryData>,
+  routeAncestry: Record<string, string[]>,
+): void {
+  for (const [routeName, entry] of manifest) {
+    if (entry.type === "route") {
+      const ancestry: string[] = [];
+      let current: EntryData | null = entry;
+      while (current) {
+        ancestry.unshift(current.shortCode);
+        current = current.parent;
+      }
+      routeAncestry[routeName] = ancestry;
+    }
+  }
 }
 
 /**
@@ -145,9 +200,11 @@ function buildPrefixTreeNode(
  * ```
  */
 export function generateManifest<TEnv>(
-  urlpatterns: UrlPatterns<TEnv, any>
-): GeneratedManifest {
+  urlpatterns: UrlPatterns<TEnv, any>,
+  mountIndex: number = 0,
+): GeneratedManifest & { _routeAncestry: Record<string, string[]> } {
   const routeManifest: Record<string, string> = {};
+  const routeAncestry: Record<string, string[]> = {};
   const prefixTree: Record<string, PrefixTreeNode> = {};
 
   // Run the root patterns handler with tracking enabled
@@ -166,19 +223,33 @@ export function generateManifest<TEnv>(
       namespace: "build",
       parent: null,
       counters: {},
+      mountIndex,
       trackedIncludes, // Enable include tracking
     },
     () => {
-      urlpatterns.handler();
+      const helpers = createRouteHelpers();
+      // Wrap in root layout for correct parent hierarchy (matches runtime)
+      helpers.layout(MapRootLayout, () => {
+        return urlpatterns.handler() as AllUseItems[];
+      });
     }
   );
 
-  // Collect root-level routes
+  // Collect root-level routes and trailing slash config
+  const routeTrailingSlash: Record<string, string> = {};
   for (const [name, pattern] of patternsMap.entries()) {
     routeManifest[name] = pattern;
   }
+  for (const [name, mode] of trailingSlashMap.entries()) {
+    routeTrailingSlash[name] = mode;
+  }
 
-  // Build prefix tree from tracked includes (shared visited set for cycle detection)
+  // Capture ancestry from manifest entries' parent chains
+  captureAncestry(manifest, routeAncestry);
+
+  // Build prefix tree from tracked includes (shared visited set for cycle detection).
+  // Multiple includes can share the same fullPrefix (e.g., include("/", patternsA),
+  // include("/", patternsB)). Merge their routes instead of overwriting.
   const visited = new Set<unknown>();
   for (const include of trackedIncludes) {
     const node = buildPrefixTreeNode(
@@ -186,16 +257,28 @@ export function generateManifest<TEnv>(
       include.namePrefix,
       include.patterns as UrlPatterns<any>,
       routeManifest,
-      visited
+      routeAncestry,
+      mountIndex,
+      visited,
+      routeTrailingSlash,
     );
 
-    prefixTree[include.fullPrefix] = node;
+    const existing = prefixTree[include.fullPrefix];
+    if (existing) {
+      existing.routes.push(...node.routes);
+      Object.assign(existing.children, node.children);
+    } else {
+      prefixTree[include.fullPrefix] = node;
+    }
   }
 
   return {
     prefixTree,
     routeManifest,
+    routeTrailingSlash: Object.keys(routeTrailingSlash).length > 0 ? routeTrailingSlash : undefined,
     generatedAt: new Date().toISOString(),
+    // Internal: routeAncestry is used only for trie building, not exported
+    _routeAncestry: routeAncestry,
   };
 }
 
