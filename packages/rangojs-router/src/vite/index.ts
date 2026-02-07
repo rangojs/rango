@@ -1272,8 +1272,6 @@ export async function rango(
   return plugins;
 }
 
-/** Alias for backwards compatibility */
-export const rango = rscRouter;
 
 /**
  * Transform CJS vendor files from @vitejs/plugin-rsc to ESM for browser compatibility.
