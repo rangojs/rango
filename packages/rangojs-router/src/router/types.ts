@@ -5,12 +5,17 @@
  */
 
 import type { ReactNode } from "react";
-import type { EntryData } from "../server/context";
+import type { EntryData, InterceptEntry, InterceptSelectorContext } from "../server/context";
 import type {
+  ErrorInfo,
+  ErrorPhase,
+  LoaderDataResult,
   ResolvedSegment,
   HandlerContext,
+  InternalHandlerContext,
   ErrorBoundaryHandler,
   NotFoundBoundaryHandler,
+  ShouldRevalidateFn,
 } from "../types";
 
 /**
@@ -52,6 +57,68 @@ export interface RouterDependencies<TEnv> {
   findNearestNotFoundBoundary: (
     entry: EntryData | null
   ) => ReactNode | NotFoundBoundaryHandler | null;
+}
+
+/**
+ * Dependencies injected from createRouter closure into extracted segment resolution functions.
+ * These are the closure-bound helpers that cannot be imported directly.
+ */
+export interface SegmentResolutionDeps<TEnv = any> {
+  wrapLoaderPromise: <T>(
+    promise: Promise<T>,
+    entry: EntryData,
+    segmentId: string,
+    pathname: string,
+    errorContext?: {
+      request: Request;
+      url: URL;
+      routeKey?: string;
+      params?: Record<string, string>;
+      env?: TEnv;
+      isPartial?: boolean;
+      requestStartTime?: number;
+    },
+  ) => Promise<LoaderDataResult<T>>;
+  trackHandler: <T>(promise: Promise<T>) => Promise<T>;
+  findNearestErrorBoundary: (
+    entry: EntryData | null,
+  ) => ReactNode | ErrorBoundaryHandler | null;
+  findNearestNotFoundBoundary: (
+    entry: EntryData | null,
+  ) => ReactNode | NotFoundBoundaryHandler | null;
+  callOnError: (
+    error: unknown,
+    phase: ErrorPhase,
+    context: any,
+  ) => void;
+}
+
+/**
+ * Dependencies injected from createRouter closure into extracted intercept resolution functions.
+ */
+export interface InterceptResolutionDeps<TEnv = any> {
+  wrapLoaderPromise: SegmentResolutionDeps<TEnv>["wrapLoaderPromise"];
+  evaluateInterceptWhen: (
+    intercept: InterceptEntry,
+    selectorContext: InterceptSelectorContext | null,
+    isAction: boolean,
+  ) => boolean;
+}
+
+/**
+ * Dependencies injected from createRouter closure into extracted match API functions.
+ */
+export interface MatchApiDeps<TEnv = any> {
+  findMatch: (pathname: string, ms?: any) => any;
+  getMetricsStore: () => any;
+  findInterceptForRoute: (
+    routeKey: string,
+    parentEntry: EntryData | null,
+    selectorContext: InterceptSelectorContext | null,
+    isAction: boolean,
+  ) => { intercept: InterceptEntry; entry: EntryData } | null;
+  callOnError: SegmentResolutionDeps<TEnv>["callOnError"];
+  findNearestErrorBoundary: SegmentResolutionDeps<TEnv>["findNearestErrorBoundary"];
 }
 
 /**
