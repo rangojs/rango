@@ -266,6 +266,12 @@ a build-time warning.
 With `passthrough: true`, `revalidate()` is allowed since the handler
 stays in the bundle and can render live.
 
+Server actions on pre-rendered pages work normally. Actions do not cause
+the `B` segment to re-render — the pre-rendered handler output stays
+frozen. Loaders are live and can be revalidated by actions as usual.
+With `passthrough: true` and `revalidate()`, the handler itself can
+re-render live.
+
 ## Build Segment: `B` type
 
 `createPrerenderHandler` introduces a new segment type: `B` (build). The `B`
