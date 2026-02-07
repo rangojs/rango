@@ -479,6 +479,40 @@ re-render of the handler itself.
 | `loading()`    | Ignored without passthrough. With passthrough, works for live fallback renders |
 | `intercept()`  | Not pre-rendered (intercepts are navigation-triggered)  |
 
+## E2E Test Plan
+
+### Basic pre-rendering
+- Static route (no params): md file renders correctly in production build
+- Dynamic route (with params): multiple md files, each slug resolves to correct content
+- Dev mode: same routes render on-demand, no stubbing
+
+### Handler elimination
+- Production build does NOT contain `node:fs` or markdown imports from handler
+- Handler stub is a plain object with `$$id`
+- Accessing a pre-rendered route serves the Flight payload, not the handler
+
+### Loaders on pre-rendered routes
+- Loader on a pre-rendered route runs at request time
+- Loader data is fresh per request (not frozen with handler)
+- Loader with `cache()` respects TTL
+
+### Server actions with loaders
+- Action on a pre-rendered page triggers loader revalidation
+- Loader data updates after action, handler shell stays frozen
+- Verify the B segment is NOT re-rendered (handler output unchanged)
+- Action with `passthrough: true` + `revalidate()` re-renders the handler
+
+### Tree structure stability
+- Same segment tree shape across SSR, client navigation, and action renders
+- No React remounts or state loss when navigating to/from pre-rendered routes
+- Client state (useActionState, refs, local state) preserved across actions
+
+### Sub-use semantics
+- Child layout inside path is pre-rendered
+- Parallel slot inside path is pre-rendered
+- Parallel using `createPrerenderHandler` (node APIs) is stubbed correctly
+- Content outside the path (parent layouts) stays live
+
 ## Open Questions
 
 - **Fallback for unknown params without passthrough**: handler is eliminated —
