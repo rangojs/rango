@@ -122,6 +122,9 @@ export function withInterceptResolution<TEnv>(
   return async function* (
     source: AsyncGenerator<ResolvedSegment>
   ): AsyncGenerator<ResolvedSegment> {
+    const pipelineStart = performance.now();
+    const ms = ctx.metricsStore;
+
     // First, yield all segments from the source (main segment resolution or cache)
     const segments: ResolvedSegment[] = [];
     for await (const segment of source) {
@@ -131,6 +134,9 @@ export function withInterceptResolution<TEnv>(
 
     // Skip intercept resolution for full match (document requests don't have intercepts)
     if (ctx.isFullMatch) {
+      if (ms) {
+        ms.metrics.push({ label: "pipeline:intercept", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
+      }
       return;
     }
 
@@ -148,6 +154,9 @@ export function withInterceptResolution<TEnv>(
       // and re-resolve loaders for fresh data
       if (ctx.interceptResult && state.cacheHit && ctx.isIntercept) {
         await handleCacheHitIntercept(ctx, state, segments);
+      }
+      if (ms) {
+        ms.metrics.push({ label: "pipeline:intercept", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
       }
       return;
     }
@@ -192,6 +201,10 @@ export function withInterceptResolution<TEnv>(
     // Yield intercept segments
     for (const segment of interceptSegments) {
       yield segment;
+    }
+
+    if (ms) {
+      ms.metrics.push({ label: "pipeline:intercept", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
     }
   };
 }

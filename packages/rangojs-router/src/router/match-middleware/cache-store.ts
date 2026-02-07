@@ -119,6 +119,9 @@ export function withCacheStore<TEnv>(
   return async function* (
     source: AsyncGenerator<ResolvedSegment>,
   ): AsyncGenerator<ResolvedSegment> {
+    const pipelineStart = performance.now();
+    const ms = ctx.metricsStore;
+
     // Collect all segments while passing them through
     const allSegments: ResolvedSegment[] = [];
     for await (const segment of source) {
@@ -137,6 +140,9 @@ export function withCacheStore<TEnv>(
       state.cacheHit ||
       ctx.request.method !== "GET"
     ) {
+      if (ms) {
+        ms.metrics.push({ label: "pipeline:cache-store", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
+      }
       return;
     }
 
@@ -262,5 +268,9 @@ export function withCacheStore<TEnv>(
 
       return response;
     });
+
+    if (ms) {
+      ms.metrics.push({ label: "pipeline:cache-store", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
+    }
   };
 }

@@ -120,6 +120,9 @@ export function withCacheLookup<TEnv>(
   return async function* (
     source: AsyncGenerator<ResolvedSegment>
   ): AsyncGenerator<ResolvedSegment> {
+    const pipelineStart = performance.now();
+    const ms = ctx.metricsStore;
+
     const {
       evaluateRevalidation,
       buildEntryRevalidateMap,
@@ -131,6 +134,9 @@ export function withCacheLookup<TEnv>(
     if (ctx.isAction || !ctx.cacheScope?.enabled) {
       // Cache miss - pass through to segment resolution
       yield* source;
+      if (ms) {
+        ms.metrics.push({ label: "pipeline:cache-lookup", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
+      }
       return;
     }
 
@@ -144,6 +150,9 @@ export function withCacheLookup<TEnv>(
     if (!cacheResult) {
       // Cache miss - pass through to segment resolution
       yield* source;
+      if (ms) {
+        ms.metrics.push({ label: "pipeline:cache-lookup", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
+      }
       return;
     }
 
@@ -256,6 +265,9 @@ export function withCacheLookup<TEnv>(
       } else {
         state.matchedIds = state.cachedMatchedIds!;
       }
+    }
+    if (ms) {
+      ms.metrics.push({ label: "pipeline:cache-lookup", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
     }
   };
 }

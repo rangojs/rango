@@ -112,6 +112,8 @@ export function createRSCHandler<
       ctx?: ExecutionContext;
     },
   ): Promise<Response> {
+    const handlerStart = performance.now();
+
     // Connection warmup: return 204 immediately before any processing
     if (router.warmupEnabled && request.method === "HEAD") {
       const warmupUrl = new URL(request.url);
@@ -121,16 +123,20 @@ export function createRSCHandler<
     }
 
     // Resolve nonce if provider is set
+    const nonceStart = performance.now();
     let nonce: string | undefined;
     if (nonceProvider) {
       const result = await nonceProvider(request, env);
       nonce = result === true ? generateNonce() : result;
     }
+    const nonceDur = performance.now() - nonceStart;
 
     const url = new URL(request.url);
 
     // Match global middleware
+    const mwMatchStart = performance.now();
     const matchedMiddleware = matchMiddleware(url.pathname, router.middleware);
+    const mwMatchDur = performance.now() - mwMatchStart;
 
     // Shared variables between middleware and route handlers
     // Initialize from env.Variables if provided (allows pre-seeding from worker entry)
@@ -161,6 +167,7 @@ export function createRSCHandler<
     // This enables href() for all routes including lazy includes
     // Manifest is regenerated when version changes (HMR in dev mode)
     // Skip when already cached in memory to avoid async overhead on every request
+    const manifestCacheStart = performance.now();
     if (router.urlpatterns && !hasCachedManifest()) {
       await getRouteManifestData(
         () => generateManifest(router.urlpatterns!),
@@ -171,6 +178,7 @@ export function createRSCHandler<
         },
       );
     }
+    const manifestCacheDur = performance.now() - manifestCacheStart;
 
     // Note: Route map for useHref() is loaded lazily via getGlobalRouteMap()
     // This allows it to include all routes from lazy includes after manifest loading
@@ -178,6 +186,7 @@ export function createRSCHandler<
     // Create unified request context with all methods
     // Includes: stub response, handle store, loader memoization, use(), cookies, headers, cache store
     // params starts empty, populated after route matching via setRequestContextParams
+    const ctxCreateStart = performance.now();
     const requestContext = createRequestContext({
       env,
       request,
@@ -187,6 +196,19 @@ export function createRSCHandler<
       executionContext: env.ctx,
       themeConfig: router.themeConfig,
     });
+    const ctxCreateDur = performance.now() - ctxCreateStart;
+
+    // Accumulate handler-level timing for Server-Timing header
+    const handlerTiming = [
+      `handler-nonce;dur=${nonceDur.toFixed(2)}`,
+      `handler-mw-match;dur=${mwMatchDur.toFixed(2)}`,
+      `handler-manifest-cache;dur=${manifestCacheDur.toFixed(2)}`,
+      `handler-ctx-create;dur=${ctxCreateDur.toFixed(2)}`,
+    ];
+
+    // Store timing data in variables for downstream access
+    variables.__handlerTiming = handlerTiming;
+    variables.__handlerStart = handlerStart;
 
     // Wrap entire request handling in request context
     // Makes context available via getRequestContext() throughout:
@@ -225,7 +247,11 @@ export function createRSCHandler<
     nonce: string | undefined,
   ): Promise<Response> {
     // First, check for route-level middleware
+    const previewStart = performance.now();
     const preview = await router.previewMatch(request, env);
+    const previewDur = performance.now() - previewStart;
+    const handlerTiming: string[] = variables.__handlerTiming || [];
+    handlerTiming.push(`handler-preview-match;dur=${previewDur.toFixed(2)}`);
     if (preview?.routeMiddleware && preview.routeMiddleware.length > 0) {
       // Convert route middleware to app middleware format for execution
       const middlewareEntries = preview.routeMiddleware.map((mw) => ({
@@ -938,6 +964,11 @@ export function createRSCHandler<
     handleStore: ReturnType<typeof requireRequestContext>["_handleStore"],
     nonce: string | undefined,
   ): Promise<Response> {
+    // Retrieve handler-level timing from variables
+    const reqCtx = requireRequestContext();
+    const handlerTimingArr: string[] = reqCtx.var.__handlerTiming || [];
+    const handlerStart: number = reqCtx.var.__handlerStart || 0;
+
     let payload: RscPayload;
     let serverTiming: string | undefined;
 
@@ -977,7 +1008,7 @@ export function createRSCHandler<
             handles: handleStore.stream(),
             version,
             themeConfig: router.themeConfig,
-            initialTheme: requireRequestContext().theme,
+            initialTheme: reqCtx.theme,
           },
         };
       } else {
@@ -1034,13 +1065,15 @@ export function createRSCHandler<
           handles: handleStore.stream(),
           version,
           themeConfig: router.themeConfig,
-          initialTheme: requireRequestContext().theme,
+          initialTheme: reqCtx.theme,
         },
       };
     }
 
     // Serialize to RSC stream
+    const rscSerializeStart = performance.now();
     const rscStream = renderToReadableStream<RscPayload>(payload);
+    const rscSerializeDur = performance.now() - rscSerializeStart;
 
     // Determine if this is an RSC request or HTML request
     const isRscRequest =
@@ -1048,13 +1081,21 @@ export function createRSCHandler<
         !url.searchParams.has("__html")) ||
       url.searchParams.has("__rsc");
 
+    // Build complete Server-Timing: handler phases + match/manifest + rendering + RSC serialize
+    const timingParts: string[] = [...handlerTimingArr];
+    if (serverTiming) {
+      timingParts.push(serverTiming);
+    }
+    timingParts.push(`rsc-serialize;dur=${rscSerializeDur.toFixed(2)}`);
+
     if (isRscRequest) {
+      const fullTiming = timingParts.join(", ");
       const rscHeaders: Record<string, string> = {
         "content-type": "text/x-component;charset=utf-8",
         vary: "accept",
       };
-      if (serverTiming) {
-        rscHeaders["Server-Timing"] = serverTiming;
+      if (fullTiming) {
+        rscHeaders["Server-Timing"] = fullTiming;
       }
       return createResponseWithMergedHeaders(rscStream, {
         headers: rscHeaders,
@@ -1062,14 +1103,28 @@ export function createRSCHandler<
     }
 
     // Delegate to SSR for HTML response
+    const ssrModuleStart = performance.now();
     const ssrModule = await loadSSRModule();
-    const htmlStream = await ssrModule.renderHTML(rscStream, { nonce });
+    const ssrModuleDur = performance.now() - ssrModuleStart;
+    timingParts.push(`ssr-module-load;dur=${ssrModuleDur.toFixed(2)}`);
 
+    const ssrRenderStart = performance.now();
+    const htmlStream = await ssrModule.renderHTML(rscStream, { nonce });
+    const ssrRenderDur = performance.now() - ssrRenderStart;
+    timingParts.push(`ssr-render-html;dur=${ssrRenderDur.toFixed(2)}`);
+
+    // Add total handler duration
+    if (handlerStart) {
+      const totalHandler = performance.now() - handlerStart;
+      timingParts.push(`handler-total;dur=${totalHandler.toFixed(2)}`);
+    }
+
+    const fullTiming = timingParts.join(", ");
     const htmlHeaders: Record<string, string> = {
       "content-type": "text/html;charset=utf-8",
     };
-    if (serverTiming) {
-      htmlHeaders["Server-Timing"] = serverTiming;
+    if (fullTiming) {
+      htmlHeaders["Server-Timing"] = fullTiming;
     }
 
     return createResponseWithMergedHeaders(htmlStream, {

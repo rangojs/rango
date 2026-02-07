@@ -104,6 +104,9 @@ export function withSegmentResolution<TEnv>(
   return async function* (
     source: AsyncGenerator<ResolvedSegment>
   ): AsyncGenerator<ResolvedSegment> {
+    const pipelineStart = performance.now();
+    const ms = ctx.metricsStore;
+
     // IMPORTANT: Always iterate source first to give cache-lookup a chance
     // to run and set state.cacheHit. Without this, cache-lookup never executes!
     for await (const segment of source) {
@@ -112,6 +115,9 @@ export function withSegmentResolution<TEnv>(
 
     // If cache hit, segments were already yielded by cache lookup
     if (state.cacheHit) {
+      if (ms) {
+        ms.metrics.push({ label: "pipeline:segment-resolve", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
+      }
       return;
     }
 
@@ -169,6 +175,10 @@ export function withSegmentResolution<TEnv>(
       for (const segment of result.segments) {
         yield segment;
       }
+    }
+
+    if (ms) {
+      ms.metrics.push({ label: "pipeline:segment-resolve", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
     }
   };
 }

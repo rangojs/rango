@@ -748,12 +748,20 @@ const cache: RouteHelpers<any, any>["cache"] = (
   }
 
   // With children: create a cache entry (like layout with caching semantics)
-  const namespace = `${ctx.namespace}.${store.getNextIndex("cache")}`;
+  const cacheNextIndex = store.getNextIndex("cache");
+  const namespace = `${ctx.namespace}.${cacheNextIndex}`;
+  const cacheShortCode = store.getShortCode("cache");
+
+  // Ancestry pruning: skip children if this cache is not an ancestor of the matched route.
+  if (ctx.ancestry && !ctx.ancestry.has(cacheShortCode)) {
+    return { name: namespace, type: "cache" } as CacheItem;
+  }
+
   const cacheUrlPrefix2 = getUrlPrefix();
 
   const entry = {
     id: namespace,
-    shortCode: store.getShortCode("cache"),
+    shortCode: cacheShortCode,
     type: "cache",
     parent: ctx.parent,
     cache: cacheConfig,
@@ -1064,14 +1072,20 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
   const ctx = store.getStore();
   if (!ctx) throw new Error("layout() must be called inside map()");
   const isRoot = !ctx.parent || ctx.parent === null;
-  const namespace = `${ctx.namespace}.${
-    isRoot ? "$root" : store.getNextIndex("layout")
-  }`;
+  const nextIndex = isRoot ? "$root" : store.getNextIndex("layout");
+  const namespace = `${ctx.namespace}.${nextIndex}`;
+  const shortCode = store.getShortCode("layout");
+
+  // Ancestry pruning: skip children if this layout is not an ancestor of the matched route.
+  // Counters are already incremented above to keep shortCodes stable across routes.
+  if (ctx.ancestry && !ctx.ancestry.has(shortCode)) {
+    return { name: namespace, type: "layout" } as LayoutItem;
+  }
 
   const urlPrefix = getUrlPrefix();
   const entry = {
     id: namespace,
-    shortCode: store.getShortCode("layout"),
+    shortCode,
     type: "layout",
     parent: ctx.parent,
     handler,

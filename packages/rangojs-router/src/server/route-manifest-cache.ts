@@ -14,7 +14,8 @@
 
 import type { SegmentCacheStore, CachedEntryData } from "../cache/types.js";
 import type { GeneratedManifest } from "../build/generate-manifest.js";
-import { setCachedManifest, hasCachedManifest } from "../route-map-builder.js";
+import { setCachedManifest, hasCachedManifest, setRouteTrie, setRouteAncestry } from "../route-map-builder.js";
+import { buildRouteTrie } from "../build/route-trie.js";
 
 /**
  * Cached route data structure
@@ -101,6 +102,25 @@ export async function getRouteManifestData(
   };
   // Make available to getGlobalRouteMap() for href()
   setCachedManifest(memoryManifest.routeManifest);
+
+  // Build and set the route trie + ancestry for O(path_length) matching
+  if (generated.routeAncestry && Object.keys(generated.routeAncestry).length > 0) {
+    setRouteAncestry(generated.routeAncestry);
+    // Build routeToStaticPrefix from prefix tree
+    const routeToStaticPrefix: Record<string, string> = {};
+    for (const name of Object.keys(generated.routeManifest)) {
+      routeToStaticPrefix[name] = "";
+    }
+    buildRouteToStaticPrefixFromTree(generated.prefixTree, routeToStaticPrefix);
+    const trie = buildRouteTrie(
+      generated.routeManifest,
+      generated.routeAncestry,
+      routeToStaticPrefix,
+      generated.routeTrailingSlash,
+    );
+    setRouteTrie(trie);
+  }
+
   const duration = (performance.now() - startTime).toFixed(2);
   console.log(`[route-manifest] MISS - generated fresh (${duration}ms, ${Object.keys(generated.routeManifest).length} routes)`);
 
@@ -170,4 +190,28 @@ export function isManifestLoaded(): boolean {
  */
 export function getManifestVersion(): string | null {
   return memoryManifest?.version ?? null;
+}
+
+/**
+ * Walk prefix tree to build route name → staticPrefix mapping.
+ */
+function buildRouteToStaticPrefixFromTree(
+  prefixTree: Record<string, any>,
+  map: Record<string, string>,
+): void {
+  function visit(node: any) {
+    if (node.routes) {
+      for (const name of node.routes) {
+        map[name] = node.staticPrefix || "";
+      }
+    }
+    if (node.children) {
+      for (const child of Object.values(node.children)) {
+        visit(child);
+      }
+    }
+  }
+  for (const node of Object.values(prefixTree)) {
+    visit(node);
+  }
 }

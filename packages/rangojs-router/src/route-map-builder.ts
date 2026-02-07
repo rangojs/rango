@@ -214,3 +214,27 @@ export function setPrecomputedEntries(
 export function getPrecomputedEntries(): typeof cachedPrecomputedEntries {
   return cachedPrecomputedEntries;
 }
+
+// Route trie for O(path_length) matching at runtime.
+// Built at build time from the route manifest and serialized into the virtual module.
+let cachedRouteTrie: import("./build/route-trie.js").TrieNode | null = null;
+
+// Route ancestry map: route name -> array of shortCodes from root to route.
+// Used by layout() to skip non-ancestor subtrees during manifest evaluation.
+let cachedRouteAncestry: Record<string, string[]> | null = null;
+
+export function setRouteTrie(trie: typeof cachedRouteTrie): void {
+  cachedRouteTrie = trie;
+}
+
+export function getRouteTrie(): typeof cachedRouteTrie {
+  return cachedRouteTrie;
+}
+
+export function setRouteAncestry(map: typeof cachedRouteAncestry): void {
+  cachedRouteAncestry = map;
+}
+
+export function getRouteAncestry(): typeof cachedRouteAncestry {
+  return cachedRouteAncestry;
+}

@@ -17,7 +17,8 @@ import {
   type HrefFunction,
   type PrefixRoutePatterns,
 } from "./href.js";
-import { registerRouteMap, getGlobalRouteMap, getPrecomputedEntries } from "./route-map-builder.js";
+import { registerRouteMap, getGlobalRouteMap, getPrecomputedEntries, getRouteTrie } from "./route-map-builder.js";
+import { tryTrieMatch } from "./router/trie-matching.js";
 import {
   createRouteHelpers,
   type RouteHelpers,
@@ -34,6 +35,7 @@ import {
   getContext,
   RSCRouterContext,
   runWithPrefixes,
+  type MetricsStore,
   type TrackedInclude,
 } from "./server/context";
 import { createHandleStore, type HandleStore } from "./server/handle-store.js";
@@ -1349,13 +1351,88 @@ export function createRouter<TEnv = any>(
   let lastFindMatchResult: RouteMatchResult<TEnv> | null = null;
 
   // Wrapper for findMatch that uses routesEntries
-  // Handles lazy evaluation by evaluating lazy entries on first match
-  function findMatch(pathname: string): RouteMatchResult<TEnv> | null {
+  // Handles lazy evaluation by evaluating lazy entries on first match.
+  // Phase 1: try O(path_length) trie match.
+  // Phase 2: fall back to regex iteration.
+  function findMatch(pathname: string, ms?: MetricsStore): RouteMatchResult<TEnv> | null {
     // Return cached result if same pathname (avoids double-match per request)
     if (lastFindMatchPathname === pathname) {
       return lastFindMatchResult;
     }
 
+    // Helper to push sub-metrics
+    const pushMetric = ms
+      ? (label: string, start: number) => {
+          ms.metrics.push({
+            label,
+            duration: performance.now() - start,
+            startTime: start - ms.requestStart,
+          });
+        }
+      : undefined;
+
+    // Phase 1: Try trie match (O(path_length))
+    const routeTrie = getRouteTrie();
+    if (routeTrie) {
+      const trieStart = performance.now();
+      const trieResult = tryTrieMatch(routeTrie, pathname);
+      pushMetric?.("match:trie", trieStart);
+
+      if (trieResult) {
+        // Find the RouteEntry that contains this route.
+        // Multiple entries can share the same staticPrefix (e.g., several
+        // include("/", patterns) calls all produce staticPrefix=""). Evaluate
+        // each candidate and pick the one whose routes include the matched key.
+        const entryStart = performance.now();
+        let entry: RouteEntry<TEnv> | undefined;
+        let fallbackEntry: RouteEntry<TEnv> | undefined;
+
+        for (const e of routesEntries) {
+          if (e.staticPrefix !== trieResult.sp) continue;
+          if (!fallbackEntry) fallbackEntry = e;
+          evaluateLazyEntry(e);
+          if (e.routes && trieResult.routeKey in (e.routes as Record<string, unknown>)) {
+            entry = e;
+            break;
+          }
+        }
+
+        // If no entry had the route in its routes map, use the first matching
+        // entry as fallback (handles main entry with inline routes not yet
+        // reflected in its routes object).
+        if (!entry) entry = fallbackEntry;
+
+        // If entry not found (nested include not yet discovered), evaluate parent
+        if (!entry) {
+          const parent = routesEntries.find(e =>
+            trieResult.sp.startsWith(e.staticPrefix) && e.staticPrefix !== trieResult.sp
+          );
+          if (parent) {
+            const lazyStart = performance.now();
+            evaluateLazyEntry(parent);
+            pushMetric?.("match:lazy-eval", lazyStart);
+          }
+          entry = routesEntries.find(e => e.staticPrefix === trieResult.sp);
+        }
+        pushMetric?.("match:entry-resolve", entryStart);
+
+        if (entry) {
+          lastFindMatchPathname = pathname;
+          lastFindMatchResult = {
+            entry,
+            routeKey: trieResult.routeKey,
+            params: trieResult.params,
+            optionalParams: new Set(trieResult.optionalParams || []),
+            redirectTo: trieResult.redirectTo,
+            ancestry: trieResult.ancestry,
+          };
+          return lastFindMatchResult;
+        }
+      }
+    }
+
+    // Phase 2: Fall back to existing matching (regex iteration)
+    const regexStart = performance.now();
     let result = findRouteMatch(pathname, routesEntries);
 
     // If we hit a lazy entry that needs evaluation, evaluate and retry.
@@ -1375,6 +1452,7 @@ export function createRouter<TEnv = any>(
       evaluateLazyEntry(result.lazyEntry);
       result = findRouteMatch(pathname, routesEntries);
     }
+    pushMetric?.("match:regex-fallback", regexStart);
 
     lastFindMatchPathname = pathname;
     lastFindMatchResult = result;
@@ -3498,6 +3576,7 @@ export function createRouter<TEnv = any>(
       pathname,
       undefined, // No metrics for error matching
       false, // Not SSR
+      matched.ancestry,
     );
 
     // Find the nearest error boundary in the entry chain
@@ -3666,9 +3745,9 @@ export function createRouter<TEnv = any>(
     // Initialize metrics store for this request
     const metricsStore = getMetricsStore();
 
-    // Track route matching
+    // Track route matching (sub-timing pushed by findMatch when ms provided)
     const routeMatchStart = metricsStore ? performance.now() : 0;
-    const matched = findMatch(pathname);
+    const matched = findMatch(pathname, metricsStore);
     if (metricsStore) {
       metricsStore.metrics.push({
         label: "route-matching",
@@ -3699,6 +3778,7 @@ export function createRouter<TEnv = any>(
       pathname,
       metricsStore,
       true, // isSSR
+      matched.ancestry,
     );
     if (metricsStore) {
       metricsStore.metrics.push({
@@ -3842,7 +3922,7 @@ export function createRouter<TEnv = any>(
       ? new URL(interceptSourceUrl, url.origin)
       : prevUrl;
 
-    // Track route matching
+    // Track route matching (sub-timing pushed by findMatch when ms provided)
     const routeMatchStart = metricsStore ? performance.now() : 0;
     const prevMatch = findMatch(prevUrl.pathname);
     const prevParams = prevMatch?.params || {};
@@ -3850,7 +3930,7 @@ export function createRouter<TEnv = any>(
       ? findMatch(interceptContextUrl.pathname)
       : prevMatch;
 
-    const matched = findMatch(pathname);
+    const matched = findMatch(pathname, metricsStore);
 
     if (metricsStore) {
       metricsStore.metrics.push({
@@ -3886,6 +3966,7 @@ export function createRouter<TEnv = any>(
       pathname,
       metricsStore,
       false,
+      matched.ancestry,
     );
     if (metricsStore) {
       metricsStore.metrics.push({
@@ -4161,6 +4242,7 @@ export function createRouter<TEnv = any>(
       pathname,
       undefined, // No metrics store for preview
       false, // isSSR - doesn't matter for preview
+      matched.ancestry,
     );
 
     // Collect route-level middleware from entry tree

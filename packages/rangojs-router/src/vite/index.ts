@@ -360,6 +360,27 @@ function flattenLeafEntries(
 }
 
 /**
+ * Walk prefix tree to map each route name to its scope's staticPrefix.
+ */
+function buildRouteToStaticPrefix(
+  prefixTree: Record<string, any>,
+  result: Record<string, string>,
+): void {
+  function visit(node: any): void {
+    const sp = node.staticPrefix || "";
+    for (const name of (node.routes || [])) {
+      result[name] = sp;
+    }
+    for (const child of Object.values(node.children || {})) {
+      visit(child);
+    }
+  }
+  for (const node of Object.values(prefixTree)) {
+    visit(node);
+  }
+}
+
+/**
  * Plugin that discovers router instances at dev/build time via the RSC environment.
  *
  * Uses `server.environments.rsc.runner.import()` to load the user's router file
@@ -388,6 +409,11 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
     staticPrefix: string;
     routes: Record<string, string>;
   }> | null = null;
+
+  // Route trie for O(path_length) matching at runtime.
+  let mergedRouteTrie: any = null;
+  // Route ancestry map for layout pruning.
+  let mergedRouteAncestry: Record<string, string[]> | null = null;
 
   // Shared discovery logic: import entry via RSC runner, generate manifests,
   // write static files, and populate mergedRouteManifest.
@@ -460,13 +486,21 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
 
     mergedRouteManifest = {};
     mergedPrecomputedEntries = [];
+    mergedRouteAncestry = {};
+    let mergedRouteTrailingSlash: Record<string, string> = {};
+
+    let routerMountIndex = 0;
+    // Collect all manifests for trie building (avoid re-running generateManifest)
+    const allManifests: Array<{ id: string; manifest: any }> = [];
 
     for (const [id, router] of registry) {
       if (!router.urlpatterns || !generateManifest) {
         continue;
       }
 
-      const manifest = generateManifest(router.urlpatterns);
+      const manifest = generateManifest(router.urlpatterns, routerMountIndex);
+      routerMountIndex++;
+      allManifests.push({ id, manifest });
       const routeCount = Object.keys(manifest.routeManifest).length;
       const staticRoutes = Object.values(manifest.routeManifest).filter(
         (p: any) => !p.includes(":") && !p.includes("*")
@@ -475,6 +509,15 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
 
       // Merge into the combined manifest
       Object.assign(mergedRouteManifest, manifest.routeManifest);
+
+      // Merge ancestry
+      if (manifest.routeAncestry) {
+        Object.assign(mergedRouteAncestry, manifest.routeAncestry);
+      }
+      // Merge trailing slash config
+      if (manifest.routeTrailingSlash) {
+        Object.assign(mergedRouteTrailingSlash, manifest.routeTrailingSlash);
+      }
 
       // Flatten prefix tree leaf nodes into precomputed entries.
       // Leaf nodes (no children) can have their routes used directly by
@@ -501,6 +544,32 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
         `(${staticRoutes} static, ${dynamicRoutes} dynamic) ` +
         `-> dist/static/__${hash}/`
       );
+    }
+
+    // Build route trie from merged manifest + ancestry
+    if (mergedRouteManifest && Object.keys(mergedRouteManifest).length > 0) {
+      const buildRouteTrie = buildMod.buildRouteTrie;
+      if (buildRouteTrie && mergedRouteAncestry) {
+        // Build routeToStaticPrefix from saved manifests
+        const routeToStaticPrefix: Record<string, string> = {};
+        for (const { manifest } of allManifests) {
+          // Root-level routes have empty static prefix
+          for (const name of Object.keys(manifest.routeManifest)) {
+            if (!(name in routeToStaticPrefix)) {
+              routeToStaticPrefix[name] = "";
+            }
+          }
+          buildRouteToStaticPrefix(manifest.prefixTree, routeToStaticPrefix);
+        }
+
+        mergedRouteTrie = buildRouteTrie(
+          mergedRouteManifest,
+          mergedRouteAncestry,
+          routeToStaticPrefix,
+          Object.keys(mergedRouteTrailingSlash).length > 0 ? mergedRouteTrailingSlash : undefined,
+        );
+        // Trie built successfully
+      }
     }
 
     return serverMod;
@@ -539,9 +608,15 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
           if (mergedPrecomputedEntries && mergedPrecomputedEntries.length > 0 && serverMod?.setPrecomputedEntries) {
             serverMod.setPrecomputedEntries(mergedPrecomputedEntries);
           }
+          if (mergedRouteTrie && serverMod?.setRouteTrie) {
+            serverMod.setRouteTrie(mergedRouteTrie);
+          }
+          if (mergedRouteAncestry && serverMod?.setRouteAncestry) {
+            serverMod.setRouteAncestry(mergedRouteAncestry);
+          }
         } catch (err: any) {
           console.warn(
-            `[rsc-router] Router discovery failed: ${err.message}`
+            `[rsc-router] Router discovery failed: ${err.message}\n${err.stack}`
           );
         }
       };
@@ -631,11 +706,17 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
         const hasManifest = mergedRouteManifest && Object.keys(mergedRouteManifest).length > 0;
         if (hasManifest) {
           const lines = [
-            `import { setCachedManifest, setPrecomputedEntries } from "@rangojs/router/server";`,
+            `import { setCachedManifest, setPrecomputedEntries, setRouteTrie, setRouteAncestry } from "@rangojs/router/server";`,
             `setCachedManifest(${JSON.stringify(mergedRouteManifest)});`,
           ];
           if (mergedPrecomputedEntries && mergedPrecomputedEntries.length > 0) {
             lines.push(`setPrecomputedEntries(${JSON.stringify(mergedPrecomputedEntries)});`);
+          }
+          if (mergedRouteTrie) {
+            lines.push(`setRouteTrie(${JSON.stringify(mergedRouteTrie)});`);
+          }
+          if (mergedRouteAncestry && Object.keys(mergedRouteAncestry).length > 0) {
+            lines.push(`setRouteAncestry(${JSON.stringify(mergedRouteAncestry)});`);
           }
           return lines.join("\n");
         }
