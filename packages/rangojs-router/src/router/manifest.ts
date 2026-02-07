@@ -11,12 +11,6 @@ import MapRootLayout from "../server/root-layout";
 import type { RouteEntry } from "../types";
 import type { UrlPatterns } from "../urls";
 
-// Runtime ancestry cache: shortCodes captured from actual loadManifest execution.
-// Build-time ancestry (from generateManifest) uses different contexts than runtime
-// (fresh parent=null vs lazyContext.parent, different mountIndex presence), causing
-// shortCode divergence. Runtime cache guarantees correct ancestry for pruning.
-const runtimeAncestryCache = new Map<string, string[]>();
-
 // Module-level manifest cache: avoids re-executing DSL handler on every request.
 // Handler execution is deterministic (components, loaders, middleware are module-level
 // stable references), so the resulting EntryData tree can be safely cached and reused
@@ -84,14 +78,6 @@ export async function loadManifest(
     Store.metrics = metricsStore;
   }
 
-  // Set ancestry for layout pruning using runtime-captured ancestry only.
-  // Build-time ancestry (from trie or routeAncestry map) uses different contexts
-  // than runtime (different parent chains, mountIndex presence), so shortCodes
-  // diverge. Only use ancestry captured from a previous loadManifest run.
-  const runtimeAncestry = runtimeAncestryCache.get(routeKey);
-  if (runtimeAncestry) {
-    Store.ancestry = new Set(runtimeAncestry);
-  }
   pushMetric?.("manifest:store-setup", storeSetupStart);
 
   // Clear manifest before rebuilding to prevent stale entry mutations
@@ -195,22 +181,6 @@ export async function loadManifest(
       `Route must be registered for ${routeKey}`
     );
     pushMetric?.("manifest:validation", validationStart);
-
-    // Capture runtime ancestry on first successful load for future pruning.
-    // Walk the parent chain from the route entry to build the correct ancestry
-    // using the actual runtime shortCodes.
-    const ancestryStart = performance.now();
-    if (!runtimeAncestryCache.has(routeKey)) {
-      const routeEntry = Store.manifest.get(routeKey)!;
-      const ancestry: string[] = [];
-      let current: EntryData | null = routeEntry;
-      while (current) {
-        ancestry.unshift(current.shortCode);
-        current = current.parent;
-      }
-      runtimeAncestryCache.set(routeKey, ancestry);
-    }
-    pushMetric?.("manifest:ancestry-capture", ancestryStart);
 
     // Cache manifest for future requests in this isolate
     manifestModuleCache.set(cacheKey, new Map(Store.manifest));

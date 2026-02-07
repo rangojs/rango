@@ -219,8 +219,6 @@ interface HelperContext {
   run?: <T>(fn: () => T | Promise<T>) => T | Promise<T>;
   /** Tracked includes for build-time manifest generation */
   trackedIncludes?: TrackedInclude[];
-  /** Ancestry shortCodes for the matched route (set by loadManifest for layout pruning) */
-  ancestry?: Set<string>;
 }
 export const RSCRouterContext: AsyncLocalStorage<HelperContext> =
   new AsyncLocalStorage<HelperContext>();
@@ -340,7 +338,6 @@ export const getContext = (): {
           urlPrefix: store.urlPrefix,
           namePrefix: store.namePrefix,
           trackedIncludes: store.trackedIncludes,
-          ancestry: store.ancestry,
         },
         callback
       );
@@ -371,7 +368,6 @@ export const getContext = (): {
           urlPrefix: store?.urlPrefix,
           namePrefix: store?.namePrefix,
           trackedIncludes: store?.trackedIncludes,
-          ancestry: store?.ancestry,
         },
         callback
       );
