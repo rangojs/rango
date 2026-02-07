@@ -35,17 +35,11 @@ function filterSegmentOrder(matched: string[]): string[] {
 
 /**
  * Resolve the collect function for a handle.
- * When a handle is passed as a prop via RSC, toJSON strips the collect function.
- * In that case, look up collect from the registry (populated when createHandle runs
- * on the client), then fall back to flat array default.
+ * Handle objects are plain { __brand, $$id } - collect is stored in the registry
+ * (populated when createHandle runs on the client).
  */
 function resolveCollect<T, A>(handle: Handle<T, A>): (segments: T[][]) => A {
-  if (typeof handle.collect === "function") {
-    return handle.collect;
-  }
-
-  // Handle was deserialized from RSC prop (toJSON stripped collect).
-  // Try the registry first (populated if the handle module was imported on client).
+  // Look up collect from the registry (populated when the handle module is imported).
   const registered = getCollectFn(handle.$$id);
   if (registered) {
     return registered as (segments: T[][]) => A;

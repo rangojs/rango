@@ -30,23 +30,6 @@ export interface Handle<TData, TAccumulated = TData[]> {
    */
   readonly $$id: string;
 
-  /**
-   * Collect function to transform segment data into final value.
-   * Receives array of arrays - each inner array contains values pushed
-   * by one segment, ordered parent-to-child.
-   * Optional because RSC serialization (toJSON) strips it. On the client,
-   * useHandle() recovers collect from the module-level registry.
-   *
-   * @param segments - Array of segment data arrays, e.g. [[a, b], [c], [d, e]]
-   * @returns The accumulated value
-   */
-  readonly collect?: (segments: TData[][]) => TAccumulated;
-
-  /**
-   * RSC serialization - strips collect function, keeps only brand + id.
-   * When passed as a prop to a client component, RSC Flight calls toJSON.
-   */
-  toJSON?: () => { __brand: "handle"; $$id: string };
 }
 
 /**
@@ -131,8 +114,6 @@ export function createHandle<TData, TAccumulated = TData[]>(
   return {
     __brand: "handle" as const,
     $$id: handleId,
-    collect: collectFn,
-    toJSON: () => ({ __brand: "handle" as const, $$id: handleId }),
   };
 }
 
