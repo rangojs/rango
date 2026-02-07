@@ -89,6 +89,45 @@ export function createRouter(): never {
   );
 }
 
+/**
+ * Error-throwing stub for server-only `redirect` function.
+ * Import from "@rangojs/router/server" or use within RSC context instead.
+ */
+export function redirect(): never {
+  throw new Error(
+    'redirect() is server-only. Import from "@rangojs/router/server" instead.'
+  );
+}
+
+/**
+ * Error-throwing stub for server-only `createHandle` function.
+ * Import from "@rangojs/router/server" or use within RSC context instead.
+ */
+export function createHandle(): never {
+  throw new Error(
+    'createHandle() is server-only. Import from "@rangojs/router/server" instead.'
+  );
+}
+
+// Handle API (type-only exports safe for client)
+export { isHandle, type Handle } from "./handle.js";
+
+/**
+ * Error-throwing stub for server-only `getRequestContext` function.
+ * Import from "@rangojs/router/server" or use within RSC context instead.
+ */
+export function getRequestContext(): never {
+  throw new Error(
+    'getRequestContext() is server-only. Import from "@rangojs/router/server" instead.'
+  );
+}
+
+// Request context type (safe for client)
+export type { RequestContext } from "./server/request-context.js";
+
+// Meta types
+export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
+
 // Href type utilities for type-safe URL generation
 // ScopedHrefFunction is used with scopedHref<typeof patterns>() for composable modules
 export type { ScopedHrefFunction, HrefFunction, ExtractLocalRoutes } from "./href.js";

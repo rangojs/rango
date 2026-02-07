@@ -3,6 +3,7 @@ import { createServer as createViteServer } from "vite";
 import * as Vite from "vite";
 import { resolve, join } from "node:path";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { exposeActionId } from "./expose-action-id.ts";
 import { exposeLoaderId } from "./expose-loader-id.ts";
@@ -96,19 +97,25 @@ export interface RscPluginOptions {
 /**
  * Base options shared by all presets
  */
-interface RscRouterBaseOptions {
+interface RangoBaseOptions {
   /**
    * Expose $$id property on server action functions.
    * Required for action-based revalidation to work.
    * @default true
    */
   exposeActionId?: boolean;
+
+  /**
+   * Show startup banner. Set to false to disable.
+   * @default true
+   */
+  banner?: boolean;
 }
 
 /**
  * Options for Node.js deployment (default)
  */
-export interface RscRouterNodeOptions extends RscRouterBaseOptions {
+export interface RangoNodeOptions extends RangoBaseOptions {
   /**
    * Deployment preset. Defaults to 'node' when not specified.
    */
@@ -120,7 +127,7 @@ export interface RscRouterNodeOptions extends RscRouterBaseOptions {
    *
    * @example
    * ```ts
-   * rscRouter({ router: './src/router.tsx' })
+   * rango({ router: './src/router.tsx' })
    * ```
    */
   router: string;
@@ -144,7 +151,7 @@ export interface RscRouterNodeOptions extends RscRouterBaseOptions {
 /**
  * Options for Cloudflare Workers deployment
  */
-export interface RscRouterCloudflareOptions extends RscRouterBaseOptions {
+export interface RangoCloudflareOptions extends RangoBaseOptions {
   /**
    * Deployment preset for Cloudflare Workers.
    * When using cloudflare preset:
@@ -157,9 +164,9 @@ export interface RscRouterCloudflareOptions extends RscRouterBaseOptions {
 }
 
 /**
- * Options for rscRouter plugin
+ * Options for rango() Vite plugin
  */
-export type RscRouterOptions = RscRouterNodeOptions | RscRouterCloudflareOptions;
+export type RangoOptions = RangoNodeOptions | RangoCloudflareOptions;
 
 /**
  * Create a virtual modules plugin for default entry files.
@@ -919,8 +926,44 @@ function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
   };
 }
 
+const _require = createRequire(import.meta.url);
+const _rangoVersion: string = _require("../../package.json").version;
+
+let _bannerPrinted = false;
+
+function printBanner(
+  mode: "dev" | "build" | "preview",
+  preset: string,
+  version: string
+): void {
+  if (_bannerPrinted) return;
+  _bannerPrinted = true;
+
+  // ANSI codes
+  const dim = "\x1b[2m";
+  const bold = "\x1b[1m";
+  const reset = "\x1b[0m";
+
+  const banner = `
+${dim}  ✦        ✦          ✧.           .          .${reset}
+${dim} ╱${reset}    ${bold}╔═╗${reset}${dim}      *      ╱                   ✦             *${reset}
+${dim}      ${reset}${bold}║ ║${reset} ${bold}╔═╗${reset}${dim}                    *                ✧.   ╱${reset}
+${dim}   ${reset}${bold}╔╗ ║ ║ ║ ║${reset}${dim}                          *               ╱${reset}
+${dim}   ${reset}${bold}║║ ║ ║ ║ ║  ╦═╗╔═╗╔╗╔╔═╗╔═╗${reset}${dim}             ✧              ✦${reset}
+${dim}  ${reset}${bold}═╣║ ║ ╠═╝ ║  ╠╦╝╠═╣║║║║ ╦║ ║${reset}${dim}        *           ✧${reset}
+${dim}   ${reset}${bold}║╚═╝ ╔═══╝  ╩╚═╩ ╩╝╚╝╚═╝╚═╝${reset}${dim}            ✦          .      *${reset}
+${dim}   ${reset}${bold}╚══╗ ║${reset}${dim} *      RSC Wrangler         ✧                ✦${reset}
+${dim}  *   ${reset}${bold}║ ╠═${reset}${dim}                         *            ✧.    ╱${reset}
+${bold}══════╝ ╚═════════╩═══${reset}${dim}                  ✦            *${reset}
+
+   v${version} · ${preset} · ${mode}
+`;
+
+  console.log(banner);
+}
+
 /**
- * Vite plugin for rsc-router.
+ * Vite plugin for @rangojs/router.
  *
  * Includes @vitejs/plugin-rsc and all necessary transforms for the router
  * to function correctly with React Server Components.
@@ -928,7 +971,7 @@ function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
  * @example Node.js (default)
  * ```ts
  * export default defineConfig({
- *   plugins: [react(), rscRouter({ router: './src/router.tsx' })],
+ *   plugins: [react(), rango({ router: './src/router.tsx' })],
  * });
  * ```
  *
@@ -937,22 +980,23 @@ function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
  * export default defineConfig({
  *   plugins: [
  *     react(),
- *     rscRouter({ preset: 'cloudflare' }),
+ *     rango({ preset: 'cloudflare' }),
  *     cloudflare({ viteEnvironment: { name: 'rsc' } }),
  *   ],
  * });
  * ```
  */
-export async function rscRouter(
-  options: RscRouterOptions
+export async function rango(
+  options: RangoOptions
 ): Promise<PluginOption[]> {
   const preset = options.preset ?? "node";
   const enableExposeActionId = options.exposeActionId ?? true;
+  const showBanner = options.banner ?? true;
 
   const plugins: PluginOption[] = [];
 
   // Get package resolution info (workspace vs npm install)
-  const rscRouterAliases = getPackageAliases();
+  const rangoAliases = getPackageAliases();
   const excludeDeps = getExcludeDeps();
 
   // Track RSC entry path for version injection
@@ -985,7 +1029,7 @@ export async function rscRouter(
             esbuildOptions: sharedEsbuildOptions,
           },
           resolve: {
-            alias: rscRouterAliases,
+            alias: rangoAliases,
           },
           environments: {
             client: {
@@ -1038,6 +1082,13 @@ export async function rscRouter(
           },
         };
       },
+
+      configResolved(config) {
+        if (showBanner) {
+          const mode = config.command === "serve" ? (process.argv.includes("preview") ? "preview" : "dev") : "build";
+          printBanner(mode, "cloudflare", _rangoVersion);
+        }
+      },
     });
 
     plugins.push(createVirtualEntriesPlugin(finalEntries));
@@ -1055,7 +1106,7 @@ export async function rscRouter(
     );
   } else {
     // Node preset: full RSC plugin integration
-    const nodeOptions = options as RscRouterNodeOptions;
+    const nodeOptions = options as RangoNodeOptions;
     const routerPath = nodeOptions.router;
     const rscOption = nodeOptions.rsc ?? true;
 
@@ -1101,7 +1152,7 @@ export async function rscRouter(
               esbuildOptions: sharedEsbuildOptions,
             },
             resolve: {
-              alias: rscRouterAliases,
+              alias: rangoAliases,
             },
             environments: {
               client: {
@@ -1148,6 +1199,11 @@ export async function rscRouter(
         },
 
         configResolved(config) {
+          if (showBanner) {
+            const mode = config.command === "serve" ? (process.argv.includes("preview") ? "preview" : "dev") : "build";
+            printBanner(mode, "node", _rangoVersion);
+          }
+
           // Count how many RSC base plugins there are (rsc:minimal is the main one)
           const rscMinimalCount = config.plugins.filter(
             (p) => p.name === "rsc:minimal"
@@ -1157,7 +1213,7 @@ export async function rscRouter(
             hasWarnedDuplicate = true;
             console.warn(
               "[rsc-router] Duplicate @vitejs/plugin-rsc detected. " +
-                "Remove rsc() from your config or use rscRouter({ rsc: false }) for manual configuration."
+                "Remove rsc() from your config or use rango({ rsc: false }) for manual configuration."
             );
           }
         },

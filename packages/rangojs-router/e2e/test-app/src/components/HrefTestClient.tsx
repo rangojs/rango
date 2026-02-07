@@ -18,6 +18,7 @@ export function HrefTestClient({ isDetailPage }: HrefTestClientProps) {
   // useHref() auto-prefixes with mount from include("/href", ...)
   const localIndex = localHref("/");
   const absoluteBlog = href("/blog");
+  // @ts-expect-error testing path-based URL ("/about" not a registered route)
   const pathBased = href("/about");
   const localDetail = isDetailPage
     ? localHref(`/client-item`)

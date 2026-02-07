@@ -1,4 +1,4 @@
-import type { Handler } from "@rangojs/router/server";
+import type { Handler } from "@rangojs/router";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 
 export const IndexRoute: Handler = () => (

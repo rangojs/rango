@@ -726,8 +726,8 @@ export interface RSCRouter<
   ): RSCRouter<
     TEnv,
     TRoutes &
-      (T["_routes"] extends Record<string, string>
-        ? T["_routes"]
+      (NonNullable<T["_routes"]> extends Record<string, string>
+        ? NonNullable<T["_routes"]>
         : Record<string, string>)
   >;
 

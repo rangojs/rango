@@ -67,9 +67,11 @@ export type {
 // Router options type (server-only, so import directly)
 export type { RSCRouterOptions } from "./router.js";
 
-// Server-side createLoader - includes the actual loader function
-// This is the key addition for RSC context
-export { createLoader } from "./route-definition.js";
+// Server-side createLoader and redirect
+export { createLoader, redirect } from "./route-definition.js";
+
+// Handle API
+export { createHandle, isHandle, type Handle } from "./handle.js";
 
 // Django-style URL patterns (RSC/server context)
 export {
@@ -93,6 +95,12 @@ export type { HandlerCacheConfig } from "./rsc/types.js";
 
 // Built-in handles (server-side)
 export { Meta } from "./handles/meta.js";
+
+// Request context (for accessing request data in server actions/components)
+export { getRequestContext, type RequestContext } from "./server/request-context.js";
+
+// Meta types
+export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 
 // Href type utilities for type-safe URL generation
 export type { ScopedHrefFunction, HrefFunction, ExtractLocalRoutes } from "./href.js";

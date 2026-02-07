@@ -1,4 +1,4 @@
-import { createRouter, type RouterEnv } from "@rangojs/router/server";
+import { createRouter, type RouterEnv } from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 import { RootLayout } from "./layouts/RootLayout.js";
 
@@ -54,9 +54,12 @@ export type AppEnv = RouterEnv<AppBindings, AppVariables>;
  * Module augmentation - makes AppEnv available globally in all handlers
  * This allows handlers to have type-safe context without importing AppEnv
  */
+type AppRoutes = typeof router.routeMap;
+
 declare global {
   namespace RSCRouter {
     interface Env extends AppEnv {}
+    interface RegisteredRoutes extends AppRoutes {}
   }
 }
 
@@ -75,5 +78,3 @@ const router = createRouter<AppEnv>({
  */
 export { router };
 export const href = router.href;
-
-console.log("[Router] Configured with Django-style urls() API");

@@ -1,6 +1,6 @@
 "use server";
 
-import { getRequestContext } from "@rangojs/router/server";
+import { getRequestContext } from "@rangojs/router";
 
 /**
  * Shop Actions - Server-side mutations

@@ -1,4 +1,4 @@
-import { createRouter, type RouterEnv } from "@rangojs/router/server";
+import { createRouter, type RouterEnv } from "@rangojs/router";
 import { urlpatterns } from "./urls.js";
 
 /**
@@ -6,9 +6,12 @@ import { urlpatterns } from "./urls.js";
  */
 export type AppEnv = RouterEnv<{}, {}>;
 
+type AppRoutes = typeof router.routeMap;
+
 declare global {
   namespace RSCRouter {
     interface Env extends AppEnv {}
+    interface RegisteredRoutes extends AppRoutes {}
   }
 }
 

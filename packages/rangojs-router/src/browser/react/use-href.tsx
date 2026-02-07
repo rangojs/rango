@@ -34,7 +34,7 @@ import { useMount } from "./use-mount.js";
  * }
  * ```
  */
-export function useHref(): (path: ValidPaths) => string {
+export function useHref(): (path: `/${string}`) => string {
   const mount = useMount();
-  return (path: ValidPaths) => href(path, mount);
+  return (path: `/${string}`) => href(path as ValidPaths, mount);
 }

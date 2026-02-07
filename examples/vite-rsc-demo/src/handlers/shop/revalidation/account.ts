@@ -1,4 +1,4 @@
-import type { Revalidate } from "@rangojs/router/server";
+import type { Revalidate } from "@rangojs/router";
 
 export const orderDetailRevalidation: Revalidate<{ id: string }> = ({
   currentParams,

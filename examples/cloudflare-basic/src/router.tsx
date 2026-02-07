@@ -1,4 +1,4 @@
-import { createRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router";
 import { createDocumentCacheMiddleware, CFCacheStore } from "@rangojs/router/cache";
 import { urlpatterns } from "./urls.js";
 import { Document } from "./document.js";
@@ -30,6 +30,14 @@ export const router = createRouter<AppEnv>({
   .use(createDocumentCacheMiddleware())
   // Register all routes
   .routes(urlpatterns);
+
+type AppRoutes = typeof router.routeMap;
+
+declare global {
+  namespace RSCRouter {
+    interface RegisteredRoutes extends AppRoutes {}
+  }
+}
 
 // Export typed href function for use in server components
 export const href = router.href;

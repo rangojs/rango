@@ -1,4 +1,4 @@
-import type { MetaDescriptor } from "@rangojs/router/server";
+import type { MetaDescriptor } from "@rangojs/router";
 
 interface ChildMetaSetterProps {
   meta: (descriptor: MetaDescriptor) => void;

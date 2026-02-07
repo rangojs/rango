@@ -1,6 +1,5 @@
-import { scopedHref } from "@rangojs/router";
+import { scopedHref, Meta } from "@rangojs/router";
 import type { Handler } from "@rangojs/router";
-import { Meta } from "@rangojs/router/server";
 import { Link } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles.js";
 import type { blogPatterns } from "./blog.js";
