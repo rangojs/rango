@@ -494,41 +494,6 @@ re-render of the handler itself.
 ## Future: Storage Abstraction
 
 Currently pre-rendered Flight payloads are written to the filesystem
-(`dist/static/__<hash>/prerender/`). A `Storage` interface would decouple
-output from the filesystem, enabling alternative backends.
-
-```ts
-interface PrerenderStorage {
-  // Write a batch of pre-rendered payloads. Receives a readable stream
-  // of entries with backpressure support so we don't exhaust memory
-  // when pre-rendering thousands of routes.
-  writeBatch(entries: ReadableStream<PrerenderEntry>): Promise<void>;
-
-  // Read a single pre-rendered payload at runtime
-  read(key: string): Promise<ReadableStream<Uint8Array> | null>;
-}
-
-interface PrerenderEntry {
-  key: string;                          // router-id/route-name/param-hash
-  payload: ReadableStream<Uint8Array>;  // Flight payload stream
-}
-```
-
-Built-in implementations:
-- `StaticStore` (default) — writes to `dist/static/`, served as static files
-- `KVStore` — writes to Cloudflare KV, Deno KV, or similar
-- `DatabaseStore` — writes to a database (Postgres, SQLite, etc.)
-
-Configured via the Vite plugin:
-
-```ts
-rango({
-  prerender: {
-    storage: new KVStore({ binding: "PRERENDER_CACHE" }),
-  },
-})
-```
-
-The batch method with backpressure is key for large sites (10k+ routes)
-where writing all payloads at once would exhaust memory. The stream lets
-the storage backend control write pacing.
+(`dist/static/__<hash>/prerender/`). A future `Storage` interface could
+decouple output from the filesystem — enabling KV stores, databases, or
+other backends. Batch writes with backpressure for large sites. Design TBD.
