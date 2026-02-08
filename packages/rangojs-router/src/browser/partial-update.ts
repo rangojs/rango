@@ -210,6 +210,36 @@ export function createPartialUpdater(
       streamingToken.end();
     });
 
+    // Transform prerendered full-page responses to partial format for client navigation.
+    // Prerendered .rsc files have isPartial=false (all segments). When navigating
+    // client-side, we have cached segments from the current page. Compute the diff
+    // (segments NOT in our cache = new route segments) and let the partial update
+    // path handle merging -- keeping live cached layouts, applying only new segments.
+    if (
+      !payload.metadata?.isPartial &&
+      payload.metadata?.segments?.length &&
+      currentSegmentMap.size > 0
+    ) {
+      const cachedIds = new Set(currentSegmentMap.keys());
+      const matched =
+        payload.metadata.matched ||
+        payload.metadata.segments.map((s: ResolvedSegment) => s.id);
+      const diff = matched.filter((id: string) => !cachedIds.has(id));
+
+      payload.metadata.isPartial = true;
+      payload.metadata.diff = diff;
+      // Keep only diff segments so newSegmentMap doesn't contain stale layouts.
+      // Non-diff segments fall through to currentSegmentMap (live cache).
+      const diffSet = new Set(diff);
+      payload.metadata.segments = payload.metadata.segments.filter(
+        (s: ResolvedSegment) => diffSet.has(s.id),
+      );
+
+      console.log(
+        `[Browser] Transformed prerender response to partial: diff=[${diff.join(", ")}]`,
+      );
+    }
+
     if (payload.metadata?.isPartial) {
       const { segments: newSegments, matched, diff } = payload.metadata;
 
