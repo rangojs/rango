@@ -274,7 +274,7 @@ function generatePrerenderHandlerStubs(
  * key: absolute module ID (filesystem path)
  * value: array of export names (e.g., ["ArticlesIndex", "ArticleDetail"])
  */
-export const prerenderHandlerModules = new Map<string, string[]>();
+export const prerenderHandlerModules: Map<string, string[]> = new Map<string, string[]>();
 
 /**
  * Vite plugin that exposes $$id on createPrerenderHandler calls.

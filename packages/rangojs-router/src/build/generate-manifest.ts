@@ -220,7 +220,7 @@ function captureAncestry(
 export function generateManifest<TEnv>(
   urlpatterns: UrlPatterns<TEnv, any>,
   mountIndex: number = 0,
-): GeneratedManifest & { _routeAncestry: Record<string, string[]> } {
+): GeneratedManifest & { _routeAncestry: Record<string, string[]>; _prerenderDefs?: Record<string, any> } {
   const routeManifest: Record<string, string> = {};
   const routeAncestry: Record<string, string[]> = {};
   const prefixTree: Record<string, PrefixTreeNode> = {};
