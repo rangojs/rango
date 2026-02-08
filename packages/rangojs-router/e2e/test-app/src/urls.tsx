@@ -18,6 +18,7 @@ import { cachePatterns } from "./urls/cache.js";
 import { themePatterns } from "./urls/theme.js";
 import { hrefPatterns } from "./urls/href.js";
 import { refTestPatterns } from "./urls/ref-test.js";
+import { prerenderPatterns } from "./urls/prerender.js";
 import {
   ProductsLoader,
   ProductDetailLoader,
@@ -407,5 +408,8 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
 
     // Ref serialization test patterns
     include("/ref-test", refTestPatterns, { name: "refTest" }),
+
+    // Pre-render handler test patterns
+    include("/", prerenderPatterns),
   ]),
 ]);

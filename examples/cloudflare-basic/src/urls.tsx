@@ -27,11 +27,12 @@ import { SlowCachePage } from "./pages/slow-cache.js";
 import { ThemePage } from "./pages/theme.js";
 import { SlowPage1, SlowPage2, FastPage } from "./pages/slow.js";
 import { InlineIndexPage, InlineDocsPage, InlinePricingPage } from "./pages/inline.js";
+import { articlesPatterns } from "./pages/articles.js";
 
 /**
  * Main URL patterns - Django-style routing API
  */
-export const urlpatterns = urls(({ path, layout, parallel, loader, loading, cache }) => [
+export const urlpatterns = urls(({ path, layout, parallel, loader, loading, cache, include }) => [
   // Global navigation layout
   layout(<NavLayout />, () => [
     // Core routes
@@ -93,5 +94,8 @@ export const urlpatterns = urls(({ path, layout, parallel, loader, loading, cach
       path("/inline/docs", InlineDocsPage, { name: "inlineDocs" }),
       path("/inline/pricing", InlinePricingPage, { name: "inlinePricing" }),
     ]),
+
+    // Pre-rendered articles (static content, build-time rendering)
+    include("/articles", articlesPatterns, { name: "articles" }),
   ]),
 ]);

@@ -31,7 +31,10 @@ import { NetworkError, isNetworkError } from "../errors.js";
  */
 export function createNavigationClient(
   deps: Pick<RscBrowserDependencies, "createFromFetch">,
+  options?: { prerenderPaths?: string[] },
 ): NavigationClient {
+  const prerenderPaths = options?.prerenderPaths;
+
   return {
     /**
      * Fetch a partial RSC payload for navigation
@@ -62,6 +65,68 @@ export function createNavigationClient(
       console.log(`[Browser] Segments to send: ${segmentIds.join(", ")}`);
       if (staleRevalidation) {
         console.log(`[Browser] Stale revalidation request`);
+      }
+
+      // For pre-rendered routes, fetch the static .rsc file directly.
+      // Skip for stale revalidation (needs live server data) and HMR.
+      if (prerenderPaths?.length && !staleRevalidation && !hmr) {
+        const targetPath = new URL(targetUrl, window.location.origin).pathname;
+        const normalized = targetPath === "/" ? "/" : targetPath.replace(/\/$/, "");
+        if (prerenderPaths.includes(normalized)) {
+          const rscPath = normalized === "/"
+            ? "/index.rsc"
+            : `${normalized}/index.rsc`;
+          const rscUrl = new URL(rscPath, window.location.origin);
+
+          console.log(`[Browser] Fetching pre-rendered RSC: ${rscUrl.pathname}`);
+
+          let resolveStreamComplete: () => void;
+          const streamComplete = new Promise<void>((resolve) => {
+            resolveStreamComplete = resolve;
+          });
+
+          const responsePromise = fetch(rscUrl, { signal }).then((response) => {
+            if (!response.ok) {
+              throw new Error("prerender-fallback");
+            }
+            if (!response.body) {
+              resolveStreamComplete();
+              return response;
+            }
+            const [rscStream, trackingStream] = response.body.tee();
+            (async () => {
+              const reader = trackingStream.getReader();
+              const onAbort = reader.cancel.bind(reader);
+              signal?.addEventListener("abort", onAbort, { once: true });
+              try {
+                while (true) {
+                  const { done } = await reader.read();
+                  if (done) break;
+                }
+              } finally {
+                signal?.removeEventListener("abort", onAbort);
+                reader.releaseLock();
+                resolveStreamComplete();
+              }
+            })();
+            return new Response(rscStream, {
+              headers: response.headers,
+              status: response.status,
+              statusText: response.statusText,
+            });
+          });
+
+          try {
+            const payload = await deps.createFromFetch<RscPayload>(responsePromise);
+            return { payload, streamComplete };
+          } catch (error) {
+            if (error instanceof Error && error.message === "prerender-fallback") {
+              console.log(`[Browser] Static .rsc not found, falling back to partial fetch`);
+            } else {
+              throw error;
+            }
+          }
+        }
       }
 
       // Build fetch URL with partial rendering params

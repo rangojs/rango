@@ -73,6 +73,15 @@ export { createLoader, redirect } from "./route-definition.js";
 // Handle API
 export { createHandle, isHandle, type Handle } from "./handle.js";
 
+// Pre-render handler API
+export {
+  createPrerenderHandler,
+  isPrerenderHandler,
+  type PrerenderHandlerDefinition,
+  type PrerenderOptions,
+  type BuildContext,
+} from "./prerender.js";
+
 // Django-style URL patterns (RSC/server context)
 export {
   urls,

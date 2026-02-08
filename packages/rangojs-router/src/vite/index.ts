@@ -9,6 +9,9 @@ import { exposeActionId } from "./expose-action-id.ts";
 import { exposeLoaderId } from "./expose-loader-id.ts";
 import { exposeHandleId } from "./expose-handle-id.ts";
 import { exposeLocationStateId } from "./expose-location-state-id.ts";
+import { exposePrerenderHandlerId } from "./expose-prerender-handler-id.ts";
+import type { PrerenderServer } from "./prerender-server.ts";
+import { buildPrerenderPatternMatchers } from "./prerender-server.ts";
 import {
   VIRTUAL_ENTRY_BROWSER,
   VIRTUAL_ENTRY_SSR,
@@ -28,6 +31,7 @@ export { exposeActionId } from "./expose-action-id.ts";
 export { exposeLoaderId } from "./expose-loader-id.ts";
 export { exposeHandleId } from "./expose-handle-id.ts";
 export { exposeLocationStateId } from "./expose-location-state-id.ts";
+export { exposePrerenderHandlerId } from "./expose-prerender-handler-id.ts";
 
 // Virtual module type declarations in ./version.d.ts
 
@@ -110,6 +114,15 @@ interface RangoBaseOptions {
    * @default true
    */
   banner?: boolean;
+
+  /**
+   * Enable Node.js prerender environment for dev mode.
+   * When true, routes using createPrerenderHandler are served by a persistent
+   * Node.js Vite dev server instead of the workerd proxy.
+   * Only relevant for cloudflare preset (Node preset already runs in Node.js).
+   * @default true (for cloudflare preset)
+   */
+  prerender?: boolean;
 }
 
 /**
@@ -399,7 +412,10 @@ function buildRouteToStaticPrefix(
  *
  * @internal
  */
-function createRouterDiscoveryPlugin(entryPath: string): Plugin {
+function createRouterDiscoveryPlugin(
+  entryPath: string,
+  opts?: { enableBuildPrerender?: boolean },
+): Plugin {
   let projectRoot = "";
   let isBuildMode = false;
   let userResolveAlias: any = undefined;
@@ -408,6 +424,15 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
   // Populated during discovery (dev: configureServer, build: buildStart).
   // Read by the virtual module's load hook to emit setCachedManifest() call.
   let mergedRouteManifest: Record<string, string> | null = null;
+
+  // Concrete URLs to pre-render at build time (populated during buildStart).
+  // Only used when enableBuildPrerender is true.
+  let prerenderBuildUrls: string[] | null = null;
+
+  // Reference to @vitejs/plugin-rsc's RscPluginManager for early manifest writes.
+  // Populated during configResolved, used in closeBundle to write the assets
+  // manifest before the child prerender process starts.
+  let rscPluginManager: any = null;
 
   // Promise that resolves when dev-mode discovery completes.
   // The virtual module's load hook awaits this to ensure data is available.
@@ -581,6 +606,54 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
       }
     }
 
+    // Expand prerender routes into concrete URLs for build-time rendering.
+    // Static routes use pattern as-is; dynamic routes call getParams() to enumerate.
+    if (opts?.enableBuildPrerender) {
+      const urls: string[] = [];
+      for (const { manifest } of allManifests) {
+        if (!manifest.prerenderRoutes) continue;
+        const defs = manifest._prerenderDefs || {};
+        for (const routeName of manifest.prerenderRoutes) {
+          const pattern = manifest.routeManifest[routeName];
+          if (!pattern) continue;
+          const hasDynamic = pattern.includes(":") || pattern.includes("*");
+          if (!hasDynamic) {
+            // Static route: use pattern directly (strip trailing slash for URL)
+            urls.push(pattern.replace(/\/$/, "") || "/");
+          } else {
+            // Dynamic route: call getParams() to enumerate param combinations
+            const def = defs[routeName];
+            if (def?.getParams) {
+              try {
+                const paramsList = await def.getParams();
+                for (const params of paramsList) {
+                  let url = pattern;
+                  for (const [key, value] of Object.entries(params as Record<string, string>)) {
+                    url = url.replace(`:${key}`, encodeURIComponent(String(value)));
+                  }
+                  urls.push(url.replace(/\/$/, "") || "/");
+                }
+              } catch (err: any) {
+                console.warn(
+                  `[rsc-router] Failed to get params for prerender route "${routeName}": ${err.message}`
+                );
+              }
+            } else {
+              console.warn(
+                `[rsc-router] Dynamic prerender route "${routeName}" has no getParams(), skipping`
+              );
+            }
+          }
+        }
+      }
+      if (urls.length > 0) {
+        prerenderBuildUrls = urls;
+        console.log(
+          `[rsc-router] Pre-render URLs: ${urls.join(", ")}`
+        );
+      }
+    }
+
     return serverMod;
   }
 
@@ -592,6 +665,16 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
       isBuildMode = config.command === "build";
       // Capture user's resolve aliases for the temp server
       userResolveAlias = config.resolve.alias;
+      // Capture @vitejs/plugin-rsc manager for early manifest writes during prerender.
+      // The manager's buildAssetsManifest is populated during client generateBundle,
+      // but writeAssetsManifest is called after all closeBundle hooks complete.
+      // We call it early in our closeBundle so the child process can import it.
+      if (opts?.enableBuildPrerender) {
+        const rscPlugin = config.plugins.find((p: any) => p.name === "rsc:minimal");
+        if (rscPlugin?.api?.manager) {
+          rscPluginManager = rscPlugin.api.manager;
+        }
+      }
     },
 
     // Dev mode: discover routers and populate manifest in memory.
@@ -724,6 +807,9 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
       if (id === VIRTUAL_ROUTES_MANIFEST_ID) {
         return "\0" + VIRTUAL_ROUTES_MANIFEST_ID;
       }
+      if (id === VIRTUAL_PRERENDER_PATHS_ID) {
+        return "\0" + VIRTUAL_PRERENDER_PATHS_ID;
+      }
       return null;
     },
 
@@ -753,12 +839,210 @@ function createRouterDiscoveryPlugin(entryPath: string): Plugin {
         // No manifest available yet (dev mode: discovery hasn't completed)
         return `// Route manifest will be populated at runtime`;
       }
+      if (id === "\0" + VIRTUAL_PRERENDER_PATHS_ID) {
+        // In dev mode: empty array (prerender handlers run live).
+        // In build mode: populated from prerenderBuildUrls during discovery.
+        const paths = prerenderBuildUrls ?? [];
+        return `export default ${JSON.stringify(paths)};`;
+      }
       return null;
+    },
+
+    // Build-time pre-rendering: spawn a child Node.js process to import the
+    // built worker and render each prerender URL to static HTML.
+    // A separate process is needed because Vite registers module resolution
+    // hooks that interfere with importing the bundled worker.
+    // closeBundle fires for each environment build. We wait until the SSR
+    // build (last in sequence) completes before pre-rendering, because the
+    // client build (step 4/5) clears dist/client/ via emptyOutDir.
+    closeBundle: {
+      order: "post" as const,
+      sequential: true,
+      async handler() {
+      if (!isBuildMode || !prerenderBuildUrls?.length) return;
+
+      // The assets manifest is populated during the client build (step 4/5).
+      // If it's not set yet, we're in an earlier build step — bail out without
+      // consuming prerenderBuildUrls so we can retry on the next closeBundle call.
+      if (!rscPluginManager?.buildAssetsManifest) return;
+
+      // The SSR bundle must exist (written during step 5/5). Without it the
+      // worker import will fail. Bail without consuming urls so the next
+      // closeBundle call (after SSR build) can proceed.
+      const ssrPath = resolve(projectRoot, "dist/rsc/ssr/index.js");
+      if (!existsSync(ssrPath)) return;
+
+      // Guard: only run once across environment builds
+      if (prerenderBuildUrls === null) return;
+      const urlsToRender = prerenderBuildUrls;
+      prerenderBuildUrls = null;
+
+      // Write the assets manifest early. @vitejs/plugin-rsc populates
+      // buildAssetsManifest during the client build's generateBundle hook,
+      // but calls writeAssetsManifest() AFTER builder.build(ssr) returns.
+      // Since closeBundle fires DURING builder.build(ssr), the file doesn't
+      // exist yet. We call writeAssetsManifest ourselves so the child
+      // prerender process can import it. The RSC plugin overwrites it
+      // with identical data later.
+      try {
+        rscPluginManager.writeAssetsManifest(["ssr", "rsc"]);
+      } catch (err: any) {
+        console.warn(
+          `[rsc-router] Failed to write assets manifest early: ${err.message}`
+        );
+      }
+
+      console.log(
+        `[rsc-router] Pre-rendering ${urlsToRender.length} route(s)...`
+      );
+
+      // Generate a temporary script that runs in a clean Node.js process.
+      // This avoids Vite's module resolution hooks interfering with imports.
+      const scriptPath = resolve(projectRoot, "dist/.prerender.mjs");
+      const scriptContent = generatePrerenderScript(projectRoot, urlsToRender);
+      writeFileSync(scriptPath, scriptContent);
+
+      try {
+        const { execFileSync } = await import("node:child_process");
+        // Clear NODE_OPTIONS and tsx loader flags to prevent Vite's module
+        // resolution hooks from being inherited by the child process.
+        const cleanEnv = { ...process.env };
+        delete cleanEnv.NODE_OPTIONS;
+        delete cleanEnv.TSX;
+        execFileSync(process.execPath, ["--no-warnings", scriptPath], {
+          stdio: "inherit",
+          cwd: projectRoot,
+          env: cleanEnv,
+        });
+      } catch (err: any) {
+        console.warn(
+          `[rsc-router] Build-time pre-rendering failed: ${err.message}`
+        );
+      } finally {
+        // Clean up the temporary script
+        try {
+          const { rmSync } = await import("node:fs");
+          rmSync(scriptPath, { force: true });
+        } catch {}
+      }
+      },
     },
   };
 }
 
+/**
+ * Generate a standalone Node.js script that pre-renders routes to static HTML.
+ * The script runs in a separate process to avoid Vite's module resolution hooks.
+ */
+function generatePrerenderScript(projectRoot: string, urls: string[]): string {
+  return `
+import { mkdirSync, writeFileSync, symlinkSync, existsSync, readdirSync, statSync, rmSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+
+const projectRoot = ${JSON.stringify(projectRoot)};
+const urls = ${JSON.stringify(urls)};
+
+// Mock workerd globals (bundled worker accesses globalThis.Cloudflare.compatibilityFlags)
+globalThis.Cloudflare = { compatibilityFlags: { enable_nodejs_process_v2: false } };
+
+// Create symlinks for project root directories under dist/ so that relative
+// paths from import.meta.dirname (dist/rsc/assets/) resolve correctly.
+// E.g., handler uses resolve(import.meta.dirname, "../../content/articles")
+// which becomes dist/content/articles — symlink makes it point to content/articles.
+const symlinks = [];
+try {
+  for (const entry of readdirSync(projectRoot)) {
+    if (entry === "dist" || entry === "node_modules" || entry.startsWith(".")) continue;
+    const target = resolve(projectRoot, entry);
+    const link = resolve(projectRoot, "dist", entry);
+    try {
+      if (!existsSync(link) && statSync(target).isDirectory()) {
+        symlinkSync(target, link);
+        symlinks.push(link);
+      }
+    } catch {}
+  }
+} catch {}
+
+const mockEnv = new Proxy({}, {
+  get(_, prop) {
+    if (prop === "toString" || prop === Symbol.toPrimitive) return () => "[PrerenderEnv]";
+    if (prop === Symbol.toStringTag) return "PrerenderEnv";
+    if (prop === "Variables") return {};
+    if (prop === "ASSETS") return { fetch: () => new Response("", { status: 404 }) };
+    throw new Error("Cloudflare binding \\"" + String(prop) + "\\" not available in prerender");
+  },
+});
+const mockCtx = { waitUntil: () => {}, passThroughOnException: () => {} };
+
+try {
+  const mod = await import(resolve(projectRoot, "dist/rsc/index.js"));
+  const worker = mod.default;
+  if (!worker?.fetch) {
+    console.warn("[rsc-router] Built worker has no fetch handler, skipping pre-render");
+    process.exit(0);
+  }
+
+  let rendered = 0;
+  for (const urlPath of urls) {
+    try {
+      const response = await worker.fetch(
+        new Request("http://localhost" + urlPath + "?__no_cache", {
+          headers: { Accept: "text/html" },
+        }),
+        mockEnv,
+        mockCtx,
+      );
+      if (response.status !== 200) {
+        console.warn("[rsc-router] Pre-render " + urlPath + " returned " + response.status + ", skipping");
+        continue;
+      }
+      const html = await response.text();
+      const cleanPath = urlPath === "/" ? "" : urlPath;
+      const outPath = resolve(projectRoot, "dist", "client", cleanPath.replace(/^\\//, ""), "index.html");
+      mkdirSync(dirname(outPath), { recursive: true });
+      writeFileSync(outPath, html);
+
+      // Also save RSC Flight payload for client-side navigation.
+      // When the browser navigates to a pre-rendered route, it fetches this
+      // static .rsc file instead of hitting ?_rsc_partial (which would return HTML).
+      try {
+        const rscResponse = await worker.fetch(
+          new Request("http://localhost" + urlPath + "?__no_cache", {
+            headers: { Accept: "text/x-component" },
+          }),
+          mockEnv,
+          mockCtx,
+        );
+        if (rscResponse.ok) {
+          const rscPayload = await rscResponse.arrayBuffer();
+          const rscPath = resolve(projectRoot, "dist", "client",
+            cleanPath.replace(/^\\//, ""), "index.rsc");
+          writeFileSync(rscPath, Buffer.from(rscPayload));
+        }
+      } catch (rscErr) {
+        console.warn("[rsc-router] RSC payload save failed for " + urlPath + ": " + rscErr.message);
+      }
+
+      rendered++;
+    } catch (err) {
+      console.warn("[rsc-router] Pre-render failed for " + urlPath + ": " + err.message);
+    }
+  }
+
+  if (rendered > 0) {
+    console.log("[rsc-router] Pre-rendered " + rendered + "/" + urls.length + " route(s) to dist/client/");
+  }
+} finally {
+  for (const link of symlinks) {
+    try { rmSync(link); } catch {}
+  }
+}
+`.trim();
+}
+
 const VIRTUAL_ROUTES_MANIFEST_ID = "virtual:rsc-router/routes-manifest";
+const VIRTUAL_PRERENDER_PATHS_ID = "virtual:rsc-router/prerender-paths";
 
 /**
  * Resolve the entry path for build-time router discovery.
@@ -1002,6 +1286,11 @@ export async function rango(
   // Track RSC entry path for version injection
   let rscEntryPath: string | null = null;
 
+  // Prerender server state (managed by cloudflare-integration's configureServer)
+  const prerenderEnabled = preset === "cloudflare" && (options.prerender ?? true);
+  let prerenderServer: PrerenderServer | null = null;
+  let prerenderPatternMatchers: RegExp[] | null = null;
+
   if (preset === "cloudflare") {
     // Cloudflare preset: configure entries for cloudflare worker setup
     // Router is not needed here - worker.rsc.tsx imports it directly
@@ -1088,6 +1377,109 @@ export async function rango(
           const mode = config.command === "serve" ? (process.argv.includes("preview") ? "preview" : "dev") : "build";
           printBanner(mode, "cloudflare", _rangoVersion);
         }
+      },
+
+      configureServer(server) {
+        if (!prerenderEnabled) return;
+        if (server.config.command !== "serve") return;
+
+        const cfUserResolveAlias = server.config.resolve.alias;
+        const cfDiscoveryEntryPath = resolveDiscoveryEntryPath(options);
+        if (!cfDiscoveryEntryPath) return;
+
+        // Create a persistent Node.js prerender server and discover routes.
+        // The cloudflare RSC environment (workerd) doesn't expose a module
+        // runner, so we create our own Node.js RSC environment and use it
+        // for both discovery and request handling.
+        const prerenderReady = (async () => {
+          try {
+            const {
+              createPrerenderServer: createPS,
+              buildPrerenderPatternMatchers: buildMatchers,
+            } = await import("./prerender-server.ts");
+
+            prerenderServer = await createPS({
+              projectRoot: server.config.root,
+              entryPath: cfDiscoveryEntryPath,
+              resolveAlias: cfUserResolveAlias,
+              extraPlugins: [
+                createVersionPlugin(),
+                exposeActionId(),
+                exposeLoaderId(),
+                exposeHandleId(),
+                exposeLocationStateId(),
+                exposePrerenderHandlerId(),
+              ],
+            });
+
+            // Discover routers and prerender routes using the server's own RSC env
+            const { prerenderRoutes, routeManifest } =
+              await prerenderServer.discoverPrerenderRoutes();
+
+            if (prerenderRoutes.length > 0) {
+              prerenderPatternMatchers = buildMatchers(prerenderRoutes, routeManifest);
+              console.log(
+                `[rsc-router] Prerender routes: ${prerenderRoutes.join(", ")}`,
+              );
+            } else {
+              // No prerender routes, dispose the server
+              await prerenderServer.dispose();
+              prerenderServer = null;
+            }
+          } catch (err: any) {
+            console.warn(
+              `[rsc-router] Prerender discovery failed: ${err.message}`,
+            );
+            if (prerenderServer) {
+              await prerenderServer.dispose();
+              prerenderServer = null;
+            }
+          }
+        })();
+
+        // Add middleware that intercepts prerender routes before cloudflare proxy
+        server.middlewares.use(async (req, res, next) => {
+          // Wait for prerender discovery to complete
+          await prerenderReady;
+
+          // Skip if no prerender server or no patterns
+          if (!prerenderServer || !prerenderPatternMatchers?.length) return next();
+
+          // Only intercept GET/HEAD for prerender routes
+          const method = req.method?.toUpperCase();
+          if (method !== "GET" && method !== "HEAD") return next();
+
+          const url = new URL(
+            req.url!,
+            `http://${req.headers.host || "localhost"}`,
+          );
+
+          const { matchesPrerenderRoute, nodeToWebRequest, writeWebResponseToNode } =
+            await import("./prerender-server.ts");
+
+          if (!matchesPrerenderRoute(url.pathname, prerenderPatternMatchers!)) {
+            return next();
+          }
+
+          try {
+            const webReq = nodeToWebRequest(req);
+            const response = await prerenderServer!.fetch(webReq);
+            await writeWebResponseToNode(response, res);
+          } catch (err) {
+            console.error("[rsc-router] Prerender error:", err);
+            next();
+          }
+        });
+
+        // Clean up prerender server on close
+        const originalClose = server.close.bind(server);
+        server.close = async () => {
+          if (prerenderServer) {
+            await prerenderServer.dispose();
+            prerenderServer = null;
+          }
+          return originalClose();
+        };
       },
     });
 
@@ -1245,6 +1637,9 @@ export async function rango(
   // Always add exposeLocationStateId for auto-generated location state keys
   plugins.push(exposeLocationStateId());
 
+  // Always add exposePrerenderHandlerId for auto-generated prerender handler IDs
+  plugins.push(exposePrerenderHandlerId());
+
   // Add version virtual module plugin for cache invalidation
   plugins.push(createVersionPlugin());
 
@@ -1266,7 +1661,9 @@ export async function rango(
 
   // Add router discovery plugin for build-time manifest generation.
   if (discoveryEntryPath) {
-    plugins.push(createRouterDiscoveryPlugin(discoveryEntryPath));
+    plugins.push(createRouterDiscoveryPlugin(discoveryEntryPath, {
+      enableBuildPrerender: prerenderEnabled,
+    }));
   }
 
   return plugins;

@@ -55,6 +55,15 @@ export { track } from "./server/context.js";
 // Handle API (works in both server and client contexts)
 export { createHandle, isHandle, type Handle } from "./handle.js";
 
+// Pre-render handler API
+export {
+  createPrerenderHandler,
+  isPrerenderHandler,
+  type PrerenderHandlerDefinition,
+  type PrerenderOptions,
+  type BuildContext,
+} from "./prerender.js";
+
 // Built-in handles
 export { Meta } from "./handles/meta.js";
 

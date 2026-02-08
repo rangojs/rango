@@ -1081,11 +1081,7 @@ export function createRouter<TEnv = any>(
     precomputedEntriesRaw
       ? new Map(precomputedEntriesRaw.map((e) => [e.staticPrefix, e.routes]))
       : null;
-  console.log(
-    "precomputedByPrefix",
-    precomputedByPrefix,
-    precomputedEntriesRaw,
-  );
+
 
   // Wrapper to pass debugPerformance to external createMetricsStore
   const getMetricsStore = () => createMetricsStore(debugPerformance);
@@ -1324,8 +1320,6 @@ export function createRouter<TEnv = any>(
    * Also detects nested lazy includes and registers them as new entries
    */
   function evaluateLazyEntry(entry: RouteEntry<TEnv>): void {
-    console.log("evaluateLazyEntry called...");
-
     if (!entry.lazy || entry.lazyEvaluated || !entry.lazyPatterns) {
       return;
     }
@@ -1462,7 +1456,6 @@ export function createRouter<TEnv = any>(
 
     // Re-register route map for runtime href() usage
     registerRouteMap(mergedRouteMap);
-    console.log("mergedRouteMap", mergedRouteMap);
   }
 
   // Single-entry cache for findMatch to avoid redundant matching within the same request.
@@ -1510,7 +1503,6 @@ export function createRouter<TEnv = any>(
         const entryStart = performance.now();
         let entry: RouteEntry<TEnv> | undefined;
         let fallbackEntry: RouteEntry<TEnv> | undefined;
-        console.log("routesEntries", routesEntries);
 
         for (const e of routesEntries) {
           if (e.staticPrefix !== trieResult.sp) continue;

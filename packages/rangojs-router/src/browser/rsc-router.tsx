@@ -89,6 +89,13 @@ export interface InitBrowserAppOptions {
    * Only used when themeConfig is provided.
    */
   initialTheme?: Theme;
+
+  /**
+   * URL paths that were pre-rendered at build time.
+   * Used to fetch static .rsc files instead of hitting the server for partial nav.
+   * Empty in dev mode.
+   */
+  prerenderPaths?: string[];
 }
 
 /**
@@ -123,7 +130,7 @@ let browserAppContext: BrowserAppContext | null = null;
 export async function initBrowserApp(
   options: InitBrowserAppOptions
 ): Promise<BrowserAppContext> {
-  const { rscStream, deps, storeOptions, linkInterception = true, themeConfig, initialTheme } = options;
+  const { rscStream, deps, storeOptions, linkInterception = true, themeConfig, initialTheme, prerenderPaths } = options;
 
   // Load initial payload from SSR-injected __FLIGHT_DATA__
   const initialPayload =
@@ -182,7 +189,7 @@ export async function initBrowserApp(
 
 
   // Create composable utilities
-  const client = createNavigationClient(deps);
+  const client = createNavigationClient(deps, { prerenderPaths });
 
   // Extract rootLayout and version from metadata for browser-side re-renders
   const rootLayout = initialPayload.metadata?.rootLayout;
