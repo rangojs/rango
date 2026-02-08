@@ -161,6 +161,53 @@ function transformPrerenderHandlerExports(
 }
 
 /**
+ * Replace the entire file with lightweight stubs when ALL non-type exports are
+ * createPrerenderHandler calls. This is the most aggressive eviction — all imports,
+ * module-level data, and handler bodies are removed from non-RSC bundles.
+ *
+ * Returns null for files with mixed exports (non-handler value exports),
+ * falling back to per-expression replacement.
+ */
+function generateWholeFileHandlerStubs(
+  code: string,
+  filePath: string,
+  isBuild: boolean,
+): { code: string; map?: undefined } | null {
+  const handlerPattern =
+    /export\s+const\s+(\w+)\s*=\s*createPrerenderHandler\s*(?:<[^>]*>)?\s*\(/g;
+  const handlers: string[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = handlerPattern.exec(code)) !== null) {
+    handlers.push(match[1]);
+  }
+
+  if (handlers.length === 0) return null;
+
+  // Check that every non-type export is a createPrerenderHandler call.
+  const allExports =
+    /export\s+(const|let|var|function|class|default)\s+(\w+)/g;
+  let exportMatch: RegExpExecArray | null;
+
+  while ((exportMatch = allExports.exec(code)) !== null) {
+    const name = exportMatch[2];
+    if (!handlers.includes(name)) {
+      // Mixed exports — can't replace the whole file
+      return null;
+    }
+  }
+
+  const stubs = handlers.map((name) => {
+    const handlerId = isBuild
+      ? hashPrerenderHandlerId(filePath, name)
+      : `${filePath}#${name}`;
+    return `export const ${name} = { __brand: "prerenderHandler", $$id: "${handlerId}" };`;
+  });
+
+  return { code: stubs.join("\n") + "\n" };
+}
+
+/**
  * Replace createPrerenderHandler(...) call expressions with lightweight stub objects
  * in non-RSC environments. Other exports, imports, and module-level code remain
  * untouched — only the call expression is replaced.
@@ -220,6 +267,16 @@ function generatePrerenderHandlerStubs(
 }
 
 /**
+ * Shared state: tracks absolute module IDs that contain prerender handler exports
+ * during the RSC build. Used by the cloudflare-integration plugin to isolate
+ * these modules into a dedicated Rollup chunk via manualChunks.
+ *
+ * key: absolute module ID (filesystem path)
+ * value: array of export names (e.g., ["ArticlesIndex", "ArticleDetail"])
+ */
+export const prerenderHandlerModules = new Map<string, string[]>();
+
+/**
  * Vite plugin that exposes $$id on createPrerenderHandler calls.
  *
  * When users create prerender handlers with createPrerenderHandler(), this plugin:
@@ -266,8 +323,26 @@ export function exposePrerenderHandlerId(): Plugin {
       const isRscEnv = this.environment?.name === "rsc";
 
       if (!isRscEnv) {
-        // Non-RSC: replace handler call expressions with lightweight stubs
-        return generatePrerenderHandlerStubs(code, relativePath, id, isBuild);
+        // Non-RSC: try whole-file replacement first (all exports are handlers),
+        // fall back to per-expression replacement for mixed-export files
+        return (
+          generateWholeFileHandlerStubs(code, relativePath, isBuild) ??
+          generatePrerenderHandlerStubs(code, relativePath, id, isBuild)
+        );
+      }
+
+      // RSC build: record this module and its handler export names for chunk isolation
+      if (isBuild) {
+        const handlerPattern =
+          /export\s+const\s+(\w+)\s*=\s*createPrerenderHandler\s*(?:<[^>]*>)?\s*\(/g;
+        const exportNames: string[] = [];
+        let m: RegExpExecArray | null;
+        while ((m = handlerPattern.exec(code)) !== null) {
+          exportNames.push(m[1]);
+        }
+        if (exportNames.length > 0) {
+          prerenderHandlerModules.set(id, exportNames);
+        }
       }
 
       // RSC: inject $$id into calls (existing behavior)

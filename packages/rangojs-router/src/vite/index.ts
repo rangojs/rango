@@ -9,7 +9,7 @@ import { exposeActionId } from "./expose-action-id.ts";
 import { exposeLoaderId } from "./expose-loader-id.ts";
 import { exposeHandleId } from "./expose-handle-id.ts";
 import { exposeLocationStateId } from "./expose-location-state-id.ts";
-import { exposePrerenderHandlerId } from "./expose-prerender-handler-id.ts";
+import { exposePrerenderHandlerId, prerenderHandlerModules } from "./expose-prerender-handler-id.ts";
 import {
   VIRTUAL_ENTRY_BROWSER,
   VIRTUAL_ENTRY_SSR,
@@ -23,6 +23,13 @@ import {
   getPublishedPackageName,
   isWorkspaceDevelopment,
 } from "./package-resolution.ts";
+
+// Shared state for handler chunk eviction.
+// Populated by cloudflare-integration's generateBundle, consumed by discovery's closeBundle.
+let handlerChunkInfo: {
+  fileName: string;
+  exports: Array<{ name: string; handlerId: string }>;
+} | null = null;
 
 // Re-export plugins
 export { exposeActionId } from "./expose-action-id.ts";
@@ -904,6 +911,57 @@ function createRouterDiscoveryPlugin(
           cwd: projectRoot,
           env: cleanEnv,
         });
+
+        // Surgically replace handler function bodies with stubs in the chunk.
+        // The chunk also contains framework code (shared deps) that must stay intact.
+        // We replace each createPrerenderHandler(...) call with a stub object and
+        // remove the $$id assignment line.
+        if (handlerChunkInfo) {
+          const chunkPath = resolve(projectRoot, "dist/rsc", handlerChunkInfo.fileName);
+          try {
+            let code = readFileSync(chunkPath, "utf-8");
+            const originalSize = Buffer.byteLength(code);
+
+            for (const { name, handlerId } of handlerChunkInfo.exports) {
+              // Find start: "const Name = createPrerenderHandler"
+              const callStartRe = new RegExp(
+                `const\\s+${name}\\s*=\\s*createPrerenderHandler`,
+              );
+              const startMatch = callStartRe.exec(code);
+              if (!startMatch) continue;
+
+              // The $$id string is always the last argument in the call.
+              // Find it to locate the end: "handlerId"\s*);
+              const escapedId = handlerId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              const endRe = new RegExp(
+                `"${escapedId}"\\s*\\);`,
+              );
+              const endMatch = endRe.exec(code.slice(startMatch.index));
+              if (!endMatch) continue;
+
+              const rangeEnd = startMatch.index + endMatch.index + endMatch[0].length;
+              const stub = `const ${name} = { __brand: "prerenderHandler", $$id: "${handlerId}" };`;
+              code = code.slice(0, startMatch.index) + stub + code.slice(rangeEnd);
+
+              // Remove the $$id assignment line (now redundant)
+              code = code.replace(
+                new RegExp(`\\n${name}\\.\\$\\$id\\s*=\\s*"[^"]+";`),
+                "",
+              );
+            }
+
+            writeFileSync(chunkPath, code);
+            const newSize = Buffer.byteLength(code);
+            const savedKB = ((originalSize - newSize) / 1024).toFixed(1);
+            console.log(
+              `[rsc-router] Evicted handler code from RSC bundle (${savedKB} KB saved): ${handlerChunkInfo.fileName}`,
+            );
+          } catch (replaceErr: any) {
+            console.warn(
+              `[rsc-router] Failed to evict handler code: ${replaceErr.message}`,
+            );
+          }
+        }
       } catch (err: any) {
         console.warn(
           `[rsc-router] Build-time pre-rendering failed: ${err.message}`
@@ -976,6 +1034,7 @@ try {
   let rendered = 0;
   for (const urlPath of urls) {
     try {
+      // Render full HTML page for direct visits (initial page load)
       const response = await worker.fetch(
         new Request("http://localhost" + urlPath + "?__no_cache", {
           headers: { Accept: "text/html" },
@@ -993,12 +1052,13 @@ try {
       mkdirSync(dirname(outPath), { recursive: true });
       writeFileSync(outPath, html);
 
-      // Also save RSC Flight payload for client-side navigation.
-      // When the browser navigates to a pre-rendered route, it fetches this
-      // static .rsc file instead of hitting ?_rsc_partial (which would return HTML).
+      // Save partial RSC payload for client-side navigation.
+      // Uses __prerender to produce a partial payload (isPartial: true, route
+      // segments only) so the browser can apply it directly without
+      // transforming a full payload.
       try {
         const rscResponse = await worker.fetch(
-          new Request("http://localhost" + urlPath + "?__no_cache", {
+          new Request("http://localhost" + urlPath + "?__no_cache&__prerender", {
             headers: { Accept: "text/x-component" },
           }),
           mockEnv,
@@ -1350,6 +1410,17 @@ export async function rango(
               },
             },
             rsc: {
+              build: {
+                rollupOptions: {
+                  output: {
+                    manualChunks(id) {
+                      if (prerenderHandlerModules.has(id)) {
+                        return "__prerender-handlers";
+                      }
+                    },
+                  },
+                },
+              },
               // RSC environment needs exclude list and esbuild options
               // Exclude rsc-router modules to prevent createContext in RSC environment
               optimizeDeps: {
@@ -1365,6 +1436,37 @@ export async function rango(
         if (showBanner) {
           const mode = config.command === "serve" ? (process.argv.includes("preview") ? "preview" : "dev") : "build";
           printBanner(mode, "cloudflare", _rangoVersion);
+        }
+      },
+
+      // Record handler chunk metadata during RSC build for post-prerender replacement.
+      // Rollup minifies EXPORT names (e.g. ArticlesIndex -> r) but keeps internal
+      // variable names intact. We search for original names from prerenderHandlerModules.
+      generateBundle(_options, bundle) {
+        if (this.environment?.name !== "rsc") return;
+
+        for (const [fileName, chunk] of Object.entries(bundle)) {
+          if (chunk.type !== "chunk") continue;
+          if (!fileName.includes("__prerender-handlers")) continue;
+
+          const handlers: Array<{ name: string; handlerId: string }> = [];
+          // Use original handler names (internal variable names are NOT minified)
+          for (const [, handlerNames] of prerenderHandlerModules) {
+            for (const name of handlerNames) {
+              const idPattern = new RegExp(
+                `\\b${name}\\.\\$\\$id\\s*=\\s*"([^"]+)"`,
+              );
+              const match = chunk.code.match(idPattern);
+              if (match) {
+                handlers.push({ name, handlerId: match[1] });
+              }
+            }
+          }
+
+          if (handlers.length > 0) {
+            handlerChunkInfo = { fileName, exports: handlers };
+          }
+          break;
         }
       },
 

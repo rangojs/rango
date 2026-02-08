@@ -1089,30 +1089,51 @@ export function createRSCHandler<
       // Caching is now handled in router.match() via cache provider in request context
       // match.segments already contains cached or fresh segments as appropriate
 
-      const renderStart = performance.now();
-      const root = renderSegments(match.segments, {
-        rootLayout: router.rootLayout,
-      });
-      const renderDuration = performance.now() - renderStart;
-      serverTiming = match.serverTiming
-        ? `${match.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
-        : `rendering;dur=${renderDuration.toFixed(2)}`;
-
-      payload = {
-        root,
-        metadata: {
-          pathname: url.pathname,
-          segments: match.segments,
-          matched: match.matched,
-          diff: match.diff,
-          isPartial: false,
+      if (url.searchParams.has("__prerender")) {
+        // Pre-render mode: skip root tree rendering for smaller .rsc payloads.
+        // The root React tree is never used during client-side navigation
+        // (the browser always calls renderSegments() client-side), so we omit
+        // it to reduce payload size. All segments are kept because RSC and SSR
+        // contexts use different ID namespaces (M0-prefixed vs non-prefixed),
+        // and the browser's prerender transformation handles the ID mapping.
+        payload = {
+          root: null,
+          metadata: {
+            pathname: url.pathname,
+            segments: match.segments,
+            matched: match.matched,
+            diff: match.diff,
+            isPartial: false,
+            handles: handleStore.stream(),
+            version,
+          },
+        };
+      } else {
+        const renderStart = performance.now();
+        const root = renderSegments(match.segments, {
           rootLayout: router.rootLayout,
-          handles: handleStore.stream(),
-          version,
-          themeConfig: router.themeConfig,
-          initialTheme: reqCtx.theme,
-        },
-      };
+        });
+        const renderDuration = performance.now() - renderStart;
+        serverTiming = match.serverTiming
+          ? `${match.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
+          : `rendering;dur=${renderDuration.toFixed(2)}`;
+
+        payload = {
+          root,
+          metadata: {
+            pathname: url.pathname,
+            segments: match.segments,
+            matched: match.matched,
+            diff: match.diff,
+            isPartial: false,
+            rootLayout: router.rootLayout,
+            handles: handleStore.stream(),
+            version,
+            themeConfig: router.themeConfig,
+            initialTheme: reqCtx.theme,
+          },
+        };
+      }
     }
 
     // Serialize to RSC stream

@@ -1,5 +1,53 @@
 # Pre-rendering API Design
 
+## Core Principle
+
+Pre-rendering is **caching at build time**. Same serialization format, same
+deserialization path, same segment system rendering. The only difference is
+WHEN the data is produced.
+
+```
+Cache:      Request → handler runs → serializeSegments() → store in KV/memory
+Prerender:  Build   → handler runs → serializeSegments() → store in bundle/KV
+
+Both at runtime:
+  Request → lookup stored segments → deserializeSegments() → segment system → render
+```
+
+There are NO static files. No `.html`, no `.rsc` served from assets. The worker
+handles every request. It reads pre-computed data instead of executing handler code.
+
+### Relationship to Caching
+
+```
+                    ┌─────────────────────┐
+                    │   Segment System    │
+                    │  renderSegments()   │
+                    └─────────┬───────────┘
+                              │
+                    ┌─────────┴───────────┐
+                    │  Resolved Segments  │
+                    │  (same format)      │
+                    └─────────┬───────────┘
+                              │
+              ┌───────────────┼───────────────┐
+              │               │               │
+     ┌────────┴──────┐ ┌─────┴─────┐ ┌───────┴───────┐
+     │   Fresh       │ │  Cached   │ │ Pre-rendered  │
+     │   (handler    │ │  (runtime │ │ (build-time   │
+     │    runs)      │ │   store)  │ │  store)       │
+     └───────────────┘ └───────────┘ └───────────────┘
+
+All three produce the same ResolvedSegment[] format.
+All three feed into the same rendering pipeline.
+```
+
+Pre-rendering reuses from the cache implementation:
+- `serializeSegments()` / `deserializeSegments()` from cache-scope.ts
+- `handleStore.replaySegmentData()` from cache lookup middleware
+- `renderSegments()` from segment-system.tsx
+- The entire RSC/HTML rendering pipeline
+
 ## Overview
 
 Pre-render route segments at build time. The primary use case is content that
@@ -345,29 +393,33 @@ during production builds.
 ## Storage Layout
 
 Pre-rendered Flight payloads are stored in the build output, keyed by
-`{router-id}/{route-name}/{param-hash}`:
+`{router-hash}/{route-name}/{param-hash}`:
 
 ```
 dist/static/__<hash>/
   routes.json          (existing — route manifest)
   prefixes.json        (existing — prefix tree)
   prerender/
-    main/                              # router id (mount index)
+    __a1b2c3/                          # router hash (from createRouter())
       blog.post/                       # route name
-        a1b2c3d4.flight                # hash of { slug: "hello-world" }
-        e5f6a7b8.flight                # hash of { slug: "getting-started" }
+        d4e5f6a7.flight                # hash of { slug: "hello-world" }
+        b8c9d0e1.flight                # hash of { slug: "getting-started" }
       products.detail/                 # route name
-        c9d0e1f2.flight                # hash of { category: "shoes", id: "nike-1" }
+        f2a3b4c5.flight                # hash of { category: "shoes", id: "nike-1" }
       about/                           # static route (no params)
         _.flight                       # single entry, no param hash needed
-    admin/                             # second router
+    __e6f7a8/                          # second router (another createRouter())
       admin.dashboard/
         _.flight
 ```
 
-Each router has its own namespace. The param hash is a deterministic hash of
-the sorted param key-value pairs so the runtime can reconstruct the lookup key
-from matched params without an index file.
+Routers created via `createRouter()` are anonymous — they have no names, only
+mount indices which can change if route order changes. The router hash is a
+deterministic hash of the router's identity (e.g., its route pattern tree or
+mount path) so the key is stable across builds. Each router gets its own
+namespace. The param hash is a deterministic hash of the sorted param
+key-value pairs so the runtime can reconstruct the lookup key from matched
+params without an index file.
 
 ## Build Pipeline
 
@@ -377,7 +429,9 @@ The existing build pipeline already:
 3. Builds a trie for O(path_length) matching (`route-trie.ts`)
 4. Writes static files to `dist/static/`
 
-Pre-rendering extends step 1-4:
+Pre-rendering extends step 1-4. All pre-render execution happens **inside
+the Vite RSC build** — no separate server, no Miniflare, no HTTP, no child
+process. We are already in the RSC environment during the build.
 
 ### Step 5: Discover pre-render handlers
 
@@ -386,12 +440,20 @@ pattern as `exposeLoaderId`). Builds registry: file path → export names.
 
 ### Step 6: Execute pre-renders
 
-For each handler in the registry:
-1. Resolve the params function to get the list of param sets
-2. For each param set, create a `BuildContext` with those params
-3. Execute the handler (loaders are not executed — they run at request time)
-4. Render the `B` segment subtree to RSC Flight payload
-5. Store keyed by router id + route name + param hash
+Happens during the RSC build phase. The handlers are already loaded —
+we just call them:
+
+1. Import the handler (already in the RSC build environment)
+2. Call `getParams()` to get the list of param sets
+3. For each param set, create a `BuildContext` with those params
+4. Call the handler → get ReactNode
+5. Call `serializeSegments()` (same function the cache uses)
+6. Collect handle data
+7. Store as `PrerenderEntry` keyed by router-hash + route-name + param-hash
+
+No server. No HTTP. No `worker.fetch()`. The handler is a function,
+we call it, serialize the output. Same as how caching calls
+`serializeSegments()` after a handler runs at request time.
 
 ### Step 7: Stub handlers in production bundle
 
@@ -399,6 +461,10 @@ Replace `createPrerenderHandler` exports with plain object stubs (unless
 `passthrough: true`). Same mechanism as `generateClientLoaderStubs()` in
 `exposeLoaderId`. The original module and its imports are excluded from
 the bundle.
+
+This is the **only piece from the Vite plugin that affects the production
+bundle**. Everything else (discovery, execution, serialization) is
+build-time only.
 
 ### Step 8: Write to build output
 
@@ -418,6 +484,19 @@ interface TrieLeaf {
   // ...existing fields
 }
 ```
+
+### What is NOT needed
+
+The following are artifacts of the static file approach and should NOT
+exist in the implementation:
+
+- `generatePrerenderScript()` — no child process needed
+- Miniflare worker setup — no server needed
+- `worker.fetch()` calls — no HTTP needed
+- Static `.html` / `.rsc` file writing in `dist/client/` — no static files
+- `prerenderPaths` virtual module — browser doesn't need to know
+- Browser-side static `.rsc` fetch logic in `navigation-client.ts` — gone
+- Browser-side prerender transformation in `partial-update.ts` — gone
 
 ## Vite Plugin Configuration
 
@@ -563,9 +642,97 @@ re-render of the handler itself.
   Same challenge as `exposeLoaderId` with mixed exports — solved there by
   falling back to per-export transforms instead of full module replacement.
 
-## Future: Storage Abstraction
+## Runtime Flow
 
-Currently pre-rendered Flight payloads are written to the filesystem
-(`dist/static/__<hash>/prerender/`). A future `Storage` interface could
-decouple output from the filesystem — enabling KV stores, databases, or
-other backends. Batch writes with backpressure for large sites. Design TBD.
+At runtime, the worker handles ALL requests — direct visits, client-side
+navigation, and partial requests. The browser never knows a route is
+pre-rendered.
+
+```
+Request: GET /articles
+  │
+  ▼
+┌──────────────────────────────────────────────────┐
+│  RSC Handler                                      │
+│                                                   │
+│  1. Route match finds B segment with $$id         │
+│                                                   │
+│  2. Look up pre-rendered Flight payload           │
+│     (by router-id + route-name + param-hash)      │
+│                                                   │
+│  3. deserializeSegments() (same as cache read)    │
+│     replayHandleData() (same as cache read)       │
+│                                                   │
+│  4. Pass segments to segment system               │
+│     renderSegments() (normal path)                │
+│     IDs generated at runtime (same namespace      │
+│     as live routes — no mismatch)                 │
+│                                                   │
+│  5. Return normal RSC or HTML response            │
+│     (identical to a cache hit)                    │
+└──────────────────────────────────────────────────┘
+```
+
+Works identically for:
+- **Direct visits** (Accept: text/html) → SSR HTML with inline Flight data
+- **Client navigation** (Accept: text/x-component) → partial RSC payload
+- **Partial requests** (_rsc_partial) → only diff segments
+
+No special browser logic. No ID mismatch. No transformation.
+
+## Design Decision: Why NOT Static Files
+
+An earlier implementation attempted static file generation (`.html` + `.rsc`
+files served from Cloudflare assets). This approach has fundamental problems
+and was abandoned:
+
+1. **ID namespace mismatch**: Prerender runs in Node.js/Miniflare, generating
+   segment IDs in a different namespace than the live worker (workerd). The
+   browser must transform prerendered payloads to handle the mismatch.
+
+2. **Dual file formats**: Need both `.html` (direct visits) and `.rsc` (client
+   navigation). Double the prerender work, double the storage.
+
+3. **Bypasses the worker**: Cloudflare assets serve files directly. The worker
+   never sees the request. No middleware, no auth, no analytics, no A/B testing.
+
+4. **Browser complexity**: Requires a `prerenderPaths` virtual module, static
+   `.rsc` fetch logic, and `isPartial` transformation code — all existing only
+   for prerender.
+
+5. **Inconsistent with caching**: Cache goes through the worker and segment
+   system. Static files bypass both. Two completely different paths for the
+   same conceptual operation.
+
+The cache-based approach eliminates all of these. Worker handles every request.
+IDs generated at runtime. One code path for cache hits and prerender hits.
+
+## Storage Options
+
+Pre-rendered Flight payloads are stored in the build output, keyed by
+`{router-id}/{route-name}/{param-hash}` (see Storage Layout above).
+
+### Option A: Bundled in the worker (zero-latency)
+
+Serialized entries embedded in the worker bundle as a JSON import.
+Best for small datasets (< 1MB total). Lookup is a Map.get() — no I/O.
+
+### Option B: KV Store
+
+Serialized entries written to Cloudflare KV at build time.
+Best for large datasets or many routes. ~1-5ms latency.
+
+### Option C: Filesystem (dev/preview)
+
+Serialized entries as JSON files in dist/. Used during `pnpm preview`
+or local development.
+
+A `PrerenderStore` interface decouples the lookup from the storage backend:
+
+```ts
+interface PrerenderStore {
+  get(key: string): Promise<PrerenderEntry | null>;
+}
+```
+
+Similar to `SegmentCacheStore` but read-only (writes happen at build time).
