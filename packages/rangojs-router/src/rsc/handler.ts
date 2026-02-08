@@ -192,9 +192,20 @@ export function createRSCHandler<
           Object.keys(generated._routeAncestry).length > 0
         ) {
           const { buildRouteTrie } = await import("../build/route-trie.js");
+          // Map each route to its include() staticPrefix so the trie
+          // returns the correct sp for lazy entry lookup in findMatch.
           const routeToStaticPrefix: Record<string, string> = {};
           for (const name of Object.keys(generated.routeManifest)) {
             routeToStaticPrefix[name] = "";
+          }
+          // Override with prefix from include() entries so the trie
+          // returns the correct sp for lazy entry lookup in findMatch.
+          if (generated.prefixTree) {
+            for (const [prefix, node] of Object.entries(generated.prefixTree)) {
+              for (const route of (node as { routes: string[] }).routes) {
+                routeToStaticPrefix[route] = prefix;
+              }
+            }
           }
           const trie = buildRouteTrie(
             generated.routeManifest,

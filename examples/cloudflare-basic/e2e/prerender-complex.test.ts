@@ -143,7 +143,7 @@ test.describe("prerender-complex", () => {
     expect(text).toBeTruthy();
 
     // Verify the timestamp is a valid ISO date string
-    const match = text!.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+    const match = text!.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[\d.]*Z)/);
     expect(match).toBeTruthy();
 
     const renderedAt = new Date(match![1]);
@@ -310,14 +310,8 @@ test.describe("prerender-complex", () => {
 /**
  * Dev mode: same route structure, no pre-rendering.
  * All handlers run live at request time. Loader freshness can be asserted.
- *
- * Skipped: include() + createPrerenderHandler fails manifest loading in dev
- * mode ("Route must be registered for articles.index"). This is a framework
- * bug — loadManifest does not find the route after handler execution when
- * the route is included via include() with a prerender handler.
- * Remove .skip once the framework handles this case.
  */
-test.describe.skip("prerender-complex (dev)", () => {
+test.describe("prerender-complex (dev)", () => {
   const f = useFixture({
     root: ".",
     mode: "dev",
@@ -379,7 +373,7 @@ test.describe.skip("prerender-complex (dev)", () => {
     await waitForHydration(page);
 
     const text = await testId(page, "stats-rendered-at").textContent();
-    const match = text!.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+    const match = text!.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[\d.]*Z)/);
     expect(match).toBeTruthy();
 
     const renderedAt = new Date(match![1]);
