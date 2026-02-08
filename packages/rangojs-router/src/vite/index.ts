@@ -10,8 +10,6 @@ import { exposeLoaderId } from "./expose-loader-id.ts";
 import { exposeHandleId } from "./expose-handle-id.ts";
 import { exposeLocationStateId } from "./expose-location-state-id.ts";
 import { exposePrerenderHandlerId } from "./expose-prerender-handler-id.ts";
-import type { PrerenderServer } from "./prerender-server.ts";
-import { buildPrerenderPatternMatchers } from "./prerender-server.ts";
 import {
   VIRTUAL_ENTRY_BROWSER,
   VIRTUAL_ENTRY_SSR,
@@ -115,14 +113,6 @@ interface RangoBaseOptions {
    */
   banner?: boolean;
 
-  /**
-   * Enable Node.js prerender environment for dev mode.
-   * When true, routes using createPrerenderHandler are served by a persistent
-   * Node.js Vite dev server instead of the workerd proxy.
-   * Only relevant for cloudflare preset (Node preset already runs in Node.js).
-   * @default true (for cloudflare preset)
-   */
-  prerender?: boolean;
 }
 
 /**
@@ -1286,10 +1276,9 @@ export async function rango(
   // Track RSC entry path for version injection
   let rscEntryPath: string | null = null;
 
-  // Prerender server state (managed by cloudflare-integration's configureServer)
-  const prerenderEnabled = preset === "cloudflare" && (options.prerender ?? true);
-  let prerenderServer: PrerenderServer | null = null;
-  let prerenderPatternMatchers: RegExp[] | null = null;
+  // Build-time prerendering is always enabled for cloudflare preset.
+  // Handlers now run in the RSC env directly (no separate Node.js server needed).
+  const prerenderEnabled = preset === "cloudflare";
 
   if (preset === "cloudflare") {
     // Cloudflare preset: configure entries for cloudflare worker setup
@@ -1379,108 +1368,6 @@ export async function rango(
         }
       },
 
-      configureServer(server) {
-        if (!prerenderEnabled) return;
-        if (server.config.command !== "serve") return;
-
-        const cfUserResolveAlias = server.config.resolve.alias;
-        const cfDiscoveryEntryPath = resolveDiscoveryEntryPath(options);
-        if (!cfDiscoveryEntryPath) return;
-
-        // Create a persistent Node.js prerender server and discover routes.
-        // The cloudflare RSC environment (workerd) doesn't expose a module
-        // runner, so we create our own Node.js RSC environment and use it
-        // for both discovery and request handling.
-        const prerenderReady = (async () => {
-          try {
-            const {
-              createPrerenderServer: createPS,
-              buildPrerenderPatternMatchers: buildMatchers,
-            } = await import("./prerender-server.ts");
-
-            prerenderServer = await createPS({
-              projectRoot: server.config.root,
-              entryPath: cfDiscoveryEntryPath,
-              resolveAlias: cfUserResolveAlias,
-              extraPlugins: [
-                createVersionPlugin(),
-                exposeActionId(),
-                exposeLoaderId(),
-                exposeHandleId(),
-                exposeLocationStateId(),
-                exposePrerenderHandlerId(),
-              ],
-            });
-
-            // Discover routers and prerender routes using the server's own RSC env
-            const { prerenderRoutes, routeManifest } =
-              await prerenderServer.discoverPrerenderRoutes();
-
-            if (prerenderRoutes.length > 0) {
-              prerenderPatternMatchers = buildMatchers(prerenderRoutes, routeManifest);
-              console.log(
-                `[rsc-router] Prerender routes: ${prerenderRoutes.join(", ")}`,
-              );
-            } else {
-              // No prerender routes, dispose the server
-              await prerenderServer.dispose();
-              prerenderServer = null;
-            }
-          } catch (err: any) {
-            console.warn(
-              `[rsc-router] Prerender discovery failed: ${err.message}`,
-            );
-            if (prerenderServer) {
-              await prerenderServer.dispose();
-              prerenderServer = null;
-            }
-          }
-        })();
-
-        // Add middleware that intercepts prerender routes before cloudflare proxy
-        server.middlewares.use(async (req, res, next) => {
-          // Wait for prerender discovery to complete
-          await prerenderReady;
-
-          // Skip if no prerender server or no patterns
-          if (!prerenderServer || !prerenderPatternMatchers?.length) return next();
-
-          // Only intercept GET/HEAD for prerender routes
-          const method = req.method?.toUpperCase();
-          if (method !== "GET" && method !== "HEAD") return next();
-
-          const url = new URL(
-            req.url!,
-            `http://${req.headers.host || "localhost"}`,
-          );
-
-          const { matchesPrerenderRoute, nodeToWebRequest, writeWebResponseToNode } =
-            await import("./prerender-server.ts");
-
-          if (!matchesPrerenderRoute(url.pathname, prerenderPatternMatchers!)) {
-            return next();
-          }
-
-          try {
-            const webReq = nodeToWebRequest(req);
-            const response = await prerenderServer!.fetch(webReq);
-            await writeWebResponseToNode(response, res);
-          } catch (err) {
-            console.error("[rsc-router] Prerender error:", err);
-            next();
-          }
-        });
-
-        // Clean up prerender server on close
-        const originalClose = server.close.bind(server);
-        server.close = async () => {
-          if (prerenderServer) {
-            await prerenderServer.dispose();
-            prerenderServer = null;
-          }
-          return originalClose();
-        };
-      },
     });
 
     plugins.push(createVirtualEntriesPlugin(finalEntries));

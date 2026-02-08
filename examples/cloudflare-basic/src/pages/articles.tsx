@@ -3,13 +3,6 @@ import { Link } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import { href } from "../router.js";
 
-// -- Markdown reading (build-time only, not available on Cloudflare Workers) --
-//
-// All Node.js fs/path usage is inside async functions called from the prerender
-// handlers. In phase 2 these handlers won't run in the production worker at all
-// (the build pipeline will serve stored Flight payloads). In phase 1 (dev mode)
-// the handlers run on-demand in Node.js where these APIs are available.
-
 interface Article {
   slug: string;
   title: string;
@@ -19,78 +12,77 @@ interface Article {
   content: string;
 }
 
-/**
- * Parse simple YAML frontmatter from a markdown string.
- * Handles --- delimited frontmatter with key: value pairs.
- */
-function parseFrontmatter(raw: string): { meta: Record<string, string>; content: string } {
-  const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!match) return { meta: {}, content: raw };
+// Hardcoded article data. Previously read from .md files at build time via
+// Node.js fs APIs, now inlined so the handler runs in any environment (including
+// workerd) without a separate Node.js prerender server.
+const articles: Article[] = [
+  {
+    slug: "prerender-vs-cache",
+    title: "Pre-rendering vs Caching",
+    excerpt:
+      "Both store RSC output, but pre-rendering happens at build time while caching happens at request time.",
+    author: "Docs Team",
+    publishedAt: "2025-06-15",
+    content: `Caching and pre-rendering both store RSC Flight payloads to avoid re-executing handlers. The key difference is *when* the payload is produced.
 
-  const meta: Record<string, string> = {};
-  for (const line of match[1].split("\n")) {
-    const colonIdx = line.indexOf(":");
-    if (colonIdx === -1) continue;
-    const key = line.slice(0, colonIdx).trim();
-    const value = line.slice(colonIdx + 1).trim();
-    meta[key] = value;
-  }
-  return { meta, content: match[2].trim() };
-}
+## Caching
 
-/**
- * Read all article markdown files from the content directory.
- * Uses dynamic imports for node:fs and node:path so the top-level module
- * can load in environments without Node.js built-ins (e.g. workerd).
- */
-async function readAllArticles(): Promise<Article[]> {
-  const { readFileSync, readdirSync } = await import("node:fs");
-  const { join, resolve } = await import("node:path");
-  const contentDir = resolve(import.meta.dirname, "../../content/articles");
+The first request triggers rendering, the result is stored for subsequent requests. Good for dynamic pages with predictable traffic patterns.
 
-  const files = readdirSync(contentDir).filter((f) => f.endsWith(".md")).sort();
-  return files.map((filename) => {
-    const slug = filename.replace(/\.md$/, "");
-    const raw = readFileSync(join(contentDir, filename), "utf-8");
-    const { meta, content } = parseFrontmatter(raw);
-    return {
-      slug,
-      title: meta.title ?? slug,
-      excerpt: meta.excerpt ?? "",
-      author: meta.author ?? "Unknown",
-      publishedAt: meta.publishedAt ?? "",
-      content,
-    };
-  });
-}
+## Pre-rendering
 
-async function readArticle(slug: string): Promise<Article | null> {
-  const { readFileSync } = await import("node:fs");
-  const { join, resolve } = await import("node:path");
-  const contentDir = resolve(import.meta.dirname, "../../content/articles");
+The payload is produced during \`vite build\`. No first-request cost, and build-only code (markdown parsers, file system reads) can be excluded from the production bundle entirely.
 
-  try {
-    const raw = readFileSync(join(contentDir, `${slug}.md`), "utf-8");
-    const { meta, content } = parseFrontmatter(raw);
-    return {
-      slug,
-      title: meta.title ?? slug,
-      excerpt: meta.excerpt ?? "",
-      author: meta.author ?? "Unknown",
-      publishedAt: meta.publishedAt ?? "",
-      content,
-    };
-  } catch {
-    return null;
-  }
-}
+## When to Use Which
+
+Use **caching** for pages that depend on runtime data (user sessions, real-time prices).
+
+Use **pre-rendering** for pages whose content is fully known at build time (documentation, marketing, changelogs).`,
+  },
+  {
+    slug: "static-params",
+    title: "Static Params with getParams",
+    excerpt:
+      "Define which parameter combinations to pre-render at build time.",
+    author: "Docs Team",
+    publishedAt: "2025-07-01",
+    content: `For dynamic routes like \`/articles/:slug\`, the pre-render handler needs to know which slugs to render. The \`getParams\` function returns the list of parameter objects.
+
+## Basic Usage
+
+The first argument to createPrerenderHandler is getParams, which returns all slugs to pre-render. The second argument is the handler, which runs once per param set.
+
+## Auto-discovery
+
+In practice you can scan the content directory to discover all slugs automatically. At build time, each parameter set produces a separate Flight payload. At runtime, the correct payload is served based on the URL — no file system access needed.`,
+  },
+  {
+    slug: "what-is-prerendering",
+    title: "What is Pre-rendering?",
+    excerpt:
+      "Pre-rendering generates HTML at build time instead of on every request.",
+    author: "Docs Team",
+    publishedAt: "2025-06-01",
+    content: `Pre-rendering is a technique where route segments are rendered at build time and stored as static Flight payloads. At runtime the server serves the pre-built payload without executing the handler — no cold starts, no build-only dependencies shipped to production.
+
+This is ideal for content that exists at build time: documentation, marketing pages, blog posts, changelogs. Parent layouts stay live (user data, A/B tests, cart) while only the route's own subtree is pre-rendered.
+
+## Why Pre-render?
+
+- **No runtime cost** — the handler doesn't run on each request
+- **No build-only deps in production** — markdown parsers, file system reads stay out of the server bundle
+- **Instant first response** — no cold start penalty for the first visitor
+
+## How It Works
+
+In dev mode, pre-render handlers run on every request just like normal handlers so you get instant feedback while developing. At build time, the handler is executed once per parameter set and the RSC Flight output is stored.`,
+  },
+];
 
 // -- Pre-render handlers ----------------------------------------------------
 
-// Article list -- reads all .md files from content/articles/
+// Article list
 export const ArticlesIndex = createPrerenderHandler(async (ctx) => {
-  const articles = await readAllArticles();
-
   const meta = ctx.use(Meta);
   meta({ title: "Articles - RSC Router Cloudflare" });
   meta({
@@ -106,7 +98,7 @@ export const ArticlesIndex = createPrerenderHandler(async (ctx) => {
     <div data-testid="articles-index">
       <h1 data-testid="articles-title">Articles</h1>
       <p style={{ color: "#666", marginBottom: "2rem" }}>
-        Pre-rendered articles read from markdown files at build time.
+        Pre-rendered articles about RSC patterns and techniques.
       </p>
       <div data-testid="articles-list">
         {articles.map((article) => (
@@ -145,26 +137,17 @@ export const ArticlesIndex = createPrerenderHandler(async (ctx) => {
         data-testid="prerender-info"
         style={{ marginTop: "2rem", fontSize: "0.875rem", color: "#999" }}
       >
-        This page is pre-rendered at build time from {articles.length} markdown
-        files.
+        This page is pre-rendered at build time from {articles.length} articles.
       </p>
     </div>
   );
 });
 
-// Article detail -- scans content dir for slugs, reads each .md file
+// Article detail -- uses hardcoded slugs for getParams
 export const ArticleDetail = createPrerenderHandler(
-  // getParams: discover all slugs from the filesystem
-  async () => {
-    const { readdirSync } = await import("node:fs");
-    const { resolve } = await import("node:path");
-    const contentDir = resolve(import.meta.dirname, "../../content/articles");
-    const files = readdirSync(contentDir).filter((f: string) => f.endsWith(".md"));
-    return files.map((f: string) => ({ slug: f.replace(/\.md$/, "") }));
-  },
-  // handler: read the specific article file
+  async () => articles.map((a) => ({ slug: a.slug })),
   async (ctx) => {
-    const article = await readArticle(ctx.params.slug);
+    const article = articles.find((a) => a.slug === ctx.params.slug);
 
     if (!article) {
       return (
@@ -226,7 +209,7 @@ export const ArticleDetail = createPrerenderHandler(
             color: "#999",
           }}
         >
-          This page is pre-rendered at build time from markdown.
+          This page is pre-rendered at build time.
         </footer>
       </article>
     );
