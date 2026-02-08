@@ -425,6 +425,8 @@ function createRouterDiscoveryPlugin(
   // Concrete URLs to pre-render at build time (populated during buildStart).
   // Only used when enableBuildPrerender is true.
   let prerenderBuildUrls: string[] | null = null;
+  // Maps route name -> router hash for prerender storage keys
+  let prerenderRouteHashMap: Record<string, string> = {};
 
   // Reference to @vitejs/plugin-rsc's RscPluginManager for early manifest writes.
   // Populated during configResolved, used in closeBundle to write the assets
@@ -593,11 +595,22 @@ function createRouterDiscoveryPlugin(
           buildRouteToStaticPrefix(manifest.prefixTree, routeToStaticPrefix);
         }
 
+        // Collect prerender route names from all manifests
+        const prerenderRouteNames = new Set<string>();
+        for (const { manifest } of allManifests) {
+          if (manifest.prerenderRoutes) {
+            for (const name of manifest.prerenderRoutes) {
+              prerenderRouteNames.add(name);
+            }
+          }
+        }
+
         mergedRouteTrie = buildRouteTrie(
           mergedRouteManifest,
           mergedRouteAncestry,
           routeToStaticPrefix,
           Object.keys(mergedRouteTrailingSlash).length > 0 ? mergedRouteTrailingSlash : undefined,
+          prerenderRouteNames.size > 0 ? prerenderRouteNames : undefined,
         );
         // Trie built successfully
       }
@@ -607,10 +620,13 @@ function createRouterDiscoveryPlugin(
     // Static routes use pattern as-is; dynamic routes call getParams() to enumerate.
     if (opts?.enableBuildPrerender) {
       const urls: string[] = [];
-      for (const { manifest } of allManifests) {
+      const routeHashMap: Record<string, string> = {};
+      for (const { id, manifest } of allManifests) {
         if (!manifest.prerenderRoutes) continue;
+        const rHash = hashRouterId(id);
         const defs = manifest._prerenderDefs || {};
         for (const routeName of manifest.prerenderRoutes) {
+          routeHashMap[routeName] = rHash;
           const pattern = manifest.routeManifest[routeName];
           if (!pattern) continue;
           const hasDynamic = pattern.includes(":") || pattern.includes("*");
@@ -645,6 +661,7 @@ function createRouterDiscoveryPlugin(
       }
       if (urls.length > 0) {
         prerenderBuildUrls = urls;
+        prerenderRouteHashMap = routeHashMap;
         console.log(
           `[rsc-router] Pre-render URLs: ${urls.join(", ")}`
         );
@@ -804,9 +821,7 @@ function createRouterDiscoveryPlugin(
       if (id === VIRTUAL_ROUTES_MANIFEST_ID) {
         return "\0" + VIRTUAL_ROUTES_MANIFEST_ID;
       }
-      if (id === VIRTUAL_PRERENDER_PATHS_ID) {
-        return "\0" + VIRTUAL_PRERENDER_PATHS_ID;
-      }
+      // virtual:rsc-router/prerender-paths removed: prerender data is served through the worker
       return null;
     },
 
@@ -836,12 +851,7 @@ function createRouterDiscoveryPlugin(
         // No manifest available yet (dev mode: discovery hasn't completed)
         return `// Route manifest will be populated at runtime`;
       }
-      if (id === "\0" + VIRTUAL_PRERENDER_PATHS_ID) {
-        // In dev mode: empty array (prerender handlers run live).
-        // In build mode: populated from prerenderBuildUrls during discovery.
-        const paths = prerenderBuildUrls ?? [];
-        return `export default ${JSON.stringify(paths)};`;
-      }
+      // virtual:rsc-router/prerender-paths load handler removed
       return null;
     },
 
@@ -896,7 +906,7 @@ function createRouterDiscoveryPlugin(
       // Generate a temporary script that runs in a clean Node.js process.
       // This avoids Vite's module resolution hooks interfering with imports.
       const scriptPath = resolve(projectRoot, "dist/.prerender.mjs");
-      const scriptContent = generatePrerenderScript(projectRoot, urlsToRender);
+      const scriptContent = generatePrerenderScript(projectRoot, urlsToRender, prerenderRouteHashMap);
       writeFileSync(scriptPath, scriptContent);
 
       try {
@@ -962,6 +972,45 @@ function createRouterDiscoveryPlugin(
             );
           }
         }
+        // Inject pre-rendered data into the RSC worker bundle.
+        // Read all .flight files written by the child process and embed them
+        // as globalThis.__PRERENDER_DATA so the worker can serve them at runtime.
+        try {
+          const { readdirSync: readDir } = await import("node:fs");
+          const prerenderData: Record<string, any> = {};
+          const staticDir = resolve(projectRoot, "dist/static");
+          for (const hashDir of readDir(staticDir).filter((d: string) => d.startsWith("__"))) {
+            const prerenderDir = resolve(staticDir, hashDir, "prerender");
+            if (!existsSync(prerenderDir)) continue;
+            for (const routeDir of readDir(prerenderDir)) {
+              const routePath = resolve(prerenderDir, routeDir);
+              for (const file of readDir(routePath).filter((f: string) => f.endsWith(".flight"))) {
+                const paramHash = file.slice(0, -7); // strip ".flight"
+                const key = `${routeDir}/${paramHash}`;
+                const content = readFileSync(resolve(routePath, file), "utf-8");
+                prerenderData[key] = JSON.parse(content);
+              }
+            }
+          }
+
+          if (Object.keys(prerenderData).length > 0) {
+            const rscEntryPath = resolve(projectRoot, "dist/rsc/index.js");
+            if (existsSync(rscEntryPath)) {
+              let rscCode = readFileSync(rscEntryPath, "utf-8");
+              const injection = `globalThis.__PRERENDER_DATA = ${JSON.stringify(prerenderData)};\n`;
+              rscCode = injection + rscCode;
+              writeFileSync(rscEntryPath, rscCode);
+              const dataSize = (Buffer.byteLength(injection) / 1024).toFixed(1);
+              console.log(
+                `[rsc-router] Injected prerender data into RSC bundle (${dataSize} KB, ${Object.keys(prerenderData).length} entries)`,
+              );
+            }
+          }
+        } catch (injectErr: any) {
+          console.warn(
+            `[rsc-router] Failed to inject prerender data: ${injectErr.message}`,
+          );
+        }
       } catch (err: any) {
         console.warn(
           `[rsc-router] Build-time pre-rendering failed: ${err.message}`
@@ -979,24 +1028,60 @@ function createRouterDiscoveryPlugin(
 }
 
 /**
- * Generate a standalone Node.js script that pre-renders routes to static HTML.
+ * Generate a standalone Node.js script that collects serialized segment data
+ * for pre-rendered routes. Writes .flight JSON files to dist/static/.
  * The script runs in a separate process to avoid Vite's module resolution hooks.
  */
-function generatePrerenderScript(projectRoot: string, urls: string[]): string {
+function generatePrerenderScript(
+  projectRoot: string,
+  urls: string[],
+  routeHashMap: Record<string, string>,
+): string {
   return `
 import { mkdirSync, writeFileSync, symlinkSync, existsSync, readdirSync, statSync, rmSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { resolve } from "node:path";
 
 const projectRoot = ${JSON.stringify(projectRoot)};
 const urls = ${JSON.stringify(urls)};
+const routeHashMap = ${JSON.stringify(routeHashMap)};
+
+// DJB2 hash matching the runtime param-hash utility
+function djb2Hex(str) {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash + str.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
+function hashParams(params) {
+  const entries = Object.entries(params);
+  if (entries.length === 0) return "_";
+  const sorted = entries.sort(([a], [b]) => a.localeCompare(b));
+  const str = sorted.map(([k, v]) => k + "=" + v).join("&");
+  return djb2Hex(str);
+}
+
+// Extract params from a URL by matching against the route pattern.
+// The route pattern uses :paramName syntax.
+function extractParams(urlPath, pattern) {
+  const urlParts = urlPath.split("/").filter(Boolean);
+  const patternParts = pattern.split("/").filter(Boolean);
+  const params = {};
+  for (let i = 0; i < patternParts.length; i++) {
+    if (patternParts[i].startsWith(":")) {
+      const paramName = patternParts[i].slice(1);
+      params[paramName] = decodeURIComponent(urlParts[i] || "");
+    }
+  }
+  return params;
+}
 
 // Mock workerd globals (bundled worker accesses globalThis.Cloudflare.compatibilityFlags)
 globalThis.Cloudflare = { compatibilityFlags: { enable_nodejs_process_v2: false } };
 
 // Create symlinks for project root directories under dist/ so that relative
 // paths from import.meta.dirname (dist/rsc/assets/) resolve correctly.
-// E.g., handler uses resolve(import.meta.dirname, "../../content/articles")
-// which becomes dist/content/articles — symlink makes it point to content/articles.
 const symlinks = [];
 try {
   for (const entry of readdirSync(projectRoot)) {
@@ -1034,54 +1119,52 @@ try {
   let rendered = 0;
   for (const urlPath of urls) {
     try {
-      // Render full HTML page for direct visits (initial page load)
+      // Collect serialized segments for this route
       const response = await worker.fetch(
-        new Request("http://localhost" + urlPath + "?__no_cache", {
+        new Request("http://localhost" + urlPath + "?__no_cache&__prerender_collect", {
           headers: { Accept: "text/html" },
         }),
         mockEnv,
         mockCtx,
       );
       if (response.status !== 200) {
-        console.warn("[rsc-router] Pre-render " + urlPath + " returned " + response.status + ", skipping");
+        console.warn("[rsc-router] Pre-render collect " + urlPath + " returned " + response.status + ", skipping");
         continue;
       }
-      const html = await response.text();
-      const cleanPath = urlPath === "/" ? "" : urlPath;
-      const outPath = resolve(projectRoot, "dist", "client", cleanPath.replace(/^\\//, ""), "index.html");
-      mkdirSync(dirname(outPath), { recursive: true });
-      writeFileSync(outPath, html);
-
-      // Save partial RSC payload for client-side navigation.
-      // Uses __prerender to produce a partial payload (isPartial: true, route
-      // segments only) so the browser can apply it directly without
-      // transforming a full payload.
-      try {
-        const rscResponse = await worker.fetch(
-          new Request("http://localhost" + urlPath + "?__no_cache&__prerender", {
-            headers: { Accept: "text/x-component" },
-          }),
-          mockEnv,
-          mockCtx,
-        );
-        if (rscResponse.ok) {
-          const rscPayload = await rscResponse.arrayBuffer();
-          const rscPath = resolve(projectRoot, "dist", "client",
-            cleanPath.replace(/^\\//, ""), "index.rsc");
-          writeFileSync(rscPath, Buffer.from(rscPayload));
-        }
-      } catch (rscErr) {
-        console.warn("[rsc-router] RSC payload save failed for " + urlPath + ": " + rscErr.message);
+      const data = await response.json();
+      const { segments, handles, routeName } = data;
+      if (!routeName || !segments) {
+        console.warn("[rsc-router] Pre-render collect " + urlPath + " missing routeName or segments, skipping");
+        continue;
       }
 
+      const routerHash = routeHashMap[routeName];
+      if (!routerHash) {
+        console.warn("[rsc-router] No router hash for route " + routeName + ", skipping");
+        continue;
+      }
+
+      // Compute param hash from the matched route params
+      // The response carries routeName; we compute params from the URL
+      // using the route manifest pattern. For static routes, paramHash is "_".
+      const paramHash = hashParams(data.params || {});
+
+      // Write .flight file
+      const flightDir = resolve(projectRoot, "dist", "static",
+        "__" + routerHash, "prerender", routeName);
+      mkdirSync(flightDir, { recursive: true });
+      const flightPath = resolve(flightDir, paramHash + ".flight");
+      writeFileSync(flightPath, JSON.stringify({ segments, handles }));
+
       rendered++;
+      console.log("[rsc-router] Pre-rendered: " + routeName + " (" + urlPath + ") -> " + paramHash + ".flight");
     } catch (err) {
       console.warn("[rsc-router] Pre-render failed for " + urlPath + ": " + err.message);
     }
   }
 
   if (rendered > 0) {
-    console.log("[rsc-router] Pre-rendered " + rendered + "/" + urls.length + " route(s) to dist/client/");
+    console.log("[rsc-router] Pre-rendered " + rendered + "/" + urls.length + " route(s) to dist/static/");
   }
 } finally {
   for (const link of symlinks) {
@@ -1092,7 +1175,7 @@ try {
 }
 
 const VIRTUAL_ROUTES_MANIFEST_ID = "virtual:rsc-router/routes-manifest";
-const VIRTUAL_PRERENDER_PATHS_ID = "virtual:rsc-router/prerender-paths";
+// VIRTUAL_PRERENDER_PATHS_ID removed: prerender data is served through the worker
 
 /**
  * Resolve the entry path for build-time router discovery.

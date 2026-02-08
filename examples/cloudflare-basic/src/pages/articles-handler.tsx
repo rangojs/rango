@@ -1,5 +1,5 @@
 import { Meta, createPrerenderHandler } from "@rangojs/router";
-import { Link } from "@rangojs/router/client";
+import { Link, ParallelOutlet } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import { href } from "../router.js";
 
@@ -64,50 +64,55 @@ export const ArticlesIndex = createPrerenderHandler(async (ctx) => {
   breadcrumb({ label: "Articles", href: href("articles.index") });
 
   return (
-    <div data-testid="articles-index">
-      <h1 data-testid="articles-title">Articles</h1>
-      <p style={{ color: "#666", marginBottom: "2rem" }}>
-        Pre-rendered articles about RSC patterns and techniques.
-      </p>
-      <div data-testid="articles-list">
-        {articles.map((article) => (
-          <article
-            key={article.slug}
-            style={{
-              marginBottom: "2rem",
-              paddingBottom: "1.5rem",
-              borderBottom: "1px solid #eee",
-            }}
-            data-testid={`article-card-${article.slug}`}
-          >
-            <h2 style={{ marginBottom: "0.5rem" }}>
-              <Link
-                to={href("articles.detail", { slug: article.slug })}
-                style={{ color: "#0070f3", textDecoration: "none" }}
-                data-testid={`article-link-${article.slug}`}
-              >
-                {article.title}
-              </Link>
-            </h2>
-            <p
+    <div data-testid="articles-index" style={{ display: "flex", gap: "2rem" }}>
+      <div style={{ flex: 1 }}>
+        <h1 data-testid="articles-title">Articles</h1>
+        <p style={{ color: "#666", marginBottom: "2rem" }}>
+          Pre-rendered articles about RSC patterns and techniques.
+        </p>
+        <div data-testid="articles-list">
+          {articles.map((article) => (
+            <article
+              key={article.slug}
               style={{
-                color: "#666",
-                fontSize: "0.875rem",
-                marginBottom: "0.5rem",
+                marginBottom: "2rem",
+                paddingBottom: "1.5rem",
+                borderBottom: "1px solid #eee",
               }}
+              data-testid={`article-card-${article.slug}`}
             >
-              By {article.author} on {article.publishedAt}
-            </p>
-            <p>{article.excerpt}</p>
-          </article>
-        ))}
+              <h2 style={{ marginBottom: "0.5rem" }}>
+                <Link
+                  to={href("articles.detail", { slug: article.slug })}
+                  style={{ color: "#0070f3", textDecoration: "none" }}
+                  data-testid={`article-link-${article.slug}`}
+                >
+                  {article.title}
+                </Link>
+              </h2>
+              <p
+                style={{
+                  color: "#666",
+                  fontSize: "0.875rem",
+                  marginBottom: "0.5rem",
+                }}
+              >
+                By {article.author} on {article.publishedAt}
+              </p>
+              <p>{article.excerpt}</p>
+            </article>
+          ))}
+        </div>
+        <p
+          data-testid="prerender-info"
+          style={{ marginTop: "2rem", fontSize: "0.875rem", color: "#999" }}
+        >
+          This page is pre-rendered at build time from {articles.length} articles.
+        </p>
       </div>
-      <p
-        data-testid="prerender-info"
-        style={{ marginTop: "2rem", fontSize: "0.875rem", color: "#999" }}
-      >
-        This page is pre-rendered at build time from {articles.length} articles.
-      </p>
+      <aside style={{ width: "280px", flexShrink: 0 }}>
+        <ParallelOutlet name="@stats" />
+      </aside>
     </div>
   );
 });

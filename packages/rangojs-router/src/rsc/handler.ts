@@ -1089,25 +1089,27 @@ export function createRSCHandler<
       // Caching is now handled in router.match() via cache provider in request context
       // match.segments already contains cached or fresh segments as appropriate
 
-      if (url.searchParams.has("__prerender")) {
-        // Pre-render mode: skip root tree rendering for smaller .rsc payloads.
-        // The root React tree is never used during client-side navigation
-        // (the browser always calls renderSegments() client-side), so we omit
-        // it to reduce payload size. All segments are kept because RSC and SSR
-        // contexts use different ID namespaces (M0-prefixed vs non-prefixed),
-        // and the browser's prerender transformation handles the ID mapping.
-        payload = {
-          root: null,
-          metadata: {
-            pathname: url.pathname,
-            segments: match.segments,
-            matched: match.matched,
-            diff: match.diff,
-            isPartial: false,
-            handles: handleStore.stream(),
-            version,
-          },
-        };
+      if (url.searchParams.has("__prerender_collect")) {
+        // Build-time prerender collection: serialize segments and handle data
+        // to JSON for storage as build artifacts. At runtime the worker
+        // deserializes these and feeds them through the normal segment pipeline.
+        const nonLoaderSegments = match.segments.filter((s) => s.type !== "loader");
+        await handleStore.settled;
+        const { serializeSegments } = await import("../cache/cache-scope.js");
+        const serializedSegments = await serializeSegments(nonLoaderSegments);
+        const handles: Record<string, Record<string, unknown[]>> = {};
+        for (const seg of nonLoaderSegments) {
+          handles[seg.id] = handleStore.getDataForSegment(seg.id);
+        }
+        return new Response(
+          JSON.stringify({
+            segments: serializedSegments,
+            handles,
+            routeName: match.routeName,
+            params: match.params,
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
       } else {
         const renderStart = performance.now();
         const root = renderSegments(match.segments, {

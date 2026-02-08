@@ -216,6 +216,8 @@ export interface RouteMatchResult<TEnv = any> {
   redirectTo?: string;
   /** Ancestry shortCodes for layout pruning (from trie match) */
   ancestry?: string[];
+  /** Route has pre-rendered data available (from trie) */
+  pr?: true;
 }
 
 /**

@@ -143,9 +143,8 @@ async function rscDeserialize<T>(
  * Serialize segments for storage.
  * Each segment's component, layout, loading, and loaderData are RSC-serialized.
  * Metadata is preserved as-is.
- * @internal
  */
-async function serializeSegments(
+export async function serializeSegments(
   segments: ResolvedSegment[]
 ): Promise<SerializedSegmentData[]> {
   const serialized: SerializedSegmentData[] = [];
@@ -225,9 +224,8 @@ async function serializeSegments(
 /**
  * Deserialize segments from storage.
  * Reconstructs ResolvedSegment objects from RSC-serialized data.
- * @internal
  */
-async function deserializeSegments(
+export async function deserializeSegments(
   data: SerializedSegmentData[]
 ): Promise<ResolvedSegment[]> {
   const segments: ResolvedSegment[] = [];

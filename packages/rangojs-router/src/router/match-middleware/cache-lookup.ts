@@ -92,6 +92,32 @@
 import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
+import type { PrerenderStore } from "../../prerender/store.js";
+
+// Lazily initialized prerender store singleton and dynamically imported deps.
+// Dynamic imports prevent pulling in @vitejs/plugin-rsc/rsc virtual module at
+// top-level, which breaks vitest (only URLs with file:, data:, node: schemes).
+let prerenderStoreInstance: PrerenderStore | null | undefined;
+let _deserializeSegments: typeof import("../../cache/cache-scope.js").deserializeSegments | undefined;
+let _hashParams: typeof import("../../prerender/param-hash.js").hashParams | undefined;
+let _getRequestContext: typeof import("../../server/request-context.js").getRequestContext | undefined;
+
+async function ensurePrerenderDeps() {
+  if (!_deserializeSegments) {
+    const [cache, paramHash, reqCtx, store] = await Promise.all([
+      import("../../cache/cache-scope.js"),
+      import("../../prerender/param-hash.js"),
+      import("../../server/request-context.js"),
+      import("../../prerender/store.js"),
+    ]);
+    _deserializeSegments = cache.deserializeSegments;
+    _hashParams = paramHash.hashParams;
+    _getRequestContext = reqCtx.getRequestContext;
+    if (prerenderStoreInstance === undefined) {
+      prerenderStoreInstance = store.createPrerenderStore();
+    }
+  }
+}
 
 /**
  * Async generator middleware type
@@ -129,6 +155,96 @@ export function withCacheLookup<TEnv>(
       resolveLoadersOnlyWithRevalidation,
       resolveLoadersOnly,
     } = getRouterContext<TEnv>();
+
+    // Prerender lookup: check build-time cached data before runtime cache.
+    // Prerender data is available regardless of runtime cache configuration.
+    if (!ctx.isAction && ctx.matched.pr) {
+      await ensurePrerenderDeps();
+      if (prerenderStoreInstance) {
+        const paramHash = _hashParams!(ctx.matched.params);
+        const entry = prerenderStoreInstance.get(ctx.matched.routeKey, paramHash);
+        if (entry) {
+          const segments = await _deserializeSegments!(entry.segments);
+
+          // Replay handle data (same as runtime cache hit path)
+          const handleStore = _getRequestContext!()?._handleStore;
+          if (handleStore) {
+            for (const [segId, segHandles] of Object.entries(entry.handles)) {
+              if (Object.keys(segHandles).length > 0) {
+                handleStore.replaySegmentData(segId, segHandles);
+              }
+            }
+          }
+
+          state.cacheHit = true;
+          state.cachedSegments = segments;
+          state.cachedMatchedIds = segments.map((s) => s.id);
+
+          const segmentTypes = segments.map((s) =>
+            s.type === "parallel" ? s.slot : s.type,
+          );
+          console.log(
+            `[Prerender] HIT: ${ctx.matched.routeKey} (${segmentTypes.join(", ")})`,
+          );
+
+          // Yield prerendered segments (same flow as cache hit)
+          // For partial navigation, nullify components the client already has
+          // so parent layouts stay live (client keeps its existing versions).
+          for (const segment of segments) {
+            if (!ctx.isFullMatch && ctx.clientSegmentSet.has(segment.id)) {
+              segment.component = null;
+              segment.loading = undefined;
+            }
+            yield segment;
+          }
+
+          // Resolve loaders fresh (loaders are never pre-rendered)
+          if (ctx.isFullMatch) {
+            if (resolveLoadersOnly) {
+              const loaderSegments = await ctx.Store.run(() =>
+                resolveLoadersOnly(ctx.entries, ctx.handlerContext),
+              );
+              state.matchedIds = state.cachedMatchedIds!;
+              for (const segment of loaderSegments) {
+                yield segment;
+              }
+            } else {
+              state.matchedIds = state.cachedMatchedIds!;
+            }
+          } else {
+            if (resolveLoadersOnlyWithRevalidation) {
+              const loaderResult = await ctx.Store.run(() =>
+                resolveLoadersOnlyWithRevalidation(
+                  ctx.entries,
+                  ctx.handlerContext,
+                  ctx.clientSegmentSet,
+                  ctx.prevParams,
+                  ctx.request,
+                  ctx.prevUrl,
+                  ctx.url,
+                  ctx.routeKey,
+                  ctx.actionContext,
+                ),
+              );
+              state.matchedIds = [
+                ...state.cachedMatchedIds!,
+                ...loaderResult.matchedIds,
+              ];
+              for (const segment of loaderResult.segments) {
+                yield segment;
+              }
+            } else {
+              state.matchedIds = state.cachedMatchedIds!;
+            }
+          }
+
+          if (ms) {
+            ms.metrics.push({ label: "pipeline:cache-lookup", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
+          }
+          return;
+        }
+      }
+    }
 
     // Skip cache during actions
     if (ctx.isAction || !ctx.cacheScope?.enabled) {

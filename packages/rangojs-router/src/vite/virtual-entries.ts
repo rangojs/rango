@@ -15,7 +15,6 @@ import { createElement, StrictMode } from "react";
 import { hydrateRoot } from "react-dom/client";
 import { rscStream } from "@rangojs/router/internal/deps/html-stream-client";
 import { initBrowserApp, RSCRouter } from "@rangojs/router/browser";
-import prerenderPaths from "virtual:rsc-router/prerender-paths";
 
 async function initializeApp() {
   const deps = {
@@ -26,7 +25,7 @@ async function initializeApp() {
     createTemporaryReferenceSet,
   };
 
-  await initBrowserApp({ rscStream, deps, prerenderPaths });
+  await initBrowserApp({ rscStream, deps });
 
   hydrateRoot(
     document,
