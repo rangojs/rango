@@ -224,7 +224,7 @@ function transformPrerenderHandlerExports(
 
   return {
     code: s.toString(),
-    map: s.generateMap({ source: sourceId, includeContent: true }),
+    map: s.generateMap({ source: sourceId, includeContent: true, hires: "boundary" }),
   };
 }
 
@@ -330,19 +330,20 @@ function generatePrerenderHandlerStubs(
 
   return {
     code: s.toString(),
-    map: s.generateMap({ source: sourceId, includeContent: true }),
+    map: s.generateMap({ source: sourceId, includeContent: true, hires: "boundary" }),
   };
 }
 
 /**
- * Shared state: tracks absolute module IDs that contain prerender handler exports
- * during the RSC build. Used by the cloudflare-integration plugin to isolate
- * these modules into a dedicated Rollup chunk via manualChunks.
- *
- * key: absolute module ID (filesystem path)
- * value: array of export names (e.g., ["ArticlesIndex", "ArticleDetail"])
+ * Plugin API type for expose-prerender-handler-id.
+ * Accessed by other plugins via config.plugins.find(p => p.name === "...").api
  */
-export const prerenderHandlerModules: Map<string, string[]> = new Map<string, string[]>();
+export interface ExposePrerenderHandlerIdApi {
+  /** Tracks absolute module IDs that contain prerender handler exports.
+   *  key: absolute module ID (filesystem path)
+   *  value: array of export names (e.g., ["ArticlesIndex", "ArticleDetail"]) */
+  prerenderHandlerModules: Map<string, string[]>;
+}
 
 /**
  * Vite plugin that exposes $$id on createPrerenderHandler calls.
@@ -355,14 +356,22 @@ export const prerenderHandlerModules: Map<string, string[]> = new Map<string, st
  * Requirements:
  * - Must use direct import: import { createPrerenderHandler } from "@rangojs/router"
  * - Must use named export: export const MyPage = createPrerenderHandler(...)
+ *
+ * Other plugins can read handler module data via the plugin API:
+ *   config.plugins.find(p => p.name === "@rangojs/router:expose-prerender-handler-id")?.api
  */
 export function exposePrerenderHandlerId(): Plugin {
   let config: ResolvedConfig;
   let isBuild = false;
+  const prerenderHandlerModules: Map<string, string[]> = new Map();
 
   return {
     name: "@rangojs/router:expose-prerender-handler-id",
     enforce: "post",
+
+    api: {
+      prerenderHandlerModules,
+    } satisfies ExposePrerenderHandlerIdApi,
 
     configResolved(resolvedConfig) {
       config = resolvedConfig;

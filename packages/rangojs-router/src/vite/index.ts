@@ -9,7 +9,8 @@ import { exposeActionId } from "./expose-action-id.ts";
 import { exposeLoaderId } from "./expose-loader-id.ts";
 import { exposeHandleId } from "./expose-handle-id.ts";
 import { exposeLocationStateId } from "./expose-location-state-id.ts";
-import { exposePrerenderHandlerId, prerenderHandlerModules } from "./expose-prerender-handler-id.ts";
+import { exposePrerenderHandlerId } from "./expose-prerender-handler-id.ts";
+import type { ExposePrerenderHandlerIdApi } from "./expose-prerender-handler-id.ts";
 import {
   VIRTUAL_ENTRY_BROWSER,
   VIRTUAL_ENTRY_SSR,
@@ -24,12 +25,13 @@ import {
   isWorkspaceDevelopment,
 } from "./package-resolution.ts";
 
-// Shared state for handler chunk eviction.
-// Populated by cloudflare-integration's generateBundle, consumed by discovery's closeBundle.
-let handlerChunkInfo: {
-  fileName: string;
-  exports: Array<{ name: string; handlerId: string }>;
-} | null = null;
+/** Plugin API type for cloudflare-integration: shares handler chunk metadata. */
+interface CloudflareIntegrationApi {
+  handlerChunkInfo: {
+    fileName: string;
+    exports: Array<{ name: string; handlerId: string }>;
+  } | null;
+}
 
 // Re-export plugins
 export { exposeActionId } from "./expose-action-id.ts";
@@ -432,6 +434,7 @@ function createRouterDiscoveryPlugin(
   // Populated during configResolved, used in closeBundle to write the assets
   // manifest before the child prerender process starts.
   let rscPluginManager: any = null;
+  let cfIntegrationApi: CloudflareIntegrationApi | null = null;
 
   // Promise that resolves when dev-mode discovery completes.
   // The virtual module's load hook awaits this to ensure data is available.
@@ -688,6 +691,13 @@ function createRouterDiscoveryPlugin(
         if (rscPlugin?.api?.manager) {
           rscPluginManager = rscPlugin.api.manager;
         }
+        // Look up cloudflare-integration plugin API for handler chunk metadata
+        const cfPlugin = config.plugins.find(
+          (p: any) => p.name === "@rangojs/router:cloudflare-integration",
+        );
+        if (cfPlugin?.api) {
+          cfIntegrationApi = cfPlugin.api as CloudflareIntegrationApi;
+        }
       }
     },
 
@@ -859,9 +869,16 @@ function createRouterDiscoveryPlugin(
     // built worker and render each prerender URL to static HTML.
     // A separate process is needed because Vite registers module resolution
     // hooks that interfere with importing the bundled worker.
-    // closeBundle fires for each environment build. We wait until the SSR
-    // build (last in sequence) completes before pre-rendering, because the
-    // client build (step 4/5) clears dist/client/ via emptyOutDir.
+    //
+    // RETRY SEMANTICS:
+    // Vite's environment-aware builder calls closeBundle once per environment
+    // build (rsc -> client -> ssr). Pre-rendering requires BOTH the client
+    // assets manifest AND the SSR bundle, so early calls bail out silently.
+    // The `order: "post"` ensures this runs after other plugins' closeBundle
+    // hooks. `sequential: true` prevents concurrent closeBundle execution
+    // across environments, avoiding race conditions on shared state like
+    // prerenderBuildUrls. The null-guard on prerenderBuildUrls ensures we
+    // run at most once even if closeBundle fires again after the SSR build.
     closeBundle: {
       order: "post" as const,
       sequential: true,
@@ -926,30 +943,54 @@ function createRouterDiscoveryPlugin(
         // The chunk also contains framework code (shared deps) that must stay intact.
         // We replace each createPrerenderHandler(...) call with a stub object and
         // remove the $$id assignment line.
-        if (handlerChunkInfo) {
-          const chunkPath = resolve(projectRoot, "dist/rsc", handlerChunkInfo.fileName);
+        const chunkInfo = cfIntegrationApi?.handlerChunkInfo;
+        if (chunkInfo) {
+          const chunkPath = resolve(projectRoot, "dist/rsc", chunkInfo.fileName);
           try {
             let code = readFileSync(chunkPath, "utf-8");
             const originalSize = Buffer.byteLength(code);
 
-            for (const { name, handlerId } of handlerChunkInfo.exports) {
+            for (const { name, handlerId } of chunkInfo.exports) {
               // Find start: "const Name = createPrerenderHandler"
+              // \s* handles both minified and readable output
               const callStartRe = new RegExp(
-                `const\\s+${name}\\s*=\\s*createPrerenderHandler`,
+                `const\\s+${name}\\s*=\\s*createPrerenderHandler\\s*(?:<[^>]*>)?\\s*\\(`,
               );
               const startMatch = callStartRe.exec(code);
               if (!startMatch) continue;
 
-              // The $$id string is always the last argument in the call.
-              // Find it to locate the end: "handlerId"\s*);
-              const escapedId = handlerId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-              const endRe = new RegExp(
-                `"${escapedId}"\\s*\\);`,
-              );
-              const endMatch = endRe.exec(code.slice(startMatch.index));
-              if (!endMatch) continue;
+              // Use paren-depth counting to find the matching close paren.
+              // This is more robust than searching for the handlerId string,
+              // which could appear elsewhere in the chunk.
+              const openParenPos = startMatch.index + startMatch[0].length;
+              let depth = 1;
+              let pos = openParenPos;
+              while (pos < code.length && depth > 0) {
+                const ch = code[pos];
+                if (ch === '"' || ch === "'" || ch === "`") {
+                  pos++;
+                  while (pos < code.length && code[pos] !== ch) {
+                    if (code[pos] === "\\") pos++;
+                    pos++;
+                  }
+                } else if (ch === "(") {
+                  depth++;
+                } else if (ch === ")") {
+                  depth--;
+                }
+                pos++;
+              }
+              if (depth !== 0) continue;
 
-              const rangeEnd = startMatch.index + endMatch.index + endMatch[0].length;
+              // pos is now after the closing paren. Skip trailing semicolon.
+              let rangeEnd = pos;
+              while (rangeEnd < code.length && /\s/.test(code[rangeEnd])) rangeEnd++;
+              if (code[rangeEnd] === ";") rangeEnd++;
+
+              // Validate: the matched range should contain the expected handlerId
+              const matched = code.slice(startMatch.index, rangeEnd);
+              if (!matched.includes(handlerId)) continue;
+
               const stub = `const ${name} = { __brand: "prerenderHandler", $$id: "${handlerId}" };`;
               code = code.slice(0, startMatch.index) + stub + code.slice(rangeEnd);
 
@@ -964,7 +1005,7 @@ function createRouterDiscoveryPlugin(
             const newSize = Buffer.byteLength(code);
             const savedKB = ((originalSize - newSize) / 1024).toFixed(1);
             console.log(
-              `[rsc-router] Evicted handler code from RSC bundle (${savedKB} KB saved): ${handlerChunkInfo.fileName}`,
+              `[rsc-router] Evicted handler code from RSC bundle (${savedKB} KB saved): ${chunkInfo.fileName}`,
             );
           } catch (replaceErr: any) {
             console.warn(
@@ -1038,7 +1079,7 @@ function generatePrerenderScript(
   routeHashMap: Record<string, string>,
 ): string {
   return `
-import { mkdirSync, writeFileSync, symlinkSync, existsSync, readdirSync, statSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, symlinkSync, existsSync, readdirSync, statSync, lstatSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 
 const projectRoot = ${JSON.stringify(projectRoot)};
@@ -1168,7 +1209,7 @@ try {
   }
 } finally {
   for (const link of symlinks) {
-    try { rmSync(link); } catch {}
+    try { if (lstatSync(link).isSymbolicLink()) rmSync(link); } catch {}
   }
 }
 `.trim();
@@ -1273,67 +1314,32 @@ function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
         return null;
       }
 
+      // Prepend imports at the top of the file. ES imports are hoisted
+      // by the module system, so source position is irrelevant.
+      const prepend: string[] = [];
       let newCode = code;
-      let changed = false;
 
-      // Auto-inject routes-manifest import if not already present.
-      // This ensures the build-time manifest is always loaded at startup,
-      // regardless of whether the user uses virtual entries or a custom worker entry.
-      if (!newCode.includes("virtual:rsc-router/routes-manifest")) {
-        const lastImportIndex = newCode.lastIndexOf("import ");
-        if (lastImportIndex !== -1) {
-          const afterLastImport = newCode.indexOf("\n", lastImportIndex);
-          if (afterLastImport !== -1) {
-            let insertIndex = afterLastImport + 1;
-            while (
-              insertIndex < newCode.length &&
-              (newCode.slice(insertIndex).match(/^\s*(from|import)\s/) ||
-                newCode[insertIndex] === "\n")
-            ) {
-              const nextNewline = newCode.indexOf("\n", insertIndex);
-              if (nextNewline === -1) break;
-              insertIndex = nextNewline + 1;
-            }
-            const manifestImport = `import "virtual:rsc-router/routes-manifest";\n`;
-            newCode = newCode.slice(0, insertIndex) + manifestImport + newCode.slice(insertIndex);
-            changed = true;
-          }
-        }
+      if (!code.includes("virtual:rsc-router/routes-manifest")) {
+        prepend.push(`import "virtual:rsc-router/routes-manifest";`);
       }
 
       // Auto-inject VERSION if file uses createRSCHandler without version
-      if (
-        newCode.includes("createRSCHandler") &&
-        !newCode.includes("@rangojs/router:version") &&
-        newCode.match(/createRSCHandler\s*\(\s*\{/)
-      ) {
-        const lastImportIndex = newCode.lastIndexOf("import ");
-        if (lastImportIndex !== -1) {
-          const afterLastImport = newCode.indexOf("\n", lastImportIndex);
-          if (afterLastImport !== -1) {
-            let insertIndex = afterLastImport + 1;
-            while (
-              insertIndex < newCode.length &&
-              (newCode.slice(insertIndex).match(/^\s*(from|import)\s/) ||
-                newCode[insertIndex] === "\n")
-            ) {
-              const nextNewline = newCode.indexOf("\n", insertIndex);
-              if (nextNewline === -1) break;
-              insertIndex = nextNewline + 1;
-            }
-            const versionImport = `import { VERSION } from "@rangojs/router:version";\n`;
-            newCode = newCode.slice(0, insertIndex) + versionImport + newCode.slice(insertIndex);
-          }
-        }
+      const needsVersion =
+        code.includes("createRSCHandler") &&
+        !code.includes("@rangojs/router:version") &&
+        /createRSCHandler\s*\(\s*\{/.test(code);
 
+      if (needsVersion) {
+        prepend.push(`import { VERSION } from "@rangojs/router:version";`);
         newCode = newCode.replace(
           /createRSCHandler\s*\(\s*\{/,
           "createRSCHandler({\n  version: VERSION,"
         );
-        changed = true;
       }
 
-      if (!changed) return null;
+      if (prepend.length === 0 && newCode === code) return null;
+
+      newCode = prepend.join("\n") + (prepend.length > 0 ? "\n" : "") + newCode;
 
       return {
         code: newCode,
@@ -1437,9 +1443,15 @@ export async function rango(
       ssr: VIRTUAL_IDS.ssr,
     };
 
+    const cfApi: CloudflareIntegrationApi = { handlerChunkInfo: null };
+    let resolvedPrerenderModules: Map<string, string[]> | undefined;
+
     plugins.push({
       name: "@rangojs/router:cloudflare-integration",
       enforce: "pre",
+
+      api: cfApi,
+
       config() {
         // Configure environments for cloudflare deployment
         return {
@@ -1497,7 +1509,7 @@ export async function rango(
                 rollupOptions: {
                   output: {
                     manualChunks(id) {
-                      if (prerenderHandlerModules.has(id)) {
+                      if (resolvedPrerenderModules?.has(id)) {
                         return "__prerender-handlers";
                       }
                     },
@@ -1520,6 +1532,13 @@ export async function rango(
           const mode = config.command === "serve" ? (process.argv.includes("preview") ? "preview" : "dev") : "build";
           printBanner(mode, "cloudflare", _rangoVersion);
         }
+        // Resolve prerenderHandlerModules from the prerender handler plugin's API.
+        // This avoids module-level shared state between plugins.
+        const prerenderPlugin = config.plugins.find(
+          (p) => p.name === "@rangojs/router:expose-prerender-handler-id",
+        );
+        resolvedPrerenderModules =
+          (prerenderPlugin?.api as ExposePrerenderHandlerIdApi | undefined)?.prerenderHandlerModules;
       },
 
       // Record handler chunk metadata during RSC build for post-prerender replacement.
@@ -1527,14 +1546,14 @@ export async function rango(
       // variable names intact. We search for original names from prerenderHandlerModules.
       generateBundle(_options, bundle) {
         if (this.environment?.name !== "rsc") return;
+        if (!resolvedPrerenderModules?.size) return;
 
         for (const [fileName, chunk] of Object.entries(bundle)) {
           if (chunk.type !== "chunk") continue;
           if (!fileName.includes("__prerender-handlers")) continue;
 
           const handlers: Array<{ name: string; handlerId: string }> = [];
-          // Use original handler names (internal variable names are NOT minified)
-          for (const [, handlerNames] of prerenderHandlerModules) {
+          for (const [, handlerNames] of resolvedPrerenderModules) {
             for (const name of handlerNames) {
               const idPattern = new RegExp(
                 `\\b${name}\\.\\$\\$id\\s*=\\s*"([^"]+)"`,
@@ -1547,7 +1566,7 @@ export async function rango(
           }
 
           if (handlers.length > 0) {
-            handlerChunkInfo = { fileName, exports: handlers };
+            cfApi.handlerChunkInfo = { fileName, exports: handlers };
           }
           break;
         }
