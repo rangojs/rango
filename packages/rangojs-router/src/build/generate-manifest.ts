@@ -43,6 +43,10 @@ export interface GeneratedManifest {
   routeManifest: Record<string, string>;
   /** Route name → trailing slash mode for trie redirect handling */
   routeTrailingSlash?: Record<string, string>;
+  /** Route names using createPrerenderHandler (for dev-mode Node.js delegation) */
+  prerenderRoutes?: string[];
+  /** Route names with passthrough: true (handler kept in bundle for live fallback) */
+  passthroughRoutes?: string[];
   /** Generation timestamp */
   generatedAt: string;
 }
@@ -60,6 +64,9 @@ function buildPrefixTreeNode(
   mountIndex: number,
   visited: Set<unknown> = new Set(),
   routeTrailingSlash?: Record<string, string>,
+  prerenderRoutes?: string[],
+  prerenderDefs?: Record<string, any>,
+  passthroughRoutes?: string[],
 ): PrefixTreeNode {
   if (visited.has(patterns)) {
     console.warn(
@@ -124,6 +131,21 @@ function buildPrefixTreeNode(
   // Capture ancestry from manifest entries' parent chains
   captureAncestry(manifest, routeAncestry);
 
+  // Collect prerender route names and handler definitions from manifest entries
+  if (prerenderRoutes) {
+    for (const [name, entry] of manifest) {
+      if (entry.type === "route" && entry.isPrerender) {
+        prerenderRoutes.push(name);
+        if (prerenderDefs && entry.prerenderDef) {
+          prerenderDefs[name] = entry.prerenderDef;
+        }
+        if (passthroughRoutes && entry.prerenderDef?.options?.passthrough === true) {
+          passthroughRoutes.push(name);
+        }
+      }
+    }
+  }
+
   // Build children from tracked nested includes.
   // Multiple includes can share the same fullPrefix (e.g., include("/", patternsA),
   // include("/", patternsB)). Merge their routes instead of overwriting.
@@ -139,6 +161,9 @@ function buildPrefixTreeNode(
       mountIndex,
       visited,
       routeTrailingSlash,
+      prerenderRoutes,
+      prerenderDefs,
+      passthroughRoutes,
     );
 
     const existing = children[include.fullPrefix];
@@ -202,7 +227,7 @@ function captureAncestry(
 export function generateManifest<TEnv>(
   urlpatterns: UrlPatterns<TEnv, any>,
   mountIndex: number = 0,
-): GeneratedManifest & { _routeAncestry: Record<string, string[]> } {
+): GeneratedManifest & { _routeAncestry: Record<string, string[]>; _prerenderDefs?: Record<string, any> } {
   const routeManifest: Record<string, string> = {};
   const routeAncestry: Record<string, string[]> = {};
   const prefixTree: Record<string, PrefixTreeNode> = {};
@@ -247,6 +272,22 @@ export function generateManifest<TEnv>(
   // Capture ancestry from manifest entries' parent chains
   captureAncestry(manifest, routeAncestry);
 
+  // Collect prerender route names and handler definitions across all levels
+  const prerenderRoutes: string[] = [];
+  const prerenderDefs: Record<string, any> = {};
+  const passthroughRoutes: string[] = [];
+  for (const [name, entry] of manifest) {
+    if (entry.type === "route" && entry.isPrerender) {
+      prerenderRoutes.push(name);
+      if (entry.prerenderDef) {
+        prerenderDefs[name] = entry.prerenderDef;
+      }
+      if (entry.prerenderDef?.options?.passthrough === true) {
+        passthroughRoutes.push(name);
+      }
+    }
+  }
+
   // Build prefix tree from tracked includes (shared visited set for cycle detection).
   // Multiple includes can share the same fullPrefix (e.g., include("/", patternsA),
   // include("/", patternsB)). Merge their routes instead of overwriting.
@@ -261,6 +302,9 @@ export function generateManifest<TEnv>(
       mountIndex,
       visited,
       routeTrailingSlash,
+      prerenderRoutes,
+      prerenderDefs,
+      passthroughRoutes,
     );
 
     const existing = prefixTree[include.fullPrefix];
@@ -276,9 +320,13 @@ export function generateManifest<TEnv>(
     prefixTree,
     routeManifest,
     routeTrailingSlash: Object.keys(routeTrailingSlash).length > 0 ? routeTrailingSlash : undefined,
+    prerenderRoutes: prerenderRoutes.length > 0 ? prerenderRoutes : undefined,
+    passthroughRoutes: passthroughRoutes.length > 0 ? passthroughRoutes : undefined,
     generatedAt: new Date().toISOString(),
     // Internal: routeAncestry is used only for trie building, not exported
     _routeAncestry: routeAncestry,
+    // Internal: prerender handler definitions for build-time getParams() access
+    _prerenderDefs: Object.keys(prerenderDefs).length > 0 ? prerenderDefs : undefined,
   };
 }
 

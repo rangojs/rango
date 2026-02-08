@@ -249,7 +249,7 @@ export async function createMatchContextForPartial<TEnv>(
     return null;
   }
 
-  if (prevMatch && prevMatch.entry !== matched.entry) {
+  if (prevMatch && prevMatch.entry !== matched.entry && !matched.pr) {
     console.log(
       `[Router.matchPartial] Route group changed: ${prevMatch.routeKey} → ${matched.routeKey}, falling back to full render`,
     );

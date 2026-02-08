@@ -23,6 +23,10 @@ export interface TrieLeaf {
   cv?: Record<string, string[]>;
   /** Trailing slash mode */
   ts?: string;
+  /** Route has pre-rendered data available */
+  pr?: true;
+  /** Passthrough: handler kept in bundle for live fallback on unknown params */
+  pt?: true;
 }
 
 export interface TrieNode {
@@ -49,6 +53,8 @@ export function buildRouteTrie(
   routeAncestry: Record<string, string[]>,
   routeToStaticPrefix: Record<string, string>,
   routeTrailingSlash?: Record<string, string>,
+  prerenderRouteNames?: Set<string>,
+  passthroughRouteNames?: Set<string>,
 ): TrieNode {
   const root: TrieNode = {};
 
@@ -67,6 +73,8 @@ export function buildRouteTrie(
       sp: staticPrefix,
       a: ancestry,
       ...(trailingSlash ? { ts: trailingSlash } : {}),
+      ...(prerenderRouteNames?.has(routeName) ? { pr: true } : {}),
+      ...(passthroughRouteNames?.has(routeName) ? { pt: true } : {}),
     });
   }
 

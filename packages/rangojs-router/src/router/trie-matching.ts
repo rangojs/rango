@@ -20,6 +20,10 @@ export interface TrieMatchResult {
   ancestry: string[];
   /** Redirect target if trailing slash requires it */
   redirectTo?: string;
+  /** Route has pre-rendered data available */
+  pr?: true;
+  /** Passthrough: handler kept for live fallback on unknown params */
+  pt?: true;
 }
 
 /**
@@ -153,5 +157,7 @@ function validateAndBuild(
     optionalParams: leaf.op,
     ancestry: leaf.a,
     ...(redirectTo ? { redirectTo } : {}),
+    ...(leaf.pr ? { pr: true } : {}),
+    ...(leaf.pt ? { pt: true } : {}),
   };
 }

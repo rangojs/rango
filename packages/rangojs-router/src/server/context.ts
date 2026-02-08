@@ -155,6 +155,10 @@ export type EntryData =
       loading?: ReactNode | false;
       /** URL pattern for this route (used by path() in urls()) */
       pattern?: string;
+      /** Set when handler is a createPrerenderHandler definition */
+      isPrerender?: true;
+      /** Original PrerenderHandlerDefinition (for build-time getParams access) */
+      prerenderDef?: { getParams?: () => Promise<any[]> | any[]; options?: { passthrough?: boolean } };
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments)

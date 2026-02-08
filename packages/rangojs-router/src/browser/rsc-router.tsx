@@ -89,6 +89,7 @@ export interface InitBrowserAppOptions {
    * Only used when themeConfig is provided.
    */
   initialTheme?: Theme;
+
 }
 
 /**

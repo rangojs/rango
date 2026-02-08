@@ -192,9 +192,20 @@ export function createRSCHandler<
           Object.keys(generated._routeAncestry).length > 0
         ) {
           const { buildRouteTrie } = await import("../build/route-trie.js");
+          // Map each route to its include() staticPrefix so the trie
+          // returns the correct sp for lazy entry lookup in findMatch.
           const routeToStaticPrefix: Record<string, string> = {};
           for (const name of Object.keys(generated.routeManifest)) {
             routeToStaticPrefix[name] = "";
+          }
+          // Override with prefix from include() entries so the trie
+          // returns the correct sp for lazy entry lookup in findMatch.
+          if (generated.prefixTree) {
+            for (const [prefix, node] of Object.entries(generated.prefixTree)) {
+              for (const route of (node as { routes: string[] }).routes) {
+                routeToStaticPrefix[route] = prefix;
+              }
+            }
           }
           const trie = buildRouteTrie(
             generated.routeManifest,
@@ -1089,30 +1100,53 @@ export function createRSCHandler<
       // Caching is now handled in router.match() via cache provider in request context
       // match.segments already contains cached or fresh segments as appropriate
 
-      const renderStart = performance.now();
-      const root = renderSegments(match.segments, {
-        rootLayout: router.rootLayout,
-      });
-      const renderDuration = performance.now() - renderStart;
-      serverTiming = match.serverTiming
-        ? `${match.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
-        : `rendering;dur=${renderDuration.toFixed(2)}`;
-
-      payload = {
-        root,
-        metadata: {
-          pathname: url.pathname,
-          segments: match.segments,
-          matched: match.matched,
-          diff: match.diff,
-          isPartial: false,
+      if (url.searchParams.has("__prerender_collect")) {
+        // Build-time prerender collection: serialize segments and handle data
+        // to JSON for storage as build artifacts. At runtime the worker
+        // deserializes these and feeds them through the normal segment pipeline.
+        const nonLoaderSegments = match.segments.filter((s) => s.type !== "loader");
+        await handleStore.settled;
+        const { serializeSegments } = await import("../cache/cache-scope.js");
+        const serializedSegments = await serializeSegments(nonLoaderSegments);
+        const handles: Record<string, Record<string, unknown[]>> = {};
+        for (const seg of nonLoaderSegments) {
+          handles[seg.id] = handleStore.getDataForSegment(seg.id);
+        }
+        return new Response(
+          JSON.stringify({
+            segments: serializedSegments,
+            handles,
+            routeName: match.routeName,
+            params: match.params,
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      } else {
+        const renderStart = performance.now();
+        const root = renderSegments(match.segments, {
           rootLayout: router.rootLayout,
-          handles: handleStore.stream(),
-          version,
-          themeConfig: router.themeConfig,
-          initialTheme: reqCtx.theme,
-        },
-      };
+        });
+        const renderDuration = performance.now() - renderStart;
+        serverTiming = match.serverTiming
+          ? `${match.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
+          : `rendering;dur=${renderDuration.toFixed(2)}`;
+
+        payload = {
+          root,
+          metadata: {
+            pathname: url.pathname,
+            segments: match.segments,
+            matched: match.matched,
+            diff: match.diff,
+            isPartial: false,
+            rootLayout: router.rootLayout,
+            handles: handleStore.stream(),
+            version,
+            themeConfig: router.themeConfig,
+            initialTheme: reqCtx.theme,
+          },
+        };
+      }
     }
 
     // Serialize to RSC stream

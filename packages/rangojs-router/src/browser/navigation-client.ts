@@ -32,6 +32,7 @@ import { NetworkError, isNetworkError } from "../errors.js";
 export function createNavigationClient(
   deps: Pick<RscBrowserDependencies, "createFromFetch">,
 ): NavigationClient {
+
   return {
     /**
      * Fetch a partial RSC payload for navigation

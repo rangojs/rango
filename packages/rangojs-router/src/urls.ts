@@ -75,6 +75,7 @@ import {
   type InterceptWhenFn,
 } from "./server/context";
 import { invariant } from "./errors";
+import { isPrerenderHandler, type PrerenderHandlerDefinition } from "./prerender.js";
 
 // ============================================================================
 // Types
@@ -274,7 +275,7 @@ export type PathHelpers<TEnv> = {
    */
   path: <const TPattern extends string, const TName extends string = UnnamedRoute>(
     pattern: TPattern,
-    handler: ReactNode | Handler<ExtractParams<TPattern>, TEnv>,
+    handler: ReactNode | Handler<ExtractParams<TPattern>, TEnv> | PrerenderHandlerDefinition<ExtractParams<TPattern>>,
     optionsOrUse?: PathOptions<TName> | (() => RouteUseItem[]),
     use?: () => RouteUseItem[]
   ) => TypedRouteItem<TName, TPattern>;
@@ -500,11 +501,13 @@ function createPathHelper<TEnv>(): PathHelpers<TEnv>["path"] {
       return { type: "route" } as RouteItem;
     }
 
-    // Ensure handler is always a function (wrap ReactNode if needed)
+    // Ensure handler is always a function (wrap ReactNode or extract from prerender def)
     const wrappedHandler: Handler<any, TEnv> =
       typeof handler === "function"
         ? (handler as Handler<any, TEnv>)
-        : () => handler;
+        : isPrerenderHandler(handler)
+          ? (handler.handler as Handler<any, TEnv>)
+          : () => handler;
 
     const entry = {
       id: namespace,
@@ -524,6 +527,10 @@ function createPathHelper<TEnv>(): PathHelpers<TEnv>["path"] {
       intercept: [],
       loader: [],
       ...(urlPrefix ? { mountPath: urlPrefix } : {}),
+      ...(isPrerenderHandler(handler) ? {
+        isPrerender: true as const,
+        prerenderDef: handler as PrerenderHandlerDefinition,
+      } : {}),
     };
 
     // Check for duplicate route names (TypeScript should catch this, but runtime check too)
