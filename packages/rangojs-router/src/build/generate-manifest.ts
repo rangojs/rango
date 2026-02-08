@@ -45,6 +45,8 @@ export interface GeneratedManifest {
   routeTrailingSlash?: Record<string, string>;
   /** Route names using createPrerenderHandler (for dev-mode Node.js delegation) */
   prerenderRoutes?: string[];
+  /** Route names with passthrough: true (handler kept in bundle for live fallback) */
+  passthroughRoutes?: string[];
   /** Generation timestamp */
   generatedAt: string;
 }
@@ -64,6 +66,7 @@ function buildPrefixTreeNode(
   routeTrailingSlash?: Record<string, string>,
   prerenderRoutes?: string[],
   prerenderDefs?: Record<string, any>,
+  passthroughRoutes?: string[],
 ): PrefixTreeNode {
   if (visited.has(patterns)) {
     console.warn(
@@ -136,6 +139,9 @@ function buildPrefixTreeNode(
         if (prerenderDefs && entry.prerenderDef) {
           prerenderDefs[name] = entry.prerenderDef;
         }
+        if (passthroughRoutes && entry.prerenderDef?.options?.passthrough === true) {
+          passthroughRoutes.push(name);
+        }
       }
     }
   }
@@ -157,6 +163,7 @@ function buildPrefixTreeNode(
       routeTrailingSlash,
       prerenderRoutes,
       prerenderDefs,
+      passthroughRoutes,
     );
 
     const existing = children[include.fullPrefix];
@@ -268,11 +275,15 @@ export function generateManifest<TEnv>(
   // Collect prerender route names and handler definitions across all levels
   const prerenderRoutes: string[] = [];
   const prerenderDefs: Record<string, any> = {};
+  const passthroughRoutes: string[] = [];
   for (const [name, entry] of manifest) {
     if (entry.type === "route" && entry.isPrerender) {
       prerenderRoutes.push(name);
       if (entry.prerenderDef) {
         prerenderDefs[name] = entry.prerenderDef;
+      }
+      if (entry.prerenderDef?.options?.passthrough === true) {
+        passthroughRoutes.push(name);
       }
     }
   }
@@ -293,6 +304,7 @@ export function generateManifest<TEnv>(
       routeTrailingSlash,
       prerenderRoutes,
       prerenderDefs,
+      passthroughRoutes,
     );
 
     const existing = prefixTree[include.fullPrefix];
@@ -309,6 +321,7 @@ export function generateManifest<TEnv>(
     routeManifest,
     routeTrailingSlash: Object.keys(routeTrailingSlash).length > 0 ? routeTrailingSlash : undefined,
     prerenderRoutes: prerenderRoutes.length > 0 ? prerenderRoutes : undefined,
+    passthroughRoutes: passthroughRoutes.length > 0 ? passthroughRoutes : undefined,
     generatedAt: new Date().toISOString(),
     // Internal: routeAncestry is used only for trie building, not exported
     _routeAncestry: routeAncestry,

@@ -28,6 +28,7 @@ import { ThemePage } from "./pages/theme.js";
 import { SlowPage1, SlowPage2, FastPage } from "./pages/slow.js";
 import { InlineIndexPage, InlineDocsPage, InlinePricingPage } from "./pages/inline.js";
 import { articlesPatterns } from "./pages/articles.js";
+import { guidesPatterns } from "./pages/guides.js";
 
 /**
  * Main URL patterns - Django-style routing API
@@ -97,5 +98,8 @@ export const urlpatterns = urls(({ path, layout, parallel, loader, loading, cach
 
     // Pre-rendered articles (static content, build-time rendering)
     include("/articles", articlesPatterns, { name: "articles" }),
+
+    // Pre-rendered guides with passthrough (known slugs pre-rendered, unknown slugs live)
+    include("/guides", guidesPatterns, { name: "guides" }),
   ]),
 ]);

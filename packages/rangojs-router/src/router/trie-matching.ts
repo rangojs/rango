@@ -22,6 +22,8 @@ export interface TrieMatchResult {
   redirectTo?: string;
   /** Route has pre-rendered data available */
   pr?: true;
+  /** Passthrough: handler kept for live fallback on unknown params */
+  pt?: true;
 }
 
 /**
@@ -156,5 +158,6 @@ function validateAndBuild(
     ancestry: leaf.a,
     ...(redirectTo ? { redirectTo } : {}),
     ...(leaf.pr ? { pr: true } : {}),
+    ...(leaf.pt ? { pt: true } : {}),
   };
 }

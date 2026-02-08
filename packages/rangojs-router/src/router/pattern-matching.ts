@@ -218,6 +218,8 @@ export interface RouteMatchResult<TEnv = any> {
   ancestry?: string[];
   /** Route has pre-rendered data available (from trie) */
   pr?: true;
+  /** Passthrough: handler kept for live fallback on unknown params (from trie) */
+  pt?: true;
 }
 
 /**

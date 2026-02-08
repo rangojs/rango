@@ -22,6 +22,9 @@ export function NavLayout() {
         <Link to={href("/articles")} data-testid="nav-articles">
           Articles
         </Link>
+        <Link to={href("/guides/routing")} data-testid="nav-guides">
+          Guides
+        </Link>
         <Link to={href("/theme")} data-testid="nav-theme">
           Theme
         </Link>

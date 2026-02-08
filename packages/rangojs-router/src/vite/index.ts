@@ -29,7 +29,7 @@ import {
 interface CloudflareIntegrationApi {
   handlerChunkInfo: {
     fileName: string;
-    exports: Array<{ name: string; handlerId: string }>;
+    exports: Array<{ name: string; handlerId: string; passthrough: boolean }>;
   } | null;
 }
 
@@ -600,10 +600,16 @@ function createRouterDiscoveryPlugin(
 
         // Collect prerender route names from all manifests
         const prerenderRouteNames = new Set<string>();
+        const passthroughRouteNames = new Set<string>();
         for (const { manifest } of allManifests) {
           if (manifest.prerenderRoutes) {
             for (const name of manifest.prerenderRoutes) {
               prerenderRouteNames.add(name);
+            }
+          }
+          if (manifest.passthroughRoutes) {
+            for (const name of manifest.passthroughRoutes) {
+              passthroughRouteNames.add(name);
             }
           }
         }
@@ -614,6 +620,7 @@ function createRouterDiscoveryPlugin(
           routeToStaticPrefix,
           Object.keys(mergedRouteTrailingSlash).length > 0 ? mergedRouteTrailingSlash : undefined,
           prerenderRouteNames.size > 0 ? prerenderRouteNames : undefined,
+          passthroughRouteNames.size > 0 ? passthroughRouteNames : undefined,
         );
         // Trie built successfully
       }
@@ -950,7 +957,9 @@ function createRouterDiscoveryPlugin(
             let code = readFileSync(chunkPath, "utf-8");
             const originalSize = Buffer.byteLength(code);
 
-            for (const { name, handlerId } of chunkInfo.exports) {
+            for (const { name, handlerId, passthrough } of chunkInfo.exports) {
+              // Passthrough handlers stay in the bundle for live fallback
+              if (passthrough) continue;
               // Find start: "const Name = createPrerenderHandler"
               // \s* handles both minified and readable output
               const callStartRe = new RegExp(
@@ -1552,7 +1561,7 @@ export async function rango(
           if (chunk.type !== "chunk") continue;
           if (!fileName.includes("__prerender-handlers")) continue;
 
-          const handlers: Array<{ name: string; handlerId: string }> = [];
+          const handlers: Array<{ name: string; handlerId: string; passthrough: boolean }> = [];
           for (const [, handlerNames] of resolvedPrerenderModules) {
             for (const name of handlerNames) {
               const idPattern = new RegExp(
@@ -1560,7 +1569,39 @@ export async function rango(
               );
               const match = chunk.code.match(idPattern);
               if (match) {
-                handlers.push({ name, handlerId: match[1] });
+                // Detect passthrough option in the createPrerenderHandler call.
+                // Find the call range for this handler and check for passthrough within it.
+                const callStartRe = new RegExp(
+                  `const\\s+${name}\\s*=\\s*createPrerenderHandler\\s*(?:<[^>]*>)?\\s*\\(`,
+                );
+                const callStart = callStartRe.exec(chunk.code);
+                let isPassthrough = false;
+                if (callStart) {
+                  // Use paren-depth counting to find the call range
+                  const openPos = callStart.index + callStart[0].length;
+                  let depth = 1;
+                  let p = openPos;
+                  while (p < chunk.code.length && depth > 0) {
+                    const ch = chunk.code[p];
+                    if (ch === '"' || ch === "'" || ch === "`") {
+                      p++;
+                      while (p < chunk.code.length && chunk.code[p] !== ch) {
+                        if (chunk.code[p] === "\\") p++;
+                        p++;
+                      }
+                    } else if (ch === "(") {
+                      depth++;
+                    } else if (ch === ")") {
+                      depth--;
+                    }
+                    p++;
+                  }
+                  if (depth === 0) {
+                    const callBody = chunk.code.slice(callStart.index, p);
+                    isPassthrough = /passthrough\s*:\s*(!0|true)/.test(callBody);
+                  }
+                }
+                handlers.push({ name, handlerId: match[1], passthrough: isPassthrough });
               }
             }
           }

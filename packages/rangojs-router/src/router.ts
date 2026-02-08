@@ -1548,6 +1548,7 @@ export function createRouter<TEnv = any>(
             redirectTo: trieResult.redirectTo,
             ancestry: trieResult.ancestry,
             ...(trieResult.pr ? { pr: true } : {}),
+            ...(trieResult.pt ? { pt: true } : {}),
           };
           return lastFindMatchResult;
         }

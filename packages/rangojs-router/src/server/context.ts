@@ -158,7 +158,7 @@ export type EntryData =
       /** Set when handler is a createPrerenderHandler definition */
       isPrerender?: true;
       /** Original PrerenderHandlerDefinition (for build-time getParams access) */
-      prerenderDef?: { getParams?: () => Promise<any[]> | any[] };
+      prerenderDef?: { getParams?: () => Promise<any[]> | any[]; options?: { passthrough?: boolean } };
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments)
