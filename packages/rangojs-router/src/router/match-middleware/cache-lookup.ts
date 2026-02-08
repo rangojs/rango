@@ -180,13 +180,6 @@ export function withCacheLookup<TEnv>(
           state.cachedSegments = segments;
           state.cachedMatchedIds = segments.map((s) => s.id);
 
-          const segmentTypes = segments.map((s) =>
-            s.type === "parallel" ? s.slot : s.type,
-          );
-          console.log(
-            `[Prerender] HIT: ${ctx.matched.routeKey} (${segmentTypes.join(", ")})`,
-          );
-
           // Yield prerendered segments (same flow as cache hit)
           // For partial navigation, nullify components the client already has
           // so parent layouts stay live (client keeps its existing versions).

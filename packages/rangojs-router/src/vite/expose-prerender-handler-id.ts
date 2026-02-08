@@ -31,17 +31,91 @@ function hasCreatePrerenderHandlerImport(code: string): boolean {
 }
 
 /**
+ * Skip past a string literal, template literal, or comment starting at pos.
+ * Returns the index after the closing delimiter, or pos if not at a
+ * string/comment start. Handles escape sequences and nested ${} in templates.
+ */
+function skipStringOrComment(code: string, pos: number): number {
+  const ch = code[pos];
+
+  if (ch === '"' || ch === "'") {
+    for (let j = pos + 1; j < code.length; j++) {
+      if (code[j] === "\\") { j++; continue; }
+      if (code[j] === ch) return j + 1;
+    }
+    return code.length;
+  }
+
+  if (ch === "`") {
+    let j = pos + 1;
+    while (j < code.length) {
+      if (code[j] === "\\") { j += 2; continue; }
+      if (code[j] === "`") return j + 1;
+      if (code[j] === "$" && j + 1 < code.length && code[j + 1] === "{") {
+        j += 2;
+        let braceDepth = 1;
+        while (j < code.length && braceDepth > 0) {
+          const inner = skipStringOrComment(code, j);
+          if (inner > j) { j = inner; continue; }
+          if (code[j] === "{") braceDepth++;
+          else if (code[j] === "}") braceDepth--;
+          if (braceDepth > 0) j++;
+        }
+        if (braceDepth === 0) j++;
+        continue;
+      }
+      j++;
+    }
+    return j;
+  }
+
+  if (ch === "/" && pos + 1 < code.length) {
+    if (code[pos + 1] === "/") {
+      const eol = code.indexOf("\n", pos + 2);
+      return eol === -1 ? code.length : eol + 1;
+    }
+    if (code[pos + 1] === "*") {
+      const end = code.indexOf("*/", pos + 2);
+      return end === -1 ? code.length : end + 2;
+    }
+  }
+
+  return pos;
+}
+
+/**
+ * Find the matching closing paren starting after an already-opened paren.
+ * Skips strings, template literals, and comments so parens inside them
+ * don't affect depth tracking. Returns the index after the closing paren.
+ */
+function findMatchingParen(code: string, startPos: number): number {
+  let depth = 1;
+  let i = startPos;
+  while (i < code.length && depth > 0) {
+    const skipped = skipStringOrComment(code, i);
+    if (skipped > i) { i = skipped; continue; }
+    if (code[i] === "(") depth++;
+    if (code[i] === ")") depth--;
+    i++;
+  }
+  return i;
+}
+
+/**
  * Count the number of top-level arguments in a function call.
- * Skips nested parens, brackets, braces, and template literals.
+ * Skips nested parens, brackets, braces, strings, and comments.
  */
 function countArgs(code: string, startPos: number, endPos: number): number {
   let depth = 0;
   let argCount = 0;
   let hasContent = false;
+  let i = startPos;
 
-  for (let i = startPos; i < endPos; i++) {
+  while (i < endPos) {
+    const skipped = skipStringOrComment(code, i);
+    if (skipped > i) { hasContent = true; i = skipped; continue; }
+
     const char = code[i];
-
     if (char === "(" || char === "[" || char === "{") {
       depth++;
       hasContent = true;
@@ -52,6 +126,7 @@ function countArgs(code: string, startPos: number, endPos: number): number {
     } else if (!/\s/.test(char)) {
       hasContent = true;
     }
+    i++;
   }
 
   return hasContent ? argCount + 1 : 0;
@@ -93,20 +168,13 @@ function transformPrerenderHandlerExports(
     const exportName = match[1];
     const matchEnd = match.index + match[0].length;
 
-    // Find the matching closing paren
-    let parenDepth = 1;
-    let i = matchEnd;
-    while (i < code.length && parenDepth > 0) {
-      if (code[i] === "(") parenDepth++;
-      if (code[i] === ")") parenDepth--;
-      i++;
-    }
-
-    const closeParenPos = i - 1;
+    // Find the matching closing paren (string/comment aware)
+    const afterClose = findMatchingParen(code, matchEnd);
+    const closeParenPos = afterClose - 1;
     const argCount = countArgs(code, matchEnd, closeParenPos);
 
     // Find statement end (after ; or whitespace)
-    let statementEnd = i;
+    let statementEnd = afterClose;
     while (statementEnd < code.length && /\s/.test(code[statementEnd])) {
       statementEnd++;
     }
@@ -172,7 +240,7 @@ function generateWholeFileHandlerStubs(
   code: string,
   filePath: string,
   isBuild: boolean,
-): { code: string; map?: undefined } | null {
+): { code: string; map: null } | null {
   const handlerPattern =
     /export\s+const\s+(\w+)\s*=\s*createPrerenderHandler\s*(?:<[^>]*>)?\s*\(/g;
   const handlers: string[] = [];
@@ -184,7 +252,14 @@ function generateWholeFileHandlerStubs(
 
   if (handlers.length === 0) return null;
 
-  // Check that every non-type export is a createPrerenderHandler call.
+  // Bail out if the file has re-exports or destructured exports that
+  // the declaration pattern below wouldn't catch. Replacing the whole
+  // file would silently drop these exports.
+  if (/export\s*\{/.test(code) || /export\s*\*/.test(code)) {
+    return null;
+  }
+
+  // Check that every non-type export declaration is a createPrerenderHandler call.
   const allExports =
     /export\s+(const|let|var|function|class|default)\s+(\w+)/g;
   let exportMatch: RegExpExecArray | null;
@@ -204,7 +279,7 @@ function generateWholeFileHandlerStubs(
     return `export const ${name} = { __brand: "prerenderHandler", $$id: "${handlerId}" };`;
   });
 
-  return { code: stubs.join("\n") + "\n" };
+  return { code: stubs.join("\n") + "\n", map: null };
 }
 
 /**
@@ -234,16 +309,9 @@ function generatePrerenderHandlerStubs(
     // callStart points to 'c' in 'createPrerenderHandler'
     const callStart = match.index + match[0].length - match[2].length;
 
-    // Find the matching closing paren (after the open paren at end of match)
+    // Find the matching closing paren (string/comment aware)
     const openParenPos = match.index + match[0].length;
-    let parenDepth = 1;
-    let i = openParenPos;
-    while (i < code.length && parenDepth > 0) {
-      if (code[i] === "(") parenDepth++;
-      if (code[i] === ")") parenDepth--;
-      i++;
-    }
-    const afterCloseParen = i;
+    const afterCloseParen = findMatchingParen(code, openParenPos);
 
     const handlerId = isBuild
       ? hashPrerenderHandlerId(filePath, exportName)
