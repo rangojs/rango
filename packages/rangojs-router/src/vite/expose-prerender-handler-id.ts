@@ -161,13 +161,71 @@ function transformPrerenderHandlerExports(
 }
 
 /**
+ * Replace createPrerenderHandler(...) call expressions with lightweight stub objects
+ * in non-RSC environments. Other exports, imports, and module-level code remain
+ * untouched — only the call expression is replaced.
+ *
+ * This prevents handler rendering code and build-only dependencies from shipping
+ * to client/SSR bundles where handlers never execute.
+ */
+function generatePrerenderHandlerStubs(
+  code: string,
+  filePath: string,
+  sourceId?: string,
+  isBuild: boolean = false,
+): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
+  // Match: export const X = createPrerenderHandler<...>(
+  const pattern =
+    /export\s+const\s+(\w+)\s*=\s*(createPrerenderHandler\s*(?:<[^>]*>)?\s*\()/g;
+
+  const s = new MagicString(code);
+  let hasChanges = false;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(code)) !== null) {
+    const exportName = match[1];
+    // callStart points to 'c' in 'createPrerenderHandler'
+    const callStart = match.index + match[0].length - match[2].length;
+
+    // Find the matching closing paren (after the open paren at end of match)
+    const openParenPos = match.index + match[0].length;
+    let parenDepth = 1;
+    let i = openParenPos;
+    while (i < code.length && parenDepth > 0) {
+      if (code[i] === "(") parenDepth++;
+      if (code[i] === ")") parenDepth--;
+      i++;
+    }
+    const afterCloseParen = i;
+
+    const handlerId = isBuild
+      ? hashPrerenderHandlerId(filePath, exportName)
+      : `${filePath}#${exportName}`;
+
+    // Replace createPrerenderHandler<...>(...) with stub object
+    s.overwrite(
+      callStart,
+      afterCloseParen,
+      `{ __brand: "prerenderHandler", $$id: "${handlerId}" }`,
+    );
+    hasChanges = true;
+  }
+
+  if (!hasChanges) return null;
+
+  return {
+    code: s.toString(),
+    map: s.generateMap({ source: sourceId, includeContent: true }),
+  };
+}
+
+/**
  * Vite plugin that exposes $$id on createPrerenderHandler calls.
  *
  * When users create prerender handlers with createPrerenderHandler(), this plugin:
- * 1. Injects a $$id as the last parameter (used as the handler identifier)
- * 2. Sets $$id property on the exported constant for external access
- *
- * Phase 1: dev mode only — no stub generation or build scanning.
+ * - RSC environment: Injects $$id into the call and sets a $$id property on the export
+ * - Non-RSC environments (client/SSR): Replaces createPrerenderHandler(...) call
+ *   expressions with lightweight { __brand, $$id } stubs, keeping other exports intact
  *
  * Requirements:
  * - Must use direct import: import { createPrerenderHandler } from "@rangojs/router"
@@ -205,7 +263,14 @@ export function exposePrerenderHandlerId(): Plugin {
       // Get relative path for the ID
       const relativePath = normalizePath(path.relative(config.root, id));
 
-      // Transform: inject $$id
+      const isRscEnv = this.environment?.name === "rsc";
+
+      if (!isRscEnv) {
+        // Non-RSC: replace handler call expressions with lightweight stubs
+        return generatePrerenderHandlerStubs(code, relativePath, id, isBuild);
+      }
+
+      // RSC: inject $$id into calls (existing behavior)
       return transformPrerenderHandlerExports(code, relativePath, id, isBuild);
     },
   };
