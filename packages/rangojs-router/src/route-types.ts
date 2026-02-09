@@ -189,7 +189,7 @@ export type RouteUseItem =
   | ErrorBoundaryItem
   | NotFoundBoundaryItem
   | CacheItem;
-/** Items that can be used inside a response route (path.JSON(), etc.) */
+/** Items that can be used inside a response route (path.json(), etc.) */
 export type ResponseRouteUseItem =
   | MiddlewareItem
   | CacheItem;

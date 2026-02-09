@@ -90,7 +90,7 @@ export const RESPONSE_TYPE: unique symbol = Symbol.for("rangojs.responseType") a
 
 /**
  * Handler that must return Response (not ReactNode).
- * Used by path.JSON(), path.TEXT(), etc.
+ * Used by path.json(), path.text(), etc.
  */
 export type ResponseHandler<TParams = Record<string, string>, TEnv = any> = (
   ctx: ResponseHandlerContext<TParams, TEnv>
@@ -108,7 +108,7 @@ export interface ResponseHandlerContext<TParams = Record<string, string>, TEnv =
 }
 
 /**
- * Restricted helpers for urls.JSON() / urls.TEXT() / urls.ANY().
+ * Restricted helpers for urls.json() / urls.text() / urls.any().
  * Only path, include, and cache are available (no layout, parallel, loader, etc.)
  */
 export type ResponsePathHelpers<TEnv> = {
@@ -137,7 +137,7 @@ export interface PathOptions<TName extends string = string> {
   name?: TName;
   /** Trailing slash behavior: "never" (redirect /path/ to /path), "always" (redirect /path to /path/), "ignore" (match both) */
   trailingSlash?: TrailingSlashMode;
-  /** Response type marker (set by path.JSON(), etc.) */
+  /** Response type marker (set by path.json(), etc.) */
   [RESPONSE_TYPE]?: string;
 }
 
@@ -170,7 +170,7 @@ export interface UrlPatterns<
   readonly _env?: TEnv;
   /** Routes type brand (phantom) - carries route name -> pattern mapping */
   readonly _routes?: TRoutes;
-  /** Module-level response type (set by urls.JSON(), urls.TEXT(), etc.) */
+  /** Module-level response type (set by urls.json(), urls.text(), etc.) */
   readonly [RESPONSE_TYPE]?: string;
 }
 
@@ -311,7 +311,7 @@ export type PathFn<TEnv> = <const TPattern extends string, const TName extends s
 ) => TypedRouteItem<TName, TPattern>;
 
 /**
- * Path function for response routes (path.JSON(), path.TEXT(), etc.).
+ * Path function for response routes (path.json(), path.text(), etc.).
  * Handler must return Response, not ReactNode. Uses lighter ResponseHandlerContext.
  * Use items restricted to middleware() and cache() only.
  */
@@ -354,10 +354,13 @@ export type PathHelpers<TEnv> = {
    * ```
    */
   path: PathFn<TEnv> & {
-    JSON: ResponsePathFn<TEnv>;
-    TEXT: ResponsePathFn<TEnv>;
-    IMAGE: ResponsePathFn<TEnv>;
-    ANY: ResponsePathFn<TEnv>;
+    json: ResponsePathFn<TEnv>;
+    text: ResponsePathFn<TEnv>;
+    html: ResponsePathFn<TEnv>;
+    xml: ResponsePathFn<TEnv>;
+    image: ResponsePathFn<TEnv>;
+    stream: ResponsePathFn<TEnv>;
+    any: ResponsePathFn<TEnv>;
   };
 
   /**
@@ -383,9 +386,12 @@ export type PathHelpers<TEnv> = {
    * ```
    */
   include: IncludeFn<TEnv> & {
-    JSON: IncludeFn<TEnv>;
-    TEXT: IncludeFn<TEnv>;
-    ANY: IncludeFn<TEnv>;
+    json: IncludeFn<TEnv>;
+    text: IncludeFn<TEnv>;
+    html: IncludeFn<TEnv>;
+    xml: IncludeFn<TEnv>;
+    stream: IncludeFn<TEnv>;
+    any: IncludeFn<TEnv>;
   };
 
   /**
@@ -526,7 +532,7 @@ function applyNamePrefix(prefix: string | undefined, name: string): string {
  */
 /**
  * Resolve response type with inheritance:
- * path.JSON() option > include.JSON() context > urls.JSON() context > none
+ * path.json() option > include.json() context > urls.json() context > none
  */
 function resolveResponseType(
   options: PathOptions | undefined,
@@ -664,16 +670,19 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
 }
 
 /**
- * Attach response type tag methods (.JSON, .TEXT, .IMAGE, .ANY) to a path helper.
+ * Attach response type tag methods (.json, .text, .html, .xml, .image, .stream, .any) to a path helper.
  * Each tag wraps the original path() call with the RESPONSE_TYPE option set.
  */
 function attachPathResponseTags<TEnv>(
   pathFn: PathFn<TEnv>,
 ): PathFn<TEnv> & {
-  JSON: ResponsePathFn<TEnv>;
-  TEXT: ResponsePathFn<TEnv>;
-  IMAGE: ResponsePathFn<TEnv>;
-  ANY: ResponsePathFn<TEnv>;
+  json: ResponsePathFn<TEnv>;
+  text: ResponsePathFn<TEnv>;
+  html: ResponsePathFn<TEnv>;
+  xml: ResponsePathFn<TEnv>;
+  image: ResponsePathFn<TEnv>;
+  stream: ResponsePathFn<TEnv>;
+  any: ResponsePathFn<TEnv>;
 } {
   function createTagged(responseType: string): ResponsePathFn<TEnv> {
     return ((
@@ -698,23 +707,29 @@ function attachPathResponseTags<TEnv>(
   }
 
   const extended = pathFn as any;
-  extended.JSON = createTagged("json");
-  extended.TEXT = createTagged("text");
-  extended.IMAGE = createTagged("image");
-  extended.ANY = createTagged("any");
+  extended.json = createTagged("json");
+  extended.text = createTagged("text");
+  extended.html = createTagged("html");
+  extended.xml = createTagged("xml");
+  extended.image = createTagged("image");
+  extended.stream = createTagged("stream");
+  extended.any = createTagged("any");
   return extended;
 }
 
 /**
- * Attach response type tag methods (.JSON, .TEXT, .ANY) to an include helper.
+ * Attach response type tag methods (.json, .text, .html, .xml, .stream, .any) to an include helper.
  * Each tag wraps the original include() call, merging RESPONSE_TYPE onto options.
  */
 function attachIncludeResponseTags<TEnv>(
   includeFn: IncludeFn<TEnv>,
 ): IncludeFn<TEnv> & {
-  JSON: IncludeFn<TEnv>;
-  TEXT: IncludeFn<TEnv>;
-  ANY: IncludeFn<TEnv>;
+  json: IncludeFn<TEnv>;
+  text: IncludeFn<TEnv>;
+  html: IncludeFn<TEnv>;
+  xml: IncludeFn<TEnv>;
+  stream: IncludeFn<TEnv>;
+  any: IncludeFn<TEnv>;
 } {
   function createTagged(responseType: string): IncludeFn<TEnv> {
     return ((
@@ -730,9 +745,12 @@ function attachIncludeResponseTags<TEnv>(
   }
 
   const extended = includeFn as any;
-  extended.JSON = createTagged("json");
-  extended.TEXT = createTagged("text");
-  extended.ANY = createTagged("any");
+  extended.json = createTagged("json");
+  extended.text = createTagged("text");
+  extended.html = createTagged("html");
+  extended.xml = createTagged("xml");
+  extended.stream = createTagged("stream");
+  extended.any = createTagged("any");
   return extended;
 }
 
@@ -912,10 +930,10 @@ export function urls<
     // Get base helpers from the existing route-definition module
     const baseHelpers = createRouteHelpers<any, TEnv>();
 
-    // Create the path helper (with .JSON, .TEXT, .IMAGE, .ANY tags)
+    // Create the path helper (with .json, .text, .html, .xml, .image, .stream, .any tags)
     const pathHelper = attachPathResponseTags(createPathHelper<TEnv>());
 
-    // Create the include helper (with .JSON, .TEXT, .ANY tags)
+    // Create the include helper (with .json, .text, .html, .xml, .stream, .any tags)
     const includeHelper = attachIncludeResponseTags(createIncludeHelper<TEnv>());
 
     // Combine all helpers
@@ -996,9 +1014,12 @@ type UrlsResponseTagFn = <
 ) => UrlPatterns<TEnv, ExtractRoutes<TItems>>;
 
 export namespace urls {
-  export const JSON: UrlsResponseTagFn = createUrlsResponseTag("json");
-  export const TEXT: UrlsResponseTagFn = createUrlsResponseTag("text");
-  export const ANY: UrlsResponseTagFn = createUrlsResponseTag("any");
+  export const json: UrlsResponseTagFn = createUrlsResponseTag("json");
+  export const text: UrlsResponseTagFn = createUrlsResponseTag("text");
+  export const html: UrlsResponseTagFn = createUrlsResponseTag("html");
+  export const xml: UrlsResponseTagFn = createUrlsResponseTag("xml");
+  export const stream: UrlsResponseTagFn = createUrlsResponseTag("stream");
+  export const any: UrlsResponseTagFn = createUrlsResponseTag("any");
 }
 
 // ============================================================================

@@ -16,8 +16,8 @@ The primary use case is `include()` composability. A third-party module exports 
 export const vendorPatterns = urls(({ path }) => [
   path("/", DashboardPage, { name: "index" }),
   path("/settings", SettingsPage, { name: "settings" }),
-  path("/api/data", dataHandler, { name: "apiData", ...path.JSON }),
-  path("/api/webhook", webhookHandler, { name: "webhook", ...path.JSON }),
+  path.json("/api/data", dataHandler, { name: "apiData" }),
+  path.json("/api/webhook", webhookHandler, { name: "webhook" }),
 ]);
 
 // consumer app -- mounts everything, doesn't need to know which routes are JSX vs API
@@ -26,38 +26,62 @@ include("/vendor", vendorPatterns, { name: "vendor" })
 
 The consumer doesn't need to know which routes are JSX and which are API -- the framework handles both correctly. `ctx.href("vendor.apiData")` resolves the URL from anywhere.
 
+## Supported MIME Types
+
+| Tag | MIME type | Use case |
+|-----|-----------|----------|
+| `.json` | `application/json` | REST APIs, JSON endpoints |
+| `.text` | `text/plain` | `robots.txt`, plain text responses |
+| `.html` | `text/html` | Non-RSC server-rendered HTML, legacy pages |
+| `.xml` | `application/xml` | RSS feeds, SOAP endpoints, sitemaps |
+| `.image` | `image/*` | Dynamic image generation |
+| `.stream` | `text/event-stream` | Server-Sent Events (SSE) |
+| `.any` | `*` | Anything non-RSC (binary, custom content types) |
+
 ## API Design
 
 ### Tag functions
 
-`urls`, `path`, `include`, and `href` get typed variants as methods: `.JSON`, `.TEXT`, `.IMAGE`, `.ANY`. Same signature as the base function, but marks the route as non-RSC.
+`urls`, `path`, `include`, and `href` get typed variants as methods: `.json`, `.text`, `.html`, `.xml`, `.image`, `.stream`, `.any`. Same signature as the base function, but marks the route as non-RSC.
 
 ```typescript
-urls.JSON     // urls() where all routes serve JSON (module-level declaration)
-urls.TEXT
-urls.ANY
+urls.json     // urls() where all routes serve JSON (module-level declaration)
+urls.text
+urls.html
+urls.xml
+urls.stream
+urls.any
 
-path.JSON     // path() that returns application/json
-path.TEXT     // path() that returns text/plain
-path.IMAGE    // path() that returns image/*
-path.ANY      // path() that returns anything but RSC/html
+path.json     // path() that returns application/json
+path.text     // path() that returns text/plain
+path.html     // path() that returns text/html
+path.xml      // path() that returns application/xml
+path.image    // path() that returns image/*
+path.stream   // path() that returns text/event-stream
+path.any      // path() that returns anything but RSC
 
-include.JSON  // include() override -- all child routes serve JSON
-include.TEXT
-include.ANY
+include.json  // include() override -- all child routes serve JSON
+include.text
+include.html
+include.xml
+include.stream
+include.any
 
-href.JSON     // href() that returns Link props with data-external
-href.TEXT
-href.ANY
+href.json     // href() that returns Link props with data-external
+href.text
+href.html
+href.xml
+href.stream
+href.any
 ```
 
 ### Route definition
 
-**Module-level: `urls.JSON()` -- the module declares its own response type**
+**Module-level: `urls.json()` -- the module declares its own response type**
 
 ```typescript
 // api-module/urls.tsx -- author knows all routes here are JSON
-export const apiPatterns = urls.JSON(({ path }) => [
+export const apiPatterns = urls.json(({ path }) => [
   path("/health", healthHandler, { name: "health" }),
   path("/products", productsHandler, { name: "products" }),
   path("/products/:id", productDetailHandler, { name: "productDetail" }),
@@ -67,21 +91,27 @@ export const apiPatterns = urls.JSON(({ path }) => [
 include("/api", apiPatterns, { name: "api" })
 ```
 
-**Per-route: `path.JSON()` -- mixed modules with some API routes**
+**Per-route: `path.json()` -- mixed modules with some API routes**
 
 ```typescript
 urls(({ path, include }) => [
   // JSON API endpoint alongside JSX routes
-  path.JSON("/api/health", healthHandler, { name: "health" }),
+  path.json("/api/health", healthHandler, { name: "health" }),
 
   // Plain text route
-  path.TEXT("/robots.txt", robotsHandler, { name: "robots" }),
+  path.text("/robots.txt", robotsHandler, { name: "robots" }),
+
+  // SSE streaming endpoint
+  path.stream("/api/events", sseHandler, { name: "events" }),
+
+  // XML sitemap
+  path.xml("/sitemap.xml", sitemapHandler, { name: "sitemap" }),
 
   // Module declares its own type -- consumer doesn't need to know
   include("/api", apiPatterns, { name: "api" }),
 
   // Override: force JSON even if patterns don't declare it
-  include.JSON("/legacy-api", legacyPatterns, { name: "legacyApi" }),
+  include.json("/legacy-api", legacyPatterns, { name: "legacyApi" }),
 
   // Regular JSX routes -- plain path(), default behavior
   path("/", HomePage, { name: "home" }),
@@ -90,19 +120,19 @@ urls(({ path, include }) => [
 
 ### Client-side usage
 
-`href.JSON()` returns an object that spreads directly into `<Link>` props:
+`href.json()` returns an object that spreads directly into `<Link>` props:
 
 ```typescript
-// href.JSON("/api/health") returns { to: "/api/health", "data-external": true }
+// href.json("/api/health") returns { to: "/api/health", "data-external": true }
 
 // Client component
-<Link {...href.JSON("/api/health")}>Check Health</Link>
+<Link {...href.json("/api/health")}>Check Health</Link>
 
 // Server component with named route
-<Link {...href.JSON(ctx.href("api.health"))}>Check Health</Link>
+<Link {...href.json(ctx.href("api.health"))}>Check Health</Link>
 
-// ANY -- don't care about specific type, just "not RSC"
-<Link {...href.ANY("/api/health")}>Check Health</Link>
+// any -- don't care about specific type, just "not RSC"
+<Link {...href.any("/api/health")}>Check Health</Link>
 
 // Regular RSC link -- plain href(), no tag
 <Link to={href("/about")}>About</Link>
@@ -119,9 +149,9 @@ Response-type routes have narrower types than JSX routes. This prevents misuse a
 path("/about", (ctx) => <AboutPage />)
 path("/old", (ctx) => Response.redirect("/new"))
 
-// path.JSON() — handler MUST return Response
-path.JSON("/api/health", (ctx) => Response.json({ status: "ok" }))
-path.JSON("/api/health", (ctx) => <JSX />)  // TS error: Type 'Element' is not assignable to 'Response'
+// path.json() — handler MUST return Response
+path.json("/api/health", (ctx) => Response.json({ status: "ok" }))
+path.json("/api/health", (ctx) => <JSX />)  // TS error: Type 'Element' is not assignable to 'Response'
 ```
 
 ```typescript
@@ -147,21 +177,21 @@ interface ResponseHandlerContext<TParams, TEnv> {
 }
 ```
 
-**`urls.JSON()` builder helpers** — restricted to what makes sense for response routes:
+**`urls.json()` builder helpers** — restricted to what makes sense for response routes:
 
 ```typescript
 // Regular urls() passes all helpers
 urls(({ path, layout, parallel, loader, loading, cache, include }) => [...])
 
-// urls.JSON() only passes response-compatible helpers
-urls.JSON(({ path, include, cache }) => [...])
+// urls.json() only passes response-compatible helpers
+urls.json(({ path, include, cache }) => [...])
 //         ^^^^^^^^^^^^^^^^^^^^^^^^^^
 //         No layout, parallel, loader, loading, intercept
 ```
 
-| Helper | `urls()` | `urls.JSON()` | Why |
+| Helper | `urls()` | `urls.json()` | Why |
 |--------|----------|---------------|-----|
-| `path` / `path.JSON` | YES | YES | Register routes |
+| `path` / `path.json` | YES | YES | Register routes |
 | `include` | YES | YES | Compose sub-modules |
 | `cache` | YES | YES | Response-level caching |
 | `layout` | YES | NO | No React tree to wrap |
@@ -171,17 +201,17 @@ urls.JSON(({ path, include, cache }) => [...])
 | `intercept` | YES | NO | No soft navigation intercepts |
 | `when` | YES | NO | Intercept condition (RSC-only) |
 
-**`path.JSON()` children** — only `cache()` is valid:
+**`path.json()` children** — only `cache()` is valid:
 
 ```typescript
 // Valid: cache wrapper around a response route
 cache({ ttl: 300 }, () => [
-  path.JSON("/api/products", productsHandler, { name: "products" }),
+  path.json("/api/products", productsHandler, { name: "products" }),
 ])
 
 // Invalid: loading/parallel/layout around response routes
 layout(<ApiLayout />, () => [         // TS error
-  path.JSON("/api/health", handler),
+  path.json("/api/health", handler),
 ])
 ```
 
@@ -190,9 +220,23 @@ layout(<ApiLayout />, () => [         // TS error
 ```typescript
 const RESPONSE_TYPE = Symbol.for("rangojs.responseType");
 
+// --- MIME type map ---
+
+const MIME_TYPES = {
+  json: "application/json",
+  text: "text/plain",
+  html: "text/html",
+  xml: "application/xml",
+  image: "image/*",
+  stream: "text/event-stream",
+  any: "*",
+} as const;
+
+type MimeTag = keyof typeof MIME_TYPES;
+
 // --- Type definitions ---
 
-// Restricted helpers for urls.JSON() — no layout, parallel, loader, loading, intercept, when
+// Restricted helpers for urls.json() — no layout, parallel, loader, loading, intercept, when
 interface ResponsePathHelpers<TEnv> {
   path: ResponsePathFn<TEnv>;     // handler must return Response
   include: IncludeFn<TEnv>;
@@ -215,51 +259,74 @@ interface ResponseHandlerContext<TParams, TEnv> {
 
 // --- Tag function implementations ---
 
-// urls.JSON() passes restricted helpers and marks all routes
-urls.JSON = <TEnv>(
+// Helper to create tag functions for each MIME type
+function createMimeTag<TFn extends Function>(baseFn: TFn, tagName: MimeTag, mimeType: string) {
+  // Implementation varies per base function (path, urls, include, href)
+}
+
+// urls.json() passes restricted helpers and marks all routes
+urls.json = <TEnv>(
   builder: (helpers: ResponsePathHelpers<TEnv>) => TItems
 ): UrlPatterns<TEnv> => {
-  // Only pass { path, include, cache } — not the full set
   const patterns = urls((allHelpers) => {
     const { path, include, cache } = allHelpers;
     return builder({ path, include, cache });
   });
-  patterns[RESPONSE_TYPE] = "application/json";
+  patterns[RESPONSE_TYPE] = MIME_TYPES.json;
   return patterns;
 };
 
-// path.JSON() narrows handler to ResponseHandler
-path.JSON = (pattern, handler: ResponseHandler, options?) =>
-  path(pattern, handler as any, { ...options, [RESPONSE_TYPE]: "application/json" });
+// All MIME tags on path -- each narrows handler to ResponseHandler
+path.json = (pattern, handler: ResponseHandler, options?) =>
+  path(pattern, handler as any, { ...options, [RESPONSE_TYPE]: MIME_TYPES.json });
 
-path.TEXT = (pattern, handler: ResponseHandler, options?) =>
-  path(pattern, handler as any, { ...options, [RESPONSE_TYPE]: "text/plain" });
+path.text = (pattern, handler: ResponseHandler, options?) =>
+  path(pattern, handler as any, { ...options, [RESPONSE_TYPE]: MIME_TYPES.text });
 
-path.ANY = (pattern, handler: ResponseHandler, options?) =>
-  path(pattern, handler as any, { ...options, [RESPONSE_TYPE]: "*" });
+path.html = (pattern, handler: ResponseHandler, options?) =>
+  path(pattern, handler as any, { ...options, [RESPONSE_TYPE]: MIME_TYPES.html });
 
-// include.JSON() overrides response type on mounted patterns
-include.JSON = (prefix, patterns, options?) =>
-  include(prefix, patterns, { ...options, [RESPONSE_TYPE]: "application/json" });
+path.xml = (pattern, handler: ResponseHandler, options?) =>
+  path(pattern, handler as any, { ...options, [RESPONSE_TYPE]: MIME_TYPES.xml });
 
-// href.JSON() returns Link-ready props
-href.JSON = (path: ValidPaths, mount?: string) =>
+path.image = (pattern, handler: ResponseHandler, options?) =>
+  path(pattern, handler as any, { ...options, [RESPONSE_TYPE]: MIME_TYPES.image });
+
+path.stream = (pattern, handler: ResponseHandler, options?) =>
+  path(pattern, handler as any, { ...options, [RESPONSE_TYPE]: MIME_TYPES.stream });
+
+path.any = (pattern, handler: ResponseHandler, options?) =>
+  path(pattern, handler as any, { ...options, [RESPONSE_TYPE]: MIME_TYPES.any });
+
+// All MIME tags on include
+include.json = (prefix, patterns, options?) =>
+  include(prefix, patterns, { ...options, [RESPONSE_TYPE]: MIME_TYPES.json });
+
+include.text = (prefix, patterns, options?) =>
+  include(prefix, patterns, { ...options, [RESPONSE_TYPE]: MIME_TYPES.text });
+
+// ... same pattern for include.html, include.xml, include.stream, include.any
+
+// All MIME tags on href -- each returns Link-ready props
+href.json = (path: ValidPaths, mount?: string) =>
   ({ to: href(path, mount), "data-external": true });
 
-href.ANY = (path: ValidPaths, mount?: string) =>
+href.text = (path: ValidPaths, mount?: string) =>
   ({ to: href(path, mount), "data-external": true });
+
+// ... same pattern for href.html, href.xml, href.stream, href.any
 ```
 
 ### Response type resolution order
 
 When multiple levels declare a response type, specificity wins:
 
-1. `path.JSON()` on the route itself (most specific)
-2. `include.JSON()` on the mounting include (override)
-3. `urls.JSON()` on the UrlPatterns (module default)
+1. `path.json()` on the route itself (most specific)
+2. `include.json()` on the mounting include (override)
+3. `urls.json()` on the UrlPatterns (module default)
 4. No response type = RSC route (default)
 
-A `path.TEXT()` inside `urls.JSON()` patterns serves text, not JSON. The module default is a fallback, not a mandate.
+A `path.text()` inside `urls.json()` patterns serves text, not JSON. The module default is a fallback, not a mandate.
 
 When `path()` or `include()` processes options, it checks for `options[RESPONSE_TYPE]`. When `include()` mounts `UrlPatterns`, it checks `patterns[RESPONSE_TYPE]` for the module-level default. Either way, the response type propagates to the trie.
 
@@ -303,7 +370,7 @@ export interface RouteMatchResult<TEnv = any> {
   routeKey: string;
   params: Record<string, string>;
   // ...existing fields
-  responseType?: string;  // From path.JSON etc., available at match time
+  responseType?: string;  // From path.json etc., available at match time
 }
 ```
 
@@ -386,31 +453,31 @@ Future optimization: store handler + middleware references directly on the trie 
 
 ## Client-Side: Auto-External Links
 
-`href.JSON()` / `href.ANY()` return `{ to: url, "data-external": true }` which spreads directly into `<Link>`. The Link does a hard navigation -- no Flight fetch, no wasted round-trip.
+`href.json()` / `href.any()` return `{ to: url, "data-external": true }` which spreads directly into `<Link>`. The Link does a hard navigation -- no Flight fetch, no wasted round-trip.
 
 ```typescript
-<Link {...href.JSON("/api/health")}>Check Health</Link>
+<Link {...href.json("/api/health")}>Check Health</Link>
 // renders: <a href="/api/health" data-external="true">Check Health</a>
 ```
 
-For the case where a developer uses plain `href()` instead of `href.JSON()` on a Link pointing to a response-type route, the `X-RSC-Reload` fallback from PR #140 still catches it. The server sees the partial request, the trie short-circuit returns the Response directly (not wrapped in Flight), and the client gets `X-RSC-Reload` to hard-navigate.
+For the case where a developer uses plain `href()` instead of `href.json()` on a Link pointing to a response-type route, the `X-RSC-Reload` fallback from PR #140 still catches it. The server sees the partial request, the trie short-circuit returns the Response directly (not wrapped in Flight), and the client gets `X-RSC-Reload` to hard-navigate.
 
 ## What Changes
 
 | File | Change |
 |------|--------|
-| `src/urls.ts` | Add `RESPONSE_TYPE` symbol, add `.JSON`/`.TEXT`/`.ANY` tag functions to `path`/`include` |
+| `src/urls.ts` | Add `RESPONSE_TYPE` symbol, `MIME_TYPES` map, add `.json`/`.text`/`.html`/`.xml`/`.image`/`.stream`/`.any` tag functions to `path`/`include` |
 | `src/server/context.ts` | Add `responseType` field to route `EntryData` |
 | `src/types.ts` | Add `responseType` to `RouteMatchResult` so trie match carries it |
 | `src/router/match-api.ts` | Extend `previewMatch()` to return `responseType` + handler |
 | `src/rsc/handler.ts` | Add short-circuit in `coreRequestHandler()` before RSC pipeline |
-| `src/href-client.ts` | Add `.JSON`/`.TEXT`/`.ANY` tag functions to `href` (return `{ to, data-external }`) |
+| `src/href-client.ts` | Add `.json`/`.text`/`.html`/`.xml`/`.stream`/`.any` tag functions to `href` (return `{ to, data-external }`) |
 | `src/browser/react/Link.tsx` | No change needed -- `data-external` already works |
 
 ## What Doesn't Change
 
-- `handleHandlerResult()` -- still throws Responses for non-typed routes (backward compat)
-- `X-RSC-Reload` fallback -- stays for `path()` routes without response type that return Response
+- `handleHandlerResult()` -- still throws Responses for non-tagged routes (backward compat)
+- `X-RSC-Reload` fallback -- stays for plain `path()` routes without response type that return Response
 - `href()` return type -- still a string
 - `<Link>` component logic -- `data-external` is already handled
 - Existing route definitions -- no response type = JSX route, same as today
@@ -429,24 +496,24 @@ For the case where a developer uses plain `href()` instead of `href.JSON()` on a
 Three levels of declaration, from broadest to most specific:
 
 ```typescript
-// 1. Module level -- urls.JSON() sets the default for all routes
-export const apiPatterns = urls.JSON(({ path }) => [
-  path("/health", healthHandler, { name: "health" }),      // inherits JSON
-  path("/products", productsHandler, { name: "products" }), // inherits JSON
-  path.TEXT("/export.csv", csvHandler, { name: "export" }), // overrides to TEXT
+// 1. Module level -- urls.json() sets the default for all routes
+export const apiPatterns = urls.json(({ path }) => [
+  path("/health", healthHandler, { name: "health" }),      // inherits json
+  path("/products", productsHandler, { name: "products" }), // inherits json
+  path.text("/export.csv", csvHandler, { name: "export" }), // overrides to text
 ]);
 
-// 2. Mount level -- include.JSON() overrides whatever the patterns declare
-include.JSON("/legacy", legacyPatterns, { name: "legacy" })
+// 2. Mount level -- include.json() overrides whatever the patterns declare
+include.json("/legacy", legacyPatterns, { name: "legacy" })
 
-// 3. Route level -- path.JSON() on individual routes (most specific)
-path.JSON("/api/health", healthHandler, { name: "health" })
+// 3. Route level -- path.json() on individual routes (most specific)
+path.json("/api/health", healthHandler, { name: "health" })
 ```
 
 The consumer can mount API patterns transparently:
 
 ```typescript
-// apiPatterns was defined with urls.JSON() -- consumer doesn't need to know
+// apiPatterns was defined with urls.json() -- consumer doesn't need to know
 include("/api", apiPatterns, { name: "api" })
 ```
 
@@ -454,10 +521,10 @@ include("/api", apiPatterns, { name: "api" })
 
 ### Phase 1: Core — tag functions + server-side short-circuit
 
-1. **Add `RESPONSE_TYPE` symbol and tag functions to `urls.ts`**
-   - `path.JSON()`, `path.TEXT()`, `path.ANY()` with `ResponseHandler` type
-   - `include.JSON()`, `include.TEXT()`, `include.ANY()`
-   - `urls.JSON()`, `urls.TEXT()`, `urls.ANY()` with `ResponsePathHelpers`
+1. **Add `RESPONSE_TYPE` symbol, `MIME_TYPES` map, and tag functions to `urls.ts`**
+   - `path.json()`, `path.text()`, `path.html()`, `path.xml()`, `path.image()`, `path.stream()`, `path.any()` with `ResponseHandler` type
+   - `include.json()`, `include.text()`, `include.html()`, `include.xml()`, `include.stream()`, `include.any()`
+   - `urls.json()`, `urls.text()`, `urls.html()`, `urls.xml()`, `urls.stream()`, `urls.any()` with `ResponsePathHelpers`
    - `ResponseHandlerContext` (lighter, no `ctx.use()`)
 
 2. **Add `responseType` to `EntryData`** (`server/context.ts`)
@@ -465,7 +532,7 @@ include("/api", apiPatterns, { name: "api" })
 
 3. **Propagate `responseType` through the trie** (`types.ts`)
    - `RouteMatchResult.responseType`
-   - `include()` inheritance: `urls.JSON()` default → `include.JSON()` override → `path.JSON()` specific
+   - `include()` inheritance: `urls.json()` default → `include.json()` override → `path.json()` specific
 
 4. **Extend `previewMatch()`** (`router/match-api.ts`)
    - Return `responseType` and `handler` when matched route has a response type
@@ -474,13 +541,13 @@ include("/api", apiPatterns, { name: "api" })
    - After `previewMatch()`: if `responseType`, call handler directly, skip RSC pipeline
    - Still run app + route middleware
 
-6. **Add `href.JSON()`, `href.TEXT()`, `href.ANY()` to client href** (`href-client.ts`)
+6. **Add `href.json()`, `href.text()`, `href.html()`, `href.xml()`, `href.stream()`, `href.any()` to client href** (`href-client.ts`)
    - Returns `{ to, "data-external": true }` for `<Link>` spread
 
 ### Phase 2: Example app — `cloudflare-basic`
 
 7. **Add API module** (`examples/cloudflare-basic/src/api/`)
-   - `urls.tsx` — `urls.JSON()` with several endpoints:
+   - `urls.tsx` — `urls.json()` with several endpoints:
      - `path("/health", ...)` — simple health check, returns `{ status: "ok" }`
      - `path("/products", ...)` — returns JSON array
      - `path("/products/:id", ...)` — returns JSON object with params
@@ -488,10 +555,12 @@ include("/api", apiPatterns, { name: "api" })
 
 8. **Mount in main urls** (`examples/cloudflare-basic/src/urls.tsx`)
    - `include("/api", apiPatterns, { name: "api" })` — transparent mounting
-   - Add nav link with `href.JSON()` for testing client-side navigation
+   - Add nav link with `href.json()` for testing client-side navigation
 
-9. **Add mixed response route** (`examples/cloudflare-basic/src/urls.tsx`)
-   - `path.TEXT("/robots.txt", ...)` — alongside JSX routes
+9. **Add mixed response routes** (`examples/cloudflare-basic/src/urls.tsx`)
+   - `path.text("/robots.txt", ...)` — plain text alongside JSX routes
+   - `path.xml("/sitemap.xml", ...)` — XML sitemap
+   - `path.stream("/api/events", ...)` — SSE endpoint
    - Shows per-route response type in a mixed module
 
 ### Phase 3: E2E tests
@@ -501,14 +570,16 @@ include("/api", apiPatterns, { name: "api" })
     - `GET /api/products` → 200, JSON array
     - `GET /api/products/123` → 200, JSON with params
     - `GET /robots.txt` → 200, `Content-Type: text/plain`
+    - `GET /sitemap.xml` → 200, `Content-Type: application/xml`
+    - `GET /api/events` → 200, `Content-Type: text/event-stream`
 
 11. **Client-side navigation tests** (`e2e/response-routes.test.ts`)
-    - Click `<Link {...href.JSON("/api/health")}>` → hard navigation, shows JSON
-    - Click `<Link {...href.ANY("/robots.txt")}>` → hard navigation, shows text
+    - Click `<Link {...href.json("/api/health")}>` → hard navigation, shows JSON
+    - Click `<Link {...href.any("/robots.txt")}>` → hard navigation, shows text
     - Verify no Flight request is made (data-external skips partial fetch)
 
 12. **Fallback tests** (`e2e/response-routes.test.ts`)
-    - Click a plain `<Link to={href("/api/health")}>` (without `href.JSON`) → X-RSC-Reload fallback still works (PR #140)
+    - Click a plain `<Link to={href("/api/health")}>` (without `href.json`) → X-RSC-Reload fallback still works (PR #140)
     - Verify console.warn about missing `data-external`
 
 13. **Middleware tests** (`e2e/response-routes.test.ts`)
@@ -517,13 +588,13 @@ include("/api", apiPatterns, { name: "api" })
     - Verify middleware can reject with 401 Response
 
 14. **`include()` inheritance tests** (`e2e/response-routes.test.ts`)
-    - `urls.JSON()` module mounted with plain `include()` — all routes return JSON
-    - Override: `path.TEXT()` inside `urls.JSON()` module — serves text
-    - `include.JSON()` override — forces JSON on non-typed patterns
+    - `urls.json()` module mounted with plain `include()` — all routes return JSON
+    - Override: `path.text()` inside `urls.json()` module — serves text
+    - `include.json()` override — forces JSON on non-typed patterns
 
 15. **TypeScript compile tests** (`e2e/response-routes-types.test.ts` or inline)
-    - Verify `path.JSON()` with JSX handler fails type check
-    - Verify `urls.JSON()` builder doesn't receive `layout`, `parallel`, etc.
+    - Verify `path.json()` with JSX handler fails type check
+    - Verify `urls.json()` builder doesn't receive `layout`, `parallel`, etc.
     - Could use `tsc --noEmit` or `@ts-expect-error` assertions
 
 16. **Build mode tests** (`e2e/response-routes.test.ts`)
@@ -569,9 +640,14 @@ include("/api", apiPatterns, { name: "api" })
 26. **Evaluate trie-level handler storage** — if `loadManifest()` is a bottleneck, store handler + middleware references directly on trie node at registration time, eliminating manifest loading entirely for response routes
 27. **Evaluate lighter context** — if `createHandlerContext()` overhead is measurable, implement `ResponseHandlerContext` as a separate code path (no loader setup, no cache scope, no segment tracking)
 
+## Resolved Decisions
+
+- **Naming**: lowercase (`path.json`, `href.text`, `urls.stream`) -- matches JS convention for methods
+- **`path.html`**: yes, included for non-RSC server-rendered HTML pages
+- **`path.xml`**: yes, included for RSS feeds, sitemaps, SOAP
+- **`path.stream`**: yes, included for SSE endpoints
+
 ## Open Questions
 
-1. Should the framework validate that the Response content-type matches the declared type (e.g. `path.JSON` but Response has `text/plain`)? Or is the type purely a routing signal?
-2. Should there be a `path.HTML` for server-rendered HTML pages that aren't RSC? (e.g. legacy pages, static HTML)
-3. Naming: `path.JSON` vs `path.json` (lowercase)?
-4. Should `cache()` work differently for response routes? (Response-level caching vs segment caching)
+1. Should the framework validate that the Response content-type matches the declared type (e.g. `path.json` but Response has `text/plain`)? Or is the type purely a routing signal?
+2. Should `cache()` work differently for response routes? (Response-level caching vs segment caching)

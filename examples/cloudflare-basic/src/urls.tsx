@@ -39,7 +39,7 @@ export const urlpatterns = urls(({ path, layout, parallel, loader, loading, cach
   include("/api", apiPatterns, { name: "api" }),
 
   // robots.txt (response route)
-  path.TEXT("/robots.txt", (ctx: ResponseHandlerContext) => {
+  path.text("/robots.txt", (ctx: ResponseHandlerContext) => {
     return new Response(
       "User-agent: *\nAllow: /\nDisallow: /api/\n",
       { headers: { "Content-Type": "text/plain" } }

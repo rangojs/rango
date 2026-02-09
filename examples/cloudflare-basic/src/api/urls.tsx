@@ -1,10 +1,10 @@
 import { urls, type ResponseHandlerContext } from "@rangojs/router/server";
 
 /**
- * API routes using urls.JSON() - all routes return Response objects,
+ * API routes using urls.json() - all routes return Response objects,
  * bypassing the RSC pipeline entirely.
  */
-export const apiPatterns = urls.JSON(({ path }) => [
+export const apiPatterns = urls.json(({ path }) => [
   path("/health", (ctx: ResponseHandlerContext) => {
     return Response.json({ status: "ok", timestamp: Date.now() });
   }, { name: "health" }),

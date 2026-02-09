@@ -141,7 +141,7 @@ export function href<T extends ValidPaths>(path: T, mount?: string): string {
 }
 
 /**
- * Props shape returned by href.JSON() etc. for spreading on <Link>.
+ * Props shape returned by href.json() etc. for spreading on <Link>.
  * Sets data-external to trigger hard navigation (skips RSC fetch).
  */
 export interface ResponseHrefProps {
@@ -159,8 +159,11 @@ function createResponseHrefTag(): ResponseHrefFn {
 }
 
 export namespace href {
-  export const JSON: ResponseHrefFn = createResponseHrefTag();
-  export const TEXT: ResponseHrefFn = createResponseHrefTag();
-  export const IMAGE: ResponseHrefFn = createResponseHrefTag();
-  export const ANY: ResponseHrefFn = createResponseHrefTag();
+  export const json: ResponseHrefFn = createResponseHrefTag();
+  export const text: ResponseHrefFn = createResponseHrefTag();
+  export const html: ResponseHrefFn = createResponseHrefTag();
+  export const xml: ResponseHrefFn = createResponseHrefTag();
+  export const image: ResponseHrefFn = createResponseHrefTag();
+  export const stream: ResponseHrefFn = createResponseHrefTag();
+  export const any: ResponseHrefFn = createResponseHrefTag();
 }
