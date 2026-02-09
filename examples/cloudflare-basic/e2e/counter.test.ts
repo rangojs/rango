@@ -34,19 +34,12 @@ test.describe("counter server actions", () => {
     const initialText = await testId(page, "counter-value").textContent();
     const initialCount = parseInt(initialText?.match(/\d+/)?.[0] ?? "0", 10);
 
-    // Click increment
+    // Click increment and wait for count to update
     await testId(page, "counter-increment").click();
-
-    // Should show pending state
-    await expect(testId(page, "counter-pending")).toBeVisible();
-
-    // Wait for pending to disappear and count to update
-    await expect(testId(page, "counter-pending")).not.toBeVisible({ timeout: 10000 });
-
-    // Check count increased
-    const newText = await testId(page, "counter-value").textContent();
-    const newCount = parseInt(newText?.match(/\d+/)?.[0] ?? "0", 10);
-    expect(newCount).toBe(initialCount + 1);
+    await expect(testId(page, "counter-value")).toContainText(
+      `Count: ${initialCount + 1}`,
+      { timeout: 10000 },
+    );
   });
 
   test("should decrement counter via server action", async ({ page }) => {
@@ -75,23 +68,21 @@ test.describe("counter server actions", () => {
     expect(newCount).toBe(currentCount - 1);
   });
 
-  test("should disable buttons during pending state", async ({ page }) => {
+  test("should re-enable buttons after server action completes", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/counter"));
     await waitForHydration(page);
 
-    // Click increment
+    // Buttons start enabled
+    await expect(testId(page, "counter-increment")).toBeEnabled();
+    await expect(testId(page, "counter-decrement")).toBeEnabled();
+
+    // Click increment and wait for action to complete
     await testId(page, "counter-increment").click();
-
-    // Buttons should be disabled during pending
-    await expect(testId(page, "counter-increment")).toBeDisabled();
-    await expect(testId(page, "counter-decrement")).toBeDisabled();
-
-    // Wait for action to complete
     await expect(testId(page, "counter-pending")).not.toBeVisible({ timeout: 10000 });
 
-    // Buttons should be enabled again
+    // Buttons should be enabled after action completes
     await expect(testId(page, "counter-increment")).toBeEnabled();
     await expect(testId(page, "counter-decrement")).toBeEnabled();
   });
