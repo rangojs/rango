@@ -27,6 +27,8 @@ Django-inspired RSC router with composable URL patterns, type-safe href, and ser
 | `/typesafety` | Type-safe routes, params, href, and environment |
 | `/host-router` | Multi-app host routing with domain/subdomain patterns |
 | `/tailwind` | Set up Tailwind CSS v4 with `?url` imports |
+| `/response-routes` | JSON/text/HTML/XML/stream endpoints with `path.json()`, `urls.json()` |
+| `/mime-routes` | Content negotiation — same URL, different response types via Accept header |
 | `/fonts` | Load web fonts with preload hints |
 
 ## Quick Start

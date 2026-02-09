@@ -353,6 +353,11 @@ path("/:slug/likes", (ctx) => {
 }, { name: "likes" });
 ```
 
+## Content Negotiation
+
+Multiple response types can share the same URL pattern. See `/mime-routes` for the
+full content negotiation API (Accept header matching, Vary: Accept, multi-variant routes).
+
 ## How It Works
 
 1. `path.json()` / `urls.json()` tag the route at the trie level with a MIME type
@@ -361,3 +366,4 @@ path("/:slug/likes", (ctx) => {
 4. JSON routes auto-wrap return values in `{ data }` / `{ error }` envelope
 5. Client-side navigation to response routes gets `X-RSC-Reload` header, triggering hard navigation
 6. Response types flow through `_responses` phantom type on `UrlPatterns`, propagated by `include()`
+7. When multiple routes share a URL pattern, the trie merges them for content negotiation (see `/mime-routes`)
