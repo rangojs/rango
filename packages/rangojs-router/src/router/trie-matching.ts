@@ -164,6 +164,6 @@ function validateAndBuild(
     ...(leaf.pr ? { pr: true } : {}),
     ...(leaf.pt ? { pt: true } : {}),
     ...(leaf.rt ? { responseType: leaf.rt } : {}),
-    ...(leaf.nv ? { negotiateVariants: leaf.nv.map(v => ({ routeKey: v.n, responseType: v.rt })) } : {}),
+    ...(leaf.nv ? { negotiateVariants: leaf.nv } : {}),
   };
 }

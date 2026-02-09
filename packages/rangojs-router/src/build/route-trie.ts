@@ -29,8 +29,8 @@ export interface TrieLeaf {
   pt?: true;
   /** Response type for non-RSC routes (json, text, image, any) */
   rt?: string;
-  /** Negotiate variants: response-type routes sharing this path [{n: routeName, rt: responseType}] */
-  nv?: Array<{ n: string; rt: string }>;
+  /** Negotiate variants: response-type routes sharing this path */
+  nv?: Array<{ routeKey: string; responseType: string }>;
 }
 
 export interface TrieNode {
@@ -169,19 +169,19 @@ function mergeLeaves(existing: TrieLeaf | undefined, leaf: TrieLeaf): TrieLeaf {
     // Both are response-type: preserve old as variant
     const merged = leaf;
     merged.nv = existing.nv || [];
-    merged.nv.push({ n: existing.n, rt: existing.rt });
+    merged.nv.push({ routeKey: existing.n, responseType: existing.rt });
     return merged;
   }
   if (leaf.rt && !existing.rt) {
     // RSC primary exists, new leaf is response-type: append variant
     if (!existing.nv) existing.nv = [];
-    existing.nv.push({ n: leaf.n, rt: leaf.rt });
+    existing.nv.push({ routeKey: leaf.n, responseType: leaf.rt });
     return existing;
   }
   if (!leaf.rt && existing.rt) {
     // Response-type was primary, new leaf is RSC: swap and move old to variants
     if (!leaf.nv) leaf.nv = [];
-    leaf.nv.push({ n: existing.n, rt: existing.rt });
+    leaf.nv.push({ routeKey: existing.n, responseType: existing.rt });
     if (existing.nv) leaf.nv.push(...existing.nv);
     return leaf;
   }

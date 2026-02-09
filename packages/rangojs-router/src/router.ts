@@ -1874,10 +1874,15 @@ export function createRouter<TEnv = any>(
     if (matched.negotiateVariants && matched.negotiateVariants.length > 0) {
       const acceptTypes = parseAcceptTypes(request.headers.get("accept") || "");
 
-      // Build candidate list: primary (if response-type) + all variants
-      const candidates = [...matched.negotiateVariants];
+      // Build candidate list: variants directly, add primary only if response-type
+      const variants = matched.negotiateVariants;
+      let candidates: Array<{ routeKey: string; responseType: string }>;
       if (responseType) {
-        candidates.push({ routeKey: matched.routeKey, responseType });
+        // Primary is response-type too — include it as a candidate
+        candidates = [...variants, { routeKey: matched.routeKey, responseType }];
+      } else {
+        // Primary is RSC — variants array used directly, no copy needed
+        candidates = variants;
       }
 
       // If primary is RSC and Accept includes text/html, skip negotiation (RSC wins)
