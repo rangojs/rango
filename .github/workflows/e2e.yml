@@ -61,6 +61,7 @@ jobs:
         run: pnpm --filter @rangojs/router test:unit
 
   demo-e2e:
+    if: github.event.pull_request.draft == false || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -113,6 +114,7 @@ jobs:
           retention-days: 7
 
   rangojs-router-e2e:
+    if: github.event.pull_request.draft == false || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -163,6 +165,7 @@ jobs:
           retention-days: 7
 
   cloudflare-basic-e2e:
+    if: github.event.pull_request.draft == false || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
