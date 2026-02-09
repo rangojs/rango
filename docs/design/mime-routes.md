@@ -42,7 +42,7 @@ The consumer doesn't need to know which routes are JSX and which are API -- the 
 
 ### Tag functions
 
-`urls`, `path`, `include`, and `href` get typed variants as methods: `.json`, `.text`, `.html`, `.xml`, `.image`, `.stream`, `.any`. Same signature as the base function, but marks the route as non-RSC.
+`urls`, `path`, and `href` get typed variants as methods: `.json`, `.text`, `.html`, `.xml`, `.image`, `.stream`, `.any`. Same signature as the base function, but marks the route as non-RSC.
 
 ```typescript
 urls.json     // urls() where all routes serve JSON (module-level declaration)
@@ -60,13 +60,6 @@ path.image    // path() that returns image/*
 path.stream   // path() that returns text/event-stream
 path.any      // path() that returns anything but RSC
 
-include.json  // include() override -- all child routes serve JSON
-include.text
-include.html
-include.xml
-include.stream
-include.any
-
 href.json     // href() that returns Link props with data-external
 href.text
 href.html
@@ -74,6 +67,8 @@ href.xml
 href.stream
 href.any
 ```
+
+Note: `include()` does **not** have response type tags. Response typing happens at the definition site via `urls.json()`, `path.json()`, etc. -- not at the mount site. This avoids a type-level gap where `include.json()` would tag routes at runtime but lose response data type inference.
 
 ### Route definition
 
@@ -110,9 +105,6 @@ urls(({ path, include }) => [
   // Module declares its own type -- consumer doesn't need to know
   include("/api", apiPatterns, { name: "api" }),
 
-  // Override: force JSON even if patterns don't declare it
-  include.json("/legacy-api", legacyPatterns, { name: "legacyApi" }),
-
   // Regular JSX routes -- plain path(), default behavior
   path("/", HomePage, { name: "home" }),
 ])
@@ -138,24 +130,131 @@ urls(({ path, include }) => [
 <Link to={href("/about")}>About</Link>
 ```
 
+### Auto-wrap: plain return values
+
+Handlers can return plain values instead of constructing `Response` objects. The framework auto-wraps the return value based on the MIME tag:
+
+| Tag | Handler can return | Auto-wrap behavior |
+|-----|-------------------|--------------------|
+| `.json` | `JsonValue \| Response` | `JSON.stringify(result)` with `application/json;charset=utf-8` |
+| `.text` | `string \| Response` | `String(result)` with `text/plain;charset=utf-8` |
+| `.html` | `string \| Response` | `String(result)` with `text/html;charset=utf-8` |
+| `.xml` | `string \| Response` | `String(result)` with `application/xml;charset=utf-8` |
+| `.image` | `Response` only | No auto-wrap (binary data) |
+| `.stream` | `Response` only | No auto-wrap (streaming) |
+| `.any` | `Response` only | No auto-wrap |
+
+When the handler returns a `Response` directly, it passes through unchanged (status code, headers preserved). This allows full control when needed:
+
+```typescript
+// Auto-wrapped: plain object -> JSON response with 200
+path.json("/products", (ctx) => products)
+
+// Pass-through: Response returned directly for custom status/headers
+path.json("/products/:id", (ctx) => {
+  const product = findProduct(ctx.params.id);
+  if (!product) return new Response("Not found", { status: 404 });
+  return product; // auto-wrapped as JSON
+})
+```
+
+### JSON response envelope
+
+JSON response routes (`path.json`, `urls.json`) wrap results in a discriminated union envelope:
+
+```typescript
+type ResponseEnvelope<T> =
+  | { data: T; error?: undefined }
+  | { data?: undefined; error: ResponseError };
+
+interface ResponseError {
+  message: string;
+  code?: string;
+  type?: string;
+  stack?: string;  // dev only
+}
+```
+
+Success: `{ data: T }`. Error: `{ error: { message, code?, type? } }` with appropriate HTTP status.
+
+Errors are handled automatically -- handlers throw `RouterError` for structured errors:
+
+```typescript
+path.json("/products/:id", (ctx) => {
+  const product = findProduct(ctx.params.id);
+  if (!product) {
+    throw new RouterError("NOT_FOUND", "Product not found", { status: 404 });
+  }
+  return product;  // wrapped as { data: product }
+})
+// On throw: { error: { message: "Product not found", code: "NOT_FOUND" } } with 404 status
+```
+
+`RouterError` messages are always exposed (developer-crafted). Generic `Error` messages are hidden in production (`"Internal Server Error"`).
+
+Non-JSON response routes also catch errors and return plain text `Response` with the appropriate status code.
+
+### Client-side type guard
+
+`isResponseError<T>()` narrows a `ResponseEnvelope<T>` to the error branch:
+
+```typescript
+import { isResponseError, type ResponseEnvelope } from "@rangojs/router/client";
+
+const result: ResponseEnvelope<Product> = await fetch(url).then(r => r.json());
+if (isResponseError(result)) {
+  console.log(result.error.message, result.error.code);
+  return;
+}
+result.data.name  // fully typed as Product
+```
+
+### Typed response lookup
+
+Two mechanisms for extracting response types at the type level:
+
+- **`RouteResponse<typeof patterns, "name">`** -- by route name, scoped to a `UrlPatterns` instance
+- **`PathResponse<"/path">`** -- by URL pattern, global via `RegisteredRoutes`
+
+```typescript
+// Scoped (from UrlPatterns)
+type Health = RouteResponse<typeof apiPatterns, "health">;
+// ResponseEnvelope<{ status: string; timestamp: number }>
+
+// Global (from RegisteredRoutes after createRouter().routes())
+type Health = PathResponse<"/api/health">;
+// ResponseEnvelope<{ status: string; timestamp: number }>
+```
+
 ### TypeScript constraints
 
 Response-type routes have narrower types than JSX routes. This prevents misuse at compile time.
 
-**Handler return type** — must return `Response`, not `ReactNode`:
+**Handler return type** — per-tag types enforce what values are allowed:
 
 ```typescript
 // Regular path() — handler can return JSX or Response
 path("/about", (ctx) => <AboutPage />)
 path("/old", (ctx) => Response.redirect("/new"))
 
-// path.json() — handler MUST return Response
-path.json("/api/health", (ctx) => Response.json({ status: "ok" }))
-path.json("/api/health", (ctx) => <JSX />)  // TS error: Type 'Element' is not assignable to 'Response'
+// path.json() — handler can return JSON values or Response
+path.json("/api/health", (ctx) => ({ status: "ok" }))       // plain object, auto-wrapped
+path.json("/api/health", (ctx) => Response.json({ ... }))    // Response, pass-through
+path.json("/api/health", (ctx) => <JSX />)  // TS error: Type 'Element' is not assignable
+
+// path.text() — handler can return string or Response
+path.text("/robots.txt", (ctx) => "User-agent: *\nDisallow:")
+path.text("/robots.txt", (ctx) => new Response("...", { headers: ... }))
 ```
 
 ```typescript
-// Type definitions
+// Type definitions per MIME tag
+type JsonResponseHandler<TParams, TEnv> = (ctx: ResponseHandlerContext<TParams, TEnv>) =>
+  JsonValue | Response | Promise<JsonValue | Response>;
+
+type TextResponseHandler<TParams, TEnv> = (ctx: ResponseHandlerContext<TParams, TEnv>) =>
+  string | Response | Promise<string | Response>;
+
 type ResponseHandler<TParams, TEnv> = (ctx: ResponseHandlerContext<TParams, TEnv>) =>
   Response | Promise<Response>;
 
@@ -170,10 +269,14 @@ type Handler<TParams, TEnv> = (ctx: HandlerContext<TParams, TEnv>) =>
 interface ResponseHandlerContext<TParams, TEnv> {
   request: Request;
   params: TParams;
-  env: TEnv;
+  env: TEnv extends RouterEnv<infer B, any> ? B : {};  // extracts bindings, same as HandlerContext
+  searchParams: URLSearchParams;  // system params filtered
+  url: URL;
+  pathname: string;
   href: HrefFunction;
   // No ctx.use() — no loaders
   // No ctx.res — handler creates its own Response
+  // No ctx.var / ctx.get / ctx.set — no middleware variables
 }
 ```
 
@@ -298,15 +401,6 @@ path.stream = (pattern, handler: ResponseHandler, options?) =>
 path.any = (pattern, handler: ResponseHandler, options?) =>
   path(pattern, handler as any, { ...options, [RESPONSE_TYPE]: MIME_TYPES.any });
 
-// All MIME tags on include
-include.json = (prefix, patterns, options?) =>
-  include(prefix, patterns, { ...options, [RESPONSE_TYPE]: MIME_TYPES.json });
-
-include.text = (prefix, patterns, options?) =>
-  include(prefix, patterns, { ...options, [RESPONSE_TYPE]: MIME_TYPES.text });
-
-// ... same pattern for include.html, include.xml, include.stream, include.any
-
 // All MIME tags on href -- each returns Link-ready props
 href.json = (path: ValidPaths, mount?: string) =>
   ({ to: href(path, mount), "data-external": true });
@@ -322,13 +416,12 @@ href.text = (path: ValidPaths, mount?: string) =>
 When multiple levels declare a response type, specificity wins:
 
 1. `path.json()` on the route itself (most specific)
-2. `include.json()` on the mounting include (override)
-3. `urls.json()` on the UrlPatterns (module default)
-4. No response type = RSC route (default)
+2. `urls.json()` on the UrlPatterns (module default)
+3. No response type = RSC route (default)
 
 A `path.text()` inside `urls.json()` patterns serves text, not JSON. The module default is a fallback, not a mandate.
 
-When `path()` or `include()` processes options, it checks for `options[RESPONSE_TYPE]`. When `include()` mounts `UrlPatterns`, it checks `patterns[RESPONSE_TYPE]` for the module-level default. Either way, the response type propagates to the trie.
+When `path()` processes options, it checks for `options[RESPONSE_TYPE]`. When `urls.json()` sets a module-level default, child `path()` calls inherit it via context. Either way, the response type propagates to the trie.
 
 ## Server-Side: Short-Circuit at the Trie
 
@@ -466,12 +559,13 @@ For the case where a developer uses plain `href()` instead of `href.json()` on a
 
 | File | Change |
 |------|--------|
-| `src/urls.ts` | Add `RESPONSE_TYPE` symbol, `MIME_TYPES` map, add `.json`/`.text`/`.html`/`.xml`/`.image`/`.stream`/`.any` tag functions to `path`/`include` |
+| `src/urls.ts` | Add `RESPONSE_TYPE` symbol, `MIME_TYPES` map, add `.json`/`.text`/`.html`/`.xml`/`.image`/`.stream`/`.any` tag functions to `path`, `ResponseEnvelope`/`ResponseError` types, `RouterError` error class |
 | `src/server/context.ts` | Add `responseType` field to route `EntryData` |
 | `src/types.ts` | Add `responseType` to `RouteMatchResult` so trie match carries it |
 | `src/router/match-api.ts` | Extend `previewMatch()` to return `responseType` + handler |
-| `src/rsc/handler.ts` | Add short-circuit in `coreRequestHandler()` before RSC pipeline |
-| `src/href-client.ts` | Add `.json`/`.text`/`.html`/`.xml`/`.stream`/`.any` tag functions to `href` (return `{ to, data-external }`) |
+| `src/rsc/handler.ts` | Add short-circuit in `coreRequestHandler()` before RSC pipeline, JSON envelope wrapping, error handling for all response routes |
+| `src/href-client.ts` | Add `.json`/`.text`/`.html`/`.xml`/`.stream`/`.any` tag functions to `href` (return `{ to, data-external }`), `PathResponse` type |
+| `src/client.tsx` | Export `ResponseEnvelope`, `ResponseError`, `PathResponse`, `isResponseError()` type guard |
 | `src/browser/react/Link.tsx` | No change needed -- `data-external` already works |
 
 ## What Doesn't Change
@@ -493,7 +587,7 @@ For the case where a developer uses plain `href()` instead of `href.json()` on a
 
 ## Response type inheritance
 
-Three levels of declaration, from broadest to most specific:
+Two levels of declaration, from broadest to most specific:
 
 ```typescript
 // 1. Module level -- urls.json() sets the default for all routes
@@ -503,10 +597,7 @@ export const apiPatterns = urls.json(({ path }) => [
   path.text("/export.csv", csvHandler, { name: "export" }), // overrides to text
 ]);
 
-// 2. Mount level -- include.json() overrides whatever the patterns declare
-include.json("/legacy", legacyPatterns, { name: "legacy" })
-
-// 3. Route level -- path.json() on individual routes (most specific)
+// 2. Route level -- path.json() on individual routes (most specific)
 path.json("/api/health", healthHandler, { name: "health" })
 ```
 
@@ -523,22 +614,26 @@ include("/api", apiPatterns, { name: "api" })
 
 1. **Add `RESPONSE_TYPE` symbol, `MIME_TYPES` map, and tag functions to `urls.ts`**
    - `path.json()`, `path.text()`, `path.html()`, `path.xml()`, `path.image()`, `path.stream()`, `path.any()` with `ResponseHandler` type
-   - `include.json()`, `include.text()`, `include.html()`, `include.xml()`, `include.stream()`, `include.any()`
    - `urls.json()`, `urls.text()`, `urls.html()`, `urls.xml()`, `urls.stream()`, `urls.any()` with `ResponsePathHelpers`
-   - `ResponseHandlerContext` (lighter, no `ctx.use()`)
+   - `ResponseHandlerContext` (lighter, with env bindings extraction, searchParams, url, pathname)
+   - `ResponseEnvelope<T>`, `ResponseError`, `RouteResponse` types
+   - `RouterError` class for structured error throwing
 
 2. **Add `responseType` to `EntryData`** (`server/context.ts`)
    - Route entries carry `responseType?: string`
 
 3. **Propagate `responseType` through the trie** (`types.ts`)
    - `RouteMatchResult.responseType`
-   - `include()` inheritance: `urls.json()` default → `include.json()` override → `path.json()` specific
+   - Inheritance: `urls.json()` default → `path.json()` specific override
 
 4. **Extend `previewMatch()`** (`router/match-api.ts`)
    - Return `responseType` and `handler` when matched route has a response type
 
 5. **Add short-circuit in `coreRequestHandler()`** (`rsc/handler.ts`)
    - After `previewMatch()`: if `responseType`, call handler directly, skip RSC pipeline
+   - JSON routes: try/catch with `{ data }` / `{ error }` envelope wrapping
+   - Non-JSON routes: try/catch with plain text error Response
+   - `RouterError` messages always exposed; generic `Error` hidden in production
    - Still run app + route middleware
 
 6. **Add `href.json()`, `href.text()`, `href.html()`, `href.xml()`, `href.stream()`, `href.any()` to client href** (`href-client.ts`)
@@ -590,7 +685,6 @@ include("/api", apiPatterns, { name: "api" })
 14. **`include()` inheritance tests** (`e2e/response-routes.test.ts`)
     - `urls.json()` module mounted with plain `include()` — all routes return JSON
     - Override: `path.text()` inside `urls.json()` module — serves text
-    - `include.json()` override — forces JSON on non-typed patterns
 
 15. **TypeScript compile tests** (`e2e/response-routes-types.test.ts` or inline)
     - Verify `path.json()` with JSX handler fails type check

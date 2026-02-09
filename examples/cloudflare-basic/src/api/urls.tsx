@@ -1,30 +1,37 @@
-import { urls, type ResponseHandlerContext } from "@rangojs/router/server";
+import { urls, RouterError } from "@rangojs/router/server";
 
 /**
- * API routes using urls.json() - all routes return Response objects,
- * bypassing the RSC pipeline entirely.
+ * API routes using urls.json() - handlers return plain objects,
+ * auto-wrapped as JSON responses by the framework.
+ *
+ * Handlers can still return Response directly for full control
+ * (custom status codes, headers, etc.).
+ *
+ * JSON routes return a { data } | { error } envelope:
+ * - Success: { data: T }
+ * - Error: { error: { message, code?, type? } } with appropriate HTTP status
  */
+const products = [
+  { id: "1", name: "Widget", price: 9.99 },
+  { id: "2", name: "Gadget", price: 19.99 },
+  { id: "3", name: "Doohickey", price: 4.99 },
+];
+
 export const apiPatterns = urls.json(({ path }) => [
-  path("/health", (ctx: ResponseHandlerContext) => {
-    return Response.json({ status: "ok", timestamp: Date.now() });
-  }, { name: "health" }),
+  path("/health", (ctx) => ({ status: "ok", timestamp: Date.now() }), { name: "health" }),
 
-  path("/products", (ctx: ResponseHandlerContext) => {
-    const products = [
-      { id: "1", name: "Widget", price: 9.99 },
-      { id: "2", name: "Gadget", price: 19.99 },
-      { id: "3", name: "Doohickey", price: 4.99 },
-    ];
-    return Response.json(products);
-  }, { name: "products" }),
+  path("/products", (ctx) => products, { name: "products" }),
 
-  path("/products/:id", (ctx: ResponseHandlerContext<{ id: string }>) => {
-    const { id } = ctx.params;
-    return Response.json({
-      id,
-      name: `Product ${id}`,
-      price: 9.99,
-      description: `Details for product ${id}`,
-    });
+  path("/products/:id", (ctx) => {
+    const product = products.find(p => p.id === ctx.params.id);
+    if (!product) {
+      throw new RouterError("NOT_FOUND", `Product ${ctx.params.id} not found`, { status: 404 });
+    }
+    return {
+      id: product.id,
+      name: product.name,
+      price: product.price,
+      description: `Details for product ${product.id}`,
+    };
   }, { name: "productDetail" }),
 ]);

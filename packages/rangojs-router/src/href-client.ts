@@ -15,6 +15,7 @@
  */
 
 import type { GetRegisteredRoutes } from "./types.js";
+import type { ResponseEnvelope } from "./urls.js";
 
 /**
  * Parse constraint values into a union type for paths
@@ -82,10 +83,41 @@ type WithSuffix<T extends string> =
   | `${T}?${string}#${string}`;
 
 /**
- * Helper type to get pattern from routes, handling both Record and interface types
+ * Helper type to get pattern from routes, handling string values and { path, response } objects
  */
 type RoutePattern<TRoutes, K extends keyof TRoutes> =
-  TRoutes[K] extends string ? TRoutes[K] : string;
+  TRoutes[K] extends string ? TRoutes[K]
+  : TRoutes[K] extends { readonly path: infer P extends string } ? P
+  : string;
+
+/**
+ * Reverse lookup: find route name where the pattern matches TPattern
+ */
+type NameForPattern<
+  TPattern extends string,
+  TRoutes = GetRegisteredRoutes
+> = {
+  [K in keyof TRoutes]: RoutePattern<TRoutes, K> extends TPattern ? K : never
+}[keyof TRoutes];
+
+/**
+ * Look up the response data type for a route pattern from RegisteredRoutes.
+ *
+ * Works by reverse-looking up the route name for the given pattern,
+ * then extracting the response type from the route entry.
+ *
+ * For static routes (no params), pattern === path:
+ *   PathResponse<"/api/health"> → { status: string; timestamp: number }
+ *
+ * For dynamic routes, use the pattern:
+ *   PathResponse<"/api/products/:id"> → Product
+ */
+export type PathResponse<TPattern extends string, TRoutes = GetRegisteredRoutes> =
+  ResponseEnvelope<{
+    [K in keyof TRoutes]: RoutePattern<TRoutes, K> extends TPattern
+      ? TRoutes[K] extends { readonly response: infer R } ? Exclude<R, Response> : never
+      : never
+  }[keyof TRoutes]>;
 
 /**
  * Strip trailing slash from a path (e.g., "/blog/" -> "/blog" | "/blog/")

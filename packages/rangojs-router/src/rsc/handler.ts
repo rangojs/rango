@@ -9,7 +9,8 @@
 
 import { createElement } from "react";
 import { renderSegments } from "../segment-system.js";
-import { RouteNotFoundError } from "../errors.js";
+import { RouteNotFoundError, RouterError } from "../errors.js";
+import type { ResponseError } from "../urls.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
 import {
   matchMiddleware,
@@ -44,6 +45,31 @@ import {
   getPrecomputedEntries,
   waitForManifestReady,
 } from "../route-map-builder.js";
+
+/**
+ * Build a ResponseError payload from a caught error.
+ * RouterError messages are always exposed (developer-crafted).
+ * Standard Error messages are hidden in production.
+ */
+function createResponseErrorPayload(error: unknown, isDev: boolean): ResponseError {
+  if (error instanceof RouterError) {
+    return {
+      message: error.message,
+      code: error.code,
+      ...(error.type ? { type: error.type } : {}),
+      ...(isDev && error.stack ? { stack: error.stack } : {}),
+    };
+  }
+  if (error instanceof Error) {
+    return {
+      message: isDev ? error.message : "Internal Server Error",
+      ...(isDev && error.stack ? { stack: error.stack } : {}),
+    };
+  }
+  return {
+    message: isDev ? String(error) : "Internal Server Error",
+  };
+}
 
 /**
  * Create an RSC request handler.
@@ -329,6 +355,9 @@ export function createRSCHandler<
         request,
         params: preview.params || {},
         env: bindings,
+        searchParams: url.searchParams,
+        url,
+        pathname: url.pathname,
         href: (name: string, hrefParams?: Record<string, string>) => {
           if (name.startsWith("/")) {
             if (!hrefParams) return name;
@@ -344,21 +373,90 @@ export function createRSCHandler<
 
       // Call handler directly, wrapped by route middleware if present
       const callHandler = async () => {
-        const response = await (preview.handler as Function)(responseHandlerCtx);
-        if (!(response instanceof Response)) {
-          throw new Error(
-            `Response route handler must return a Response object, got ${typeof response}`
-          );
+        // JSON response routes: wrap in { data } / { error } envelope
+        if (preview.responseType === "json") {
+          const errorCtx = { request, url, env };
+          try {
+            const result = await (preview.handler as Function)(responseHandlerCtx);
+            if (result instanceof Response) {
+              const mergedHeaders: Record<string, string> = {};
+              result.headers.forEach((value, key) => {
+                mergedHeaders[key] = value;
+              });
+              return createResponseWithMergedHeaders(result.body, {
+                status: result.status,
+                headers: mergedHeaders,
+              });
+            }
+            return createResponseWithMergedHeaders(
+              JSON.stringify({ data: result }),
+              { status: 200, headers: { "content-type": "application/json;charset=utf-8" } },
+            );
+          } catch (error) {
+            callOnError(error, "handler", errorCtx);
+            const isDev = process.env.NODE_ENV !== "production";
+            const status = error instanceof RouterError ? error.status : 500;
+            return createResponseWithMergedHeaders(
+              JSON.stringify({ error: createResponseErrorPayload(error, isDev) }),
+              { status, headers: { "content-type": "application/json;charset=utf-8" } },
+            );
+          }
         }
-        // Merge middleware-set headers into the handler's response
-        const mergedHeaders: Record<string, string> = {};
-        response.headers.forEach((value, key) => {
-          mergedHeaders[key] = value;
-        });
-        return createResponseWithMergedHeaders(response.body, {
-          status: response.status,
-          headers: mergedHeaders,
-        });
+
+        // Non-JSON response routes: catch errors and return plain Response
+        const errorCtx = { request, url, env };
+        try {
+          const result = await (preview.handler as Function)(responseHandlerCtx);
+
+          if (result instanceof Response) {
+            // Handler returned a Response directly -- pass through
+            const mergedHeaders: Record<string, string> = {};
+            result.headers.forEach((value, key) => {
+              mergedHeaders[key] = value;
+            });
+            return createResponseWithMergedHeaders(result.body, {
+              status: result.status,
+              headers: mergedHeaders,
+            });
+          }
+
+          // Auto-wrap based on response type tag
+          switch (preview.responseType) {
+            case "text":
+              return createResponseWithMergedHeaders(
+                String(result),
+                { status: 200, headers: { "content-type": "text/plain;charset=utf-8" } },
+              );
+            case "html":
+              return createResponseWithMergedHeaders(
+                String(result),
+                { status: 200, headers: { "content-type": "text/html;charset=utf-8" } },
+              );
+            case "xml":
+              return createResponseWithMergedHeaders(
+                String(result),
+                { status: 200, headers: { "content-type": "application/xml;charset=utf-8" } },
+              );
+            default:
+              // image, stream, any -- must return Response
+              throw new Error(
+                `Response route handler for "${preview.responseType}" must return a Response object, got ${typeof result}`
+              );
+          }
+        } catch (error) {
+          callOnError(error, "handler", errorCtx);
+          const isDev = process.env.NODE_ENV !== "production";
+          const status = error instanceof RouterError ? error.status : 500;
+          const message = error instanceof RouterError
+            ? error.message
+            : isDev && error instanceof Error
+              ? error.message
+              : "Internal Server Error";
+          return createResponseWithMergedHeaders(message, {
+            status,
+            headers: { "content-type": "text/plain;charset=utf-8" },
+          });
+        }
       };
 
       if (preview.routeMiddleware && preview.routeMiddleware.length > 0) {

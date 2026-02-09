@@ -30,6 +30,7 @@ import { SlowPage1, SlowPage2, FastPage } from "./pages/slow.js";
 import { InlineIndexPage, InlineDocsPage, InlinePricingPage } from "./pages/inline.js";
 import { articlesPatterns } from "./pages/articles.js";
 import { guidesPatterns } from "./pages/guides.js";
+import { ApiDemoPage } from "./pages/api-demo.js";
 
 /**
  * Main URL patterns - Django-style routing API
@@ -52,6 +53,7 @@ export const urlpatterns = urls(({ path, layout, parallel, loader, loading, cach
     path("/", HomePage, { name: "home" }),
     path("/about", AboutPage, { name: "about" }),
     path("/counter", CounterPage, { name: "counter" }),
+    path("/api-demo", ApiDemoPage, { name: "apiDemo" }),
     path("/features/:slug", FeatureDetailPage, { name: "featuresDetail" }, () => [
       loading(<FeatureLoading />),
     ]),

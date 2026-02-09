@@ -25,6 +25,7 @@ export {
   NetworkError,
   isNetworkError,
   sanitizeError,
+  RouterError,
 } from "./errors.js";
 
 // Types (safe to import anywhere - no runtime code)
@@ -73,8 +74,18 @@ export { createLoader } from "./loader.js";
 export type {
   ResponseHandler,
   ResponseHandlerContext,
+  JsonResponseHandler,
+  TextResponseHandler,
+  JsonValue,
   ResponsePathHelpers,
+  JsonResponsePathHelpers,
+  TextResponsePathHelpers,
   ResponsePathFn,
+  JsonResponsePathFn,
+  TextResponsePathFn,
+  RouteResponse,
+  ResponseError,
+  ResponseEnvelope,
 } from "./urls.js";
 
 /**
@@ -151,3 +162,6 @@ export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 export type { ScopedHrefFunction, HrefFunction, ExtractLocalRoutes } from "./href.js";
 // scopedHref() helper for handlers to get locally-typed href
 export { scopedHref } from "./href.js";
+
+// Path-based response type lookup from RegisteredRoutes
+export type { PathResponse } from "./href-client.js";

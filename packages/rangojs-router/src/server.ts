@@ -23,8 +23,18 @@ export {
   type IncludeOptions,
   type ResponseHandler,
   type ResponseHandlerContext,
+  type JsonResponseHandler,
+  type TextResponseHandler,
+  type JsonValue,
   type ResponsePathHelpers,
+  type JsonResponsePathHelpers,
+  type TextResponsePathHelpers,
   type ResponsePathFn,
+  type JsonResponsePathFn,
+  type TextResponsePathFn,
+  type RouteResponse,
+  type ResponseError,
+  type ResponseEnvelope,
 } from "./urls.js";
 
 // Re-export IncludeItem from route-types
@@ -106,6 +116,7 @@ export {
   BuildError,
   InvalidHandlerError,
   sanitizeError,
+  RouterError,
 } from "./errors.js";
 
 // Component utilities
@@ -158,3 +169,6 @@ export type {
   OnErrorContext,
   OnErrorCallback,
 } from "./types.js";
+
+// Path-based response type lookup from RegisteredRoutes
+export type { PathResponse } from "./href-client.js";

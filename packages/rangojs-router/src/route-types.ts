@@ -34,9 +34,11 @@ export type LayoutItem = {
  * Used for type inference in urls() API
  */
 export type TypedLayoutItem<
-  TChildRoutes extends Record<string, string> = Record<string, string>
+  TChildRoutes extends Record<string, string> = Record<string, string>,
+  TChildResponses extends Record<string, unknown> = Record<string, unknown>,
 > = LayoutItem & {
   readonly __childRoutes?: TChildRoutes;
+  readonly __childResponses?: TChildResponses;
 };
 export type RouteItem = {
   name: string;
@@ -51,10 +53,12 @@ export type RouteItem = {
  */
 export type TypedRouteItem<
   TName extends string = string,
-  TPattern extends string = string
+  TPattern extends string = string,
+  TData = unknown,
 > = RouteItem & {
   readonly __name?: TName;
   readonly __pattern?: TPattern;
+  readonly __data?: TData;
 };
 export type ParallelItem = {
   name: string;
@@ -120,9 +124,11 @@ export type CacheItem = {
  * Used for type inference in urls() API
  */
 export type TypedCacheItem<
-  TChildRoutes extends Record<string, string> = Record<string, string>
+  TChildRoutes extends Record<string, string> = Record<string, string>,
+  TChildResponses extends Record<string, unknown> = Record<string, unknown>,
 > = CacheItem & {
   readonly __childRoutes?: TChildRoutes;
+  readonly __childResponses?: TChildResponses;
 };
 
 /**
@@ -152,11 +158,13 @@ export type IncludeItem = {
 export type TypedIncludeItem<
   TRoutes extends Record<string, string> = Record<string, string>,
   TNamePrefix extends string = string,
-  TUrlPrefix extends string = string
+  TUrlPrefix extends string = string,
+  TResponses extends Record<string, unknown> = Record<string, unknown>,
 > = IncludeItem & {
   readonly __routes?: TRoutes;
   readonly __namePrefix?: TNamePrefix;
   readonly __urlPrefix?: TUrlPrefix;
+  readonly __responses?: TResponses;
 };
 
 /**

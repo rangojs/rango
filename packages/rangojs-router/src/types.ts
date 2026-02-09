@@ -49,6 +49,7 @@ declare global {
     // eslint-disable-next-line @typescript-eslint/no-empty-interface
     interface RegisteredRoutes {
       // Empty by default - users augment with their merged route maps for type-safe href()
+      // Values are string (pattern) for RSC routes, or { path: string; response: T } for response routes
     }
   }
 }
