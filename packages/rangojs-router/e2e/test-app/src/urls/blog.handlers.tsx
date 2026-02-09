@@ -1,14 +1,14 @@
 import { scopedHref, Meta } from "@rangojs/router";
-import type { Handler } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles.js";
 import type { blogPatterns } from "./blog.js";
+import type { HandlerFor } from "../route-params.gen.js";
 
 /**
  * Blog index page handler
  * Demonstrates scopedHref for type-safe local route names
  */
-export const BlogIndexHandler: Handler<"/"> = (ctx) => {
+export const BlogIndexHandler: HandlerFor<"blog.index"> = (ctx) => {
   // Use scopedHref for type-safe local route names
   const href = scopedHref<typeof blogPatterns>(ctx.href);
   const pushBreadcrumb = ctx.use(Breadcrumbs);
@@ -61,7 +61,7 @@ export const BlogIndexHandler: Handler<"/"> = (ctx) => {
  * Blog post detail handler
  * Demonstrates async meta streaming
  */
-export const BlogPostHandler: Handler<"/:postId"> = (ctx) => {
+export const BlogPostHandler: HandlerFor<"blog.post"> = (ctx) => {
   const href = scopedHref<typeof blogPatterns>(ctx.href);
 
   const pushBreadcrumb = ctx.use(Breadcrumbs);

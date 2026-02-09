@@ -1,10 +1,11 @@
 import type { Plugin, PluginOption } from "vite";
 import { createServer as createViteServer } from "vite";
 import * as Vite from "vite";
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { generateRouteTypesSource } from "../build/generate-route-types.ts";
 import { exposeActionId } from "./expose-action-id.ts";
 import { exposeLoaderId } from "./expose-loader-id.ts";
 import { exposeHandleId } from "./expose-handle-id.ts";
@@ -121,6 +122,16 @@ interface RangoBaseOptions {
    * @default true
    */
   banner?: boolean;
+
+  /**
+   * Path for the generated route-params type file.
+   * Contains a `HandlerFor<"routeName">` type alias that maps route names
+   * to their URL patterns, avoiding circular type references.
+   *
+   * Set to `false` to disable generation.
+   * @default "./src/route-params.gen.ts"
+   */
+  routeTypes?: string | false;
 
 }
 
@@ -413,7 +424,7 @@ function buildRouteToStaticPrefix(
  */
 function createRouterDiscoveryPlugin(
   entryPath: string,
-  opts?: { enableBuildPrerender?: boolean },
+  opts?: { enableBuildPrerender?: boolean; routeTypes?: string | false },
 ): Plugin {
   let projectRoot = "";
   let isBuildMode = false;
@@ -686,6 +697,19 @@ function createRouterDiscoveryPlugin(
     return serverMod;
   }
 
+  // Write route-params type file from the merged manifest.
+  // Only writes when content has changed to avoid triggering HMR loops.
+  function writeRouteTypesFile() {
+    if (opts?.routeTypes === false || !mergedRouteManifest) return;
+    const outPath = resolve(projectRoot, opts?.routeTypes || "./src/route-params.gen.ts");
+    const source = generateRouteTypesSource(mergedRouteManifest);
+    const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
+    if (existing === source) return;
+    mkdirSync(dirname(outPath), { recursive: true });
+    writeFileSync(outPath, source);
+    console.log(`[rsc-router] Generated route types -> ${outPath}`);
+  }
+
   return {
     name: "@rangojs/router:discovery",
 
@@ -743,6 +767,7 @@ function createRouterDiscoveryPlugin(
           }
 
           await discoverRouters(rscEnv);
+          writeRouteTypesFile();
 
           // Populate the route map in the RSC env
           if (mergedRouteManifest && serverMod?.setCachedManifest) {
@@ -820,6 +845,7 @@ function createRouterDiscoveryPlugin(
         }
 
         await discoverRouters(rscEnv);
+        writeRouteTypesFile();
       } catch (err: any) {
         // Clean up before re-throwing so the temp server doesn't leak
         delete (globalThis as any).__rscRouterDiscoveryActive;
@@ -1800,6 +1826,7 @@ export async function rango(
   if (discoveryEntryPath) {
     plugins.push(createRouterDiscoveryPlugin(discoveryEntryPath, {
       enableBuildPrerender: prerenderEnabled,
+      routeTypes: options.routeTypes,
     }));
   }
 
