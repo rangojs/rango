@@ -29,6 +29,8 @@ export interface TrieLeaf {
   pt?: true;
   /** Response type for non-RSC routes (json, text, image, any) */
   rt?: string;
+  /** Negotiate variants: response-type routes sharing this path */
+  nv?: Array<{ routeKey: string; responseType: string }>;
 }
 
 export interface TrieNode {
@@ -153,6 +155,44 @@ export function extractAncestryFromTrie(
   return result;
 }
 
+/**
+ * Merge a new leaf with an existing leaf, handling content negotiation.
+ * When an RSC route and response-type routes share the same URL pattern,
+ * the RSC route becomes the primary leaf and response-type routes are
+ * appended to the nv (negotiate variants) array.
+ * Multiple response types on the same path are supported (json + text + xml).
+ */
+function mergeLeaves(existing: TrieLeaf | undefined, leaf: TrieLeaf): TrieLeaf {
+  if (!existing) return leaf;
+
+  if (existing.rt && leaf.rt) {
+    // Both are response-type: preserve old as variant
+    const merged = leaf;
+    merged.nv = existing.nv || [];
+    merged.nv.push({ routeKey: existing.n, responseType: existing.rt });
+    return merged;
+  }
+  if (leaf.rt && !existing.rt) {
+    // RSC primary exists, new leaf is response-type: append variant
+    if (!existing.nv) existing.nv = [];
+    existing.nv.push({ routeKey: leaf.n, responseType: leaf.rt });
+    return existing;
+  }
+  if (!leaf.rt && existing.rt) {
+    // Response-type was primary, new leaf is RSC: swap and move old to variants
+    if (!leaf.nv) leaf.nv = [];
+    leaf.nv.push({ routeKey: existing.n, responseType: existing.rt });
+    if (existing.nv) leaf.nv.push(...existing.nv);
+    return leaf;
+  }
+  // Both RSC (last wins): overwrite
+  return leaf;
+}
+
+function mergeLeaf(node: TrieNode, leaf: TrieLeaf): void {
+  node.r = mergeLeaves(node.r, leaf);
+}
+
 function insertSegments(
   node: TrieNode,
   segments: ParsedSegment[],
@@ -161,7 +201,7 @@ function insertSegments(
 ): void {
   // Base case: all segments consumed, add terminal
   if (index >= segments.length) {
-    node.r = leaf;
+    mergeLeaf(node, leaf);
     return;
   }
 
@@ -174,7 +214,7 @@ function insertSegments(
   } else if (segment.type === "param") {
     if (segment.optional) {
       // Optional param: add terminal at current node (param absent)
-      node.r = leaf;
+      mergeLeaf(node, leaf);
       // AND continue with param child (param present)
     }
     if (!node.p) {
@@ -183,6 +223,9 @@ function insertSegments(
     insertSegments(node.p.c, segments, index + 1, leaf);
   } else if (segment.type === "wildcard") {
     // Wildcard consumes all remaining segments
-    node.w = { ...leaf, pn: "*" };
+    const wildLeaf = { ...leaf, pn: "*" };
+    const existing = node.w ? { ...node.w } as TrieLeaf : undefined;
+    const merged = mergeLeaves(existing, wildLeaf);
+    node.w = merged as TrieLeaf & { pn: string };
   }
 }

@@ -125,6 +125,48 @@ import { createMatchPartialPipeline } from "./router/match-pipelines.js";
 import { collectMatchResult } from "./router/match-result.js";
 import { resolveThemeConfig } from "./theme/constants.js";
 
+// Response type -> MIME type used for Accept header matching
+const RESPONSE_TYPE_MIME: Record<string, string> = {
+  json: "application/json",
+  text: "text/plain",
+  xml: "application/xml",
+  html: "text/html",
+};
+
+/**
+ * Parse an Accept header into a Set of MIME types.
+ * Splits on commas, trims whitespace, strips quality parameters.
+ * e.g. "text/html, application/json;q=0.9" -> Set{"text/html", "application/json"}
+ */
+function parseAcceptTypes(accept: string): Set<string> {
+  const types = new Set<string>();
+  for (const part of accept.split(",")) {
+    // Strip quality params (;q=0.9) and whitespace
+    const mime = part.split(";")[0]!.trim();
+    if (mime) types.add(mime);
+  }
+  return types;
+}
+
+/**
+ * Pick the best negotiate variant based on parsed Accept types.
+ * Checks each variant's MIME type against the set.
+ * Falls back to the first variant if no specific match is found.
+ */
+function pickNegotiateVariant(
+  acceptTypes: Set<string>,
+  variants: Array<{ routeKey: string; responseType: string }>,
+): { routeKey: string; responseType: string } {
+  for (const variant of variants) {
+    const mime = RESPONSE_TYPE_MIME[variant.responseType];
+    if (mime && acceptTypes.has(mime)) {
+      return variant;
+    }
+  }
+  // No specific MIME match — use first variant as default
+  return variants[0]!;
+}
+
 /**
  * Props passed to the root layout component
  */
@@ -889,6 +931,7 @@ export interface RSCRouter<
     responseType?: string;
     handler?: Function;
     params?: Record<string, string>;
+    negotiated?: boolean;
   } | null>;
 
   matchPartial(
@@ -1577,6 +1620,7 @@ export function createRouter<TEnv = any>(
             ...(trieResult.pr ? { pr: true } : {}),
             ...(trieResult.pt ? { pt: true } : {}),
             ...(trieResult.responseType ? { responseType: trieResult.responseType } : {}),
+            ...(trieResult.negotiateVariants ? { negotiateVariants: trieResult.negotiateVariants } : {}),
           };
           return lastFindMatchResult;
         }
@@ -1787,6 +1831,7 @@ export function createRouter<TEnv = any>(
     responseType?: string;
     handler?: Function;
     params?: Record<string, string>;
+    negotiated?: boolean;
   } | null> {
     const url = new URL(request.url);
     const pathname = url.pathname;
@@ -1822,6 +1867,56 @@ export function createRouter<TEnv = any>(
     const responseType = matched.responseType ||
       (manifestEntry.type === "route" ? manifestEntry.responseType : undefined);
 
+    // Content negotiation: when negotiate variants exist, pick the best
+    // handler based on the Accept header. Variants may coexist with an RSC
+    // primary (responseType unset) or a response-type primary (responseType set).
+    // When the primary is itself a response-type route, include it as a candidate.
+    if (matched.negotiateVariants && matched.negotiateVariants.length > 0) {
+      const acceptTypes = parseAcceptTypes(request.headers.get("accept") || "");
+
+      // Build candidate list: variants directly, add primary only if response-type
+      const variants = matched.negotiateVariants;
+      let candidates: Array<{ routeKey: string; responseType: string }>;
+      if (responseType) {
+        // Primary is response-type too — include it as a candidate
+        candidates = [...variants, { routeKey: matched.routeKey, responseType }];
+      } else {
+        // Primary is RSC — variants array used directly, no copy needed
+        candidates = variants;
+      }
+
+      // If primary is RSC and Accept includes text/html, skip negotiation (RSC wins)
+      // but still mark as negotiated so Vary: Accept is set on the response.
+      if (!responseType && acceptTypes.has("text/html")) {
+        // Fall through to default RSC handling below, with negotiated flag
+      } else {
+        const variant = pickNegotiateVariant(acceptTypes, candidates);
+
+        // If the winner is the current primary, use it directly
+        if (responseType && variant.routeKey === matched.routeKey) {
+          // Fall through — responseType already set, handler is manifestEntry
+        } else {
+          const negotiateEntry = await loadManifest(
+            matched.entry,
+            variant.routeKey,
+            pathname,
+            undefined,
+            false,
+          );
+          return {
+            routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
+            responseType: variant.responseType,
+            handler: negotiateEntry.type === "route" ? negotiateEntry.handler : undefined,
+            params: matched.params,
+            negotiated: true,
+          };
+        }
+      }
+    }
+
+    // If we passed through the negotiation block (variants exist), mark as
+    // negotiated so the handler sets Vary: Accept on the response.
+    const hasVariants = matched.negotiateVariants && matched.negotiateVariants.length > 0;
     return {
       routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
       ...(responseType ? {
@@ -1829,6 +1924,7 @@ export function createRouter<TEnv = any>(
         handler: manifestEntry.type === "route" ? manifestEntry.handler : undefined,
         params: matched.params,
       } : {}),
+      ...(hasVariants ? { negotiated: true } : {}),
     };
   }
 

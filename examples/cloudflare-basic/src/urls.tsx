@@ -47,6 +47,34 @@ export const urlpatterns = urls(({ path, layout, parallel, loader, loading, cach
     );
   }, { name: "robots" }),
 
+  // Content negotiation test routes (same URL, different response types)
+  path("/test/negotiate", () => <div>HTML version</div>, { name: "testNegotiate" }),
+  path.json("/test/negotiate", (ctx) => ({
+    format: "json",
+    negotiated: true,
+  }), { name: "testNegotiateJson" }),
+
+  // Content negotiation: text
+  path("/test/negotiate-text", () => <div>Text HTML version</div>, { name: "testNegotiateText" }),
+  path.text("/test/negotiate-text", () => "plain text response", { name: "testNegotiateTextApi" }),
+
+  // Content negotiation: xml
+  path("/test/negotiate-xml", () => <div>XML HTML version</div>, { name: "testNegotiateXml" }),
+  path.xml("/test/negotiate-xml", () => "<item><status>ok</status></item>", { name: "testNegotiateXmlApi" }),
+
+  // Content negotiation: multiple response types on same path
+  path("/test/negotiate-multi", () => <div>Multi HTML version</div>, { name: "testNegotiateMulti" }),
+  path.json("/test/negotiate-multi", () => ({ format: "json" }), { name: "testNegotiateMultiJson" }),
+  path.text("/test/negotiate-multi", () => "plain text", { name: "testNegotiateMultiText" }),
+  path.xml("/test/negotiate-multi", () => "<root><format>xml</format></root>", { name: "testNegotiateMultiXml" }),
+
+  // Content negotiation: wildcard route
+  path("/test/negotiate-wild/*", () => <div>Wildcard HTML</div>, { name: "testNegotiateWild" }),
+  path.json("/test/negotiate-wild/*", (ctx) => ({
+    format: "json",
+    wildcard: (ctx.params as Record<string, string>)["*"],
+  }), { name: "testNegotiateWildJson" }),
+
   // MIME type test routes (one per tag, used by e2e tests)
   path.json("/test/mime/json", () => ({ type: "json" }), { name: "testMimeJson" }),
   path.text("/test/mime/text", () => "hello text", { name: "testMimeText" }),
