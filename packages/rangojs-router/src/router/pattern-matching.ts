@@ -222,6 +222,8 @@ export interface RouteMatchResult<TEnv = any> {
   pt?: true;
   /** Response type for non-RSC routes (json, text, image, any) */
   responseType?: string;
+  /** Negotiate variants: response-type routes sharing this path */
+  negotiateVariants?: Array<{ routeKey: string; responseType: string }>;
 }
 
 /**

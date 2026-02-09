@@ -140,6 +140,8 @@ export interface ResponseHandlerContext<TParams = Record<string, string>, TEnv =
   /** The pathname portion of the request URL. */
   pathname: string;
   href: (name: string, params?: Record<string, string>) => string;
+  /** Read a variable set by middleware via ctx.set(key, value). */
+  get: (key: string) => unknown;
 }
 
 /**

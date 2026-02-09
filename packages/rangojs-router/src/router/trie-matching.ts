@@ -26,6 +26,8 @@ export interface TrieMatchResult {
   pt?: true;
   /** Response type for non-RSC routes (json, text, image, any) */
   responseType?: string;
+  /** Negotiate variants: response-type routes sharing this path */
+  negotiateVariants?: Array<{ routeKey: string; responseType: string }>;
 }
 
 /**
@@ -162,5 +164,6 @@ function validateAndBuild(
     ...(leaf.pr ? { pr: true } : {}),
     ...(leaf.pt ? { pt: true } : {}),
     ...(leaf.rt ? { responseType: leaf.rt } : {}),
+    ...(leaf.nv ? { negotiateVariants: leaf.nv.map(v => ({ routeKey: v.n, responseType: v.rt })) } : {}),
   };
 }

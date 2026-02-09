@@ -369,6 +369,7 @@ export function createRSCHandler<
           }
           return name;
         },
+        get: (key: string) => variables[key],
       };
 
       // Call handler directly, wrapped by route middleware if present
@@ -459,6 +460,15 @@ export function createRSCHandler<
         }
       };
 
+      // Wrap callHandler to append Vary: Accept on content-negotiated responses
+      const callHandlerWithVary = async () => {
+        const response = await callHandler();
+        if (preview.negotiated) {
+          response.headers.append("Vary", "Accept");
+        }
+        return response;
+      };
+
       if (preview.routeMiddleware && preview.routeMiddleware.length > 0) {
         const middlewareEntries = preview.routeMiddleware.map((mw) => ({
           entry: {
@@ -470,11 +480,20 @@ export function createRSCHandler<
           },
           params: mw.params,
         }));
-        return executeMiddleware(middlewareEntries, request, env, variables, callHandler);
+        return executeMiddleware(middlewareEntries, request, env, variables, callHandlerWithVary);
       }
 
-      return callHandler();
+      return callHandlerWithVary();
     }
+
+    // Wrap RSC handler to append Vary: Accept on content-negotiated routes
+    const rscHandler = async () => {
+      const response = await coreRequestHandlerInner(request, env, url, variables, nonce);
+      if (preview?.negotiated) {
+        response.headers.append("Vary", "Accept");
+      }
+      return response;
+    };
 
     if (preview?.routeMiddleware && preview.routeMiddleware.length > 0) {
       // Convert route middleware to app middleware format for execution
@@ -490,13 +509,11 @@ export function createRSCHandler<
       }));
 
       // Execute route middleware wrapping the actual request handling
-      return executeMiddleware(middlewareEntries, request, env, variables, () =>
-        coreRequestHandlerInner(request, env, url, variables, nonce),
-      );
+      return executeMiddleware(middlewareEntries, request, env, variables, rscHandler);
     }
 
     // No route middleware, proceed directly
-    return coreRequestHandlerInner(request, env, url, variables, nonce);
+    return rscHandler();
   }
 
   // Inner request handler (actual RSC logic, wrapped by route middleware if any)
