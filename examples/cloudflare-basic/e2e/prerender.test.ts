@@ -141,6 +141,33 @@ test.describe("prerender", () => {
     ).toBeVisible();
   });
 
+  test("should navigate from prerendered articles to blog without fallback", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+    await page.goto(f.url("/articles"));
+    await waitForHydration(page);
+
+    const warnings: string[] = [];
+    page.on("console", (msg) => {
+      if (
+        msg.type() === "warning" &&
+        msg.text().includes("Full update (fallback)")
+      ) {
+        warnings.push(msg.text());
+      }
+    });
+
+    await using __ = await expectNoReload(page);
+
+    await testId(page, "nav-blog").click();
+    await expect(testId(page, "blog-index")).toBeVisible();
+    await expect(testId(page, "blog-title")).toHaveText("Blog");
+
+    // Verify partial update (no fallback render)
+    expect(warnings).toEqual([]);
+  });
+
   test("should display meta tags on pre-rendered page", async ({ page }) => {
     using _ = expectNoPageError(page);
 
