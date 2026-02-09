@@ -598,9 +598,10 @@ function createRouterDiscoveryPlugin(
           buildRouteToStaticPrefix(manifest.prefixTree, routeToStaticPrefix);
         }
 
-        // Collect prerender route names from all manifests
+        // Collect prerender route names and response type routes from all manifests
         const prerenderRouteNames = new Set<string>();
         const passthroughRouteNames = new Set<string>();
+        const mergedResponseTypeRoutes: Record<string, string> = {};
         for (const { manifest } of allManifests) {
           if (manifest.prerenderRoutes) {
             for (const name of manifest.prerenderRoutes) {
@@ -612,6 +613,9 @@ function createRouterDiscoveryPlugin(
               passthroughRouteNames.add(name);
             }
           }
+          if (manifest.responseTypeRoutes) {
+            Object.assign(mergedResponseTypeRoutes, manifest.responseTypeRoutes);
+          }
         }
 
         mergedRouteTrie = buildRouteTrie(
@@ -621,6 +625,7 @@ function createRouterDiscoveryPlugin(
           Object.keys(mergedRouteTrailingSlash).length > 0 ? mergedRouteTrailingSlash : undefined,
           prerenderRouteNames.size > 0 ? prerenderRouteNames : undefined,
           passthroughRouteNames.size > 0 ? passthroughRouteNames : undefined,
+          Object.keys(mergedResponseTypeRoutes).length > 0 ? mergedResponseTypeRoutes : undefined,
         );
         // Trie built successfully
       }

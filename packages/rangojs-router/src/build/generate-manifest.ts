@@ -47,6 +47,8 @@ export interface GeneratedManifest {
   prerenderRoutes?: string[];
   /** Route names with passthrough: true (handler kept in bundle for live fallback) */
   passthroughRoutes?: string[];
+  /** Route name → response type for non-RSC routes */
+  responseTypeRoutes?: Record<string, string>;
   /** Generation timestamp */
   generatedAt: string;
 }
@@ -67,6 +69,7 @@ function buildPrefixTreeNode(
   prerenderRoutes?: string[],
   prerenderDefs?: Record<string, any>,
   passthroughRoutes?: string[],
+  responseTypeRoutes?: Record<string, string>,
 ): PrefixTreeNode {
   if (visited.has(patterns)) {
     console.warn(
@@ -146,6 +149,15 @@ function buildPrefixTreeNode(
     }
   }
 
+  // Collect response type routes from manifest entries
+  if (responseTypeRoutes) {
+    for (const [name, entry] of manifest) {
+      if (entry.type === "route" && entry.responseType) {
+        responseTypeRoutes[name] = entry.responseType;
+      }
+    }
+  }
+
   // Build children from tracked nested includes.
   // Multiple includes can share the same fullPrefix (e.g., include("/", patternsA),
   // include("/", patternsB)). Merge their routes instead of overwriting.
@@ -164,6 +176,7 @@ function buildPrefixTreeNode(
       prerenderRoutes,
       prerenderDefs,
       passthroughRoutes,
+      responseTypeRoutes,
     );
 
     const existing = children[include.fullPrefix];
@@ -276,6 +289,7 @@ export function generateManifest<TEnv>(
   const prerenderRoutes: string[] = [];
   const prerenderDefs: Record<string, any> = {};
   const passthroughRoutes: string[] = [];
+  const responseTypeRoutes: Record<string, string> = {};
   for (const [name, entry] of manifest) {
     if (entry.type === "route" && entry.isPrerender) {
       prerenderRoutes.push(name);
@@ -285,6 +299,9 @@ export function generateManifest<TEnv>(
       if (entry.prerenderDef?.options?.passthrough === true) {
         passthroughRoutes.push(name);
       }
+    }
+    if (entry.type === "route" && entry.responseType) {
+      responseTypeRoutes[name] = entry.responseType;
     }
   }
 
@@ -305,6 +322,7 @@ export function generateManifest<TEnv>(
       prerenderRoutes,
       prerenderDefs,
       passthroughRoutes,
+      responseTypeRoutes,
     );
 
     const existing = prefixTree[include.fullPrefix];
@@ -322,6 +340,7 @@ export function generateManifest<TEnv>(
     routeTrailingSlash: Object.keys(routeTrailingSlash).length > 0 ? routeTrailingSlash : undefined,
     prerenderRoutes: prerenderRoutes.length > 0 ? prerenderRoutes : undefined,
     passthroughRoutes: passthroughRoutes.length > 0 ? passthroughRoutes : undefined,
+    responseTypeRoutes: Object.keys(responseTypeRoutes).length > 0 ? responseTypeRoutes : undefined,
     generatedAt: new Date().toISOString(),
     // Internal: routeAncestry is used only for trie building, not exported
     _routeAncestry: routeAncestry,

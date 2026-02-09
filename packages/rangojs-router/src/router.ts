@@ -851,8 +851,8 @@ export interface RSCRouter<
   match(request: Request, context: TEnv): Promise<MatchResult>;
 
   /**
-   * Preview match - returns route middleware without segment resolution
-   * Used by RSC handler to execute route middleware before full matching
+   * Preview match - returns route middleware without segment resolution.
+   * Also returns responseType and handler for response routes (non-RSC short-circuit).
    */
   previewMatch(
     request: Request,
@@ -862,6 +862,9 @@ export interface RSCRouter<
       handler: import("./router/middleware.js").MiddlewareFn;
       params: Record<string, string>;
     }>;
+    responseType?: string;
+    handler?: Function;
+    params?: Record<string, string>;
   } | null>;
 
   matchPartial(
@@ -1549,6 +1552,7 @@ export function createRouter<TEnv = any>(
             ancestry: trieResult.ancestry,
             ...(trieResult.pr ? { pr: true } : {}),
             ...(trieResult.pt ? { pt: true } : {}),
+            ...(trieResult.responseType ? { responseType: trieResult.responseType } : {}),
           };
           return lastFindMatchResult;
         }
@@ -1745,8 +1749,8 @@ export function createRouter<TEnv = any>(
   }
 
   /**
-   * Preview match - returns route middleware without segment resolution
-   * Used by RSC handler to execute route middleware before full matching
+   * Preview match - returns route middleware without segment resolution.
+   * Also returns responseType and handler for response routes (non-RSC short-circuit).
    */
   async function previewMatch(
     request: Request,
@@ -1756,6 +1760,9 @@ export function createRouter<TEnv = any>(
       handler: import("./router/middleware.js").MiddlewareFn;
       params: Record<string, string>;
     }>;
+    responseType?: string;
+    handler?: Function;
+    params?: Record<string, string>;
   } | null> {
     const url = new URL(request.url);
     const pathname = url.pathname;
@@ -1787,8 +1794,17 @@ export function createRouter<TEnv = any>(
       matched.params,
     );
 
+    // Check for response type (from trie match or manifest entry)
+    const responseType = matched.responseType ||
+      (manifestEntry.type === "route" ? manifestEntry.responseType : undefined);
+
     return {
       routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
+      ...(responseType ? {
+        responseType,
+        handler: manifestEntry.type === "route" ? manifestEntry.handler : undefined,
+        params: matched.params,
+      } : {}),
     };
   }
 

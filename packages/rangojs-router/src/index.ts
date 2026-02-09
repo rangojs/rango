@@ -69,6 +69,14 @@ export type {
 // Use this when defining loaders that will be imported by client components
 export { createLoader } from "./loader.js";
 
+// Response route types (usable in both server and client contexts)
+export type {
+  ResponseHandler,
+  ResponseHandlerContext,
+  ResponsePathHelpers,
+  ResponsePathFn,
+} from "./urls.js";
+
 /**
  * Error-throwing stub for server-only `urls` function.
  * Import from "@rangojs/router/server" or use within RSC context instead.

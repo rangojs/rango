@@ -1,8 +1,9 @@
-import { urls } from "@rangojs/router";
+import { urls, type ResponseHandlerContext } from "@rangojs/router/server";
 import { NavLayout } from "./components/NavLayout.js";
 import { RootLayout } from "./components/SlowRootLayout.js";
 import { FeatureLoading } from "./components/FeatureLoading.js";
 import { BlogSidebarLoader } from "./loaders/blog.js";
+import { apiPatterns } from "./api/urls.js";
 
 // Page handlers
 import { HomePage } from "./pages/home.js";
@@ -34,6 +35,17 @@ import { guidesPatterns } from "./pages/guides.js";
  * Main URL patterns - Django-style routing API
  */
 export const urlpatterns = urls(({ path, layout, parallel, loader, loading, cache, include }) => [
+  // API routes (response routes - skip RSC pipeline)
+  include("/api", apiPatterns, { name: "api" }),
+
+  // robots.txt (response route)
+  path.TEXT("/robots.txt", (ctx: ResponseHandlerContext) => {
+    return new Response(
+      "User-agent: *\nAllow: /\nDisallow: /api/\n",
+      { headers: { "Content-Type": "text/plain" } }
+    );
+  }, { name: "robots" }),
+
   // Global navigation layout
   layout(<NavLayout />, () => [
     // Core routes

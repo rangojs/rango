@@ -212,6 +212,9 @@ export function createRSCHandler<
             generated._routeAncestry,
             routeToStaticPrefix,
             generated.routeTrailingSlash,
+            undefined, // prerenderRouteNames
+            undefined, // passthroughRouteNames
+            generated.responseTypeRoutes,
           );
           setRouteTrie(trie);
         }
@@ -296,6 +299,85 @@ export function createRSCHandler<
     const previewDur = performance.now() - previewStart;
     const handlerTiming: string[] = variables.__handlerTiming || [];
     handlerTiming.push(`handler-preview-match;dur=${previewDur.toFixed(2)}`);
+    // Response route short-circuit: skip entire RSC pipeline
+    if (preview?.responseType && preview.handler) {
+      const isPartial = url.searchParams.has("_rsc_partial");
+
+      // Partial requests (client-side navigation) to response routes
+      // get X-RSC-Reload to trigger hard navigation in the browser
+      if (isPartial) {
+        const cleanUrl = new URL(url);
+        cleanUrl.searchParams.delete("_rsc_partial");
+        cleanUrl.searchParams.delete("_rsc_segments");
+        cleanUrl.searchParams.delete("_rsc_v");
+        cleanUrl.searchParams.delete("_rsc_stale");
+        cleanUrl.searchParams.delete("_rsc_action");
+        cleanUrl.searchParams.delete("_rsc_prev");
+
+        return createResponseWithMergedHeaders(null, {
+          status: 200,
+          headers: {
+            "X-RSC-Reload": cleanUrl.toString(),
+            "content-type": "text/x-component;charset=utf-8",
+          },
+        });
+      }
+
+      // Build lightweight context for response handler
+      const bindings = (env as any)?.Bindings ?? env;
+      const responseHandlerCtx = {
+        request,
+        params: preview.params || {},
+        env: bindings,
+        href: (name: string, hrefParams?: Record<string, string>) => {
+          if (name.startsWith("/")) {
+            if (!hrefParams) return name;
+            return name.replace(/:([^/]+)/g, (_, key) => {
+              const value = hrefParams[key];
+              if (value === undefined) throw new Error(`Missing param "${key}" for path "${name}"`);
+              return encodeURIComponent(value);
+            });
+          }
+          return name;
+        },
+      };
+
+      // Call handler directly, wrapped by route middleware if present
+      const callHandler = async () => {
+        const response = await (preview.handler as Function)(responseHandlerCtx);
+        if (!(response instanceof Response)) {
+          throw new Error(
+            `Response route handler must return a Response object, got ${typeof response}`
+          );
+        }
+        // Merge middleware-set headers into the handler's response
+        const mergedHeaders: Record<string, string> = {};
+        response.headers.forEach((value, key) => {
+          mergedHeaders[key] = value;
+        });
+        return createResponseWithMergedHeaders(response.body, {
+          status: response.status,
+          headers: mergedHeaders,
+        });
+      };
+
+      if (preview.routeMiddleware && preview.routeMiddleware.length > 0) {
+        const middlewareEntries = preview.routeMiddleware.map((mw) => ({
+          entry: {
+            pattern: null,
+            regex: null,
+            paramNames: [],
+            handler: mw.handler,
+            mountPrefix: null,
+          },
+          params: mw.params,
+        }));
+        return executeMiddleware(middlewareEntries, request, env, variables, callHandler);
+      }
+
+      return callHandler();
+    }
+
     if (preview?.routeMiddleware && preview.routeMiddleware.length > 0) {
       // Convert route middleware to app middleware format for execution
       const middlewareEntries = preview.routeMiddleware.map((mw) => ({

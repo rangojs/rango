@@ -27,6 +27,8 @@ export interface TrieLeaf {
   pr?: true;
   /** Passthrough: handler kept in bundle for live fallback on unknown params */
   pt?: true;
+  /** Response type for non-RSC routes (json, text, image, any) */
+  rt?: string;
 }
 
 export interface TrieNode {
@@ -55,6 +57,7 @@ export function buildRouteTrie(
   routeTrailingSlash?: Record<string, string>,
   prerenderRouteNames?: Set<string>,
   passthroughRouteNames?: Set<string>,
+  responseTypeRoutes?: Record<string, string>,
 ): TrieNode {
   const root: TrieNode = {};
 
@@ -62,6 +65,7 @@ export function buildRouteTrie(
     const ancestry = routeAncestry[routeName] || [];
     const staticPrefix = routeToStaticPrefix[routeName] || "";
     const trailingSlash = routeTrailingSlash?.[routeName];
+    const responseType = responseTypeRoutes?.[routeName];
 
     // Detect and strip trailing slash from pattern for parsing
     const hasTrailingSlash = pattern.length > 1 && pattern.endsWith("/");
@@ -75,6 +79,7 @@ export function buildRouteTrie(
       ...(trailingSlash ? { ts: trailingSlash } : {}),
       ...(prerenderRouteNames?.has(routeName) ? { pr: true } : {}),
       ...(passthroughRouteNames?.has(routeName) ? { pt: true } : {}),
+      ...(responseType ? { rt: responseType } : {}),
     });
   }
 

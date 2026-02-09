@@ -54,6 +54,7 @@ import type {
   NotFoundBoundaryItem,
   LayoutUseItem,
   RouteUseItem,
+  ResponseRouteUseItem,
   ParallelUseItem,
   InterceptUseItem,
   LoaderUseItem,
@@ -78,6 +79,46 @@ import { invariant } from "./errors";
 import { isPrerenderHandler, type PrerenderHandlerDefinition } from "./prerender.js";
 
 // ============================================================================
+// Response Route Symbol and Types
+// ============================================================================
+
+/**
+ * Symbol marking a route as a response route (non-RSC).
+ * Stored on PathOptions and UrlPatterns to signal the trie to short-circuit.
+ */
+export const RESPONSE_TYPE: unique symbol = Symbol.for("rangojs.responseType") as any;
+
+/**
+ * Handler that must return Response (not ReactNode).
+ * Used by path.JSON(), path.TEXT(), etc.
+ */
+export type ResponseHandler<TParams = Record<string, string>, TEnv = any> = (
+  ctx: ResponseHandlerContext<TParams, TEnv>
+) => Response | Promise<Response>;
+
+/**
+ * Lighter handler context for response routes.
+ * No ctx.use() (no loaders), no ctx.res (handler creates its own Response).
+ */
+export interface ResponseHandlerContext<TParams = Record<string, string>, TEnv = any> {
+  request: Request;
+  params: TParams;
+  env: TEnv;
+  href: (name: string, params?: Record<string, string>) => string;
+}
+
+/**
+ * Restricted helpers for urls.JSON() / urls.TEXT() / urls.ANY().
+ * Only path, include, and cache are available (no layout, parallel, loader, etc.)
+ */
+export type ResponsePathHelpers<TEnv> = {
+  path: ResponsePathFn<TEnv>;
+  include: IncludeFn<TEnv>;
+  cache: PathHelpers<TEnv>["cache"];
+  middleware: PathHelpers<TEnv>["middleware"];
+};
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -96,6 +137,8 @@ export interface PathOptions<TName extends string = string> {
   name?: TName;
   /** Trailing slash behavior: "never" (redirect /path/ to /path), "always" (redirect /path to /path/), "ignore" (match both) */
   trailingSlash?: TrailingSlashMode;
+  /** Response type marker (set by path.JSON(), etc.) */
+  [RESPONSE_TYPE]?: string;
 }
 
 /**
@@ -127,6 +170,8 @@ export interface UrlPatterns<
   readonly _env?: TEnv;
   /** Routes type brand (phantom) - carries route name -> pattern mapping */
   readonly _routes?: TRoutes;
+  /** Module-level response type (set by urls.JSON(), urls.TEXT(), etc.) */
+  readonly [RESPONSE_TYPE]?: string;
 }
 
 /**
@@ -255,6 +300,41 @@ export type ExtractRoutes<T extends readonly any[]> = ExtractRoutesFromItems<T, 
 /**
  * Helpers provided by urls()
  */
+/**
+ * Base path function signature for defining routes with URL patterns.
+ */
+export type PathFn<TEnv> = <const TPattern extends string, const TName extends string = UnnamedRoute>(
+  pattern: TPattern,
+  handler: ReactNode | Handler<ExtractParams<TPattern>, TEnv> | PrerenderHandlerDefinition<ExtractParams<TPattern>>,
+  optionsOrUse?: PathOptions<TName> | (() => RouteUseItem[]),
+  use?: () => RouteUseItem[]
+) => TypedRouteItem<TName, TPattern>;
+
+/**
+ * Path function for response routes (path.JSON(), path.TEXT(), etc.).
+ * Handler must return Response, not ReactNode. Uses lighter ResponseHandlerContext.
+ * Use items restricted to middleware() and cache() only.
+ */
+export type ResponsePathFn<TEnv> = <const TPattern extends string, const TName extends string = UnnamedRoute>(
+  pattern: TPattern,
+  handler: ResponseHandler<ExtractParams<TPattern>, TEnv>,
+  optionsOrUse?: PathOptions<TName> | (() => ResponseRouteUseItem[]),
+  use?: () => ResponseRouteUseItem[]
+) => TypedRouteItem<TName, TPattern>;
+
+/**
+ * Base include function signature.
+ */
+export type IncludeFn<TEnv> = <
+  TRoutes extends Record<string, string>,
+  const TUrlPrefix extends string,
+  const TNamePrefix extends string = never
+>(
+  prefix: TUrlPrefix,
+  patterns: UrlPatterns<TEnv, TRoutes>,
+  options?: IncludeOptions<TNamePrefix>
+) => TypedIncludeItem<TRoutes, TNamePrefix, TUrlPrefix>;
+
 export type PathHelpers<TEnv> = {
   /**
    * Define a route with URL pattern at definition site
@@ -273,12 +353,12 @@ export type PathHelpers<TEnv> = {
    * ])
    * ```
    */
-  path: <const TPattern extends string, const TName extends string = UnnamedRoute>(
-    pattern: TPattern,
-    handler: ReactNode | Handler<ExtractParams<TPattern>, TEnv> | PrerenderHandlerDefinition<ExtractParams<TPattern>>,
-    optionsOrUse?: PathOptions<TName> | (() => RouteUseItem[]),
-    use?: () => RouteUseItem[]
-  ) => TypedRouteItem<TName, TPattern>;
+  path: PathFn<TEnv> & {
+    JSON: ResponsePathFn<TEnv>;
+    TEXT: ResponsePathFn<TEnv>;
+    IMAGE: ResponsePathFn<TEnv>;
+    ANY: ResponsePathFn<TEnv>;
+  };
 
   /**
    * Define a layout that wraps child routes
@@ -302,15 +382,11 @@ export type PathHelpers<TEnv> = {
    * include("/blog", blogPatterns, { name: "blog" })
    * ```
    */
-  include: <
-    TRoutes extends Record<string, string>,
-    const TUrlPrefix extends string,
-    const TNamePrefix extends string = never
-  >(
-    prefix: TUrlPrefix,
-    patterns: UrlPatterns<TEnv, TRoutes>,
-    options?: IncludeOptions<TNamePrefix>
-  ) => TypedIncludeItem<TRoutes, TNamePrefix, TUrlPrefix>;
+  include: IncludeFn<TEnv> & {
+    JSON: IncludeFn<TEnv>;
+    TEXT: IncludeFn<TEnv>;
+    ANY: IncludeFn<TEnv>;
+  };
 
   /**
    * Define parallel routes that render simultaneously in named slots
@@ -448,7 +524,18 @@ function applyNamePrefix(prefix: string | undefined, name: string): string {
  * The path() function is the key new feature - it combines URL pattern
  * with handler at the definition site.
  */
-function createPathHelper<TEnv>(): PathHelpers<TEnv>["path"] {
+/**
+ * Resolve response type with inheritance:
+ * path.JSON() option > include.JSON() context > urls.JSON() context > none
+ */
+function resolveResponseType(
+  options: PathOptions | undefined,
+  ctx: { responseType?: string },
+): string | undefined {
+  return options?.[RESPONSE_TYPE] || ctx.responseType;
+}
+
+function createPathHelper<TEnv>(): PathFn<TEnv> {
   return ((
     pattern: string,
     handler: ReactNode | Handler<any, TEnv>,
@@ -531,6 +618,7 @@ function createPathHelper<TEnv>(): PathHelpers<TEnv>["path"] {
         isPrerender: true as const,
         prerenderDef: handler as PrerenderHandlerDefinition,
       } : {}),
+      ...(resolveResponseType(options, ctx) ? { responseType: resolveResponseType(options, ctx) } : {}),
     };
 
     // Check for duplicate route names (TypeScript should catch this, but runtime check too)
@@ -572,7 +660,80 @@ function createPathHelper<TEnv>(): PathHelpers<TEnv>["path"] {
     }
 
     return { name: namespace, type: "route" } as RouteItem;
-  }) as PathHelpers<TEnv>["path"];
+  }) as PathFn<TEnv>;
+}
+
+/**
+ * Attach response type tag methods (.JSON, .TEXT, .IMAGE, .ANY) to a path helper.
+ * Each tag wraps the original path() call with the RESPONSE_TYPE option set.
+ */
+function attachPathResponseTags<TEnv>(
+  pathFn: PathFn<TEnv>,
+): PathFn<TEnv> & {
+  JSON: ResponsePathFn<TEnv>;
+  TEXT: ResponsePathFn<TEnv>;
+  IMAGE: ResponsePathFn<TEnv>;
+  ANY: ResponsePathFn<TEnv>;
+} {
+  function createTagged(responseType: string): ResponsePathFn<TEnv> {
+    return ((
+      pattern: string,
+      handler: any,
+      optionsOrUse?: any,
+      maybeUse?: any
+    ) => {
+      let options: PathOptions;
+      let use: (() => any[]) | undefined;
+
+      if (typeof optionsOrUse === "function") {
+        options = { [RESPONSE_TYPE]: responseType };
+        use = optionsOrUse;
+      } else {
+        options = { ...optionsOrUse, [RESPONSE_TYPE]: responseType };
+        use = maybeUse;
+      }
+
+      return pathFn(pattern, handler, options, use);
+    }) as ResponsePathFn<TEnv>;
+  }
+
+  const extended = pathFn as any;
+  extended.JSON = createTagged("json");
+  extended.TEXT = createTagged("text");
+  extended.IMAGE = createTagged("image");
+  extended.ANY = createTagged("any");
+  return extended;
+}
+
+/**
+ * Attach response type tag methods (.JSON, .TEXT, .ANY) to an include helper.
+ * Each tag wraps the original include() call, merging RESPONSE_TYPE onto options.
+ */
+function attachIncludeResponseTags<TEnv>(
+  includeFn: IncludeFn<TEnv>,
+): IncludeFn<TEnv> & {
+  JSON: IncludeFn<TEnv>;
+  TEXT: IncludeFn<TEnv>;
+  ANY: IncludeFn<TEnv>;
+} {
+  function createTagged(responseType: string): IncludeFn<TEnv> {
+    return ((
+      prefix: string,
+      patterns: UrlPatterns<TEnv>,
+      options?: IncludeOptions
+    ) => {
+      // Tag the patterns object with the response type for inheritance
+      const taggedPatterns = Object.create(patterns);
+      taggedPatterns[RESPONSE_TYPE] = responseType;
+      return includeFn(prefix, taggedPatterns, options);
+    }) as IncludeFn<TEnv>;
+  }
+
+  const extended = includeFn as any;
+  extended.JSON = createTagged("json");
+  extended.TEXT = createTagged("text");
+  extended.ANY = createTagged("any");
+  return extended;
 }
 
 /**
@@ -648,7 +809,7 @@ function processItems(items: readonly AllUseItems[]): AllUseItems[] {
  * they're evaluated on first request that matches the prefix. This improves
  * cold start time for apps with many routes.
  */
-function createIncludeHelper<TEnv>(): PathHelpers<TEnv>["include"] {
+function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
   return (
     prefix: string,
     patterns: UrlPatterns<TEnv>,
@@ -751,17 +912,17 @@ export function urls<
     // Get base helpers from the existing route-definition module
     const baseHelpers = createRouteHelpers<any, TEnv>();
 
-    // Create the path helper
-    const pathHelper = createPathHelper<TEnv>();
+    // Create the path helper (with .JSON, .TEXT, .IMAGE, .ANY tags)
+    const pathHelper = attachPathResponseTags(createPathHelper<TEnv>());
 
-    // Create the include helper
-    const includeHelper = createIncludeHelper<TEnv>();
+    // Create the include helper (with .JSON, .TEXT, .ANY tags)
+    const includeHelper = attachIncludeResponseTags(createIncludeHelper<TEnv>());
 
     // Combine all helpers
     // Note: layout and cache are cast to their typed versions - phantom types don't affect runtime
     const helpers: PathHelpers<TEnv> = {
-      path: pathHelper,
-      include: includeHelper,
+      path: pathHelper as any,
+      include: includeHelper as any,
       layout: baseHelpers.layout as PathHelpers<TEnv>["layout"],
       parallel: baseHelpers.parallel,
       intercept: baseHelpers.intercept as PathHelpers<TEnv>["intercept"],
@@ -798,6 +959,46 @@ export function urls<
       return Object.fromEntries(ctx.trailingSlash);
     },
   } as UrlPatterns<TEnv, ExtractRoutes<TItems>>;
+}
+
+/**
+ * Create a response-typed urls() variant.
+ * Sets RESPONSE_TYPE on the returned UrlPatterns and injects responseType
+ * into the context so child path() calls inherit it by default.
+ */
+function createUrlsResponseTag(responseType: string) {
+  return function taggedUrls<
+    TEnv = DefaultEnv,
+    const TItems extends readonly AllUseItems[] = readonly AllUseItems[]
+  >(
+    builder: (helpers: ResponsePathHelpers<TEnv>) => TItems
+  ): UrlPatterns<TEnv, ExtractRoutes<TItems>> {
+    // Wrap the builder to inject responseType into context
+    const wrappedBuilder = (helpers: PathHelpers<TEnv>) => {
+      const store = getContext();
+      const ctx = store.getStore();
+      if (ctx) {
+        ctx.responseType = responseType;
+      }
+      return builder(helpers as any);
+    };
+    const result = urls<TEnv, TItems>(wrappedBuilder as any);
+    (result as any)[RESPONSE_TYPE] = responseType;
+    return result;
+  };
+}
+
+type UrlsResponseTagFn = <
+  TEnv = DefaultEnv,
+  const TItems extends readonly AllUseItems[] = readonly AllUseItems[]
+>(
+  builder: (helpers: ResponsePathHelpers<TEnv>) => TItems
+) => UrlPatterns<TEnv, ExtractRoutes<TItems>>;
+
+export namespace urls {
+  export const JSON: UrlsResponseTagFn = createUrlsResponseTag("json");
+  export const TEXT: UrlsResponseTagFn = createUrlsResponseTag("text");
+  export const ANY: UrlsResponseTagFn = createUrlsResponseTag("any");
 }
 
 // ============================================================================

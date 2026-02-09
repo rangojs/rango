@@ -24,6 +24,8 @@ export interface TrieMatchResult {
   pr?: true;
   /** Passthrough: handler kept for live fallback on unknown params */
   pt?: true;
+  /** Response type for non-RSC routes (json, text, image, any) */
+  responseType?: string;
 }
 
 /**
@@ -159,5 +161,6 @@ function validateAndBuild(
     ...(redirectTo ? { redirectTo } : {}),
     ...(leaf.pr ? { pr: true } : {}),
     ...(leaf.pt ? { pt: true } : {}),
+    ...(leaf.rt ? { responseType: leaf.rt } : {}),
   };
 }

@@ -10,6 +10,9 @@ export function NavLayout() {
         <Link to={href("/")} data-testid="nav-home">
           Home
         </Link>
+        <Link {...href.JSON("/api/health")} data-testid="nav-api">
+          API Health
+        </Link>
         <Link to={href("/about")} data-testid="nav-about">
           About
         </Link>
