@@ -22,6 +22,7 @@ import {
 import { includedPatterns } from "./included-patterns.js";
 import { localizedPatterns } from "./localized-patterns.js";
 import { shopPatterns } from "./shop-patterns.js";
+import { jsonApiPatterns } from "./json-api-patterns.js";
 import { HomePage } from "./pages/benchmark.js";
 import { LinksDemo } from "./pages/links-demo.js";
 
@@ -125,6 +126,10 @@ export const urlpatterns = urls(({ path, include }) => [
   // - /shop/product/* (staticPrefix: "/shop/product") skips /shop/category
   // - /shop/category/* (staticPrefix: "/shop/category") skips /shop/product
   include("/shop", shopPatterns, { name: "shop" }),
+
+  // === JSON API ROUTES (response routes with typed responses) ===
+  // Tests PathResponse type resolution through the single RegisteredRoutes registry
+  include("/json-api", jsonApiPatterns, { name: "jsonApi" }),
 
   // === BENCHMARK: Last route (after ALL routes) ===
   path("/bench/last", BenchmarkHandler, { name: "benchLast" }),

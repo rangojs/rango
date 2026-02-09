@@ -80,10 +80,12 @@ export type PrefixedRoutes<
 
 /**
  * Helper to safely extract route patterns from a routes object
- * Handles both Record<string, string> and interface types (like RegisteredRoutes)
+ * Handles string values, { path, response } objects, and interface types (like RegisteredRoutes)
  */
 type RoutePatternFor<TRoutes, TName extends keyof TRoutes> =
-  TRoutes[TName] extends string ? TRoutes[TName] : string;
+  TRoutes[TName] extends string ? TRoutes[TName]
+  : TRoutes[TName] extends { readonly path: infer P extends string } ? P
+  : string;
 
 /**
  * Extract params type for a route
@@ -182,6 +184,12 @@ export type ScopedHrefFunction<TLocalRoutes> = {
  */
 export type ExtractLocalRoutes<TPatterns> =
   TPatterns extends { readonly _routes?: infer TRoutes } ? TRoutes : Record<string, string>;
+
+/**
+ * Extract the response data type for a named route from a UrlPatterns instance.
+ * Re-exported from urls.ts for consumer convenience.
+ */
+export type { RouteResponse } from "./urls.js";
 
 /**
  * Get a locally-typed href function from ctx.href for composable modules.

@@ -9,7 +9,8 @@
 
 import { createElement } from "react";
 import { renderSegments } from "../segment-system.js";
-import { RouteNotFoundError } from "../errors.js";
+import { RouteNotFoundError, RouterError } from "../errors.js";
+import type { ResponseError } from "../urls.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
 import {
   matchMiddleware,
@@ -44,6 +45,31 @@ import {
   getPrecomputedEntries,
   waitForManifestReady,
 } from "../route-map-builder.js";
+
+/**
+ * Build a ResponseError payload from a caught error.
+ * RouterError messages are always exposed (developer-crafted).
+ * Standard Error messages are hidden in production.
+ */
+function createResponseErrorPayload(error: unknown, isDev: boolean): ResponseError {
+  if (error instanceof RouterError) {
+    return {
+      message: error.message,
+      code: error.code,
+      ...(error.type ? { type: error.type } : {}),
+      ...(isDev && error.stack ? { stack: error.stack } : {}),
+    };
+  }
+  if (error instanceof Error) {
+    return {
+      message: isDev ? error.message : "Internal Server Error",
+      ...(isDev && error.stack ? { stack: error.stack } : {}),
+    };
+  }
+  return {
+    message: isDev ? String(error) : "Internal Server Error",
+  };
+}
 
 /**
  * Create an RSC request handler.
@@ -212,6 +238,9 @@ export function createRSCHandler<
             generated._routeAncestry,
             routeToStaticPrefix,
             generated.routeTrailingSlash,
+            undefined, // prerenderRouteNames
+            undefined, // passthroughRouteNames
+            generated.responseTypeRoutes,
           );
           setRouteTrie(trie);
         }
@@ -296,6 +325,157 @@ export function createRSCHandler<
     const previewDur = performance.now() - previewStart;
     const handlerTiming: string[] = variables.__handlerTiming || [];
     handlerTiming.push(`handler-preview-match;dur=${previewDur.toFixed(2)}`);
+    // Response route short-circuit: skip entire RSC pipeline
+    if (preview?.responseType && preview.handler) {
+      const isPartial = url.searchParams.has("_rsc_partial");
+
+      // Partial requests (client-side navigation) to response routes
+      // get X-RSC-Reload to trigger hard navigation in the browser
+      if (isPartial) {
+        const cleanUrl = new URL(url);
+        cleanUrl.searchParams.delete("_rsc_partial");
+        cleanUrl.searchParams.delete("_rsc_segments");
+        cleanUrl.searchParams.delete("_rsc_v");
+        cleanUrl.searchParams.delete("_rsc_stale");
+        cleanUrl.searchParams.delete("_rsc_action");
+        cleanUrl.searchParams.delete("_rsc_prev");
+
+        return createResponseWithMergedHeaders(null, {
+          status: 200,
+          headers: {
+            "X-RSC-Reload": cleanUrl.toString(),
+            "content-type": "text/x-component;charset=utf-8",
+          },
+        });
+      }
+
+      // Build lightweight context for response handler
+      const bindings = (env as any)?.Bindings ?? env;
+      const responseHandlerCtx = {
+        request,
+        params: preview.params || {},
+        env: bindings,
+        searchParams: url.searchParams,
+        url,
+        pathname: url.pathname,
+        href: (name: string, hrefParams?: Record<string, string>) => {
+          if (name.startsWith("/")) {
+            if (!hrefParams) return name;
+            return name.replace(/:([^/]+)/g, (_, key) => {
+              const value = hrefParams[key];
+              if (value === undefined) throw new Error(`Missing param "${key}" for path "${name}"`);
+              return encodeURIComponent(value);
+            });
+          }
+          return name;
+        },
+      };
+
+      // Call handler directly, wrapped by route middleware if present
+      const callHandler = async () => {
+        // JSON response routes: wrap in { data } / { error } envelope
+        if (preview.responseType === "json") {
+          const errorCtx = { request, url, env };
+          try {
+            const result = await (preview.handler as Function)(responseHandlerCtx);
+            if (result instanceof Response) {
+              const mergedHeaders: Record<string, string> = {};
+              result.headers.forEach((value, key) => {
+                mergedHeaders[key] = value;
+              });
+              return createResponseWithMergedHeaders(result.body, {
+                status: result.status,
+                headers: mergedHeaders,
+              });
+            }
+            return createResponseWithMergedHeaders(
+              JSON.stringify({ data: result }),
+              { status: 200, headers: { "content-type": "application/json;charset=utf-8" } },
+            );
+          } catch (error) {
+            callOnError(error, "handler", errorCtx);
+            const isDev = process.env.NODE_ENV !== "production";
+            const status = error instanceof RouterError ? error.status : 500;
+            return createResponseWithMergedHeaders(
+              JSON.stringify({ error: createResponseErrorPayload(error, isDev) }),
+              { status, headers: { "content-type": "application/json;charset=utf-8" } },
+            );
+          }
+        }
+
+        // Non-JSON response routes: catch errors and return plain Response
+        const errorCtx = { request, url, env };
+        try {
+          const result = await (preview.handler as Function)(responseHandlerCtx);
+
+          if (result instanceof Response) {
+            // Handler returned a Response directly -- pass through
+            const mergedHeaders: Record<string, string> = {};
+            result.headers.forEach((value, key) => {
+              mergedHeaders[key] = value;
+            });
+            return createResponseWithMergedHeaders(result.body, {
+              status: result.status,
+              headers: mergedHeaders,
+            });
+          }
+
+          // Auto-wrap based on response type tag
+          switch (preview.responseType) {
+            case "text":
+              return createResponseWithMergedHeaders(
+                String(result),
+                { status: 200, headers: { "content-type": "text/plain;charset=utf-8" } },
+              );
+            case "html":
+              return createResponseWithMergedHeaders(
+                String(result),
+                { status: 200, headers: { "content-type": "text/html;charset=utf-8" } },
+              );
+            case "xml":
+              return createResponseWithMergedHeaders(
+                String(result),
+                { status: 200, headers: { "content-type": "application/xml;charset=utf-8" } },
+              );
+            default:
+              // image, stream, any -- must return Response
+              throw new Error(
+                `Response route handler for "${preview.responseType}" must return a Response object, got ${typeof result}`
+              );
+          }
+        } catch (error) {
+          callOnError(error, "handler", errorCtx);
+          const isDev = process.env.NODE_ENV !== "production";
+          const status = error instanceof RouterError ? error.status : 500;
+          const message = error instanceof RouterError
+            ? error.message
+            : isDev && error instanceof Error
+              ? error.message
+              : "Internal Server Error";
+          return createResponseWithMergedHeaders(message, {
+            status,
+            headers: { "content-type": "text/plain;charset=utf-8" },
+          });
+        }
+      };
+
+      if (preview.routeMiddleware && preview.routeMiddleware.length > 0) {
+        const middlewareEntries = preview.routeMiddleware.map((mw) => ({
+          entry: {
+            pattern: null,
+            regex: null,
+            paramNames: [],
+            handler: mw.handler,
+            mountPrefix: null,
+          },
+          params: mw.params,
+        }));
+        return executeMiddleware(middlewareEntries, request, env, variables, callHandler);
+      }
+
+      return callHandler();
+    }
+
     if (preview?.routeMiddleware && preview.routeMiddleware.length > 0) {
       // Convert route middleware to app middleware format for execution
       const middlewareEntries = preview.routeMiddleware.map((mw) => ({

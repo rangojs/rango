@@ -172,6 +172,42 @@ export function isNetworkError(error: unknown): boolean {
 }
 
 /**
+ * Structured error for JSON response routes.
+ * Thrown by handlers to return a typed error envelope with a specific HTTP status.
+ *
+ * Unlike standard Error, RouterError messages are always exposed to the client
+ * (the developer intentionally crafted them for consumers).
+ *
+ * @example
+ * ```typescript
+ * path("/products/:id", (ctx) => {
+ *   const product = products.find(p => p.id === ctx.params.id);
+ *   if (!product) throw new RouterError("NOT_FOUND", "Product not found", { status: 404 });
+ *   return product;
+ * }, { name: "productDetail" })
+ * ```
+ */
+export class RouterError extends Error {
+  name = "RouterError" as const;
+  code: string;
+  type?: string;
+  status: number;
+  cause?: unknown;
+
+  constructor(code: string, message: string, options?: {
+    status?: number;
+    type?: string;
+    cause?: unknown;
+  }) {
+    super(message);
+    this.code = code;
+    this.status = options?.status ?? 500;
+    this.type = options?.type;
+    this.cause = options?.cause;
+  }
+}
+
+/**
  * Thrown when route handler returns invalid type
  */
 export class InvalidHandlerError extends Error {

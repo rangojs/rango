@@ -25,6 +25,7 @@ export {
   NetworkError,
   isNetworkError,
   sanitizeError,
+  RouterError,
 } from "./errors.js";
 
 // Types (safe to import anywhere - no runtime code)
@@ -68,6 +69,24 @@ export type {
 // Client-safe createLoader - only stores the $$id, function is not included
 // Use this when defining loaders that will be imported by client components
 export { createLoader } from "./loader.js";
+
+// Response route types (usable in both server and client contexts)
+export type {
+  ResponseHandler,
+  ResponseHandlerContext,
+  JsonResponseHandler,
+  TextResponseHandler,
+  JsonValue,
+  ResponsePathHelpers,
+  JsonResponsePathHelpers,
+  TextResponsePathHelpers,
+  ResponsePathFn,
+  JsonResponsePathFn,
+  TextResponsePathFn,
+  RouteResponse,
+  ResponseError,
+  ResponseEnvelope,
+} from "./urls.js";
 
 /**
  * Error-throwing stub for server-only `urls` function.
@@ -143,3 +162,6 @@ export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 export type { ScopedHrefFunction, HrefFunction, ExtractLocalRoutes } from "./href.js";
 // scopedHref() helper for handlers to get locally-typed href
 export { scopedHref } from "./href.js";
+
+// Path-based response type lookup from RegisteredRoutes
+export type { PathResponse } from "./href-client.js";

@@ -220,6 +220,8 @@ export interface RouteMatchResult<TEnv = any> {
   pr?: true;
   /** Passthrough: handler kept for live fallback on unknown params (from trie) */
   pt?: true;
+  /** Response type for non-RSC routes (json, text, image, any) */
+  responseType?: string;
 }
 
 /**

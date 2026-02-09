@@ -24,6 +24,7 @@ export {
   NetworkError,
   isNetworkError,
   sanitizeError,
+  RouterError,
 } from "./index.js";
 
 // Re-export all types from types.ts (user-facing types only)
@@ -90,6 +91,9 @@ export {
   type UrlPatterns,
   type IncludeOptions,
   type IncludeItem,
+  type RouteResponse,
+  type ResponseError,
+  type ResponseEnvelope,
 } from "./urls.js";
 
 // Core router (server-side)

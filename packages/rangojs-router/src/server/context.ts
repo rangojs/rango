@@ -159,6 +159,8 @@ export type EntryData =
       isPrerender?: true;
       /** Original PrerenderHandlerDefinition (for build-time getParams access) */
       prerenderDef?: { getParams?: () => Promise<any[]> | any[]; options?: { passthrough?: boolean } };
+      /** Response type for non-RSC routes (json, text, image, any) */
+      responseType?: string;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments)
@@ -223,6 +225,8 @@ interface HelperContext {
   run?: <T>(fn: () => T | Promise<T>) => T | Promise<T>;
   /** Tracked includes for build-time manifest generation */
   trackedIncludes?: TrackedInclude[];
+  /** Default response type inherited from urls.json() */
+  responseType?: string;
 }
 export const RSCRouterContext: AsyncLocalStorage<HelperContext> =
   new AsyncLocalStorage<HelperContext>();
@@ -342,6 +346,7 @@ export const getContext = (): {
           urlPrefix: store.urlPrefix,
           namePrefix: store.namePrefix,
           trackedIncludes: store.trackedIncludes,
+          responseType: store.responseType,
         },
         callback
       );
@@ -372,6 +377,7 @@ export const getContext = (): {
           urlPrefix: store?.urlPrefix,
           namePrefix: store?.namePrefix,
           trackedIncludes: store?.trackedIncludes,
+          responseType: store?.responseType,
         },
         callback
       );

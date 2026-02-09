@@ -445,9 +445,33 @@ export interface RSCRouterOptions<TEnv = any> {
 }
 
 /**
+ * Merge route patterns with response types into a single route map.
+ * Routes with response types get { path, response } objects; others stay as strings.
+ */
+type MergeRoutesWithResponses<
+  TRoutes extends Record<string, string>,
+  TResponses,
+> = {
+  [K in keyof TRoutes]: K extends keyof NonNullable<TResponses>
+    ? unknown extends NonNullable<TResponses>[K]
+      ? TRoutes[K] // RSC route — TData defaults to unknown, keep as plain string
+      : { readonly path: TRoutes[K]; readonly response: NonNullable<TResponses>[K] }
+    : TRoutes[K]
+};
+
+/**
+ * Extract the URL pattern from a route entry (string or { path, response } object)
+ */
+type PatternOfEntry<V> =
+  V extends string ? V
+  : V extends { readonly path: infer P extends string } ? P
+  : never;
+
+/**
  * Type-level detection of conflicting route keys.
  * Extracts keys that exist in both TExisting and TNew but with different URL patterns.
  * Returns `never` if no conflicts exist.
+ * Compares patterns (not full entries) to handle both string and { path, response } values.
  *
  * @example
  * ```typescript
@@ -457,14 +481,14 @@ export interface RSCRouterOptions<TEnv = any> {
  * ```
  */
 type ConflictingKeys<
-  TExisting extends Record<string, string>,
-  TNew extends Record<string, string>,
+  TExisting extends Record<string, unknown>,
+  TNew extends Record<string, unknown>,
 > = {
-  [K in keyof TExisting & keyof TNew]: TExisting[K] extends TNew[K]
-    ? TNew[K] extends TExisting[K]
-      ? never // Same value, no conflict
-      : K // Different values, conflict
-    : K; // Different values, conflict
+  [K in keyof TExisting & keyof TNew]: PatternOfEntry<TExisting[K]> extends PatternOfEntry<TNew[K]>
+    ? PatternOfEntry<TNew[K]> extends PatternOfEntry<TExisting[K]>
+      ? never // Same pattern, no conflict
+      : K // Different patterns, conflict
+    : K; // Different patterns, conflict
 }[keyof TExisting & keyof TNew];
 
 /**
@@ -594,7 +618,7 @@ type InlineRouteHelpers<TRoutes extends Record<string, string>, TEnv> = {
 interface RouteBuilder<
   T extends RouteDefinition,
   TEnv,
-  TRoutes extends Record<string, string>,
+  TRoutes extends Record<string, unknown>,
   TLocalRoutes extends Record<string, string> = Record<string, string>,
 > {
   /**
@@ -664,7 +688,7 @@ interface RouteBuilder<
  */
 export interface RSCRouter<
   TEnv = any,
-  TRoutes extends Record<string, string> = Record<string, string>,
+  TRoutes extends Record<string, unknown> = Record<string, string>,
 > {
   /**
    * Brand marker for build-time discovery.
@@ -727,7 +751,7 @@ export interface RSCRouter<
     TEnv,
     TRoutes &
       (NonNullable<T["_routes"]> extends Record<string, string>
-        ? NonNullable<T["_routes"]>
+        ? MergeRoutesWithResponses<NonNullable<T["_routes"]>, T["_responses"]>
         : Record<string, string>)
   >;
 
@@ -851,8 +875,8 @@ export interface RSCRouter<
   match(request: Request, context: TEnv): Promise<MatchResult>;
 
   /**
-   * Preview match - returns route middleware without segment resolution
-   * Used by RSC handler to execute route middleware before full matching
+   * Preview match - returns route middleware without segment resolution.
+   * Also returns responseType and handler for response routes (non-RSC short-circuit).
    */
   previewMatch(
     request: Request,
@@ -862,6 +886,9 @@ export interface RSCRouter<
       handler: import("./router/middleware.js").MiddlewareFn;
       params: Record<string, string>;
     }>;
+    responseType?: string;
+    handler?: Function;
+    params?: Record<string, string>;
   } | null>;
 
   matchPartial(
@@ -1549,6 +1576,7 @@ export function createRouter<TEnv = any>(
             ancestry: trieResult.ancestry,
             ...(trieResult.pr ? { pr: true } : {}),
             ...(trieResult.pt ? { pt: true } : {}),
+            ...(trieResult.responseType ? { responseType: trieResult.responseType } : {}),
           };
           return lastFindMatchResult;
         }
@@ -1745,8 +1773,8 @@ export function createRouter<TEnv = any>(
   }
 
   /**
-   * Preview match - returns route middleware without segment resolution
-   * Used by RSC handler to execute route middleware before full matching
+   * Preview match - returns route middleware without segment resolution.
+   * Also returns responseType and handler for response routes (non-RSC short-circuit).
    */
   async function previewMatch(
     request: Request,
@@ -1756,6 +1784,9 @@ export function createRouter<TEnv = any>(
       handler: import("./router/middleware.js").MiddlewareFn;
       params: Record<string, string>;
     }>;
+    responseType?: string;
+    handler?: Function;
+    params?: Record<string, string>;
   } | null> {
     const url = new URL(request.url);
     const pathname = url.pathname;
@@ -1787,8 +1818,17 @@ export function createRouter<TEnv = any>(
       matched.params,
     );
 
+    // Check for response type (from trie match or manifest entry)
+    const responseType = matched.responseType ||
+      (manifestEntry.type === "route" ? manifestEntry.responseType : undefined);
+
     return {
       routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
+      ...(responseType ? {
+        responseType,
+        handler: manifestEntry.type === "route" ? manifestEntry.handler : undefined,
+        params: matched.params,
+      } : {}),
     };
   }
 

@@ -1,8 +1,9 @@
-import { urls } from "@rangojs/router";
+import { urls, type ResponseHandlerContext } from "@rangojs/router/server";
 import { NavLayout } from "./components/NavLayout.js";
 import { RootLayout } from "./components/SlowRootLayout.js";
 import { FeatureLoading } from "./components/FeatureLoading.js";
 import { BlogSidebarLoader } from "./loaders/blog.js";
+import { apiPatterns } from "./api/urls.js";
 
 // Page handlers
 import { HomePage } from "./pages/home.js";
@@ -29,15 +30,43 @@ import { SlowPage1, SlowPage2, FastPage } from "./pages/slow.js";
 import { InlineIndexPage, InlineDocsPage, InlinePricingPage } from "./pages/inline.js";
 import { articlesPatterns } from "./pages/articles.js";
 import { guidesPatterns } from "./pages/guides.js";
+import { ApiDemoPage } from "./pages/api-demo.js";
 
 /**
  * Main URL patterns - Django-style routing API
  */
 export const urlpatterns = urls(({ path, layout, parallel, loader, loading, cache, include }) => [
-  // API route returning raw Response (not JSX)
-  path("/api/health", () => new Response(JSON.stringify({ status: "ok" }), {
-    headers: { "Content-Type": "application/json" },
-  }), { name: "apiHealth" }),
+  // API routes (response routes - skip RSC pipeline)
+  include("/api", apiPatterns, { name: "api" }),
+
+  // robots.txt (response route)
+  path.text("/robots.txt", (ctx: ResponseHandlerContext) => {
+    return new Response(
+      "User-agent: *\nAllow: /\nDisallow: /api/\n",
+      { headers: { "Content-Type": "text/plain" } }
+    );
+  }, { name: "robots" }),
+
+  // MIME type test routes (one per tag, used by e2e tests)
+  path.json("/test/mime/json", () => ({ type: "json" }), { name: "testMimeJson" }),
+  path.text("/test/mime/text", () => "hello text", { name: "testMimeText" }),
+  path.html("/test/mime/html", () => "<h1>hello html</h1>", { name: "testMimeHtml" }),
+  path.xml("/test/mime/xml", () => "<root><type>xml</type></root>", { name: "testMimeXml" }),
+  path.image("/test/mime/image", () => {
+    return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
+      headers: { "Content-Type": "image/png" },
+    });
+  }, { name: "testMimeImage" }),
+  path.stream("/test/mime/stream", () => {
+    return new Response("stream data", {
+      headers: { "Content-Type": "application/octet-stream" },
+    });
+  }, { name: "testMimeStream" }),
+  path.any("/test/mime/any", () => {
+    return new Response("custom", {
+      headers: { "Content-Type": "application/x-custom" },
+    });
+  }, { name: "testMimeAny" }),
 
   // Global navigation layout
   layout(<NavLayout />, () => [
@@ -45,6 +74,7 @@ export const urlpatterns = urls(({ path, layout, parallel, loader, loading, cach
     path("/", HomePage, { name: "home" }),
     path("/about", AboutPage, { name: "about" }),
     path("/counter", CounterPage, { name: "counter" }),
+    path("/api-demo", ApiDemoPage, { name: "apiDemo" }),
     path("/features/:slug", FeatureDetailPage, { name: "featuresDetail" }, () => [
       loading(<FeatureLoading />),
     ]),

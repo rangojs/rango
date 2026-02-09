@@ -10,11 +10,17 @@ export function NavLayout() {
         <Link to={href("/")} data-testid="nav-home">
           Home
         </Link>
+        <Link {...href.json("/api/health")} data-testid="nav-api">
+          API Health
+        </Link>
         <Link to={href("/about")} data-testid="nav-about">
           About
         </Link>
         <Link to={href("/counter")} data-testid="nav-counter">
           Counter
+        </Link>
+        <Link to={href("/api-demo")} data-testid="nav-api-demo">
+          API Demo
         </Link>
         <Link to={href("/blog")} data-testid="nav-blog">
           Blog

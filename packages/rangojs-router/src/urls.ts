@@ -35,6 +35,7 @@ import type {
   MiddlewareFn,
   NotFoundBoundaryHandler,
   PartialCacheOptions,
+  RouterEnv,
   ShouldRevalidateFn,
   TrailingSlashMode,
 } from "./types.js";
@@ -54,6 +55,7 @@ import type {
   NotFoundBoundaryItem,
   LayoutUseItem,
   RouteUseItem,
+  ResponseRouteUseItem,
   ParallelUseItem,
   InterceptUseItem,
   LoaderUseItem,
@@ -78,6 +80,102 @@ import { invariant } from "./errors";
 import { isPrerenderHandler, type PrerenderHandlerDefinition } from "./prerender.js";
 
 // ============================================================================
+// Response Route Symbol and Types
+// ============================================================================
+
+/**
+ * Symbol marking a route as a response route (non-RSC).
+ * Stored on PathOptions and UrlPatterns to signal the trie to short-circuit.
+ */
+export const RESPONSE_TYPE: unique symbol = Symbol.for("rangojs.responseType") as any;
+
+/**
+ * Handler that must return Response (not ReactNode).
+ * Used by path.image(), path.stream(), path.any() (binary/streaming data).
+ */
+export type ResponseHandler<TParams = Record<string, string>, TEnv = any> = (
+  ctx: ResponseHandlerContext<TParams, TEnv>
+) => Response | Promise<Response>;
+
+/**
+ * JSON-serializable value type for auto-wrap support.
+ */
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+/**
+ * Handler for JSON response routes.
+ * Can return a plain JSON-serializable value (auto-wrapped) or Response (pass-through).
+ */
+export type JsonResponseHandler<TParams = Record<string, string>, TEnv = any> = (
+  ctx: ResponseHandlerContext<TParams, TEnv>
+) => JsonValue | Response | Promise<JsonValue | Response>;
+
+/**
+ * Handler for text-based response routes (text, html, xml).
+ * Can return a string (auto-wrapped) or Response (pass-through).
+ */
+export type TextResponseHandler<TParams = Record<string, string>, TEnv = any> = (
+  ctx: ResponseHandlerContext<TParams, TEnv>
+) => string | Response | Promise<string | Response>;
+
+/**
+ * Lighter handler context for response routes.
+ * No ctx.use() (no loaders), no ctx.res (handler creates its own Response).
+ */
+export interface ResponseHandlerContext<TParams = Record<string, string>, TEnv = any> {
+  request: Request;
+  params: TParams;
+  /** Platform bindings (DB, KV, secrets, etc.) extracted from RouterEnv. */
+  env: TEnv extends RouterEnv<infer B, any> ? B : {};
+  /** Query parameters from the URL (system params like `_rsc*` are filtered). */
+  searchParams: URLSearchParams;
+  /** The full URL object (with system params filtered). */
+  url: URL;
+  /** The pathname portion of the request URL. */
+  pathname: string;
+  href: (name: string, params?: Record<string, string>) => string;
+}
+
+/**
+ * Restricted helpers for urls.json().
+ * path() accepts plain JSON-serializable values or Response.
+ */
+export type JsonResponsePathHelpers<TEnv> = {
+  path: JsonResponsePathFn<TEnv>;
+  include: IncludeFn<TEnv>;
+  cache: PathHelpers<TEnv>["cache"];
+  middleware: PathHelpers<TEnv>["middleware"];
+};
+
+/**
+ * Restricted helpers for urls.text() / urls.html() / urls.xml().
+ * path() accepts strings or Response.
+ */
+export type TextResponsePathHelpers<TEnv> = {
+  path: TextResponsePathFn<TEnv>;
+  include: IncludeFn<TEnv>;
+  cache: PathHelpers<TEnv>["cache"];
+  middleware: PathHelpers<TEnv>["middleware"];
+};
+
+/**
+ * Restricted helpers for urls.stream() / urls.any().
+ * path() must return Response.
+ */
+export type ResponsePathHelpers<TEnv> = {
+  path: ResponsePathFn<TEnv>;
+  include: IncludeFn<TEnv>;
+  cache: PathHelpers<TEnv>["cache"];
+  middleware: PathHelpers<TEnv>["middleware"];
+};
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -96,6 +194,8 @@ export interface PathOptions<TName extends string = string> {
   name?: TName;
   /** Trailing slash behavior: "never" (redirect /path/ to /path), "always" (redirect /path to /path/), "ignore" (match both) */
   trailingSlash?: TrailingSlashMode;
+  /** Response type marker (set by path.json(), etc.) */
+  [RESPONSE_TYPE]?: string;
 }
 
 /**
@@ -113,7 +213,8 @@ export interface PathDefinition {
  */
 export interface UrlPatterns<
   TEnv = any,
-  TRoutes extends Record<string, string> = Record<string, string>
+  TRoutes extends Record<string, string> = Record<string, string>,
+  TResponses extends Record<string, unknown> = Record<string, unknown>,
 > {
   /** Internal: route definitions */
   readonly definitions: PathDefinition[];
@@ -127,6 +228,10 @@ export interface UrlPatterns<
   readonly _env?: TEnv;
   /** Routes type brand (phantom) - carries route name -> pattern mapping */
   readonly _routes?: TRoutes;
+  /** Responses type brand (phantom) - carries route name -> response data type mapping */
+  readonly _responses?: TResponses;
+  /** Module-level response type (set by urls.json(), urls.text(), etc.) */
+  readonly [RESPONSE_TYPE]?: string;
 }
 
 /**
@@ -249,12 +354,144 @@ type ExtractRoutesFromItems<
 export type ExtractRoutes<T extends readonly any[]> = ExtractRoutesFromItems<T, 40>;
 
 // ============================================================================
+// Response Type Extraction Utilities
+// ============================================================================
+
+/**
+ * Prefix keys of a Record<string, unknown> with a dot-separated prefix.
+ * Used for response type maps through include().
+ */
+type PrefixKeys<
+  T extends Record<string, unknown>,
+  TPrefix extends string
+> = TPrefix extends ""
+  ? T
+  : {
+      [K in keyof T as K extends string ? `${TPrefix}.${K}` : never]: T[K];
+    };
+
+/**
+ * Extract response data types from a single item.
+ * Parallel to ExtractRoutesFromItem but extracts name -> TData mapping.
+ */
+type ExtractResponsesFromItem<T, D extends number = 40> = [D] extends [never]
+  ? {}
+  : T extends TypedRouteItem<infer TName, any, infer TData>
+    ? TName extends string
+      ? TName extends UnnamedRoute ? {} : { [K in TName]: TData }
+      : {}
+    : T extends TypedIncludeItem<any, infer TNamePrefix, any, infer TResponses>
+      ? TNamePrefix extends string
+        ? TResponses extends Record<string, unknown>
+          ? PrefixKeys<TResponses, TNamePrefix>
+          : {}
+        : TResponses extends Record<string, unknown>
+          ? TResponses
+          : {}
+      : T extends TypedLayoutItem<any, infer TChildResponses>
+        ? TChildResponses extends Record<string, unknown>
+          ? TChildResponses
+          : {}
+        : T extends TypedCacheItem<any, infer TChildResponses>
+          ? TChildResponses extends Record<string, unknown>
+            ? TChildResponses
+            : {}
+          : {};
+
+/**
+ * Extract responses from an array of items using mapped types.
+ * Parallel to ExtractRoutesFromItems.
+ */
+type ExtractResponsesFromItems<
+  T extends readonly any[],
+  D extends number = 40
+> = T extends readonly any[]
+  ? UnionToIntersection<
+      { [K in keyof T]: ExtractResponsesFromItem<T[K], D> }[number]
+    > extends infer R
+    ? R extends Record<string, unknown>
+      ? R
+      : {}
+    : {}
+  : {};
+
+/**
+ * Main utility: extract response data type map from urls() callback return type.
+ * Parallel to ExtractRoutes.
+ */
+export type ExtractResponses<T extends readonly any[]> = ExtractResponsesFromItems<T, 40>;
+
+// ============================================================================
 // Path Helpers Type
 // ============================================================================
 
 /**
  * Helpers provided by urls()
  */
+/**
+ * Base path function signature for defining routes with URL patterns.
+ */
+export type PathFn<TEnv> = <const TPattern extends string, const TName extends string = UnnamedRoute>(
+  pattern: TPattern,
+  handler: ReactNode | Handler<ExtractParams<TPattern>, TEnv> | PrerenderHandlerDefinition<ExtractParams<TPattern>>,
+  optionsOrUse?: PathOptions<TName> | (() => RouteUseItem[]),
+  use?: () => RouteUseItem[]
+) => TypedRouteItem<TName, TPattern>;
+
+/**
+ * Path function for response routes that must return Response (image, stream, any).
+ * Handler must return Response, not ReactNode. Uses lighter ResponseHandlerContext.
+ * Use items restricted to middleware() and cache() only.
+ */
+export type ResponsePathFn<TEnv> = <const TPattern extends string, const TName extends string = UnnamedRoute>(
+  pattern: TPattern,
+  handler: ResponseHandler<ExtractParams<TPattern>, TEnv>,
+  optionsOrUse?: PathOptions<TName> | (() => ResponseRouteUseItem[]),
+  use?: () => ResponseRouteUseItem[]
+) => TypedRouteItem<TName, TPattern>;
+
+/**
+ * Path function for JSON response routes (path.json()).
+ * Handler can return plain JSON-serializable values or Response.
+ * TData is inferred from the handler's return type (excluding Response/Promise wrappers).
+ */
+export type JsonResponsePathFn<TEnv> = <
+  const TPattern extends string,
+  const TName extends string = UnnamedRoute,
+  TData = unknown,
+>(
+  pattern: TPattern,
+  handler: (ctx: ResponseHandlerContext<ExtractParams<TPattern>, TEnv>) =>
+    TData | Response | Promise<TData | Response>,
+  optionsOrUse?: PathOptions<TName> | (() => ResponseRouteUseItem[]),
+  use?: () => ResponseRouteUseItem[]
+) => TypedRouteItem<TName, TPattern, TData>;
+
+/**
+ * Path function for text-based response routes (path.text(), path.html(), path.xml()).
+ * Handler can return a string or Response. TData is always `string`.
+ */
+export type TextResponsePathFn<TEnv> = <const TPattern extends string, const TName extends string = UnnamedRoute>(
+  pattern: TPattern,
+  handler: TextResponseHandler<ExtractParams<TPattern>, TEnv>,
+  optionsOrUse?: PathOptions<TName> | (() => ResponseRouteUseItem[]),
+  use?: () => ResponseRouteUseItem[]
+) => TypedRouteItem<TName, TPattern, string>;
+
+/**
+ * Base include function signature.
+ */
+export type IncludeFn<TEnv> = <
+  TRoutes extends Record<string, string>,
+  const TUrlPrefix extends string,
+  const TNamePrefix extends string = never,
+  TResponses extends Record<string, unknown> = Record<string, unknown>,
+>(
+  prefix: TUrlPrefix,
+  patterns: UrlPatterns<TEnv, TRoutes, TResponses>,
+  options?: IncludeOptions<TNamePrefix>
+) => TypedIncludeItem<TRoutes, TNamePrefix, TUrlPrefix, TResponses>;
+
 export type PathHelpers<TEnv> = {
   /**
    * Define a route with URL pattern at definition site
@@ -273,22 +510,25 @@ export type PathHelpers<TEnv> = {
    * ])
    * ```
    */
-  path: <const TPattern extends string, const TName extends string = UnnamedRoute>(
-    pattern: TPattern,
-    handler: ReactNode | Handler<ExtractParams<TPattern>, TEnv> | PrerenderHandlerDefinition<ExtractParams<TPattern>>,
-    optionsOrUse?: PathOptions<TName> | (() => RouteUseItem[]),
-    use?: () => RouteUseItem[]
-  ) => TypedRouteItem<TName, TPattern>;
+  path: PathFn<TEnv> & {
+    json: JsonResponsePathFn<TEnv>;
+    text: TextResponsePathFn<TEnv>;
+    html: TextResponsePathFn<TEnv>;
+    xml: TextResponsePathFn<TEnv>;
+    image: ResponsePathFn<TEnv>;
+    stream: ResponsePathFn<TEnv>;
+    any: ResponsePathFn<TEnv>;
+  };
 
   /**
    * Define a layout that wraps child routes
    */
   layout: {
-    (component: ReactNode | Handler<any, TEnv>): TypedLayoutItem<{}>;
+    (component: ReactNode | Handler<any, TEnv>): TypedLayoutItem<{}, {}>;
     <const TChildren extends readonly LayoutUseItem[]>(
       component: ReactNode | Handler<any, TEnv>,
       use: () => TChildren
-    ): TypedLayoutItem<ExtractRoutes<TChildren>>;
+    ): TypedLayoutItem<ExtractRoutes<TChildren>, ExtractResponses<TChildren>>;
   };
 
   /**
@@ -302,15 +542,7 @@ export type PathHelpers<TEnv> = {
    * include("/blog", blogPatterns, { name: "blog" })
    * ```
    */
-  include: <
-    TRoutes extends Record<string, string>,
-    const TUrlPrefix extends string,
-    const TNamePrefix extends string = never
-  >(
-    prefix: TUrlPrefix,
-    patterns: UrlPatterns<TEnv, TRoutes>,
-    options?: IncludeOptions<TNamePrefix>
-  ) => TypedIncludeItem<TRoutes, TNamePrefix, TUrlPrefix>;
+  include: IncludeFn<TEnv>;
 
   /**
    * Define parallel routes that render simultaneously in named slots
@@ -380,12 +612,12 @@ export type PathHelpers<TEnv> = {
     (): CacheItem;
     <const TChildren extends readonly AllUseItems[]>(
       children: () => TChildren
-    ): TypedCacheItem<ExtractRoutes<TChildren>>;
-    (options: PartialCacheOptions | false): TypedCacheItem<{}>;
+    ): TypedCacheItem<ExtractRoutes<TChildren>, ExtractResponses<TChildren>>;
+    (options: PartialCacheOptions | false): TypedCacheItem<{}, {}>;
     <const TChildren extends readonly AllUseItems[]>(
       options: PartialCacheOptions | false,
       use: () => TChildren
-    ): TypedCacheItem<ExtractRoutes<TChildren>>;
+    ): TypedCacheItem<ExtractRoutes<TChildren>, ExtractResponses<TChildren>>;
   };
 };
 
@@ -448,7 +680,18 @@ function applyNamePrefix(prefix: string | undefined, name: string): string {
  * The path() function is the key new feature - it combines URL pattern
  * with handler at the definition site.
  */
-function createPathHelper<TEnv>(): PathHelpers<TEnv>["path"] {
+/**
+ * Resolve response type with inheritance:
+ * path.json() option > urls.json() context > none
+ */
+function resolveResponseType(
+  options: PathOptions | undefined,
+  ctx: { responseType?: string },
+): string | undefined {
+  return options?.[RESPONSE_TYPE] || ctx.responseType;
+}
+
+function createPathHelper<TEnv>(): PathFn<TEnv> {
   return ((
     pattern: string,
     handler: ReactNode | Handler<any, TEnv>,
@@ -531,6 +774,7 @@ function createPathHelper<TEnv>(): PathHelpers<TEnv>["path"] {
         isPrerender: true as const,
         prerenderDef: handler as PrerenderHandlerDefinition,
       } : {}),
+      ...(resolveResponseType(options, ctx) ? { responseType: resolveResponseType(options, ctx) } : {}),
     };
 
     // Check for duplicate route names (TypeScript should catch this, but runtime check too)
@@ -572,8 +816,57 @@ function createPathHelper<TEnv>(): PathHelpers<TEnv>["path"] {
     }
 
     return { name: namespace, type: "route" } as RouteItem;
-  }) as PathHelpers<TEnv>["path"];
+  }) as PathFn<TEnv>;
 }
+
+/**
+ * Attach response type tag methods (.json, .text, .html, .xml, .image, .stream, .any) to a path helper.
+ * Each tag wraps the original path() call with the RESPONSE_TYPE option set.
+ */
+function attachPathResponseTags<TEnv>(
+  pathFn: PathFn<TEnv>,
+): PathFn<TEnv> & {
+  json: JsonResponsePathFn<TEnv>;
+  text: TextResponsePathFn<TEnv>;
+  html: TextResponsePathFn<TEnv>;
+  xml: TextResponsePathFn<TEnv>;
+  image: ResponsePathFn<TEnv>;
+  stream: ResponsePathFn<TEnv>;
+  any: ResponsePathFn<TEnv>;
+} {
+  function createTagged(responseType: string): ResponsePathFn<TEnv> {
+    return ((
+      pattern: string,
+      handler: any,
+      optionsOrUse?: any,
+      maybeUse?: any
+    ) => {
+      let options: PathOptions;
+      let use: (() => any[]) | undefined;
+
+      if (typeof optionsOrUse === "function") {
+        options = { [RESPONSE_TYPE]: responseType };
+        use = optionsOrUse;
+      } else {
+        options = { ...optionsOrUse, [RESPONSE_TYPE]: responseType };
+        use = maybeUse;
+      }
+
+      return pathFn(pattern, handler, options, use);
+    }) as ResponsePathFn<TEnv>;
+  }
+
+  const extended = pathFn as any;
+  extended.json = createTagged("json");
+  extended.text = createTagged("text");
+  extended.html = createTagged("html");
+  extended.xml = createTagged("xml");
+  extended.image = createTagged("image");
+  extended.stream = createTagged("stream");
+  extended.any = createTagged("any");
+  return extended;
+}
+
 
 /**
  * Process an IncludeItem by executing its nested patterns with prefixes
@@ -648,7 +941,7 @@ function processItems(items: readonly AllUseItems[]): AllUseItems[] {
  * they're evaluated on first request that matches the prefix. This improves
  * cold start time for apps with many routes.
  */
-function createIncludeHelper<TEnv>(): PathHelpers<TEnv>["include"] {
+function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
   return (
     prefix: string,
     patterns: UrlPatterns<TEnv>,
@@ -737,7 +1030,7 @@ export function urls<
   const TItems extends readonly AllUseItems[] = readonly AllUseItems[]
 >(
   builder: (helpers: PathHelpers<TEnv>) => TItems
-): UrlPatterns<TEnv, ExtractRoutes<TItems>> {
+): UrlPatterns<TEnv, ExtractRoutes<TItems>, ExtractResponses<TItems>> {
   // Collect path definitions during build
   const definitions: PathDefinition[] = [];
 
@@ -751,8 +1044,8 @@ export function urls<
     // Get base helpers from the existing route-definition module
     const baseHelpers = createRouteHelpers<any, TEnv>();
 
-    // Create the path helper
-    const pathHelper = createPathHelper<TEnv>();
+    // Create the path helper (with .json, .text, .html, .xml, .image, .stream, .any tags)
+    const pathHelper = attachPathResponseTags(createPathHelper<TEnv>());
 
     // Create the include helper
     const includeHelper = createIncludeHelper<TEnv>();
@@ -760,8 +1053,8 @@ export function urls<
     // Combine all helpers
     // Note: layout and cache are cast to their typed versions - phantom types don't affect runtime
     const helpers: PathHelpers<TEnv> = {
-      path: pathHelper,
-      include: includeHelper,
+      path: pathHelper as any,
+      include: includeHelper as any,
       layout: baseHelpers.layout as PathHelpers<TEnv>["layout"],
       parallel: baseHelpers.parallel,
       intercept: baseHelpers.intercept as PathHelpers<TEnv>["intercept"],
@@ -797,7 +1090,64 @@ export function urls<
       }
       return Object.fromEntries(ctx.trailingSlash);
     },
-  } as UrlPatterns<TEnv, ExtractRoutes<TItems>>;
+  } as UrlPatterns<TEnv, ExtractRoutes<TItems>, ExtractResponses<TItems>>;
+}
+
+/**
+ * Create a response-typed urls() variant.
+ * Sets RESPONSE_TYPE on the returned UrlPatterns and injects responseType
+ * into the context so child path() calls inherit it by default.
+ */
+function createUrlsResponseTag(responseType: string) {
+  return function taggedUrls<
+    TEnv = DefaultEnv,
+    const TItems extends readonly AllUseItems[] = readonly AllUseItems[]
+  >(
+    builder: (helpers: ResponsePathHelpers<TEnv>) => TItems
+  ): UrlPatterns<TEnv, ExtractRoutes<TItems>, ExtractResponses<TItems>> {
+    // Wrap the builder to inject responseType into context
+    const wrappedBuilder = (helpers: PathHelpers<TEnv>) => {
+      const store = getContext();
+      const ctx = store.getStore();
+      if (ctx) {
+        ctx.responseType = responseType;
+      }
+      return builder(helpers as any);
+    };
+    const result = urls<TEnv, TItems>(wrappedBuilder as any);
+    (result as any)[RESPONSE_TYPE] = responseType;
+    return result;
+  };
+}
+
+type UrlsJsonTagFn = <
+  TEnv = DefaultEnv,
+  const TItems extends readonly AllUseItems[] = readonly AllUseItems[]
+>(
+  builder: (helpers: JsonResponsePathHelpers<TEnv>) => TItems
+) => UrlPatterns<TEnv, ExtractRoutes<TItems>, ExtractResponses<TItems>>;
+
+type UrlsTextTagFn = <
+  TEnv = DefaultEnv,
+  const TItems extends readonly AllUseItems[] = readonly AllUseItems[]
+>(
+  builder: (helpers: TextResponsePathHelpers<TEnv>) => TItems
+) => UrlPatterns<TEnv, ExtractRoutes<TItems>, ExtractResponses<TItems>>;
+
+type UrlsResponseTagFn = <
+  TEnv = DefaultEnv,
+  const TItems extends readonly AllUseItems[] = readonly AllUseItems[]
+>(
+  builder: (helpers: ResponsePathHelpers<TEnv>) => TItems
+) => UrlPatterns<TEnv, ExtractRoutes<TItems>, ExtractResponses<TItems>>;
+
+export namespace urls {
+  export const json: UrlsJsonTagFn = createUrlsResponseTag("json") as any;
+  export const text: UrlsTextTagFn = createUrlsResponseTag("text") as any;
+  export const html: UrlsTextTagFn = createUrlsResponseTag("html") as any;
+  export const xml: UrlsTextTagFn = createUrlsResponseTag("xml") as any;
+  export const stream: UrlsResponseTagFn = createUrlsResponseTag("stream");
+  export const any: UrlsResponseTagFn = createUrlsResponseTag("any");
 }
 
 // ============================================================================
@@ -820,6 +1170,61 @@ export type ExtractPathParams<
   T extends UrlPatterns<any>,
   K extends string
 > = ExtractParams<string>; // Will be refined with pattern tracking
+
+// ============================================================================
+// Response Envelope Types
+// ============================================================================
+
+/**
+ * Error shape returned in the `{ error }` side of a JSON response envelope.
+ */
+export interface ResponseError {
+  message: string;
+  code?: string;
+  type?: string;
+  stack?: string;
+}
+
+/**
+ * Discriminated union envelope for JSON response routes.
+ * Consumers check `result.error` to discriminate between success and failure.
+ *
+ * @example
+ * ```typescript
+ * const result: ResponseEnvelope<Product> = await fetch(url).then(r => r.json());
+ * if (result.error) {
+ *   console.log(result.error.message, result.error.code);
+ *   return;
+ * }
+ * result.data.name // fully typed
+ * ```
+ */
+export type ResponseEnvelope<T> =
+  | { data: T; error?: undefined }
+  | { data?: undefined; error: ResponseError };
+
+// ============================================================================
+// Response Type Consumer Utilities
+// ============================================================================
+
+/**
+ * Extract the response data type for a named route from a UrlPatterns instance.
+ * Wraps in ResponseEnvelope since JSON response routes return enveloped data.
+ *
+ * @example
+ * ```typescript
+ * const apiPatterns = urls.json(({ path }) => [
+ *   path("/health", (ctx) => ({ status: "ok", timestamp: Date.now() }), { name: "health" }),
+ * ]);
+ *
+ * type HealthData = RouteResponse<typeof apiPatterns, "health">;
+ * // ResponseEnvelope<{ status: string; timestamp: number }>
+ * ```
+ */
+export type RouteResponse<TPatterns, TName extends string> =
+  TPatterns extends { readonly _responses?: infer R }
+    ? TName extends keyof R ? ResponseEnvelope<Exclude<R[TName], Response>> : never
+    : never;
 
 // ============================================================================
 // Exports
