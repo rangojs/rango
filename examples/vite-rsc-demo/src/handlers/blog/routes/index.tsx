@@ -1,7 +1,7 @@
 import type { Handler } from "@rangojs/router";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 
-export const IndexRoute: Handler = () => (
+export const IndexRoute: Handler<"/"> = () => (
   <DebugSegmentWrapper type="route" name="Blog Index">
     <div>
       <h2>Blog Posts</h2>

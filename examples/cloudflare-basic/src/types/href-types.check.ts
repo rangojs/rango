@@ -8,7 +8,7 @@
 import type { Handler, HandlerContext } from "@rangojs/router";
 
 // Test 1: ctx.href in handlers accepts route names
-const testHandlerHref: Handler = (ctx) => {
+const testHandlerHref: Handler<"/"> = (ctx) => {
   // Should work - ctx.href accepts any string for named route resolution
   const _homeUrl = ctx.href("home");
   const _aboutUrl = ctx.href("about");

@@ -296,6 +296,8 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv> = {
    * Type-safe when using Handler<"/path/:param"> or Handler<{ param: string }>.
    */
   params: TParams;
+  /** @internal Phantom property for params type invariance. Prevents mounting handlers on wrong routes. */
+  readonly _paramCheck?: (params: TParams) => TParams;
   /**
    * The incoming Request object.
    * System params (`_rsc*`) are filtered from the URL for cleaner access.

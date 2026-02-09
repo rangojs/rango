@@ -3,7 +3,7 @@ import type { Handler } from "@rangojs/router";
 /**
  * Reviews index page - shows all reviews for a product
  */
-export const ReviewsIndexRoute: Handler<{ slug: string }> = (ctx) => (
+export const ReviewsIndexRoute: Handler<"/product/:slug/reviews"> = (ctx) => (
   <div>
     <h2>Reviews for {ctx.params.slug}</h2>
     <p>All reviews for this product</p>
@@ -13,7 +13,7 @@ export const ReviewsIndexRoute: Handler<{ slug: string }> = (ctx) => (
 /**
  * Single review detail page
  */
-export const ReviewDetailRoute: Handler<{ slug: string; reviewId: string }> = (
+export const ReviewDetailRoute: Handler<"/product/:slug/reviews/:reviewId"> = (
   ctx
 ) => (
   <div>
@@ -25,7 +25,7 @@ export const ReviewDetailRoute: Handler<{ slug: string; reviewId: string }> = (
 /**
  * Edit review page
  */
-export const ReviewEditRoute: Handler<{ slug: string; reviewId: string }> = (
+export const ReviewEditRoute: Handler<"/product/:slug/reviews/:reviewId/edit"> = (
   ctx
 ) => (
   <div>

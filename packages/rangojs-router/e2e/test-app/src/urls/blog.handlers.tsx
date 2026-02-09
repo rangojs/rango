@@ -8,7 +8,7 @@ import type { blogPatterns } from "./blog.js";
  * Blog index page handler
  * Demonstrates scopedHref for type-safe local route names
  */
-export const BlogIndexHandler: Handler = (ctx) => {
+export const BlogIndexHandler: Handler<"/"> = (ctx) => {
   // Use scopedHref for type-safe local route names
   const href = scopedHref<typeof blogPatterns>(ctx.href);
   const pushBreadcrumb = ctx.use(Breadcrumbs);
@@ -61,7 +61,7 @@ export const BlogIndexHandler: Handler = (ctx) => {
  * Blog post detail handler
  * Demonstrates async meta streaming
  */
-export const BlogPostHandler: Handler<{ postId: string }> = (ctx) => {
+export const BlogPostHandler: Handler<"/:postId"> = (ctx) => {
   const href = scopedHref<typeof blogPatterns>(ctx.href);
 
   const pushBreadcrumb = ctx.use(Breadcrumbs);

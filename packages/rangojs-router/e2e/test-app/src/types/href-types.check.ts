@@ -8,7 +8,7 @@
 import type { Handler, HandlerContext, Middleware, Revalidate, GenericParams } from "@rangojs/router";
 
 // Test 1: ctx.href in handlers accepts route names
-const testHandlerHref: Handler = (ctx) => {
+const testHandlerHref: Handler<"/"> = (ctx) => {
   // Should work - ctx.href accepts any string for named route resolution
   const _indexUrl = ctx.href("index");
   const _blogUrl = ctx.href("blog.index");
@@ -207,7 +207,7 @@ const _handlerAbsolute: string = localHrefFromHandler("other.module.route");
 const _handlerPath: string = localHrefFromHandler("/raw/path");
 
 // Test 16: Handler usage pattern
-const testHandlerWithScopedHref: Handler = (ctx) => {
+const testHandlerWithScopedHref: Handler<"/"> = (ctx) => {
   // This is the recommended pattern for composable modules
   const href = scopedHref<TestPatternsType>(ctx.href);
 

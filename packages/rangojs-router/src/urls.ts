@@ -131,6 +131,8 @@ export type TextResponseHandler<TParams = Record<string, string>, TEnv = any> = 
 export interface ResponseHandlerContext<TParams = Record<string, string>, TEnv = any> {
   request: Request;
   params: TParams;
+  /** @internal Phantom property for params type invariance. Prevents mounting handlers on wrong routes. */
+  readonly _paramCheck?: (params: TParams) => TParams;
   /** Platform bindings (DB, KV, secrets, etc.) extracted from RouterEnv. */
   env: TEnv extends RouterEnv<infer B, any> ? B : {};
   /** Query parameters from the URL (system params like `_rsc*` are filtered). */

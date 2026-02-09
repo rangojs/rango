@@ -1253,7 +1253,7 @@ const createRouteHelper = <
   const T extends RouteDefinition,
   TEnv,
 >(): RouteHelpers<T, TEnv>["route"] => {
-  return routeFn as RouteHelpers<T, TEnv>["route"];
+  return routeFn as unknown as RouteHelpers<T, TEnv>["route"];
 };
 
 /**
