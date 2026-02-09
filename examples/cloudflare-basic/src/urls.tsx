@@ -34,6 +34,11 @@ import { guidesPatterns } from "./pages/guides.js";
  * Main URL patterns - Django-style routing API
  */
 export const urlpatterns = urls(({ path, layout, parallel, loader, loading, cache, include }) => [
+  // API route returning raw Response (not JSX)
+  path("/api/health", () => new Response(JSON.stringify({ status: "ok" }), {
+    headers: { "Content-Type": "application/json" },
+  }), { name: "apiHealth" }),
+
   // Global navigation layout
   layout(<NavLayout />, () => [
     // Core routes

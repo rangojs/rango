@@ -251,9 +251,8 @@ export async function createMatchContextForPartial<TEnv>(
 
   if (prevMatch && prevMatch.entry !== matched.entry && !matched.pr) {
     console.log(
-      `[Router.matchPartial] Route group changed: ${prevMatch.routeKey} → ${matched.routeKey}, falling back to full render`,
+      `[Router.matchPartial] Route group changed: ${prevMatch.routeKey} → ${matched.routeKey}`,
     );
-    return null;
   }
 
   const manifestStart = metricsStore ? performance.now() : 0;
