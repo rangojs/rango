@@ -4,6 +4,7 @@ packages:
   - 'packages/rangojs-router/e2e/test-app'
   - 'packages/rangojs-router/e2e/e2e-basic'
   - 'examples/*'
+  - 'apps/*'
 
 catalog:
   "@vitejs/plugin-rsc": ^0.5.14
