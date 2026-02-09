@@ -1,10 +1,11 @@
 import type { Plugin, PluginOption } from "vite";
 import { createServer as createViteServer } from "vite";
 import * as Vite from "vite";
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { generateRouteTypesSource } from "../build/generate-route-types.ts";
 import { exposeActionId } from "./expose-action-id.ts";
 import { exposeLoaderId } from "./expose-loader-id.ts";
 import { exposeHandleId } from "./expose-handle-id.ts";
@@ -424,6 +425,9 @@ function createRouterDiscoveryPlugin(
   // Read by the virtual module's load hook to emit setCachedManifest() call.
   let mergedRouteManifest: Record<string, string> | null = null;
 
+  // Per-router route manifests for generating typed route files.
+  let perRouterManifests: Array<{ id: string; routeManifest: Record<string, string> }> = [];
+
   // Concrete URLs to pre-render at build time (populated during buildStart).
   // Only used when enableBuildPrerender is true.
   let prerenderBuildUrls: string[] | null = null;
@@ -522,6 +526,7 @@ function createRouterDiscoveryPlugin(
 
     mergedRouteManifest = {};
     mergedPrecomputedEntries = [];
+    perRouterManifests = [];
     let mergedRouteAncestry: Record<string, string[]> = {};
     let mergedRouteTrailingSlash: Record<string, string> = {};
 
@@ -545,6 +550,7 @@ function createRouterDiscoveryPlugin(
 
       // Merge into the combined manifest
       Object.assign(mergedRouteManifest, manifest.routeManifest);
+      perRouterManifests.push({ id, routeManifest: manifest.routeManifest });
 
       // Merge ancestry (internal field, used only for trie building)
       if (manifest._routeAncestry) {
@@ -686,6 +692,22 @@ function createRouterDiscoveryPlugin(
     return serverMod;
   }
 
+  // Write named-routes type files next to the router entry file.
+  // One file per router: named-routes.<routerId>.gen.ts
+  // Only writes when content has changed to avoid triggering HMR loops.
+  function writeRouteTypesFiles() {
+    if (perRouterManifests.length === 0) return;
+    const entryDir = dirname(resolve(projectRoot, entryPath));
+    for (const { id, routeManifest } of perRouterManifests) {
+      const outPath = join(entryDir, `named-routes.${id}.gen.ts`);
+      const source = generateRouteTypesSource(routeManifest);
+      const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
+      if (existing === source) continue;
+      writeFileSync(outPath, source);
+      console.log(`[rsc-router] Generated route types -> ${outPath}`);
+    }
+  }
+
   return {
     name: "@rangojs/router:discovery",
 
@@ -743,6 +765,7 @@ function createRouterDiscoveryPlugin(
           }
 
           await discoverRouters(rscEnv);
+          writeRouteTypesFiles();
 
           // Populate the route map in the RSC env
           if (mergedRouteManifest && serverMod?.setCachedManifest) {
@@ -820,6 +843,7 @@ function createRouterDiscoveryPlugin(
         }
 
         await discoverRouters(rscEnv);
+        writeRouteTypesFiles();
       } catch (err: any) {
         // Clean up before re-throwing so the temp server doesn't leak
         delete (globalThis as any).__rscRouterDiscoveryActive;

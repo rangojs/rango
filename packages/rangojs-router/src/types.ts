@@ -51,6 +51,12 @@ declare global {
       // Empty by default - users augment with their merged route maps for type-safe href()
       // Values are string (pattern) for RSC routes, or { path: string; response: T } for response routes
     }
+
+    // eslint-disable-next-line @typescript-eslint/no-empty-interface
+    interface GeneratedRouteMap {
+      // Empty by default - populated by generated named-routes.*.gen.ts files
+      // Maps route names to URL pattern strings for Handler<"routeName"> support
+    }
   }
 }
 
@@ -260,8 +266,17 @@ export type ResolvedRouteMap<T extends RouteDefinition> = UnionToIntersection<Fl
  * }
  * ```
  */
-export type Handler<T = {}, TEnv = DefaultEnv> = (
-  ctx: HandlerContext<T extends string ? ExtractParams<T> : T, TEnv>
+export type Handler<
+  T = {},
+  TRouteMap = RSCRouter.GeneratedRouteMap,
+  TEnv = DefaultEnv,
+> = (
+  ctx: HandlerContext<
+    T extends keyof TRouteMap
+      ? TRouteMap[T] extends string ? ExtractParams<TRouteMap[T]> : (T extends string ? ExtractParams<T> : T)
+      : T extends string ? ExtractParams<T> : T,
+    TEnv
+  >
 ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>;
 
 /**
@@ -623,7 +638,7 @@ export type RouteKeys<T extends RouteDefinition> = keyof ResolvedRouteMap<T> & s
  */
 type LayoutValue<TEnv = any> =
   | ReactNode
-  | Handler<any, TEnv>;
+  | Handler<any, any, TEnv>;
 
 /**
  * Helper to extract params from a route key using the resolved (flattened) route map
@@ -640,7 +655,7 @@ export type ExtractRouteParams<T extends RouteDefinition, K extends string> =
  */
 export type HandlersForRouteMap<T extends RouteDefinition, TEnv = any> = {
   // Route handlers - type-safe params extracted from route patterns
-  [K in RouteKeys<T>]?: Handler<ExtractRouteParams<T, K & string>, TEnv>;
+  [K in RouteKeys<T>]?: Handler<ExtractRouteParams<T, K & string>, any, TEnv>;
 } & {
   // Layout patterns: $layout.{routeName}.{layoutName}
   [K in `$layout.${RouteKeys<T> | '*'}.${string}`]?: LayoutValue<TEnv>;
@@ -654,12 +669,13 @@ export type HandlersForRouteMap<T extends RouteDefinition, TEnv = any> = {
           ? ExtractRouteParams<T, RouteKey & string>
           : GenericParams
         : GenericParams,
+      any,
       TEnv
     >
   >;
 } & {
   // Global parallel routes (with '*') use GenericParams
-  [K in `$parallel.${"*"}.${string}`]?: Record<`@${string}`, Handler<GenericParams, TEnv>>;
+  [K in `$parallel.${"*"}.${string}`]?: Record<`@${string}`, Handler<GenericParams, any, TEnv>>;
 } & {
   // Middleware patterns: $middleware.{routeName}.{middlewareName}
   [K in `$middleware.${RouteKeys<T> | '*'}.${string}`]?: MiddlewareFn<TEnv, GenericParams>[];

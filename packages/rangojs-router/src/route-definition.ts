@@ -239,7 +239,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * @param use - Callback returning child routes, middleware, loaders, etc.
    */
   layout: (
-    component: ReactNode | Handler<any, TEnv>,
+    component: ReactNode | Handler<any, any, TEnv>,
     use?: () => LayoutUseItem[]
   ) => LayoutItem;
   /**
@@ -263,7 +263,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * @param use - Optional callback for loaders, loading, revalidate, etc.
    */
   parallel: <
-    TSlots extends Record<`@${string}`, Handler<any, TEnv> | ReactNode>,
+    TSlots extends Record<`@${string}`, Handler<any, any, TEnv> | ReactNode>,
   >(
     slots: TSlots,
     use?: () => ParallelUseItem[]
@@ -932,7 +932,7 @@ const intercept: RouteHelpers<any, any>["intercept"] = (
     if (capturedLayouts.length > 0 && capturedLayouts[0].type === "layout") {
       entry.layout = capturedLayouts[0].handler as
         | ReactNode
-        | Handler<any, any>;
+        | Handler<any, any, any>;
     }
 
     invariant(

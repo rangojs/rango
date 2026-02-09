@@ -208,7 +208,7 @@ export interface PathOptions<TName extends string = string> {
 export interface PathDefinition {
   pattern: string;
   name?: string;
-  handler: ReactNode | Handler<any, any>;
+  handler: ReactNode | Handler<any, any, any>;
   use?: RouteUseItem[];
 }
 
@@ -528,9 +528,9 @@ export type PathHelpers<TEnv> = {
    * Define a layout that wraps child routes
    */
   layout: {
-    (component: ReactNode | Handler<any, TEnv>): TypedLayoutItem<{}, {}>;
+    (component: ReactNode | Handler<any, any, TEnv>): TypedLayoutItem<{}, {}>;
     <const TChildren extends readonly LayoutUseItem[]>(
-      component: ReactNode | Handler<any, TEnv>,
+      component: ReactNode | Handler<any, any, TEnv>,
       use: () => TChildren
     ): TypedLayoutItem<ExtractRoutes<TChildren>, ExtractResponses<TChildren>>;
   };
@@ -551,7 +551,7 @@ export type PathHelpers<TEnv> = {
   /**
    * Define parallel routes that render simultaneously in named slots
    */
-  parallel: <TSlots extends Record<`@${string}`, Handler<any, TEnv> | ReactNode>>(
+  parallel: <TSlots extends Record<`@${string}`, Handler<any, any, TEnv> | ReactNode>>(
     slots: TSlots,
     use?: () => ParallelUseItem[]
   ) => ParallelItem;
@@ -563,7 +563,7 @@ export type PathHelpers<TEnv> = {
   intercept: (
     slotName: `@${string}`,
     routeName: string,
-    handler: ReactNode | Handler<any, TEnv>,
+    handler: ReactNode | Handler<any, any, TEnv>,
     use?: () => InterceptUseItem[]
   ) => InterceptItem;
 
@@ -698,7 +698,7 @@ function resolveResponseType(
 function createPathHelper<TEnv>(): PathFn<TEnv> {
   return ((
     pattern: string,
-    handler: ReactNode | Handler<any, TEnv>,
+    handler: ReactNode | Handler<any, any, TEnv>,
     optionsOrUse?: PathOptions | (() => RouteUseItem[]),
     maybeUse?: () => RouteUseItem[]
   ): RouteItem => {
@@ -749,11 +749,11 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
     }
 
     // Ensure handler is always a function (wrap ReactNode or extract from prerender def)
-    const wrappedHandler: Handler<any, TEnv> =
+    const wrappedHandler: Handler<any, any, TEnv> =
       typeof handler === "function"
-        ? (handler as Handler<any, TEnv>)
+        ? (handler as Handler<any, any, TEnv>)
         : isPrerenderHandler(handler)
-          ? (handler.handler as Handler<any, TEnv>)
+          ? (handler.handler as Handler<any, any, TEnv>)
           : () => handler;
 
     const entry = {
