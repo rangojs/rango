@@ -440,6 +440,31 @@ export function createRSCHandler<
     } catch (error) {
       // Check if middleware/handler returned Response
       if (error instanceof Response) {
+        // During partial (client-side navigation), a 200 Response from a handler
+        // means the route serves raw content (JSON, text, etc.), not JSX.
+        // Signal the browser to hard-navigate so it renders the raw response.
+        // Only for 200 — redirects (3xx) work already because the browser follows
+        // them automatically to a URL that serves Flight data.
+        if (isPartial && error.status === 200) {
+          console.warn(
+            `[RSC] Route handler at ${url.pathname} returned a Response during client-side navigation. ` +
+            `Falling back to hard navigation. Use data-external on the <Link> to avoid the extra round-trip.`,
+          );
+          const cleanUrl = new URL(url);
+          cleanUrl.searchParams.delete("_rsc_partial");
+          cleanUrl.searchParams.delete("_rsc_segments");
+          cleanUrl.searchParams.delete("_rsc_v");
+          cleanUrl.searchParams.delete("_rsc_stale");
+          cleanUrl.searchParams.delete("_rsc_action");
+          cleanUrl.searchParams.delete("_rsc_prev");
+          return createResponseWithMergedHeaders(null, {
+            status: 200,
+            headers: {
+              "X-RSC-Reload": cleanUrl.toString(),
+              "content-type": "text/x-component;charset=utf-8",
+            },
+          });
+        }
         return error;
       }
 
