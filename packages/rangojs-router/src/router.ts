@@ -453,7 +453,9 @@ type MergeRoutesWithResponses<
   TResponses,
 > = {
   [K in keyof TRoutes]: K extends keyof NonNullable<TResponses>
-    ? { readonly path: TRoutes[K]; readonly response: NonNullable<TResponses>[K] }
+    ? unknown extends NonNullable<TResponses>[K]
+      ? TRoutes[K] // RSC route — TData defaults to unknown, keep as plain string
+      : { readonly path: TRoutes[K]; readonly response: NonNullable<TResponses>[K] }
     : TRoutes[K]
 };
 

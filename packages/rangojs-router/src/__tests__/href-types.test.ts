@@ -246,7 +246,8 @@ type _Test8 = AssertTrue<AssertEqual<
 
 import type { PathResponse, ValidPaths } from "../href-client.js";
 import { urls } from "../urls.js";
-import type { RouteResponse, ResponseEnvelope } from "../urls.js";
+import type { RouteResponse, ResponseEnvelope, ResponseHandlerContext, ResponseError } from "../urls.js";
+import { isResponseError } from "../client.js";
 
 // Actual urls definitions using the real urls() / urls.json() API.
 // This tests that response types propagate through the phantom type chain.
@@ -291,13 +292,16 @@ type RscRoutes = NonNullable<(typeof rscPatterns)["_routes"]>;
 type ApiRoutes = NonNullable<(typeof apiPatterns)["_routes"]>;
 type ApiResponses = (typeof apiPatterns)["_responses"];
 
-// MergeRoutesWithResponses is the type router.ts applies when merging _routes + _responses
+// MergeRoutesWithResponses is the type router.ts applies when merging _routes + _responses.
+// RSC routes have TData = unknown (the TypedRouteItem default), so we skip those.
 type MergeRoutesWithResponses<
   TRoutes extends Record<string, string>,
   TResponses,
 > = {
   [K in keyof TRoutes]: K extends keyof NonNullable<TResponses>
-    ? { readonly path: TRoutes[K]; readonly response: NonNullable<TResponses>[K] }
+    ? unknown extends NonNullable<TResponses>[K]
+      ? TRoutes[K]
+      : { readonly path: TRoutes[K]; readonly response: NonNullable<TResponses>[K] }
     : TRoutes[K]
 };
 
@@ -379,9 +383,6 @@ describe("HrefFunction with mixed routeMap", () => {
 // ResponseHandlerContext — env extraction, searchParams, url, pathname
 // ============================================================================
 
-import type { ResponseHandlerContext, ResponseEnvelope, ResponseError } from "../urls.js";
-import { isResponseError } from "../client.js";
-
 type TestEnv = RouterEnv<{ DB: "d1"; KV: "kv" }, { user: string }>;
 
 describe("ResponseHandlerContext", () => {
@@ -391,7 +392,7 @@ describe("ResponseHandlerContext", () => {
   });
 
   it("should fallback to empty object for non-RouterEnv", () => {
-    type Ctx = ResponseHandlerContext<{}, any>;
+    type Ctx = ResponseHandlerContext<{}, { DB: string }>;
     expectTypeOf<Ctx["env"]>().toEqualTypeOf<{}>();
   });
 
