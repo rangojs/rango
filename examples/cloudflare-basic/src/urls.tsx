@@ -47,6 +47,27 @@ export const urlpatterns = urls(({ path, layout, parallel, loader, loading, cach
     );
   }, { name: "robots" }),
 
+  // MIME type test routes (one per tag, used by e2e tests)
+  path.json("/test/mime/json", () => ({ type: "json" }), { name: "testMimeJson" }),
+  path.text("/test/mime/text", () => "hello text", { name: "testMimeText" }),
+  path.html("/test/mime/html", () => "<h1>hello html</h1>", { name: "testMimeHtml" }),
+  path.xml("/test/mime/xml", () => "<root><type>xml</type></root>", { name: "testMimeXml" }),
+  path.image("/test/mime/image", () => {
+    return new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), {
+      headers: { "Content-Type": "image/png" },
+    });
+  }, { name: "testMimeImage" }),
+  path.stream("/test/mime/stream", () => {
+    return new Response("stream data", {
+      headers: { "Content-Type": "application/octet-stream" },
+    });
+  }, { name: "testMimeStream" }),
+  path.any("/test/mime/any", () => {
+    return new Response("custom", {
+      headers: { "Content-Type": "application/x-custom" },
+    });
+  }, { name: "testMimeAny" }),
+
   // Global navigation layout
   layout(<NavLayout />, () => [
     // Core routes
