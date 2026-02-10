@@ -339,3 +339,414 @@ export function writePerModuleRouteTypesForFile(filePath: string): void {
     console.warn(`[rsc-router] Failed to generate route types for ${filePath}: ${(err as Error).message}`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Static include() parsing
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract include() calls from source code by statically parsing.
+ * Returns the path prefix, variable name, and optional name prefix for each.
+ */
+export function extractIncludesFromSource(
+  code: string
+): Array<{ pathPrefix: string; variableName: string; namePrefix: string | null }> {
+  const results: Array<{
+    pathPrefix: string;
+    variableName: string;
+    namePrefix: string | null;
+  }> = [];
+  const regex = /\binclude\s*\(/g;
+  let match;
+
+  while ((match = regex.exec(code)) !== null) {
+    const result = parseIncludeCall(code, match.index + match[0].length);
+    if (result) results.push(result);
+  }
+
+  return results;
+}
+
+/**
+ * Parse a single include() call starting right after the opening paren.
+ * Expects: include("prefix", variableName, { name: "prefix" })
+ */
+function parseIncludeCall(
+  code: string,
+  pos: number
+): {
+  pathPrefix: string;
+  variableName: string;
+  namePrefix: string | null;
+} | null {
+  // Skip whitespace to first argument
+  while (pos < code.length && isWhitespace(code[pos])) pos++;
+
+  // First arg: string literal (pathPrefix)
+  const prefixStr = readString(code, pos);
+  if (!prefixStr) return null;
+  const pathPrefix = prefixStr.value;
+  pos = prefixStr.end;
+
+  // Comma
+  while (pos < code.length && isWhitespace(code[pos])) pos++;
+  if (pos >= code.length || code[pos] !== ",") return null;
+  pos++;
+  while (pos < code.length && isWhitespace(code[pos])) pos++;
+
+  // Second arg: identifier (variableName)
+  const varStart = pos;
+  while (pos < code.length && /[\w$]/.test(code[pos])) pos++;
+  if (pos === varStart) return null;
+  const variableName = code.slice(varStart, pos);
+
+  // Scan rest of call for optional { name: "..." }
+  let namePrefix: string | null = null;
+  let depth = 1; // inside include()
+
+  while (pos < code.length && depth > 0) {
+    const ch = code[pos];
+
+    if (isWhitespace(ch)) {
+      pos++;
+      continue;
+    }
+
+    // Line comment
+    if (ch === "/" && pos + 1 < code.length && code[pos + 1] === "/") {
+      pos += 2;
+      while (pos < code.length && code[pos] !== "\n") pos++;
+      continue;
+    }
+
+    // Block comment
+    if (ch === "/" && pos + 1 < code.length && code[pos + 1] === "*") {
+      pos += 2;
+      while (
+        pos < code.length - 1 &&
+        !(code[pos] === "*" && code[pos + 1] === "/")
+      )
+        pos++;
+      pos += 2;
+      continue;
+    }
+
+    // At depth 2 (inside options object), look for name: "..."
+    if (depth === 2 && ch === "n" && matchesNameColon(code, pos)) {
+      const nameResult = extractNameValue(code, pos);
+      if (nameResult) {
+        namePrefix = nameResult.value;
+        pos = nameResult.end;
+        continue;
+      }
+    }
+
+    // Skip string literals
+    if (
+      ch === '"' ||
+      ch === "`" ||
+      (ch === "'" && (pos === 0 || !/\w/.test(code[pos - 1])))
+    ) {
+      pos = skipStringLiteral(code, pos);
+      continue;
+    }
+
+    // Track depth
+    if (ch === "(" || ch === "{" || ch === "[") depth++;
+    else if (ch === ")" || ch === "}" || ch === "]") depth--;
+
+    pos++;
+  }
+
+  return { pathPrefix, variableName, namePrefix };
+}
+
+// ---------------------------------------------------------------------------
+// Import resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Find the import statement for a local variable name.
+ * Returns the import specifier and the exported name from the source module.
+ */
+function resolveImportedVariable(
+  code: string,
+  localName: string
+): { specifier: string; exportedName: string } | null {
+  const importRegex = /import\s*\{([^}]+)\}\s*from\s*["']([^"']+)["']/g;
+  let match;
+
+  while ((match = importRegex.exec(code)) !== null) {
+    const imports = match[1];
+    const specifier = match[2];
+
+    const parts = imports
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const part of parts) {
+      const asMatch = part.match(/^(\w+)\s+as\s+(\w+)$/);
+      if (asMatch && asMatch[2] === localName)
+        return { specifier, exportedName: asMatch[1] };
+      if (part === localName) return { specifier, exportedName: localName };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Resolve an import specifier relative to the importing file.
+ * Strips .js/.mjs extensions and tries .ts/.tsx candidates.
+ */
+function resolveImportPath(
+  importSpec: string,
+  fromFile: string
+): string | null {
+  if (!importSpec.startsWith(".")) return null;
+
+  const dir = dirname(fromFile);
+  let base = importSpec;
+  if (base.endsWith(".js")) base = base.slice(0, -3);
+  else if (base.endsWith(".mjs")) base = base.slice(0, -4);
+
+  const candidates = [
+    resolve(dir, base + ".ts"),
+    resolve(dir, base + ".tsx"),
+    resolve(dir, base + "/index.ts"),
+    resolve(dir, base + "/index.tsx"),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// urls() block extraction for same-file variables
+// ---------------------------------------------------------------------------
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Extract the source of a specific `const varName = urls(...)` block.
+ * Used for same-file variables where include() references a urls() defined
+ * in the same module rather than imported.
+ */
+function extractUrlsBlockForVariable(
+  code: string,
+  varName: string
+): string | null {
+  const pattern = new RegExp(
+    `(?:export\\s+)?(?:const|let|var)\\s+${escapeRegExp(varName)}\\s*=\\s*urls\\s*\\(`
+  );
+  const match = pattern.exec(code);
+  if (!match) return null;
+
+  // Start from the opening paren of urls(
+  const openParen = match.index + match[0].length - 1;
+  let depth = 1;
+  let pos = openParen + 1;
+
+  while (pos < code.length && depth > 0) {
+    const ch = code[pos];
+
+    // Skip strings
+    if (
+      ch === '"' ||
+      ch === "`" ||
+      (ch === "'" && (pos === 0 || !/\w/.test(code[pos - 1])))
+    ) {
+      pos = skipStringLiteral(code, pos);
+      continue;
+    }
+
+    // Line comment
+    if (ch === "/" && pos + 1 < code.length && code[pos + 1] === "/") {
+      pos += 2;
+      while (pos < code.length && code[pos] !== "\n") pos++;
+      continue;
+    }
+
+    // Block comment
+    if (ch === "/" && pos + 1 < code.length && code[pos + 1] === "*") {
+      pos += 2;
+      while (
+        pos < code.length - 1 &&
+        !(code[pos] === "*" && code[pos + 1] === "/")
+      )
+        pos++;
+      pos += 2;
+      continue;
+    }
+
+    if (ch === "(" || ch === "{" || ch === "[") depth++;
+    else if (ch === ")" || ch === "}" || ch === "]") depth--;
+
+    pos++;
+  }
+
+  return code.slice(openParen, pos);
+}
+
+// ---------------------------------------------------------------------------
+// Combined route map building
+// ---------------------------------------------------------------------------
+
+/**
+ * Recursively build a route map from a urls module file.
+ * Extracts local path() routes and follows include() calls to sub-modules.
+ * Handles both imported and same-file variables.
+ */
+export function buildCombinedRouteMap(
+  filePath: string,
+  variableName?: string,
+  visited?: Set<string>
+): Record<string, string> {
+  visited = visited ?? new Set();
+  const realPath = resolve(filePath);
+  const key = variableName ? `${realPath}:${variableName}` : realPath;
+  if (visited.has(key)) return {};
+  visited.add(key);
+
+  let source: string;
+  try {
+    source = readFileSync(realPath, "utf-8");
+  } catch {
+    return {};
+  }
+
+  // If a specific variable is requested, extract just its urls() block
+  let block: string;
+  if (variableName) {
+    const extracted = extractUrlsBlockForVariable(source, variableName);
+    if (!extracted) return {};
+    block = extracted;
+  } else {
+    block = source;
+  }
+
+  return buildRouteMapFromBlock(block, source, realPath, visited);
+}
+
+function buildRouteMapFromBlock(
+  block: string,
+  fullSource: string,
+  filePath: string,
+  visited: Set<string>
+): Record<string, string> {
+  const routeMap: Record<string, string> = {};
+
+  // Extract local path() routes
+  const localRoutes = extractRoutesFromSource(block);
+  for (const { name, pattern } of localRoutes) {
+    routeMap[name] = pattern;
+  }
+
+  // Extract include() calls
+  const includes = extractIncludesFromSource(block);
+  for (const { pathPrefix, variableName, namePrefix } of includes) {
+    let childRoutes: Record<string, string>;
+
+    // Try import resolution first
+    const imported = resolveImportedVariable(fullSource, variableName);
+    if (imported) {
+      const targetFile = resolveImportPath(imported.specifier, filePath);
+      if (!targetFile) continue;
+      childRoutes = buildCombinedRouteMap(
+        targetFile,
+        imported.exportedName,
+        visited
+      );
+    } else {
+      // Same-file variable
+      childRoutes = buildCombinedRouteMap(filePath, variableName, visited);
+    }
+
+    // Apply prefixes
+    for (const [name, pattern] of Object.entries(childRoutes)) {
+      const prefixedName = namePrefix ? `${namePrefix}.${name}` : name;
+      const prefixedPattern =
+        pattern === "/" ? pathPrefix || "/" : pathPrefix + pattern;
+      routeMap[prefixedName] = prefixedPattern;
+    }
+  }
+
+  return routeMap;
+}
+
+// ---------------------------------------------------------------------------
+// Combined named-routes.gen.ts writer
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate named-routes.gen.ts by statically parsing include() calls
+ * and recursively resolving sub-module routes. No code execution needed.
+ *
+ * Finds root url modules (files with urls() + include() that aren't imported
+ * by other url modules), builds a combined route map, and writes the output.
+ */
+export function writeCombinedRouteTypes(root: string, entry: string): void {
+  const scanDir = dirname(resolve(root, entry));
+
+  // Find files with both urls( and include( -- these are composing modules
+  const files = findTsFiles(scanDir);
+  const urlModulesWithIncludes: string[] = [];
+
+  for (const filePath of files) {
+    try {
+      const source = readFileSync(filePath, "utf-8");
+      if (source.includes("urls(") && source.includes("include(")) {
+        urlModulesWithIncludes.push(filePath);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  if (urlModulesWithIncludes.length === 0) return;
+
+  // Build set of files imported by url modules (to identify roots)
+  const importedFiles = new Set<string>();
+  for (const filePath of urlModulesWithIncludes) {
+    try {
+      const source = readFileSync(filePath, "utf-8");
+      const includes = extractIncludesFromSource(source);
+      for (const { variableName } of includes) {
+        const imported = resolveImportedVariable(source, variableName);
+        if (imported) {
+          const resolved = resolveImportPath(imported.specifier, filePath);
+          if (resolved) importedFiles.add(resolved);
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  // Roots are url modules with includes that aren't imported by others
+  const roots = urlModulesWithIncludes.filter((f) => !importedFiles.has(f));
+  if (roots.length === 0) return;
+
+  // Build combined route map from all roots
+  const mergedManifest: Record<string, string> = {};
+  for (const rootFile of roots) {
+    const routeMap = buildCombinedRouteMap(rootFile);
+    Object.assign(mergedManifest, routeMap);
+  }
+
+  if (Object.keys(mergedManifest).length === 0) return;
+
+  const outPath = join(scanDir, "named-routes.gen.ts");
+  const source = generateRouteTypesSource(mergedManifest);
+  const existing = existsSync(outPath)
+    ? readFileSync(outPath, "utf-8")
+    : null;
+  if (existing !== source) {
+    writeFileSync(outPath, source);
+    console.log(`[rsc-router] Generated combined route types -> ${outPath}`);
+  }
+}

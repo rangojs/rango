@@ -5,7 +5,7 @@ import { resolve, join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
-import { generateRouteTypesSource, writePerModuleRouteTypes, writePerModuleRouteTypesForFile } from "../build/generate-route-types.ts";
+import { generateRouteTypesSource, writePerModuleRouteTypes, writePerModuleRouteTypesForFile, writeCombinedRouteTypes } from "../build/generate-route-types.ts";
 import { exposeActionId } from "./expose-action-id.ts";
 import { exposeLoaderId } from "./expose-loader-id.ts";
 import { exposeHandleId } from "./expose-handle-id.ts";
@@ -743,6 +743,7 @@ function createRouterDiscoveryPlugin(
       // Runs before the dev server starts so .gen.ts files exist immediately for IDE.
       if (opts?.perModuleRouteTypes !== false) {
         writePerModuleRouteTypes(projectRoot, entryPath);
+        writeCombinedRouteTypes(projectRoot, entryPath);
       }
       // Capture @vitejs/plugin-rsc manager for early manifest writes during prerender.
       // The manager's buildAssetsManifest is populated during client generateBundle,
@@ -820,13 +821,14 @@ function createRouterDiscoveryPlugin(
         setTimeout(() => discover().then(resolve, resolve), 0);
       });
 
-      // Watch url module files for changes and regenerate per-module route types.
+      // Watch url module files for changes and regenerate route types.
       if (opts?.perModuleRouteTypes !== false) {
         server.watcher.on("change", (filePath) => {
           if (filePath.endsWith(".gen.ts")) return;
           if (!filePath.endsWith(".ts") && !filePath.endsWith(".tsx")) return;
           try {
             writePerModuleRouteTypesForFile(filePath);
+            writeCombinedRouteTypes(projectRoot, entryPath);
           } catch {
             // Ignore read errors for deleted/moved files
           }
