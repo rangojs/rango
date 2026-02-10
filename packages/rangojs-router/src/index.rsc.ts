@@ -36,6 +36,7 @@ export type {
   RouteDefinition,
   // Handler types
   Handler,
+  ScopedRouteMap,
   HandlerContext,
   ExtractParams,
   GenericParams,

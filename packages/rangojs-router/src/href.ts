@@ -183,7 +183,11 @@ export type ScopedHrefFunction<TLocalRoutes> = {
  * Used with scopedHref() to get the routes type from patterns
  */
 export type ExtractLocalRoutes<TPatterns> =
-  TPatterns extends { readonly _routes?: infer TRoutes } ? TRoutes : Record<string, string>;
+  TPatterns extends { readonly _routes?: infer TRoutes }
+    ? TRoutes
+    : TPatterns extends Record<string, string>
+      ? TPatterns
+      : Record<string, string>;
 
 /**
  * Extract the response data type for a named route from a UrlPatterns instance.

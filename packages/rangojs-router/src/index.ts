@@ -37,6 +37,7 @@ export type {
   RouteDefinition,
   // Handler types
   Handler,            // Supports params object, path pattern, or route name
+  ScopedRouteMap,     // Scoped view of GeneratedRouteMap for Handler<"localName", ScopedRouteMap<"prefix">>
   HandlerContext,
   ExtractParams,
   GenericParams,
