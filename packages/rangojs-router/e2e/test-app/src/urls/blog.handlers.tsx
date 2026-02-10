@@ -2,15 +2,13 @@ import { scopedHref, Meta } from "@rangojs/router";
 import type { Handler } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles.js";
-import type { blogPatterns } from "./blog.js";
+import type { routes } from "./blog.gen.js";
 
 /**
  * Blog index page handler
- * Demonstrates scopedHref for type-safe local route names
  */
-export const BlogIndexHandler: Handler<"blog.index"> = (ctx) => {
-  // Use scopedHref for type-safe local route names
-  const href = scopedHref<typeof blogPatterns>(ctx.href);
+export const BlogIndexHandler: Handler<"index", routes> = (ctx) => {
+  const href = scopedHref<routes>(ctx.href);
   const pushBreadcrumb = ctx.use(Breadcrumbs);
   const meta = ctx.use(Meta);
   pushBreadcrumb({ label: "Blog", href: href("index") });
@@ -26,7 +24,6 @@ export const BlogIndexHandler: Handler<"blog.index"> = (ctx) => {
       <p data-testid="blog-description">Welcome to the blog</p>
       <ul data-testid="blog-posts">
         <li>
-          {/* Use scoped href for local route with params */}
           <Link
             to={href("post", { postId: "post-1" })}
             data-testid="blog-post-link-1"
@@ -45,7 +42,6 @@ export const BlogIndexHandler: Handler<"blog.index"> = (ctx) => {
       </ul>
       <div data-testid="blog-product-links" style={{ marginTop: "1rem" }}>
         <h3>Featured Products</h3>
-        {/* Cross-module: use absolute name */}
         <Link
           to={href("product.detail", { productId: "product-a" })}
           data-testid="blog-product-link"
@@ -59,10 +55,9 @@ export const BlogIndexHandler: Handler<"blog.index"> = (ctx) => {
 
 /**
  * Blog post detail handler
- * Demonstrates async meta streaming
  */
-export const BlogPostHandler: Handler<"blog.post"> = (ctx) => {
-  const href = scopedHref<typeof blogPatterns>(ctx.href);
+export const BlogPostHandler: Handler<"post", routes> = (ctx) => {
+  const href = scopedHref<routes>(ctx.href);
 
   const pushBreadcrumb = ctx.use(Breadcrumbs);
   const meta = ctx.use(Meta);
@@ -77,7 +72,6 @@ export const BlogPostHandler: Handler<"blog.post"> = (ctx) => {
     content: `Content for post ${ctx.params.postId}`,
   });
 
-  // Test async meta with Promise - og:description streams in after 500ms
   meta(
     new Promise((resolve) =>
       setTimeout(
@@ -91,7 +85,6 @@ export const BlogPostHandler: Handler<"blog.post"> = (ctx) => {
     ),
   );
 
-  // Test async meta with IIFE pattern - og:author streams in after 300ms
   meta(
     (async () => {
       await new Promise((r) => setTimeout(r, 300));

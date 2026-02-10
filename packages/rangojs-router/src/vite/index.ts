@@ -4,8 +4,8 @@ import * as Vite from "vite";
 import { resolve, join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
-import { generateRouteTypesSource } from "../build/generate-route-types.ts";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
+import { generateRouteTypesSource, extractRoutesFromSource, generatePerModuleTypesSource } from "../build/generate-route-types.ts";
 import { exposeActionId } from "./expose-action-id.ts";
 import { exposeLoaderId } from "./expose-loader-id.ts";
 import { exposeHandleId } from "./expose-handle-id.ts";
@@ -411,6 +411,66 @@ function buildRouteToStaticPrefix(
 }
 
 /**
+ * Recursively find .ts/.tsx files under a directory, skipping node_modules
+ * and .gen. files.
+ */
+function findTsFiles(dir: string): string[] {
+  const results: string[] = [];
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return results;
+  }
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+      results.push(...findTsFiles(fullPath));
+    } else if (
+      (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) &&
+      !entry.name.includes(".gen.")
+    ) {
+      results.push(fullPath);
+    }
+  }
+  return results;
+}
+
+/**
+ * Generate per-module route type files by statically parsing url module source.
+ * Scans for files containing `urls(` and writes a sibling `.gen.ts` with the
+ * extracted route name/pattern pairs. Only writes when content has changed.
+ */
+function writePerModuleRouteTypes(root: string, entry: string): void {
+  const scanDir = dirname(resolve(root, entry));
+  const files = findTsFiles(scanDir);
+  for (const filePath of files) {
+    writePerModuleRouteTypesForFile(filePath);
+  }
+}
+
+/**
+ * Generate per-module route types for a single url module file.
+ * No-ops if the file doesn't contain `urls(` or has no named routes.
+ */
+function writePerModuleRouteTypesForFile(filePath: string): void {
+  const source = readFileSync(filePath, "utf-8");
+  if (!source.includes("urls(")) return;
+
+  const routes = extractRoutesFromSource(source);
+  if (routes.length === 0) return;
+
+  const genPath = filePath.replace(/\.(tsx?)$/, ".gen.ts");
+  const genSource = generatePerModuleTypesSource(routes);
+  const existing = existsSync(genPath) ? readFileSync(genPath, "utf-8") : null;
+  if (existing !== genSource) {
+    writeFileSync(genPath, genSource);
+    console.log(`[rsc-router] Generated route types -> ${genPath}`);
+  }
+}
+
+/**
  * Plugin that discovers router instances at dev/build time via the RSC environment.
  *
  * Uses `server.environments.rsc.runner.import()` to load the user's router file
@@ -712,9 +772,10 @@ function createRouterDiscoveryPlugin(
       const outPath = join(entryDir, `named-routes.${id}.gen.ts`);
       const source = generateRouteTypesSource(routeManifest);
       const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
-      if (existing === source) continue;
-      writeFileSync(outPath, source);
-      console.log(`[rsc-router] Generated route types -> ${outPath}`);
+      if (existing !== source) {
+        writeFileSync(outPath, source);
+        console.log(`[rsc-router] Generated route types -> ${outPath}`);
+      }
     }
   }
 
@@ -726,6 +787,9 @@ function createRouterDiscoveryPlugin(
       isBuildMode = config.command === "build";
       // Capture user's resolve aliases for the temp server
       userResolveAlias = config.resolve.alias;
+      // Generate per-module route types from static source parsing.
+      // Runs before the dev server starts so .gen.ts files exist immediately for IDE.
+      writePerModuleRouteTypes(projectRoot, entryPath);
       // Capture @vitejs/plugin-rsc manager for early manifest writes during prerender.
       // The manager's buildAssetsManifest is populated during client generateBundle,
       // but writeAssetsManifest is called after all closeBundle hooks complete.
@@ -800,6 +864,17 @@ function createRouterDiscoveryPlugin(
       // Store the promise so the virtual module's load hook can await it.
       discoveryDone = new Promise<void>((resolve) => {
         setTimeout(() => discover().then(resolve, resolve), 0);
+      });
+
+      // Watch url module files for changes and regenerate per-module route types.
+      server.watcher.on("change", (filePath) => {
+        if (filePath.endsWith(".gen.ts")) return;
+        if (!filePath.endsWith(".ts") && !filePath.endsWith(".tsx")) return;
+        try {
+          writePerModuleRouteTypesForFile(filePath);
+        } catch {
+          // Ignore read errors for deleted/moved files
+        }
       });
     },
 
