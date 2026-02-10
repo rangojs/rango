@@ -63,7 +63,7 @@ export type PrefetchStrategy = "hover" | "viewport" | "hybrid" | "none";
 export interface LinkProps
   extends Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, "href"> {
   /**
-   * The URL to navigate to (typically from router.href())
+   * The URL to navigate to (typically from router.reverse())
    */
   to: string;
   /**
@@ -134,9 +134,9 @@ function isExternalUrl(href: string): boolean {
 /**
  * Type-safe Link component for SPA navigation
  *
- * Works with router.href() for type-safe URLs:
+ * Works with router.reverse() for type-safe URLs:
  * ```tsx
- * <Link to={router.href("shop.products.detail", { slug: "my-product" })}>
+ * <Link to={router.reverse("shop.products.detail", { slug: "my-product" })}>
  *   View Product
  * </Link>
  * ```

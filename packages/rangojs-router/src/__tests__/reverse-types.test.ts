@@ -1,5 +1,5 @@
 /**
- * Type-level tests for href type system
+ * Type-level tests for reverse type system
  *
  * These tests verify that the type system works correctly at compile time.
  * They use expectTypeOf() from vitest which performs compile-time type checking.
@@ -7,13 +7,13 @@
 
 import { describe, it, expectTypeOf } from "vitest";
 import type {
-  HrefFunction,
-  ScopedHrefFunction,
+  ReverseFunction,
+  ScopedReverseFunction,
   ParamsFor,
   PrefixedRoutes,
   PrefixRoutePatterns,
   PrefixRouteKeys,
-} from "../href.js";
+} from "../reverse.js";
 import type { ExtractParams } from "../types.js";
 import type { HandlerContext, GenericParams, DefaultEnv, RouterEnv } from "../types.js";
 
@@ -140,20 +140,20 @@ describe("PrefixedRoutes", () => {
   });
 });
 
-describe("HrefFunction type structure", () => {
+describe("ReverseFunction type structure", () => {
   it("should be a callable function type", () => {
-    type Href = HrefFunction<TestRoutes>;
+    type Href = ReverseFunction<TestRoutes>;
     expectTypeOf<Href>().toBeCallableWith("about");
     expectTypeOf<Href>().toBeCallableWith("blog.post", { slug: "hello" });
   });
 
   it("should return string", () => {
-    type Href = HrefFunction<TestRoutes>;
+    type Href = ReverseFunction<TestRoutes>;
     expectTypeOf<Href>().returns.toBeString();
   });
 
   it("should accept valid route names", () => {
-    type Href = HrefFunction<TestRoutes>;
+    type Href = ReverseFunction<TestRoutes>;
     // These are valid route keys in TestRoutes
     expectTypeOf<"about">().toMatchTypeOf<Parameters<Href>[0]>();
     expectTypeOf<"index">().toMatchTypeOf<Parameters<Href>[0]>();
@@ -161,53 +161,53 @@ describe("HrefFunction type structure", () => {
   });
 });
 
-describe("ScopedHrefFunction type structure", () => {
+describe("ScopedReverseFunction type structure", () => {
   it("should be a callable function type", () => {
-    type ScopedHref = ScopedHrefFunction<BlogRoutes>;
+    type ScopedHref = ScopedReverseFunction<BlogRoutes>;
     expectTypeOf<ScopedHref>().toBeCallableWith("index");
     expectTypeOf<ScopedHref>().toBeCallableWith("post", { slug: "hello" });
   });
 
   it("should return string", () => {
-    type ScopedHref = ScopedHrefFunction<BlogRoutes>;
+    type ScopedHref = ScopedReverseFunction<BlogRoutes>;
     expectTypeOf<ScopedHref>().returns.toBeString();
   });
 
   it("should allow absolute names with dot notation", () => {
-    type ScopedHref = ScopedHrefFunction<BlogRoutes>;
+    type ScopedHref = ScopedReverseFunction<BlogRoutes>;
     // Absolute names (with dot) are always allowed via template literal type
     expectTypeOf<ScopedHref>().toBeCallableWith("shop.cart");
     expectTypeOf<ScopedHref>().toBeCallableWith("any.thing.here");
   });
 
   it("should allow path-based URLs", () => {
-    type ScopedHref = ScopedHrefFunction<BlogRoutes>;
+    type ScopedHref = ScopedReverseFunction<BlogRoutes>;
     // Path-based (starting with /) are always allowed
     expectTypeOf<ScopedHref>().toBeCallableWith("/about");
     expectTypeOf<ScopedHref>().toBeCallableWith("/any/path/here");
   });
 });
 
-describe("HandlerContext.href", () => {
-  it("should have href property that is a function", () => {
+describe("HandlerContext.reverse", () => {
+  it("should have reverse property that is a function", () => {
     type Ctx = HandlerContext<{ slug: string }, DefaultEnv>;
-    expectTypeOf<Ctx["href"]>().toBeFunction();
+    expectTypeOf<Ctx["reverse"]>().toBeFunction();
   });
 
   it("should return string", () => {
     type Ctx = HandlerContext<GenericParams, DefaultEnv>;
-    expectTypeOf<Ctx["href"]>().returns.toBeString();
+    expectTypeOf<Ctx["reverse"]>().returns.toBeString();
   });
 
   it("should accept string as first argument", () => {
     type Ctx = HandlerContext<GenericParams, DefaultEnv>;
-    type FirstArg = Parameters<Ctx["href"]>[0];
+    type FirstArg = Parameters<Ctx["reverse"]>[0];
     expectTypeOf<FirstArg>().toBeString();
   });
 
   it("should accept optional Record<string, string> as second argument", () => {
     type Ctx = HandlerContext<GenericParams, DefaultEnv>;
-    type SecondArg = Parameters<Ctx["href"]>[1];
+    type SecondArg = Parameters<Ctx["reverse"]>[1];
     expectTypeOf<SecondArg>().toEqualTypeOf<Record<string, string> | undefined>();
   });
 });
@@ -365,15 +365,15 @@ describe("ValidPaths with mixed routeMap", () => {
   });
 });
 
-describe("HrefFunction with mixed routeMap", () => {
+describe("ReverseFunction with mixed routeMap", () => {
   it("should accept RSC route names", () => {
-    type Href = HrefFunction<FullRoutes>;
+    type Href = ReverseFunction<FullRoutes>;
     expectTypeOf<Href>().toBeCallableWith("about");
     expectTypeOf<Href>().toBeCallableWith("home");
   });
 
   it("should accept response route names with params", () => {
-    type Href = HrefFunction<FullRoutes>;
+    type Href = ReverseFunction<FullRoutes>;
     expectTypeOf<Href>().toBeCallableWith("health");
     expectTypeOf<Href>().toBeCallableWith("item", { id: "123" });
   });
@@ -568,8 +568,8 @@ describe("urls() with include() — full type chain", () => {
   });
 
   // Route names: RSC
-  it("should resolve RSC route names in HrefFunction", () => {
-    type Href = HrefFunction<MainAppRoutes>;
+  it("should resolve RSC route names in ReverseFunction", () => {
+    type Href = ReverseFunction<MainAppRoutes>;
     expectTypeOf<Href>().toBeCallableWith("home");
     expectTypeOf<Href>().toBeCallableWith("about");
     expectTypeOf<Href>().toBeCallableWith("blog.post", { slug: "hello" });
@@ -577,14 +577,14 @@ describe("urls() with include() — full type chain", () => {
 
   // Route names: inline response routes
   it("should resolve inline response route names", () => {
-    type Href = HrefFunction<MainAppRoutes>;
+    type Href = ReverseFunction<MainAppRoutes>;
     expectTypeOf<Href>().toBeCallableWith("inlineApi");
     expectTypeOf<Href>().toBeCallableWith("version");
   });
 
   // Route names: included JSON API (prefixed with "api.")
   it("should resolve included JSON API route names with prefix", () => {
-    type Href = HrefFunction<MainAppRoutes>;
+    type Href = ReverseFunction<MainAppRoutes>;
     expectTypeOf<Href>().toBeCallableWith("api.health");
     expectTypeOf<Href>().toBeCallableWith("api.users");
     expectTypeOf<Href>().toBeCallableWith("api.user", { userId: "123" });
@@ -593,7 +593,7 @@ describe("urls() with include() — full type chain", () => {
 
   // Route names: included text routes (prefixed with "seo.")
   it("should resolve included text route names with prefix", () => {
-    type Href = HrefFunction<MainAppRoutes>;
+    type Href = ReverseFunction<MainAppRoutes>;
     expectTypeOf<Href>().toBeCallableWith("seo.robots");
     expectTypeOf<Href>().toBeCallableWith("seo.sitemap");
   });
@@ -746,30 +746,30 @@ describe("Mountable module — scoped RouteResponse on blog API", () => {
   });
 });
 
-// --- Scoped href within the blog module (ctx.href / useHref inside blog) ---
+// --- Scoped reverse within the blog module (ctx.reverse / useHref inside blog) ---
 
-// Extract the blog module's own routes (what ctx.href sees inside blog handlers)
+// Extract the blog module's own routes (what ctx.reverse sees inside blog handlers)
 type BlogModuleRoutes = NonNullable<(typeof blogModulePatterns)["_routes"]>;
 type BlogModuleResponses = (typeof blogModulePatterns)["_responses"];
 type BlogModuleMerged = MergeRoutesWithResponses<BlogModuleRoutes, BlogModuleResponses>;
 
-describe("Mountable module — ScopedHrefFunction inside blog module", () => {
+describe("Mountable module — ScopedReverseFunction inside blog module", () => {
   it("should accept local RSC route names", () => {
-    type BlogHref = ScopedHrefFunction<BlogModuleMerged>;
+    type BlogHref = ScopedReverseFunction<BlogModuleMerged>;
     expectTypeOf<BlogHref>().toBeCallableWith("index");
     expectTypeOf<BlogHref>().toBeCallableWith("post", { slug: "hello" });
     expectTypeOf<BlogHref>().toBeCallableWith("category", { catId: "tech" });
   });
 
   it("should accept nested API route names (after internal include)", () => {
-    type BlogHref = ScopedHrefFunction<BlogModuleMerged>;
+    type BlogHref = ScopedReverseFunction<BlogModuleMerged>;
     expectTypeOf<BlogHref>().toBeCallableWith("api.stats");
     expectTypeOf<BlogHref>().toBeCallableWith("api.likes", { slug: "hello" });
     expectTypeOf<BlogHref>().toBeCallableWith("api.comments", { slug: "hello" });
   });
 
   it("should accept absolute names to reach parent routes (dot-notation passthrough)", () => {
-    type BlogHref = ScopedHrefFunction<BlogModuleMerged>;
+    type BlogHref = ScopedReverseFunction<BlogModuleMerged>;
     // Absolute names with dot notation pass through to the global router
     expectTypeOf<BlogHref>().toBeCallableWith("home.something");
   });
@@ -800,22 +800,22 @@ type AppRoutes = NonNullable<(typeof appPatterns)["_routes"]>;
 type AppResponses = (typeof appPatterns)["_responses"];
 type AppMerged = MergeRoutesWithResponses<AppRoutes, AppResponses>;
 
-describe("Mountable module — HrefFunction after mounting blog", () => {
+describe("Mountable module — ReverseFunction after mounting blog", () => {
   it("should accept top-level app routes", () => {
-    type AppHref = HrefFunction<AppMerged>;
+    type AppHref = ReverseFunction<AppMerged>;
     expectTypeOf<AppHref>().toBeCallableWith("home");
     expectTypeOf<AppHref>().toBeCallableWith("about");
   });
 
   it("should accept blog RSC routes with blog. prefix", () => {
-    type AppHref = HrefFunction<AppMerged>;
+    type AppHref = ReverseFunction<AppMerged>;
     expectTypeOf<AppHref>().toBeCallableWith("blog.index");
     expectTypeOf<AppHref>().toBeCallableWith("blog.post", { slug: "hello" });
     expectTypeOf<AppHref>().toBeCallableWith("blog.category", { catId: "tech" });
   });
 
   it("should accept blog API routes with blog.api. prefix (nested include)", () => {
-    type AppHref = HrefFunction<AppMerged>;
+    type AppHref = ReverseFunction<AppMerged>;
     expectTypeOf<AppHref>().toBeCallableWith("blog.api.stats");
     expectTypeOf<AppHref>().toBeCallableWith("blog.api.likes", { slug: "hello" });
     expectTypeOf<AppHref>().toBeCallableWith("blog.api.comments", { slug: "hello" });

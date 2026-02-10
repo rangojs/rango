@@ -8,12 +8,12 @@ import {
   BlogSidebarLoader,
   type BlogSidebarData,
 } from "../loaders/blog.js";
-import { href } from "../router.js";
+import { reverse } from "../router.js";
 
 export function BlogLayout(ctx: HandlerContext) {
   const breadcrumb = ctx.use(Breadcrumbs);
-  breadcrumb({ label: "Home", href: href("home") });
-  breadcrumb({ label: "Blog", href: href("blog") });
+  breadcrumb({ label: "Home", href: reverse("home") });
+  breadcrumb({ label: "Blog", href: reverse("blog") });
 
   return (
     <div data-testid="blog-layout" style={{ display: "flex", gap: "2rem" }}>
@@ -38,7 +38,7 @@ export function BlogSidebar({ data }: { data: BlogSidebarData }) {
         {data.recentPosts.map((post) => (
           <li key={post.slug} style={{ marginBottom: "0.75rem" }}>
             <Link
-              to={href("blogPost", { slug: post.slug })}
+              to={reverse("blogPost", { slug: post.slug })}
               style={{
                 color: "#0070f3",
                 textDecoration: "none",
@@ -131,7 +131,7 @@ export function BlogIndexPage(ctx: HandlerContext) {
             data-testid={`blog-post-${post.slug}`}
           >
             <h2 style={{ marginBottom: "0.5rem" }}>
-              <Link to={href("blogPost", { slug: post.slug })} style={{ color: "#0070f3", textDecoration: "none" }} data-testid={`blog-link-${post.slug}`}>
+              <Link to={reverse("blogPost", { slug: post.slug })} style={{ color: "#0070f3", textDecoration: "none" }} data-testid={`blog-link-${post.slug}`}>
                 {post.title}
               </Link>
             </h2>
@@ -171,12 +171,12 @@ export function BlogPostPage(ctx: HandlerContext<{ slug: string }>) {
   meta({ name: "description", content: post.excerpt });
 
   const breadcrumb = ctx.use(Breadcrumbs);
-  breadcrumb({ label: post.title, href: href("blogPost", { slug: post.slug }) });
+  breadcrumb({ label: post.title, href: reverse("blogPost", { slug: post.slug }) });
 
   return (
     <article data-testid="blog-post-detail">
       <nav style={{ marginBottom: "1rem", paddingBottom: "0.5rem", borderBottom: "1px solid #eee" }}>
-        <Link to={href("blog")} style={{ color: "#0070f3", textDecoration: "none" }}>&larr; Back to Blog</Link>
+        <Link to={reverse("blog")} style={{ color: "#0070f3", textDecoration: "none" }}>&larr; Back to Blog</Link>
       </nav>
       <header style={{ marginBottom: "2rem" }}>
         <h1 data-testid="post-title">{post.title}</h1>

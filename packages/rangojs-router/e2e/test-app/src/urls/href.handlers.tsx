@@ -4,19 +4,19 @@ import { HrefTestClient } from "../components/HrefTestClient.js";
 import type { routes } from "./href.gen.js";
 
 export const HrefIndexHandler: Handler<"index", routes> = (ctx) => {
-  // Server-side ctx.href tests
+  // Server-side ctx.reverse tests
   // Using absolute names for type safety (local names work at runtime but aren't type-safe)
-  const localIndexHref = ctx.href("href.index"); // Absolute name for /href
-  const localDetailHref = ctx.href("href.detail", { id: "123" }); // Absolute name for /href/123
-  const absoluteBlogHref = ctx.href("blog.index"); // Absolute name for /blog
-  const pathBasedHref = ctx.href("/about"); // Path-based (always allowed)
+  const localIndexHref = ctx.reverse("href.index"); // Absolute name for /href
+  const localDetailHref = ctx.reverse("href.detail", { id: "123" }); // Absolute name for /href/123
+  const absoluteBlogHref = ctx.reverse("blog.index"); // Absolute name for /blog
+  const pathBasedHref = ctx.reverse("/about"); // Path-based (always allowed)
 
   return (
     <div data-testid="href-index-page">
       <h1 data-testid="href-page-title">Href Test Page</h1>
 
       <section data-testid="server-href-section">
-        <h2>Server-side ctx.href</h2>
+        <h2>Server-side ctx.reverse</h2>
         <ul>
           <li data-testid="server-local-index">
             Local index: <code>{localIndexHref}</code>
@@ -74,17 +74,17 @@ export const HrefIndexHandler: Handler<"index", routes> = (ctx) => {
 };
 
 export const HrefDetailHandler: Handler<"detail", routes> = (ctx) => {
-  // Test ctx.href inside detail route
+  // Test ctx.reverse inside detail route
   // Using absolute names for type safety
-  const backToIndex = ctx.href("href.index");
-  const siblingDetail = ctx.href("href.detail", { id: "sibling-item" });
+  const backToIndex = ctx.reverse("href.index");
+  const siblingDetail = ctx.reverse("href.detail", { id: "sibling-item" });
 
   return (
     <div data-testid="href-detail-page">
       <h1 data-testid="detail-title">Detail: {ctx.params.id}</h1>
 
       <section data-testid="detail-server-href">
-        <h2>Server-side ctx.href (from detail route)</h2>
+        <h2>Server-side ctx.reverse (from detail route)</h2>
         <ul>
           <li data-testid="detail-server-back-index">
             Back to index: <code>{backToIndex}</code>

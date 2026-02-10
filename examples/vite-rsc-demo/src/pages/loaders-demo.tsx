@@ -12,7 +12,7 @@ import {
   FileUploader,
   ChatStream,
 } from "../handlers/loaders-demo/components.js";
-import { href } from "../router.js";
+import { reverse } from "../router.js";
 
 export function LoadersDemoLayout() {
   return (
@@ -46,7 +46,7 @@ export function LoadersDemoLayout() {
           }}
         >
           <Link
-            to={href("loaders.index")}
+            to={reverse("loaders.index")}
             style={{
               padding: "0.5rem 1rem",
               background: "#3b82f6",
@@ -58,7 +58,7 @@ export function LoadersDemoLayout() {
             Index (useLoader)
           </Link>
           <Link
-            to={href("loaders.stats")}
+            to={reverse("loaders.stats")}
             style={{
               padding: "0.5rem 1rem",
               background: "#8b5cf6",
@@ -122,7 +122,7 @@ export function LoadersIndexPage() {
           }}
         >
           <strong>Try it:</strong> Navigate to{" "}
-          <Link to={href("loaders.stats")}>/loaders/stats</Link> and back. Notice how
+          <Link to={reverse("loaders.stats")}>/loaders/stats</Link> and back. Notice how
           the call count increments - the loader runs on each navigation.
         </div>
       </div>

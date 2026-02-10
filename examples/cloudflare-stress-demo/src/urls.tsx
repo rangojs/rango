@@ -13,7 +13,7 @@
  * - /shop/product/* requests skip /shop/category routes (nested optimization!)
  * - 404s for non-prefixed paths skip ~10,000 routes
  */
-import { urls, scopedHref, type Handler } from "@rangojs/router";
+import { urls, scopedReverse, type Handler } from "@rangojs/router";
 import { enableMatchDebug, getMatchDebugStats } from "@rangojs/router/server";
 import type { routes } from "./urls.gen.js";
 import { includedPatterns } from "./included-patterns.js";
@@ -43,40 +43,40 @@ const BenchmarkHandler: Handler<"benchFirst", routes> = async (ctx) => {
         note: elapsed === 0 ? "sub-millisecond (CF time frozen)" : "actual",
       },
       matchStats,
-      // Test ctx.href() for routes from lazy includes
-      testHref: ctx.href("api.benchFirst"),
+      // Test ctx.reverse() for routes from lazy includes
+      testReverse: ctx.reverse("api.benchFirst"),
     }),
     { headers: { "Content-Type": "application/json" } },
   );
 };
 
-// Links demo handler - showcases ctx.href() and scopedHref() on the server
+// Links demo handler - showcases ctx.reverse() and scopedReverse() on the server
 const LinksDemoHandler: Handler<"links", routes> = async (ctx) => {
-  const href = scopedHref<typeof urlpatterns>(ctx.href);
+  const reverse = scopedReverse<typeof urlpatterns>(ctx.reverse);
 
-  // ctx.href with global named routes
-  const homeUrl = ctx.href("home");
-  const apiBench = ctx.href("api.benchFirst");
-  const shopHome = ctx.href("shop.home");
-  const shopProduct1 = ctx.href("shop.product.item1");
-  const shopCat1 = ctx.href("shop.category.cat1");
+  // ctx.reverse with global named routes
+  const homeUrl = ctx.reverse("home");
+  const apiBench = ctx.reverse("api.benchFirst");
+  const shopHome = ctx.reverse("shop.home");
+  const shopProduct1 = ctx.reverse("shop.product.item1");
+  const shopCat1 = ctx.reverse("shop.category.cat1");
 
-  // scopedHref with local route names
-  const localHome = href("home");
-  const localBenchFirst = href("benchFirst");
+  // scopedReverse with local route names
+  const localHome = reverse("home");
+  const localBenchFirst = reverse("benchFirst");
 
-  // scopedHref with cross-module dot-prefixed names
-  const crossModuleApi = href("api.benchLast");
+  // scopedReverse with cross-module dot-prefixed names
+  const crossModuleApi = reverse("api.benchLast");
 
   return (
     <div style={{ maxWidth: "800px", margin: "0 auto", padding: "2rem" }}>
       <h1>Links Demo (14k+ routes)</h1>
       <p style={{ color: "#666" }}>
-        Server-side ctx.href() and scopedHref() with type-safe route resolution
+        Server-side ctx.reverse() and scopedReverse() with type-safe route resolution
         across 14,000+ routes.
       </p>
 
-      <h2>ctx.href() - Global Named Routes</h2>
+      <h2>ctx.reverse() - Global Named Routes</h2>
       <ul>
         <li>home: <code>{homeUrl}</code></li>
         <li>api.benchFirst: <code>{apiBench}</code></li>
@@ -85,7 +85,7 @@ const LinksDemoHandler: Handler<"links", routes> = async (ctx) => {
         <li>shop.category.cat1: <code>{shopCat1}</code></li>
       </ul>
 
-      <h2>scopedHref() - Local Route Names</h2>
+      <h2>scopedReverse() - Local Route Names</h2>
       <ul>
         <li>home (local): <code>{localHome}</code></li>
         <li>benchFirst (local): <code>{localBenchFirst}</code></li>

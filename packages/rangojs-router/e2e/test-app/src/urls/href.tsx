@@ -4,7 +4,7 @@ import { HrefIndexHandler, HrefDetailHandler } from "./href.handlers.js";
 
 /**
  * Href URL patterns for testing scoped href resolution
- * Tests ctx.href (server-side) and href()+useMount() (client-side)
+ * Tests ctx.reverse (server-side) and href()+useMount() (client-side)
  */
 export const hrefPatterns = urls(({ path, include }) => [
   path("/", HrefIndexHandler, { name: "index" }),
@@ -24,18 +24,18 @@ const nestedHrefPatterns = urls(({ path }) => [
   path(
     "/",
     (ctx) => {
-      // From nested context, test href resolution
+      // From nested context, test reverse resolution
       // Using absolute names for type safety
-      const nestedIndex = ctx.href("href.nested.index"); // Absolute name for /href/nested
-      const parentIndex = ctx.href("href.index"); // Absolute name for /href
-      const parentDetail = ctx.href("href.detail", { id: "from-nested" }); // Absolute name for /href/from-nested
+      const nestedIndex = ctx.reverse("href.nested.index"); // Absolute name for /href/nested
+      const parentIndex = ctx.reverse("href.index"); // Absolute name for /href
+      const parentDetail = ctx.reverse("href.detail", { id: "from-nested" }); // Absolute name for /href/from-nested
 
       return (
         <div data-testid="href-nested-page">
           <h1 data-testid="nested-title">Nested Href Test</h1>
 
           <section data-testid="nested-server-href">
-            <h2>Server-side ctx.href (from nested route)</h2>
+            <h2>Server-side ctx.reverse (from nested route)</h2>
             <ul>
               <li data-testid="nested-server-local-index">
                 Local index: <code>{nestedIndex}</code>

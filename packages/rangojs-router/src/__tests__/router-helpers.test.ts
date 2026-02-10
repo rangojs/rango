@@ -11,7 +11,7 @@ import {
   parseCookies,
   serializeCookie,
 } from "../router/middleware.js";
-import { createHref } from "../href.js";
+import { createReverse } from "../reverse.js";
 import type { RouteEntry, TrailingSlashMode } from "../types.js";
 
 // Helper to create minimal RouteEntry for findMatch tests
@@ -419,10 +419,10 @@ describe("serializeCookie", () => {
 });
 
 // ========================================================================
-// createHref
+// createReverse
 // ========================================================================
 
-describe("createHref", () => {
+describe("createReverse", () => {
   const routeMap = {
     home: "/",
     about: "/about",
@@ -430,35 +430,35 @@ describe("createHref", () => {
     "product.detail": "/product/:category/:id",
   };
 
-  const href = createHref(routeMap);
+  const reverse = createReverse(routeMap);
 
   it("returns static path for paramless route", () => {
-    expect(href("home" as any)).toBe("/");
-    expect(href("about" as any)).toBe("/about");
+    expect(reverse("home" as any)).toBe("/");
+    expect(reverse("about" as any)).toBe("/about");
   });
 
   it("substitutes params into pattern", () => {
-    expect(href("blog.post" as any, { slug: "hello" })).toBe("/blog/hello");
+    expect(reverse("blog.post" as any, { slug: "hello" })).toBe("/blog/hello");
   });
 
   it("substitutes multiple params", () => {
     expect(
-      href("product.detail" as any, { category: "shoes", id: "42" })
+      reverse("product.detail" as any, { category: "shoes", id: "42" })
     ).toBe("/product/shoes/42");
   });
 
   it("URI-encodes param values", () => {
-    expect(href("blog.post" as any, { slug: "hello world" })).toBe(
+    expect(reverse("blog.post" as any, { slug: "hello world" })).toBe(
       "/blog/hello%20world"
     );
   });
 
   it("throws for unknown route", () => {
-    expect(() => href("nonexistent" as any)).toThrow("Unknown route: nonexistent");
+    expect(() => reverse("nonexistent" as any)).toThrow("Unknown route: nonexistent");
   });
 
   it("throws for missing param", () => {
-    expect(() => href("blog.post" as any, {} as any)).toThrow(
+    expect(() => reverse("blog.post" as any, {} as any)).toThrow(
       'Missing param "slug"'
     );
   });
@@ -470,5 +470,5 @@ describe("createHref", () => {
 // direct map lookup, local names try prefix → parent prefix → direct.
 //
 // Since resolveRouteName is not exported, we describe its expected behavior
-// for documentation. It's exercised by createHandlerContext's href() at runtime.
+// for documentation. It's exercised by createHandlerContext's reverse() at runtime.
 // ========================================================================

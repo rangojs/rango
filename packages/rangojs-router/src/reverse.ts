@@ -101,18 +101,18 @@ export type ParamsFor<
 type IsEmptyObject<T> = keyof T extends never ? true : false;
 
 /**
- * Type-safe href function signature
+ * Type-safe reverse function signature (Django-style URL reversal)
  *
  * Validates route names and params at compile time.
  * Use route names instead of raw paths for full type safety.
  *
  * @example
  * ```typescript
- * href("cart")                           // ✓ Validates route exists
- * href("product.detail", { id: "123" })  // ✓ Validates route + params
+ * reverse("cart")                           // ✓ Validates route exists
+ * reverse("product.detail", { id: "123" })  // ✓ Validates route + params
  * ```
  */
-export type HrefFunction<TRoutes> = {
+export type ReverseFunction<TRoutes> = {
   /**
    * Route without params - validates route name exists
    */
@@ -130,7 +130,7 @@ export type HrefFunction<TRoutes> = {
 };
 
 /**
- * Type-safe scoped href function signature for use with scopedHref<typeof patterns>()
+ * Type-safe scoped reverse function signature for use with scopedReverse<typeof patterns>()
  *
  * **Recommended: Use route names for type safety.**
  * Route names validate both the route exists and params are correct.
@@ -139,15 +139,15 @@ export type HrefFunction<TRoutes> = {
  * @example
  * ```typescript
  * // RECOMMENDED: Use route names for type safety
- * href("blog.post", { slug: "hello" })  // ✓ Validates route + params
- * href("shop.cart")                      // ✓ Validates route exists
+ * reverse("blog.post", { slug: "hello" })  // ✓ Validates route + params
+ * reverse("shop.cart")                      // ✓ Validates route exists
  *
  * // ESCAPE HATCH: Path-based URLs (no validation)
- * href("/about")                         // ⚠ No type checking
- * href("/typo/in/path")                  // ⚠ Won't catch errors
+ * reverse("/about")                         // ⚠ No type checking
+ * reverse("/typo/in/path")                  // ⚠ Won't catch errors
  * ```
  */
-export type ScopedHrefFunction<TLocalRoutes> = {
+export type ScopedReverseFunction<TLocalRoutes> = {
   /**
    * Route without params - validates route name exists
    * @recommended Use this for type-safe URL generation
@@ -180,7 +180,7 @@ export type ScopedHrefFunction<TLocalRoutes> = {
 
 /**
  * Extract local routes type from UrlPatterns
- * Used with scopedHref() to get the routes type from patterns
+ * Used with scopedReverse() to get the routes type from patterns
  */
 export type ExtractLocalRoutes<TPatterns> =
   TPatterns extends { readonly _routes?: infer TRoutes }
@@ -196,26 +196,26 @@ export type ExtractLocalRoutes<TPatterns> =
 export type { RouteResponse } from "./urls.js";
 
 /**
- * Get a locally-typed href function from ctx.href for composable modules.
+ * Get a locally-typed reverse function from ctx.reverse for composable modules.
  *
- * This is a type-only cast - ctx.href already resolves local names at runtime
+ * This is a type-only cast - ctx.reverse already resolves local names at runtime
  * based on the current route prefix. This helper just provides type safety
  * for local route names within a url module.
  *
- * @param href - The ctx.href function from HandlerContext
- * @returns The same href function, but typed for local routes
+ * @param reverse - The ctx.reverse function from HandlerContext
+ * @returns The same reverse function, but typed for local routes
  *
  * @example
  * ```typescript
  * // urls/blog.tsx
  * export const blogPatterns = urls(({ path }) => [
  *   path("/", (ctx) => {
- *     // Get locally-typed href for this module's routes
- *     const href = scopedHref<typeof blogPatterns>(ctx.href);
+ *     // Get locally-typed reverse for this module's routes
+ *     const reverse = scopedReverse<typeof blogPatterns>(ctx.reverse);
  *
- *     href("index");              // ✓ Type-safe local route
- *     href("post", { slug: "x" }); // ✓ Type-safe with params
- *     href("shop.cart");          // ✓ Cross-module (absolute name)
+ *     reverse("index");              // ✓ Type-safe local route
+ *     reverse("post", { slug: "x" }); // ✓ Type-safe with params
+ *     reverse("shop.cart");          // ✓ Cross-module (absolute name)
  *
  *     return <BlogIndex />;
  *   }, { name: "index" }),
@@ -224,29 +224,29 @@ export type { RouteResponse } from "./urls.js";
  * ]);
  * ```
  */
-export function scopedHref<TPatterns>(
-  href: ((...args: any[]) => string)
-): ScopedHrefFunction<ExtractLocalRoutes<TPatterns>> {
-  return href as ScopedHrefFunction<ExtractLocalRoutes<TPatterns>>;
+export function scopedReverse<TPatterns>(
+  reverse: ((...args: any[]) => string)
+): ScopedReverseFunction<ExtractLocalRoutes<TPatterns>> {
+  return reverse as ScopedReverseFunction<ExtractLocalRoutes<TPatterns>>;
 }
 
 /**
- * Create a type-safe href function for URL generation
+ * Create a type-safe reverse function for URL generation
  *
  * @param routeMap - Flattened route map with all registered routes
- * @returns Type-safe href function
+ * @returns Type-safe reverse function
  *
  * @example
  * ```typescript
  * // Given routes: { cart: "/shop/cart", detail: "/shop/product/:slug" }
- * const href = createHref(routeMap);
- * href("cart"); // "/shop/cart"
- * href("detail", { slug: "my-product" }); // "/shop/product/my-product"
+ * const reverse = createReverse(routeMap);
+ * reverse("cart"); // "/shop/cart"
+ * reverse("detail", { slug: "my-product" }); // "/shop/product/my-product"
  * ```
  */
-export function createHref<TRoutes extends Record<string, string>>(
+export function createReverse<TRoutes extends Record<string, string>>(
   routeMap: TRoutes
-): HrefFunction<TRoutes & Record<string, string>> {
+): ReverseFunction<TRoutes & Record<string, string>> {
   return ((name: string, params?: Record<string, string>) => {
     const pattern = routeMap[name];
     if (!pattern) {
@@ -263,5 +263,5 @@ export function createHref<TRoutes extends Record<string, string>>(
       }
       return encodeURIComponent(value);
     });
-  }) as HrefFunction<TRoutes>;
+  }) as ReverseFunction<TRoutes>;
 }

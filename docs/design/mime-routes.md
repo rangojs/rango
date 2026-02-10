@@ -24,7 +24,7 @@ export const vendorPatterns = urls(({ path }) => [
 include("/vendor", vendorPatterns, { name: "vendor" })
 ```
 
-The consumer doesn't need to know which routes are JSX and which are API -- the framework handles both correctly. `ctx.href("vendor.apiData")` resolves the URL from anywhere.
+The consumer doesn't need to know which routes are JSX and which are API -- the framework handles both correctly. `ctx.reverse("vendor.apiData")` resolves the URL from anywhere.
 
 ## Supported MIME Types
 
@@ -121,7 +121,7 @@ urls(({ path, include }) => [
 <Link {...href.json("/api/health")}>Check Health</Link>
 
 // Server component with named route
-<Link {...href.json(ctx.href("api.health"))}>Check Health</Link>
+<Link {...href.json(ctx.reverse("api.health"))}>Check Health</Link>
 
 // any -- don't care about specific type, just "not RSC"
 <Link {...href.any("/api/health")}>Check Health</Link>
@@ -273,7 +273,7 @@ interface ResponseHandlerContext<TParams, TEnv> {
   searchParams: URLSearchParams;  // system params filtered
   url: URL;
   pathname: string;
-  href: HrefFunction;
+  reverse: ReverseFunction;
   // No ctx.use() — no loaders
   // No ctx.res — handler creates its own Response
   // No ctx.var / ctx.get / ctx.set — no middleware variables
@@ -357,7 +357,7 @@ interface ResponseHandlerContext<TParams, TEnv> {
   request: Request;
   params: TParams;
   env: TEnv;
-  href: HrefFunction;
+  reverse: ReverseFunction;
 }
 
 // --- Tag function implementations ---

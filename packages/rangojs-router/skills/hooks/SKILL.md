@@ -422,7 +422,7 @@ function MountInfo() {
 }
 ```
 
-See `/links` for full URL generation guide including server-side `ctx.href`.
+See `/links` for full URL generation guide including server-side `ctx.reverse`.
 
 ## Hook Summary
 

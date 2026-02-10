@@ -116,6 +116,6 @@ export { getRequestContext, type RequestContext } from "./server/request-context
 // Meta types
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 
-// Href type utilities for type-safe URL generation
-export type { ScopedHrefFunction, HrefFunction, ExtractLocalRoutes } from "./href.js";
-export { scopedHref } from "./href.js";
+// Reverse type utilities for type-safe URL generation (Django-style URL reversal)
+export type { ScopedReverseFunction, ReverseFunction, ExtractLocalRoutes } from "./reverse.js";
+export { scopedReverse } from "./reverse.js";

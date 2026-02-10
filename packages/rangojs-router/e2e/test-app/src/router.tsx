@@ -154,4 +154,4 @@ export const router = createRouter<AppEnv>({
   .use("/middleware-test/params/:id", paramsMiddleware)
   .routes(urlpatterns);
 
-export const href = router.href;
+export const reverse = router.reverse;

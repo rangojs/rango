@@ -74,7 +74,7 @@ const router = createRouter<AppEnv>({
 }).routes(urlpatterns);
 
 /**
- * Export the router and type-safe href for server components.
+ * Export the router and type-safe reverse for server components.
  */
 export { router };
-export const href = router.href;
+export const reverse = router.reverse;

@@ -50,16 +50,16 @@ export {
   type RootLayoutProps,
 } from "./router.js";
 
-// Type-safe href utilities
+// Type-safe reverse utilities (Django-style URL reversal)
 export {
-  createHref,
-  type HrefFunction,
+  createReverse,
+  type ReverseFunction,
   type PrefixedRoutes,
   type PrefixRoutePatterns,
   type ParamsFor,
   type SanitizePrefix,
   type MergeRoutes,
-} from "./href.js";
+} from "./reverse.js";
 
 // Segment system (server-only)
 export { renderSegments } from "./segment-system.js";

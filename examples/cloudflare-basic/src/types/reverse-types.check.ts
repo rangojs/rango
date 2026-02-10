@@ -1,28 +1,28 @@
 /**
- * Type-level tests for href system
- * These tests verify that the href types work correctly at compile time.
+ * Type-level tests for reverse system
+ * These tests verify that the reverse types work correctly at compile time.
  *
- * This file is type-checked by tsc to ensure the href system is properly typed.
+ * This file is type-checked by tsc to ensure the reverse system is properly typed.
  */
 
 import type { Handler, HandlerContext } from "@rangojs/router";
 
-// Test 1: ctx.href in handlers accepts route names
-const testHandlerHref: Handler<"/"> = (ctx) => {
-  // Should work - ctx.href accepts any string for named route resolution
-  const _homeUrl = ctx.href("home");
-  const _aboutUrl = ctx.href("about");
-  const _blogUrl = ctx.href("blog");
+// Test 1: ctx.reverse in handlers accepts route names
+const testHandlerReverse: Handler<"/"> = (ctx) => {
+  // Should work - ctx.reverse accepts any string for named route resolution
+  const _homeUrl = ctx.reverse("home");
+  const _aboutUrl = ctx.reverse("about");
+  const _blogUrl = ctx.reverse("blog");
 
   // Should work - route with params
-  const _blogPostUrl = ctx.href("blogPost", { slug: "hello-world" });
-  const _featureUrl = ctx.href("featuresDetail", { slug: "routing" });
+  const _blogPostUrl = ctx.reverse("blogPost", { slug: "hello-world" });
+  const _featureUrl = ctx.reverse("featuresDetail", { slug: "routing" });
 
   // Should work - absolute route with dot notation (global lookup)
-  const _absoluteUrl = ctx.href("some.nested.route");
+  const _absoluteUrl = ctx.reverse("some.nested.route");
 
   // Should work - path-based URL
-  const _pathUrl = ctx.href("/api/data");
+  const _pathUrl = ctx.reverse("/api/data");
 
   return null;
 };
@@ -43,39 +43,40 @@ const testExplicitParamsHandler: Handler<{ slug: string; tab?: string }> = (
   return null;
 };
 
-// Test 4: HandlerContext has typed href
-type CheckCtxHref = HandlerContext<{ id: string }>["href"];
-// Verify href is a function type that returns string
-type _AssertHrefCallable = CheckCtxHref extends (
+// Test 4: HandlerContext has typed reverse
+type CheckCtxReverse = HandlerContext<{ id: string }>["reverse"];
+// Verify reverse is a function type that returns string
+type _AssertReverseCallable = CheckCtxReverse extends (
   name: string,
   params?: any,
 ) => string
   ? true
   : never;
-const _checkHrefCallable: _AssertHrefCallable = true;
+const _checkReverseCallable: _AssertReverseCallable = true;
 
-// Test 5: Verify ctx.href accepts various route name formats
-// ctx.href is (name: string, params?) => string, accepts any route name
+// Test 5: Verify ctx.reverse accepts various route name formats
+// ctx.reverse is (name: string, params?) => string, accepts any route name
 declare function testGlobalRoutes(): void;
 if (false as boolean) {
   testGlobalRoutes();
-  // ctx.href accepts any string - named routes resolve at runtime via server routeMap
+  // ctx.reverse accepts any string - named routes resolve at runtime via server routeMap
   const ctx = {} as HandlerContext;
-  ctx.href("/blog");
-  ctx.href("about");
-  ctx.href("blog");
-  ctx.href("blogPost", { slug: "test" });
+  ctx.reverse("/blog");
+  ctx.reverse("about");
+  ctx.reverse("blog");
+  ctx.reverse("blogPost", { slug: "test" });
 }
 
 // =============================================================================
-// Test 6: ScopedHrefFunction composability pattern
+// Test 6: ScopedReverseFunction composability pattern
 // =============================================================================
-// This tests that included url modules can use scopedHref with their own patterns
-// to get type-safe href for just their local routes.
+// This tests that included url modules can use scopedReverse with their own patterns
+// to get type-safe reverse for just their local routes.
 // UrlPatterns is only available from server (it requires server context)
 import type { UrlPatterns } from "@rangojs/router";
-// ScopedHrefFunction and ExtractParams are safe client types
-import type { ScopedHrefFunction, ExtractParams } from "@rangojs/router";
+// ScopedReverseFunction and ExtractParams are safe client types
+import type { ScopedReverseFunction, ExtractParams } from "@rangojs/router";
+
 
 // Simulate a local module's patterns type
 // When you define: const myPatterns = urls(({ path }) => [...])
@@ -87,32 +88,32 @@ type LocalRoutes = {
 };
 type LocalPatternsType = UrlPatterns<unknown, LocalRoutes>;
 
-// Type-level assertion: scopedHref should extract local routes from UrlPatterns
-type ExtractedHref = LocalPatternsType extends UrlPatterns<any, infer TRoutes>
-  ? ScopedHrefFunction<TRoutes>
+// Type-level assertion: scopedReverse should extract local routes from UrlPatterns
+type ExtractedReverse = LocalPatternsType extends UrlPatterns<any, infer TRoutes>
+  ? ScopedReverseFunction<TRoutes>
   : never;
 
-// Verify the extracted type is ScopedHrefFunction with our local routes
-type _AssertExtractsLocalRoutes = ExtractedHref extends ScopedHrefFunction<LocalRoutes>
+// Verify the extracted type is ScopedReverseFunction with our local routes
+type _AssertExtractsLocalRoutes = ExtractedReverse extends ScopedReverseFunction<LocalRoutes>
   ? true
   : never;
 const _checkExtractsLocalRoutes: _AssertExtractsLocalRoutes = true;
 
-// Test 7: Local route name validation in ScopedHrefFunction
-declare const localHref: ScopedHrefFunction<LocalRoutes>;
+// Test 7: Local route name validation in ScopedReverseFunction
+declare const localReverse: ScopedReverseFunction<LocalRoutes>;
 
 // Valid local route without params
-const _localIndex: string = localHref("index");
-const _localSettings: string = localHref("settings");
+const _localIndex: string = localReverse("index");
+const _localSettings: string = localReverse("settings");
 
 // Valid local route with params
-const _localDetail: string = localHref("detail", { slug: "hello-world" });
+const _localDetail: string = localReverse("detail", { slug: "hello-world" });
 
 // Absolute routes (dot notation) - allowed as escape hatch for cross-module
-const _absoluteRoute: string = localHref("shop.cart");
+const _absoluteRoute: string = localReverse("shop.cart");
 
 // Path-based URLs - allowed as escape hatch
-const _pathBased: string = localHref("/api/data");
+const _pathBased: string = localReverse("/api/data");
 
 // Test 8: ExtractParams extracts correct params from patterns
 type IndexParams = ExtractParams<LocalRoutes["index"]>;
@@ -129,27 +130,27 @@ type _AssertSettingsHasNoParams = keyof SettingsParams extends never ? true : ne
 const _checkSettingsHasNoParams: _AssertSettingsHasNoParams = true;
 
 // Test 9: Composability - multiple independent url modules
-// Each module can use scopedHref<typeof itsPatterns>(ctx.href) with local routes
+// Each module can use scopedReverse<typeof itsPatterns>(ctx.reverse) with local routes
 type BlogRoutes = { index: "/"; post: "/:postId" };
 type ShopRoutes = { index: "/"; cart: "/cart"; product: "/product/:sku" };
 
-type BlogHref = ScopedHrefFunction<BlogRoutes>;
-type ShopHref = ScopedHrefFunction<ShopRoutes>;
+type BlogReverse = ScopedReverseFunction<BlogRoutes>;
+type ShopReverse = ScopedReverseFunction<ShopRoutes>;
 
-declare const blogHref: BlogHref;
-declare const shopHref: ShopHref;
+declare const blogReverse: BlogReverse;
+declare const shopReverse: ShopReverse;
 
 // Blog module components use blog routes
-const _blogIndex: string = blogHref("index");
-const _blogPost: string = blogHref("post", { postId: "123" });
+const _blogIndex: string = blogReverse("index");
+const _blogPost: string = blogReverse("post", { postId: "123" });
 
 // Shop module components use shop routes
-const _shopIndex: string = shopHref("index");
-const _shopCart: string = shopHref("cart");
-const _shopProduct: string = shopHref("product", { sku: "SKU-001" });
+const _shopIndex: string = shopReverse("index");
+const _shopCart: string = shopReverse("cart");
+const _shopProduct: string = shopReverse("product", { sku: "SKU-001" });
 
 // Cross-module navigation uses absolute names
-const _toBlog: string = shopHref("blog.post", { postId: "abc" });
-const _toShop: string = blogHref("shop.cart");
+const _toBlog: string = shopReverse("blog.post", { postId: "abc" });
+const _toShop: string = blogReverse("shop.cart");
 
 export {};

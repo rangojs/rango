@@ -115,8 +115,8 @@ export function createHandlerContext<TEnv>(
     // Theme support (when enabled via router config)
     theme: requestContext?.theme,
     setTheme: requestContext?.setTheme,
-    // Scoped href for URL generation
-    href: (name: string, hrefParams?: Record<string, string>) => {
+    // Scoped reverse for URL generation
+    reverse: (name: string, hrefParams?: Record<string, string>) => {
       // Path-based - return directly (optionally with param substitution)
       if (name.startsWith("/")) {
         if (hrefParams) {

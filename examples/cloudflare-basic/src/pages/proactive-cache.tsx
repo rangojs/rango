@@ -1,5 +1,5 @@
 import { Link, Outlet } from "@rangojs/router/client";
-import { href } from "../router.js";
+import { reverse } from "../router.js";
 
 export function ProactiveCacheLayout() {
   return (
@@ -9,19 +9,19 @@ export function ProactiveCacheLayout() {
         Layout rendered at: {new Date().toISOString()}
       </p>
       <nav data-testid="proactive-nav">
-        <Link to={href("home")} data-testid="proactive-back-home">
+        <Link to={reverse("home")} data-testid="proactive-back-home">
           Home
         </Link>
         {" | "}
-        <Link to={href("proactiveCache")} data-testid="proactive-nav-index">
+        <Link to={reverse("proactiveCache")} data-testid="proactive-nav-index">
           Index
         </Link>
         {" | "}
-        <Link to={href("proactiveCacheItemA")} data-testid="proactive-nav-a">
+        <Link to={reverse("proactiveCacheItemA")} data-testid="proactive-nav-a">
           Item A
         </Link>
         {" | "}
-        <Link to={href("proactiveCacheItemB")} data-testid="proactive-nav-b">
+        <Link to={reverse("proactiveCacheItemB")} data-testid="proactive-nav-b">
           Item B
         </Link>
       </nav>

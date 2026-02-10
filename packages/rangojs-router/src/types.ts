@@ -3,7 +3,7 @@ import type { AllUseItems } from "./route-types.js";
 import type { Handle } from "./handle.js";
 import type { MiddlewareFn } from "./router/middleware.js";
 import type { Theme } from "./theme/types.js";
-import type { ScopedHrefFunction } from "./href.js";
+import type { ScopedReverseFunction } from "./reverse.js";
 
 // Re-export MiddlewareFn for internal/advanced use
 export type { MiddlewareFn } from "./router/middleware.js";
@@ -518,7 +518,7 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv> = {
    */
   setTheme?: (theme: Theme) => void;
   /**
-   * Generate URLs from route names.
+   * Generate URLs from route names (Django-style URL reversal).
    *
    * **Recommended: Use route names for type safety.**
    * Route names validate both the route exists and params are correct.
@@ -527,14 +527,14 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv> = {
    * @example
    * ```typescript
    * // RECOMMENDED: Use route names for type safety
-   * ctx.href("shop.cart")                    // ✓ Validates route exists
-   * ctx.href("blog.post", { slug: "hello" }) // ✓ Validates route + params
+   * ctx.reverse("shop.cart")                    // ✓ Validates route exists
+   * ctx.reverse("blog.post", { slug: "hello" }) // ✓ Validates route + params
    *
    * // ESCAPE HATCH: Path-based URLs (no validation)
-   * ctx.href("/about")                       // ⚠ No type checking
+   * ctx.reverse("/about")                       // ⚠ No type checking
    * ```
    */
-  href: ScopedHrefFunction<GetRegisteredRoutes>;
+  reverse: ScopedReverseFunction<GetRegisteredRoutes>;
 };
 
 /**
@@ -1014,7 +1014,7 @@ export interface MatchResult {
   params: Record<string, string>;
   /**
    * The matched route name (includes name prefix from include()).
-   * Used by ctx.href() for local name resolution.
+   * Used by ctx.reverse() for local name resolution.
    */
   routeName?: string;
   /**

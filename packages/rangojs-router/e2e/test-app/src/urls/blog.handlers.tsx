@@ -1,4 +1,4 @@
-import { scopedHref, Meta } from "@rangojs/router";
+import { scopedReverse, Meta } from "@rangojs/router";
 import type { Handler } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles.js";
@@ -8,7 +8,7 @@ import type { routes } from "./blog.gen.js";
  * Blog index page handler
  */
 export const BlogIndexHandler: Handler<"index", routes> = (ctx) => {
-  const href = scopedHref<routes>(ctx.href);
+  const href = scopedReverse<routes>(ctx.reverse);
   const pushBreadcrumb = ctx.use(Breadcrumbs);
   const meta = ctx.use(Meta);
   pushBreadcrumb({ label: "Blog", href: href("index") });
@@ -57,7 +57,7 @@ export const BlogIndexHandler: Handler<"index", routes> = (ctx) => {
  * Blog post detail handler
  */
 export const BlogPostHandler: Handler<"post", routes> = (ctx) => {
-  const href = scopedHref<routes>(ctx.href);
+  const href = scopedReverse<routes>(ctx.reverse);
 
   const pushBreadcrumb = ctx.use(Breadcrumbs);
   const meta = ctx.use(Meta);

@@ -636,8 +636,8 @@ export { MountContext } from "./browser/react/mount-context.js";
 // Mount-aware href hook - auto-prefixes paths with include() mount
 export { useHref } from "./browser/react/use-href.js";
 
-// Type-safe scoped href function for scopedHref<typeof patterns>()
-export type { ScopedHrefFunction } from "./href.js";
+// Type-safe scoped reverse function for scopedReverse<typeof patterns>()
+export type { ScopedReverseFunction } from "./reverse.js";
 
 // Loader definition type - for typing loader props in client components
 export type { LoaderDefinition } from "./types.js";

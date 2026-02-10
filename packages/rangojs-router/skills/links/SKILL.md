@@ -1,19 +1,19 @@
 ---
 name: links
-description: URL generation with ctx.href (server), href (client), useHref (mounted), useMount, and scopedHref
-argument-hint: [href|useHref|useMount|scopedHref]
+description: URL generation with ctx.reverse (server), href (client), useHref (mounted), useMount, and scopedReverse
+argument-hint: [href|useHref|useMount|scopedReverse]
 ---
 
 # Links & URL Generation
 
 @rangojs/router provides different href APIs for server and client contexts.
 
-## Server: ctx.href()
+## Server: ctx.reverse()
 
 Available in route handlers via HandlerContext. Resolves named routes using the full route map.
 
 ```typescript
-import { urls, scopedHref } from "@rangojs/router";
+import { urls, scopedReverse } from "@rangojs/router";
 
 export const shopPatterns = urls(({ path, layout }) => [
   layout(<ShopLayout />, () => [
@@ -33,29 +33,29 @@ export const shopPatterns = urls(({ path, layout }) => [
 ```typescript
 // Inside a handler within shopPatterns (mounted at /shop)
 path("/product/:slug", (ctx) => {
-  ctx.href("cart");                        // "/shop/cart" (local)
-  ctx.href("product", { slug: "widget" }); // "/shop/product/widget" (local + params)
-  ctx.href("blog.post", { slug: "hi" });   // "/blog/hi" (absolute)
-  ctx.href("/about");                      // "/about" (path-based)
+  ctx.reverse("cart");                        // "/shop/cart" (local)
+  ctx.reverse("product", { slug: "widget" }); // "/shop/product/widget" (local + params)
+  ctx.reverse("blog.post", { slug: "hi" });   // "/blog/hi" (absolute)
+  ctx.reverse("/about");                      // "/about" (path-based)
 
   return <ProductPage slug={ctx.params.slug} />;
 }, { name: "product" })
 ```
 
-### scopedHref() - type-safe ctx.href
+### scopedReverse() - type-safe ctx.reverse
 
-Wraps `ctx.href` with local route type information for autocomplete and validation:
+Wraps `ctx.reverse` with local route type information for autocomplete and validation:
 
 ```typescript
-import { scopedHref } from "@rangojs/router";
+import { scopedReverse } from "@rangojs/router";
 
 path("/product/:slug", (ctx) => {
-  const href = scopedHref<typeof shopPatterns>(ctx.href);
+  const reverse = scopedReverse<typeof shopPatterns>(ctx.reverse);
 
-  href("cart");                        // Type-safe local name
-  href("product", { slug: "widget" }); // Type-safe with params
-  href("blog.post");                   // Absolute names (dot notation) always allowed
-  href("/about");                      // Path-based always allowed
+  reverse("cart");                        // Type-safe local name
+  reverse("product", { slug: "widget" }); // Type-safe with params
+  reverse("blog.post");                   // Absolute names (dot notation) always allowed
+  reverse("/about");                      // Path-based always allowed
 
   return <ProductPage slug={ctx.params.slug} />;
 }, { name: "product" })
@@ -128,8 +128,8 @@ function MountInfo() {
 
 | Context | API | Resolves | Use for |
 |---------|-----|----------|---------|
-| Server handler | `ctx.href("name")` | Named routes (local + absolute) | Server-side URL generation |
-| Server handler | `scopedHref<T>(ctx.href)` | Same, with type safety | Type-safe server URLs |
+| Server handler | `ctx.reverse("name")` | Named routes (local + absolute) | Server-side URL generation |
+| Server handler | `scopedReverse<T>(ctx.reverse)` | Same, with type safety | Type-safe server URLs |
 | Client component | `href("/path")` | Absolute paths | Global navigation |
 | Client component | `useHref()` | Mount-prefixed paths | Local navigation inside `include()` |
 | Client component | `useMount()` | Raw mount path | Custom mount-aware logic |
@@ -138,12 +138,12 @@ function MountInfo() {
 
 ```typescript
 // urls/shop.tsx (server)
-import { urls, scopedHref } from "@rangojs/router";
+import { urls, scopedReverse } from "@rangojs/router";
 
 export const shopPatterns = urls(({ path, layout }) => [
   layout((ctx) => {
-    const href = scopedHref<typeof shopPatterns>(ctx.href);
-    return <ShopLayout cartUrl={href("cart")} />;
+    const reverse = scopedReverse<typeof shopPatterns>(ctx.reverse);
+    return <ShopLayout cartUrl={reverse("cart")} />;
   }, () => [
     path("/", ShopIndex, { name: "index" }),
     path("/cart", CartPage, { name: "cart" }),
