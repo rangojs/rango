@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "wrangler deploy",
+    "extract": "npx rango extract-names ./",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

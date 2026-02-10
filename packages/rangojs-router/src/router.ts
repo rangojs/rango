@@ -9,10 +9,10 @@ import {
 } from "./errors";
 import { serializeManifest, type SerializedManifest } from "./debug.js";
 import {
-  createHref,
-  type HrefFunction,
+  createReverse,
+  type ReverseFunction,
   type PrefixRoutePatterns,
-} from "./href.js";
+} from "./reverse.js";
 import {
   registerRouteMap,
   getPrecomputedEntries,
@@ -823,11 +823,11 @@ export interface RSCRouter<
    * @example
    * ```typescript
    * // Given: .routes("/shop", { cart: "/cart", detail: "/product/:slug" })
-   * router.href("cart"); // "/shop/cart"
-   * router.href("detail", { slug: "widget" }); // "/shop/product/widget"
+   * router.reverse("cart"); // "/shop/cart"
+   * router.reverse("detail", { slug: "widget" }); // "/shop/product/widget"
    * ```
    */
-  href: HrefFunction<TRoutes>;
+  reverse: ReverseFunction<TRoutes>;
 
   /**
    * Accumulated route map for typeof extraction
@@ -1025,9 +1025,9 @@ export interface RSCRouter<
  *   .routes('/shop', shopRoutes) // accumulates shopRoutes with prefixed URLs
  *   .map(() => import('./shop'));
  *
- * // router.href now has type-safe autocomplete for all registered routes
- * // Given shopRoutes = { cart: "/cart" }, href uses original key:
- * router.href("cart"); // "/shop/cart"
+ * // router.reverse now has type-safe autocomplete for all registered routes
+ * // Given shopRoutes = { cart: "/cart" }, reverse uses original key:
+ * router.reverse("cart"); // "/shop/cart"
  * ```
  */
 
@@ -1141,7 +1141,7 @@ export function createRouter<TEnv = any>(
     });
   }
 
-  // Track all registered routes with their prefixes for href()
+  // Track all registered routes with their prefixes for reverse()
   const mergedRouteMap: Record<string, string> = {};
 
   // Build a Map from precomputed entries for O(1) lookup by staticPrefix.
@@ -1457,7 +1457,7 @@ export function createRouter<TEnv = any>(
     const routesObject: Record<string, string> = {};
     for (const [name, pattern] of patterns.entries()) {
       routesObject[name] = pattern;
-      // Also add to merged route map for href() support
+      // Also add to merged route map for reverse() support
       const existingPattern = mergedRouteMap[name];
       if (existingPattern !== undefined && existingPattern !== pattern) {
         console.warn(
@@ -1524,7 +1524,7 @@ export function createRouter<TEnv = any>(
       routesEntries.splice(insertIndex, 0, nestedEntry);
     }
 
-    // Re-register route map for runtime href() usage
+    // Re-register route map for runtime reverse() usage
     registerRouteMap(mergedRouteMap);
   }
 
@@ -1938,7 +1938,7 @@ export function createRouter<TEnv = any>(
   ): RouteBuilder<RouteDefinition, TEnv, any, TNewRoutes> {
     const currentMountIndex = mountIndex++;
 
-    // Merge routes into the href map
+    // Merge routes into the reverse map
     // Keys stay unchanged for composability - only URL patterns get prefixed
     const routeEntries = routes as Record<string, string>;
     for (const [key, pattern] of Object.entries(routeEntries)) {
@@ -1966,7 +1966,7 @@ export function createRouter<TEnv = any>(
       mergedRouteMap[key] = prefixedPattern;
     }
 
-    // Auto-register route map for runtime href() usage
+    // Auto-register route map for runtime reverse() usage
     registerRouteMap(mergedRouteMap);
 
     // Extract trailing slash config if present (attached by route())
@@ -2182,7 +2182,7 @@ export function createRouter<TEnv = any>(
           routesEntries.splice(insertIndex, 0, lazyEntry);
         }
 
-        // Auto-register route map for runtime href() usage
+        // Auto-register route map for runtime reverse() usage
         registerRouteMap(mergedRouteMap);
 
         // Return the router (no .map() needed for UrlPatterns)
@@ -2209,7 +2209,7 @@ export function createRouter<TEnv = any>(
 
     // Type-safe URL builder using merged route map
     // Types are tracked through the builder chain via TRoutes parameter
-    href: createHref(mergedRouteMap),
+    reverse: createReverse(mergedRouteMap),
 
     // Expose accumulated route map for typeof extraction
     // Returns {} initially, but builder chain accumulates specific route types

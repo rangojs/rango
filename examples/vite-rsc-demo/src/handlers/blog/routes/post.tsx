@@ -4,7 +4,7 @@ import { SegmentTimer } from "@/components/SegmentTimer.js";
 import { CurrentURL } from "@/components/CurrentURL.js";
 import { Link } from "@rangojs/router/client";
 
-export const PostRoute: Handler<{ slug: string }> = (ctx) => {
+export const PostRoute: Handler<"/:slug"> = (ctx) => {
   const renderTime = new Date().toISOString();
   const queryParams: [string, string][] = Array.from(
     ctx.searchParams.entries()

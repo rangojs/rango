@@ -82,5 +82,5 @@ declare global {
   }
 }
 
-// Export typed href function for use in server components
-export const href = router.href;
+// Export typed reverse function for use in server components
+export const reverse = router.reverse;

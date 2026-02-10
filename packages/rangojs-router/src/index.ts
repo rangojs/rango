@@ -37,6 +37,7 @@ export type {
   RouteDefinition,
   // Handler types
   Handler,            // Supports params object, path pattern, or route name
+  ScopedRouteMap,     // Scoped view of GeneratedRouteMap for Handler<"localName", ScopedRouteMap<"prefix">>
   HandlerContext,
   ExtractParams,
   GenericParams,
@@ -157,11 +158,11 @@ export type { RequestContext } from "./server/request-context.js";
 // Meta types
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 
-// Href type utilities for type-safe URL generation
-// ScopedHrefFunction is used with scopedHref<typeof patterns>() for composable modules
-export type { ScopedHrefFunction, HrefFunction, ExtractLocalRoutes } from "./href.js";
-// scopedHref() helper for handlers to get locally-typed href
-export { scopedHref } from "./href.js";
+// Reverse type utilities for type-safe URL generation (Django-style URL reversal)
+// ScopedReverseFunction is used with scopedReverse<typeof patterns>() for composable modules
+export type { ScopedReverseFunction, ReverseFunction, ExtractLocalRoutes } from "./reverse.js";
+// scopedReverse() helper for handlers to get locally-typed reverse
+export { scopedReverse } from "./reverse.js";
 
 // Path-based response type lookup from RegisteredRoutes
 export type { PathResponse } from "./href-client.js";

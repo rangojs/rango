@@ -215,7 +215,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    */
   route: <K extends keyof ResolvedRouteMap<T> & string>(
     name: K,
-    handler: Handler<ExtractRouteParams<T, K & string>, TEnv>,
+    handler: Handler<ExtractRouteParams<T, K & string>, {}, TEnv>,
     use?: () => RouteUseItem[]
   ) => RouteItem;
   /**
@@ -239,7 +239,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * @param use - Callback returning child routes, middleware, loaders, etc.
    */
   layout: (
-    component: ReactNode | Handler<any, TEnv>,
+    component: ReactNode | Handler<any, any, TEnv>,
     use?: () => LayoutUseItem[]
   ) => LayoutItem;
   /**
@@ -263,7 +263,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * @param use - Optional callback for loaders, loading, revalidate, etc.
    */
   parallel: <
-    TSlots extends Record<`@${string}`, Handler<any, TEnv> | ReactNode>,
+    TSlots extends Record<`@${string}`, Handler<any, any, TEnv> | ReactNode>,
   >(
     slots: TSlots,
     use?: () => ParallelUseItem[]
@@ -295,7 +295,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
   intercept: <K extends keyof ResolvedRouteMap<T> & string>(
     slotName: `@${string}`,
     routeName: K,
-    handler: ReactNode | Handler<ExtractRouteParams<T, K>, TEnv>,
+    handler: ReactNode | Handler<ExtractRouteParams<T, K>, {}, TEnv>,
     use?: () => InterceptUseItem[]
   ) => InterceptItem;
   /**
@@ -932,7 +932,7 @@ const intercept: RouteHelpers<any, any>["intercept"] = (
     if (capturedLayouts.length > 0 && capturedLayouts[0].type === "layout") {
       entry.layout = capturedLayouts[0].handler as
         | ReactNode
-        | Handler<any, any>;
+        | Handler<any, any, any>;
     }
 
     invariant(
@@ -1253,7 +1253,7 @@ const createRouteHelper = <
   const T extends RouteDefinition,
   TEnv,
 >(): RouteHelpers<T, TEnv>["route"] => {
-  return routeFn as RouteHelpers<T, TEnv>["route"];
+  return routeFn as unknown as RouteHelpers<T, TEnv>["route"];
 };
 
 /**

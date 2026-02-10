@@ -5,12 +5,13 @@
  * - Nested layouts
  * - Static routes
  */
-import { urls } from "@rangojs/router";
+import { urls, type Handler } from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";
-import { getMatchDebugStats, type HandlerContext } from "@rangojs/router/server";
+import { getMatchDebugStats } from "@rangojs/router/server";
+import type { routes } from "./localized-patterns.gen.js";
 
 // Benchmark route - returns raw Response with debug stats, bypasses RSC
-const BenchmarkHandler = async (ctx: HandlerContext) => {
+const BenchmarkHandler: Handler<"benchFirst", routes> = async (ctx) => {
   const now = Date.now();
   const start = ctx.var.dateStart ?? 0;
   const elapsed = now - start;
@@ -34,8 +35,10 @@ const BenchmarkHandler = async (ctx: HandlerContext) => {
   );
 };
 
-// Page component that displays route params and timing
-const ParamPage = async (ctx: HandlerContext) => {
+// Shared handler for 8000+ stress-test routes with varying param shapes.
+// Handler<Record<string, any>> bypasses PathFn's biconditional via the
+// index-signature guard (string extends keyof TParams).
+const ParamPage: Handler<Record<string, any>> = async (ctx) => {
   // setTimeout(0) to unfreeze Cloudflare's time
   await new Promise((r) => setTimeout(r, 1));
 
@@ -54,8 +57,8 @@ const ParamPage = async (ctx: HandlerContext) => {
   );
 };
 
-// Simple page component for stress routes
-const StressPage = async (ctx: HandlerContext) => {
+// Simple page component for stress routes (no params)
+const StressPage: Handler<"localeHome", routes> = async (ctx) => {
   await new Promise((r) => setTimeout(r, 1));
 
   const renderTime = Date.now();

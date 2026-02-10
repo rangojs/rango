@@ -35,12 +35,15 @@ export default defineConfig({
       name: "dev-warmup",
       testMatch: "**/dev-warmup.setup.ts",
       use: { ...browserConfig, baseURL: `http://localhost:${DEV_SERVER_PORT}` },
+      // Must run after build: both write to node_modules/.vite/deps_ssr and the
+      // build overwrites the dev server's optimizer cache, causing ERR_OUTDATED_OPTIMIZED_DEP.
+      dependencies: ["build"],
     },
     {
       name: "dev",
       // Exclude production tests (by test name) and HMR test files (by file name)
       grep: /^(?!.*\(production\))/,
-      testIgnore: ["**/loader-hmr.test.ts", "**/*.setup.ts"],
+      testIgnore: ["**/loader-hmr.test.ts", "**/route-types-hmr.test.ts", "**/*.setup.ts"],
       use: { ...browserConfig, baseURL: `http://localhost:${DEV_SERVER_PORT}` },
       dependencies: ["dev-warmup"],
     },
@@ -56,7 +59,7 @@ export default defineConfig({
     {
       name: "hmr",
       // Only run HMR test files
-      testMatch: ["**/loader-hmr.test.ts"],
+      testMatch: ["**/loader-hmr.test.ts", "**/route-types-hmr.test.ts"],
       use: browserConfig,
       // HMR tests modify files, run serially to avoid conflicts
       fullyParallel: false,

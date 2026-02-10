@@ -338,15 +338,15 @@ type LikesParams = ParamsFor<"blog.api.likes">;
 // = { slug: string }
 ```
 
-### ctx.href inside mounted modules
+### ctx.reverse inside mounted modules
 
 Response route handlers inside a mounted module can reference local names:
 
 ```typescript
 // Inside blogApiPatterns handler
 path("/:slug/likes", (ctx) => {
-  // ctx.href resolves names relative to the mount point
-  const commentsUrl = ctx.href("comments", { slug: ctx.params.slug });
+  // ctx.reverse resolves names relative to the mount point
+  const commentsUrl = ctx.reverse("comments", { slug: ctx.params.slug });
   // -> "/blog/api/my-post/comments"
 
   return { slug: ctx.params.slug, count: 42, commentsUrl };

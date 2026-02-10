@@ -20,8 +20,8 @@ const router = createRouter<AppEnv>({
   urls: urlpatterns,
 });
 
-// Server-side named-route href (type-safe via routeMap)
-export const href = router.href;
+// Server-side named-route reverse (type-safe via routeMap)
+export const reverse = router.reverse;
 
 export default router;
 ```
@@ -45,19 +45,19 @@ export const urlpatterns = urls(({ path, layout }) => [
 
 ## Type-Safe href()
 
-### Server: ctx.href + scopedHref
+### Server: ctx.reverse + scopedReverse
 
-In route handlers, use `scopedHref()` for local route name autocomplete:
+In route handlers, use `scopedReverse()` for local route name autocomplete:
 
 ```typescript
-import { scopedHref } from "@rangojs/router";
+import { scopedReverse } from "@rangojs/router";
 
 path("/product/:slug", (ctx) => {
-  const href = scopedHref<typeof shopPatterns>(ctx.href);
+  const reverse = scopedReverse<typeof shopPatterns>(ctx.reverse);
 
-  href("cart");                        // Type-safe local name
-  href("product", { slug: "widget" }); // Type-safe with params
-  href("blog.post");                   // Absolute names always allowed
+  reverse("cart");                        // Type-safe local name
+  reverse("product", { slug: "widget" }); // Type-safe with params
+  reverse("blog.post");                   // Absolute names always allowed
 
   return <ProductPage slug={ctx.params.slug} />;
 }, { name: "product" })
@@ -381,10 +381,10 @@ export const ProductLoader = createLoader("product", async (ctx) => {
   return { product: await fetchProduct(ctx.params.slug) };
 });
 
-// 5. Server: ctx.href for named routes
+// 5. Server: ctx.reverse for named routes
 path("/product/:slug", (ctx) => {
-  const href = scopedHref<typeof urlpatterns>(ctx.href);
-  return <Link to={href("shop")}>Back to Shop</Link>;
+  const reverse = scopedReverse<typeof urlpatterns>(ctx.reverse);
+  return <Link to={reverse("shop")}>Back to Shop</Link>;
 }, { name: "product" })
 
 // 6. Client: useHref for mounted paths, href for absolute

@@ -130,14 +130,14 @@ export type InterceptWhenFn<TEnv = any> = (ctx: InterceptSelectorContext<TEnv>) 
 export type InterceptEntry = {
   slotName: `@${string}`;  // e.g., "@modal"
   routeName: string;        // e.g., "card"
-  handler: ReactNode | Handler<any, any>;
+  handler: ReactNode | Handler<any, any, any>;
   middleware: MiddlewareFn<any, any>[];
   revalidate: ShouldRevalidateFn<any, any>[];
   errorBoundary: (ReactNode | ErrorBoundaryHandler)[];
   notFoundBoundary: (ReactNode | NotFoundBoundaryHandler)[];
   loader: LoaderEntry[];
   loading?: ReactNode | false;
-  layout?: ReactNode | Handler<any, any>;  // Wrapper layout with <Outlet /> for content
+  layout?: ReactNode | Handler<any, any, any>;  // Wrapper layout with <Outlet /> for content
   when: InterceptWhenFn[];  // Selector conditions - all must return true to intercept
 };
 
@@ -151,7 +151,7 @@ export type EntryPropSegments = {
 export type EntryData =
   | ({
       type: "route";
-      handler: Handler<any, any>;
+      handler: Handler<any, any, any>;
       loading?: ReactNode | false;
       /** URL pattern for this route (used by path() in urls()) */
       pattern?: string;
@@ -166,14 +166,14 @@ export type EntryData =
       EntryPropSegments)
   | ({
       type: "layout";
-      handler: ReactNode | Handler<any, any>;
+      handler: ReactNode | Handler<any, any, any>;
       loading?: ReactNode | false;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments)
   | ({
       type: "parallel";
-      handler: Record<`@${string}`, Handler<any, any> | ReactNode>;
+      handler: Record<`@${string}`, Handler<any, any, any> | ReactNode>;
       loading?: ReactNode | false;
     } & EntryPropCommon &
       EntryPropDatas &
@@ -181,7 +181,7 @@ export type EntryData =
   | ({
       type: "cache";
       /** Cache entries create cache boundaries and render like layouts (with Outlet) */
-      handler: ReactNode | Handler<any, any>;
+      handler: ReactNode | Handler<any, any, any>;
       loading?: ReactNode | false;
     } & EntryPropCommon &
       EntryPropDatas &

@@ -4,7 +4,7 @@ import { SegmentTimer } from "@/components/SegmentTimer.js";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 import { ParallelOutlet } from "@rangojs/router/client";
 
-export const CartRoute: Handler = () => (
+export const CartRoute: Handler<"/cart"> = () => (
   <DebugSegmentWrapper type="route" name="Cart">
     <div style={{ display: "flex", gap: "2rem" }}>
       <div style={{ flex: 1 }}>

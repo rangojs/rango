@@ -124,8 +124,11 @@
     "CLAUDE.md",
     "README.md"
   ],
+  "bin": {
+    "rango": "./dist/bin/rango.js"
+  },
   "scripts": {
-    "build": "pnpm dlx esbuild src/vite/index.ts --bundle --format=esm --outfile=dist/vite/index.js --platform=node --packages=external",
+    "build": "pnpm dlx esbuild src/vite/index.ts --bundle --format=esm --outfile=dist/vite/index.js --platform=node --packages=external && pnpm dlx esbuild src/bin/rango.ts --bundle --format=esm --outfile=dist/bin/rango.js --platform=node --packages=external --banner:js='#!/usr/bin/env node'",
     "prepublishOnly": "pnpm build",
     "typecheck": "tsc --noEmit",
     "test": "playwright test",

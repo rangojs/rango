@@ -163,7 +163,7 @@ export interface MatchContext<TEnv = any> {
   handlerContext: HandlerContext<any, TEnv>;
   loaderPromises: Map<string, Promise<any>>;
 
-  // Route map for server-side ctx.href() resolution
+  // Route map for server-side ctx.reverse() resolution
   routeMap: Record<string, string>;
 
   // Metrics

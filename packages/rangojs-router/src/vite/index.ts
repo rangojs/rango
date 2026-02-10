@@ -1,10 +1,11 @@
 import type { Plugin, PluginOption } from "vite";
 import { createServer as createViteServer } from "vite";
 import * as Vite from "vite";
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
+import { generateRouteTypesSource, writePerModuleRouteTypes, writePerModuleRouteTypesForFile, writeCombinedRouteTypes } from "../build/generate-route-types.ts";
 import { exposeActionId } from "./expose-action-id.ts";
 import { exposeLoaderId } from "./expose-loader-id.ts";
 import { exposeHandleId } from "./expose-handle-id.ts";
@@ -110,18 +111,19 @@ export interface RscPluginOptions {
  */
 interface RangoBaseOptions {
   /**
-   * Expose $$id property on server action functions.
-   * Required for action-based revalidation to work.
-   * @default true
-   */
-  exposeActionId?: boolean;
-
-  /**
    * Show startup banner. Set to false to disable.
    * @default true
    */
   banner?: boolean;
 
+  /**
+   * Generate static route type files (.gen.ts) by parsing url modules at startup.
+   * Creates per-module route maps and a combined named-routes.gen.ts for type-safe
+   * Handler<"name", routes> and href() without executing router code.
+   * Set to `false` to disable (run `npx rango extract-names` manually instead).
+   * @default true
+   */
+  staticRouteTypesGeneration?: boolean;
 }
 
 /**
@@ -413,7 +415,7 @@ function buildRouteToStaticPrefix(
  */
 function createRouterDiscoveryPlugin(
   entryPath: string,
-  opts?: { enableBuildPrerender?: boolean },
+  opts?: { enableBuildPrerender?: boolean; staticRouteTypesGeneration?: boolean },
 ): Plugin {
   let projectRoot = "";
   let isBuildMode = false;
@@ -423,6 +425,9 @@ function createRouterDiscoveryPlugin(
   // Populated during discovery (dev: configureServer, build: buildStart).
   // Read by the virtual module's load hook to emit setCachedManifest() call.
   let mergedRouteManifest: Record<string, string> | null = null;
+
+  // Per-router route manifests for generating typed route files.
+  let perRouterManifests: Array<{ id: string; routeManifest: Record<string, string> }> = [];
 
   // Concrete URLs to pre-render at build time (populated during buildStart).
   // Only used when enableBuildPrerender is true.
@@ -522,6 +527,7 @@ function createRouterDiscoveryPlugin(
 
     mergedRouteManifest = {};
     mergedPrecomputedEntries = [];
+    perRouterManifests = [];
     let mergedRouteAncestry: Record<string, string[]> = {};
     let mergedRouteTrailingSlash: Record<string, string> = {};
 
@@ -545,6 +551,7 @@ function createRouterDiscoveryPlugin(
 
       // Merge into the combined manifest
       Object.assign(mergedRouteManifest, manifest.routeManifest);
+      perRouterManifests.push({ id, routeManifest: manifest.routeManifest });
 
       // Merge ancestry (internal field, used only for trie building)
       if (manifest._routeAncestry) {
@@ -686,6 +693,29 @@ function createRouterDiscoveryPlugin(
     return serverMod;
   }
 
+  // Write named-routes type file next to the router entry file.
+  // Only writes when content has changed to avoid triggering HMR loops.
+  function writeRouteTypesFiles() {
+    if (perRouterManifests.length === 0) return;
+    try {
+      const entryDir = dirname(resolve(projectRoot, entryPath));
+      // Merge all router manifests into a single route map
+      const mergedManifest: Record<string, string> = {};
+      for (const { routeManifest } of perRouterManifests) {
+        Object.assign(mergedManifest, routeManifest);
+      }
+      const outPath = join(entryDir, "named-routes.gen.ts");
+      const source = generateRouteTypesSource(mergedManifest);
+      const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
+      if (existing !== source) {
+        writeFileSync(outPath, source);
+        console.log(`[rsc-router] Generated route types -> ${outPath}`);
+      }
+    } catch (err) {
+      console.warn(`[rsc-router] Failed to write named-routes.gen.ts: ${(err as Error).message}`);
+    }
+  }
+
   return {
     name: "@rangojs/router:discovery",
 
@@ -694,6 +724,12 @@ function createRouterDiscoveryPlugin(
       isBuildMode = config.command === "build";
       // Capture user's resolve aliases for the temp server
       userResolveAlias = config.resolve.alias;
+      // Generate per-module route types from static source parsing.
+      // Runs before the dev server starts so .gen.ts files exist immediately for IDE.
+      if (opts?.staticRouteTypesGeneration !== false) {
+        writePerModuleRouteTypes(projectRoot, entryPath);
+        writeCombinedRouteTypes(projectRoot, entryPath);
+      }
       // Capture @vitejs/plugin-rsc manager for early manifest writes during prerender.
       // The manager's buildAssetsManifest is populated during client generateBundle,
       // but writeAssetsManifest is called after all closeBundle hooks complete.
@@ -743,6 +779,7 @@ function createRouterDiscoveryPlugin(
           }
 
           await discoverRouters(rscEnv);
+          writeRouteTypesFiles();
 
           // Populate the route map in the RSC env
           if (mergedRouteManifest && serverMod?.setCachedManifest) {
@@ -768,6 +805,20 @@ function createRouterDiscoveryPlugin(
       discoveryDone = new Promise<void>((resolve) => {
         setTimeout(() => discover().then(resolve, resolve), 0);
       });
+
+      // Watch url module files for changes and regenerate route types.
+      if (opts?.staticRouteTypesGeneration !== false) {
+        server.watcher.on("change", (filePath) => {
+          if (filePath.endsWith(".gen.ts")) return;
+          if (!filePath.endsWith(".ts") && !filePath.endsWith(".tsx")) return;
+          try {
+            writePerModuleRouteTypesForFile(filePath);
+            writeCombinedRouteTypes(projectRoot, entryPath);
+          } catch {
+            // Ignore read errors for deleted/moved files
+          }
+        });
+      }
     },
 
     // Build mode: create a temporary Vite dev server to access the RSC
@@ -820,6 +871,7 @@ function createRouterDiscoveryPlugin(
         }
 
         await discoverRouters(rscEnv);
+        writeRouteTypesFiles();
       } catch (err: any) {
         // Clean up before re-throwing so the temp server doesn't leak
         delete (globalThis as any).__rscRouterDiscoveryActive;
@@ -1427,7 +1479,6 @@ export async function rango(
   options: RangoOptions
 ): Promise<PluginOption[]> {
   const preset = options.preset ?? "node";
-  const enableExposeActionId = options.exposeActionId ?? true;
   const showBanner = options.banner ?? true;
 
   const plugins: PluginOption[] = [];
@@ -1505,14 +1556,18 @@ export async function rango(
                 dedupe: ["react", "react-dom"],
               },
               // Pre-bundle SSR entry and React for proper module linking with childEnvironments
-              // Exclude rsc-router modules to ensure same Context instance
+              // All deps must be listed to avoid late discovery triggering ERR_OUTDATED_OPTIMIZED_DEP
               optimizeDeps: {
                 entries: [finalEntries.ssr],
                 include: [
                   "react",
+                  "react-dom",
                   "react-dom/server.edge",
+                  "react-dom/static.edge",
                   "react/jsx-runtime",
+                  "react/jsx-dev-runtime",
                   "rsc-html-stream/server",
+                  "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge",
                 ],
                 exclude: excludeDeps,
                 esbuildOptions: sharedEsbuildOptions,
@@ -1706,8 +1761,16 @@ export async function rango(
                 ssr: {
                   optimizeDeps: {
                     entries: [VIRTUAL_IDS.ssr],
-                    // Pre-bundle React for SSR to ensure single instance
-                    include: ["react", "react-dom/server.edge", "react/jsx-runtime"],
+                    // Pre-bundle all SSR deps to prevent late discovery triggering ERR_OUTDATED_OPTIMIZED_DEP
+                    include: [
+                      "react",
+                      "react-dom",
+                      "react-dom/server.edge",
+                      "react-dom/static.edge",
+                      "react/jsx-runtime",
+                      "react/jsx-dev-runtime",
+                      "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge",
+                    ],
                     exclude: excludeDeps,
                     esbuildOptions: sharedEsbuildOptions,
                   },
@@ -1761,9 +1824,7 @@ export async function rango(
     }
   }
 
-  if (enableExposeActionId) {
-    plugins.push(exposeActionId());
-  }
+  plugins.push(exposeActionId());
 
   // Always add exposeLoaderId for GET-based loader fetching with useFetchLoader
   plugins.push(exposeLoaderId());
@@ -1800,6 +1861,7 @@ export async function rango(
   if (discoveryEntryPath) {
     plugins.push(createRouterDiscoveryPlugin(discoveryEntryPath, {
       enableBuildPrerender: prerenderEnabled,
+      staticRouteTypesGeneration: options.staticRouteTypesGeneration,
     }));
   }
 

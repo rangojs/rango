@@ -23,12 +23,12 @@
  * ```
  */
 
-import type { PrefixRoutePatterns } from "./href.js";
+import type { PrefixRoutePatterns } from "./reverse.js";
 
 /**
  * Route map builder interface
  *
- * Accumulates route types through the builder chain for type-safe href.
+ * Accumulates route types through the builder chain for type-safe reverse.
  */
 export interface RouteMapBuilder<TRoutes extends Record<string, string> = {}> {
   /**
@@ -126,9 +126,9 @@ let cachedPrecomputedEntries: Array<{
 }> | null = null;
 
 /**
- * Register the route map globally for href to use at runtime
+ * Register the route map globally for reverse to use at runtime
  *
- * Call this after building your route map to make it available to href.
+ * Call this after building your route map to make it available to reverse.
  * Routes are merged with any existing registered routes.
  *
  * @param map - The route map to register
@@ -150,7 +150,7 @@ export function registerRouteMap(map: Record<string, string>): void {
 /**
  * Get the globally registered route map
  *
- * Used internally by href to resolve route names to URLs at runtime.
+ * Used internally by reverse to resolve route names to URLs at runtime.
  * Returns the cached manifest if available (complete with lazy includes),
  * otherwise returns the runtime-accumulated route map.
  *

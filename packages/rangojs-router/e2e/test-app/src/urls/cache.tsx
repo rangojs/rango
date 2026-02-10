@@ -1,4 +1,4 @@
-import { urls, redirect, notFound } from "@rangojs/router";
+import { urls } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import {
   NonCachedTestLoader,
@@ -11,6 +11,22 @@ import {
   UseLoaderInterceptLayout,
   ProactiveCacheLayout,
 } from "../components/layouts/index.js";
+import {
+  CacheNonCachedLoaderHandler,
+  CacheCachedLoaderHandler,
+  CacheInterceptIndexHandler,
+  CacheInterceptDetailHandler,
+  CacheUseLoaderIndexHandler,
+  CacheUseLoaderDetailHandler,
+  ProactiveCacheIndexHandler,
+  ProactiveCacheItemAHandler,
+  ProactiveCacheItemBHandler,
+  CacheStatusSuccessHandler,
+  CacheStatusNotFoundHandler,
+  CacheStatusServerErrorHandler,
+  CacheStatusRedirectHandler,
+  CacheStatusRedirectTargetHandler,
+} from "./cache.handlers.js";
 
 /**
  * Cache test routes URL patterns
@@ -20,20 +36,7 @@ export const cachePatterns = urls(({ path, layout, intercept, loader, when, cach
   // Route with NON-cached loader (default behavior)
   path(
     "/cache-test/non-cached-loader",
-    async (ctx) => {
-      const data = await ctx.use(NonCachedTestLoader);
-      return (
-        <div data-testid="non-cached-loader-page">
-          <Link to="/" data-testid="back-link">
-            ← Back to Home
-          </Link>
-          <h1 data-testid="page-title">Non-Cached Loader Test</h1>
-          <p data-testid="loader-count">Loader count: {data.count}</p>
-          <p data-testid="loader-message">{data.message}</p>
-          <p data-testid="loaded-at">Loaded: {data.loadedAt}</p>
-        </div>
-      );
-    },
+    CacheNonCachedLoaderHandler,
     { name: "cacheTest.nonCachedLoader" },
     () => [loader(NonCachedTestLoader)]
   ),
@@ -41,20 +44,7 @@ export const cachePatterns = urls(({ path, layout, intercept, loader, when, cach
   // Route with CACHED loader (opt-in via cache())
   path(
     "/cache-test/cached-loader",
-    async (ctx) => {
-      const data = await ctx.use(CachedTestLoader);
-      return (
-        <div data-testid="cached-loader-page">
-          <Link to="/" data-testid="back-link">
-            ← Back to Home
-          </Link>
-          <h1 data-testid="page-title">Cached Loader Test</h1>
-          <p data-testid="loader-count">Loader count: {data.count}</p>
-          <p data-testid="loader-message">{data.message}</p>
-          <p data-testid="loaded-at">Loaded: {data.loadedAt}</p>
-        </div>
-      );
-    },
+    CacheCachedLoaderHandler,
     { name: "cacheTest.cachedLoader" },
     () => [
       loader(CachedTestLoader, () => [
@@ -65,47 +55,13 @@ export const cachePatterns = urls(({ path, layout, intercept, loader, when, cach
 
   // Cache intercept test routes
   layout(CacheInterceptLayout, () => [
-    // Index page for intercept cache testing
-    path(
-      "/cache-test/intercept",
-      () => (
-        <div data-testid="cache-intercept-index">
-          <h1>Cache Intercept Test</h1>
-          <p>Click a link to test intercept caching:</p>
-          <ul>
-            <li>
-              <Link to="/cache-test/intercept/item-a" data-testid="cache-intercept-link-a">
-                Item A
-              </Link>
-            </li>
-            <li>
-              <Link to="/cache-test/intercept/item-b" data-testid="cache-intercept-link-b">
-                Item B
-              </Link>
-            </li>
-          </ul>
-        </div>
-      ),
-      { name: "cacheTest.interceptIndex" }
-    ),
+    path("/cache-test/intercept", CacheInterceptIndexHandler, { name: "cacheTest.interceptIndex" }),
 
     // Detail route wrapped in cache - for direct navigation
     cache({ ttl: 600 }, () => [
       path(
         "/cache-test/intercept/:itemId",
-        async (ctx) => {
-          const data = await ctx.use(InterceptCacheTestLoader);
-          return (
-            <div data-testid="cache-intercept-detail">
-              <Link to="/cache-test/intercept" data-testid="back-to-intercept-index">
-                Back
-              </Link>
-              <h1>Item Detail: {ctx.params.itemId}</h1>
-              <p>This is the full detail page (direct navigation)</p>
-              <CacheTestModal data={data} testId="detail-loader-data" />
-            </div>
-          );
-        },
+        CacheInterceptDetailHandler,
         { name: "cacheTest.interceptDetail" },
         () => [loader(InterceptCacheTestLoader)]
       ),
@@ -133,43 +89,11 @@ export const cachePatterns = urls(({ path, layout, intercept, loader, when, cach
 
   // useLoader intercept test routes
   layout(UseLoaderInterceptLayout, () => [
-    // Index page for useLoader intercept testing
-    path(
-      "/cache-test/useloader",
-      () => (
-        <div data-testid="useloader-intercept-index">
-          <h1>useLoader Intercept Test</h1>
-          <p>Click a link to test useLoader with loader() registration:</p>
-          <ul>
-            <li>
-              <Link to="/cache-test/useloader/item-a" data-testid="useloader-link-a">
-                Item A
-              </Link>
-            </li>
-            <li>
-              <Link to="/cache-test/useloader/item-b" data-testid="useloader-link-b">
-                Item B
-              </Link>
-            </li>
-          </ul>
-        </div>
-      ),
-      { name: "cacheTest.useLoaderIndex" }
-    ),
+    path("/cache-test/useloader", CacheUseLoaderIndexHandler, { name: "cacheTest.useLoaderIndex" }),
 
-    // Detail route (non-cached) - for direct navigation
     path(
       "/cache-test/useloader/:itemId",
-      (ctx) => (
-        <div data-testid="useloader-intercept-detail">
-          <Link to="/cache-test/useloader" data-testid="back-to-useloader-index">
-            Back
-          </Link>
-          <h1>Item Detail: {ctx.params.itemId}</h1>
-          <p>This is the full detail page (direct navigation)</p>
-          <UseLoaderModal loader={InterceptCacheTestLoader} testId="detail-useloader-data" />
-        </div>
-      ),
+      CacheUseLoaderDetailHandler,
       { name: "cacheTest.useLoaderDetail" },
       () => [loader(InterceptCacheTestLoader)]
     ),
@@ -194,44 +118,9 @@ export const cachePatterns = urls(({ path, layout, intercept, loader, when, cach
   // Proactive caching test routes - layout is INSIDE cache boundary
   cache({ ttl: 600 }, () => [
     layout(ProactiveCacheLayout, () => [
-      path(
-        "/proactive-cache",
-        () => (
-          <div data-testid="proactive-index-page">
-            <h3>Proactive Cache Index</h3>
-            <p data-testid="proactive-index-rendered">
-              Index rendered at: {new Date().toISOString()}
-            </p>
-          </div>
-        ),
-        { name: "proactiveCache.index" }
-      ),
-
-      path(
-        "/proactive-cache/item-a",
-        () => (
-          <div data-testid="proactive-item-a-page">
-            <h3>Item A</h3>
-            <p data-testid="proactive-item-a-rendered">
-              Item A rendered at: {new Date().toISOString()}
-            </p>
-          </div>
-        ),
-        { name: "proactiveCache.itemA" }
-      ),
-
-      path(
-        "/proactive-cache/item-b",
-        () => (
-          <div data-testid="proactive-item-b-page">
-            <h3>Item B</h3>
-            <p data-testid="proactive-item-b-rendered">
-              Item B rendered at: {new Date().toISOString()}
-            </p>
-          </div>
-        ),
-        { name: "proactiveCache.itemB" }
-      ),
+      path("/proactive-cache", ProactiveCacheIndexHandler, { name: "proactiveCache.index" }),
+      path("/proactive-cache/item-a", ProactiveCacheItemAHandler, { name: "proactiveCache.itemA" }),
+      path("/proactive-cache/item-b", ProactiveCacheItemBHandler, { name: "proactiveCache.itemB" }),
     ]),
   ]),
 
@@ -246,61 +135,10 @@ export const cachePatterns = urls(({ path, layout, intercept, loader, when, cach
       </div>
     )),
 
-    // Success route (200) - should be cached
-    path(
-      "/cache-status/success",
-      () => (
-        <div data-testid="cache-status-success-page">
-          <Link to="/" data-testid="back-link">← Back to Home</Link>
-          <h1 data-testid="cache-status-success-title">Cache Status: Success (200)</h1>
-          <p data-testid="cache-status-success-rendered">
-            Rendered at: {new Date().toISOString()}
-          </p>
-        </div>
-      ),
-      { name: "cacheStatus.success" }
-    ),
-
-    // Not Found route (404) - should NOT be cached
-    path(
-      "/cache-status/not-found",
-      () => {
-        notFound("This resource does not exist");
-      },
-      { name: "cacheStatus.notFound" }
-    ),
-
-    // Server Error route (500) - should NOT be cached
-    path(
-      "/cache-status/server-error",
-      () => {
-        throw new Error("Intentional server error for cache status testing");
-      },
-      { name: "cacheStatus.serverError" }
-    ),
-
-    // Redirect route (308) - should NOT be cached
-    path(
-      "/cache-status/redirect",
-      () => {
-        return redirect("/cache-status/redirect-target", 308);
-      },
-      { name: "cacheStatus.redirect" }
-    ),
-
-    // Redirect target route (200) - should be cached
-    path(
-      "/cache-status/redirect-target",
-      () => (
-        <div data-testid="cache-status-redirect-target-page">
-          <Link to="/" data-testid="back-link">← Back to Home</Link>
-          <h1 data-testid="cache-status-redirect-target-title">Cache Status: Redirect Target (200)</h1>
-          <p data-testid="cache-status-redirect-target-rendered">
-            Rendered at: {new Date().toISOString()}
-          </p>
-        </div>
-      ),
-      { name: "cacheStatus.redirectTarget" }
-    ),
+    path("/cache-status/success", CacheStatusSuccessHandler, { name: "cacheStatus.success" }),
+    path("/cache-status/not-found", CacheStatusNotFoundHandler, { name: "cacheStatus.notFound" }),
+    path("/cache-status/server-error", CacheStatusServerErrorHandler, { name: "cacheStatus.serverError" }),
+    path("/cache-status/redirect", CacheStatusRedirectHandler, { name: "cacheStatus.redirect" }),
+    path("/cache-status/redirect-target", CacheStatusRedirectTargetHandler, { name: "cacheStatus.redirectTarget" }),
   ]),
 ]);

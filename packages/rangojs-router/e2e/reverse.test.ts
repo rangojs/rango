@@ -3,18 +3,18 @@ import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError, testId } from "./helper";
 
 /**
- * Tests for scoped href resolution
- * - Server-side ctx.href in route handlers
+ * Tests for scoped reverse resolution
+ * - Server-side ctx.reverse in route handlers
  * - Client-side href() + useMount()
  * - Local, absolute, and path-based resolution
  */
-test.describe("Scoped Href Resolution", () => {
+test.describe("Scoped Reverse Resolution", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
   });
 
-  test.describe("Server-side ctx.href", () => {
+  test.describe("Server-side ctx.reverse", () => {
     test("should resolve local route name to correct path", async ({ page }) => {
       using _ = expectNoPageError(page);
 
@@ -162,7 +162,7 @@ test.describe("Scoped Href Resolution", () => {
 
   });
 
-  test.describe("Link navigation with href", () => {
+  test.describe("Link navigation with reverse", () => {
     test("should navigate using server-rendered href links", async ({
       page,
     }) => {
@@ -225,7 +225,7 @@ test.describe("Scoped Href Resolution", () => {
   });
 });
 
-test.describe("Scoped Href Resolution (production)", () => {
+test.describe("Scoped Reverse Resolution (production)", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "build",

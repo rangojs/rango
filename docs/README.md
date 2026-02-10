@@ -494,19 +494,19 @@ declare global {
 
 // Export for use throughout app
 export { router };
-export const href = router.href;
+export const reverse = router.reverse;
 ```
 
-### Using router.href (Route Names)
+### Using router.reverse (Route Names)
 
 Generate URLs from route names with type-safe params:
 
 ```typescript
-import { href } from "./router";
+import { reverse } from "./router";
 
 // Routes without params
-href("shop.index");  // "/shop"
-href("shop.cart");   // "/shop/cart"
+reverse("shop.index");  // "/shop"
+reverse("shop.cart");   // "/shop/cart"
 
 // Routes with params - TypeScript enforces required params
 href("shop.products.detail", { slug: "my-product" });  // "/shop/product/my-product"
