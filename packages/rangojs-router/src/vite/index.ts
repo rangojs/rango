@@ -111,13 +111,6 @@ export interface RscPluginOptions {
  */
 interface RangoBaseOptions {
   /**
-   * Expose $$id property on server action functions.
-   * Required for action-based revalidation to work.
-   * @default true
-   */
-  exposeActionId?: boolean;
-
-  /**
    * Show startup banner. Set to false to disable.
    * @default true
    */
@@ -134,11 +127,13 @@ interface RangoBaseOptions {
   routeTypes?: string | false;
 
   /**
-   * Generate per-module .gen.ts route type files by statically parsing url modules.
-   * Set to false to disable auto-generation (run `npx rango extract-names` manually).
+   * Generate static route type files (.gen.ts) by parsing url modules at startup.
+   * Creates per-module route maps and a combined named-routes.gen.ts for type-safe
+   * Handler<"name", routes> and href() without executing router code.
+   * Set to `false` to disable (run `npx rango extract-names` manually instead).
    * @default true
    */
-  perModuleRouteTypes?: boolean;
+  staticRouteTypesGeneration?: boolean;
 }
 
 /**
@@ -430,7 +425,7 @@ function buildRouteToStaticPrefix(
  */
 function createRouterDiscoveryPlugin(
   entryPath: string,
-  opts?: { enableBuildPrerender?: boolean; routeTypes?: string | false; perModuleRouteTypes?: boolean },
+  opts?: { enableBuildPrerender?: boolean; routeTypes?: string | false; staticRouteTypesGeneration?: boolean },
 ): Plugin {
   let projectRoot = "";
   let isBuildMode = false;
@@ -741,7 +736,7 @@ function createRouterDiscoveryPlugin(
       userResolveAlias = config.resolve.alias;
       // Generate per-module route types from static source parsing.
       // Runs before the dev server starts so .gen.ts files exist immediately for IDE.
-      if (opts?.perModuleRouteTypes !== false) {
+      if (opts?.staticRouteTypesGeneration !== false) {
         writePerModuleRouteTypes(projectRoot, entryPath);
         writeCombinedRouteTypes(projectRoot, entryPath);
       }
@@ -822,7 +817,7 @@ function createRouterDiscoveryPlugin(
       });
 
       // Watch url module files for changes and regenerate route types.
-      if (opts?.perModuleRouteTypes !== false) {
+      if (opts?.staticRouteTypesGeneration !== false) {
         server.watcher.on("change", (filePath) => {
           if (filePath.endsWith(".gen.ts")) return;
           if (!filePath.endsWith(".ts") && !filePath.endsWith(".tsx")) return;
@@ -1494,7 +1489,6 @@ export async function rango(
   options: RangoOptions
 ): Promise<PluginOption[]> {
   const preset = options.preset ?? "node";
-  const enableExposeActionId = options.exposeActionId ?? true;
   const showBanner = options.banner ?? true;
 
   const plugins: PluginOption[] = [];
@@ -1828,9 +1822,7 @@ export async function rango(
     }
   }
 
-  if (enableExposeActionId) {
-    plugins.push(exposeActionId());
-  }
+  plugins.push(exposeActionId());
 
   // Always add exposeLoaderId for GET-based loader fetching with useFetchLoader
   plugins.push(exposeLoaderId());
@@ -1868,7 +1860,7 @@ export async function rango(
     plugins.push(createRouterDiscoveryPlugin(discoveryEntryPath, {
       enableBuildPrerender: prerenderEnabled,
       routeTypes: options.routeTypes,
-      perModuleRouteTypes: options.perModuleRouteTypes,
+      staticRouteTypesGeneration: options.staticRouteTypesGeneration,
     }));
   }
 
