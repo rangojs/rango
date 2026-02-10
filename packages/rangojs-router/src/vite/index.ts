@@ -117,16 +117,6 @@ interface RangoBaseOptions {
   banner?: boolean;
 
   /**
-   * Path for the generated route-params type file.
-   * Contains a `HandlerFor<"routeName">` type alias that maps route names
-   * to their URL patterns, avoiding circular type references.
-   *
-   * Set to `false` to disable generation.
-   * @default "./src/route-params.gen.ts"
-   */
-  routeTypes?: string | false;
-
-  /**
    * Generate static route type files (.gen.ts) by parsing url modules at startup.
    * Creates per-module route maps and a combined named-routes.gen.ts for type-safe
    * Handler<"name", routes> and href() without executing router code.
@@ -425,7 +415,7 @@ function buildRouteToStaticPrefix(
  */
 function createRouterDiscoveryPlugin(
   entryPath: string,
-  opts?: { enableBuildPrerender?: boolean; routeTypes?: string | false; staticRouteTypesGeneration?: boolean },
+  opts?: { enableBuildPrerender?: boolean; staticRouteTypesGeneration?: boolean },
 ): Plugin {
   let projectRoot = "";
   let isBuildMode = false;
@@ -1859,7 +1849,6 @@ export async function rango(
   if (discoveryEntryPath) {
     plugins.push(createRouterDiscoveryPlugin(discoveryEntryPath, {
       enableBuildPrerender: prerenderEnabled,
-      routeTypes: options.routeTypes,
       staticRouteTypesGeneration: options.staticRouteTypesGeneration,
     }));
   }
