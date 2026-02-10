@@ -1556,14 +1556,18 @@ export async function rango(
                 dedupe: ["react", "react-dom"],
               },
               // Pre-bundle SSR entry and React for proper module linking with childEnvironments
-              // Exclude rsc-router modules to ensure same Context instance
+              // All deps must be listed to avoid late discovery triggering ERR_OUTDATED_OPTIMIZED_DEP
               optimizeDeps: {
                 entries: [finalEntries.ssr],
                 include: [
                   "react",
+                  "react-dom",
                   "react-dom/server.edge",
+                  "react-dom/static.edge",
                   "react/jsx-runtime",
+                  "react/jsx-dev-runtime",
                   "rsc-html-stream/server",
+                  "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge",
                 ],
                 exclude: excludeDeps,
                 esbuildOptions: sharedEsbuildOptions,
@@ -1757,8 +1761,16 @@ export async function rango(
                 ssr: {
                   optimizeDeps: {
                     entries: [VIRTUAL_IDS.ssr],
-                    // Pre-bundle React for SSR to ensure single instance
-                    include: ["react", "react-dom/server.edge", "react/jsx-runtime"],
+                    // Pre-bundle all SSR deps to prevent late discovery triggering ERR_OUTDATED_OPTIMIZED_DEP
+                    include: [
+                      "react",
+                      "react-dom",
+                      "react-dom/server.edge",
+                      "react-dom/static.edge",
+                      "react/jsx-runtime",
+                      "react/jsx-dev-runtime",
+                      "@vitejs/plugin-rsc/vendor/react-server-dom/client.edge",
+                    ],
                     exclude: excludeDeps,
                     esbuildOptions: sharedEsbuildOptions,
                   },

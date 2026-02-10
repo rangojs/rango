@@ -35,6 +35,9 @@ export default defineConfig({
       name: "dev-warmup",
       testMatch: "**/dev-warmup.setup.ts",
       use: { ...browserConfig, baseURL: `http://localhost:${DEV_SERVER_PORT}` },
+      // Must run after build: both write to node_modules/.vite/deps_ssr and the
+      // build overwrites the dev server's optimizer cache, causing ERR_OUTDATED_OPTIMIZED_DEP.
+      dependencies: ["build"],
     },
     {
       name: "dev",
