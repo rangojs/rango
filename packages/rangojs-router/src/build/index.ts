@@ -26,3 +26,9 @@ export {
   type TrieNode,
   type TrieLeaf,
 } from "./route-trie.js";
+
+export {
+  writePerModuleRouteTypes,
+  extractRoutesFromSource,
+  generatePerModuleTypesSource,
+} from "./generate-route-types.js";

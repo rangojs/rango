@@ -5,7 +5,7 @@ import { resolve, join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
-import { generateRouteTypesSource, extractRoutesFromSource, generatePerModuleTypesSource } from "../build/generate-route-types.ts";
+import { generateRouteTypesSource, writePerModuleRouteTypes, writePerModuleRouteTypesForFile } from "../build/generate-route-types.ts";
 import { exposeActionId } from "./expose-action-id.ts";
 import { exposeLoaderId } from "./expose-loader-id.ts";
 import { exposeHandleId } from "./expose-handle-id.ts";
@@ -133,6 +133,12 @@ interface RangoBaseOptions {
    */
   routeTypes?: string | false;
 
+  /**
+   * Generate per-module .gen.ts route type files by statically parsing url modules.
+   * Set to false to disable auto-generation (run `npx rango extract-names` manually).
+   * @default true
+   */
+  perModuleRouteTypes?: boolean;
 }
 
 /**
@@ -411,71 +417,6 @@ function buildRouteToStaticPrefix(
 }
 
 /**
- * Recursively find .ts/.tsx files under a directory, skipping node_modules
- * and .gen. files.
- */
-function findTsFiles(dir: string): string[] {
-  const results: string[] = [];
-  let entries;
-  try {
-    entries = readdirSync(dir, { withFileTypes: true });
-  } catch (err) {
-    console.warn(`[rsc-router] Failed to scan directory ${dir}: ${(err as Error).message}`);
-    return results;
-  }
-  for (const entry of entries) {
-    const fullPath = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
-      results.push(...findTsFiles(fullPath));
-    } else if (
-      (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) &&
-      !entry.name.includes(".gen.")
-    ) {
-      results.push(fullPath);
-    }
-  }
-  return results;
-}
-
-/**
- * Generate per-module route type files by statically parsing url module source.
- * Scans for files containing `urls(` and writes a sibling `.gen.ts` with the
- * extracted route name/pattern pairs. Only writes when content has changed.
- */
-function writePerModuleRouteTypes(root: string, entry: string): void {
-  const scanDir = dirname(resolve(root, entry));
-  const files = findTsFiles(scanDir);
-  for (const filePath of files) {
-    writePerModuleRouteTypesForFile(filePath);
-  }
-}
-
-/**
- * Generate per-module route types for a single url module file.
- * No-ops if the file doesn't contain `urls(` or has no named routes.
- */
-function writePerModuleRouteTypesForFile(filePath: string): void {
-  try {
-    const source = readFileSync(filePath, "utf-8");
-    if (!source.includes("urls(")) return;
-
-    const routes = extractRoutesFromSource(source);
-    if (routes.length === 0) return;
-
-    const genPath = filePath.replace(/\.(tsx?)$/, ".gen.ts");
-    const genSource = generatePerModuleTypesSource(routes);
-    const existing = existsSync(genPath) ? readFileSync(genPath, "utf-8") : null;
-    if (existing !== genSource) {
-      writeFileSync(genPath, genSource);
-      console.log(`[rsc-router] Generated route types -> ${genPath}`);
-    }
-  } catch (err) {
-    console.warn(`[rsc-router] Failed to generate route types for ${filePath}: ${(err as Error).message}`);
-  }
-}
-
-/**
  * Plugin that discovers router instances at dev/build time via the RSC environment.
  *
  * Uses `server.environments.rsc.runner.import()` to load the user's router file
@@ -489,7 +430,7 @@ function writePerModuleRouteTypesForFile(filePath: string): void {
  */
 function createRouterDiscoveryPlugin(
   entryPath: string,
-  opts?: { enableBuildPrerender?: boolean; routeTypes?: string | false },
+  opts?: { enableBuildPrerender?: boolean; routeTypes?: string | false; perModuleRouteTypes?: boolean },
 ): Plugin {
   let projectRoot = "";
   let isBuildMode = false;
@@ -800,7 +741,9 @@ function createRouterDiscoveryPlugin(
       userResolveAlias = config.resolve.alias;
       // Generate per-module route types from static source parsing.
       // Runs before the dev server starts so .gen.ts files exist immediately for IDE.
-      writePerModuleRouteTypes(projectRoot, entryPath);
+      if (opts?.perModuleRouteTypes !== false) {
+        writePerModuleRouteTypes(projectRoot, entryPath);
+      }
       // Capture @vitejs/plugin-rsc manager for early manifest writes during prerender.
       // The manager's buildAssetsManifest is populated during client generateBundle,
       // but writeAssetsManifest is called after all closeBundle hooks complete.
@@ -878,15 +821,17 @@ function createRouterDiscoveryPlugin(
       });
 
       // Watch url module files for changes and regenerate per-module route types.
-      server.watcher.on("change", (filePath) => {
-        if (filePath.endsWith(".gen.ts")) return;
-        if (!filePath.endsWith(".ts") && !filePath.endsWith(".tsx")) return;
-        try {
-          writePerModuleRouteTypesForFile(filePath);
-        } catch {
-          // Ignore read errors for deleted/moved files
-        }
-      });
+      if (opts?.perModuleRouteTypes !== false) {
+        server.watcher.on("change", (filePath) => {
+          if (filePath.endsWith(".gen.ts")) return;
+          if (!filePath.endsWith(".ts") && !filePath.endsWith(".tsx")) return;
+          try {
+            writePerModuleRouteTypesForFile(filePath);
+          } catch {
+            // Ignore read errors for deleted/moved files
+          }
+        });
+      }
     },
 
     // Build mode: create a temporary Vite dev server to access the RSC
@@ -1921,6 +1866,7 @@ export async function rango(
     plugins.push(createRouterDiscoveryPlugin(discoveryEntryPath, {
       enableBuildPrerender: prerenderEnabled,
       routeTypes: options.routeTypes,
+      perModuleRouteTypes: options.perModuleRouteTypes,
     }));
   }
 

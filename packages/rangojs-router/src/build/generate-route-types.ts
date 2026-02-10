@@ -1,3 +1,6 @@
+import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
+import { join, dirname, resolve } from "node:path";
+
 /**
  * Extract route definitions from source code by statically parsing path() calls.
  * No code execution needed -- works on raw source text.
@@ -270,4 +273,69 @@ ${interfaceBody}
   }
 }
 `;
+}
+
+/**
+ * Recursively find .ts/.tsx files under a directory, skipping node_modules
+ * and .gen. files.
+ */
+export function findTsFiles(dir: string): string[] {
+  const results: string[] = [];
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    console.warn(`[rsc-router] Failed to scan directory ${dir}: ${(err as Error).message}`);
+    return results;
+  }
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+      results.push(...findTsFiles(fullPath));
+    } else if (
+      (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) &&
+      !entry.name.includes(".gen.")
+    ) {
+      results.push(fullPath);
+    }
+  }
+  return results;
+}
+
+/**
+ * Generate per-module route type files by statically parsing url module source.
+ * Scans for files containing `urls(` and writes a sibling `.gen.ts` with the
+ * extracted route name/pattern pairs. Only writes when content has changed.
+ */
+export function writePerModuleRouteTypes(root: string, entry: string): void {
+  const scanDir = dirname(resolve(root, entry));
+  const files = findTsFiles(scanDir);
+  for (const filePath of files) {
+    writePerModuleRouteTypesForFile(filePath);
+  }
+}
+
+/**
+ * Generate per-module route types for a single url module file.
+ * No-ops if the file doesn't contain `urls(` or has no named routes.
+ */
+export function writePerModuleRouteTypesForFile(filePath: string): void {
+  try {
+    const source = readFileSync(filePath, "utf-8");
+    if (!source.includes("urls(")) return;
+
+    const routes = extractRoutesFromSource(source);
+    if (routes.length === 0) return;
+
+    const genPath = filePath.replace(/\.(tsx?)$/, ".gen.ts");
+    const genSource = generatePerModuleTypesSource(routes);
+    const existing = existsSync(genPath) ? readFileSync(genPath, "utf-8") : null;
+    if (existing !== genSource) {
+      writeFileSync(genPath, genSource);
+      console.log(`[rsc-router] Generated route types -> ${genPath}`);
+    }
+  } catch (err) {
+    console.warn(`[rsc-router] Failed to generate route types for ${filePath}: ${(err as Error).message}`);
+  }
 }
