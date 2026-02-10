@@ -2,14 +2,10 @@
 export type routes = {
   absolute: "/absolute";
   child: "/child";
-  child: "/child";
-  child: "/child";
   deep: "/deep/nested";
   handlePassthrough: "/handle-passthrough";
   handlePassthroughAsync: "/handle-passthrough-async";
   hydrationTest: "/hydration-test";
-  index: "/";
-  index: "/";
   index: "/";
   nested: "/nested";
   nestedChild: "/nested/child";

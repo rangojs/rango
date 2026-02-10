@@ -505,15 +505,20 @@ export type ExtractResponses<T extends readonly any[]> =
 export type PathFn<TEnv> = <
   const TPattern extends string,
   const TName extends string = UnnamedRoute,
+  TParams = ExtractParams<TPattern>,
 >(
   pattern: TPattern,
   handler:
     | ReactNode
-    | ((ctx: HandlerContext<ExtractParams<TPattern>, TEnv>) => ReactNode | Promise<ReactNode> | Response | Promise<Response>)
-    | PrerenderHandlerDefinition<ExtractParams<TPattern>>,
+    | ((ctx: HandlerContext<TParams, TEnv>) => ReactNode | Promise<ReactNode> | Response | Promise<Response>)
+    | PrerenderHandlerDefinition<TParams>,
   optionsOrUse?: PathOptions<TName> | (() => RouteUseItem[]),
   use?: () => RouteUseItem[],
-) => TypedRouteItem<TName, TPattern>;
+) => ExtractParams<TPattern> extends TParams
+  ? TParams extends ExtractParams<TPattern>
+    ? TypedRouteItem<TName, TPattern>
+    : { __error: `Handler params do not match pattern "${TPattern}"` }
+  : { __error: `Handler params do not match pattern "${TPattern}"` };
 
 /**
  * Path function for response routes that must return Response (image, stream, any).

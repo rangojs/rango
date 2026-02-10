@@ -35,9 +35,15 @@ export function generatePerModuleTypesSource(
     return true;
   });
 
-  const sorted = [...valid].sort((a, b) => a.name.localeCompare(b.name));
+  // Deduplicate by name (last definition wins for same name)
+  const deduped = new Map<string, string>();
+  for (const { name, pattern } of valid) {
+    deduped.set(name, pattern);
+  }
+  const sorted = [...deduped.entries()]
+    .sort(([a], [b]) => a.localeCompare(b));
   const body = sorted
-    .map(({ name, pattern }) => {
+    .map(([name, pattern]) => {
       // Quote names that aren't valid bare identifiers (dots, dashes, etc.)
       const key = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(name) ? name : `"${name}"`;
       return `  ${key}: "${pattern}";`;

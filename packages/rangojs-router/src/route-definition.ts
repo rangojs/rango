@@ -215,7 +215,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    */
   route: <K extends keyof ResolvedRouteMap<T> & string>(
     name: K,
-    handler: Handler<ExtractRouteParams<T, K & string>, TEnv>,
+    handler: Handler<ExtractRouteParams<T, K & string>, {}, TEnv>,
     use?: () => RouteUseItem[]
   ) => RouteItem;
   /**
@@ -295,7 +295,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
   intercept: <K extends keyof ResolvedRouteMap<T> & string>(
     slotName: `@${string}`,
     routeName: K,
-    handler: ReactNode | Handler<ExtractRouteParams<T, K>, TEnv>,
+    handler: ReactNode | Handler<ExtractRouteParams<T, K>, {}, TEnv>,
     use?: () => InterceptUseItem[]
   ) => InterceptItem;
   /**

@@ -306,8 +306,8 @@ export type ScopedRouteMap<
 };
 
 export type Handler<
-  T extends string,
-  TRouteMap extends {},
+  T = {},
+  TRouteMap extends {} = {},
   TEnv = DefaultEnv,
 > = (
   ctx: HandlerContext<

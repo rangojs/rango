@@ -2,5 +2,4 @@
 export type routes = {
   detail: "/:id";
   index: "/";
-  index: "/";
 };
