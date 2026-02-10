@@ -23,11 +23,12 @@ test.describe.serial("route-types-hmr", () => {
 
   const blogUrlsPath = path.resolve("./e2e/test-app/src/urls/blog.tsx");
   const genFilePath = path.resolve(
-    "./e2e/test-app/src/named-routes.router_0.gen.ts"
+    "./e2e/test-app/src/named-routes.gen.ts"
   );
   const handlersPath = path.resolve(
     "./e2e/test-app/src/urls/blog.handlers.tsx"
   );
+  const blogGenPath = path.resolve("./e2e/test-app/src/urls/blog.gen.ts");
 
   let originalBlogContent: string;
 
@@ -102,6 +103,40 @@ test.describe.serial("route-types-hmr", () => {
 
     // mtime should not have changed since route patterns are identical
     const statAfter = await fs.stat(genFilePath);
+    expect(statAfter.mtimeMs).toBe(statBefore.mtimeMs);
+
+    // Restore handler file
+    await fs.writeFile(handlersPath, handlerContent);
+    await new Promise((r) => setTimeout(r, 500));
+  });
+
+  test("should update per-module blog.gen.ts when a route is added", async () => {
+    const before = await fs.readFile(blogGenPath, "utf-8");
+    expect(before).not.toContain("comments:");
+
+    const modified = originalBlogContent.replace(
+      'path("/:postId", BlogPostHandler, { name: "post" }),',
+      `path("/:postId", BlogPostHandler, { name: "post" }),
+    path("/:postId/comments", BlogPostHandler, { name: "comments" }),`
+    );
+    await fs.writeFile(blogUrlsPath, modified);
+
+    await expect(async () => {
+      const after = await fs.readFile(blogGenPath, "utf-8");
+      expect(after).toContain('comments: "/:postId/comments"');
+    }).toPass({ timeout: 10000 });
+  });
+
+  test("should not overwrite per-module gen file when routes unchanged", async () => {
+    const statBefore = await fs.stat(blogGenPath);
+
+    // Touch the handler file (not the url module)
+    const handlerContent = await fs.readFile(handlersPath, "utf-8");
+    await fs.writeFile(handlersPath, handlerContent + "\n// touch");
+
+    await new Promise((r) => setTimeout(r, 2000));
+
+    const statAfter = await fs.stat(blogGenPath);
     expect(statAfter.mtimeMs).toBe(statBefore.mtimeMs);
 
     // Restore handler file

@@ -54,7 +54,7 @@ declare global {
 
     // eslint-disable-next-line @typescript-eslint/no-empty-interface
     interface GeneratedRouteMap {
-      // Empty by default - populated by generated named-routes.*.gen.ts files
+      // Empty by default - populated by generated named-routes.gen.ts
       // Maps route names to URL pattern strings for Handler<"routeName"> support
     }
   }

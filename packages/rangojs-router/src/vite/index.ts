@@ -419,7 +419,8 @@ function findTsFiles(dir: string): string[] {
   let entries;
   try {
     entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
+  } catch (err) {
+    console.warn(`[rsc-router] Failed to scan directory ${dir}: ${(err as Error).message}`);
     return results;
   }
   for (const entry of entries) {
@@ -455,18 +456,22 @@ function writePerModuleRouteTypes(root: string, entry: string): void {
  * No-ops if the file doesn't contain `urls(` or has no named routes.
  */
 function writePerModuleRouteTypesForFile(filePath: string): void {
-  const source = readFileSync(filePath, "utf-8");
-  if (!source.includes("urls(")) return;
+  try {
+    const source = readFileSync(filePath, "utf-8");
+    if (!source.includes("urls(")) return;
 
-  const routes = extractRoutesFromSource(source);
-  if (routes.length === 0) return;
+    const routes = extractRoutesFromSource(source);
+    if (routes.length === 0) return;
 
-  const genPath = filePath.replace(/\.(tsx?)$/, ".gen.ts");
-  const genSource = generatePerModuleTypesSource(routes);
-  const existing = existsSync(genPath) ? readFileSync(genPath, "utf-8") : null;
-  if (existing !== genSource) {
-    writeFileSync(genPath, genSource);
-    console.log(`[rsc-router] Generated route types -> ${genPath}`);
+    const genPath = filePath.replace(/\.(tsx?)$/, ".gen.ts");
+    const genSource = generatePerModuleTypesSource(routes);
+    const existing = existsSync(genPath) ? readFileSync(genPath, "utf-8") : null;
+    if (existing !== genSource) {
+      writeFileSync(genPath, genSource);
+      console.log(`[rsc-router] Generated route types -> ${genPath}`);
+    }
+  } catch (err) {
+    console.warn(`[rsc-router] Failed to generate route types for ${filePath}: ${(err as Error).message}`);
   }
 }
 
@@ -762,20 +767,26 @@ function createRouterDiscoveryPlugin(
     return serverMod;
   }
 
-  // Write named-routes type files next to the router entry file.
-  // One file per router: named-routes.<routerId>.gen.ts
+  // Write named-routes type file next to the router entry file.
   // Only writes when content has changed to avoid triggering HMR loops.
   function writeRouteTypesFiles() {
     if (perRouterManifests.length === 0) return;
-    const entryDir = dirname(resolve(projectRoot, entryPath));
-    for (const { id, routeManifest } of perRouterManifests) {
-      const outPath = join(entryDir, `named-routes.${id}.gen.ts`);
-      const source = generateRouteTypesSource(routeManifest);
+    try {
+      const entryDir = dirname(resolve(projectRoot, entryPath));
+      // Merge all router manifests into a single route map
+      const mergedManifest: Record<string, string> = {};
+      for (const { routeManifest } of perRouterManifests) {
+        Object.assign(mergedManifest, routeManifest);
+      }
+      const outPath = join(entryDir, "named-routes.gen.ts");
+      const source = generateRouteTypesSource(mergedManifest);
       const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
       if (existing !== source) {
         writeFileSync(outPath, source);
         console.log(`[rsc-router] Generated route types -> ${outPath}`);
       }
+    } catch (err) {
+      console.warn(`[rsc-router] Failed to write named-routes.gen.ts: ${(err as Error).message}`);
     }
   }
 
