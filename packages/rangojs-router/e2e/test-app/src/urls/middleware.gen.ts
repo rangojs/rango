@@ -4,6 +4,7 @@ export const routes = {
   errorHandler: "/error-handler/trigger",
   index: "/",
   params: "/params/:paramId",
+  protected: "/protected",
   protectedDashboard: "/protected/dashboard",
   routeLevel: "/route-level",
   routeLevelWithParams: "/route-level/:routeId",

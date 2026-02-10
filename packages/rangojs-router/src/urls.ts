@@ -700,7 +700,7 @@ export type PathHelpers<TEnv> = {
    * Define cache configuration for segments
    */
   cache: {
-    (): CacheItem;
+    (): TypedCacheItem<{}, {}>;
     <const TChildren extends readonly AllUseItems[]>(
       children: () => TChildren,
     ): TypedCacheItem<ExtractRoutes<TChildren>, ExtractResponses<TChildren>>;

@@ -27,6 +27,7 @@
     "build": "turbo run build",
     "preview": "turbo run preview",
     "lint": "turbo run lint",
+    "tsc": "turbo run typecheck",
     "typecheck": "turbo run typecheck",
     "test": "pnpm test:unit && pnpm test:e2e",
     "test:unit": "pnpm --filter @rangojs/router test:unit",
