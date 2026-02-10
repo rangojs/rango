@@ -223,8 +223,11 @@ function parsePathCall(
       }
     }
 
-    // Skip string literals
-    if (ch === '"' || ch === "'" || ch === "`") {
+    // Skip string literals.
+    // Treat ' preceded by a word char as an apostrophe (e.g. "shouldn't"),
+    // not a string delimiter. In valid JS/TS, opening ' is never preceded
+    // by a word character.
+    if (ch === '"' || ch === "`" || (ch === "'" && (pos === 0 || !/\w/.test(code[pos - 1])))) {
       pos = skipStringLiteral(code, pos);
       continue;
     }

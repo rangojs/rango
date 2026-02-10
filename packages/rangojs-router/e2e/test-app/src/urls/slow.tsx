@@ -1,11 +1,10 @@
 import { urls } from "@rangojs/router";
-import { Link } from "@rangojs/router/client";
 import { SlowLoader } from "../loaders.js";
-import { RevalidateButton } from "../components/RevalidateButton.js";
 import {
-  SlowStreamingContent,
-  SlowSkipSsrContent,
-} from "../components/SlowStreamingContent.js";
+  SlowHandler,
+  SlowStreamingHandler,
+  SlowStreamingSkipSsrHandler,
+} from "./slow.handlers.js";
 
 /**
  * Slow routes URL patterns - for testing loader behavior
@@ -15,35 +14,16 @@ import {
  * it has an intercept that needs to share the same parent context.
  */
 export const slowPatternsWithoutDetail = urls(({ path, loader, loading }) => [
-  // Slow route WITHOUT loading - loader should be awaited (blocking)
   path(
     "/slow",
-    async (ctx) => {
-      const { message, count, loadedAt } = await ctx.use(SlowLoader);
-      return (
-        <div data-testid="slow-page">
-          <Link to="/" data-testid="back-link">
-            ← Back to Home
-          </Link>
-          <h1 data-testid="slow-title">Slow Route (No Loading)</h1>
-          <p data-testid="slow-message">{message}</p>
-          <p data-testid="slow-count">Load count: {count}</p>
-          <p data-testid="slow-loaded-at">Loaded: {loadedAt}</p>
-          <div data-testid="slow-actions">
-            <RevalidateButton testId="slow-revalidate-btn" />
-          </div>
-        </div>
-      );
-    },
+    SlowHandler,
     { name: "slow" },
     () => [loader(SlowLoader)],
   ),
 
-  // Slow route WITH loading - loader should stream (non-blocking)
-  // Uses client component with useLoader() so loading skeleton shows immediately
   path(
     "/slow-streaming",
-    () => <SlowStreamingContent loader={SlowLoader} />,
+    SlowStreamingHandler,
     { name: "slowStreaming" },
     () => [
       loader(SlowLoader),
@@ -55,11 +35,9 @@ export const slowPatternsWithoutDetail = urls(({ path, loader, loading }) => [
     ],
   ),
 
-  // Slow route WITH loading skipSSR - awaited on SSR, streams on navigation
-  // Uses client component with useLoader() so loading skeleton shows on navigation
   path(
     "/slow-streaming-skip-ssr",
-    () => <SlowSkipSsrContent loader={SlowLoader} />,
+    SlowStreamingSkipSsrHandler,
     { name: "slowStreamingSkipSsr" },
     () => [
       loader(SlowLoader),
