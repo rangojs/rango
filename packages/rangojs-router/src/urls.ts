@@ -267,6 +267,24 @@ export interface IncludeOptions<TNamePrefix extends string = string> {
 
 /**
  * Prefix route names with a given prefix (e.g., "blog" + "post" = "blog.post")
+ *
+ * Filters out plain `string` index signatures to prevent dynamically-generated
+ * routes from poisoning the route map. When TypeScript encounters very large
+ * route sets (5000+ routes via Array.from), it may give up computing specific
+ * types and fall back to Record<string, string>. Without filtering, PrefixRoutes
+ * would map `string` to `${prefix}.${string}`, creating an index signature that
+ * accepts ANY prefixed name and defeats type-safe route checking.
+ *
+ * Uses `string extends K` (conservative filter):
+ * - Drops `string` keys (TypeScript fallback) -> prevents `[x: `site.${string}`]`
+ * - Keeps template literal patterns like `item${number}` from Array.from loops,
+ *   which are imprecise but still allow writing paths like `/shop/product/1`
+ *
+ * A more aggressive alternative (`{} extends Record<K, 1>`) would also drop
+ * template literal patterns. We chose conservative because loop-generated routes
+ * with `${number}` patterns still provide some value: they don't appear in
+ * named-routes.gen.ts or IDE autocomplete, but they do let you manually write
+ * valid paths without type errors.
  */
 type PrefixRoutes<
   TRoutes extends Record<string, string>,
@@ -275,7 +293,9 @@ type PrefixRoutes<
   ? TRoutes
   : {
       [K in keyof TRoutes as K extends string
-        ? `${TPrefix}.${K}`
+        ? string extends K
+          ? never
+          : `${TPrefix}.${K}`
         : never]: TRoutes[K];
     };
 
@@ -428,6 +448,7 @@ export type ExtractRoutes<T extends readonly any[]> = ExtractRoutesFromItems<
 /**
  * Prefix keys of a Record<string, unknown> with a dot-separated prefix.
  * Used for response type maps through include().
+ * Same index signature filter as PrefixRoutes (see comment there).
  */
 type PrefixKeys<
   T extends Record<string, unknown>,
@@ -435,7 +456,11 @@ type PrefixKeys<
 > = TPrefix extends ""
   ? T
   : {
-      [K in keyof T as K extends string ? `${TPrefix}.${K}` : never]: T[K];
+      [K in keyof T as K extends string
+        ? string extends K
+          ? never
+          : `${TPrefix}.${K}`
+        : never]: T[K];
     };
 
 /**
@@ -514,11 +539,17 @@ export type PathFn<TEnv> = <
     | PrerenderHandlerDefinition<TParams>,
   optionsOrUse?: PathOptions<TName> | (() => RouteUseItem[]),
   use?: () => RouteUseItem[],
-) => ExtractParams<TPattern> extends TParams
-  ? TParams extends ExtractParams<TPattern>
-    ? TypedRouteItem<TName, TPattern>
-    : { __error: `Handler params do not match pattern "${TPattern}"` }
-  : { __error: `Handler params do not match pattern "${TPattern}"` };
+  // Generic handler bypass: when handler uses index-signature params
+  // (e.g. Handler<Record<string, any>>), skip the biconditional.
+  // `string extends keyof TParams` is true for index signatures,
+  // false for concrete params ({id: string}) and empty ({}).
+) => string extends keyof TParams
+  ? TypedRouteItem<TName, TPattern>
+  : ExtractParams<TPattern> extends TParams
+    ? TParams extends ExtractParams<TPattern>
+      ? TypedRouteItem<TName, TPattern>
+      : { __error: `Handler params do not match pattern "${TPattern}"` }
+    : { __error: `Handler params do not match pattern "${TPattern}"` };
 
 /**
  * Path function for response routes that must return Response (image, stream, any).

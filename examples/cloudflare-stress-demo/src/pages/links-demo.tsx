@@ -15,8 +15,10 @@ export function LinksDemo() {
   const benchFirst = href("/bench/first");
   const benchLast = href("/bench/last");
   const linksPath = href("/links");
-  const apiResource = href("/api/v1/resource1/123");
-  const siteUser = href("/site/en/user1/456");
+  // Site/API dynamic routes use `string` index signatures (TypeScript fallback for 5000+ routes)
+  // which are filtered by PrefixRoutes. Use shop routes which preserve `${number}` patterns.
+  const shopProductBench = href("/shop/product/bench/first");
+  const shopCategoryBench = href("/shop/category/bench/first");
   const shopProduct = href("/shop/product/1");
   const shopCategory = href("/shop/category/1");
 
@@ -47,10 +49,10 @@ export function LinksDemo() {
           /links: <code>{linksPath}</code>
         </li>
         <li>
-          /api/v1/resource1/123: <code>{apiResource}</code>
+          /shop/product/bench/first: <code>{shopProductBench}</code>
         </li>
         <li>
-          /site/en/user1/456: <code>{siteUser}</code>
+          /shop/category/bench/first: <code>{shopCategoryBench}</code>
         </li>
         <li>
           /shop/product/1: <code>{shopProduct}</code>

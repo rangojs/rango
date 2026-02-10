@@ -13,12 +13,9 @@
  * - /shop/product/* requests skip /shop/category routes (nested optimization!)
  * - 404s for non-prefixed paths skip ~10,000 routes
  */
-import { urls, scopedHref } from "@rangojs/router";
-import {
-  enableMatchDebug,
-  getMatchDebugStats,
-  type HandlerContext,
-} from "@rangojs/router/server";
+import { urls, scopedHref, type Handler } from "@rangojs/router";
+import { enableMatchDebug, getMatchDebugStats } from "@rangojs/router/server";
+import type { routes } from "./urls.gen.js";
 import { includedPatterns } from "./included-patterns.js";
 import { localizedPatterns } from "./localized-patterns.js";
 import { shopPatterns } from "./shop-patterns.js";
@@ -30,7 +27,7 @@ import { LinksDemo } from "./pages/links-demo.js";
 enableMatchDebug(true);
 
 // Benchmark handler - bypasses RSC, returns raw JSON with debug stats
-const BenchmarkHandler = async (ctx: HandlerContext) => {
+const BenchmarkHandler: Handler<"benchFirst", routes> = async (ctx) => {
   const now = Date.now();
   const start = ctx.var.dateStart ?? 0;
   const elapsed = now - start;
@@ -54,7 +51,7 @@ const BenchmarkHandler = async (ctx: HandlerContext) => {
 };
 
 // Links demo handler - showcases ctx.href() and scopedHref() on the server
-const LinksDemoHandler = async (ctx: HandlerContext) => {
+const LinksDemoHandler: Handler<"links", routes> = async (ctx) => {
   const href = scopedHref<typeof urlpatterns>(ctx.href);
 
   // ctx.href with global named routes
