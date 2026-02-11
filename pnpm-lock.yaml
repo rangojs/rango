@@ -210,6 +210,9 @@ importers:
       magic-string:
         specifier: ^0.30.17
         version: 0.30.21
+      picomatch:
+        specifier: ^4.0.3
+        version: 4.0.3
       rsc-html-stream:
         specifier: ^0.0.7
         version: 0.0.7

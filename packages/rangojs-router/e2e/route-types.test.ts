@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 const genFilePath = path.resolve(
-  "./e2e/test-app/src/named-routes.gen.ts"
+  "./e2e/test-app/src/router.named-routes.gen.ts"
 );
 const blogGenPath = path.resolve("./e2e/test-app/src/urls/blog.gen.ts");
 

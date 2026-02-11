@@ -960,6 +960,14 @@ export interface RSCRouter<
    */
   readonly urlpatterns?: UrlPatterns<TEnv, any>;
 
+  /**
+   * Source file path where createRouter() was called.
+   * Set via Error.stack parsing at construction time.
+   * Used by the Vite plugin to write per-router named-routes.gen.ts files.
+   * @internal
+   */
+  readonly __sourceFile?: string;
+
   match(request: Request, context: TEnv): Promise<MatchResult>;
 
   /**
@@ -1098,6 +1106,23 @@ export function createRouter<TEnv = any>(
   } = options;
 
   const routerId = userProvidedId ?? `router_${routerAutoId++}`;
+
+  // Capture the source file that called createRouter() via stack trace parsing.
+  // Used by the Vite plugin to write per-router named-routes.gen.ts files.
+  let __sourceFile: string | undefined;
+  try {
+    const stack = new Error().stack;
+    if (stack) {
+      const lines = stack.split("\n");
+      for (const line of lines) {
+        const match = line.match(/\((.+?\.(ts|tsx|js|jsx)):\d+:\d+\)/);
+        if (match && !match[1].includes("/router.ts") && !match[1].includes("@rangojs/router")) {
+          __sourceFile = match[1];
+          break;
+        }
+      }
+    }
+  } catch {}
 
   // Resolve warmup enabled flag (default: true)
   const warmupEnabled = warmupOption !== false;
@@ -2304,6 +2329,9 @@ export function createRouter<TEnv = any>(
     get urlpatterns() {
       return storedUrlPatterns ?? undefined;
     },
+
+    // Expose source file for per-router type generation
+    __sourceFile,
 
     // RSC request handler (lazily created on first call)
     fetch: (() => {

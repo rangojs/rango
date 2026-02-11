@@ -1,11 +1,11 @@
 import type { Plugin, PluginOption } from "vite";
 import { createServer as createViteServer } from "vite";
 import * as Vite from "vite";
-import { resolve, join, dirname } from "node:path";
+import { resolve, join, dirname, basename } from "node:path";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
-import { generateRouteTypesSource, writePerModuleRouteTypes, writePerModuleRouteTypesForFile, writeCombinedRouteTypes } from "../build/generate-route-types.ts";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, unlinkSync } from "node:fs";
+import { generateRouteTypesSource, writePerModuleRouteTypes, writePerModuleRouteTypesForFile, writeCombinedRouteTypes, findRouterFiles, createScanFilter, type ScanFilter } from "../build/generate-route-types.ts";
 import { exposeActionId } from "./expose-action-id.ts";
 import { exposeLoaderId } from "./expose-loader-id.ts";
 import { exposeHandleId } from "./expose-handle-id.ts";
@@ -118,12 +118,27 @@ interface RangoBaseOptions {
 
   /**
    * Generate static route type files (.gen.ts) by parsing url modules at startup.
-   * Creates per-module route maps and a combined named-routes.gen.ts for type-safe
+   * Creates per-module route maps and per-router named-routes.gen.ts for type-safe
    * Handler<"name", routes> and href() without executing router code.
    * Set to `false` to disable (run `npx rango extract-names` manually instead).
    * @default true
    */
   staticRouteTypesGeneration?: boolean;
+
+  /**
+   * Glob patterns for files to include in route type scanning.
+   * Only files matching at least one pattern will be scanned.
+   * Patterns are relative to the project root.
+   * When unset, all .ts/.tsx files are scanned.
+   */
+  include?: string[];
+
+  /**
+   * Glob patterns for files to exclude from route type scanning.
+   * Takes precedence over `include`. Patterns are relative to the project root.
+   * Defaults to common test/build directories.
+   */
+  exclude?: string[];
 }
 
 /**
@@ -139,12 +154,18 @@ export interface RangoNodeOptions extends RangoBaseOptions {
    * Path to your router configuration file that exports the route tree.
    * This file must export a `router` object created with `createRouter()`.
    *
+   * When omitted, auto-discovers the router by scanning for files containing
+   * `createRouter`. If exactly one is found, it is used automatically.
+   * If multiple are found, an error is thrown with the list of candidates.
+   *
    * @example
    * ```ts
    * rango({ router: './src/router.tsx' })
+   * // or simply:
+   * rango()
    * ```
    */
-  router: string;
+  router?: string;
 
   /**
    * RSC plugin configuration. By default, rsc-router includes @vitejs/plugin-rsc
@@ -415,11 +436,18 @@ function buildRouteToStaticPrefix(
  */
 function createRouterDiscoveryPlugin(
   entryPath: string,
-  opts?: { enableBuildPrerender?: boolean; staticRouteTypesGeneration?: boolean },
+  opts?: { enableBuildPrerender?: boolean; staticRouteTypesGeneration?: boolean; include?: string[]; exclude?: string[] },
 ): Plugin {
   let projectRoot = "";
   let isBuildMode = false;
   let userResolveAlias: any = undefined;
+
+  // Scan filter compiled from include/exclude patterns (created in configResolved)
+  let scanFilter: ScanFilter | undefined;
+
+  // Cached router file paths (files containing createRouter) from initial scan.
+  // Reused by the file watcher to avoid re-scanning the entire directory tree.
+  let cachedRouterFiles: string[] | undefined;
 
   // Merged route manifest from all discovered routers.
   // Populated during discovery (dev: configureServer, build: buildStart).
@@ -427,7 +455,7 @@ function createRouterDiscoveryPlugin(
   let mergedRouteManifest: Record<string, string> | null = null;
 
   // Per-router route manifests for generating typed route files.
-  let perRouterManifests: Array<{ id: string; routeManifest: Record<string, string> }> = [];
+  let perRouterManifests: Array<{ id: string; routeManifest: Record<string, string>; sourceFile?: string }> = [];
 
   // Concrete URLs to pre-render at build time (populated during buildStart).
   // Only used when enableBuildPrerender is true.
@@ -551,7 +579,7 @@ function createRouterDiscoveryPlugin(
 
       // Merge into the combined manifest
       Object.assign(mergedRouteManifest, manifest.routeManifest);
-      perRouterManifests.push({ id, routeManifest: manifest.routeManifest });
+      perRouterManifests.push({ id, routeManifest: manifest.routeManifest, sourceFile: router.__sourceFile });
 
       // Merge ancestry (internal field, used only for trie building)
       if (manifest._routeAncestry) {
@@ -693,26 +721,37 @@ function createRouterDiscoveryPlugin(
     return serverMod;
   }
 
-  // Write named-routes type file next to the router entry file.
+  // Write per-router named-routes type files next to each router's source file.
+  // Each router gets its own {basename}.named-routes.gen.ts with only its routes.
   // Only writes when content has changed to avoid triggering HMR loops.
   function writeRouteTypesFiles() {
     if (perRouterManifests.length === 0) return;
+
+    // Delete old combined named-routes.gen.ts if it exists
     try {
       const entryDir = dirname(resolve(projectRoot, entryPath));
-      // Merge all router manifests into a single route map
-      const mergedManifest: Record<string, string> = {};
-      for (const { routeManifest } of perRouterManifests) {
-        Object.assign(mergedManifest, routeManifest);
+      const oldCombinedPath = join(entryDir, "named-routes.gen.ts");
+      if (existsSync(oldCombinedPath)) {
+        unlinkSync(oldCombinedPath);
+        console.log(`[rsc-router] Removed stale combined route types: ${oldCombinedPath}`);
       }
-      const outPath = join(entryDir, "named-routes.gen.ts");
-      const source = generateRouteTypesSource(mergedManifest);
-      const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
-      if (existing !== source) {
-        writeFileSync(outPath, source);
-        console.log(`[rsc-router] Generated route types -> ${outPath}`);
+    } catch {}
+
+    for (const { routeManifest, sourceFile } of perRouterManifests) {
+      if (!sourceFile) continue;
+      try {
+        const routerDir = dirname(sourceFile);
+        const routerBasename = basename(sourceFile).replace(/\.(tsx?|jsx?)$/, "");
+        const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
+        const source = generateRouteTypesSource(routeManifest);
+        const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
+        if (existing !== source) {
+          writeFileSync(outPath, source);
+          console.log(`[rsc-router] Generated route types -> ${outPath}`);
+        }
+      } catch (err) {
+        console.warn(`[rsc-router] Failed to write named-routes.gen.ts: ${(err as Error).message}`);
       }
-    } catch (err) {
-      console.warn(`[rsc-router] Failed to write named-routes.gen.ts: ${(err as Error).message}`);
     }
   }
 
@@ -724,11 +763,19 @@ function createRouterDiscoveryPlugin(
       isBuildMode = config.command === "build";
       // Capture user's resolve aliases for the temp server
       userResolveAlias = config.resolve.alias;
+      // Compile include/exclude patterns into a scan filter
+      if (opts?.include || opts?.exclude) {
+        scanFilter = createScanFilter(projectRoot, {
+          include: opts.include,
+          exclude: opts.exclude,
+        });
+      }
       // Generate per-module route types from static source parsing.
       // Runs before the dev server starts so .gen.ts files exist immediately for IDE.
       if (opts?.staticRouteTypesGeneration !== false) {
-        writePerModuleRouteTypes(projectRoot, entryPath);
-        writeCombinedRouteTypes(projectRoot, entryPath);
+        writePerModuleRouteTypes(projectRoot, scanFilter);
+        cachedRouterFiles = findRouterFiles(projectRoot, scanFilter);
+        writeCombinedRouteTypes(projectRoot, cachedRouterFiles);
       }
       // Capture @vitejs/plugin-rsc manager for early manifest writes during prerender.
       // The manager's buildAssetsManifest is populated during client generateBundle,
@@ -779,7 +826,14 @@ function createRouterDiscoveryPlugin(
           }
 
           await discoverRouters(rscEnv);
-          writeRouteTypesFiles();
+          // Write per-router type files from runtime discovery.
+          // Skip when static route types generation is enabled (configResolved
+          // already wrote the files via writeCombinedRouteTypes and the file
+          // watcher handles HMR updates). Running both paths causes race
+          // conditions where the runtime path overwrites watcher updates.
+          if (opts?.staticRouteTypesGeneration === false) {
+            writeRouteTypesFiles();
+          }
 
           // Populate the route map in the RSC env
           if (mergedRouteManifest && serverMod?.setCachedManifest) {
@@ -806,19 +860,29 @@ function createRouterDiscoveryPlugin(
         setTimeout(() => discover().then(resolve, resolve), 0);
       });
 
-      // Watch url module files for changes and regenerate route types.
-      // Only process files that contain urls( — skip components, actions, etc.
+      // Watch url module and router files for changes and regenerate route types.
+      // Process files containing urls( (per-module types) or createRouter( (per-router types).
       if (opts?.staticRouteTypesGeneration !== false) {
         server.watcher.on("change", (filePath) => {
           if (filePath.endsWith(".gen.ts")) return;
           if (!filePath.endsWith(".ts") && !filePath.endsWith(".tsx")) return;
+          // Apply scan filter as early-exit before reading file
+          if (scanFilter && !scanFilter(filePath)) return;
           try {
             const source = readFileSync(filePath, "utf-8");
             const trimmed = source.trimStart();
             if (trimmed.startsWith('"use client"') || trimmed.startsWith("'use client'")) return;
-            if (!source.includes("urls(")) return;
-            writePerModuleRouteTypesForFile(filePath);
-            writeCombinedRouteTypes(projectRoot, entryPath);
+            const hasUrls = source.includes("urls(");
+            const hasCreateRouter = /\bcreateRouter\s*[<(]/.test(source);
+            if (!hasUrls && !hasCreateRouter) return;
+            if (hasUrls) {
+              writePerModuleRouteTypesForFile(filePath);
+            }
+            // Invalidate cache when a router file changes (new router added/removed)
+            if (hasCreateRouter) {
+              cachedRouterFiles = undefined;
+            }
+            writeCombinedRouteTypes(projectRoot, cachedRouterFiles);
           } catch {
             // Ignore read errors for deleted/moved files
           }
@@ -1291,10 +1355,10 @@ const VIRTUAL_ROUTES_MANIFEST_ID = "virtual:rsc-router/routes-manifest";
 
 /**
  * Resolve the entry path for build-time router discovery.
- * - Node preset: uses the required `router` option.
+ * - Node preset: uses the `router` option (may be undefined if auto-discovery failed).
  * - Cloudflare preset: reads the `main` field from wrangler.json.
  */
-function resolveDiscoveryEntryPath(options: RangoOptions): string | undefined {
+function resolveDiscoveryEntryPath(options: RangoOptions, routerPath?: string): string | undefined {
   if (options.preset === "cloudflare") {
     // Auto-detect from wrangler.json
     const wranglerPaths = ["wrangler.json", "wrangler.jsonc"];
@@ -1315,8 +1379,8 @@ function resolveDiscoveryEntryPath(options: RangoOptions): string | undefined {
     }
     return undefined;
   }
-  // Node preset: router is required
-  return (options as RangoNodeOptions).router;
+  // Node preset: use resolved routerPath (may be auto-discovered or explicit)
+  return routerPath;
 }
 
 /**
@@ -1481,10 +1545,11 @@ ${bold}══════╝ ╚═════════╩═══${reset}$
  * ```
  */
 export async function rango(
-  options: RangoOptions
+  options?: RangoOptions
 ): Promise<PluginOption[]> {
-  const preset = options.preset ?? "node";
-  const showBanner = options.banner ?? true;
+  const resolvedOptions: RangoOptions = options ?? { preset: "node" };
+  const preset = resolvedOptions.preset ?? "node";
+  const showBanner = resolvedOptions.banner ?? true;
 
   const plugins: PluginOption[] = [];
 
@@ -1494,6 +1559,9 @@ export async function rango(
 
   // Track RSC entry path for version injection
   let rscEntryPath: string | null = null;
+
+  // Resolved router path (node preset only, may be auto-discovered)
+  let routerPath: string | undefined;
 
   // Build-time prerendering is always enabled for cloudflare preset.
   // Handlers now run in the RSC env directly (no separate Node.js server needed).
@@ -1695,8 +1763,35 @@ export async function rango(
     );
   } else {
     // Node preset: full RSC plugin integration
-    const nodeOptions = options as RangoNodeOptions;
-    const routerPath = nodeOptions.router;
+    const nodeOptions = resolvedOptions as RangoNodeOptions;
+    routerPath = nodeOptions.router;
+
+    // Auto-discover router when not specified
+    if (!routerPath) {
+      const earlyFilter = createScanFilter(process.cwd(), {
+        include: resolvedOptions.include,
+        exclude: resolvedOptions.exclude,
+      });
+      const candidates = findRouterFiles(process.cwd(), earlyFilter);
+      if (candidates.length === 1) {
+        // Convert absolute path to relative ./path
+        const abs = candidates[0];
+        const rel = abs.startsWith(process.cwd())
+          ? "./" + abs.slice(process.cwd().length + 1)
+          : abs;
+        routerPath = rel;
+      } else if (candidates.length > 1) {
+        const cwd = process.cwd();
+        const list = candidates
+          .map((f) => "  - " + (f.startsWith(cwd) ? f.slice(cwd.length + 1) : f))
+          .join("\n");
+        throw new Error(
+          `[rsc-router] Multiple routers found. Specify \`router\` to choose one:\n${list}`
+        );
+      }
+      // 0 found: routerPath stays undefined, warn at startup via discovery plugin
+    }
+
     const rscOption = nodeOptions.rsc ?? true;
 
     // Add RSC plugin by default (can be disabled with rsc: false)
@@ -1847,9 +1942,12 @@ export async function rango(
   plugins.push(createVersionPlugin());
 
   // Resolve discovery entry path (used for both discovery and version injection).
-  // Node preset: uses the required router path.
+  // Node preset: uses the (possibly auto-discovered) router path.
   // Cloudflare preset: auto-detects RSC entry from wrangler.json main field.
-  const discoveryEntryPath = resolveDiscoveryEntryPath(options);
+  const discoveryEntryPath = resolveDiscoveryEntryPath(
+    resolvedOptions,
+    preset !== "cloudflare" ? routerPath : undefined,
+  );
 
   // Add version injector for custom entry.rsc files.
   // For Cloudflare preset, the RSC entry is the worker file (from wrangler.json).
@@ -1866,7 +1964,9 @@ export async function rango(
   if (discoveryEntryPath) {
     plugins.push(createRouterDiscoveryPlugin(discoveryEntryPath, {
       enableBuildPrerender: prerenderEnabled,
-      staticRouteTypesGeneration: options.staticRouteTypesGeneration,
+      staticRouteTypesGeneration: resolvedOptions.staticRouteTypesGeneration,
+      include: resolvedOptions.include,
+      exclude: resolvedOptions.exclude,
     }));
   }
 

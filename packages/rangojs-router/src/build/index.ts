@@ -31,4 +31,6 @@ export {
   writePerModuleRouteTypes,
   extractRoutesFromSource,
   generatePerModuleTypesSource,
+  createScanFilter,
+  type ScanFilter,
 } from "./generate-route-types.js";

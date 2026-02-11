@@ -23,7 +23,7 @@ test.describe.serial("route-types-hmr", () => {
 
   const blogUrlsPath = path.resolve("./e2e/test-app/src/urls/blog.tsx");
   const genFilePath = path.resolve(
-    "./e2e/test-app/src/named-routes.gen.ts"
+    "./e2e/test-app/src/router.named-routes.gen.ts"
   );
   const handlersPath = path.resolve(
     "./e2e/test-app/src/urls/blog.handlers.tsx"

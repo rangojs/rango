@@ -1,5 +1,7 @@
-import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
-import { join, dirname, resolve } from "node:path";
+import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from "node:fs";
+import { join, dirname, resolve, relative, basename as pathBasename } from "node:path";
+// @ts-ignore -- picomatch ships no .d.ts; types are trivial
+import picomatch from "picomatch";
 
 /**
  * Extract route definitions from source code by statically parsing path() calls.
@@ -275,11 +277,50 @@ ${interfaceBody}
 `;
 }
 
+/** Default exclude patterns for route type scanning. */
+export const DEFAULT_EXCLUDE_PATTERNS: string[] = [
+  "**/__tests__/**",
+  "**/__mocks__/**",
+  "**/dist/**",
+  "**/coverage/**",
+  "**/*.test.{ts,tsx}",
+  "**/*.spec.{ts,tsx}",
+];
+
+export type ScanFilter = (absolutePath: string) => boolean;
+
+/**
+ * Compile include/exclude glob patterns into a single predicate.
+ * Paths are made root-relative before matching.
+ * Returns undefined when no filtering is needed (no include, default exclude).
+ */
+export function createScanFilter(
+  root: string,
+  opts: { include?: string[]; exclude?: string[] },
+): ScanFilter | undefined {
+  const { include, exclude } = opts;
+  const hasInclude = include && include.length > 0;
+  const hasCustomExclude = exclude !== undefined;
+
+  if (!hasInclude && !hasCustomExclude) return undefined;
+
+  const effectiveExclude = exclude ?? DEFAULT_EXCLUDE_PATTERNS;
+  const includeMatcher = hasInclude ? picomatch(include) : null;
+  const excludeMatcher = effectiveExclude.length > 0 ? picomatch(effectiveExclude) : null;
+
+  return (absolutePath: string) => {
+    const rel = relative(root, absolutePath);
+    if (excludeMatcher && excludeMatcher(rel)) return false;
+    if (includeMatcher) return includeMatcher(rel);
+    return true;
+  };
+}
+
 /**
  * Recursively find .ts/.tsx files under a directory, skipping node_modules
  * and .gen. files.
  */
-export function findTsFiles(dir: string): string[] {
+export function findTsFiles(dir: string, filter?: ScanFilter): string[] {
   const results: string[] = [];
   let entries;
   try {
@@ -292,11 +333,12 @@ export function findTsFiles(dir: string): string[] {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory()) {
       if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
-      results.push(...findTsFiles(fullPath));
+      results.push(...findTsFiles(fullPath, filter));
     } else if (
       (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) &&
       !entry.name.includes(".gen.")
     ) {
+      if (filter && !filter(fullPath)) continue;
       results.push(fullPath);
     }
   }
@@ -308,9 +350,8 @@ export function findTsFiles(dir: string): string[] {
  * Scans for files containing `urls(` and writes a sibling `.gen.ts` with the
  * extracted route name/pattern pairs. Only writes when content has changed.
  */
-export function writePerModuleRouteTypes(root: string, entry: string): void {
-  const scanDir = dirname(resolve(root, entry));
-  const files = findTsFiles(scanDir);
+export function writePerModuleRouteTypes(root: string, filter?: ScanFilter): void {
+  const files = findTsFiles(root, filter);
   for (const filePath of files) {
     writePerModuleRouteTypesForFile(filePath);
   }
@@ -679,74 +720,109 @@ function buildRouteMapFromBlock(
 }
 
 // ---------------------------------------------------------------------------
-// Combined named-routes.gen.ts writer
+// Router file URL extraction
 // ---------------------------------------------------------------------------
 
 /**
- * Generate named-routes.gen.ts by statically parsing include() calls
- * and recursively resolving sub-module routes. No code execution needed.
- *
- * Finds root url modules (files with urls() + include() that aren't imported
- * by other url modules), builds a combined route map, and writes the output.
+ * Extract the url patterns variable from a router file.
+ * Looks for patterns like:
+ *   .routes(variableName)
+ *   urls: variableName
+ * Returns the local variable name and optional import info.
  */
-export function writeCombinedRouteTypes(root: string, entry: string): void {
-  const scanDir = dirname(resolve(root, entry));
+function extractUrlsVariableFromRouter(
+  code: string
+): string | null {
+  // Pattern 1: .routes(variableName) where variableName is an identifier (not a string)
+  const routesCallMatch = code.match(/\.routes\s*\(\s*([a-zA-Z_$][\w$]*)\s*\)/);
+  if (routesCallMatch) return routesCallMatch[1];
 
-  // Find files with both urls( and include( -- these are composing modules
-  const files = findTsFiles(scanDir);
-  const urlModulesWithIncludes: string[] = [];
+  // Pattern 2: urls: variableName in createRouter options
+  const urlsOptionMatch = code.match(/urls\s*:\s*([a-zA-Z_$][\w$]*)/);
+  if (urlsOptionMatch) return urlsOptionMatch[1];
 
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Per-router named-routes.gen.ts writer
+// ---------------------------------------------------------------------------
+
+/**
+ * Scan for files containing createRouter() and return their paths.
+ * Call once at startup; the result can be reused on subsequent watcher triggers.
+ */
+export function findRouterFiles(root: string, filter?: ScanFilter): string[] {
+  const files = findTsFiles(root, filter);
+  const result: string[] = [];
   for (const filePath of files) {
+    if (filePath.includes(".gen.")) continue;
     try {
       const source = readFileSync(filePath, "utf-8");
-      if (source.includes("urls(") && source.includes("include(")) {
-        urlModulesWithIncludes.push(filePath);
+      if (/\bcreateRouter\s*[<(]/.test(source)) {
+        result.push(filePath);
       }
     } catch {
       continue;
     }
   }
+  return result;
+}
 
-  if (urlModulesWithIncludes.length === 0) return;
+/**
+ * Generate per-router named-routes.gen.ts files from known router file paths.
+ * Re-reads each router file and resolves url patterns via static source parsing.
+ *
+ * Pass `knownRouterFiles` from a previous `findRouterFiles()` call to skip the
+ * full directory scan. If omitted, falls back to scanning (startup path).
+ */
+export function writeCombinedRouteTypes(root: string, knownRouterFiles?: string[]): void {
+  // Delete old combined named-routes.gen.ts if it exists (stale from older versions)
+  try {
+    const oldCombinedPath = join(root, "src", "named-routes.gen.ts");
+    if (existsSync(oldCombinedPath)) {
+      unlinkSync(oldCombinedPath);
+      console.log(`[rsc-router] Removed stale combined route types: ${oldCombinedPath}`);
+    }
+  } catch {}
 
-  // Build set of files imported by url modules (to identify roots)
-  const importedFiles = new Set<string>();
-  for (const filePath of urlModulesWithIncludes) {
+  const routerFilePaths = knownRouterFiles ?? findRouterFiles(root);
+  if (routerFilePaths.length === 0) return;
+
+  for (const routerFilePath of routerFilePaths) {
+    let routerSource: string;
     try {
-      const source = readFileSync(filePath, "utf-8");
-      const includes = extractIncludesFromSource(source);
-      for (const { variableName } of includes) {
-        const imported = resolveImportedVariable(source, variableName);
-        if (imported) {
-          const resolved = resolveImportPath(imported.specifier, filePath);
-          if (resolved) importedFiles.add(resolved);
-        }
-      }
+      routerSource = readFileSync(routerFilePath, "utf-8");
     } catch {
       continue;
     }
-  }
+    // Extract the urls variable name from .routes(varName) or urls: varName
+    const urlsVarName = extractUrlsVariableFromRouter(routerSource);
+    if (!urlsVarName) continue;
 
-  // Roots are url modules with includes that aren't imported by others
-  const roots = urlModulesWithIncludes.filter((f) => !importedFiles.has(f));
-  if (roots.length === 0) return;
+    // Resolve the variable to its source module
+    let routeMap: Record<string, string>;
 
-  // Build combined route map from all roots
-  const mergedManifest: Record<string, string> = {};
-  for (const rootFile of roots) {
-    const routeMap = buildCombinedRouteMap(rootFile);
-    Object.assign(mergedManifest, routeMap);
-  }
+    const imported = resolveImportedVariable(routerSource, urlsVarName);
+    if (imported) {
+      // Variable is imported from another module
+      const targetFile = resolveImportPath(imported.specifier, routerFilePath);
+      if (!targetFile) continue;
+      routeMap = buildCombinedRouteMap(targetFile, imported.exportedName);
+    } else {
+      // Variable is defined in the same file
+      routeMap = buildCombinedRouteMap(routerFilePath, urlsVarName);
+    }
 
-  if (Object.keys(mergedManifest).length === 0) return;
+    if (Object.keys(routeMap).length === 0) continue;
 
-  const outPath = join(scanDir, "named-routes.gen.ts");
-  const source = generateRouteTypesSource(mergedManifest);
-  const existing = existsSync(outPath)
-    ? readFileSync(outPath, "utf-8")
-    : null;
-  if (existing !== source) {
-    writeFileSync(outPath, source);
-    console.log(`[rsc-router] Generated combined route types -> ${outPath}`);
+    const routerBasename = pathBasename(routerFilePath).replace(/\.(tsx?|jsx?)$/, "");
+    const outPath = join(dirname(routerFilePath), `${routerBasename}.named-routes.gen.ts`);
+    const source = generateRouteTypesSource(routeMap);
+    const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
+    if (existing !== source) {
+      writeFileSync(outPath, source);
+      console.log(`[rsc-router] Generated route types (${Object.keys(routeMap).length} routes) -> ${outPath}`);
+    }
   }
 }
