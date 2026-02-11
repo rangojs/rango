@@ -351,6 +351,7 @@ export function createRSCHandler<
 
       // Build lightweight context for response handler
       const bindings = (env as any)?.Bindings ?? env;
+      const reqCtx = requireRequestContext();
       const responseHandlerCtx = {
         request,
         params: preview.params || {},
@@ -370,6 +371,8 @@ export function createRSCHandler<
           return name;
         },
         get: (key: string) => variables[key],
+        header: (name: string, value: string) => reqCtx.header(name, value),
+        setCookie: (name: string, value: string, options?: any) => reqCtx.setCookie(name, value, options),
       };
 
       // Call handler directly, wrapped by route middleware if present
@@ -437,6 +440,11 @@ export function createRSCHandler<
               return createResponseWithMergedHeaders(
                 String(result),
                 { status: 200, headers: { "content-type": "application/xml;charset=utf-8" } },
+              );
+            case "md":
+              return createResponseWithMergedHeaders(
+                String(result),
+                { status: 200, headers: { "content-type": "text/markdown;charset=utf-8" } },
               );
             default:
               // image, stream, any -- must return Response

@@ -4,6 +4,11 @@ export {};
 declare global {
   namespace RSCRouter {
     interface GeneratedRouteMap {
+      "apiShop.cart": "/api/shop/cart";
+      "apiShop.cartItem": "/api/shop/cart/:itemId";
+      "apiShop.catalog": "/api/shop/catalog";
+      "apiShop.health": "/api/shop/health";
+      "apiShop.product": "/api/shop/catalog/:productId";
       "blog.index": "/blog";
       "blog.post": "/blog/:postId";
       "cacheStatus.notFound": "//cache-status/not-found";
@@ -568,6 +573,10 @@ declare global {
       "middlewareTest.routeLevel": "/middleware-test/route-level";
       "middlewareTest.routeLevelWithParams": "/middleware-test/route-level/:routeId";
       "middlewareTest.sharedVars": "/middleware-test/shared-vars";
+      "negotiateJsonFirst": "/negotiate-test-json-first";
+      "negotiateJsonFirstRsc": "/negotiate-test-json-first";
+      "negotiateTest": "/negotiate-test";
+      "negotiateTestJson": "/negotiate-test";
       "proactiveCache.index": "//proactive-cache";
       "proactiveCache.itemA": "//proactive-cache/item-a";
       "proactiveCache.itemB": "//proactive-cache/item-b";
@@ -576,6 +585,13 @@ declare global {
       "refTest.bothProps": "/ref-test/both-props";
       "refTest.handleProp": "/ref-test/handle-prop";
       "refTest.loaderProp": "/ref-test/loader-prop";
+      "responseInLayout": "/response-in-layout";
+      "responseMwNested": "/response-mw/nested";
+      "responseWrapHtml": "/response-wrap/html";
+      "responseWrapJsonHeaders": "/response-wrap/json-headers";
+      "responseWrapText": "/response-wrap/text";
+      "responseWrapXml": "/response-wrap/xml";
+      "shopPlayground": "/shop-playground";
       "slow": "//slow";
       "slowProduct.detail": "/slow-product/:productId";
       "slowStreaming": "//slow-streaming";

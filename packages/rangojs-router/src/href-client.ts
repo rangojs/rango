@@ -195,6 +195,7 @@ export namespace href {
   export const text: ResponseHrefFn = createResponseHrefTag();
   export const html: ResponseHrefFn = createResponseHrefTag();
   export const xml: ResponseHrefFn = createResponseHrefTag();
+  export const md: ResponseHrefFn = createResponseHrefTag();
   export const image: ResponseHrefFn = createResponseHrefTag();
   export const stream: ResponseHrefFn = createResponseHrefTag();
   export const any: ResponseHrefFn = createResponseHrefTag();

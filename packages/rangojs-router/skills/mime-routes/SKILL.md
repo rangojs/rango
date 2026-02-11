@@ -10,7 +10,7 @@ Content negotiation lets you register multiple response types on the same URL pa
 The router inspects the `Accept` header and dispatches to the matching handler.
 All negotiated responses include `Vary: Accept` for correct CDN/cache behavior.
 
-See also: `/response-routes` for the base response route API (path.json, urls.json, etc.).
+See also: `/response-routes` for the base response route API (path.json, path.text, etc.).
 
 ## Defining Negotiated Routes
 
@@ -47,6 +47,7 @@ The MIME mapping used for matching:
 | `text` | `text/plain` |
 | `xml` | `application/xml` |
 | `html` | `text/html` |
+| `md` | `text/markdown` |
 
 Tags `image`, `stream`, and `any` are pass-through and do not participate in Accept matching.
 

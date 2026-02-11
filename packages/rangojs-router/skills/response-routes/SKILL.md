@@ -1,7 +1,7 @@
 ---
 name: response-routes
-description: Response routes (path.json, path.text, urls.json, etc.) for non-RSC endpoints with typed responses
-argument-hint: [json|text|html|xml|image|stream]
+description: Response routes (path.json, path.text, etc.) for non-RSC endpoints with typed responses
+argument-hint: [json|text|html|xml|md|image|stream]
 ---
 
 # Response Routes
@@ -32,6 +32,11 @@ export const urlpatterns = urls(({ path, layout, include }) => [
     return "User-agent: *\nAllow: /\nDisallow: /api/\n";
   }, { name: "robots" }),
 
+  // Markdown route
+  path.md("/docs/:slug.md", (ctx) => {
+    return `# ${ctx.params.slug}\n\nDocumentation content here.`;
+  }, { name: "docs" }),
+
   // Response route (full control, returns Response directly)
   path.image("/og/:slug.png", async (ctx) => {
     const image = await generateOgImage(ctx.params.slug);
@@ -42,53 +47,18 @@ export const urlpatterns = urls(({ path, layout, include }) => [
 ]);
 ```
 
-## Module-Level Tags: urls.json(), urls.text(), etc.
-
-When an entire module is one MIME type, use `urls.json()` or `urls.text()` instead of `urls()`.
-All routes in the module inherit the tag. Mount with `include()`:
-
-```typescript
-// api/urls.tsx
-import { urls, RouterError } from "@rangojs/router/server";
-
-export const apiPatterns = urls.json(({ path }) => [
-  path("/health", (ctx) => ({
-    status: "ok",
-    timestamp: Date.now(),
-  }), { name: "health" }),
-
-  path("/products", (ctx) => [
-    { id: "1", name: "Widget", price: 9.99 },
-    { id: "2", name: "Gadget", price: 19.99 },
-  ], { name: "products" }),
-
-  path("/products/:id", (ctx) => {
-    const product = products.find(p => p.id === ctx.params.id);
-    if (!product) {
-      throw new RouterError("NOT_FOUND", `Product ${ctx.params.id} not found`, { status: 404 });
-    }
-    return product;
-  }, { name: "productDetail" }),
-]);
-
-// urls.tsx (main)
-export const urlpatterns = urls(({ path, include }) => [
-  path("/", HomePage, { name: "home" }),
-  include("/api", apiPatterns, { name: "api" }),
-]);
-```
-
 ## Available Tags
 
-| Tag | path.X() | urls.X() | Handler returns | Auto-wrap |
-|-----|----------|----------|-----------------|-----------|
-| `json` | `path.json()` | `urls.json()` | plain object/array | `{ data: T }` envelope |
-| `text` | `path.text()` | `urls.text()` | string | text/plain Response |
-| `html` | `path.html()` | `urls.html()` | string | text/html Response |
-| `xml` | `path.xml()` | `urls.xml()` | string | application/xml Response |
-| `image` | `path.image()` | `urls.image()` | Response | pass-through |
-| `stream` | `path.stream()` | `urls.stream()` | Response | pass-through |
-| `any` | `path.any()` | `urls.any()` | Response | pass-through |
+| Tag | Usage | Handler returns | Auto-wrap |
+|-----|-------|-----------------|-----------|
+| `json` | `path.json()` | plain object/array | `{ data: T }` envelope |
+| `text` | `path.text()` | string | text/plain Response |
+| `html` | `path.html()` | string | text/html Response |
+| `xml` | `path.xml()` | string | application/xml Response |
+| `md` | `path.md()` | string | text/markdown Response |
+| `image` | `path.image()` | Response | pass-through |
+| `stream` | `path.stream()` | Response | pass-through |
+| `any` | `path.any()` | Response | pass-through |
 
 ## ResponseHandlerContext
 
@@ -124,7 +94,7 @@ path.json("/api/data", (ctx) => {
 
 ## JSON Envelope
 
-`path.json()` and `urls.json()` handlers return plain data. The framework auto-wraps it
+`path.json()` handlers return plain data. The framework auto-wraps it
 in a `ResponseEnvelope<T>` discriminated union:
 
 ```typescript
@@ -196,7 +166,7 @@ if (isResponseError(result)) {
 
 ### RouteResponse (scoped lookup by route name)
 
-Look up response type from a `urls.json()` or `urls.text()` module by route name:
+Look up response type from a `path.json()` or `path.text()` module by route name:
 
 ```typescript
 import type { RouteResponse } from "@rangojs/router/server";
@@ -282,17 +252,17 @@ A self-contained module with RSC pages + JSON APIs, mountable via `include()`:
 // blog/api/urls.tsx
 import { urls, RouterError } from "@rangojs/router/server";
 
-export const blogApiPatterns = urls.json(({ path }) => [
-  path("/stats", (ctx) => ({
+export const blogApiPatterns = urls(({ path }) => [
+  path.json("/stats", (ctx) => ({
     views: 1200, visitors: 450,
   }), { name: "stats" }),
 
-  path("/:slug/likes", (ctx) => ({
+  path.json("/:slug/likes", (ctx) => ({
     slug: ctx.params.slug,
     count: 42,
   }), { name: "likes" }),
 
-  path("/:slug/comments", (ctx) => ([
+  path.json("/:slug/comments", (ctx) => ([
     { id: "c1", body: "Great post", author: "alice" },
   ]), { name: "comments" }),
 ]);
@@ -360,7 +330,7 @@ full content negotiation API (Accept header matching, Vary: Accept, multi-varian
 
 ## How It Works
 
-1. `path.json()` / `urls.json()` tag the route at the trie level with a MIME type
+1. `path.json()` tags the route at the trie level with a MIME type
 2. `coreRequestHandler()` checks the tag before the RSC pipeline
 3. Tagged routes short-circuit: handler runs, Response is returned directly
 4. JSON routes auto-wrap return values in `{ data }` / `{ error }` envelope

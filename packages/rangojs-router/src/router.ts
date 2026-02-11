@@ -131,40 +131,86 @@ const RESPONSE_TYPE_MIME: Record<string, string> = {
   text: "text/plain",
   xml: "application/xml",
   html: "text/html",
+  md: "text/markdown",
 };
 
-/**
- * Parse an Accept header into a Set of MIME types.
- * Splits on commas, trims whitespace, strips quality parameters.
- * e.g. "text/html, application/json;q=0.9" -> Set{"text/html", "application/json"}
- */
-function parseAcceptTypes(accept: string): Set<string> {
-  const types = new Set<string>();
-  for (const part of accept.split(",")) {
-    // Strip quality params (;q=0.9) and whitespace
-    const mime = part.split(";")[0]!.trim();
-    if (mime) types.add(mime);
-  }
-  return types;
+// Reverse lookup: MIME type -> response type tag (e.g. "text/html" -> "html")
+const MIME_RESPONSE_TYPE: Record<string, string> = Object.fromEntries(
+  Object.entries(RESPONSE_TYPE_MIME).map(([tag, mime]) => [mime, tag]),
+);
+
+interface AcceptEntry {
+  mime: string;
+  q: number;
+  order: number;
 }
 
 /**
- * Pick the best negotiate variant based on parsed Accept types.
- * Checks each variant's MIME type against the set.
- * Falls back to the first variant if no specific match is found.
+ * Parse an Accept header into a sorted array of MIME entries.
+ * Respects q-values (default 1.0) and uses client order as tiebreaker
+ * when q-values are equal (matching Express/Hono behavior).
+ */
+function parseAcceptTypes(accept: string): AcceptEntry[] {
+  const entries: AcceptEntry[] = [];
+  const parts = accept.split(",");
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]!;
+    const segments = part.split(";");
+    const mime = segments[0]!.trim();
+    if (!mime) continue;
+    let q = 1.0;
+    for (let j = 1; j < segments.length; j++) {
+      const param = segments[j]!.trim();
+      if (param.startsWith("q=")) {
+        q = Math.max(0, Math.min(1, Number(param.slice(2)) || 0));
+      }
+    }
+    entries.push({ mime, q, order: i });
+  }
+  // Sort: highest q first, then lowest client order first (stable)
+  entries.sort((a, b) => b.q - a.q || a.order - b.order);
+  return entries;
+}
+
+// Sentinel response type for RSC routes in negotiation candidates
+const RSC_RESPONSE_TYPE = "__rsc__";
+
+/**
+ * Pick the best negotiate variant by walking the client's sorted Accept list.
+ * For each accepted MIME type (in q-value/order priority), check if any
+ * candidate serves that type. Wildcards (*\/*) match the first candidate.
+ * Falls back to the first candidate if nothing matches.
  */
 function pickNegotiateVariant(
-  acceptTypes: Set<string>,
-  variants: Array<{ routeKey: string; responseType: string }>,
+  acceptEntries: AcceptEntry[],
+  candidates: Array<{ routeKey: string; responseType: string }>,
 ): { routeKey: string; responseType: string } {
-  for (const variant of variants) {
-    const mime = RESPONSE_TYPE_MIME[variant.responseType];
-    if (mime && acceptTypes.has(mime)) {
-      return variant;
+  // Build a MIME -> candidate lookup for O(1) matching
+  const byCandidateMime = new Map<string, { routeKey: string; responseType: string }>();
+  for (const c of candidates) {
+    const mime = c.responseType === RSC_RESPONSE_TYPE ? "text/html" : RESPONSE_TYPE_MIME[c.responseType];
+    if (mime && !byCandidateMime.has(mime)) {
+      byCandidateMime.set(mime, c);
     }
   }
-  // No specific MIME match — use first variant as default
-  return variants[0]!;
+
+  for (const entry of acceptEntries) {
+    if (entry.q === 0) continue;
+    // Wildcard matches first candidate
+    if (entry.mime === "*/*") return candidates[0]!;
+    // Type wildcard (e.g. "text/*") — match first candidate with that type
+    if (entry.mime.endsWith("/*")) {
+      const typePrefix = entry.mime.slice(0, entry.mime.indexOf("/"));
+      for (const [mime, candidate] of byCandidateMime) {
+        if (mime.startsWith(typePrefix + "/")) return candidate;
+      }
+      continue;
+    }
+    const match = byCandidateMime.get(entry.mime);
+    if (match) return match;
+  }
+  // No match — use first candidate as default
+  return candidates[0]!;
 }
 
 /**
@@ -1621,6 +1667,7 @@ export function createRouter<TEnv = any>(
             ...(trieResult.pt ? { pt: true } : {}),
             ...(trieResult.responseType ? { responseType: trieResult.responseType } : {}),
             ...(trieResult.negotiateVariants ? { negotiateVariants: trieResult.negotiateVariants } : {}),
+            ...(trieResult.rscFirst ? { rscFirst: true } : {}),
           };
           return lastFindMatchResult;
         }
@@ -1868,49 +1915,50 @@ export function createRouter<TEnv = any>(
       (manifestEntry.type === "route" ? manifestEntry.responseType : undefined);
 
     // Content negotiation: when negotiate variants exist, pick the best
-    // handler based on the Accept header. Variants may coexist with an RSC
-    // primary (responseType unset) or a response-type primary (responseType set).
-    // When the primary is itself a response-type route, include it as a candidate.
+    // handler based on the Accept header. Uses q-values and client order
+    // as tiebreaker (matching Express/Hono behavior). RSC routes participate
+    // as text/html candidates so browsers naturally get HTML without
+    // special-casing.
     if (matched.negotiateVariants && matched.negotiateVariants.length > 0) {
-      const acceptTypes = parseAcceptTypes(request.headers.get("accept") || "");
+      const acceptEntries = parseAcceptTypes(request.headers.get("accept") || "");
 
-      // Build candidate list: variants directly, add primary only if response-type
+      // Build candidate list preserving definition order.
+      // For wildcard (*/*) and no-Accept fallback, the first candidate wins.
       const variants = matched.negotiateVariants;
       let candidates: Array<{ routeKey: string; responseType: string }>;
       if (responseType) {
-        // Primary is response-type too — include it as a candidate
+        // Primary is response-type — include it as a candidate
         candidates = [...variants, { routeKey: matched.routeKey, responseType }];
       } else {
-        // Primary is RSC — variants array used directly, no copy needed
-        candidates = variants;
+        // Primary is RSC — insert as text/html candidate in definition order
+        const rscCandidate = { routeKey: matched.routeKey, responseType: RSC_RESPONSE_TYPE };
+        candidates = matched.rscFirst
+          ? [rscCandidate, ...variants]
+          : [...variants, rscCandidate];
       }
 
-      // If primary is RSC and Accept includes text/html, skip negotiation (RSC wins)
-      // but still mark as negotiated so Vary: Accept is set on the response.
-      if (!responseType && acceptTypes.has("text/html")) {
-        // Fall through to default RSC handling below, with negotiated flag
-      } else {
-        const variant = pickNegotiateVariant(acceptTypes, candidates);
+      const variant = pickNegotiateVariant(acceptEntries, candidates);
 
-        // If the winner is the current primary, use it directly
-        if (responseType && variant.routeKey === matched.routeKey) {
-          // Fall through — responseType already set, handler is manifestEntry
-        } else {
-          const negotiateEntry = await loadManifest(
-            matched.entry,
-            variant.routeKey,
-            pathname,
-            undefined,
-            false,
-          );
-          return {
-            routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
-            responseType: variant.responseType,
-            handler: negotiateEntry.type === "route" ? negotiateEntry.handler : undefined,
-            params: matched.params,
-            negotiated: true,
-          };
-        }
+      // If the winner is RSC, fall through to default RSC handling
+      if (variant.responseType === RSC_RESPONSE_TYPE) {
+        // Fall through — RSC won negotiation
+      } else if (responseType && variant.routeKey === matched.routeKey) {
+        // Fall through — response-type primary won, already set
+      } else {
+        const negotiateEntry = await loadManifest(
+          matched.entry,
+          variant.routeKey,
+          pathname,
+          undefined,
+          false,
+        );
+        return {
+          routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
+          responseType: variant.responseType,
+          handler: negotiateEntry.type === "route" ? negotiateEntry.handler : undefined,
+          params: matched.params,
+          negotiated: true,
+        };
       }
     }
 

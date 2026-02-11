@@ -40,6 +40,7 @@ import type {
   ShouldRevalidateFn,
   TrailingSlashMode,
 } from "./types.js";
+import type { CookieOptions } from "./router/middleware.js";
 import type {
   AllUseItems,
   LayoutItem,
@@ -138,7 +139,8 @@ export type TextResponseHandler<
 
 /**
  * Lighter handler context for response routes.
- * No ctx.use() (no loaders), no ctx.res (handler creates its own Response).
+ * No ctx.use() (no loaders). Supports setting response headers and cookies
+ * without constructing a full Response object.
  */
 export interface ResponseHandlerContext<
   TParams = Record<string, string>,
@@ -159,40 +161,12 @@ export interface ResponseHandlerContext<
   reverse: (name: string, params?: Record<string, string>) => string;
   /** Read a variable set by middleware via ctx.set(key, value). */
   get: (key: string) => unknown;
+  /** Set a response header. Merged into the auto-wrapped or pass-through Response. */
+  header: (name: string, value: string) => void;
+  /** Set a cookie on the response. */
+  setCookie: (name: string, value: string, options?: CookieOptions) => void;
 }
 
-/**
- * Restricted helpers for urls.json().
- * path() accepts plain JSON-serializable values or Response.
- */
-export type JsonResponsePathHelpers<TEnv> = {
-  path: JsonResponsePathFn<TEnv>;
-  include: IncludeFn<TEnv>;
-  cache: PathHelpers<TEnv>["cache"];
-  middleware: PathHelpers<TEnv>["middleware"];
-};
-
-/**
- * Restricted helpers for urls.text() / urls.html() / urls.xml().
- * path() accepts strings or Response.
- */
-export type TextResponsePathHelpers<TEnv> = {
-  path: TextResponsePathFn<TEnv>;
-  include: IncludeFn<TEnv>;
-  cache: PathHelpers<TEnv>["cache"];
-  middleware: PathHelpers<TEnv>["middleware"];
-};
-
-/**
- * Restricted helpers for urls.stream() / urls.any().
- * path() must return Response.
- */
-export type ResponsePathHelpers<TEnv> = {
-  path: ResponsePathFn<TEnv>;
-  include: IncludeFn<TEnv>;
-  cache: PathHelpers<TEnv>["cache"];
-  middleware: PathHelpers<TEnv>["middleware"];
-};
 
 // ============================================================================
 // Types
@@ -249,8 +223,6 @@ export interface UrlPatterns<
   readonly _routes?: TRoutes;
   /** Responses type brand (phantom) - carries route name -> response data type mapping */
   readonly _responses?: TResponses;
-  /** Module-level response type (set by urls.json(), urls.text(), etc.) */
-  readonly [RESPONSE_TYPE]?: string;
 }
 
 /**
@@ -635,6 +607,7 @@ export type PathHelpers<TEnv> = {
     text: TextResponsePathFn<TEnv>;
     html: TextResponsePathFn<TEnv>;
     xml: TextResponsePathFn<TEnv>;
+    md: TextResponsePathFn<TEnv>;
     image: ResponsePathFn<TEnv>;
     stream: ResponsePathFn<TEnv>;
     any: ResponsePathFn<TEnv>;
@@ -803,14 +776,12 @@ function applyNamePrefix(prefix: string | undefined, name: string): string {
  * with handler at the definition site.
  */
 /**
- * Resolve response type with inheritance:
- * path.json() option > urls.json() context > none
+ * Resolve response type from path options (set by path.json(), path.text(), etc.)
  */
 function resolveResponseType(
   options: PathOptions | undefined,
-  ctx: { responseType?: string },
 ): string | undefined {
-  return options?.[RESPONSE_TYPE] || ctx.responseType;
+  return options?.[RESPONSE_TYPE];
 }
 
 function createPathHelper<TEnv>(): PathFn<TEnv> {
@@ -899,8 +870,8 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
             prerenderDef: handler as PrerenderHandlerDefinition,
           }
         : {}),
-      ...(resolveResponseType(options, ctx)
-        ? { responseType: resolveResponseType(options, ctx) }
+      ...(resolveResponseType(options)
+        ? { responseType: resolveResponseType(options) }
         : {}),
     };
 
@@ -947,7 +918,7 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
 }
 
 /**
- * Attach response type tag methods (.json, .text, .html, .xml, .image, .stream, .any) to a path helper.
+ * Attach response type tag methods (.json, .text, .html, .xml, .md, .image, .stream, .any) to a path helper.
  * Each tag wraps the original path() call with the RESPONSE_TYPE option set.
  */
 function attachPathResponseTags<TEnv>(pathFn: PathFn<TEnv>): PathFn<TEnv> & {
@@ -955,6 +926,7 @@ function attachPathResponseTags<TEnv>(pathFn: PathFn<TEnv>): PathFn<TEnv> & {
   text: TextResponsePathFn<TEnv>;
   html: TextResponsePathFn<TEnv>;
   xml: TextResponsePathFn<TEnv>;
+  md: TextResponsePathFn<TEnv>;
   image: ResponsePathFn<TEnv>;
   stream: ResponsePathFn<TEnv>;
   any: ResponsePathFn<TEnv>;
@@ -986,6 +958,7 @@ function attachPathResponseTags<TEnv>(pathFn: PathFn<TEnv>): PathFn<TEnv> & {
   extended.text = createTagged("text");
   extended.html = createTagged("html");
   extended.xml = createTagged("xml");
+  extended.md = createTagged("md");
   extended.image = createTagged("image");
   extended.stream = createTagged("stream");
   extended.any = createTagged("any");
@@ -1215,62 +1188,6 @@ export function urls<
   } as UrlPatterns<TEnv, ExtractRoutes<TItems>, ExtractResponses<TItems>>;
 }
 
-/**
- * Create a response-typed urls() variant.
- * Sets RESPONSE_TYPE on the returned UrlPatterns and injects responseType
- * into the context so child path() calls inherit it by default.
- */
-function createUrlsResponseTag(responseType: string) {
-  return function taggedUrls<
-    TEnv = DefaultEnv,
-    const TItems extends readonly AllUseItems[] = readonly AllUseItems[],
-  >(
-    builder: (helpers: ResponsePathHelpers<TEnv>) => TItems,
-  ): UrlPatterns<TEnv, ExtractRoutes<TItems>, ExtractResponses<TItems>> {
-    // Wrap the builder to inject responseType into context
-    const wrappedBuilder = (helpers: PathHelpers<TEnv>) => {
-      const store = getContext();
-      const ctx = store.getStore();
-      if (ctx) {
-        ctx.responseType = responseType;
-      }
-      return builder(helpers as any);
-    };
-    const result = urls<TEnv, TItems>(wrappedBuilder as any);
-    (result as any)[RESPONSE_TYPE] = responseType;
-    return result;
-  };
-}
-
-type UrlsJsonTagFn = <
-  TEnv = DefaultEnv,
-  const TItems extends readonly AllUseItems[] = readonly AllUseItems[],
->(
-  builder: (helpers: JsonResponsePathHelpers<TEnv>) => TItems,
-) => UrlPatterns<TEnv, ExtractRoutes<TItems>, ExtractResponses<TItems>>;
-
-type UrlsTextTagFn = <
-  TEnv = DefaultEnv,
-  const TItems extends readonly AllUseItems[] = readonly AllUseItems[],
->(
-  builder: (helpers: TextResponsePathHelpers<TEnv>) => TItems,
-) => UrlPatterns<TEnv, ExtractRoutes<TItems>, ExtractResponses<TItems>>;
-
-type UrlsResponseTagFn = <
-  TEnv = DefaultEnv,
-  const TItems extends readonly AllUseItems[] = readonly AllUseItems[],
->(
-  builder: (helpers: ResponsePathHelpers<TEnv>) => TItems,
-) => UrlPatterns<TEnv, ExtractRoutes<TItems>, ExtractResponses<TItems>>;
-
-export namespace urls {
-  export const json: UrlsJsonTagFn = createUrlsResponseTag("json") as any;
-  export const text: UrlsTextTagFn = createUrlsResponseTag("text") as any;
-  export const html: UrlsTextTagFn = createUrlsResponseTag("html") as any;
-  export const xml: UrlsTextTagFn = createUrlsResponseTag("xml") as any;
-  export const stream: UrlsResponseTagFn = createUrlsResponseTag("stream");
-  export const any: UrlsResponseTagFn = createUrlsResponseTag("any");
-}
 
 // ============================================================================
 // Type Utilities for path()
@@ -1335,8 +1252,8 @@ export type ResponseEnvelope<T> =
  *
  * @example
  * ```typescript
- * const apiPatterns = urls.json(({ path }) => [
- *   path("/health", (ctx) => ({ status: "ok", timestamp: Date.now() }), { name: "health" }),
+ * const apiPatterns = urls(({ path }) => [
+ *   path.json("/health", (ctx) => ({ status: "ok", timestamp: Date.now() }), { name: "health" }),
  * ]);
  *
  * type HealthData = RouteResponse<typeof apiPatterns, "health">;

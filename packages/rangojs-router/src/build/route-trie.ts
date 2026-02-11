@@ -31,6 +31,8 @@ export interface TrieLeaf {
   rt?: string;
   /** Negotiate variants: response-type routes sharing this path */
   nv?: Array<{ routeKey: string; responseType: string }>;
+  /** RSC-first: RSC route was defined before response-type variants */
+  rf?: true;
 }
 
 export interface TrieNode {
@@ -174,15 +176,21 @@ function mergeLeaves(existing: TrieLeaf | undefined, leaf: TrieLeaf): TrieLeaf {
   }
   if (leaf.rt && !existing.rt) {
     // RSC primary exists, new leaf is response-type: append variant
-    if (!existing.nv) existing.nv = [];
+    // RSC was defined first (it was already the existing leaf)
+    if (!existing.nv) {
+      existing.nv = [];
+      existing.rf = true;
+    }
     existing.nv.push({ routeKey: leaf.n, responseType: leaf.rt });
     return existing;
   }
   if (!leaf.rt && existing.rt) {
     // Response-type was primary, new leaf is RSC: swap and move old to variants
+    // RSC was defined second (response-type was already the existing leaf)
     if (!leaf.nv) leaf.nv = [];
     leaf.nv.push({ routeKey: existing.n, responseType: existing.rt });
     if (existing.nv) leaf.nv.push(...existing.nv);
+    // rf intentionally not set — RSC came after response-type variants
     return leaf;
   }
   // Both RSC (last wins): overwrite

@@ -224,6 +224,8 @@ export interface RouteMatchResult<TEnv = any> {
   responseType?: string;
   /** Negotiate variants: response-type routes sharing this path */
   negotiateVariants?: Array<{ routeKey: string; responseType: string }>;
+  /** RSC-first: RSC route was defined before response-type variants */
+  rscFirst?: true;
 }
 
 /**

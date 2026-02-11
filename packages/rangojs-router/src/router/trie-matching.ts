@@ -28,6 +28,8 @@ export interface TrieMatchResult {
   responseType?: string;
   /** Negotiate variants: response-type routes sharing this path */
   negotiateVariants?: Array<{ routeKey: string; responseType: string }>;
+  /** RSC-first: RSC route was defined before response-type variants */
+  rscFirst?: true;
 }
 
 /**
@@ -165,5 +167,6 @@ function validateAndBuild(
     ...(leaf.pt ? { pt: true } : {}),
     ...(leaf.rt ? { responseType: leaf.rt } : {}),
     ...(leaf.nv ? { negotiateVariants: leaf.nv } : {}),
+    ...(leaf.rf ? { rscFirst: true } : {}),
   };
 }

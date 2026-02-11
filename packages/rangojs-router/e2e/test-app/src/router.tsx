@@ -24,6 +24,10 @@ export interface AppVariables {
   routeMiddlewareApplied?: string;
   middlewareRouteId?: string;
   paramsAvailableInMiddleware?: string;
+  // Response route middleware test variables
+  outerMw?: string;
+  innerMw?: string;
+  role?: string;
 }
 
 export type AppEnv = RouterEnv<AppBindings, AppVariables>;
