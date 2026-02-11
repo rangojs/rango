@@ -141,6 +141,13 @@ test.describe("prerender navigation (dev)", () => {
   }) => {
     using _ = expectNoPageError(page);
 
+    // Warm up the dev server so blog modules are compiled before the
+    // timed navigation.  Without this Vite may still be compiling blog
+    // code when the client navigates, causing an RSC stream timeout and
+    // a full-page reload instead of a partial update.
+    await page.goto(f.url("/blog"));
+    await waitForHydration(page);
+
     await page.goto(f.url("/articles"));
     await waitForHydration(page);
     await expect(testId(page, "articles-index")).toBeVisible();
