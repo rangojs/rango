@@ -807,11 +807,16 @@ function createRouterDiscoveryPlugin(
       });
 
       // Watch url module files for changes and regenerate route types.
+      // Only process files that contain urls( — skip components, actions, etc.
       if (opts?.staticRouteTypesGeneration !== false) {
         server.watcher.on("change", (filePath) => {
           if (filePath.endsWith(".gen.ts")) return;
           if (!filePath.endsWith(".ts") && !filePath.endsWith(".tsx")) return;
           try {
+            const source = readFileSync(filePath, "utf-8");
+            const trimmed = source.trimStart();
+            if (trimmed.startsWith('"use client"') || trimmed.startsWith("'use client'")) return;
+            if (!source.includes("urls(")) return;
             writePerModuleRouteTypesForFile(filePath);
             writeCombinedRouteTypes(projectRoot, entryPath);
           } catch {
