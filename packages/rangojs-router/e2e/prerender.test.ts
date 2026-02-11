@@ -39,6 +39,39 @@ test.describe("prerender-handler (dev mode)", () => {
     ).toContainText("Content for getting-started");
   });
 
+  test("prerender client component resolves loader, action, and locationState", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/docs/getting-started"));
+    await waitForHydration(page);
+
+    // Loader data should be resolved and rendered by useLoader
+    await expect(
+      page.locator('[data-testid="prerender-loader-data"]')
+    ).toContainText("prerender-loader-data");
+    await expect(
+      page.locator('[data-testid="prerender-loader-test"]')
+    ).toContainText("true");
+
+    // useAction should work with directly imported action
+    await expect(
+      page.locator('[data-testid="prerender-action-state"]')
+    ).toContainText("idle");
+
+    // Verify loader has $$id injected
+    const loaderJson = await page.locator('[data-testid="prerender-loader-json"]').textContent();
+    const loaderObj = JSON.parse(loaderJson!);
+    expect(loaderObj.$$id).toBeTruthy();
+
+    // Verify action has $$id injected (via direct import, not prop)
+    const actionId = await page.locator('[data-testid="prerender-action-id"]').textContent();
+    expect(actionId).not.toBe("no-action-id");
+
+    // Verify location state has __rsc_ls_key injected
+    const locationStateKey = await page.locator('[data-testid="prerender-location-state-key"]').textContent();
+    expect(locationStateKey).not.toBe("no-ls-key");
+  });
+
   test("dynamic prerender handler renders different params", async ({
     page,
   }) => {

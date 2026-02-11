@@ -1,5 +1,10 @@
 import { createLoader } from "@rangojs/router";
 
+// Simple loader for prerender client component tests
+export const PrerenderTestLoader = createLoader(async () => {
+  return { test: true, message: "prerender-loader-data" };
+});
+
 // Product data
 const products = [
   {

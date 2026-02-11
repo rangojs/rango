@@ -104,6 +104,11 @@ export async function resetCart(): Promise<void> {
   carts.delete(cartId);
 }
 
+// Dummy action for prerender client component tests
+export async function prerenderTestAction(): Promise<{ ok: true }> {
+  return { ok: true };
+}
+
 /**
  * Simple action that triggers revalidation
  * Used to test that loaders registered with loader() are revalidated

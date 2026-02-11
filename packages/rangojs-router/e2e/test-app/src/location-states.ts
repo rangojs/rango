@@ -6,3 +6,9 @@ export interface SlowProductState {
 }
 
 export const SlowProductLocationState = createLocationState<SlowProductState>();
+
+export interface PrerenderTestState {
+  tag: string;
+}
+
+export const PrerenderTestLocationState = createLocationState<PrerenderTestState>();
