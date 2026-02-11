@@ -225,8 +225,6 @@ interface HelperContext {
   run?: <T>(fn: () => T | Promise<T>) => T | Promise<T>;
   /** Tracked includes for build-time manifest generation */
   trackedIncludes?: TrackedInclude[];
-  /** Default response type inherited from urls.json() */
-  responseType?: string;
 }
 export const RSCRouterContext: AsyncLocalStorage<HelperContext> =
   new AsyncLocalStorage<HelperContext>();
@@ -346,7 +344,6 @@ export const getContext = (): {
           urlPrefix: store.urlPrefix,
           namePrefix: store.namePrefix,
           trackedIncludes: store.trackedIncludes,
-          responseType: store.responseType,
         },
         callback
       );
@@ -377,7 +374,6 @@ export const getContext = (): {
           urlPrefix: store?.urlPrefix,
           namePrefix: store?.namePrefix,
           trackedIncludes: store?.trackedIncludes,
-          responseType: store?.responseType,
         },
         callback
       );

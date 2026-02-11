@@ -241,7 +241,7 @@ type _Test8 = AssertTrue<AssertEqual<
 >>;
 
 // ============================================================================
-// PathResponse — full type chain through urls.json() → createRouter().routes()
+// PathResponse — full type chain through path.json() → createRouter().routes()
 // ============================================================================
 
 import type { PathResponse, ValidPaths } from "../href-client.js";
@@ -249,7 +249,7 @@ import { urls } from "../urls.js";
 import type { RouteResponse, ResponseEnvelope, ResponseHandlerContext, ResponseError } from "../urls.js";
 import { isResponseError } from "../client.js";
 
-// Actual urls definitions using the real urls() / urls.json() API.
+// Actual urls definitions using the real urls() / path.json() API.
 // This tests that response types propagate through the phantom type chain.
 const rscPatterns = urls(({ path }) => [
   path("/", () => null, { name: "home" }),
@@ -257,16 +257,16 @@ const rscPatterns = urls(({ path }) => [
   path("/blog/:slug", () => null, { name: "blog.post" }),
 ]);
 
-const apiPatterns = urls.json(({ path }) => [
-  path("/health", () => ({ status: "ok" as const, timestamp: Date.now() }), { name: "health" }),
-  path("/items", () => [{ id: "1", name: "Widget" }], { name: "items" }),
-  path("/items/:id", (ctx) => ({ id: ctx.params.id, name: "Widget", price: 9.99 }), { name: "item" }),
+const apiPatterns = urls(({ path }) => [
+  path.json("/health", () => ({ status: "ok" as const, timestamp: Date.now() }), { name: "health" }),
+  path.json("/items", () => [{ id: "1", name: "Widget" }], { name: "items" }),
+  path.json("/items/:id", (ctx) => ({ id: ctx.params.id, name: "Widget", price: 9.99 }), { name: "item" }),
 ]);
 
 // --- Scoped RouteResponse (from UrlPatterns._responses phantom) ---
 
 describe("RouteResponse (scoped, from UrlPatterns)", () => {
-  it("should resolve typed response envelope from urls.json() patterns", () => {
+  it("should resolve typed response envelope from path.json() patterns", () => {
     type Health = RouteResponse<typeof apiPatterns, "health">;
     expectTypeOf<Health>().toEqualTypeOf<ResponseEnvelope<{ status: "ok"; timestamp: number }>>();
   });
@@ -282,7 +282,7 @@ describe("RouteResponse (scoped, from UrlPatterns)", () => {
   });
 });
 
-// --- Full chain: urls.json() → MergeRoutesWithResponses → routeMap → PathResponse ---
+// --- Full chain: path.json() → MergeRoutesWithResponses → routeMap → PathResponse ---
 // This simulates what createRouter().routes(patterns) does at the type level.
 // createRouter can't be imported in vitest (virtual module dep), so we apply
 // the same MergeRoutesWithResponses logic that .routes(UrlPatterns) uses.
@@ -478,11 +478,11 @@ describe("isResponseError", () => {
 // --- Sub-module patterns (each declared independently, like separate files) ---
 
 // JSON API module (e.g. api/urls.tsx)
-const userApiPatterns = urls.json(({ path }) => [
-  path("/health", () => ({ status: "ok" as const, uptime: 123 }), { name: "health" }),
-  path("/users", () => [{ id: "1", email: "a@b.com" }], { name: "users" }),
-  path("/users/:userId", (ctx) => ({ id: ctx.params.userId, email: "a@b.com" }), { name: "user" }),
-  path("/users/:userId/posts/:postId", (ctx) => ({
+const userApiPatterns = urls(({ path }) => [
+  path.json("/health", () => ({ status: "ok" as const, uptime: 123 }), { name: "health" }),
+  path.json("/users", () => [{ id: "1", email: "a@b.com" }], { name: "users" }),
+  path.json("/users/:userId", (ctx) => ({ id: ctx.params.userId, email: "a@b.com" }), { name: "user" }),
+  path.json("/users/:userId/posts/:postId", (ctx) => ({
     id: ctx.params.postId,
     author: ctx.params.userId,
     title: "Hello",
@@ -490,9 +490,9 @@ const userApiPatterns = urls.json(({ path }) => [
 ]);
 
 // Text module (e.g. seo/urls.tsx)
-const seoPatterns = urls.text(({ path }) => [
-  path("/robots.txt", () => "User-agent: *\nDisallow: /api/", { name: "robots" }),
-  path("/sitemap.txt", () => "https://example.com/\nhttps://example.com/about", { name: "sitemap" }),
+const seoPatterns = urls(({ path }) => [
+  path.text("/robots.txt", () => "User-agent: *\nDisallow: /api/", { name: "robots" }),
+  path.text("/sitemap.txt", () => "https://example.com/\nhttps://example.com/about", { name: "sitemap" }),
 ]);
 
 // Main urlpatterns — mixes RSC pages, inline response routes, and includes
@@ -702,10 +702,10 @@ describe("ValidPaths through urls() with include()", () => {
 // ============================================================================
 
 // blog/api/urls.tsx — Blog's own JSON API routes
-const blogApiPatterns = urls.json(({ path }) => [
-  path("/stats", () => ({ views: 1000, visitors: 500 }), { name: "stats" }),
-  path("/:slug/likes", (ctx) => ({ slug: ctx.params.slug, count: 42 }), { name: "likes" }),
-  path("/:slug/comments", (ctx) => ([
+const blogApiPatterns = urls(({ path }) => [
+  path.json("/stats", () => ({ views: 1000, visitors: 500 }), { name: "stats" }),
+  path.json("/:slug/likes", (ctx) => ({ slug: ctx.params.slug, count: 42 }), { name: "likes" }),
+  path.json("/:slug/comments", (ctx) => ([
     { id: "c1", slug: ctx.params.slug, body: "Great post" },
   ]), { name: "comments" }),
 ]);
