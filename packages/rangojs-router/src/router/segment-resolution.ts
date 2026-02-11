@@ -690,10 +690,17 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       const parallelId = `${entry.shortCode}.${slot}`;
 
       const isFullRefetch = clientSegmentIds.size === 0;
+      // When the parent layout is new (not in client's segment set),
+      // all its parallel children must be resolved and tracked.
+      // Without this, navigating to a new layout with parallels
+      // (e.g., BlogLayout with @sidebar) from a different route
+      // would silently drop those parallel segments.
+      const isNewParent = !clientSegmentIds.has(entry.shortCode);
       if (
         isFullRefetch ||
         clientSegmentIds.has(parallelId) ||
-        belongsToRoute
+        belongsToRoute ||
+        isNewParent
       ) {
         matchedIds.push(parallelId);
       }
@@ -701,7 +708,7 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       const component = await revalidate(
         async () => {
           if (isFullRefetch) return true;
-          if (!clientSegmentIds.has(parallelId)) return belongsToRoute;
+          if (!clientSegmentIds.has(parallelId)) return belongsToRoute || isNewParent;
 
           const dummySegment: ResolvedSegment = {
             id: parallelId,

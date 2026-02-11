@@ -109,6 +109,18 @@ export async function loadManifest(
     const lazyContext = entry.lazy && entry.lazyPatterns ? entry.lazyContext : null;
     const parentForContext = lazyContext?.parent as EntryData | null ?? Store.parent;
 
+    // For lazy entries, merge captured counters from include() so the
+    // handler's entries get shortCode indices after sibling entries that
+    // were created during pattern extraction.  This prevents shortCode
+    // collisions between lazy and non-lazy entries under the same parent
+    // (e.g., ArticlesLayout and BlogLayout both under NavLayout).
+    if (lazyContext && (lazyContext as any).counters) {
+      const captured = (lazyContext as any).counters as Record<string, number>;
+      for (const [key, value] of Object.entries(captured)) {
+        Store.counters[key] = Math.max(Store.counters[key] ?? 0, value);
+      }
+    }
+
     const handlerExecStart = performance.now();
     const useItems = await getContext().runWithStore(
       Store,
@@ -118,25 +130,25 @@ export async function loadManifest(
         // Create helpers for lazy-loaded handlers that need them
         const helpers = createRouteHelpers();
 
-        // For lazy entries, use lazyPatterns.handler() with proper prefixes
+        // For lazy entries, use lazyPatterns.handler() with proper prefixes.
+        // Do NOT wrap in MapRootLayout here: the captured parent chain from
+        // pattern extraction already includes the synthetic MapRootLayout
+        // parent, so adding another would create an extra level that does
+        // not exist in the non-lazy (root handler) path and would produce
+        // mismatched shortCodes.
         if (entry.lazy && entry.lazyPatterns) {
           const lazyPatterns = entry.lazyPatterns as UrlPatterns<any>;
           const includePrefix = (entry as any)._lazyPrefix || "";
           const fullPrefix = (lazyContext?.urlPrefix || "") + includePrefix;
 
-          // Wrap in root layout and run with prefixes
-          const wrappedItems = helpers.layout(MapRootLayout, () => {
-            if (fullPrefix || lazyContext?.namePrefix) {
-              return runWithPrefixes(
-                fullPrefix,
-                lazyContext?.namePrefix,
-                () => lazyPatterns.handler()
-              );
-            }
-            return lazyPatterns.handler();
-          });
-
-          return [wrappedItems].flat(3);
+          if (fullPrefix || lazyContext?.namePrefix) {
+            return runWithPrefixes(
+              fullPrefix,
+              lazyContext?.namePrefix,
+              () => lazyPatterns.handler()
+            );
+          }
+          return lazyPatterns.handler();
         }
 
         // Wrap handler execution in root layout so routes get correct parent
@@ -184,10 +196,16 @@ export async function loadManifest(
       useItems && useItems.length > 0,
       "Did not receive any handler from router.map()"
     );
-    invariant(
-      useItems.some((item: { type: string }) => item.type === "layout"),
-      "Top-level handler must be a layout"
-    );
+    // For non-lazy entries the root handler is wrapped in MapRootLayout,
+    // so the result always contains a layout item.  Lazy entries run the
+    // included patterns handler directly (no MapRootLayout wrapper) so
+    // we skip this check -- the layout is in the captured parent chain.
+    if (!lazyContext) {
+      invariant(
+        useItems.some((item: { type: string }) => item.type === "layout"),
+        "Top-level handler must be a layout"
+      );
+    }
 
     invariant(
       Store.manifest.has(routeKey),

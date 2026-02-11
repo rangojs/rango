@@ -1521,6 +1521,16 @@ export function createRouter<TEnv = any>(
     // Capture the handler result to detect nested lazy includes
     let handlerResult: AllUseItems[] = [];
 
+    // Merge captured counters from include() to maintain consistent
+    // shortCode indices with sibling entries from pattern extraction
+    const lazyCounters: Record<string, number> = {};
+    if (lazyContext && (lazyContext as any).counters) {
+      const captured = (lazyContext as any).counters as Record<string, number>;
+      for (const [key, value] of Object.entries(captured)) {
+        lazyCounters[key] = value;
+      }
+    }
+
     RSCRouterContext.run(
       {
         manifest,
@@ -1529,7 +1539,7 @@ export function createRouter<TEnv = any>(
         trailingSlash: trailingSlashMap,
         namespace: "lazy",
         parent: (lazyContext?.parent as EntryData | null) ?? null,
-        counters: {},
+        counters: lazyCounters,
       },
       () => {
         // Run the lazy patterns handler with the original context prefixes
@@ -2298,9 +2308,31 @@ export function createRouter<TEnv = any>(
         const patternsByPrefix = new Map<string, Map<string, string>>();
         const trailingSlashMap = new Map<string, TrailingSlashMode>();
 
-        // Run the handler once to extract patterns for route matching
-        // Note: loadManifest will re-run the handler to register entries in its context
-        // Lazy includes are detected in the return value and handled separately
+        // Run the handler once to extract patterns for route matching.
+        // Note: loadManifest will re-run the handler to register entries in its context.
+        // Lazy includes are detected in the return value and handled separately.
+        //
+        // Pattern extraction must use the same mountIndex and MapRootLayout root
+        // parent as loadManifest so that shortCodes produced here match those at
+        // runtime.  include() captures the current parent and counters; if those
+        // shortCodes diverge from the runtime tree the segment reconciliation on
+        // the client will see a full mismatch and remount the entire page.
+        const syntheticMapRoot: EntryData = {
+          type: "layout",
+          id: `#synthetic-maproot-M${currentMountIndex}`,
+          shortCode: `M${currentMountIndex}L0`,
+          parent: null,
+          handler: MapRootLayout,
+          middleware: [],
+          revalidate: [],
+          errorBoundary: [],
+          notFoundBoundary: [],
+          layout: [],
+          parallel: [],
+          intercept: [],
+          loader: [],
+        };
+
         let handlerResult: AllUseItems[] = [];
         RSCRouterContext.run(
           {
@@ -2309,11 +2341,11 @@ export function createRouter<TEnv = any>(
             patternsByPrefix,
             trailingSlash: trailingSlashMap,
             namespace: "root",
-            parent: null,
+            parent: syntheticMapRoot,
             counters: {},
+            mountIndex: currentMountIndex,
           },
           () => {
-            // Execute the handler to collect patterns
             handlerResult = urlPatterns.handler() as AllUseItems[];
           },
         );

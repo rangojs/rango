@@ -1073,6 +1073,11 @@ function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
       });
     }
 
+    // Snapshot parent's counters so lazy manifest generation starts
+    // at the correct index, preventing shortCode collisions with
+    // sibling entries (e.g., BlogLayout and ArticlesLayout under NavLayout).
+    const capturedCounters = { ...ctx.counters };
+
     // All includes are lazy - patterns are evaluated on first matching request
     // This improves cold start time significantly for large route sets
     return {
@@ -1086,6 +1091,7 @@ function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
         urlPrefix: capturedUrlPrefix,
         namePrefix: fullNamePrefix,
         parent: capturedParent,
+        counters: capturedCounters,
       },
     } as IncludeItem;
   };
