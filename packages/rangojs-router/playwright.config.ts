@@ -67,7 +67,7 @@ export default defineConfig({
       dependencies: process.env.CI ? [] : ["dev", "production"],
     },
   ],
-  workers: process.env.CI ? 3 : 4,
+  workers: process.env.CI ? 3 : 6,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   reporter: [

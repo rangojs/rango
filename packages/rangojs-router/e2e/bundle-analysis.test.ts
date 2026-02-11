@@ -138,8 +138,8 @@ test.describe("bundle-analysis", () => {
     test("server action implementations SHOULD be in RSC bundle", async () => {
       const rscBundle = getRscBundleContent();
 
-      // Cart state should be in RSC bundle
-      expect(rscBundle).toContain("cartItems");
+      // Cart state should be in RSC bundle (keyed by cart ID)
+      expect(rscBundle).toContain("getCartId");
 
       // Action implementations should be in RSC bundle
       expect(rscBundle).toContain("addToCart");
