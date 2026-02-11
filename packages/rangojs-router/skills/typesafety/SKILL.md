@@ -82,6 +82,74 @@ function ShopNav() {
 }
 ```
 
+### Client: useReverseRoutes — type-safe named routes
+
+For named-route reversal on the client, use `useReverseRoutes` with routes from a `.gen.ts` file.
+
+The generated `.gen.ts` exports both a value and a type with the same name:
+
+```typescript
+// urls/shop.gen.ts (auto-generated)
+export const routes = {
+  index: "/",
+  cart: "/cart",
+  product: "/product/:slug",
+} as const;
+export type routes = typeof routes;
+```
+
+Server components import the value and pass it as a prop. Client components import the type for the prop signature. The narrow `as const` types survive the prop boundary, giving `useReverseRoutes` full inference:
+
+```tsx
+// Server component (RSC)
+import { routes } from "./urls/shop.gen";
+
+function ShopPage() {
+  return <ShopNav routes={routes} />;
+}
+```
+
+```tsx
+// Client component
+"use client";
+import { useReverseRoutes, Link } from "@rangojs/router/client";
+import type { routes } from "./urls/shop.gen";
+
+function ShopNav({ routes }: { routes: routes }) {
+  const reverse = useReverseRoutes(routes);
+
+  return (
+    <nav>
+      <Link to={reverse("index")}>Shop</Link>
+      <Link to={reverse("cart")}>Cart</Link>
+      <Link to={reverse("product", { slug: "widget" })}>Widget</Link>
+      {/*                ^ autocomplete   ^ type-checked params */}
+    </nav>
+  );
+}
+```
+
+Route names and params are fully validated at compile time:
+
+```typescript
+reverse("cart");                          // OK — no params needed
+reverse("product", { slug: "widget" });   // OK — params match pattern
+reverse("product");                       // Error — missing required params
+reverse("product", { id: "1" });          // Error — wrong param name
+reverse("nonexistent");                   // Error — unknown route
+```
+
+For non-hook usage (event handlers, callbacks), use `createReverse` directly:
+
+```typescript
+import { createReverse } from "@rangojs/router/client";
+
+const handleClick = (slug: string) => {
+  const reverse = createReverse(routes);
+  window.location.href = reverse("product", { slug });
+};
+```
+
 See `/links` for full URL generation guide.
 
 ## Environment Type Setup
@@ -391,4 +459,14 @@ path("/product/:slug", (ctx) => {
 "use client";
 import { useHref, href, Link } from "@rangojs/router/client";
 <Link to={href("/shop/product/widget")}>Widget</Link>
+
+// 7. Client: useReverseRoutes for type-safe named routes
+// Server passes routes from .gen.ts, client gets autocomplete + validation
+import { useReverseRoutes } from "@rangojs/router/client";
+import type { routes } from "./urls/shop.gen";
+
+function ShopNav({ routes }: { routes: routes }) {
+  const reverse = useReverseRoutes(routes);
+  return <Link to={reverse("product", { slug: "widget" })}>Widget</Link>;
+}
 ```

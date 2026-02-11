@@ -1,7 +1,7 @@
 ---
 name: links
-description: URL generation with ctx.reverse (server), href (client), useHref (mounted), useMount, and scopedReverse
-argument-hint: [href|useHref|useMount|scopedReverse]
+description: URL generation with ctx.reverse (server), href (client), useHref (mounted), useReverseRoutes (client named routes), useMount, and scopedReverse
+argument-hint: [href|useHref|useMount|useReverseRoutes|scopedReverse]
 ---
 
 # Links & URL Generation
@@ -124,6 +124,58 @@ function MountInfo() {
 
 `useMount()` reads from `MountContext`, which is automatically set by `include()` in the segment tree.
 
+## Client: useReverseRoutes()
+
+Hook for type-safe named-route reversal on the client. Takes a route map (from a generated `.gen.ts` file) passed as props from a server component, returns a memoized reverse function with full autocomplete.
+
+```typescript
+// Server component (RSC) — passes routes to client
+import { routes } from "./urls.gen";
+
+function ShopPage() {
+  return <ShopNav routes={routes} />;
+}
+```
+
+```tsx
+// Client component
+"use client";
+import { useReverseRoutes, Link } from "@rangojs/router/client";
+import type { routes } from "./urls.gen";
+
+function ShopNav({ routes }: { routes: routes }) {
+  const reverse = useReverseRoutes(routes);
+
+  return (
+    <nav>
+      <Link to={reverse("index")}>Shop Home</Link>
+      <Link to={reverse("product", { slug: "widget" })}>Widget</Link>
+      {/*                ^ autocomplete + type-checked params */}
+    </nav>
+  );
+}
+```
+
+The `.gen.ts` file exports both a value and a type with the same name `routes`. Server components import the value; client components use `import type` for the prop type. The narrow `as const` types flow through the prop boundary, giving the hook full inference.
+
+### createReverse() — non-hook variant
+
+For use outside render (event handlers, callbacks), import `createReverse` directly:
+
+```typescript
+"use client";
+import { createReverse } from "@rangojs/router/client";
+import type { routes } from "./urls.gen";
+
+function SearchForm({ routes }: { routes: routes }) {
+  const handleSubmit = (slug: string) => {
+    const reverse = createReverse(routes);
+    window.location.href = reverse("product", { slug });
+  };
+  // ...
+}
+```
+
 ## When to use what
 
 | Context | API | Resolves | Use for |
@@ -132,6 +184,8 @@ function MountInfo() {
 | Server handler | `scopedReverse<T>(ctx.reverse)` | Same, with type safety | Type-safe server URLs |
 | Client component | `href("/path")` | Absolute paths | Global navigation |
 | Client component | `useHref()` | Mount-prefixed paths | Local navigation inside `include()` |
+| Client component | `useReverseRoutes(routes)` | Named routes from route map | Type-safe client-side named route reversal |
+| Client component | `createReverse(routes)` | Same, non-hook | Event handlers, callbacks outside render |
 | Client component | `useMount()` | Raw mount path | Custom mount-aware logic |
 
 ## Complete example: mounted module
@@ -159,7 +213,7 @@ export const urlpatterns = urls(({ path, include }) => [
 ```
 
 ```tsx
-// components/ShopNav.tsx (client)
+// components/ShopNav.tsx (client) — path-based with useHref
 "use client";
 import { useHref, href, Link } from "@rangojs/router/client";
 
@@ -174,6 +228,25 @@ export function ShopNav() {
 
       {/* Absolute path - no prefix */}
       <Link to={href("/")}>Home</Link>
+    </nav>
+  );
+}
+```
+
+```tsx
+// components/ShopLinks.tsx (client) — name-based with useReverseRoutes
+"use client";
+import { useReverseRoutes, Link } from "@rangojs/router/client";
+import type { routes } from "../urls/shop.gen";
+
+export function ShopLinks({ routes }: { routes: routes }) {
+  const reverse = useReverseRoutes(routes);
+
+  return (
+    <nav>
+      <Link to={reverse("index")}>Shop</Link>
+      <Link to={reverse("cart")}>Cart</Link>
+      <Link to={reverse("product", { slug: "widget" })}>Widget</Link>
     </nav>
   );
 }

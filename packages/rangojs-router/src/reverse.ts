@@ -127,6 +127,13 @@ export type ReverseFunction<TRoutes> = {
     name: TName,
     params: ExtractParams<RoutePatternFor<TRoutes, TName>>
   ): string;
+
+  /**
+   * Fallback for generic contexts where TypeScript can't resolve
+   * the conditional types above (TRoutes is a type parameter).
+   * The strict overloads take priority when TRoutes is concrete.
+   */
+  (name: keyof TRoutes & string, params?: Record<string, string>): string;
 };
 
 /**
@@ -246,7 +253,7 @@ export function scopedReverse<TPatterns>(
  */
 export function createReverse<TRoutes extends Record<string, string>>(
   routeMap: TRoutes
-): ReverseFunction<TRoutes & Record<string, string>> {
+): ReverseFunction<TRoutes> {
   return ((name: string, params?: Record<string, string>) => {
     const pattern = routeMap[name];
     if (!pattern) {

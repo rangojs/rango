@@ -3,6 +3,8 @@ import { Link } from "@rangojs/router/client";
 import type { HandlerContext } from "@rangojs/router";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import { FeatureLocationState } from "../location-states.js";
+import { ReverseRoutesDemo } from "../components/ReverseRoutesDemo.js";
+import { routes as articleRoutes } from "./articles.gen.js";
 
 const features = [
   {
@@ -61,6 +63,11 @@ export function HomePage(ctx: HandlerContext) {
           </li>
         ))}
       </ul>
+      <h2 style={{ marginTop: "2rem" }}>Reverse Routes Demo</h2>
+      <p style={{ marginBottom: "1rem" }}>
+        Client-side URL reversal using useReverseRoutes hook with article routes:
+      </p>
+      <ReverseRoutesDemo routes={articleRoutes} />
     </main>
   );
 }

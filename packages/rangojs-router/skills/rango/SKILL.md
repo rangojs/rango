@@ -22,7 +22,7 @@ Django-inspired RSC router with composable URL patterns, type-safe href, and ser
 | `/caching` | Segment caching with memory or KV stores |
 | `/document-cache` | Edge caching with Cache-Control headers |
 | `/theme` | Light/dark mode with FOUC prevention |
-| `/links` | URL generation: ctx.reverse, href, useHref, useMount, scopedReverse |
+| `/links` | URL generation: ctx.reverse, href, useHref, useReverseRoutes, useMount, scopedReverse |
 | `/hooks` | Client-side React hooks |
 | `/typesafety` | Type-safe routes, params, href, and environment |
 | `/host-router` | Multi-app host routing with domain/subdomain patterns |

@@ -1,7 +1,8 @@
 import type { Handler } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { HrefTestClient } from "../components/HrefTestClient.js";
-import type { routes } from "./href.gen.js";
+import { ReverseRoutesTestClient } from "../components/ReverseRoutesTestClient.js";
+import { routes } from "./href.gen.js";
 
 export const HrefIndexHandler: Handler<"index", routes> = (ctx) => {
   // Server-side ctx.reverse tests
@@ -51,6 +52,11 @@ export const HrefIndexHandler: Handler<"index", routes> = (ctx) => {
       <section data-testid="client-href-section">
         <h2>Client-side href + useMount</h2>
         <HrefTestClient />
+      </section>
+
+      <section data-testid="client-reverse-routes-section">
+        <h2>Client-side useReverseRoutes</h2>
+        <ReverseRoutesTestClient routes={routes} />
       </section>
 
       <section data-testid="navigation-section">

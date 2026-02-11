@@ -44,6 +44,9 @@ export {
 // Link status hook
 export { useLinkStatus, type LinkStatus } from "./use-link-status.js";
 
+// Reverse routes hook
+export { useReverseRoutes } from "./use-reverse-routes.js";
+
 // Scroll restoration
 export {
   ScrollRestoration,
