@@ -47,11 +47,16 @@ The MIME mapping used for matching:
 
 | Tag | MIME type |
 |-----|-----------|
+| RSC (plain `path()`) | `text/html` (negotiation) / `text/x-component` (wire format) |
 | `json` | `application/json` |
 | `text` | `text/plain` |
 | `xml` | `application/xml` |
 | `html` | `text/html` |
 | `md` | `text/markdown` |
+
+RSC routes negotiate as `text/html` but respond with `text/x-component` (the RSC wire format).
+The browser's RSC runtime decodes this transparently — clients requesting `text/html` get
+the RSC page rendered normally.
 
 Tags `image`, `stream`, and `any` are pass-through and do not participate in Accept matching.
 
@@ -96,7 +101,7 @@ path.json("/api/data", () => ({ format: "json" }), { name: "dataJson" }),
 path.text("/api/data", () => "plain text version", { name: "dataText" }),
 ```
 
-Without an RSC primary, there is no `text/html` short-circuit — the Accept header
+Without an RSC primary, there is no `text/html` candidate — the Accept header
 picks among the response-type candidates directly.
 
 ## How It Works
