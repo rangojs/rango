@@ -34,10 +34,14 @@ When an API client requests the same URL (`Accept: application/json`), the JSON 
 
 ## Negotiation Rules
 
-1. **`text/html` in Accept** — RSC route wins (the page renders normally)
-2. **Specific MIME match** — the variant whose MIME type appears in Accept wins
-3. **No match / `*/*` / empty Accept** — first variant in registration order wins (fallback)
-4. **All responses** on a negotiated URL get `Vary: Accept` header, including the RSC side
+1. **Q-value priority** — higher `q` wins (`Accept: application/json;q=0.9, text/html;q=1.0` serves RSC)
+2. **Client order tiebreaker** — when q-values are equal, the type listed first in Accept wins (matches Express/Hono behavior)
+3. **Specific MIME match** — the variant whose MIME type appears in Accept wins
+4. **Wildcard / empty Accept** — `*/*` and missing Accept fall back to route definition order (the first-defined variant wins)
+5. **All responses** on a negotiated URL get `Vary: Accept` header, including the RSC side
+
+RSC participates as a `text/html` candidate alongside response-type variants.
+There is no special short-circuit — RSC follows the same negotiation rules as other types.
 
 The MIME mapping used for matching:
 
@@ -99,11 +103,12 @@ picks among the response-type candidates directly.
 
 1. **Build time**: `buildRouteTrie()` calls `mergeLeaves()` when multiple routes share a pattern.
    RSC routes become the primary trie leaf; response-type routes are stored in the `nv`
-   (negotiate variants) array on the leaf.
+   (negotiate variants) array on the leaf. The `rf` (rsc-first) flag tracks definition order.
 2. **Runtime**: `previewRoute()` reads `negotiateVariants` from the trie match result.
-   It parses the `Accept` header, builds a candidate list, and calls `pickNegotiateVariant()`.
-3. **RSC short-circuit**: if the primary is RSC and `Accept` contains `text/html`,
-   negotiation is skipped — the RSC pipeline handles the request.
+   It parses the `Accept` header (extracting q-values and order), builds a candidate list
+   (RSC as `text/html` + response-type variants), and calls `pickNegotiateVariant()`.
+3. **Candidate matching**: walks the client's sorted Accept list (by q desc, then order asc),
+   matching each entry against candidates. Wildcards (`*/*`, `text/*`) fall back to definition order.
 4. **Vary header**: both the response-route handler wrapper and the RSC handler wrapper
    append `Vary: Accept` when the `negotiated` flag is set on the preview result.
 

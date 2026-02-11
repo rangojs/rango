@@ -73,8 +73,27 @@ interface ResponseHandlerContext<TParams, TEnv> {
   url: URL;
   pathname: string;
   href: (name: string, params?: Record<string, string>) => string;
+  header: (name: string, value: string) => void;
+  setCookie: (name: string, value: string, options?: CookieOptions) => void;
 }
 ```
+
+### Setting Headers and Cookies
+
+String-returning handlers (json, text, html, xml, md) can set custom headers and cookies
+without constructing a full Response:
+
+```typescript
+path.md("/docs/:slug.md", (ctx) => {
+  ctx.header("Cache-Control", "public, max-age=3600");
+  ctx.setCookie("last-doc", ctx.params.slug, { path: "/" });
+  return `# ${ctx.params.slug}\n\nContent here.`;
+}, { name: "docs" });
+```
+
+Headers and cookies set via `ctx.header()` / `ctx.setCookie()` are merged into the
+auto-wrapped Response. If the handler returns a `Response` directly, these are ignored
+(use the Response headers instead).
 
 ### Environment Type Extraction
 
