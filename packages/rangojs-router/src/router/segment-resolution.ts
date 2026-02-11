@@ -106,6 +106,14 @@ export async function resolveLoaders<TEnv>(
 }
 
 /**
+ * Options for segment resolution.
+ */
+export interface ResolveSegmentOptions {
+  /** When true, skip resolveLoaders() calls (used for pre-rendering) */
+  skipLoaders?: boolean;
+}
+
+/**
  * Resolve segments from EntryData.
  * Executes middlewares, loaders, parallels, and handlers in correct order.
  * Returns array: [main segment, ...orphan layout segments]
@@ -118,12 +126,15 @@ export async function resolveSegment<TEnv>(
   loaderPromises: Map<string, Promise<any>>,
   deps: SegmentResolutionDeps<TEnv>,
   isRouteEntry: boolean = false,
+  options?: ResolveSegmentOptions,
 ): Promise<ResolvedSegment[]> {
   const segments: ResolvedSegment[] = [];
 
   if (entry.type === "layout" || entry.type === "cache") {
-    const loaderSegments = await resolveLoaders(entry, context, false, deps);
-    segments.push(...loaderSegments);
+    if (!options?.skipLoaders) {
+      const loaderSegments = await resolveLoaders(entry, context, false, deps);
+      segments.push(...loaderSegments);
+    }
 
     for (const parallelEntry of entry.parallel) {
       const parallelSegments = await resolveParallelEntry(
@@ -158,8 +169,10 @@ export async function resolveSegment<TEnv>(
       segments.push(...orphanSegments);
     }
   } else if (entry.type === "route") {
-    const loaderSegments = await resolveLoaders(entry, context, true, deps);
-    segments.push(...loaderSegments);
+    if (!options?.skipLoaders) {
+      const loaderSegments = await resolveLoaders(entry, context, true, deps);
+      segments.push(...loaderSegments);
+    }
 
     for (const orphan of entry.layout) {
       const orphanSegments = await resolveOrphanLayout(
@@ -425,13 +438,14 @@ export async function resolveAllSegments<TEnv>(
   context: HandlerContext<any, TEnv>,
   loaderPromises: Map<string, Promise<any>>,
   deps: SegmentResolutionDeps<TEnv>,
+  options?: ResolveSegmentOptions,
 ): Promise<ResolvedSegment[]> {
   const allSegments: ResolvedSegment[] = [];
 
   for (const entry of entries) {
     const resolvedSegments = await resolveWithErrorHandling(
       entry, routeKey, params, context, loaderPromises,
-      () => resolveSegment(entry, routeKey, params, context, loaderPromises, deps),
+      () => resolveSegment(entry, routeKey, params, context, loaderPromises, deps, false, options),
       deps,
     );
     allSegments.push(...resolvedSegments);

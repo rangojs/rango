@@ -188,8 +188,8 @@ function mergeLeaves(existing: TrieLeaf | undefined, leaf: TrieLeaf): TrieLeaf {
     // Response-type was primary, new leaf is RSC: swap and move old to variants
     // RSC was defined second (response-type was already the existing leaf)
     if (!leaf.nv) leaf.nv = [];
-    leaf.nv.push({ routeKey: existing.n, responseType: existing.rt });
     if (existing.nv) leaf.nv.push(...existing.nv);
+    leaf.nv.push({ routeKey: existing.n, responseType: existing.rt });
     // rf intentionally not set — RSC came after response-type variants
     return leaf;
   }

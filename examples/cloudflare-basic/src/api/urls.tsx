@@ -17,12 +17,12 @@ const products = [
   { id: "3", name: "Doohickey", price: 4.99 },
 ];
 
-export const apiPatterns = urls.json(({ path }) => [
-  path("/health", (ctx) => ({ status: "ok", timestamp: Date.now() }), { name: "health" }),
+export const apiPatterns = urls(({ path }) => [
+  path.json("/health", (ctx) => ({ status: "ok", timestamp: Date.now() }), { name: "health" }),
 
-  path("/products", (ctx) => products, { name: "products" }),
+  path.json("/products", (ctx) => products, { name: "products" }),
 
-  path("/products/:id", (ctx) => {
+  path.json("/products/:id", (ctx) => {
     const product = products.find(p => p.id === ctx.params.id);
     if (!product) {
       throw new RouterError("NOT_FOUND", `Product ${ctx.params.id} not found`, { status: 404 });

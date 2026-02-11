@@ -1,5 +1,6 @@
 - When writing code comments, never use icons and emojis. Keep comments technical and focused on implementation details.
 - Before working on routing, run `/rango` to understand the API. Skills are in `node_modules/@rangojs/router/skills/`.
+- Run the full test suite with `pnpm test` from the repo root.
 
 ## Design Documents
 

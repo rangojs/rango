@@ -177,4 +177,73 @@ test.describe("prerender", () => {
     const title = await page.title();
     expect(title).toContain("Articles");
   });
+
+  // -- Releases (node:fs prerender handler) --
+
+  test("should render releases page on direct visit", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/releases"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "releases-page")).toBeVisible();
+    await expect(page.locator("h1")).toHaveText("Releases");
+    await expect(testId(page, "release-2.0.0")).toBeVisible();
+    await expect(testId(page, "release-1.0.0")).toBeVisible();
+  });
+
+  test("should navigate to releases via client-side navigation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/counter"));
+    await waitForHydration(page);
+
+    await using __ = await expectNoReload(page);
+
+    await testId(page, "nav-releases").click();
+    await expect(testId(page, "releases-page")).toBeVisible();
+    await expect(testId(page, "release-2.0.0")).toBeVisible();
+  });
+
+  // -- Guides (passthrough prerender handler) --
+
+  test("should render guides page on direct visit", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/guides/routing"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "guide-detail")).toBeVisible();
+    await expect(testId(page, "guide-title")).toHaveText("Routing Guide");
+    await expect(testId(page, "guide-slug")).toHaveText("Slug: routing");
+  });
+
+  test("should render different guide slug on direct visit", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/guides/caching"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "guide-title")).toHaveText("Caching Guide");
+    await expect(testId(page, "guide-slug")).toHaveText("Slug: caching");
+  });
+
+  test("should navigate to guides via client-side navigation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/counter"));
+    await waitForHydration(page);
+
+    await using __ = await expectNoReload(page);
+
+    await testId(page, "nav-guides").click();
+    await expect(testId(page, "guide-detail")).toBeVisible();
+    await expect(testId(page, "guide-title")).toHaveText("Routing Guide");
+  });
 });

@@ -328,6 +328,9 @@ export function findMatch<TEnv>(
       const trailingSlashMode: TrailingSlashMode | undefined = entry.trailingSlash?.[routeKey];
 
 
+      // Prerender flag from entry metadata (set by urls() for prerender handlers)
+      const prFlag = entry.prerenderRouteKeys?.has(routeKey) ? { pr: true as const } : {};
+
       // Try exact match first
       const match = regex.exec(pathname);
       if (match) {
@@ -344,13 +347,13 @@ export function findMatch<TEnv>(
         // Check if trailing slash mode requires redirect even on exact match
         if (trailingSlashMode === "always" && !pathnameHasTrailingSlash && pathname !== "/") {
           // Mode says always have trailing slash, but pathname doesn't have it
-          return { entry, routeKey, params, optionalParams, redirectTo: pathname + "/" };
+          return { entry, routeKey, params, optionalParams, redirectTo: pathname + "/", ...prFlag };
         } else if (trailingSlashMode === "never" && pathnameHasTrailingSlash) {
           // Mode says never have trailing slash, but pathname has it
-          return { entry, routeKey, params, optionalParams, redirectTo: pathname.slice(0, -1) };
+          return { entry, routeKey, params, optionalParams, redirectTo: pathname.slice(0, -1), ...prFlag };
         }
 
-        return { entry, routeKey, params, optionalParams };
+        return { entry, routeKey, params, optionalParams, ...prFlag };
       }
 
       // Try alternate pathname (opposite trailing slash)
@@ -364,24 +367,24 @@ export function findMatch<TEnv>(
         // Determine redirect behavior based on mode
         if (trailingSlashMode === "ignore") {
           // Match without redirect
-          return { entry, routeKey, params, optionalParams };
+          return { entry, routeKey, params, optionalParams, ...prFlag };
         } else if (trailingSlashMode === "never") {
           // Redirect to no trailing slash
           if (pathnameHasTrailingSlash) {
-            return { entry, routeKey, params, optionalParams, redirectTo: alternatePathname };
+            return { entry, routeKey, params, optionalParams, redirectTo: alternatePathname, ...prFlag };
           }
-          return { entry, routeKey, params, optionalParams };
+          return { entry, routeKey, params, optionalParams, ...prFlag };
         } else if (trailingSlashMode === "always") {
           // Redirect to with trailing slash
           if (!pathnameHasTrailingSlash) {
-            return { entry, routeKey, params, optionalParams, redirectTo: alternatePathname };
+            return { entry, routeKey, params, optionalParams, redirectTo: alternatePathname, ...prFlag };
           }
-          return { entry, routeKey, params, optionalParams };
+          return { entry, routeKey, params, optionalParams, ...prFlag };
         } else {
           // No explicit mode - use pattern-based detection
           // Redirect to canonical form (what the pattern defines)
           const canonicalPath = hasTrailingSlash ? alternatePathname : pathname.slice(0, -1);
-          return { entry, routeKey, params, optionalParams, redirectTo: canonicalPath };
+          return { entry, routeKey, params, optionalParams, redirectTo: canonicalPath, ...prFlag };
         }
       }
     }

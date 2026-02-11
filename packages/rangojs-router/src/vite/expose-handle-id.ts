@@ -170,7 +170,7 @@ function transformHandleExports(
  * - Must use direct import: import { createHandle } from "@rangojs/router"
  * - Must use named export: export const MyHandle = createHandle(...)
  */
-export function exposeHandleId(): Plugin {
+export function exposeHandleId(options?: { forceBuild?: boolean }): Plugin {
   let config: ResolvedConfig;
   let isBuild = false;
 
@@ -180,7 +180,7 @@ export function exposeHandleId(): Plugin {
 
     configResolved(resolvedConfig) {
       config = resolvedConfig;
-      isBuild = config.command === "build";
+      isBuild = options?.forceBuild || config.command === "build";
     },
 
     transform(code, id) {

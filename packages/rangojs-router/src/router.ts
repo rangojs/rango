@@ -54,7 +54,12 @@ import type {
 import type {
   NonceProvider,
 } from "./rsc/types.js";
-import type { ExecutionContext } from "./server/request-context.js";
+import {
+  runWithRequestContext,
+  type RequestContext,
+  type ExecutionContext,
+} from "./server/request-context.js";
+import type { SerializedSegmentData, SegmentHandleData } from "./cache/types.js";
 
 // Extracted router utilities
 import {
@@ -88,10 +93,11 @@ import {
 } from "./router/match-api.js";
 
 import type { SegmentResolutionDeps, MatchApiDeps } from "./router/types.js";
-import { createHandlerContext } from "./router/handler-context.js";
+import { createHandlerContext, createBuildContext } from "./router/handler-context.js";
 import {
   setupLoaderAccess,
   setupLoaderAccessSilent,
+  setupBuildUse,
   wrapLoaderWithErrorHandling,
 } from "./router/loader-resolution.js";
 import { loadManifest } from "./router/manifest.js";
@@ -971,6 +977,22 @@ export interface RSCRouter<
   match(request: Request, context: TEnv): Promise<MatchResult>;
 
   /**
+   * Build-time pre-render match. Resolves segments with a BuildContext
+   * (no request/env/headers/cookies), skipping middleware and loaders.
+   * Used by the Vite plugin to collect pre-render data at build time.
+   * @internal
+   */
+  matchForPrerender(
+    pathname: string,
+    params: Record<string, string>,
+  ): Promise<{
+    segments: SerializedSegmentData[];
+    handles: Record<string, SegmentHandleData>;
+    routeName: string;
+    params: Record<string, string>;
+  } | null>;
+
+  /**
    * Preview match - returns route middleware without segment resolution.
    * Also returns responseType and handler for response routes (non-RSC short-circuit).
    */
@@ -1320,8 +1342,9 @@ export function createRouter<TEnv = any>(
     params: Record<string, string>,
     context: HandlerContext<any, TEnv>,
     loaderPromises: Map<string, Promise<any>>,
+    options?: { skipLoaders?: boolean },
   ) {
-    return _resolveAllSegments(entries, routeKey, params, context, loaderPromises, segmentDeps);
+    return _resolveAllSegments(entries, routeKey, params, context, loaderPromises, segmentDeps, options);
   }
 
   function resolveLoadersOnly(
@@ -1727,6 +1750,151 @@ export function createRouter<TEnv = any>(
     return result;
   }
 
+
+  /**
+   * Build-time pre-render match. Resolves segments with a BuildContext
+   * (no request/env/headers/cookies), skipping middleware and loaders.
+   */
+  async function matchForPrerender(
+    pathname: string,
+    params: Record<string, string>,
+  ): Promise<{
+    segments: SerializedSegmentData[];
+    handles: Record<string, SegmentHandleData>;
+    routeName: string;
+    params: Record<string, string>;
+  } | null> {
+    // 1. Find the matching route entry
+    const matched = findMatch(pathname);
+    if (!matched) return null;
+
+    // Use params from trie match if available, fall back to provided params
+    const matchedParams = matched.params ?? params;
+
+    // Build a minimal RouterContext for loadManifest/traverseBack
+    const routerCtx: RouterContext<TEnv> = {
+      findMatch,
+      loadManifest,
+      traverseBack,
+      createHandlerContext,
+      setupLoaderAccess,
+      setupLoaderAccessSilent,
+      getContext,
+      getMetricsStore,
+      createCacheScope,
+      findInterceptForRoute,
+      resolveAllSegmentsWithRevalidation,
+      resolveInterceptEntry,
+      evaluateRevalidation,
+      getRequestContext,
+      resolveAllSegments,
+      createHandleStore,
+      buildEntryRevalidateMap,
+      resolveLoadersOnlyWithRevalidation,
+      resolveInterceptLoadersOnly,
+      resolveLoadersOnly,
+    };
+
+    return runWithRouterContext(routerCtx, async () => {
+      // 2. Load the manifest entry tree
+      const manifestEntry = await loadManifest(
+        matched.entry,
+        matched.routeKey,
+        pathname,
+        undefined,
+        false,
+      );
+
+      // 3. Build ancestor chain [root, ..., route]
+      const entries: EntryData[] = [];
+      for (const entry of traverseBack(manifestEntry)) {
+        entries.push(entry);
+      }
+
+      // 4. Create handle store for collecting handle data
+      const handleStore = createHandleStore();
+
+      // 5. Create a minimal request context with the handle store
+      const stubRes = new Response(null, { status: 200 });
+      const minimalRequestContext: RequestContext<TEnv> = {
+        env: {} as TEnv,
+        request: new Request("http://prerender" + pathname),
+        url: new URL("http://prerender" + pathname),
+        pathname,
+        searchParams: new URLSearchParams(),
+        var: {},
+        get: () => undefined as any,
+        set: () => {},
+        params: matchedParams,
+        res: stubRes,
+        cookie: () => undefined,
+        cookies: () => ({}),
+        setCookie: () => {},
+        deleteCookie: () => {},
+        header: () => {},
+        use: (() => {
+          throw new Error("use() not available during pre-rendering");
+        }) as any,
+        method: "GET",
+        _handleStore: handleStore,
+        waitUntil: () => {},
+        onResponse: () => {},
+        _onResponseCallbacks: [],
+      };
+
+      return runWithRequestContext(minimalRequestContext, async () => {
+        // 6. Create BuildContext (no request/env/headers/cookies)
+        const buildCtx = createBuildContext<TEnv>(
+          matchedParams,
+          pathname,
+          handleStore,
+        );
+
+        // 7. Wire use() for handles only (loaders throw)
+        setupBuildUse(buildCtx);
+
+        // 8. Resolve all segments with skipLoaders
+        const loaderPromises = new Map<string, Promise<any>>();
+        const allSegments = await resolveAllSegments(
+          entries,
+          matched.routeKey,
+          matchedParams,
+          buildCtx,
+          loaderPromises,
+          { skipLoaders: true },
+        );
+
+        // 9. Filter out any loader segments (belt-and-suspenders)
+        const nonLoaderSegments = allSegments.filter((s) => s.type !== "loader");
+
+        // 10. Wait for handles to settle
+        await handleStore.settled;
+
+        // 11. Serialize segments using the cache serializer
+        const { serializeSegments } = await import("./cache/cache-scope.js");
+        const serializedSegments = await serializeSegments(nonLoaderSegments);
+
+        // 12. Collect handle data per segment (skip segments with no handle data)
+        const handles: Record<string, SegmentHandleData> = {};
+        for (const seg of nonLoaderSegments) {
+          const segHandles = handleStore.getDataForSegment(seg.id);
+          if (Object.keys(segHandles).length > 0) {
+            handles[seg.id] = segHandles;
+          }
+        }
+
+        // Use the trie-level route key (e.g., "docs", "docs.article")
+        const routeName = matched.routeKey;
+
+        return {
+          segments: serializedSegments,
+          handles,
+          routeName,
+          params: matchedParams,
+        };
+      });
+    });
+  }
 
   /**
    * Match request and return segments (document/SSR requests)
@@ -2157,6 +2325,15 @@ export function createRouter<TEnv = any>(
             ? Object.fromEntries(trailingSlashMap)
             : undefined;
 
+        // Collect route keys that have prerender handlers (for non-trie match path)
+        let prerenderRouteKeys: Set<string> | undefined;
+        for (const [name, entry] of manifest.entries()) {
+          if (entry.type === "route" && entry.isPrerender) {
+            if (!prerenderRouteKeys) prerenderRouteKeys = new Set();
+            prerenderRouteKeys.add(name);
+          }
+        }
+
         // Create separate RouteEntry for each URL prefix group
         // This enables prefix-based short-circuit optimization
         if (patternsByPrefix.size > 0) {
@@ -2176,6 +2353,7 @@ export function createRouter<TEnv = any>(
               trailingSlash: trailingSlashConfig,
               handler: urlPatterns.handler,
               mountIndex: currentMountIndex,
+              ...(prerenderRouteKeys ? { prerenderRouteKeys } : {}),
             });
           }
         } else {
@@ -2192,6 +2370,7 @@ export function createRouter<TEnv = any>(
             trailingSlash: trailingSlashConfig,
             handler: urlPatterns.handler,
             mountIndex: currentMountIndex,
+            ...(prerenderRouteKeys ? { prerenderRouteKeys } : {}),
           });
         }
 
@@ -2315,6 +2494,7 @@ export function createRouter<TEnv = any>(
     middleware: globalMiddleware,
 
     match,
+    matchForPrerender,
     matchPartial,
     matchError,
     previewMatch,

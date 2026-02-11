@@ -233,6 +233,52 @@ export function setupLoaderAccess<TEnv>(
 }
 
 /**
+ * Set up ctx.use() for pre-rendering (build-time).
+ * Handles push to HandleStore; loaders throw with a clear error.
+ */
+export function setupBuildUse<TEnv>(
+  ctx: HandlerContext<any, TEnv>,
+): void {
+  // Get HandleStore from request context
+  const getHandleStore = (): HandleStore | undefined => {
+    return getRequestContext()?._handleStore;
+  };
+
+  ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
+    // Handle case: return a push function bound to the current segment
+    if (isHandle(item)) {
+      const handle = item;
+      const store = getHandleStore();
+      const segmentId = (ctx as InternalHandlerContext)._currentSegmentId;
+
+      if (!segmentId) {
+        throw new Error(
+          `Handle "${handle.$$id}" used outside of handler context. ` +
+            `Handles must be used within route/layout handlers.`,
+        );
+      }
+
+      return (dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>)) => {
+        if (!store) return;
+
+        const valueOrPromise = typeof dataOrFn === "function"
+          ? (dataOrFn as () => Promise<unknown>)()
+          : dataOrFn;
+
+        store.push(handle.$$id, segmentId, valueOrPromise);
+      };
+    }
+
+    // Loader case: not available during pre-rendering
+    throw new Error(
+      "Loaders are not available during pre-rendering. " +
+        "Use them on parent layouts with cache() for request-time data, " +
+        "or use a passthrough prerender handler.",
+    );
+  }) as typeof ctx.use;
+}
+
+/**
  * Set up ctx.use() for proactive caching (silent mode).
  * Handles are silently ignored (no push to HandleStore).
  * Loaders work normally but with fresh memoization.

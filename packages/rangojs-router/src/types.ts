@@ -1087,6 +1087,12 @@ export interface RouteEntry<TEnv = any> {
     | Promise<() => Array<AllUseItems>>;
   mountIndex: number;
 
+  /**
+   * Route keys in this entry that have pre-render handlers.
+   * Used by the non-trie match path to set the `pr` flag.
+   */
+  prerenderRouteKeys?: Set<string>;
+
   // === Lazy evaluation fields ===
 
   /**

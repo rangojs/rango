@@ -238,8 +238,8 @@ export function createRSCHandler<
             generated._routeAncestry,
             routeToStaticPrefix,
             generated.routeTrailingSlash,
-            undefined, // prerenderRouteNames
-            undefined, // passthroughRouteNames
+            generated.prerenderRoutes ? new Set(generated.prerenderRoutes) : undefined,
+            generated.passthroughRoutes ? new Set(generated.passthroughRoutes) : undefined,
             generated.responseTypeRoutes,
           );
           setRouteTrie(trie);
@@ -1340,7 +1340,10 @@ export function createRSCHandler<
         const serializedSegments = await serializeSegments(nonLoaderSegments);
         const handles: Record<string, Record<string, unknown[]>> = {};
         for (const seg of nonLoaderSegments) {
-          handles[seg.id] = handleStore.getDataForSegment(seg.id);
+          const segHandles = handleStore.getDataForSegment(seg.id);
+          if (Object.keys(segHandles).length > 0) {
+            handles[seg.id] = segHandles;
+          }
         }
         return new Response(
           JSON.stringify({

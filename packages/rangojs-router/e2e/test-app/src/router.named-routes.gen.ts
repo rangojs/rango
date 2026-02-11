@@ -22,6 +22,7 @@ declare global {
       "cacheTest.nonCachedLoader": "//cache-test/non-cached-loader";
       "cacheTest.useLoaderDetail": "//cache-test/useloader/:itemId";
       "cacheTest.useLoaderIndex": "//cache-test/useloader";
+      "changelog": "//changelog";
       "docs": "//docs";
       "docs.article": "//docs/:slug";
       "errors.clientError": "//errors/client-error";

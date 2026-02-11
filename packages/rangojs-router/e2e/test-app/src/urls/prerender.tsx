@@ -1,4 +1,5 @@
 import { urls, createPrerenderHandler } from "@rangojs/router";
+import { ChangelogPage } from "./prerender-fs.js";
 
 // Static page -- no params, renders on-demand in dev mode
 export const DocsPage = createPrerenderHandler(
@@ -29,4 +30,5 @@ export const DocsArticle = createPrerenderHandler(
 export const prerenderPatterns = urls(({ path }) => [
   path("/docs", DocsPage, { name: "docs" }),
   path("/docs/:slug", DocsArticle, { name: "docs.article" }),
+  path("/changelog", ChangelogPage, { name: "changelog" }),
 ]);

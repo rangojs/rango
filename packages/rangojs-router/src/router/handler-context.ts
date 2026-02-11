@@ -5,6 +5,7 @@
  */
 
 import type { HandlerContext, InternalHandlerContext } from "../types";
+import type { HandleStore } from "../server/handle-store.js";
 import { getRequestContext } from "../server/request-context.js";
 
 /**
@@ -155,4 +156,68 @@ export function createHandlerContext<TEnv>(
       });
     },
   };
+}
+
+/**
+ * Create a BuildContext for pre-rendering.
+ *
+ * Returns a HandlerContext-compatible object where params, pathname, url,
+ * and use(handle) work, but request/env/headers/cookies/var/searchParams
+ * throw with a clear error. Loaders are not available during pre-rendering.
+ */
+export function createBuildContext<TEnv>(
+  params: Record<string, string>,
+  pathname: string,
+  handleStore: HandleStore,
+): InternalHandlerContext<any, TEnv> {
+  const syntheticUrl = new URL(`http://prerender${pathname}`);
+
+  function throwUnavailable(prop: string): never {
+    throw new Error(
+      `Property "${prop}" is not available during pre-rendering. ` +
+        `Fetch data directly in the handler or use a passthrough prerender handler.`,
+    );
+  }
+
+  return {
+    params,
+    get request(): Request {
+      return throwUnavailable("request");
+    },
+    get searchParams(): URLSearchParams {
+      return throwUnavailable("searchParams");
+    },
+    pathname,
+    url: syntheticUrl,
+    get env(): TEnv {
+      return throwUnavailable("env");
+    },
+    get var(): any {
+      return throwUnavailable("var");
+    },
+    get: (() => {
+      throwUnavailable("get");
+    }) as any,
+    set: (() => {
+      throwUnavailable("set");
+    }) as any,
+    get _originalRequest(): Request {
+      return throwUnavailable("request");
+    },
+    get res(): Response {
+      return throwUnavailable("res");
+    },
+    get headers(): Headers {
+      return throwUnavailable("headers");
+    },
+    // Placeholder use() - replaced by setupBuildUse
+    use: () => {
+      throw new Error("ctx.use() called before build context was initialized");
+    },
+    theme: undefined,
+    setTheme: undefined,
+    reverse: () => {
+      throwUnavailable("reverse");
+    },
+  } as InternalHandlerContext<any, TEnv>;
 }

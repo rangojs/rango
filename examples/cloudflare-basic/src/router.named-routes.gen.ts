@@ -5,6 +5,9 @@ declare global {
   namespace RSCRouter {
     interface GeneratedRouteMap {
       "about": "/about";
+      "api.health": "/api/health";
+      "api.productDetail": "/api/products/:id";
+      "api.products": "/api/products";
       "apiDemo": "/api-demo";
       "articles.detail": "/articles/:slug";
       "articles.index": "/articles";
@@ -22,6 +25,7 @@ declare global {
       "proactiveCache": "/proactive-cache";
       "proactiveCacheItemA": "/proactive-cache/item-a";
       "proactiveCacheItemB": "/proactive-cache/item-b";
+      "releases.index": "/releases";
       "robots": "/robots.txt";
       "slow1": "/slow/1";
       "slow2": "/slow/2";

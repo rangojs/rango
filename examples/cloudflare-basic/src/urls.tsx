@@ -30,6 +30,7 @@ import { SlowPage1, SlowPage2, FastPage } from "./pages/slow.js";
 import { InlineIndexPage, InlineDocsPage, InlinePricingPage } from "./pages/inline.js";
 import { articlesPatterns } from "./pages/articles.js";
 import { guidesPatterns } from "./pages/guides.js";
+import { releasesPatterns } from "./pages/releases.js";
 import { ApiDemoPage } from "./pages/api-demo.js";
 
 /**
@@ -48,11 +49,11 @@ export const urlpatterns = urls(({ path, layout, parallel, loader, loading, cach
   }, { name: "robots" }),
 
   // Content negotiation test routes (same URL, different response types)
-  path("/test/negotiate", () => <div>HTML version</div>, { name: "testNegotiate" }),
   path.json("/test/negotiate", (ctx) => ({
     format: "json",
     negotiated: true,
   }), { name: "testNegotiateJson" }),
+  path("/test/negotiate", () => <div>HTML version</div>, { name: "testNegotiate" }),
 
   // Content negotiation: text
   path("/test/negotiate-text", () => <div>Text HTML version</div>, { name: "testNegotiateText" }),
@@ -63,17 +64,17 @@ export const urlpatterns = urls(({ path, layout, parallel, loader, loading, cach
   path.xml("/test/negotiate-xml", () => "<item><status>ok</status></item>", { name: "testNegotiateXmlApi" }),
 
   // Content negotiation: multiple response types on same path
-  path("/test/negotiate-multi", () => <div>Multi HTML version</div>, { name: "testNegotiateMulti" }),
   path.json("/test/negotiate-multi", () => ({ format: "json" }), { name: "testNegotiateMultiJson" }),
   path.text("/test/negotiate-multi", () => "plain text", { name: "testNegotiateMultiText" }),
   path.xml("/test/negotiate-multi", () => "<root><format>xml</format></root>", { name: "testNegotiateMultiXml" }),
+  path("/test/negotiate-multi", () => <div>Multi HTML version</div>, { name: "testNegotiateMulti" }),
 
   // Content negotiation: wildcard route
-  path("/test/negotiate-wild/*", () => <div>Wildcard HTML</div>, { name: "testNegotiateWild" }),
   path.json("/test/negotiate-wild/*", (ctx) => ({
     format: "json",
     wildcard: (ctx.params as Record<string, string>)["*"],
   }), { name: "testNegotiateWildJson" }),
+  path("/test/negotiate-wild/*", () => <div>Wildcard HTML</div>, { name: "testNegotiateWild" }),
 
   // MIME type test routes (one per tag, used by e2e tests)
   path.json("/test/mime/json", () => ({ type: "json" }), { name: "testMimeJson" }),
@@ -164,5 +165,8 @@ export const urlpatterns = urls(({ path, layout, parallel, loader, loading, cach
 
     // Pre-rendered guides with passthrough (known slugs pre-rendered, unknown slugs live)
     include("/guides", guidesPatterns, { name: "guides" }),
+
+    // Pre-rendered releases page (uses node:fs at build time, evicted at deploy)
+    include("/releases", releasesPatterns, { name: "releases" }),
   ]),
 ]);

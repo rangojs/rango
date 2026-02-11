@@ -34,3 +34,5 @@ export {
   createScanFilter,
   type ScanFilter,
 } from "./generate-route-types.js";
+
+export { hashParams } from "../prerender/param-hash.js";

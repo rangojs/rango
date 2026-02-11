@@ -320,22 +320,19 @@ test.describe("bundle-analysis", () => {
   });
 
   test.describe("version-virtual-module", () => {
-    function getRscIndexContent(): string {
-      return readFileSync(RSC_INDEX, "utf-8");
-    }
-
     test("VERSION should be in RSC bundle as hex string", async () => {
-      const rscIndex = getRscIndexContent();
+      // VERSION may be in index.js or an RSC asset chunk (e.g. __prerender-handlers)
+      const rscBundle = getRscBundleContent();
 
       // VERSION should be defined as const VERSION = "hexstring"
-      expect(rscIndex).toMatch(/const VERSION\s*=\s*["'][0-9a-f]+["']/i);
+      expect(rscBundle).toMatch(/const VERSION\s*=\s*["'][0-9a-f]+["']/i);
     });
 
     test("VERSION should be a valid hex timestamp", async () => {
-      const rscIndex = getRscIndexContent();
+      const rscBundle = getRscBundleContent();
 
       // Extract VERSION value from const declaration
-      const versionMatch = rscIndex.match(/const VERSION\s*=\s*["']([0-9a-f]+)["']/i);
+      const versionMatch = rscBundle.match(/const VERSION\s*=\s*["']([0-9a-f]+)["']/i);
       expect(versionMatch).toBeTruthy();
 
       const version = versionMatch![1];
@@ -357,16 +354,143 @@ test.describe("bundle-analysis", () => {
 
     test("VERSION should NOT be in client bundle", async () => {
       const clientBundle = getClientBundleContent();
-      const rscIndex = getRscIndexContent();
+      const rscBundle = getRscBundleContent();
 
       // Extract the actual VERSION from RSC bundle
-      const versionMatch = rscIndex.match(/const VERSION\s*=\s*["']([0-9a-f]+)["']/i);
+      const versionMatch = rscBundle.match(/const VERSION\s*=\s*["']([0-9a-f]+)["']/i);
       expect(versionMatch).toBeTruthy();
 
       const version = versionMatch![1];
 
       // The specific version string should not appear in client bundle
       expect(clientBundle).not.toContain(version);
+    });
+  });
+
+  test.describe("prerender-handler-eviction", () => {
+    function getPrerenderHandlersContent(): string | null {
+      const files = readdirSync(RSC_ASSETS_DIR).filter((f) =>
+        f.startsWith("__prerender-handlers") && f.endsWith(".js")
+      );
+      if (files.length === 0) return null;
+      return files
+        .map((file) => readFileSync(join(RSC_ASSETS_DIR, file), "utf-8"))
+        .join("\n");
+    }
+
+    function getRscIndexContent(): string {
+      return existsSync(RSC_INDEX)
+        ? readFileSync(RSC_INDEX, "utf-8")
+        : "";
+    }
+
+    test("__prerender-handlers chunk exists in RSC bundle", async () => {
+      const content = getPrerenderHandlersContent();
+      expect(content).not.toBeNull();
+      expect(content!.length).toBeGreaterThan(0);
+    });
+
+    test("handler implementation strings evicted from prerender-handlers chunk", async () => {
+      const content = getPrerenderHandlersContent();
+      expect(content).not.toBeNull();
+
+      // Non-passthrough handler body strings should be replaced with stubs
+      expect(content).not.toContain("pre-rendered documentation");
+      expect(content).not.toContain("Content for");
+    });
+
+    test("handler implementation strings NOT in client bundle", async () => {
+      const clientBundle = getClientBundleContent();
+
+      expect(clientBundle).not.toContain("pre-rendered documentation");
+    });
+
+    test("handler implementation strings NOT in SSR bundle", async () => {
+      const ssrBundle = getSsrBundleContent();
+
+      expect(ssrBundle).not.toContain("pre-rendered documentation");
+    });
+
+    test("evicted handlers have stub shape", async () => {
+      const content = getPrerenderHandlersContent();
+      expect(content).not.toBeNull();
+
+      // Evicted handlers are replaced with: { __brand: "prerenderHandler", $$id: "..." }
+      expect(content).toMatch(/__brand.*prerenderHandler/);
+    });
+
+    test("__PRERENDER_MANIFEST imported into RSC entry", async () => {
+      const rscIndex = getRscIndexContent();
+
+      expect(rscIndex).toContain("__prerender-manifest.js");
+      expect(rscIndex).toContain("__PRERENDER_MANIFEST");
+    });
+
+    test("__prerender-manifest.js has correct shape", async () => {
+      const manifestPath = join(TEST_APP_ROOT, "dist/rsc/__prerender-manifest.js");
+      expect(existsSync(manifestPath)).toBe(true);
+
+      const manifestCode = readFileSync(manifestPath, "utf-8");
+
+      // Should contain docs routes (static route uses "_" param hash)
+      expect(manifestCode).toContain('"docs/_"');
+
+      // Should contain docs.article routes (dynamic with param hash)
+      expect(manifestCode).toMatch(/"docs\.article\/[a-f0-9]+"/);
+
+      // Should contain dynamic import references to __pr-*.js asset files
+      expect(manifestCode).toMatch(/import\("\.\/assets\/__pr-[a-f0-9]+\.js"\)/);
+    });
+
+    test("__pr-*.js asset files have correct shape", async () => {
+      const prFiles = readdirSync(RSC_ASSETS_DIR).filter((f) =>
+        f.startsWith("__pr-") && f.endsWith(".js")
+      );
+      expect(prFiles.length).toBeGreaterThan(0);
+
+      for (const file of prFiles) {
+        const content = readFileSync(join(RSC_ASSETS_DIR, file), "utf-8");
+        // Each asset exports a default with segments[] and handles{}
+        expect(content).toContain("export default");
+        const match = content.match(/export default\s+({[\s\S]*});\s*$/);
+        expect(match).toBeTruthy();
+        const data = JSON.parse(match![1]);
+        expect(Array.isArray(data.segments)).toBe(true);
+        expect(data.segments.length).toBeGreaterThan(0);
+        expect(typeof data.handles).toBe("object");
+      }
+    });
+
+    test("node:fs should NOT be in client bundle", async () => {
+      const clientBundle = getClientBundleContent();
+
+      expect(clientBundle).not.toContain("readFileSync");
+      expect(clientBundle).not.toContain("node:fs");
+    });
+
+    test("node:fs should NOT be in SSR bundle", async () => {
+      const ssrBundle = getSsrBundleContent();
+
+      expect(ssrBundle).not.toContain("readFileSync");
+    });
+
+    test("changelog content should NOT be in client bundle", async () => {
+      const clientBundle = getClientBundleContent();
+
+      // The changelog JSON data is build-time only
+      expect(clientBundle).not.toContain("Added pre-rendering support");
+      expect(clientBundle).not.toContain("Cache middleware");
+      expect(clientBundle).not.toContain("Initial release");
+    });
+
+    test("changelog prerender data should exist in manifest", async () => {
+      const manifestPath = join(TEST_APP_ROOT, "dist/rsc/__prerender-manifest.js");
+      expect(existsSync(manifestPath)).toBe(true);
+
+      const manifestCode = readFileSync(manifestPath, "utf-8");
+
+      // Should contain a changelog route entry
+      expect(manifestCode).toMatch(/"changelog\//);
     });
   });
 });

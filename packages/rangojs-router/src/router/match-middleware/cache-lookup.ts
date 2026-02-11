@@ -162,7 +162,9 @@ export function withCacheLookup<TEnv>(
       await ensurePrerenderDeps();
       if (prerenderStoreInstance) {
         const paramHash = _hashParams!(ctx.matched.params);
-        const entry = prerenderStoreInstance.get(ctx.matched.routeKey, paramHash);
+        const entry = await prerenderStoreInstance.get(
+          ctx.matched.routeKey, paramHash, { pathname: ctx.pathname }
+        );
         if (entry) {
           const segments = await _deserializeSegments!(entry.segments);
 
@@ -183,8 +185,12 @@ export function withCacheLookup<TEnv>(
           // Yield prerendered segments (same flow as cache hit)
           // For partial navigation, nullify components the client already has
           // so parent layouts stay live (client keeps its existing versions).
+          // However, when params changed (e.g., different guide slug), the
+          // prerendered segments have different content, so we must NOT nullify.
+          const paramsChanged = !ctx.isFullMatch &&
+            JSON.stringify(ctx.matched.params) !== JSON.stringify(ctx.prevParams);
           for (const segment of segments) {
-            if (!ctx.isFullMatch && ctx.clientSegmentSet.has(segment.id)) {
+            if (!ctx.isFullMatch && !paramsChanged && ctx.clientSegmentSet.has(segment.id)) {
               segment.component = null;
               segment.loading = undefined;
             }
