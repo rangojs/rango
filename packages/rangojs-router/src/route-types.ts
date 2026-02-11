@@ -147,6 +147,8 @@ export type IncludeItem = {
     urlPrefix: string;
     namePrefix: string | undefined;
     parent: unknown; // EntryData - avoid circular import
+    /** Counter snapshot from pattern extraction for consistent shortCode indices */
+    counters?: Record<string, number>;
   };
   [IncludeBrand]: void;
 };
