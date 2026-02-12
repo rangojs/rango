@@ -7,10 +7,7 @@ import { createRequire } from "node:module";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
 import { generateRouteTypesSource, writePerModuleRouteTypes, writePerModuleRouteTypesForFile, writeCombinedRouteTypes, findRouterFiles, createScanFilter, type ScanFilter } from "../build/generate-route-types.ts";
 import { exposeActionId } from "./expose-action-id.ts";
-import { exposeLoaderId } from "./expose-loader-id.ts";
-import { exposeHandleId } from "./expose-handle-id.ts";
-import { exposeLocationStateId } from "./expose-location-state-id.ts";
-import { exposePrerenderHandlerId } from "./expose-prerender-handler-id.ts";
+import { exposeInternalIds, exposeRouterId } from "./expose-internal-ids.ts";
 import {
   VIRTUAL_ENTRY_BROWSER,
   VIRTUAL_ENTRY_SSR,
@@ -26,10 +23,8 @@ import {
 
 // Re-export plugins
 export { exposeActionId } from "./expose-action-id.ts";
-export { exposeLoaderId } from "./expose-loader-id.ts";
-export { exposeHandleId } from "./expose-handle-id.ts";
-export { exposeLocationStateId } from "./expose-location-state-id.ts";
-export { exposePrerenderHandlerId } from "./expose-prerender-handler-id.ts";
+export { exposeInternalIds, exposeRouterId } from "./expose-internal-ids.ts";
+export type { ExposeInternalIdsApi } from "./expose-internal-ids.ts";
 
 // Virtual module type declarations in ./version.d.ts
 
@@ -487,7 +482,7 @@ function createRouterDiscoveryPlugin(
   // RSC entry chunk filename recorded during generateBundle for closeBundle injection.
   let rscEntryFileName: string | null = null;
 
-  // Resolved prerender handler modules from the expose-prerender-handler-id plugin.
+  // Resolved prerender handler modules from the expose-internal-ids plugin.
   let resolvedPrerenderModules: Map<string, string[]> | undefined;
 
   // Promise that resolves when dev-mode discovery completes.
@@ -910,13 +905,13 @@ function createRouterDiscoveryPlugin(
         cachedRouterFiles = findRouterFiles(projectRoot, scanFilter);
         writeCombinedRouteTypes(projectRoot, cachedRouterFiles);
       }
-      // Resolve prerenderHandlerModules from the prerender handler plugin's API.
+      // Resolve prerenderHandlerModules from the consolidated IDs plugin's API.
       if (opts?.enableBuildPrerender) {
-        const prerenderPlugin = config.plugins.find(
-          (p: any) => p.name === "@rangojs/router:expose-prerender-handler-id",
+        const idsPlugin = config.plugins.find(
+          (p: any) => p.name === "@rangojs/router:expose-internal-ids",
         );
         resolvedPrerenderModules =
-          (prerenderPlugin?.api as any)?.prerenderHandlerModules;
+          (idsPlugin?.api as any)?.prerenderHandlerModules;
       }
     },
 
@@ -1173,12 +1168,11 @@ function createRouterDiscoveryPlugin(
             // Stub virtual modules that the RSC entry may import
             // (e.g., virtual:rsc-router/routes-manifest, virtual:rsc-router/loader-manifest)
             createVirtualStubPlugin(),
-            // Inject handle IDs so prerender-collected handle data uses the same
-            // hashed keys as the production client/SSR bundles.
-            exposeHandleId({ forceBuild: true }),
-            // Inject stable $$id into createRouter() calls so build-time IDs
-            // match runtime IDs across environments (Node runner vs workerd).
-            createExposeRouterIdPlugin(),
+            // Inject handle + router IDs so prerender-collected handle data uses
+            // the same hashed keys as the production client/SSR bundles, and
+            // build-time router IDs match runtime IDs across environments.
+            exposeInternalIds({ forceBuild: true }),
+            exposeRouterId(),
           ],
         });
 
@@ -1839,6 +1833,13 @@ export async function rango(
               // RSC environment needs exclude list and esbuild options
               // Exclude rsc-router modules to prevent createContext in RSC environment
               optimizeDeps: {
+                // Pre-bundle all RSC deps to prevent late discovery triggering ERR_OUTDATED_OPTIMIZED_DEP
+                include: [
+                  "react",
+                  "react/jsx-runtime",
+                  "react/jsx-dev-runtime",
+                  "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
+                ],
                 exclude: excludeDeps,
                 esbuildOptions: sharedEsbuildOptions,
               },
@@ -1991,8 +1992,13 @@ export async function rango(
                 rsc: {
                   optimizeDeps: {
                     entries: [VIRTUAL_IDS.rsc],
-                    // Pre-bundle React for RSC to ensure single instance
-                    include: ["react", "react/jsx-runtime"],
+                    // Pre-bundle all RSC deps to prevent late discovery triggering ERR_OUTDATED_OPTIMIZED_DEP
+                    include: [
+                      "react",
+                      "react/jsx-runtime",
+                      "react/jsx-dev-runtime",
+                      "@vitejs/plugin-rsc/vendor/react-server-dom/server.edge",
+                    ],
                     esbuildOptions: sharedEsbuildOptions,
                   },
                 },
@@ -2037,20 +2043,13 @@ export async function rango(
 
   plugins.push(exposeActionId());
 
-  // Always add exposeLoaderId for GET-based loader fetching with useFetchLoader
-  plugins.push(exposeLoaderId());
+  // Consolidated plugin for create* ID injection (enforce: "post"):
+  // loaders, handles, location state, and prerender handlers.
+  plugins.push(exposeInternalIds());
 
-  // Always add exposeHandleId for auto-generated handle IDs
-  plugins.push(exposeHandleId());
-
-  // Always add exposeLocationStateId for auto-generated location state keys
-  plugins.push(exposeLocationStateId());
-
-  // Always add exposePrerenderHandlerId for auto-generated prerender handler IDs
-  plugins.push(exposePrerenderHandlerId());
-
-  // Inject stable $$id into createRouter() calls
-  plugins.push(createExposeRouterIdPlugin());
+  // Router ID injection runs at normal priority (no enforce) to avoid
+  // changing Vite's dep optimization timing.
+  plugins.push(exposeRouterId());
 
   // Add version virtual module plugin for cache invalidation
   plugins.push(createVersionPlugin());
@@ -2088,80 +2087,6 @@ export async function rango(
 }
 
 
-/**
- * Inject stable $$id into createRouter() calls at compile time.
- *
- * Derives a short hash from the file path and line number of each
- * createRouter() call. This ID is stable across environments (Node module
- * runner vs workerd) because it's computed at build time, not from runtime
- * stack traces which differ between environments.
- */
-function createExposeRouterIdPlugin(): Plugin {
-  let projectRoot = "";
-  return {
-    name: "@rangojs/router:expose-router-id",
-    configResolved(config) {
-      projectRoot = config.root;
-    },
-    transform(code, id) {
-      if (!code.includes("createRouter")) return null;
-      // Must import createRouter from @rangojs/router (not /host, /server, etc.)
-      if (!/import\s*\{[^}]*\bcreateRouter\b[^}]*\}\s*from\s*["']@rangojs\/router["']/.test(code)) {
-        return null;
-      }
-      if (id.includes("node_modules")) return null;
-
-      const filePath = relative(projectRoot, id).replace(/\\/g, "/");
-
-      // Match createRouter({ or createRouter<...>({ or createRouter() or createRouter<...>()
-      // Skip calls that already have $$id
-      const pattern = /\bcreateRouter\s*(?:<[^>]*>)?\s*\(/g;
-      let match: RegExpExecArray | null;
-      let result = code;
-      let offset = 0;
-
-      while ((match = pattern.exec(code)) !== null) {
-        const callStart = match.index;
-        const parenPos = match.index + match[0].length - 1;
-
-        // Check what follows the opening paren
-        const afterParen = code.slice(parenPos + 1).trimStart();
-
-        // Skip if $$id is already present
-        if (afterParen.includes("$$id")) continue;
-
-        // Compute line number for this call
-        const lineNumber = code.slice(0, callStart).split("\n").length;
-        const hash = createHash("sha256")
-          .update(`${filePath}:${lineNumber}`)
-          .digest("hex")
-          .slice(0, 8);
-
-        if (afterParen.startsWith("{")) {
-          // createRouter({ ... }) -> createRouter({ $$id: "hash", ... })
-          const bracePos = code.indexOf("{", parenPos + 1);
-          const insertPos = bracePos + 1 + offset;
-          result =
-            result.slice(0, insertPos) +
-            ` $$id: "${hash}",` +
-            result.slice(insertPos);
-          offset += ` $$id: "${hash}",`.length;
-        } else if (afterParen.startsWith(")")) {
-          // createRouter() -> createRouter({ $$id: "hash" })
-          const insertPos = parenPos + 1 + offset;
-          result =
-            result.slice(0, insertPos) +
-            `{ $$id: "${hash}" }` +
-            result.slice(insertPos);
-          offset += `{ $$id: "${hash}" }`.length;
-        }
-      }
-
-      if (result === code) return null;
-      return { code: result, map: null };
-    },
-  };
-}
 
 /**
  * Transform CJS vendor files from @vitejs/plugin-rsc to ESM for browser compatibility.

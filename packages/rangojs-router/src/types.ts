@@ -1565,7 +1565,7 @@ export type LoaderDefinition<
   TParams = Record<string, string | undefined>,
 > = {
   __brand: "loader";
-  $$id: string; // Injected by Vite plugin (exposeLoaderId) - unique identifier
+  $$id: string; // Injected by Vite plugin (exposeInternalIds) - unique identifier
   fn?: LoaderFn<T, TParams, any>; // Optional - server-side only, stored in registry for RSC
   action?: LoaderAction<T>; // Optional - for fetchable loaders
 };

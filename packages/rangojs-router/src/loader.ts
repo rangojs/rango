@@ -5,7 +5,7 @@
  * that can be passed to hooks like useLoader. The actual loader function
  * is not included - it only exists on the server.
  *
- * The $$id is injected by the Vite exposeLoaderId plugin.
+ * The $$id is injected by the Vite exposeInternalIds plugin.
  */
 
 import type {

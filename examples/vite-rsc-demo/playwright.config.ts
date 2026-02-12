@@ -49,6 +49,9 @@ export default defineConfig({
           grep: /^(?!.*\(production\))/,
           testIgnore: ["**/*.setup.ts"],
           use: browserConfig,
+          // Must run after build: both write to node_modules/.vite/deps_rsc and the
+          // build overwrites the dev server's optimizer cache, causing ERR_OUTDATED_OPTIMIZED_DEP.
+          dependencies: ["build"],
         },
         {
           name: "production",
