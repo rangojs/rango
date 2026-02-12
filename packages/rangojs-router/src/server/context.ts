@@ -217,6 +217,8 @@ interface HelperContext {
   patternsByPrefix?: Map<string, Map<string, string>>;
   /** Trailing slash config per route name */
   trailingSlash?: Map<string, "never" | "always" | "ignore">;
+  /** Search param schemas per route name */
+  searchSchemas?: Map<string, Record<string, string>>;
   /** URL prefix from include() - applied to all path() patterns */
   urlPrefix?: string;
   /** Name prefix from include() - applied to all named routes */
@@ -268,6 +270,7 @@ export const getContext = (): {
           patterns: new Map<string, string>(),
           patternsByPrefix: new Map<string, Map<string, string>>(),
           trailingSlash: new Map<string, "never" | "always" | "ignore">(),
+          searchSchemas: new Map<string, Record<string, string>>(),
         } satisfies HelperContext;
       }
       return store;
@@ -341,6 +344,7 @@ export const getContext = (): {
           isSSR: store.isSSR,
           patterns: store.patterns,
           trailingSlash: store.trailingSlash,
+          searchSchemas: store.searchSchemas,
           urlPrefix: store.urlPrefix,
           namePrefix: store.namePrefix,
           trackedIncludes: store.trackedIncludes,
@@ -359,6 +363,7 @@ export const getContext = (): {
       const manifest = store ? store.manifest : new Map<string, EntryData>();
       const patterns = store?.patterns || new Map<string, string>();
       const trailingSlash = store?.trailingSlash || new Map<string, "never" | "always" | "ignore">();
+      const searchSchemas = store?.searchSchemas || new Map<string, Record<string, string>>();
       return context.run(
         {
           manifest,
@@ -371,6 +376,7 @@ export const getContext = (): {
           isSSR: store?.isSSR,
           patterns,
           trailingSlash,
+          searchSchemas,
           urlPrefix: store?.urlPrefix,
           namePrefix: store?.namePrefix,
           trackedIncludes: store?.trackedIncludes,

@@ -34,7 +34,7 @@ export type LayoutItem = {
  * Used for type inference in urls() API
  */
 export type TypedLayoutItem<
-  TChildRoutes extends Record<string, string> = Record<string, string>,
+  TChildRoutes extends Record<string, any> = Record<string, string>,
   TChildResponses extends Record<string, unknown> = Record<string, unknown>,
 > = LayoutItem & {
   readonly __childRoutes?: TChildRoutes;
@@ -55,10 +55,12 @@ export type TypedRouteItem<
   TName extends string = string,
   TPattern extends string = string,
   TData = unknown,
+  TSearch = {},
 > = RouteItem & {
   readonly __name?: TName;
   readonly __pattern?: TPattern;
   readonly __data?: TData;
+  readonly __search?: TSearch;
 };
 export type ParallelItem = {
   name: string;
@@ -124,7 +126,7 @@ export type CacheItem = {
  * Used for type inference in urls() API
  */
 export type TypedCacheItem<
-  TChildRoutes extends Record<string, string> = Record<string, string>,
+  TChildRoutes extends Record<string, any> = Record<string, string>,
   TChildResponses extends Record<string, unknown> = Record<string, unknown>,
 > = CacheItem & {
   readonly __childRoutes?: TChildRoutes;
@@ -158,7 +160,7 @@ export type IncludeItem = {
  * Used for type inference in urls() API
  */
 export type TypedIncludeItem<
-  TRoutes extends Record<string, string> = Record<string, string>,
+  TRoutes extends Record<string, any> = Record<string, string>,
   TNamePrefix extends string = string,
   TUrlPrefix extends string = string,
   TResponses extends Record<string, unknown> = Record<string, unknown>,

@@ -17,6 +17,7 @@ import { middlewarePatterns } from "./urls/middleware.js";
 import { cachePatterns } from "./urls/cache.js";
 import { themePatterns } from "./urls/theme.js";
 import { hrefPatterns } from "./urls/href.js";
+import { searchPatterns } from "./urls/search.js";
 import { refTestPatterns } from "./urls/ref-test.js";
 import { prerenderPatterns } from "./urls/prerender.js";
 import { apiShopPatterns } from "./urls/api-shop.js";
@@ -407,6 +408,9 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
 
     // Href test patterns
     include("/href", hrefPatterns, { name: "href" }),
+
+    // Search params test patterns
+    include("/search", searchPatterns, { name: "search" }),
 
     // Ref serialization test patterns
     include("/ref-test", refTestPatterns, { name: "refTest" }),

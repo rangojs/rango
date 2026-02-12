@@ -553,15 +553,18 @@ export interface RSCRouterOptions<TEnv = any> {
 /**
  * Merge route patterns with response types into a single route map.
  * Routes with response types get { path, response } objects; others stay as strings.
+ * Handles both plain string routes and { path, search } object routes.
  */
 type MergeRoutesWithResponses<
-  TRoutes extends Record<string, string>,
+  TRoutes extends Record<string, unknown>,
   TResponses,
 > = {
   [K in keyof TRoutes]: K extends keyof NonNullable<TResponses>
     ? unknown extends NonNullable<TResponses>[K]
-      ? TRoutes[K] // RSC route — TData defaults to unknown, keep as plain string
-      : { readonly path: TRoutes[K]; readonly response: NonNullable<TResponses>[K] }
+      ? TRoutes[K] // RSC route — TData defaults to unknown, keep as-is
+      : TRoutes[K] extends { readonly path: infer P extends string }
+        ? TRoutes[K] & { readonly response: NonNullable<TResponses>[K] }
+        : { readonly path: TRoutes[K] & string; readonly response: NonNullable<TResponses>[K] }
     : TRoutes[K]
 };
 
@@ -856,7 +859,7 @@ export interface RSCRouter<
   ): RSCRouter<
     TEnv,
     TRoutes &
-      (NonNullable<T["_routes"]> extends Record<string, string>
+      (NonNullable<T["_routes"]> extends Record<string, unknown>
         ? MergeRoutesWithResponses<NonNullable<T["_routes"]>, T["_responses"]>
         : Record<string, string>)
   >;

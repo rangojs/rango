@@ -82,6 +82,8 @@ declare global {
       "responseWrapJsonHeaders": "/response-wrap/json-headers";
       "responseWrapText": "/response-wrap/text";
       "responseWrapXml": "/response-wrap/xml";
+      "search.detail": { readonly path: "/search/:category"; readonly search: { q: "string?"; active: "boolean?" } };
+      "search.index": { readonly path: "/search"; readonly search: { q: "string"; page: "number?"; sort: "string?" } };
       "shopPlayground": "/shop-playground";
       "slow": "//slow";
       "slowProduct.detail": "/slow-product/:productId";

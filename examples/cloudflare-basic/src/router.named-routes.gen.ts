@@ -27,6 +27,7 @@ declare global {
       "proactiveCacheItemB": "/proactive-cache/item-b";
       "releases.index": "/releases";
       "robots": "/robots.txt";
+      "search": { readonly path: "/search"; readonly search: { q: "string"; page: "number?"; sort: "string?" } };
       "slow1": "/slow/1";
       "slow2": "/slow/2";
       "slowCache": "/slow-cache";

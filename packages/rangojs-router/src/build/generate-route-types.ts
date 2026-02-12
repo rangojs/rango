@@ -12,8 +12,8 @@ import picomatch from "picomatch";
  */
 export function extractRoutesFromSource(
   code: string
-): Array<{ name: string; pattern: string }> {
-  const routes: Array<{ name: string; pattern: string }> = [];
+): Array<{ name: string; pattern: string; search?: Record<string, string> }> {
+  const routes: Array<{ name: string; pattern: string; search?: Record<string, string> }> = [];
   const regex = /\bpath(?:\.(?:json|text|html|xml|image|stream|any))?\s*\(/g;
   let match;
 
@@ -30,7 +30,7 @@ export function extractRoutesFromSource(
  * Output has zero imports, preventing circular references.
  */
 export function generatePerModuleTypesSource(
-  routes: Array<{ name: string; pattern: string }>
+  routes: Array<{ name: string; pattern: string; search?: Record<string, string> }>
 ): string {
   const valid = routes.filter(({ name }) => {
     if (!name || /["'\\`\n\r]/.test(name)) {
@@ -41,16 +41,22 @@ export function generatePerModuleTypesSource(
   });
 
   // Deduplicate by name (last definition wins for same name)
-  const deduped = new Map<string, string>();
-  for (const { name, pattern } of valid) {
-    deduped.set(name, pattern);
+  const deduped = new Map<string, { pattern: string; search?: Record<string, string> }>();
+  for (const { name, pattern, search } of valid) {
+    deduped.set(name, { pattern, search });
   }
   const sorted = [...deduped.entries()]
     .sort(([a], [b]) => a.localeCompare(b));
   const body = sorted
-    .map(([name, pattern]) => {
+    .map(([name, { pattern, search }]) => {
       // Quote names that aren't valid bare identifiers (dots, dashes, etc.)
       const key = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(name) ? name : `"${name}"`;
+      if (search && Object.keys(search).length > 0) {
+        const searchBody = Object.entries(search)
+          .map(([k, v]) => `${k}: "${v}"`)
+          .join(", ");
+        return `  ${key}: { path: "${pattern}", search: { ${searchBody} } },`;
+      }
       return `  ${key}: "${pattern}",`;
     })
     .join("\n");
@@ -172,10 +178,78 @@ function extractNameValue(
  * Parse a single path() call starting right after the opening paren.
  * Returns { name, pattern } or null if the call is unnamed.
  */
+/**
+ * Check if code at pos starts with `search` as a standalone identifier
+ * followed by `:` (an object property).
+ */
+function matchesSearchColon(code: string, pos: number): boolean {
+  if (code.slice(pos, pos + 6) !== "search") return false;
+  if (pos > 0 && /\w/.test(code[pos - 1])) return false;
+  const afterSearch = pos + 6;
+  if (afterSearch < code.length && /\w/.test(code[afterSearch])) return false;
+  let checkPos = afterSearch;
+  while (checkPos < code.length && isWhitespace(code[checkPos])) checkPos++;
+  return code[checkPos] === ":";
+}
+
+/**
+ * Extract a search schema object literal after `search:`.
+ * Parses { key: "type", key2: "type2" } at the position after `search:`.
+ * Returns the parsed schema and end position, or null if not an object literal.
+ */
+function extractSearchValue(
+  code: string,
+  pos: number
+): { value: Record<string, string>; end: number } | null {
+  pos += 6; // skip 'search'
+  while (pos < code.length && isWhitespace(code[pos])) pos++;
+  pos++; // skip ':'
+  while (pos < code.length && isWhitespace(code[pos])) pos++;
+
+  if (code[pos] !== "{") return null;
+  pos++; // skip '{'
+
+  const schema: Record<string, string> = {};
+
+  while (pos < code.length) {
+    while (pos < code.length && isWhitespace(code[pos])) pos++;
+    if (code[pos] === "}") return { value: schema, end: pos + 1 };
+    if (code[pos] === ",") { pos++; continue; }
+
+    // Parse key (identifier or string)
+    let key: string;
+    if (code[pos] === '"' || code[pos] === "'") {
+      const keyStr = readString(code, pos);
+      if (!keyStr) return null;
+      key = keyStr.value;
+      pos = keyStr.end;
+    } else {
+      const keyStart = pos;
+      while (pos < code.length && /[\w$]/.test(code[pos])) pos++;
+      if (pos === keyStart) return null;
+      key = code.slice(keyStart, pos);
+    }
+
+    // Skip colon
+    while (pos < code.length && isWhitespace(code[pos])) pos++;
+    if (code[pos] !== ":") return null;
+    pos++;
+    while (pos < code.length && isWhitespace(code[pos])) pos++;
+
+    // Parse value (must be a string literal)
+    const valStr = readString(code, pos);
+    if (!valStr) return null;
+    schema[key] = valStr.value;
+    pos = valStr.end;
+  }
+
+  return null;
+}
+
 function parsePathCall(
   code: string,
   pos: number
-): { name: string; pattern: string } | null {
+): { name: string; pattern: string; search?: Record<string, string> } | null {
   // Skip whitespace to first argument
   while (pos < code.length && isWhitespace(code[pos])) pos++;
 
@@ -187,9 +261,10 @@ function parsePathCall(
 
   // Scan the rest of the call tracking depth.
   // depth=1: inside path(), depth=2: inside an object/paren at top level of call.
-  // We look for `name: "..."` at depth 2 (options object properties).
+  // We look for `name: "..."` and `search: { ... }` at depth 2 (options object properties).
   let depth = 1;
   let name: string | null = null;
+  let search: Record<string, string> | undefined;
 
   while (pos < code.length && depth > 0) {
     const ch = code[pos];
@@ -218,12 +293,21 @@ function parsePathCall(
       continue;
     }
 
-    // At depth 2 (inside an object at call top-level), look for name: "..."
+    // At depth 2 (inside an object at call top-level), look for name: "..." and search: { ... }
     if (depth === 2 && ch === "n" && matchesNameColon(code, pos)) {
       const nameResult = extractNameValue(code, pos);
       if (nameResult) {
         name = nameResult.value;
         pos = nameResult.end;
+        continue;
+      }
+    }
+
+    if (depth === 2 && ch === "s" && matchesSearchColon(code, pos)) {
+      const searchResult = extractSearchValue(code, pos);
+      if (searchResult) {
+        search = searchResult.value;
+        pos = searchResult.end;
         continue;
       }
     }
@@ -245,7 +329,7 @@ function parsePathCall(
   }
 
   if (name === null) return null;
-  return { name, pattern };
+  return { name, pattern, ...(search ? { search } : {}) };
 }
 
 /**
@@ -254,14 +338,24 @@ function parsePathCall(
  * without circular references since the file has no imports from the app.
  */
 export function generateRouteTypesSource(
-  routeManifest: Record<string, string>
+  routeManifest: Record<string, string>,
+  searchSchemas?: Record<string, Record<string, string>>
 ): string {
   const entries = Object.entries(routeManifest).sort(([a], [b]) =>
     a.localeCompare(b)
   );
 
   const interfaceBody = entries
-    .map(([name, pattern]) => `      "${name}": "${pattern}";`)
+    .map(([name, pattern]) => {
+      const search = searchSchemas?.[name];
+      if (search && Object.keys(search).length > 0) {
+        const searchBody = Object.entries(search)
+          .map(([k, v]) => `${k}: "${v}"`)
+          .join("; ");
+        return `      "${name}": { readonly path: "${pattern}"; readonly search: { ${searchBody} } };`;
+      }
+      return `      "${name}": "${pattern}";`;
+    })
     .join("\n");
 
   return `// Auto-generated by @rangojs/router - do not edit
@@ -677,46 +771,90 @@ function buildRouteMapFromBlock(
   block: string,
   fullSource: string,
   filePath: string,
-  visited: Set<string>
+  visited: Set<string>,
+  searchSchemasOut?: Record<string, Record<string, string>>
 ): Record<string, string> {
   const routeMap: Record<string, string> = {};
 
   // Extract local path() routes
   const localRoutes = extractRoutesFromSource(block);
-  for (const { name, pattern } of localRoutes) {
+  for (const { name, pattern, search } of localRoutes) {
     routeMap[name] = pattern;
+    if (search && searchSchemasOut) {
+      searchSchemasOut[name] = search;
+    }
   }
 
   // Extract include() calls
   const includes = extractIncludesFromSource(block);
   for (const { pathPrefix, variableName, namePrefix } of includes) {
-    let childRoutes: Record<string, string>;
+    let childResult: { routes: Record<string, string>; searchSchemas: Record<string, Record<string, string>> };
 
     // Try import resolution first
     const imported = resolveImportedVariable(fullSource, variableName);
     if (imported) {
       const targetFile = resolveImportPath(imported.specifier, filePath);
       if (!targetFile) continue;
-      childRoutes = buildCombinedRouteMap(
+      childResult = buildCombinedRouteMapWithSearch(
         targetFile,
         imported.exportedName,
         visited
       );
     } else {
       // Same-file variable
-      childRoutes = buildCombinedRouteMap(filePath, variableName, visited);
+      childResult = buildCombinedRouteMapWithSearch(filePath, variableName, visited);
     }
 
     // Apply prefixes
-    for (const [name, pattern] of Object.entries(childRoutes)) {
+    for (const [name, pattern] of Object.entries(childResult.routes)) {
       const prefixedName = namePrefix ? `${namePrefix}.${name}` : name;
       const prefixedPattern =
         pattern === "/" ? pathPrefix || "/" : pathPrefix + pattern;
       routeMap[prefixedName] = prefixedPattern;
+      // Propagate search schemas with prefix
+      if (childResult.searchSchemas[name] && searchSchemasOut) {
+        searchSchemasOut[prefixedName] = childResult.searchSchemas[name];
+      }
     }
   }
 
   return routeMap;
+}
+
+/**
+ * Build route map and search schemas together.
+ * Internal helper used by the include resolution path.
+ */
+function buildCombinedRouteMapWithSearch(
+  filePath: string,
+  variableName?: string,
+  visited?: Set<string>
+): { routes: Record<string, string>; searchSchemas: Record<string, Record<string, string>> } {
+  visited = visited ?? new Set();
+  const realPath = resolve(filePath);
+  const key = variableName ? `${realPath}:${variableName}` : realPath;
+  if (visited.has(key)) return { routes: {}, searchSchemas: {} };
+  visited.add(key);
+
+  let source: string;
+  try {
+    source = readFileSync(realPath, "utf-8");
+  } catch {
+    return { routes: {}, searchSchemas: {} };
+  }
+
+  let block: string;
+  if (variableName) {
+    const extracted = extractUrlsBlockForVariable(source, variableName);
+    if (!extracted) return { routes: {}, searchSchemas: {} };
+    block = extracted;
+  } else {
+    block = source;
+  }
+
+  const searchSchemas: Record<string, Record<string, string>> = {};
+  const routes = buildRouteMapFromBlock(block, source, realPath, visited, searchSchemas);
+  return { routes, searchSchemas };
 }
 
 // ---------------------------------------------------------------------------
@@ -801,28 +939,32 @@ export function writeCombinedRouteTypes(root: string, knownRouterFiles?: string[
     if (!urlsVarName) continue;
 
     // Resolve the variable to its source module
-    let routeMap: Record<string, string>;
+    let result: { routes: Record<string, string>; searchSchemas: Record<string, Record<string, string>> };
 
     const imported = resolveImportedVariable(routerSource, urlsVarName);
     if (imported) {
       // Variable is imported from another module
       const targetFile = resolveImportPath(imported.specifier, routerFilePath);
       if (!targetFile) continue;
-      routeMap = buildCombinedRouteMap(targetFile, imported.exportedName);
+      result = buildCombinedRouteMapWithSearch(targetFile, imported.exportedName);
     } else {
       // Variable is defined in the same file
-      routeMap = buildCombinedRouteMap(routerFilePath, urlsVarName);
+      result = buildCombinedRouteMapWithSearch(routerFilePath, urlsVarName);
     }
 
-    if (Object.keys(routeMap).length === 0) continue;
+    if (Object.keys(result.routes).length === 0) continue;
 
+    const hasSearchSchemas = Object.keys(result.searchSchemas).length > 0;
     const routerBasename = pathBasename(routerFilePath).replace(/\.(tsx?|jsx?)$/, "");
     const outPath = join(dirname(routerFilePath), `${routerBasename}.named-routes.gen.ts`);
-    const source = generateRouteTypesSource(routeMap);
+    const source = generateRouteTypesSource(
+      result.routes,
+      hasSearchSchemas ? result.searchSchemas : undefined
+    );
     const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
     if (existing !== source) {
       writeFileSync(outPath, source);
-      console.log(`[rsc-router] Generated route types (${Object.keys(routeMap).length} routes) -> ${outPath}`);
+      console.log(`[rsc-router] Generated route types (${Object.keys(result.routes).length} routes) -> ${outPath}`);
     }
   }
 }
