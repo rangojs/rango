@@ -11,7 +11,7 @@ export const router = createRouter<AppEnv>({
   document: Document,
   // Enable theme support with system detection
   theme: {
-    defaultTheme: "system",
+    defaultTheme: "light",
     themes: ["light", "dark", "system"],
     attribute: "class",
     storageKey: "theme",
