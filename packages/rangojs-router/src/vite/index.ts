@@ -594,25 +594,9 @@ function createRouterDiscoveryPlugin(
       // evaluateLazyEntry() without running the handler at runtime.
       flattenLeafEntries(manifest.prefixTree, manifest.routeManifest, mergedPrecomputedEntries);
 
-      // Write static files for this router
-      const hash = hashRouterId(id);
-      const outDir = join(projectRoot, "dist", "static", `__${hash}`);
-      mkdirSync(outDir, { recursive: true });
-
-      writeFileSync(
-        join(outDir, "routes.json"),
-        JSON.stringify(manifest.routeManifest, null, 2) + "\n"
-      );
-
-      writeFileSync(
-        join(outDir, "prefixes.json"),
-        JSON.stringify(manifest.prefixTree, null, 2) + "\n"
-      );
-
       console.log(
         `[rsc-router] Router "${id}" -> ${routeCount} routes ` +
-        `(${staticRoutes} static, ${dynamicRoutes} dynamic) ` +
-        `-> dist/static/__${hash}/`
+        `(${staticRoutes} static, ${dynamicRoutes} dynamic)`
       );
     }
 
@@ -1131,13 +1115,13 @@ function createRouterDiscoveryPlugin(
         if (hasManifest) {
           const lines = [
             `import { setCachedManifest, setPrecomputedEntries, setRouteTrie } from "@rangojs/router/server";`,
-            `setCachedManifest(${JSON.stringify(mergedRouteManifest)});`,
+            `setCachedManifest(${jsonParseExpression(mergedRouteManifest)});`,
           ];
           if (mergedPrecomputedEntries && mergedPrecomputedEntries.length > 0) {
-            lines.push(`setPrecomputedEntries(${JSON.stringify(mergedPrecomputedEntries)});`);
+            lines.push(`setPrecomputedEntries(${jsonParseExpression(mergedPrecomputedEntries)});`);
           }
           if (mergedRouteTrie) {
-            lines.push(`setRouteTrie(${JSON.stringify(mergedRouteTrie)});`);
+            lines.push(`setRouteTrie(${jsonParseExpression(mergedRouteTrie)});`);
           }
           if (!isBuildMode && devServerOrigin) {
             lines.push(`globalThis.__PRERENDER_DEV_URL = ${JSON.stringify(devServerOrigin)};`);
@@ -1458,6 +1442,17 @@ function createVirtualStubPlugin(): Plugin {
  */
 function hashRouterId(id: string): string {
   return createHash("sha256").update(id).digest("hex").slice(0, 12);
+}
+
+/**
+ * Wrap a value as `JSON.parse('...')` instead of a JS object literal.
+ * V8's JSON parser is significantly faster than its full JS parser for large
+ * objects, so this improves startup time for big route manifests.
+ */
+function jsonParseExpression(value: unknown): string {
+  const json = JSON.stringify(value);
+  const escaped = json.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  return `JSON.parse('${escaped}')`;
 }
 
 /**

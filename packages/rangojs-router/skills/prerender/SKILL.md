@@ -180,8 +180,6 @@ Pre-rendered Flight payloads are stored in the build output:
 
 ```
 dist/static/__<hash>/
-  routes.json
-  prefixes.json
   prerender/
     blog.post/
       d4e5f6a7.flight    # hash of { slug: "hello-world" }
