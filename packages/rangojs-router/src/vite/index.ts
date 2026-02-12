@@ -1215,7 +1215,8 @@ function createRouterDiscoveryPlugin(
         }
         return `// Route manifest will be populated at runtime`;
       }
-      // Per-router virtual modules: virtual:rsc-router/routes-manifest/<routerId>
+      // Per-router virtual modules: pure data exports (no side effects).
+      // ensureRouterManifest() imports the module and stores the data.
       const perRouterPrefix = "\0" + VIRTUAL_ROUTES_MANIFEST_ID + "/";
       if (id.startsWith(perRouterPrefix)) {
         if (discoveryDone) {
@@ -1225,19 +1226,17 @@ function createRouterDiscoveryPlugin(
         const manifest = perRouterManifestDataMap.get(routerId);
         const trie = perRouterTrieMap.get(routerId);
         const entries = perRouterPrecomputedMap.get(routerId);
-        const lines = [
-          `import { setRouterManifest, setRouterTrie, setRouterPrecomputedEntries } from "@rangojs/router/server";`,
-        ];
+        const lines: string[] = [];
         if (manifest) {
-          lines.push(`setRouterManifest(${JSON.stringify(routerId)}, ${jsonParseExpression(manifest)});`);
+          lines.push(`export const manifest = ${jsonParseExpression(manifest)};`);
         }
         if (trie) {
-          lines.push(`setRouterTrie(${JSON.stringify(routerId)}, ${jsonParseExpression(trie)});`);
+          lines.push(`export const trie = ${jsonParseExpression(trie)};`);
         }
         if (entries && entries.length > 0) {
-          lines.push(`setRouterPrecomputedEntries(${JSON.stringify(routerId)}, ${jsonParseExpression(entries)});`);
+          lines.push(`export const precomputedEntries = ${jsonParseExpression(entries)};`);
         }
-        return lines.join("\n");
+        return lines.join("\n") || "// empty router manifest";
       }
       // virtual:rsc-router/prerender-paths load handler removed
       return null;

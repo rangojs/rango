@@ -281,7 +281,10 @@ export async function ensureRouterManifest(routerId: string): Promise<void> {
   if (perRouterManifestMap.has(routerId)) return;
   const loader = routerManifestLoaders.get(routerId);
   if (loader) {
-    await loader();
+    const mod = await loader();
+    if (mod.manifest) perRouterManifestMap.set(routerId, mod.manifest);
+    if (mod.trie) perRouterTrieMap.set(routerId, mod.trie);
+    if (mod.precomputedEntries) perRouterPrecomputedEntriesMap.set(routerId, mod.precomputedEntries);
     routerManifestLoaders.delete(routerId);
   }
 }
