@@ -245,17 +245,18 @@ function createVirtualEntriesPlugin(
  * Rollup onwarn handler that suppresses known harmless warnings:
  * - "use client" directives: handled by the RSC plugin, not relevant to Rollup
  * - sourcemap errors: caused by "use client" directive at line 1:0 confusing sourcemap resolution
- * - sourcemap incomplete: router plugins that transform without generating sourcemaps
+ * - sourcemap incomplete: plugins that transform without generating sourcemaps (router + RSC plugin)
  * - dynamic/static mixed imports: expected for router internals (e.g. request-context, cache-scope)
  */
 function onwarn(warning: Vite.Rollup.RollupLog, defaultHandler: (warning: Vite.Rollup.RollupLog) => void): void {
   if (warning.code === "MODULE_LEVEL_DIRECTIVE" || warning.code === "SOURCEMAP_ERROR") {
     return;
   }
-  if (
-    warning.plugin?.startsWith("@rangojs/router:") &&
-    warning.message?.includes("Sourcemap is likely to be incorrect")
-  ) {
+  // @vitejs/plugin-rsc@0.5.14: rsc:virtual:vite-rsc/assets-manifest renderChunk
+  // returns { code } without map, causing Rollup to warn about incorrect sourcemaps.
+  // This is harmless (simple string replacement). Remove this suppression if a
+  // future version of @vitejs/plugin-rsc fixes the missing sourcemap.
+  if (warning.message?.includes("Sourcemap is likely to be incorrect")) {
     return;
   }
   if (
