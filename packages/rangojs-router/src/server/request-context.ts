@@ -17,6 +17,7 @@ import type { Handle } from "../handle.js";
 import { createHandleStore, type HandleStore } from "./handle-store.js";
 import { isHandle } from "../handle.js";
 import { track } from "./context.js";
+import { getFetchableLoader } from "./fetchable-loader-store.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
 import { THEME_COOKIE } from "../theme/constants.js";
@@ -504,8 +505,6 @@ export function createUseFunction<TEnv>(
     // Get loader function - either from loader object or fetchable registry
     let loaderFn = loader.fn;
     if (!loaderFn) {
-      // Lazy import to avoid circular dependency
-      const { getFetchableLoader } = require("../loader.rsc.js");
       const fetchable = getFetchableLoader(loader.$$id);
       if (fetchable) {
         loaderFn = fetchable.fn;

@@ -21,7 +21,7 @@ import type {
 import type { LoaderRevalidationResult, ActionContext } from "./types";
 import { isHandle, type Handle } from "../handle.js";
 import type { HandleStore } from "../server/handle-store.js";
-import { getFetchableLoader } from "../loader.rsc.js";
+import { getFetchableLoader } from "../server/fetchable-loader-store.js";
 import { getRequestContext } from "../server/request-context.js";
 
 /**
