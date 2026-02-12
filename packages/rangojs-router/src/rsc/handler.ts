@@ -239,11 +239,19 @@ export function createRSCHandler<
           }
           // Override with prefix from include() entries so the trie
           // returns the correct sp for lazy entry lookup in findMatch.
+          // Walk recursively to include routes in nested includes.
           if (generated.prefixTree) {
-            for (const [prefix, node] of Object.entries(generated.prefixTree)) {
-              for (const route of (node as { routes: string[] }).routes) {
-                routeToStaticPrefix[route] = prefix;
+            const visitPrefixNode = (node: any): void => {
+              const sp = node.staticPrefix || "";
+              for (const route of (node.routes || [])) {
+                routeToStaticPrefix[route] = sp;
               }
+              for (const child of Object.values(node.children || {})) {
+                visitPrefixNode(child);
+              }
+            };
+            for (const node of Object.values(generated.prefixTree)) {
+              visitPrefixNode(node);
             }
           }
           const trie = buildRouteTrie(

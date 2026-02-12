@@ -1521,17 +1521,27 @@ export function createRouter<TEnv = any>(
     // Check for pre-computed routes from build-time data.
     // Only leaf nodes (no nested includes) are precomputed, so entries with
     // nested lazy includes fall through to the handler below.
+    // When multiple entries share the same staticPrefix (e.g., several
+    // include("/", ...) calls), the precomputed data merges all their routes
+    // into one entry. Assigning that merged set to the first matching entry
+    // causes findMatch to pick the wrong handler for routes belonging to a
+    // different include. Skip the shortcut when the prefix is shared.
     const currentPrecomputed = getPrecomputedByPrefix();
     if (currentPrecomputed) {
       const routes = currentPrecomputed.get(entry.staticPrefix);
       if (routes) {
-        entry.lazyEvaluated = true;
-        entry.routes = routes as ResolvedRouteMap<any>;
-        for (const [name, pattern] of Object.entries(routes)) {
-          mergedRouteMap[name] = pattern;
+        const prefixIsShared = routesEntries.filter(
+          (e) => e.staticPrefix === entry.staticPrefix,
+        ).length > 1;
+        if (!prefixIsShared) {
+          entry.lazyEvaluated = true;
+          entry.routes = routes as ResolvedRouteMap<any>;
+          for (const [name, pattern] of Object.entries(routes)) {
+            mergedRouteMap[name] = pattern;
+          }
+          registerRouteMap(mergedRouteMap);
+          return;
         }
-        registerRouteMap(mergedRouteMap);
-        return;
       }
     }
 
