@@ -60,7 +60,7 @@ jobs:
       - name: Run unit tests
         run: pnpm --filter @rangojs/router test:unit
 
-  demo-e2e:
+  vite-rsc-demo-e2e:
     if: github.event.pull_request.draft == false || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
