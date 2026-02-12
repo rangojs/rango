@@ -247,6 +247,32 @@ function createVirtualEntriesPlugin(
 }
 
 /**
+ * Rollup onwarn handler that suppresses known harmless warnings:
+ * - "use client" directives: handled by the RSC plugin, not relevant to Rollup
+ * - sourcemap errors: caused by "use client" directive at line 1:0 confusing sourcemap resolution
+ * - sourcemap incomplete: router plugins that transform without generating sourcemaps
+ * - dynamic/static mixed imports: expected for router internals (e.g. request-context, cache-scope)
+ */
+function onwarn(warning: Vite.Rollup.RollupLog, defaultHandler: (warning: Vite.Rollup.RollupLog) => void): void {
+  if (warning.code === "MODULE_LEVEL_DIRECTIVE" || warning.code === "SOURCEMAP_ERROR") {
+    return;
+  }
+  if (
+    warning.plugin?.startsWith("@rangojs/router:") &&
+    warning.message?.includes("Sourcemap is likely to be incorrect")
+  ) {
+    return;
+  }
+  if (
+    warning.plugin === "vite:reporter" &&
+    warning.message?.includes("dynamic import will not move module into another chunk")
+  ) {
+    return;
+  }
+  defaultHandler(warning);
+}
+
+/**
  * Manual chunks configuration for client build.
  * Splits React and router packages into separate chunks for better caching.
  */
@@ -1756,6 +1782,9 @@ export async function rango(
           resolve: {
             alias: rangoAliases,
           },
+          build: {
+            rollupOptions: { onwarn },
+          },
           environments: {
             client: {
               build: {
@@ -1907,6 +1936,9 @@ export async function rango(
             optimizeDeps: {
               exclude: excludeDeps,
               esbuildOptions: sharedEsbuildOptions,
+            },
+            build: {
+              rollupOptions: { onwarn },
             },
             resolve: {
               alias: rangoAliases,
