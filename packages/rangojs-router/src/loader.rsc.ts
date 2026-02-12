@@ -7,7 +7,7 @@
  * For non-fetchable loaders: returns a loader definition with fn included
  * For fetchable loaders: stores fn in registry and returns a serializable loader with action
  *
- * The $$id is injected by the Vite exposeLoaderId plugin as a hidden parameter.
+ * The $$id is injected by the Vite exposeInternalIds plugin as a hidden parameter.
  * Users don't need to pass any name - IDs are auto-generated from file path.
  */
 
@@ -55,7 +55,7 @@ function registerFetchableLoader(
  * - loader-registry.ts to populate the main registry for GET-based fetching
  *
  * Loaders are registered here when createLoader() is called with fetchable: true.
- * The $$id is injected by the Vite exposeLoaderId plugin.
+ * The $$id is injected by the Vite exposeInternalIds plugin.
  *
  * @param id - The loader's $$id (auto-generated from file path + export name)
  * @returns The loader function and middleware, or undefined if not found
@@ -89,7 +89,7 @@ export function createLoader<T>(
 export function createLoader<T>(
   fn: LoaderFn<T, Record<string, string | undefined>, any>,
   fetchable?: true | FetchableLoaderOptions,
-  // Hidden parameter injected by Vite exposeLoaderId plugin
+  // Hidden parameter injected by Vite exposeInternalIds plugin
   __injectedId?: string
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>> {
   // The $$id will be set on the returned object by Vite plugin
