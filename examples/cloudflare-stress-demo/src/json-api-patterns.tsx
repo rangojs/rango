@@ -8,25 +8,25 @@
  */
 import { urls } from "@rangojs/router";
 
-export const jsonApiPatterns = urls.json(({ path }) => [
-  path("/health", (ctx) => ({
+export const jsonApiPatterns = urls(({ path }) => [
+  path.json("/health", (ctx) => ({
     status: "ok" as const,
     timestamp: Date.now(),
     uptime: process.uptime(),
   }), { name: "health" }),
 
-  path("/stats", (ctx) => ({
+  path.json("/stats", (ctx) => ({
     routes: 10000,
     prefixes: 3,
     lazy: true,
   }), { name: "stats" }),
 
-  path("/items", (ctx) => ([
+  path.json("/items", (ctx) => ([
     { id: "1", name: "Widget", price: 9.99 },
     { id: "2", name: "Gadget", price: 19.99 },
   ]), { name: "items" }),
 
-  path("/items/:id", (ctx) => ({
+  path.json("/items/:id", (ctx) => ({
     id: ctx.params.id,
     name: `Item ${ctx.params.id}`,
     price: 9.99,
