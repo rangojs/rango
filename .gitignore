@@ -7,3 +7,6 @@ test-results
 
 # Temporary research docs
 MIDDLEWARE_RESEARCH.md
+.vercel
+.output
+.nitro

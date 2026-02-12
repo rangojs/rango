@@ -1,0 +1,27 @@
+{
+  "name": "bun-nitro",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && nitro build",
+    "deploy": "npx vercel deploy --prebuilt --prod"
+  },
+  "dependencies": {
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "rsc-html-stream": "^0.0.7",
+    "@rangojs/router": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "latest",
+    "h3": "^1.15.3",
+    "nitropack": "^2.11.12",
+    "typescript": "^5.9.3",
+    "vite": "catalog:"
+  }
+}
