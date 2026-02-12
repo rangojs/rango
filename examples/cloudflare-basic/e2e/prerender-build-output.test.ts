@@ -12,7 +12,6 @@ const DIST = path.resolve("dist");
  *   1. Handler code is evicted from client and SSR bundles
  *   2. Handler code is isolated in the __prerender-handlers chunk
  *   3. Prerender assets (__prerender-manifest.js, __pr-*.js) have correct structure
- *   4. Metadata files (prefixes.json, routes.json) are well-formed
  */
 
 // -- Helpers --
@@ -26,15 +25,6 @@ function concatBundleContents(dir: string): string {
   return readAllFiles(dir)
     .map((f) => fs.readFileSync(path.join(dir, f), "utf-8"))
     .join("\n");
-}
-
-/** Find the version-hash directory under dist/static/ */
-function findVersionDir(): string {
-  const staticDir = path.join(DIST, "static");
-  const entries = fs.readdirSync(staticDir);
-  const versionDir = entries.find((e) => e.startsWith("__"));
-  expect(versionDir).toBeTruthy();
-  return path.join(staticDir, versionDir!);
 }
 
 // -- Handler eviction tests --
@@ -282,54 +272,3 @@ test.describe("prerender asset structure", () => {
   });
 });
 
-// -- Metadata file tests --
-
-test.describe("prerender metadata files", () => {
-  let versionDir: string;
-
-  test.beforeAll(() => {
-    versionDir = findVersionDir();
-  });
-
-  test("prefixes.json exists and maps /articles prefix", () => {
-    const data = JSON.parse(
-      fs.readFileSync(path.join(versionDir, "prefixes.json"), "utf-8"),
-    );
-
-    expect(data).toHaveProperty("/articles");
-    expect(data["/articles"]).toHaveProperty("routes");
-    expect(data["/articles"].routes).toContain("articles.index");
-    expect(data["/articles"].routes).toContain("articles.detail");
-  });
-
-  test("prefixes.json has correct prefix properties", () => {
-    const data = JSON.parse(
-      fs.readFileSync(path.join(versionDir, "prefixes.json"), "utf-8"),
-    );
-
-    const articlesPrefix = data["/articles"];
-    expect(articlesPrefix.staticPrefix).toBe("/articles");
-    expect(articlesPrefix.fullPrefix).toBe("/articles");
-    expect(articlesPrefix.namePrefix).toBe("articles");
-  });
-
-  test("routes.json maps all prerendered route names to URL patterns", () => {
-    const data = JSON.parse(
-      fs.readFileSync(path.join(versionDir, "routes.json"), "utf-8"),
-    );
-
-    expect(data["articles.index"]).toBe("/articles");
-    expect(data["articles.detail"]).toBe("/articles/:slug");
-  });
-
-  test("routes.json contains non-prerendered routes too", () => {
-    const data = JSON.parse(
-      fs.readFileSync(path.join(versionDir, "routes.json"), "utf-8"),
-    );
-
-    // routes.json is the full route manifest, not just prerendered routes
-    expect(data).toHaveProperty("home");
-    expect(data).toHaveProperty("counter");
-    expect(data).toHaveProperty("about");
-  });
-});

@@ -397,8 +397,6 @@ Pre-rendered Flight payloads are stored in the build output, keyed by
 
 ```
 dist/static/__<hash>/
-  routes.json          (existing — route manifest)
-  prefixes.json        (existing — prefix tree)
   prerender/
     __a1b2c3/                          # router hash (from createRouter())
       blog.post/                       # route name

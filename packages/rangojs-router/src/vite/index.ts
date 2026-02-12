@@ -247,6 +247,32 @@ function createVirtualEntriesPlugin(
 }
 
 /**
+ * Rollup onwarn handler that suppresses known harmless warnings:
+ * - "use client" directives: handled by the RSC plugin, not relevant to Rollup
+ * - sourcemap errors: caused by "use client" directive at line 1:0 confusing sourcemap resolution
+ * - sourcemap incomplete: router plugins that transform without generating sourcemaps
+ * - dynamic/static mixed imports: expected for router internals (e.g. request-context, cache-scope)
+ */
+function onwarn(warning: Vite.Rollup.RollupLog, defaultHandler: (warning: Vite.Rollup.RollupLog) => void): void {
+  if (warning.code === "MODULE_LEVEL_DIRECTIVE" || warning.code === "SOURCEMAP_ERROR") {
+    return;
+  }
+  if (
+    warning.plugin?.startsWith("@rangojs/router:") &&
+    warning.message?.includes("Sourcemap is likely to be incorrect")
+  ) {
+    return;
+  }
+  if (
+    warning.plugin === "vite:reporter" &&
+    warning.message?.includes("dynamic import will not move module into another chunk")
+  ) {
+    return;
+  }
+  defaultHandler(warning);
+}
+
+/**
  * Manual chunks configuration for client build.
  * Splits React and router packages into separate chunks for better caching.
  */
@@ -479,6 +505,13 @@ function createRouterDiscoveryPlugin(
   // Route trie for O(path_length) matching at runtime.
   let mergedRouteTrie: any = null;
 
+  // Per-router isolated data for multi-router manifest splitting.
+  // Each router gets its own manifest, trie, and precomputed entries so that
+  // virtual:rsc-router/routes-manifest/<routerId> modules can be emitted.
+  let perRouterTrieMap: Map<string, any> = new Map();
+  let perRouterPrecomputedMap: Map<string, Array<{ staticPrefix: string; routes: Record<string, string> }>> = new Map();
+  let perRouterManifestDataMap: Map<string, Record<string, string>> = new Map();
+
   // Dev-mode state for on-demand prerender endpoint.
   let devServerOrigin: string | null = null;
   let devServer: any = null;
@@ -555,6 +588,9 @@ function createRouterDiscoveryPlugin(
     mergedRouteManifest = {};
     mergedPrecomputedEntries = [];
     perRouterManifests = [];
+    perRouterManifestDataMap = new Map();
+    perRouterPrecomputedMap = new Map();
+    perRouterTrieMap = new Map();
     let mergedRouteAncestry: Record<string, string[]> = {};
     let mergedRouteTrailingSlash: Record<string, string> = {};
 
@@ -594,26 +630,33 @@ function createRouterDiscoveryPlugin(
       // evaluateLazyEntry() without running the handler at runtime.
       flattenLeafEntries(manifest.prefixTree, manifest.routeManifest, mergedPrecomputedEntries);
 
-      // Write static files for this router
-      const hash = hashRouterId(id);
-      const outDir = join(projectRoot, "dist", "static", `__${hash}`);
-      mkdirSync(outDir, { recursive: true });
-
-      writeFileSync(
-        join(outDir, "routes.json"),
-        JSON.stringify(manifest.routeManifest, null, 2) + "\n"
-      );
-
-      writeFileSync(
-        join(outDir, "prefixes.json"),
-        JSON.stringify(manifest.prefixTree, null, 2) + "\n"
-      );
+      // Store per-router manifest and precomputed entries for isolated virtual modules.
+      perRouterManifestDataMap.set(id, manifest.routeManifest);
+      const routerPrecomputed: Array<{ staticPrefix: string; routes: Record<string, string> }> = [];
+      flattenLeafEntries(manifest.prefixTree, manifest.routeManifest, routerPrecomputed);
+      perRouterPrecomputedMap.set(id, routerPrecomputed);
 
       console.log(
         `[rsc-router] Router "${id}" -> ${routeCount} routes ` +
-        `(${staticRoutes} static, ${dynamicRoutes} dynamic) ` +
-        `-> dist/static/__${hash}/`
+        `(${staticRoutes} static, ${dynamicRoutes} dynamic)`
       );
+    }
+
+    // Warn if multiple routers use auto-generated IDs (router_0, router_1, ...).
+    // Auto-IDs are assigned by counter and depend on module evaluation order,
+    // which can differ between build time and runtime (especially with dynamic
+    // imports in host routers). This causes per-router data to be loaded into
+    // the wrong router at runtime.
+    if (registry.size > 1) {
+      const autoIds = [...registry.keys()].filter((id) => /^router_\d+$/.test(id));
+      if (autoIds.length > 1) {
+        console.warn(
+          `[rsc-router] WARNING: ${autoIds.length} routers use auto-generated IDs (${autoIds.join(", ")}). ` +
+          `In multi-router setups, each createRouter() must have an explicit \`id\` option ` +
+          `to ensure per-router manifest data is matched correctly at runtime. ` +
+          `Example: createRouter({ id: "site", ... })`
+        );
+      }
     }
 
     // Build route trie from merged manifest + ancestry
@@ -661,7 +704,36 @@ function createRouterDiscoveryPlugin(
           passthroughRouteNames.size > 0 ? passthroughRouteNames : undefined,
           Object.keys(mergedResponseTypeRoutes).length > 0 ? mergedResponseTypeRoutes : undefined,
         );
-        // Trie built successfully
+
+        // Build per-router tries for multi-router isolation.
+        for (const { id, manifest } of allManifests) {
+          if (!manifest._routeAncestry || Object.keys(manifest._routeAncestry).length === 0) continue;
+          const perRouterStaticPrefix: Record<string, string> = {};
+          for (const name of Object.keys(manifest.routeManifest)) {
+            perRouterStaticPrefix[name] = "";
+          }
+          buildRouteToStaticPrefix(manifest.prefixTree, perRouterStaticPrefix);
+
+          const perRouterPrerenderNames = manifest.prerenderRoutes
+            ? new Set<string>(manifest.prerenderRoutes)
+            : undefined;
+          const perRouterPassthroughNames = manifest.passthroughRoutes
+            ? new Set<string>(manifest.passthroughRoutes)
+            : undefined;
+
+          const perRouterTrie = buildRouteTrie(
+            manifest.routeManifest,
+            manifest._routeAncestry,
+            perRouterStaticPrefix,
+            manifest.routeTrailingSlash && Object.keys(manifest.routeTrailingSlash).length > 0
+              ? manifest.routeTrailingSlash : undefined,
+            perRouterPrerenderNames && perRouterPrerenderNames.size > 0 ? perRouterPrerenderNames : undefined,
+            perRouterPassthroughNames && perRouterPassthroughNames.size > 0 ? perRouterPassthroughNames : undefined,
+            manifest.responseTypeRoutes && Object.keys(manifest.responseTypeRoutes).length > 0
+              ? manifest.responseTypeRoutes : undefined,
+          );
+          perRouterTrieMap.set(id, perRouterTrie);
+        }
       }
     }
 
@@ -769,20 +841,28 @@ function createRouterDiscoveryPlugin(
       }
     } catch {}
 
-    for (const { routeManifest, sourceFile } of perRouterManifests) {
+    for (const { id, routeManifest, sourceFile } of perRouterManifests) {
       if (!sourceFile) continue;
-      try {
-        const routerDir = dirname(sourceFile);
-        const routerBasename = basename(sourceFile).replace(/\.(tsx?|jsx?)$/, "");
-        const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
-        const source = generateRouteTypesSource(routeManifest);
-        const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
-        if (existing !== source) {
-          writeFileSync(outPath, source);
-          console.log(`[rsc-router] Generated route types -> ${outPath}`);
-        }
-      } catch (err) {
-        console.warn(`[rsc-router] Failed to write named-routes.gen.ts: ${(err as Error).message}`);
+
+      // Validate sourceFile points to a real project file, not node_modules or
+      // a Vite internal path. A bad sourceFile leads to route types written to
+      // the wrong location, causing non-deterministic type resolution.
+      if (sourceFile.includes("node_modules")) {
+        throw new Error(
+          `[rsc-router] Router "${id}" has sourceFile inside node_modules: ${sourceFile}\n` +
+          `This means createRouter() stack trace parsing matched a Vite internal frame.\n` +
+          `Set an explicit \`id\` on createRouter() or check the call site.`,
+        );
+      }
+
+      const routerDir = dirname(sourceFile);
+      const routerBasename = basename(sourceFile).replace(/\.(tsx?|jsx?)$/, "");
+      const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
+      const source = generateRouteTypesSource(routeManifest);
+      const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
+      if (existing !== source) {
+        writeFileSync(outPath, source);
+        console.log(`[rsc-router] Generated route types -> ${outPath}`);
       }
     }
   }
@@ -906,6 +986,23 @@ function createRouterDiscoveryPlugin(
           }
           if (mergedRouteTrie && serverMod?.setRouteTrie) {
             serverMod.setRouteTrie(mergedRouteTrie);
+          }
+          // Populate per-router isolated data eagerly in dev (HMR).
+          // In production builds, per-router data is loaded lazily via import().
+          if (serverMod?.setRouterManifest) {
+            for (const [routerId, manifest] of perRouterManifestDataMap) {
+              serverMod.setRouterManifest(routerId, manifest);
+            }
+          }
+          if (serverMod?.setRouterTrie) {
+            for (const [routerId, trie] of perRouterTrieMap) {
+              serverMod.setRouterTrie(routerId, trie);
+            }
+          }
+          if (serverMod?.setRouterPrecomputedEntries) {
+            for (const [routerId, entries] of perRouterPrecomputedMap) {
+              serverMod.setRouterPrecomputedEntries(routerId, entries);
+            }
           }
         } catch (err: any) {
           console.warn(
@@ -1079,6 +1176,9 @@ function createRouterDiscoveryPlugin(
             // Inject handle IDs so prerender-collected handle data uses the same
             // hashed keys as the production client/SSR bundles.
             exposeHandleId({ forceBuild: true }),
+            // Inject stable $$id into createRouter() calls so build-time IDs
+            // match runtime IDs across environments (Node runner vs workerd).
+            createExposeRouterIdPlugin(),
           ],
         });
 
@@ -1091,7 +1191,13 @@ function createRouterDiscoveryPlugin(
         }
 
         await discoverRouters(rscEnv);
-        writeRouteTypesFiles();
+        // Skip when static route types generation is enabled (configResolved
+        // already wrote the files via writeCombinedRouteTypes). Same guard
+        // as dev mode to avoid writing a duplicate file from __sourceFile
+        // (which comes from runtime stack trace parsing).
+        if (opts?.staticRouteTypesGeneration === false) {
+          writeRouteTypesFiles();
+        }
       } catch (err: any) {
         // Clean up before re-throwing so the temp server doesn't leak
         delete (globalThis as any).__rscRouterDiscoveryActive;
@@ -1115,6 +1221,10 @@ function createRouterDiscoveryPlugin(
       if (id === VIRTUAL_ROUTES_MANIFEST_ID) {
         return "\0" + VIRTUAL_ROUTES_MANIFEST_ID;
       }
+      // Per-router virtual modules: virtual:rsc-router/routes-manifest/<routerId>
+      if (id.startsWith(VIRTUAL_ROUTES_MANIFEST_ID + "/")) {
+        return "\0" + id;
+      }
       // virtual:rsc-router/prerender-paths removed: prerender data is served through the worker
       return null;
     },
@@ -1130,14 +1240,21 @@ function createRouterDiscoveryPlugin(
         const hasManifest = mergedRouteManifest && Object.keys(mergedRouteManifest).length > 0;
         if (hasManifest) {
           const lines = [
-            `import { setCachedManifest, setPrecomputedEntries, setRouteTrie } from "@rangojs/router/server";`,
-            `setCachedManifest(${JSON.stringify(mergedRouteManifest)});`,
+            `import { setCachedManifest, setPrecomputedEntries, setRouteTrie, registerRouterManifestLoader } from "@rangojs/router/server";`,
+            `setCachedManifest(${jsonParseExpression(mergedRouteManifest)});`,
           ];
           if (mergedPrecomputedEntries && mergedPrecomputedEntries.length > 0) {
-            lines.push(`setPrecomputedEntries(${JSON.stringify(mergedPrecomputedEntries)});`);
+            lines.push(`setPrecomputedEntries(${jsonParseExpression(mergedPrecomputedEntries)});`);
           }
           if (mergedRouteTrie) {
-            lines.push(`setRouteTrie(${JSON.stringify(mergedRouteTrie)});`);
+            lines.push(`setRouteTrie(${jsonParseExpression(mergedRouteTrie)});`);
+          }
+          // Register lazy loaders for per-router manifest modules.
+          // Each import() uses a static string literal so Rollup creates separate chunks.
+          for (const routerId of perRouterManifestDataMap.keys()) {
+            lines.push(
+              `registerRouterManifestLoader(${JSON.stringify(routerId)}, () => import(${JSON.stringify(VIRTUAL_ROUTES_MANIFEST_ID + "/" + routerId)}));`,
+            );
           }
           if (!isBuildMode && devServerOrigin) {
             lines.push(`globalThis.__PRERENDER_DEV_URL = ${JSON.stringify(devServerOrigin)};`);
@@ -1157,6 +1274,29 @@ function createRouterDiscoveryPlugin(
           }
         }
         return `// Route manifest will be populated at runtime`;
+      }
+      // Per-router virtual modules: pure data exports (no side effects).
+      // ensureRouterManifest() imports the module and stores the data.
+      const perRouterPrefix = "\0" + VIRTUAL_ROUTES_MANIFEST_ID + "/";
+      if (id.startsWith(perRouterPrefix)) {
+        if (discoveryDone) {
+          await discoveryDone;
+        }
+        const routerId = id.slice(perRouterPrefix.length);
+        const manifest = perRouterManifestDataMap.get(routerId);
+        const trie = perRouterTrieMap.get(routerId);
+        const entries = perRouterPrecomputedMap.get(routerId);
+        const lines: string[] = [];
+        if (manifest) {
+          lines.push(`export const manifest = ${jsonParseExpression(manifest)};`);
+        }
+        if (trie) {
+          lines.push(`export const trie = ${jsonParseExpression(trie)};`);
+        }
+        if (entries && entries.length > 0) {
+          lines.push(`export const precomputedEntries = ${jsonParseExpression(entries)};`);
+        }
+        return lines.join("\n") || "// empty router manifest";
       }
       // virtual:rsc-router/prerender-paths load handler removed
       return null;
@@ -1461,6 +1601,17 @@ function hashRouterId(id: string): string {
 }
 
 /**
+ * Wrap a value as `JSON.parse('...')` instead of a JS object literal.
+ * V8's JSON parser is significantly faster than its full JS parser for large
+ * objects, so this improves startup time for big route manifests.
+ */
+function jsonParseExpression(value: unknown): string {
+  const json = JSON.stringify(value);
+  const escaped = json.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  return `JSON.parse('${escaped}')`;
+}
+
+/**
  * Plugin that auto-injects VERSION and routes-manifest into custom entry.rsc files.
  * If a custom entry.rsc file uses createRSCHandler but doesn't pass version,
  * this transform adds the import and property automatically.
@@ -1637,6 +1788,9 @@ export async function rango(
           resolve: {
             alias: rangoAliases,
           },
+          build: {
+            rollupOptions: { onwarn },
+          },
           environments: {
             client: {
               build: {
@@ -1789,6 +1943,9 @@ export async function rango(
               exclude: excludeDeps,
               esbuildOptions: sharedEsbuildOptions,
             },
+            build: {
+              rollupOptions: { onwarn },
+            },
             resolve: {
               alias: rangoAliases,
             },
@@ -1892,6 +2049,9 @@ export async function rango(
   // Always add exposePrerenderHandlerId for auto-generated prerender handler IDs
   plugins.push(exposePrerenderHandlerId());
 
+  // Inject stable $$id into createRouter() calls
+  plugins.push(createExposeRouterIdPlugin());
+
   // Add version virtual module plugin for cache invalidation
   plugins.push(createVersionPlugin());
 
@@ -1927,6 +2087,81 @@ export async function rango(
   return plugins;
 }
 
+
+/**
+ * Inject stable $$id into createRouter() calls at compile time.
+ *
+ * Derives a short hash from the file path and line number of each
+ * createRouter() call. This ID is stable across environments (Node module
+ * runner vs workerd) because it's computed at build time, not from runtime
+ * stack traces which differ between environments.
+ */
+function createExposeRouterIdPlugin(): Plugin {
+  let projectRoot = "";
+  return {
+    name: "@rangojs/router:expose-router-id",
+    configResolved(config) {
+      projectRoot = config.root;
+    },
+    transform(code, id) {
+      if (!code.includes("createRouter")) return null;
+      // Must import createRouter from @rangojs/router (not /host, /server, etc.)
+      if (!/import\s*\{[^}]*\bcreateRouter\b[^}]*\}\s*from\s*["']@rangojs\/router["']/.test(code)) {
+        return null;
+      }
+      if (id.includes("node_modules")) return null;
+
+      const filePath = relative(projectRoot, id).replace(/\\/g, "/");
+
+      // Match createRouter({ or createRouter<...>({ or createRouter() or createRouter<...>()
+      // Skip calls that already have $$id
+      const pattern = /\bcreateRouter\s*(?:<[^>]*>)?\s*\(/g;
+      let match: RegExpExecArray | null;
+      let result = code;
+      let offset = 0;
+
+      while ((match = pattern.exec(code)) !== null) {
+        const callStart = match.index;
+        const parenPos = match.index + match[0].length - 1;
+
+        // Check what follows the opening paren
+        const afterParen = code.slice(parenPos + 1).trimStart();
+
+        // Skip if $$id is already present
+        if (afterParen.includes("$$id")) continue;
+
+        // Compute line number for this call
+        const lineNumber = code.slice(0, callStart).split("\n").length;
+        const hash = createHash("sha256")
+          .update(`${filePath}:${lineNumber}`)
+          .digest("hex")
+          .slice(0, 8);
+
+        if (afterParen.startsWith("{")) {
+          // createRouter({ ... }) -> createRouter({ $$id: "hash", ... })
+          const bracePos = code.indexOf("{", parenPos + 1);
+          const insertPos = bracePos + 1 + offset;
+          result =
+            result.slice(0, insertPos) +
+            ` $$id: "${hash}",` +
+            result.slice(insertPos);
+          offset += ` $$id: "${hash}",`.length;
+        } else if (afterParen.startsWith(")")) {
+          // createRouter() -> createRouter({ $$id: "hash" })
+          const insertPos = parenPos + 1 + offset;
+          result =
+            result.slice(0, insertPos) +
+            `{ $$id: "${hash}" }` +
+            result.slice(insertPos);
+          offset += `{ $$id: "${hash}" }`.length;
+        }
+      }
+
+      if (result === code) return null;
+      return { code: result, map: null };
+    },
+  };
+}
 
 /**
  * Transform CJS vendor files from @vitejs/plugin-rsc to ESM for browser compatibility.

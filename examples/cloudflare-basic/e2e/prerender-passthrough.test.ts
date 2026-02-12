@@ -24,14 +24,6 @@ function concatBundleContents(dir: string): string {
     .join("\n");
 }
 
-function findVersionDir(): string {
-  const staticDir = path.join(DIST, "static");
-  const entries = fs.readdirSync(staticDir);
-  const versionDir = entries.find((e) => e.startsWith("__"));
-  expect(versionDir).toBeTruthy();
-  return path.join(staticDir, versionDir!);
-}
-
 test.describe.configure({ mode: "serial" });
 
 // =============================================================================
@@ -377,23 +369,6 @@ test.describe("prerender passthrough assets", () => {
     }
   });
 
-  test("prefixes.json includes /guides prefix", () => {
-    const versionDir = findVersionDir();
-    const data = JSON.parse(
-      fs.readFileSync(path.join(versionDir, "prefixes.json"), "utf-8"),
-    );
-    expect(data).toHaveProperty("/guides");
-    expect(data["/guides"]).toHaveProperty("routes");
-    expect(data["/guides"].routes).toContain("guides.detail");
-  });
-
-  test("routes.json maps guides.detail to pattern", () => {
-    const versionDir = findVersionDir();
-    const data = JSON.parse(
-      fs.readFileSync(path.join(versionDir, "routes.json"), "utf-8"),
-    );
-    expect(data["guides.detail"]).toBe("/guides/:slug");
-  });
 });
 
 // =============================================================================
