@@ -227,6 +227,68 @@ export function getRouteTrie(): typeof cachedRouteTrie {
   return cachedRouteTrie;
 }
 
+// Per-router isolated data: each router gets its own manifest, trie, and
+// precomputed entries so multi-router setups (e.g. site + admin via
+// createHostRouter()) don't see each other's routes.
+const perRouterManifestMap: Map<string, Record<string, string>> = new Map();
+const perRouterTrieMap: Map<string, import("./build/route-trie.js").TrieNode> = new Map();
+const perRouterPrecomputedEntriesMap: Map<
+  string,
+  Array<{ staticPrefix: string; routes: Record<string, string> }>
+> = new Map();
+
+export function setRouterManifest(routerId: string, manifest: Record<string, string>): void {
+  perRouterManifestMap.set(routerId, manifest);
+}
+
+export function getRouterManifest(routerId: string): Record<string, string> | undefined {
+  return perRouterManifestMap.get(routerId);
+}
+
+export function setRouterTrie(routerId: string, trie: import("./build/route-trie.js").TrieNode): void {
+  perRouterTrieMap.set(routerId, trie);
+}
+
+export function getRouterTrie(routerId: string): import("./build/route-trie.js").TrieNode | undefined {
+  return perRouterTrieMap.get(routerId);
+}
+
+export function setRouterPrecomputedEntries(
+  routerId: string,
+  entries: Array<{ staticPrefix: string; routes: Record<string, string> }>,
+): void {
+  perRouterPrecomputedEntriesMap.set(routerId, entries);
+}
+
+export function getRouterPrecomputedEntries(
+  routerId: string,
+): Array<{ staticPrefix: string; routes: Record<string, string> }> | undefined {
+  return perRouterPrecomputedEntriesMap.get(routerId);
+}
+
+// Lazy loader registry: per-router manifest modules are loaded on first request
+// via import() to keep startup fast and allow Rollup to code-split per router.
+const routerManifestLoaders: Map<string, () => Promise<any>> = new Map();
+
+export function registerRouterManifestLoader(
+  routerId: string,
+  loader: () => Promise<any>,
+): void {
+  routerManifestLoaders.set(routerId, loader);
+}
+
+export async function ensureRouterManifest(routerId: string): Promise<void> {
+  if (perRouterManifestMap.has(routerId)) return;
+  const loader = routerManifestLoaders.get(routerId);
+  if (loader) {
+    const mod = await loader();
+    if (mod.manifest) perRouterManifestMap.set(routerId, mod.manifest);
+    if (mod.trie) perRouterTrieMap.set(routerId, mod.trie);
+    if (mod.precomputedEntries) perRouterPrecomputedEntriesMap.set(routerId, mod.precomputedEntries);
+    routerManifestLoaders.delete(routerId);
+  }
+}
+
 // Dev-mode manifest readiness gate.
 // The Vite discovery plugin calls setManifestReadyPromise() before starting
 // discovery, and resolves it when discovery completes. The handler awaits

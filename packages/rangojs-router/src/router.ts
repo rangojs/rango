@@ -15,8 +15,13 @@ import {
 } from "./reverse.js";
 import {
   registerRouteMap,
+  getGlobalRouteMap,
   getPrecomputedEntries,
   getRouteTrie,
+  getRouterManifest,
+  getRouterTrie,
+  getRouterPrecomputedEntries,
+  ensureRouterManifest,
 } from "./route-map-builder.js";
 import { tryTrieMatch } from "./router/trie-matching.js";
 import {
@@ -252,6 +257,13 @@ export interface RSCRouterOptions<TEnv = any> {
    * Auto-generated if not provided.
    */
   id?: string;
+
+  /**
+   * Injected by the Vite transform at compile time.
+   * Hash of filename + line number for stable cross-environment ID.
+   * @internal
+   */
+  $$id?: string;
 
   /**
    * Enable performance metrics collection
@@ -1112,6 +1124,7 @@ export function createRouter<TEnv = any>(
 ): RSCRouter<TEnv, {}> {
   const {
     id: userProvidedId,
+    $$id: injectedId,
     debugPerformance = false,
     document: documentOption,
     defaultErrorBoundary,
@@ -1127,8 +1140,6 @@ export function createRouter<TEnv = any>(
     allowDebugManifest: allowDebugManifestOption = true,
   } = options;
 
-  const routerId = userProvidedId ?? `router_${routerAutoId++}`;
-
   // Capture the source file that called createRouter() via stack trace parsing.
   // Used by the Vite plugin to write per-router named-routes.gen.ts files.
   let __sourceFile: string | undefined;
@@ -1138,13 +1149,20 @@ export function createRouter<TEnv = any>(
       const lines = stack.split("\n");
       for (const line of lines) {
         const match = line.match(/\((.+?\.(ts|tsx|js|jsx)):\d+:\d+\)/);
-        if (match && !match[1].includes("/router.ts") && !match[1].includes("@rangojs/router")) {
-          __sourceFile = match[1];
+        if (match && !match[1].endsWith("/router.ts") && !match[1].includes("@rangojs/router") && !match[1].includes("node_modules")) {
+          // Strip file: URL protocol prefix from Vite module runner stack traces
+          __sourceFile = match[1].startsWith("file:") ? match[1].slice(5) : match[1];
           break;
         }
       }
     }
   } catch {}
+
+  // Router ID priority: explicit id > Vite-injected $$id > counter fallback.
+  // $$id is a hash of filename+line injected by the Vite transform at compile
+  // time, so it's stable across build/runtime regardless of module evaluation
+  // order (unlike the counter which depends on import order).
+  const routerId = userProvidedId ?? injectedId ?? `router_${routerAutoId++}`;
 
   // Resolve warmup enabled flag (default: true)
   const warmupEnabled = warmupOption !== false;
@@ -1237,13 +1255,24 @@ export function createRouter<TEnv = any>(
   // Track all registered routes with their prefixes for reverse()
   const mergedRouteMap: Record<string, string> = {};
 
-  // Build a Map from precomputed entries for O(1) lookup by staticPrefix.
-  // The array is set at import time (from the virtual module) before createRouter runs.
-  const precomputedEntriesRaw = getPrecomputedEntries();
-  const precomputedByPrefix: Map<string, Record<string, string>> | null =
-    precomputedEntriesRaw
-      ? new Map(precomputedEntriesRaw.map((e) => [e.staticPrefix, e.routes]))
-      : null;
+  // Lazy precomputed entries lookup: rebuilt when per-router data arrives.
+  // In production multi-router setups, per-router data is loaded lazily via
+  // ensureRouterManifest(). At createRouter() time the data isn't available yet,
+  // so we defer building the Map until first use and invalidate when the
+  // per-router source changes.
+  let precomputedByPrefix: Map<string, Record<string, string>> | null = null;
+  let precomputedSource: Array<{ staticPrefix: string; routes: Record<string, string> }> | null | undefined;
+
+  function getPrecomputedByPrefix(): Map<string, Record<string, string>> | null {
+    const current = getRouterPrecomputedEntries(routerId) ?? getPrecomputedEntries();
+    if (current !== precomputedSource) {
+      precomputedSource = current;
+      precomputedByPrefix = current
+        ? new Map(current.map((e) => [e.staticPrefix, e.routes]))
+        : null;
+    }
+    return precomputedByPrefix;
+  }
 
 
   // Wrapper to pass debugPerformance to external createMetricsStore
@@ -1330,6 +1359,7 @@ export function createRouter<TEnv = any>(
       findInterceptForRoute(routeKey, parentEntry, selectorContext, isAction),
     callOnError,
     findNearestErrorBoundary,
+    getRouteMap: () => getRouterManifest(routerId) ?? getGlobalRouteMap(),
   };
 
   // Thin wrappers that bind the deps to extracted functions.
@@ -1491,16 +1521,27 @@ export function createRouter<TEnv = any>(
     // Check for pre-computed routes from build-time data.
     // Only leaf nodes (no nested includes) are precomputed, so entries with
     // nested lazy includes fall through to the handler below.
-    if (precomputedByPrefix) {
-      const routes = precomputedByPrefix.get(entry.staticPrefix);
+    // When multiple entries share the same staticPrefix (e.g., several
+    // include("/", ...) calls), the precomputed data merges all their routes
+    // into one entry. Assigning that merged set to the first matching entry
+    // causes findMatch to pick the wrong handler for routes belonging to a
+    // different include. Skip the shortcut when the prefix is shared.
+    const currentPrecomputed = getPrecomputedByPrefix();
+    if (currentPrecomputed) {
+      const routes = currentPrecomputed.get(entry.staticPrefix);
       if (routes) {
-        entry.lazyEvaluated = true;
-        entry.routes = routes as ResolvedRouteMap<any>;
-        for (const [name, pattern] of Object.entries(routes)) {
-          mergedRouteMap[name] = pattern;
+        const prefixIsShared = routesEntries.filter(
+          (e) => e.staticPrefix === entry.staticPrefix,
+        ).length > 1;
+        if (!prefixIsShared) {
+          entry.lazyEvaluated = true;
+          entry.routes = routes as ResolvedRouteMap<any>;
+          for (const [name, pattern] of Object.entries(routes)) {
+            mergedRouteMap[name] = pattern;
+          }
+          registerRouteMap(mergedRouteMap);
+          return;
         }
-        registerRouteMap(mergedRouteMap);
-        return;
       }
     }
 
@@ -1663,7 +1704,8 @@ export function createRouter<TEnv = any>(
       : undefined;
 
     // Phase 1: Try trie match (O(path_length))
-    const routeTrie = getRouteTrie();
+    // Prefer per-router trie (isolated) over global trie (merged).
+    const routeTrie = getRouterTrie(routerId) ?? getRouteTrie();
     if (routeTrie) {
       const trieStart = performance.now();
       const trieResult = tryTrieMatch(routeTrie, pathname);
@@ -2559,6 +2601,9 @@ export function createRouter<TEnv = any>(
         request: Request,
         env: TEnv & { ctx?: ExecutionContext },
       ) => {
+        // Trigger lazy import of per-router manifest data before route matching.
+        // No-op if data is already loaded or no loader is registered.
+        await ensureRouterManifest(routerId);
         if (!handler) {
           // Lazy import deferred to first request to avoid dev mode issues
           const { createRSCHandler } = await import("./rsc/handler.js");
