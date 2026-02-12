@@ -479,6 +479,13 @@ function createRouterDiscoveryPlugin(
   // Route trie for O(path_length) matching at runtime.
   let mergedRouteTrie: any = null;
 
+  // Per-router isolated data for multi-router manifest splitting.
+  // Each router gets its own manifest, trie, and precomputed entries so that
+  // virtual:rsc-router/routes-manifest/<routerId> modules can be emitted.
+  let perRouterTrieMap: Map<string, any> = new Map();
+  let perRouterPrecomputedMap: Map<string, Array<{ staticPrefix: string; routes: Record<string, string> }>> = new Map();
+  let perRouterManifestDataMap: Map<string, Record<string, string>> = new Map();
+
   // Dev-mode state for on-demand prerender endpoint.
   let devServerOrigin: string | null = null;
   let devServer: any = null;
@@ -555,6 +562,9 @@ function createRouterDiscoveryPlugin(
     mergedRouteManifest = {};
     mergedPrecomputedEntries = [];
     perRouterManifests = [];
+    perRouterManifestDataMap = new Map();
+    perRouterPrecomputedMap = new Map();
+    perRouterTrieMap = new Map();
     let mergedRouteAncestry: Record<string, string[]> = {};
     let mergedRouteTrailingSlash: Record<string, string> = {};
 
@@ -593,6 +603,12 @@ function createRouterDiscoveryPlugin(
       // Leaf nodes (no children) can have their routes used directly by
       // evaluateLazyEntry() without running the handler at runtime.
       flattenLeafEntries(manifest.prefixTree, manifest.routeManifest, mergedPrecomputedEntries);
+
+      // Store per-router manifest and precomputed entries for isolated virtual modules.
+      perRouterManifestDataMap.set(id, manifest.routeManifest);
+      const routerPrecomputed: Array<{ staticPrefix: string; routes: Record<string, string> }> = [];
+      flattenLeafEntries(manifest.prefixTree, manifest.routeManifest, routerPrecomputed);
+      perRouterPrecomputedMap.set(id, routerPrecomputed);
 
       console.log(
         `[rsc-router] Router "${id}" -> ${routeCount} routes ` +
@@ -645,7 +661,36 @@ function createRouterDiscoveryPlugin(
           passthroughRouteNames.size > 0 ? passthroughRouteNames : undefined,
           Object.keys(mergedResponseTypeRoutes).length > 0 ? mergedResponseTypeRoutes : undefined,
         );
-        // Trie built successfully
+
+        // Build per-router tries for multi-router isolation.
+        for (const { id, manifest } of allManifests) {
+          if (!manifest._routeAncestry || Object.keys(manifest._routeAncestry).length === 0) continue;
+          const perRouterStaticPrefix: Record<string, string> = {};
+          for (const name of Object.keys(manifest.routeManifest)) {
+            perRouterStaticPrefix[name] = "";
+          }
+          buildRouteToStaticPrefix(manifest.prefixTree, perRouterStaticPrefix);
+
+          const perRouterPrerenderNames = manifest.prerenderRoutes
+            ? new Set<string>(manifest.prerenderRoutes)
+            : undefined;
+          const perRouterPassthroughNames = manifest.passthroughRoutes
+            ? new Set<string>(manifest.passthroughRoutes)
+            : undefined;
+
+          const perRouterTrie = buildRouteTrie(
+            manifest.routeManifest,
+            manifest._routeAncestry,
+            perRouterStaticPrefix,
+            manifest.routeTrailingSlash && Object.keys(manifest.routeTrailingSlash).length > 0
+              ? manifest.routeTrailingSlash : undefined,
+            perRouterPrerenderNames && perRouterPrerenderNames.size > 0 ? perRouterPrerenderNames : undefined,
+            perRouterPassthroughNames && perRouterPassthroughNames.size > 0 ? perRouterPassthroughNames : undefined,
+            manifest.responseTypeRoutes && Object.keys(manifest.responseTypeRoutes).length > 0
+              ? manifest.responseTypeRoutes : undefined,
+          );
+          perRouterTrieMap.set(id, perRouterTrie);
+        }
       }
     }
 
@@ -891,6 +936,23 @@ function createRouterDiscoveryPlugin(
           if (mergedRouteTrie && serverMod?.setRouteTrie) {
             serverMod.setRouteTrie(mergedRouteTrie);
           }
+          // Populate per-router isolated data eagerly in dev (HMR).
+          // In production builds, per-router data is loaded lazily via import().
+          if (serverMod?.setRouterManifest) {
+            for (const [routerId, manifest] of perRouterManifestDataMap) {
+              serverMod.setRouterManifest(routerId, manifest);
+            }
+          }
+          if (serverMod?.setRouterTrie) {
+            for (const [routerId, trie] of perRouterTrieMap) {
+              serverMod.setRouterTrie(routerId, trie);
+            }
+          }
+          if (serverMod?.setRouterPrecomputedEntries) {
+            for (const [routerId, entries] of perRouterPrecomputedMap) {
+              serverMod.setRouterPrecomputedEntries(routerId, entries);
+            }
+          }
         } catch (err: any) {
           console.warn(
             `[rsc-router] Router discovery failed: ${err.message}\n${err.stack}`
@@ -1099,6 +1161,10 @@ function createRouterDiscoveryPlugin(
       if (id === VIRTUAL_ROUTES_MANIFEST_ID) {
         return "\0" + VIRTUAL_ROUTES_MANIFEST_ID;
       }
+      // Per-router virtual modules: virtual:rsc-router/routes-manifest/<routerId>
+      if (id.startsWith(VIRTUAL_ROUTES_MANIFEST_ID + "/")) {
+        return "\0" + id;
+      }
       // virtual:rsc-router/prerender-paths removed: prerender data is served through the worker
       return null;
     },
@@ -1114,7 +1180,7 @@ function createRouterDiscoveryPlugin(
         const hasManifest = mergedRouteManifest && Object.keys(mergedRouteManifest).length > 0;
         if (hasManifest) {
           const lines = [
-            `import { setCachedManifest, setPrecomputedEntries, setRouteTrie } from "@rangojs/router/server";`,
+            `import { setCachedManifest, setPrecomputedEntries, setRouteTrie, registerRouterManifestLoader } from "@rangojs/router/server";`,
             `setCachedManifest(${jsonParseExpression(mergedRouteManifest)});`,
           ];
           if (mergedPrecomputedEntries && mergedPrecomputedEntries.length > 0) {
@@ -1122,6 +1188,13 @@ function createRouterDiscoveryPlugin(
           }
           if (mergedRouteTrie) {
             lines.push(`setRouteTrie(${jsonParseExpression(mergedRouteTrie)});`);
+          }
+          // Register lazy loaders for per-router manifest modules.
+          // Each import() uses a static string literal so Rollup creates separate chunks.
+          for (const routerId of perRouterManifestDataMap.keys()) {
+            lines.push(
+              `registerRouterManifestLoader(${JSON.stringify(routerId)}, () => import(${JSON.stringify(VIRTUAL_ROUTES_MANIFEST_ID + "/" + routerId)}));`,
+            );
           }
           if (!isBuildMode && devServerOrigin) {
             lines.push(`globalThis.__PRERENDER_DEV_URL = ${JSON.stringify(devServerOrigin)};`);
@@ -1141,6 +1214,30 @@ function createRouterDiscoveryPlugin(
           }
         }
         return `// Route manifest will be populated at runtime`;
+      }
+      // Per-router virtual modules: virtual:rsc-router/routes-manifest/<routerId>
+      const perRouterPrefix = "\0" + VIRTUAL_ROUTES_MANIFEST_ID + "/";
+      if (id.startsWith(perRouterPrefix)) {
+        if (discoveryDone) {
+          await discoveryDone;
+        }
+        const routerId = id.slice(perRouterPrefix.length);
+        const manifest = perRouterManifestDataMap.get(routerId);
+        const trie = perRouterTrieMap.get(routerId);
+        const entries = perRouterPrecomputedMap.get(routerId);
+        const lines = [
+          `import { setRouterManifest, setRouterTrie, setRouterPrecomputedEntries } from "@rangojs/router/server";`,
+        ];
+        if (manifest) {
+          lines.push(`setRouterManifest(${JSON.stringify(routerId)}, ${jsonParseExpression(manifest)});`);
+        }
+        if (trie) {
+          lines.push(`setRouterTrie(${JSON.stringify(routerId)}, ${jsonParseExpression(trie)});`);
+        }
+        if (entries && entries.length > 0) {
+          lines.push(`setRouterPrecomputedEntries(${JSON.stringify(routerId)}, ${jsonParseExpression(entries)});`);
+        }
+        return lines.join("\n");
       }
       // virtual:rsc-router/prerender-paths load handler removed
       return null;

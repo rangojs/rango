@@ -15,8 +15,13 @@ import {
 } from "./reverse.js";
 import {
   registerRouteMap,
+  getGlobalRouteMap,
   getPrecomputedEntries,
   getRouteTrie,
+  getRouterManifest,
+  getRouterTrie,
+  getRouterPrecomputedEntries,
+  ensureRouterManifest,
 } from "./route-map-builder.js";
 import { tryTrieMatch } from "./router/trie-matching.js";
 import {
@@ -1238,8 +1243,8 @@ export function createRouter<TEnv = any>(
   const mergedRouteMap: Record<string, string> = {};
 
   // Build a Map from precomputed entries for O(1) lookup by staticPrefix.
-  // The array is set at import time (from the virtual module) before createRouter runs.
-  const precomputedEntriesRaw = getPrecomputedEntries();
+  // Prefer per-router entries (isolated) over global entries (merged).
+  const precomputedEntriesRaw = getRouterPrecomputedEntries(routerId) ?? getPrecomputedEntries();
   const precomputedByPrefix: Map<string, Record<string, string>> | null =
     precomputedEntriesRaw
       ? new Map(precomputedEntriesRaw.map((e) => [e.staticPrefix, e.routes]))
@@ -1330,6 +1335,7 @@ export function createRouter<TEnv = any>(
       findInterceptForRoute(routeKey, parentEntry, selectorContext, isAction),
     callOnError,
     findNearestErrorBoundary,
+    getRouteMap: () => getRouterManifest(routerId) ?? getGlobalRouteMap(),
   };
 
   // Thin wrappers that bind the deps to extracted functions.
@@ -1663,7 +1669,8 @@ export function createRouter<TEnv = any>(
       : undefined;
 
     // Phase 1: Try trie match (O(path_length))
-    const routeTrie = getRouteTrie();
+    // Prefer per-router trie (isolated) over global trie (merged).
+    const routeTrie = getRouterTrie(routerId) ?? getRouteTrie();
     if (routeTrie) {
       const trieStart = performance.now();
       const trieResult = tryTrieMatch(routeTrie, pathname);
@@ -2559,6 +2566,9 @@ export function createRouter<TEnv = any>(
         request: Request,
         env: TEnv & { ctx?: ExecutionContext },
       ) => {
+        // Trigger lazy import of per-router manifest data before route matching.
+        // No-op if data is already loaded or no loader is registered.
+        await ensureRouterManifest(routerId);
         if (!handler) {
           // Lazy import deferred to first request to avoid dev mode issues
           const { createRSCHandler } = await import("./rsc/handler.js");

@@ -44,6 +44,10 @@ import {
   setRouteTrie,
   getPrecomputedEntries,
   waitForManifestReady,
+  getRouterManifest,
+  getRouterTrie,
+  setRouterManifest,
+  setRouterTrie,
 } from "../route-map-builder.js";
 
 /**
@@ -243,7 +247,9 @@ export function createRSCHandler<
             generated.responseTypeRoutes,
           );
           setRouteTrie(trie);
+          setRouterTrie(router.id, trie);
         }
+        setRouterManifest(router.id, generated.routeManifest);
       }
       if (!hasCachedManifest()) {
         throw new Error(
@@ -577,12 +583,14 @@ export function createRSCHandler<
       url.searchParams.has("__debug_manifest") &&
       (isDev || router.allowDebugManifest)
     ) {
-      const trie = getRouteTrie();
+      const trie = getRouterTrie(router.id) ?? getRouteTrie();
+      const routeManifest = getRouterManifest(router.id) ?? getGlobalRouteMap();
       const { extractAncestryFromTrie } = await import("../build/route-trie.js");
       return new Response(
         JSON.stringify(
           {
-            routeManifest: getGlobalRouteMap(),
+            routerId: router.id,
+            routeManifest,
             routeAncestry: trie ? extractAncestryFromTrie(trie) : {},
             routeTrie: trie,
             precomputedEntries: getPrecomputedEntries(),

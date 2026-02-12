@@ -27,9 +27,6 @@ import {
   InterceptSelectorContext,
   type MetricsStore,
 } from "../server/context";
-import {
-  getGlobalRouteMap,
-} from "../route-map-builder.js";
 import type {
   ErrorBoundaryHandler,
   ErrorInfo,
@@ -111,7 +108,7 @@ export async function createMatchContextForFull<TEnv>(
     pathname,
     url,
     bindings,
-    getGlobalRouteMap(),
+    deps.getRouteMap(),
     matched.routeKey,
   );
 
@@ -159,7 +156,7 @@ export async function createMatchContextForFull<TEnv>(
       : matched.routeKey,
     handlerContext,
     loaderPromises,
-    routeMap: getGlobalRouteMap(),
+    routeMap: deps.getRouteMap(),
     metricsStore,
     Store,
     interceptContextMatch: null,
@@ -284,7 +281,7 @@ export async function createMatchContextForPartial<TEnv>(
     pathname,
     url,
     bindings,
-    getGlobalRouteMap(),
+    deps.getRouteMap(),
     matched.routeKey,
   );
 
@@ -407,7 +404,7 @@ export async function createMatchContextForPartial<TEnv>(
     localRouteName,
     handlerContext,
     loaderPromises,
-    routeMap: getGlobalRouteMap(),
+    routeMap: deps.getRouteMap(),
     metricsStore,
     Store,
     interceptContextMatch,
