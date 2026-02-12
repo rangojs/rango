@@ -119,3 +119,6 @@ export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 // Reverse type utilities for type-safe URL generation (Django-style URL reversal)
 export type { ScopedReverseFunction, ReverseFunction, ExtractLocalRoutes } from "./reverse.js";
 export { scopedReverse } from "./reverse.js";
+
+// Search params schema types
+export type { SearchSchema, SearchSchemaValue, ResolveSearchSchema, RouteSearchParams, RouteParams } from "./search-params.js";

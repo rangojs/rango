@@ -1,4 +1,6 @@
 import type { ExtractParams } from "./types.js";
+import type { SearchSchema, ResolveSearchSchema } from "./search-params.js";
+import { serializeSearchParams } from "./search-params.js";
 
 /**
  * Sanitize prefix string by removing leading slash
@@ -101,6 +103,15 @@ export type ParamsFor<
 type IsEmptyObject<T> = keyof T extends never ? true : false;
 
 /**
+ * Extract search schema from a route entry.
+ * Returns {} if no search schema is defined.
+ */
+type ExtractSearchSchema<TRoutes, TName extends keyof TRoutes> =
+  TRoutes[TName] extends { readonly search: infer S extends SearchSchema }
+    ? S
+    : {};
+
+/**
  * Type-safe reverse function signature (Django-style URL reversal)
  *
  * Validates route names and params at compile time.
@@ -126,6 +137,15 @@ export type ReverseFunction<TRoutes> = {
   <TName extends keyof TRoutes & string>(
     name: TName,
     params: ExtractParams<RoutePatternFor<TRoutes, TName>>
+  ): string;
+
+  /**
+   * Route with params and search - validates route name, params, and search
+   */
+  <TName extends keyof TRoutes & string>(
+    name: TName,
+    params: ExtractParams<RoutePatternFor<TRoutes, TName>>,
+    search: ResolveSearchSchema<ExtractSearchSchema<TRoutes, TName>>
   ): string;
 };
 
@@ -166,10 +186,19 @@ export type ScopedReverseFunction<TLocalRoutes> = {
   ): string;
 
   /**
+   * Route with params and search - validates route name, params, and search
+   */
+  <TName extends keyof TLocalRoutes & string>(
+    name: TName,
+    params: ExtractParams<RoutePatternFor<TLocalRoutes, TName>>,
+    search: ResolveSearchSchema<ExtractSearchSchema<TLocalRoutes, TName>>
+  ): string;
+
+  /**
    * Absolute route name (contains dot) - global lookup
    * Use for cross-module navigation: "shop.cart", "blog.post"
    */
-  (name: `${string}.${string}`, params?: Record<string, string>): string;
+  (name: `${string}.${string}`, params?: Record<string, string>, search?: Record<string, unknown>): string;
 
   /**
    * Path-based URL - ESCAPE HATCH, no type validation
@@ -247,21 +276,32 @@ export function scopedReverse<TPatterns>(
 export function createReverse<TRoutes extends Record<string, string>>(
   routeMap: TRoutes
 ): ReverseFunction<TRoutes & Record<string, string>> {
-  return ((name: string, params?: Record<string, string>) => {
+  return ((name: string, params?: Record<string, string>, search?: Record<string, unknown>) => {
     const pattern = routeMap[name];
     if (!pattern) {
       throw new Error(`Unknown route: ${name}`);
     }
 
-    if (!params) return pattern;
+    let result = pattern;
+    if (params) {
+      // Replace :param placeholders with actual values
+      result = result.replace(/:([^/]+)/g, (_: string, key: string) => {
+        const value = params[key];
+        if (value === undefined) {
+          throw new Error(`Missing param "${key}" for route "${name}"`);
+        }
+        return encodeURIComponent(value);
+      });
+    }
 
-    // Replace :param placeholders with actual values
-    return pattern.replace(/:([^/]+)/g, (_, key) => {
-      const value = params[key];
-      if (value === undefined) {
-        throw new Error(`Missing param "${key}" for route "${name}"`);
+    // Append search params as query string
+    if (search) {
+      const qs = serializeSearchParams(search);
+      if (qs) {
+        result += `?${qs}`;
       }
-      return encodeURIComponent(value);
-    });
+    }
+
+    return result;
   }) as ReverseFunction<TRoutes>;
 }

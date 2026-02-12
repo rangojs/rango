@@ -7,6 +7,8 @@
 import type { HandlerContext, InternalHandlerContext } from "../types";
 import type { HandleStore } from "../server/handle-store.js";
 import { getRequestContext } from "../server/request-context.js";
+import { getSearchSchema } from "../route-map-builder.js";
+import { parseSearchParams, serializeSearchParams } from "../search-params.js";
 
 /**
  * Resolve route name with namespace prefix support.
@@ -88,13 +90,19 @@ export function createHandlerContext<TEnv>(
   const cleanUrl = new URL(url);
   cleanUrl.search = cleanSearchParams.toString();
 
+  // If route has a search schema, parse URLSearchParams into typed object
+  const searchSchema = routeName ? getSearchSchema(routeName) : undefined;
+  const resolvedSearchParams = searchSchema
+    ? parseSearchParams(cleanSearchParams, searchSchema)
+    : cleanSearchParams;
+
   // Get stub response from request context for setting headers
   const stubResponse = requestContext?.res ?? new Response(null, { status: 200 });
 
   return {
     params,
     request,
-    searchParams: cleanSearchParams, // Filtered params
+    searchParams: resolvedSearchParams as any, // Filtered params (typed object or URLSearchParams)
     pathname,
     url: cleanUrl, // Clean URL
     env: bindings,
@@ -117,11 +125,12 @@ export function createHandlerContext<TEnv>(
     theme: requestContext?.theme,
     setTheme: requestContext?.setTheme,
     // Scoped reverse for URL generation
-    reverse: (name: string, hrefParams?: Record<string, string>) => {
+    reverse: (name: string, hrefParams?: Record<string, string>, search?: Record<string, unknown>) => {
       // Path-based - return directly (optionally with param substitution)
       if (name.startsWith("/")) {
+        let result = name;
         if (hrefParams) {
-          return name.replace(/:([^/]+)/g, (_, key) => {
+          result = result.replace(/:([^/]+)/g, (_, key) => {
             const value = hrefParams[key];
             if (value === undefined) {
               throw new Error(`Missing param "${key}" for path "${name}"`);
@@ -129,7 +138,11 @@ export function createHandlerContext<TEnv>(
             return encodeURIComponent(value);
           });
         }
-        return name;
+        if (search) {
+          const qs = serializeSearchParams(search);
+          if (qs) result += `?${qs}`;
+        }
+        return result;
       }
 
       // Resolve route name with namespace support
@@ -141,19 +154,26 @@ export function createHandlerContext<TEnv>(
         );
       }
 
-      // If no params, return pattern directly
-      if (!hrefParams) {
-        return pattern;
-      }
+      let result = pattern;
 
       // Substitute params
-      return pattern.replace(/:([^/]+)/g, (_, key) => {
-        const value = hrefParams[key];
-        if (value === undefined) {
-          throw new Error(`Missing param "${key}" for route "${name}"`);
-        }
-        return encodeURIComponent(value);
-      });
+      if (hrefParams) {
+        result = result.replace(/:([^/]+)/g, (_, key) => {
+          const value = hrefParams[key];
+          if (value === undefined) {
+            throw new Error(`Missing param "${key}" for route "${name}"`);
+          }
+          return encodeURIComponent(value);
+        });
+      }
+
+      // Append search params as query string
+      if (search) {
+        const qs = serializeSearchParams(search);
+        if (qs) result += `?${qs}`;
+      }
+
+      return result;
     },
   };
 }

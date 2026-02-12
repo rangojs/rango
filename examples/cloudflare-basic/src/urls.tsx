@@ -36,6 +36,7 @@ import { articlesPatterns } from "./pages/articles.js";
 import { guidesPatterns } from "./pages/guides.js";
 import { releasesPatterns } from "./pages/releases.js";
 import { ApiDemoPage } from "./pages/api-demo.js";
+import { SearchPage } from "./pages/search.js";
 
 /**
  * Main URL patterns - Django-style routing API
@@ -160,6 +161,9 @@ export const urlpatterns = urls(
         path("/about", AboutPage, { name: "about" }),
         path("/counter", CounterPage, { name: "counter" }),
         path("/api-demo", ApiDemoPage, { name: "apiDemo" }),
+
+        // Search route with typed search params
+        path("/search", SearchPage, { name: "search", search: { q: "string", page: "number?", sort: "string?" } }),
         path(
           "/features/:slug",
           FeatureDetailPage,

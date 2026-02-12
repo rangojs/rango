@@ -83,6 +83,8 @@ import {
   isPrerenderHandler,
   type PrerenderHandlerDefinition,
 } from "./prerender.js";
+import type { SearchSchema } from "./search-params.js";
+import { registerSearchSchema } from "./route-map-builder.js";
 
 // ============================================================================
 // Response Route Symbol and Types
@@ -182,9 +184,11 @@ export type UnnamedRoute = "$unnamed";
 /**
  * Options for path() function
  */
-export interface PathOptions<TName extends string = string> {
+export interface PathOptions<TName extends string = string, TSearch extends SearchSchema = {}> {
   /** Route name for href() lookups */
   name?: TName;
+  /** Search param schema for typed query parameters */
+  search?: TSearch;
   /** Trailing slash behavior: "never" (redirect /path/ to /path), "always" (redirect /path to /path/), "ignore" (match both) */
   trailingSlash?: TrailingSlashMode;
   /** Response type marker (set by path.json(), etc.) */
@@ -206,7 +210,7 @@ export interface PathDefinition {
  */
 export interface UrlPatterns<
   TEnv = any,
-  TRoutes extends Record<string, string> = Record<string, string>,
+  TRoutes extends Record<string, any> = Record<string, string>,
   TResponses extends Record<string, unknown> = Record<string, unknown>,
 > {
   /** Internal: route definitions */
@@ -259,7 +263,7 @@ export interface IncludeOptions<TNamePrefix extends string = string> {
  * valid paths without type errors.
  */
 type PrefixRoutes<
-  TRoutes extends Record<string, string>,
+  TRoutes extends Record<string, any>,
   TPrefix extends string,
 > = TPrefix extends ""
   ? TRoutes
@@ -275,12 +279,14 @@ type PrefixRoutes<
  * Prefix route patterns with a URL prefix (e.g., "/blog" + "/:slug" = "/blog/:slug")
  */
 type PrefixPatterns<
-  TRoutes extends Record<string, string>,
+  TRoutes extends Record<string, any>,
   TUrlPrefix extends string,
 > = {
   [K in keyof TRoutes]: TRoutes[K] extends string
     ? `${TUrlPrefix}${TRoutes[K]}`
-    : TRoutes[K];
+    : TRoutes[K] extends { readonly path: infer P extends string; readonly search: infer S }
+      ? { readonly path: `${TUrlPrefix}${P}`; readonly search: S }
+      : TRoutes[K];
 };
 
 /**
@@ -356,11 +362,14 @@ type UnionToIntersection<U> = (U extends any ? (k: U) => void : never) extends (
 type ExtractRoutesFromItem<T, D extends number = 40> = [D] extends [never]
   ? {} // Max depth reached, stop recursion
   : // TypedRouteItem: extract name -> pattern (exclude unnamed routes)
-    T extends TypedRouteItem<infer TName, infer TPattern>
+    // When search schema is non-empty, value becomes { path, search } object
+    T extends TypedRouteItem<infer TName, infer TPattern, any, infer TSearch>
     ? TName extends string
       ? TName extends UnnamedRoute
         ? {} // Exclude unnamed routes from type map
-        : { [K in TName]: TPattern }
+        : {} extends TSearch
+          ? { [K in TName]: TPattern }
+          : { [K in TName]: { readonly path: TPattern; readonly search: TSearch } }
       : {}
     : // TypedIncludeItem: extract prefixed routes (both name and URL prefix)
       T extends TypedIncludeItem<
@@ -397,7 +406,7 @@ type ExtractRoutesFromItems<
   ? UnionToIntersection<
       { [K in keyof T]: ExtractRoutesFromItem<T[K], D> }[number]
     > extends infer R
-    ? R extends Record<string, string>
+    ? R extends Record<string, any>
       ? R
       : {}
     : {}
@@ -502,24 +511,25 @@ export type ExtractResponses<T extends readonly any[]> =
 export type PathFn<TEnv> = <
   const TPattern extends string,
   const TName extends string = UnnamedRoute,
+  const TSearch extends SearchSchema = {},
   TParams = ExtractParams<TPattern>,
 >(
   pattern: TPattern,
   handler:
     | ReactNode
-    | ((ctx: HandlerContext<TParams, TEnv>) => ReactNode | Promise<ReactNode> | Response | Promise<Response>)
+    | ((ctx: HandlerContext<TParams, TEnv, TSearch>) => ReactNode | Promise<ReactNode> | Response | Promise<Response>)
     | PrerenderHandlerDefinition<TParams>,
-  optionsOrUse?: PathOptions<TName> | (() => RouteUseItem[]),
+  optionsOrUse?: PathOptions<TName, TSearch> | (() => RouteUseItem[]),
   use?: () => RouteUseItem[],
   // Generic handler bypass: when handler uses index-signature params
   // (e.g. Handler<Record<string, any>>), skip the biconditional.
   // `string extends keyof TParams` is true for index signatures,
   // false for concrete params ({id: string}) and empty ({}).
 ) => string extends keyof TParams
-  ? TypedRouteItem<TName, TPattern>
+  ? TypedRouteItem<TName, TPattern, unknown, TSearch>
   : ExtractParams<TPattern> extends TParams
     ? TParams extends ExtractParams<TPattern>
-      ? TypedRouteItem<TName, TPattern>
+      ? TypedRouteItem<TName, TPattern, unknown, TSearch>
       : { __error: `Handler params do not match pattern "${TPattern}"` }
     : { __error: `Handler params do not match pattern "${TPattern}"` };
 
@@ -574,7 +584,7 @@ export type TextResponsePathFn<TEnv> = <
  * Base include function signature.
  */
 export type IncludeFn<TEnv> = <
-  TRoutes extends Record<string, string>,
+  TRoutes extends Record<string, any>,
   const TUrlPrefix extends string,
   const TNamePrefix extends string = never,
   TResponses extends Record<string, unknown> = Record<string, unknown>,
@@ -901,6 +911,14 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
     // Store trailing slash config if specified
     if (options?.trailingSlash && ctx.trailingSlash) {
       ctx.trailingSlash.set(routeName, options.trailingSlash);
+    }
+
+    // Store search schema if specified
+    if (options?.search) {
+      if (ctx.searchSchemas) {
+        ctx.searchSchemas.set(routeName, options.search);
+      }
+      registerSearchSchema(routeName, options.search);
     }
 
     // Run use callback if provided

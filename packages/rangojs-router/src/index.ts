@@ -67,6 +67,9 @@ export type {
   NotFoundBoundaryHandler,
 } from "./types.js";
 
+// Search params schema types
+export type { SearchSchema, SearchSchemaValue, ResolveSearchSchema, RouteSearchParams, RouteParams } from "./search-params.js";
+
 // Client-safe createLoader - only stores the $$id, function is not included
 // Use this when defining loaders that will be imported by client components
 export { createLoader } from "./loader.js";
