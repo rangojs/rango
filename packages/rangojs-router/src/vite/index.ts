@@ -616,6 +616,23 @@ function createRouterDiscoveryPlugin(
       );
     }
 
+    // Warn if multiple routers use auto-generated IDs (router_0, router_1, ...).
+    // Auto-IDs are assigned by counter and depend on module evaluation order,
+    // which can differ between build time and runtime (especially with dynamic
+    // imports in host routers). This causes per-router data to be loaded into
+    // the wrong router at runtime.
+    if (registry.size > 1) {
+      const autoIds = [...registry.keys()].filter((id) => /^router_\d+$/.test(id));
+      if (autoIds.length > 1) {
+        console.warn(
+          `[rsc-router] WARNING: ${autoIds.length} routers use auto-generated IDs (${autoIds.join(", ")}). ` +
+          `In multi-router setups, each createRouter() must have an explicit \`id\` option ` +
+          `to ensure per-router manifest data is matched correctly at runtime. ` +
+          `Example: createRouter({ id: "site", ... })`
+        );
+      }
+    }
+
     // Build route trie from merged manifest + ancestry
     if (mergedRouteManifest && Object.keys(mergedRouteManifest).length > 0) {
       const buildRouteTrie = buildMod.buildRouteTrie;
@@ -798,20 +815,28 @@ function createRouterDiscoveryPlugin(
       }
     } catch {}
 
-    for (const { routeManifest, sourceFile } of perRouterManifests) {
+    for (const { id, routeManifest, sourceFile } of perRouterManifests) {
       if (!sourceFile) continue;
-      try {
-        const routerDir = dirname(sourceFile);
-        const routerBasename = basename(sourceFile).replace(/\.(tsx?|jsx?)$/, "");
-        const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
-        const source = generateRouteTypesSource(routeManifest);
-        const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
-        if (existing !== source) {
-          writeFileSync(outPath, source);
-          console.log(`[rsc-router] Generated route types -> ${outPath}`);
-        }
-      } catch (err) {
-        console.warn(`[rsc-router] Failed to write named-routes.gen.ts: ${(err as Error).message}`);
+
+      // Validate sourceFile points to a real project file, not node_modules or
+      // a Vite internal path. A bad sourceFile leads to route types written to
+      // the wrong location, causing non-deterministic type resolution.
+      if (sourceFile.includes("node_modules")) {
+        throw new Error(
+          `[rsc-router] Router "${id}" has sourceFile inside node_modules: ${sourceFile}\n` +
+          `This means createRouter() stack trace parsing matched a Vite internal frame.\n` +
+          `Set an explicit \`id\` on createRouter() or check the call site.`,
+        );
+      }
+
+      const routerDir = dirname(sourceFile);
+      const routerBasename = basename(sourceFile).replace(/\.(tsx?|jsx?)$/, "");
+      const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
+      const source = generateRouteTypesSource(routeManifest);
+      const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
+      if (existing !== source) {
+        writeFileSync(outPath, source);
+        console.log(`[rsc-router] Generated route types -> ${outPath}`);
       }
     }
   }
@@ -1125,6 +1150,9 @@ function createRouterDiscoveryPlugin(
             // Inject handle IDs so prerender-collected handle data uses the same
             // hashed keys as the production client/SSR bundles.
             exposeHandleId({ forceBuild: true }),
+            // Inject stable $$id into createRouter() calls so build-time IDs
+            // match runtime IDs across environments (Node runner vs workerd).
+            createExposeRouterIdPlugin(),
           ],
         });
 
@@ -1983,6 +2011,9 @@ export async function rango(
   // Always add exposePrerenderHandlerId for auto-generated prerender handler IDs
   plugins.push(exposePrerenderHandlerId());
 
+  // Inject stable $$id into createRouter() calls
+  plugins.push(createExposeRouterIdPlugin());
+
   // Add version virtual module plugin for cache invalidation
   plugins.push(createVersionPlugin());
 
@@ -2018,6 +2049,81 @@ export async function rango(
   return plugins;
 }
 
+
+/**
+ * Inject stable $$id into createRouter() calls at compile time.
+ *
+ * Derives a short hash from the file path and line number of each
+ * createRouter() call. This ID is stable across environments (Node module
+ * runner vs workerd) because it's computed at build time, not from runtime
+ * stack traces which differ between environments.
+ */
+function createExposeRouterIdPlugin(): Plugin {
+  let projectRoot = "";
+  return {
+    name: "@rangojs/router:expose-router-id",
+    configResolved(config) {
+      projectRoot = config.root;
+    },
+    transform(code, id) {
+      if (!code.includes("createRouter")) return null;
+      // Must import createRouter from @rangojs/router (not /host, /server, etc.)
+      if (!/import\s*\{[^}]*\bcreateRouter\b[^}]*\}\s*from\s*["']@rangojs\/router["']/.test(code)) {
+        return null;
+      }
+      if (id.includes("node_modules")) return null;
+
+      const filePath = relative(projectRoot, id).replace(/\\/g, "/");
+
+      // Match createRouter({ or createRouter<...>({ or createRouter() or createRouter<...>()
+      // Skip calls that already have $$id
+      const pattern = /\bcreateRouter\s*(?:<[^>]*>)?\s*\(/g;
+      let match: RegExpExecArray | null;
+      let result = code;
+      let offset = 0;
+
+      while ((match = pattern.exec(code)) !== null) {
+        const callStart = match.index;
+        const parenPos = match.index + match[0].length - 1;
+
+        // Check what follows the opening paren
+        const afterParen = code.slice(parenPos + 1).trimStart();
+
+        // Skip if $$id is already present
+        if (afterParen.includes("$$id")) continue;
+
+        // Compute line number for this call
+        const lineNumber = code.slice(0, callStart).split("\n").length;
+        const hash = createHash("sha256")
+          .update(`${filePath}:${lineNumber}`)
+          .digest("hex")
+          .slice(0, 8);
+
+        if (afterParen.startsWith("{")) {
+          // createRouter({ ... }) -> createRouter({ $$id: "hash", ... })
+          const bracePos = code.indexOf("{", parenPos + 1);
+          const insertPos = bracePos + 1 + offset;
+          result =
+            result.slice(0, insertPos) +
+            ` $$id: "${hash}",` +
+            result.slice(insertPos);
+          offset += ` $$id: "${hash}",`.length;
+        } else if (afterParen.startsWith(")")) {
+          // createRouter() -> createRouter({ $$id: "hash" })
+          const insertPos = parenPos + 1 + offset;
+          result =
+            result.slice(0, insertPos) +
+            `{ $$id: "${hash}" }` +
+            result.slice(insertPos);
+          offset += `{ $$id: "${hash}" }`.length;
+        }
+      }
+
+      if (result === code) return null;
+      return { code: result, map: null };
+    },
+  };
+}
 
 /**
  * Transform CJS vendor files from @vitejs/plugin-rsc to ESM for browser compatibility.

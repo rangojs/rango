@@ -205,18 +205,27 @@ export function createRSCHandler<
     // via setManifestReadyPromise(). In dev mode (Cloudflare), Miniflare runs
     // in a separate isolate where module-level state doesn't carry over, so
     // we generate inline from the router's urlpatterns.
+    //
+    // In multi-router setups (e.g. createHostRouter), each router must have
+    // its own per-router manifest. We check per-router data first: even if
+    // the global manifest was set by a different router, this router still
+    // needs its own trie and manifest for correct matching.
     const manifestCacheStart = performance.now();
-    if (!hasCachedManifest()) {
-      const readyPromise = waitForManifestReady();
-      if (readyPromise) {
-        await readyPromise;
+    const hasRouterData = getRouterManifest(router.id) !== undefined;
+    if (!hasRouterData) {
+      if (!hasCachedManifest()) {
+        const readyPromise = waitForManifestReady();
+        if (readyPromise) {
+          await readyPromise;
+        }
       }
-      if (!hasCachedManifest() && router.urlpatterns) {
-        // Cloudflare dev: generate manifest inline (no caching needed)
+      if (!getRouterManifest(router.id) && router.urlpatterns) {
+        // Cloudflare dev: generate manifest inline for this router.
+        // Each router generates its own manifest independently so
+        // multi-router setups (host routing) work correctly.
         const { generateManifest } =
           await import("../build/generate-manifest.js");
         const generated = generateManifest(router.urlpatterns);
-        setCachedManifest(generated.routeManifest);
         if (
           generated._routeAncestry &&
           Object.keys(generated._routeAncestry).length > 0
@@ -246,12 +255,18 @@ export function createRSCHandler<
             generated.passthroughRoutes ? new Set(generated.passthroughRoutes) : undefined,
             generated.responseTypeRoutes,
           );
-          setRouteTrie(trie);
           setRouterTrie(router.id, trie);
+          // Set global trie only if not already set by another router
+          if (!getRouteTrie()) {
+            setRouteTrie(trie);
+          }
         }
         setRouterManifest(router.id, generated.routeManifest);
+        // Merge into global manifest (needed for reverse/href across routers)
+        const existing = hasCachedManifest() ? getGlobalRouteMap() : {};
+        setCachedManifest({ ...existing, ...generated.routeManifest });
       }
-      if (!hasCachedManifest()) {
+      if (!getRouterManifest(router.id) && !hasCachedManifest()) {
         throw new Error(
           'Route manifest not available. Ensure "virtual:rsc-router/routes-manifest" is imported in your entry file.',
         );

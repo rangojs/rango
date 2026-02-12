@@ -259,6 +259,13 @@ export interface RSCRouterOptions<TEnv = any> {
   id?: string;
 
   /**
+   * Injected by the Vite transform at compile time.
+   * Hash of filename + line number for stable cross-environment ID.
+   * @internal
+   */
+  $$id?: string;
+
+  /**
    * Enable performance metrics collection
    * When enabled, metrics are output to console and available via Server-Timing header
    */
@@ -1117,6 +1124,7 @@ export function createRouter<TEnv = any>(
 ): RSCRouter<TEnv, {}> {
   const {
     id: userProvidedId,
+    $$id: injectedId,
     debugPerformance = false,
     document: documentOption,
     defaultErrorBoundary,
@@ -1132,8 +1140,6 @@ export function createRouter<TEnv = any>(
     allowDebugManifest: allowDebugManifestOption = true,
   } = options;
 
-  const routerId = userProvidedId ?? `router_${routerAutoId++}`;
-
   // Capture the source file that called createRouter() via stack trace parsing.
   // Used by the Vite plugin to write per-router named-routes.gen.ts files.
   let __sourceFile: string | undefined;
@@ -1143,13 +1149,20 @@ export function createRouter<TEnv = any>(
       const lines = stack.split("\n");
       for (const line of lines) {
         const match = line.match(/\((.+?\.(ts|tsx|js|jsx)):\d+:\d+\)/);
-        if (match && !match[1].includes("/router.ts") && !match[1].includes("@rangojs/router")) {
-          __sourceFile = match[1];
+        if (match && !match[1].includes("/router.ts") && !match[1].includes("@rangojs/router") && !match[1].includes("node_modules")) {
+          // Strip file: URL protocol prefix from Vite module runner stack traces
+          __sourceFile = match[1].startsWith("file:") ? match[1].slice(5) : match[1];
           break;
         }
       }
     }
   } catch {}
+
+  // Router ID priority: explicit id > Vite-injected $$id > counter fallback.
+  // $$id is a hash of filename+line injected by the Vite transform at compile
+  // time, so it's stable across build/runtime regardless of module evaluation
+  // order (unlike the counter which depends on import order).
+  const routerId = userProvidedId ?? injectedId ?? `router_${routerAutoId++}`;
 
   // Resolve warmup enabled flag (default: true)
   const warmupEnabled = warmupOption !== false;
@@ -1242,13 +1255,24 @@ export function createRouter<TEnv = any>(
   // Track all registered routes with their prefixes for reverse()
   const mergedRouteMap: Record<string, string> = {};
 
-  // Build a Map from precomputed entries for O(1) lookup by staticPrefix.
-  // Prefer per-router entries (isolated) over global entries (merged).
-  const precomputedEntriesRaw = getRouterPrecomputedEntries(routerId) ?? getPrecomputedEntries();
-  const precomputedByPrefix: Map<string, Record<string, string>> | null =
-    precomputedEntriesRaw
-      ? new Map(precomputedEntriesRaw.map((e) => [e.staticPrefix, e.routes]))
-      : null;
+  // Lazy precomputed entries lookup: rebuilt when per-router data arrives.
+  // In production multi-router setups, per-router data is loaded lazily via
+  // ensureRouterManifest(). At createRouter() time the data isn't available yet,
+  // so we defer building the Map until first use and invalidate when the
+  // per-router source changes.
+  let precomputedByPrefix: Map<string, Record<string, string>> | null = null;
+  let precomputedSource: Array<{ staticPrefix: string; routes: Record<string, string> }> | null | undefined;
+
+  function getPrecomputedByPrefix(): Map<string, Record<string, string>> | null {
+    const current = getRouterPrecomputedEntries(routerId) ?? getPrecomputedEntries();
+    if (current !== precomputedSource) {
+      precomputedSource = current;
+      precomputedByPrefix = current
+        ? new Map(current.map((e) => [e.staticPrefix, e.routes]))
+        : null;
+    }
+    return precomputedByPrefix;
+  }
 
 
   // Wrapper to pass debugPerformance to external createMetricsStore
@@ -1497,8 +1521,9 @@ export function createRouter<TEnv = any>(
     // Check for pre-computed routes from build-time data.
     // Only leaf nodes (no nested includes) are precomputed, so entries with
     // nested lazy includes fall through to the handler below.
-    if (precomputedByPrefix) {
-      const routes = precomputedByPrefix.get(entry.staticPrefix);
+    const currentPrecomputed = getPrecomputedByPrefix();
+    if (currentPrecomputed) {
+      const routes = currentPrecomputed.get(entry.staticPrefix);
       if (routes) {
         entry.lazyEvaluated = true;
         entry.routes = routes as ResolvedRouteMap<any>;
