@@ -1149,7 +1149,7 @@ export function createRouter<TEnv = any>(
       const lines = stack.split("\n");
       for (const line of lines) {
         const match = line.match(/\((.+?\.(ts|tsx|js|jsx)):\d+:\d+\)/);
-        if (match && !match[1].includes("/router.ts") && !match[1].includes("@rangojs/router") && !match[1].includes("node_modules")) {
+        if (match && !match[1].endsWith("/router.ts") && !match[1].includes("@rangojs/router") && !match[1].includes("node_modules")) {
           // Strip file: URL protocol prefix from Vite module runner stack traces
           __sourceFile = match[1].startsWith("file:") ? match[1].slice(5) : match[1];
           break;

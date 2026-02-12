@@ -1191,7 +1191,13 @@ function createRouterDiscoveryPlugin(
         }
 
         await discoverRouters(rscEnv);
-        writeRouteTypesFiles();
+        // Skip when static route types generation is enabled (configResolved
+        // already wrote the files via writeCombinedRouteTypes). Same guard
+        // as dev mode to avoid writing a duplicate file from __sourceFile
+        // (which comes from runtime stack trace parsing).
+        if (opts?.staticRouteTypesGeneration === false) {
+          writeRouteTypesFiles();
+        }
       } catch (err: any) {
         // Clean up before re-throwing so the temp server doesn't leak
         delete (globalThis as any).__rscRouterDiscoveryActive;
