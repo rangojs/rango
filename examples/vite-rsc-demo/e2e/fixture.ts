@@ -31,14 +31,32 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
     });
   });
 
-  async function findPort(): Promise<number> {
+  async function findPort(timeoutMs = 60000): Promise<number> {
     let stdout = "";
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(
+          new Error(
+            `Timed out waiting for server to start after ${timeoutMs}ms. Stdout: ${stdout}`
+          )
+        );
+      }, timeoutMs);
+
       child.stdout!.on("data", (data) => {
         stdout += stripVTControlCharacters(String(data));
         const match = stdout.match(/http:\/\/localhost:(\d+)/);
         if (match) {
+          clearTimeout(timeout);
           resolve(Number(match[1]));
+        }
+      });
+
+      child.on("exit", (code) => {
+        clearTimeout(timeout);
+        if (code !== 0) {
+          reject(
+            new Error(`Server exited with code ${code}. Stdout: ${stdout}`)
+          );
         }
       });
     });
@@ -70,6 +88,7 @@ export function useFixture(options: {
   command?: string;
   buildCommand?: string;
   cliOptions?: SpawnOptions;
+  isolatedServer?: boolean;
 }) {
   let cleanup: (() => Promise<void>) | undefined;
   let baseURL!: string;
@@ -79,18 +98,24 @@ export function useFixture(options: {
 
   test.beforeAll(async ({}, testInfo) => {
     if (options.mode === "dev") {
-      proc = runCli({
-        command: options.command ?? `pnpm dev`,
-        label: `${options.root}:dev`,
-        cwd,
-        ...options.cliOptions,
-      });
-      const port = await proc.findPort();
-      baseURL = `http://localhost:${port}`;
-      cleanup = async () => {
-        proc.kill();
-        await proc.done;
-      };
+      const sharedURL =
+        !options.isolatedServer && testInfo.project.use.baseURL;
+      if (sharedURL) {
+        baseURL = sharedURL;
+      } else {
+        proc = runCli({
+          command: options.command ?? `pnpm dev`,
+          label: `${options.root}:dev`,
+          cwd,
+          ...options.cliOptions,
+        });
+        const port = await proc.findPort();
+        baseURL = `http://localhost:${port}`;
+        cleanup = async () => {
+          proc.kill();
+          await proc.done;
+        };
+      }
     }
     if (options.mode === "build") {
       const hasBuildDep =

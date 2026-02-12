@@ -6,6 +6,8 @@ const browserConfig = {
   deviceScaleFactor: undefined,
 };
 
+const DEV_SERVER_PORT = 5195;
+
 const isUIMode = process.argv.includes("--ui");
 
 export default defineConfig({
@@ -13,6 +15,11 @@ export default defineConfig({
   fullyParallel: true,
   globalTimeout: 600000, // 10 minutes max
   timeout: process.env.CI ? 60000 : 30000, // 60s on CI, 30s locally
+  webServer: {
+    command: `rm -rf node_modules/.vite && pnpm dev --port ${DEV_SERVER_PORT}`,
+    port: DEV_SERVER_PORT,
+    reuseExistingServer: !process.env.CI,
+  },
   use: {
     screenshot: "only-on-failure",
     trace: "on-all-retries",
@@ -29,7 +36,10 @@ export default defineConfig({
           name: "dev",
           grep: /^(?!.*\(production\))/,
           testIgnore: ["**/*.setup.ts"],
-          use: browserConfig,
+          use: {
+            ...browserConfig,
+            baseURL: `http://localhost:${DEV_SERVER_PORT}`,
+          },
         },
         {
           name: "production",
@@ -45,13 +55,25 @@ export default defineConfig({
           testMatch: "**/build-test-app.setup.ts",
         },
         {
-          name: "dev",
-          grep: /^(?!.*\(production\))/,
-          testIgnore: ["**/*.setup.ts"],
-          use: browserConfig,
+          name: "dev-warmup",
+          testMatch: "**/dev-warmup.setup.ts",
+          use: {
+            ...browserConfig,
+            baseURL: `http://localhost:${DEV_SERVER_PORT}`,
+          },
           // Must run after build: both write to node_modules/.vite/deps_rsc and the
           // build overwrites the dev server's optimizer cache, causing ERR_OUTDATED_OPTIMIZED_DEP.
           dependencies: ["build"],
+        },
+        {
+          name: "dev",
+          grep: /^(?!.*\(production\))/,
+          testIgnore: ["**/*.setup.ts"],
+          use: {
+            ...browserConfig,
+            baseURL: `http://localhost:${DEV_SERVER_PORT}`,
+          },
+          dependencies: ["dev-warmup"],
         },
         {
           name: "production",
