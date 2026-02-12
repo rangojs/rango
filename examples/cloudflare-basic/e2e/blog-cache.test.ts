@@ -186,6 +186,7 @@ test.describe("proactive-caching", () => {
   const f = useFixture({
     root: ".",
     mode: "dev",
+    isolatedServer: true,
   });
 
   test("proactive caching triggers when navigating within cached layout", async ({
