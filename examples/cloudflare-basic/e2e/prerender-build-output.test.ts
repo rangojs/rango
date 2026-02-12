@@ -29,7 +29,7 @@ function concatBundleContents(dir: string): string {
 
 // -- Handler eviction tests --
 
-test.describe("handler eviction", () => {
+test.describe("handler eviction (production)", () => {
   let clientBundle: string;
   let ssrBundle: string;
   let prerenderHandlersBundle: string;
@@ -185,7 +185,7 @@ test.describe("handler eviction", () => {
 
 // -- Prerender asset structure tests --
 
-test.describe("prerender asset structure", () => {
+test.describe("prerender asset structure (production)", () => {
   const RSC_DIR = path.join(DIST, "rsc");
   const RSC_ASSETS_DIR = path.join(RSC_DIR, "assets");
 

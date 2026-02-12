@@ -226,7 +226,7 @@ test.describe("content negotiation (dev)", () => {
   });
 });
 
-test.describe("content negotiation (build)", () => {
+test.describe("content negotiation (production)", () => {
   const f = useFixture({
     root: ".",
     mode: "build",

@@ -104,7 +104,7 @@ export function useFixture(options: {
   const cwd = path.resolve(options.root);
   let proc!: ReturnType<typeof runCli>;
 
-  test.beforeAll(async () => {
+  test.beforeAll(async ({}, testInfo) => {
     if (options.mode === "dev") {
       proc = runCli({
         command: options.command ?? `pnpm dev`,
@@ -120,7 +120,9 @@ export function useFixture(options: {
       };
     }
     if (options.mode === "build") {
-      if (!process.env.TEST_SKIP_BUILD) {
+      const hasBuildDep =
+        testInfo.project.dependencies.includes("build");
+      if (!process.env.TEST_SKIP_BUILD && !hasBuildDep) {
         const buildProc = runCli({
           command: options.buildCommand ?? `pnpm build`,
           label: `${options.root}:build`,

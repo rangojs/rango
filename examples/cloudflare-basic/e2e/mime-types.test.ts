@@ -103,7 +103,7 @@ test.describe("MIME type response routes (dev)", () => {
   });
 });
 
-test.describe("MIME type response routes (build)", () => {
+test.describe("MIME type response routes (production)", () => {
   const f = useFixture({
     root: ".",
     mode: "build",

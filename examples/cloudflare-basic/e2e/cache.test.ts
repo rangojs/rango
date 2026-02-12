@@ -96,7 +96,7 @@ test.describe("basic-navigation (dev)", () => {
 /**
  * Basic navigation tests for production (preview) mode
  */
-test.describe("basic-navigation (preview)", () => {
+test.describe("basic-navigation (production)", () => {
   const f = useFixture({
     root: ".",
     mode: "build",
@@ -245,7 +245,7 @@ test.describe("proactive-cache (dev)", () => {
  * Blog breadcrumb tests - validates breadcrumbs don't duplicate with caching
  * This is a regression test for cached segments re-pushing handle data
  */
-test.describe("blog-breadcrumbs (preview)", () => {
+test.describe("blog-breadcrumbs (production)", () => {
   const f = useFixture({
     root: ".",
     mode: "build",
@@ -547,7 +547,7 @@ test.describe("blog-breadcrumbs (preview)", () => {
 /**
  * Proactive cache test route tests (preview mode)
  */
-test.describe("proactive-cache (preview)", () => {
+test.describe("proactive-cache (production)", () => {
   const f = useFixture({
     root: ".",
     mode: "build",
