@@ -60,8 +60,11 @@ test.describe("cache-status-behavior", () => {
       "Cache Status: Success (200)"
     );
 
-    // Wait for cache write to complete
-    await page.waitForTimeout(500);
+    // Wait for async cache write to complete (runs inside waitUntil, fire-and-forget in dev)
+    await expect.poll(() => {
+      const stdout = f.proc().stdout().substring(initialLength);
+      return stdout.includes("[CacheScope] Cached:") && stdout.includes("/cache-status/success");
+    }, { timeout: 5000, message: "Expected [CacheScope] Cached: log for /cache-status/success" }).toBeTruthy();
 
     // Check logs
     const afterFirstStdout = f.proc().stdout();
@@ -155,10 +158,18 @@ test.describe("cache-status-behavior", () => {
   test("cached 200 should hit on second request", async ({ page }) => {
     using _ = expectNoPageError(page);
 
+    const beforeFirstStdout = f.proc().stdout();
+    const beforeFirstLen = beforeFirstStdout.length;
+
     // First visit - populate cache
     await page.goto(f.url("/cache-status/success"));
     await waitForHydration(page);
-    await page.waitForTimeout(500);
+
+    // Wait for async cache write to complete before navigating away
+    await expect.poll(() => {
+      const stdout = f.proc().stdout().substring(beforeFirstLen);
+      return stdout.includes("[CacheScope] Cached:") && stdout.includes("/cache-status/success");
+    }, { timeout: 5000, message: "Expected cache write to complete for /cache-status/success" }).toBeTruthy();
 
     // Navigate away
     await page.goto(f.url("/"));
