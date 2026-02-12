@@ -30,7 +30,7 @@ test.describe.configure({ mode: "serial" });
 // Build mode: runtime behavior tests
 // =============================================================================
 
-test.describe("prerender passthrough (build)", () => {
+test.describe("prerender passthrough (production)", () => {
   const f = useFixture({
     root: ".",
     mode: "build",
@@ -257,7 +257,7 @@ test.describe("prerender passthrough (build)", () => {
 // Build mode: bundle output validation tests
 // =============================================================================
 
-test.describe("prerender passthrough bundle output", () => {
+test.describe("prerender passthrough bundle output (production)", () => {
   let prerenderHandlersBundle: string;
   let clientBundle: string;
   let ssrBundle: string;
@@ -325,7 +325,7 @@ test.describe("prerender passthrough bundle output", () => {
 // Build mode: prerender asset structure tests
 // =============================================================================
 
-test.describe("prerender passthrough assets", () => {
+test.describe("prerender passthrough assets (production)", () => {
   const RSC_DIR = path.join(DIST, "rsc");
   const RSC_ASSETS_DIR = path.join(RSC_DIR, "assets");
 

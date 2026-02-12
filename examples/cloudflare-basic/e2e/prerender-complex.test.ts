@@ -21,7 +21,7 @@ test.describe.configure({ mode: "serial" });
  *     ])
  *     path("/:slug", ArticleDetail)     -- prerendered
  */
-test.describe("prerender-complex", () => {
+test.describe("prerender-complex (production)", () => {
   const f = useFixture({
     root: ".",
     mode: "build",

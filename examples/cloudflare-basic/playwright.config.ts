@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const isUIMode = process.argv.includes("--ui");
+
 export default defineConfig({
   testDir: "./e2e",
   // Run tests serially since cloudflare dev server has port conflicts when running in parallel
@@ -18,10 +20,50 @@ export default defineConfig({
     // Extended action timeout for CI
     actionTimeout: process.env.CI ? 30000 : 15000,
   },
-  projects: [
-    {
-      name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
-    },
-  ],
+  // In UI mode, flatten projects to avoid the dependency chain that breaks
+  // Playwright's --ui filtering (--grep, --project, file args).
+  projects: isUIMode
+    ? [
+        {
+          name: "dev",
+          grep: /^(?!.*\(production\))/,
+          testIgnore: ["**/hmr.test.ts", "**/*.setup.ts"],
+          use: { ...devices["Desktop Chrome"] },
+        },
+        {
+          name: "production",
+          grep: /\(production\)/,
+          testIgnore: ["**/*.setup.ts"],
+          use: { ...devices["Desktop Chrome"] },
+        },
+        {
+          name: "hmr",
+          testMatch: ["**/hmr.test.ts"],
+          use: { ...devices["Desktop Chrome"] },
+        },
+      ]
+    : [
+        {
+          name: "build",
+          testMatch: "**/build-test-app.setup.ts",
+        },
+        {
+          name: "dev",
+          grep: /^(?!.*\(production\))/,
+          testIgnore: ["**/hmr.test.ts", "**/*.setup.ts"],
+          use: { ...devices["Desktop Chrome"] },
+        },
+        {
+          name: "production",
+          grep: /\(production\)/,
+          testIgnore: ["**/*.setup.ts"],
+          use: { ...devices["Desktop Chrome"] },
+          dependencies: ["build"],
+        },
+        {
+          name: "hmr",
+          testMatch: ["**/hmr.test.ts"],
+          use: { ...devices["Desktop Chrome"] },
+        },
+      ],
 });
