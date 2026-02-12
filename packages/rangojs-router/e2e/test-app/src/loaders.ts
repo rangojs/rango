@@ -369,6 +369,12 @@ export const ComposingFetchableUsesNonFetchable = createLoader(
 // These loaders are used to test loader caching behavior
 // ============================================================================
 
+// Loader that returns a fresh timestamp on every request.
+// Used to verify loaders on pre-rendered routes run at request time.
+export const FreshTimestampLoader = createLoader(async () => ({
+  timestamp: Date.now(),
+}));
+
 // Counter for non-cached loader
 let nonCachedLoaderCount = 0;
 
