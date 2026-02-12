@@ -20,6 +20,7 @@ import { hrefPatterns } from "./urls/href.js";
 import { searchPatterns } from "./urls/search.js";
 import { refTestPatterns } from "./urls/ref-test.js";
 import { prerenderPatterns } from "./urls/prerender.js";
+import { prerenderComplexPatterns } from "./urls/prerender-complex.js";
 import { apiShopPatterns } from "./urls/api-shop.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -417,6 +418,9 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
 
     // Pre-render handler test patterns
     include("/", prerenderPatterns),
+
+    // Pre-render complex test patterns (layout + parallel + fresh loader)
+    include("/prerender-complex", prerenderComplexPatterns, { name: "prerenderComplex" }),
 
     // Shop API patterns (JSON response routes)
     include("/api/shop", apiShopPatterns, { name: "apiShop" }),

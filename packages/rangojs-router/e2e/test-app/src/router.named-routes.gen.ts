@@ -68,6 +68,8 @@ declare global {
       "negotiateJsonFirstRsc": "/negotiate-test-json-first";
       "negotiateTest": "/negotiate-test";
       "negotiateTestJson": "/negotiate-test";
+      "prerenderComplex.detail": "/prerender-complex/:slug";
+      "prerenderComplex.index": "/prerender-complex";
       "proactiveCache.index": "//proactive-cache";
       "proactiveCache.itemA": "//proactive-cache/item-a";
       "proactiveCache.itemB": "//proactive-cache/item-b";
