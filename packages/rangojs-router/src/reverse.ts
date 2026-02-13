@@ -1,4 +1,4 @@
-import type { ExtractParams } from "./types.js";
+import type { ExtractParams, GetRegisteredRoutes } from "./types.js";
 import type { SearchSchema, ResolveSearchSchema } from "./search-params.js";
 import { serializeSearchParams } from "./search-params.js";
 
@@ -150,21 +150,16 @@ export type ReverseFunction<TRoutes> = {
 };
 
 /**
- * Type-safe scoped reverse function signature for use with scopedReverse<typeof patterns>()
+ * Type-safe scoped reverse function that validates all route names and params.
  *
- * **Recommended: Use route names for type safety.**
- * Route names validate both the route exists and params are correct.
- * Path-based URLs (`/...`) are an escape hatch with no validation.
+ * When used via HandlerContext or scopedReverse(), local routes are merged with
+ * global RegisteredRoutes so all names are fully type-checked.
  *
  * @example
  * ```typescript
- * // RECOMMENDED: Use route names for type safety
- * reverse("blog.post", { slug: "hello" })  // ✓ Validates route + params
- * reverse("shop.cart")                      // ✓ Validates route exists
- *
- * // ESCAPE HATCH: Path-based URLs (no validation)
- * reverse("/about")                         // ⚠ No type checking
- * reverse("/typo/in/path")                  // ⚠ Won't catch errors
+ * reverse("cart")                           // ✓ Validates local route
+ * reverse("blog.post", { slug: "hello" })   // ✓ Validates global route + params
+ * reverse("typo")                           // ✗ Compile error
  * ```
  */
 export type ScopedReverseFunction<TLocalRoutes> = {
@@ -193,18 +188,6 @@ export type ScopedReverseFunction<TLocalRoutes> = {
     params: ExtractParams<RoutePatternFor<TLocalRoutes, TName>>,
     search: ResolveSearchSchema<ExtractSearchSchema<TLocalRoutes, TName>>
   ): string;
-
-  /**
-   * Absolute route name (contains dot) - global lookup
-   * Use for cross-module navigation: "shop.cart", "blog.post"
-   */
-  (name: `${string}.${string}`, params?: Record<string, string>, search?: Record<string, unknown>): string;
-
-  /**
-   * Path-based URL - ESCAPE HATCH, no type validation
-   * Prefer route names for type safety. Only use paths when necessary.
-   */
-  (name: `/${string}`, params?: Record<string, string>): string;
 };
 
 /**
@@ -244,7 +227,7 @@ export type { RouteResponse } from "./urls.js";
  *
  *     reverse("index");              // ✓ Type-safe local route
  *     reverse("post", { slug: "x" }); // ✓ Type-safe with params
- *     reverse("shop.cart");          // ✓ Cross-module (absolute name)
+ *     reverse("shop.cart");          // ✓ Type-safe global route
  *
  *     return <BlogIndex />;
  *   }, { name: "index" }),
@@ -255,8 +238,8 @@ export type { RouteResponse } from "./urls.js";
  */
 export function scopedReverse<TPatterns>(
   reverse: ((...args: any[]) => string)
-): ScopedReverseFunction<ExtractLocalRoutes<TPatterns>> {
-  return reverse as ScopedReverseFunction<ExtractLocalRoutes<TPatterns>>;
+): ScopedReverseFunction<ExtractLocalRoutes<TPatterns> & GetRegisteredRoutes> {
+  return reverse as ScopedReverseFunction<ExtractLocalRoutes<TPatterns> & GetRegisteredRoutes>;
 }
 
 /**

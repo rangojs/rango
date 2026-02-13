@@ -173,18 +173,13 @@ describe("ScopedReverseFunction type structure", () => {
     expectTypeOf<ScopedHref>().returns.toBeString();
   });
 
-  it("should allow absolute names with dot notation", () => {
+  it("should reject unknown names", () => {
     type ScopedHref = ScopedReverseFunction<BlogRoutes>;
-    // Absolute names (with dot) are always allowed via template literal type
+    // No escape hatches: dotted names and paths must be in the route map
+    // @ts-expect-error - unknown dotted name
     expectTypeOf<ScopedHref>().toBeCallableWith("shop.cart");
-    expectTypeOf<ScopedHref>().toBeCallableWith("any.thing.here");
-  });
-
-  it("should allow path-based URLs", () => {
-    type ScopedHref = ScopedReverseFunction<BlogRoutes>;
-    // Path-based (starting with /) are always allowed
+    // @ts-expect-error - unknown path
     expectTypeOf<ScopedHref>().toBeCallableWith("/about");
-    expectTypeOf<ScopedHref>().toBeCallableWith("/any/path/here");
   });
 });
 
@@ -205,10 +200,10 @@ describe("HandlerContext.reverse", () => {
     expectTypeOf<FirstArg>().toBeString();
   });
 
-  it("should accept optional Record<string, string> as second argument", () => {
+  it("should accept params as second argument", () => {
     type Ctx = HandlerContext<GenericParams, DefaultEnv>;
     type SecondArg = Parameters<Ctx["reverse"]>[1];
-    expectTypeOf<SecondArg>().toEqualTypeOf<Record<string, string> | undefined>();
+    expectTypeOf<SecondArg>().toBeObject();
   });
 });
 
@@ -773,9 +768,10 @@ describe("Mountable module — ScopedReverseFunction inside blog module", () => 
     expectTypeOf<BlogHref>().toBeCallableWith("api.comments", { slug: "hello" });
   });
 
-  it("should accept absolute names to reach parent routes (dot-notation passthrough)", () => {
+  it("should reject unknown names without escape hatches", () => {
     type BlogHref = ScopedReverseFunction<BlogModuleMerged>;
-    // Absolute names with dot notation pass through to the global router
+    // No escape hatches: unknown dotted names are rejected
+    // @ts-expect-error - "home.something" is not in BlogModuleMerged
     expectTypeOf<BlogHref>().toBeCallableWith("home.something");
   });
 });
