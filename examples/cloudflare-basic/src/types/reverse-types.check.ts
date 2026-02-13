@@ -72,7 +72,6 @@ import type { UrlPatterns } from "@rangojs/router";
 // ScopedReverseFunction and ExtractParams are safe client types
 import type { ScopedReverseFunction, ExtractParams } from "@rangojs/router";
 
-
 // Simulate a local module's patterns type
 // When you define: const myPatterns = urls(({ path }) => [...])
 // The resulting type is: UrlPatterns<TEnv, { routeName: pattern }>
@@ -84,14 +83,14 @@ type LocalRoutes = {
 type LocalPatternsType = UrlPatterns<unknown, LocalRoutes>;
 
 // Type-level assertion: scopedReverse should extract local routes from UrlPatterns
-type ExtractedReverse = LocalPatternsType extends UrlPatterns<any, infer TRoutes>
-  ? ScopedReverseFunction<TRoutes>
-  : never;
+type ExtractedReverse =
+  LocalPatternsType extends UrlPatterns<any, infer TRoutes>
+    ? ScopedReverseFunction<TRoutes>
+    : never;
 
 // Verify the extracted type is ScopedReverseFunction with our local routes
-type _AssertExtractsLocalRoutes = ExtractedReverse extends ScopedReverseFunction<LocalRoutes>
-  ? true
-  : never;
+type _AssertExtractsLocalRoutes =
+  ExtractedReverse extends ScopedReverseFunction<LocalRoutes> ? true : never;
 const _checkExtractsLocalRoutes: _AssertExtractsLocalRoutes = true;
 
 // Test 7: Local route name validation in ScopedReverseFunction
@@ -112,10 +111,14 @@ type SettingsParams = ExtractParams<LocalRoutes["settings"]>;
 type _AssertIndexHasNoParams = keyof IndexParams extends never ? true : never;
 const _checkIndexHasNoParams: _AssertIndexHasNoParams = true;
 
-type _AssertDetailHasSlug = DetailParams extends { slug: string } ? true : never;
+type _AssertDetailHasSlug = DetailParams extends { slug: string }
+  ? true
+  : never;
 const _checkDetailHasSlug: _AssertDetailHasSlug = true;
 
-type _AssertSettingsHasNoParams = keyof SettingsParams extends never ? true : never;
+type _AssertSettingsHasNoParams = keyof SettingsParams extends never
+  ? true
+  : never;
 const _checkSettingsHasNoParams: _AssertSettingsHasNoParams = true;
 
 // Test 9: Composability - multiple independent url modules
