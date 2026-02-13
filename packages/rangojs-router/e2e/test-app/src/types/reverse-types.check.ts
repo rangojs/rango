@@ -195,24 +195,22 @@ const _checkExtractedRoutesMatch: _AssertExtractedRoutesMatch = true;
 // Test scopedReverse returns properly typed function
 const localReverseFromHandler = scopedReverse<TestPatternsType>(globalReverse);
 
-// These should all type-check
+// These should all type-check (scoped to local routes only)
 const _handlerIndex: string = localReverseFromHandler("index");
 const _handlerDetail: string = localReverseFromHandler("detail", { id: "123" });
 const _handlerSettings: string = localReverseFromHandler("settings");
-const _handlerAbsolute: string = localReverseFromHandler("other.module.route");
-const _handlerPath: string = localReverseFromHandler("/raw/path");
 
 // Test 16: Handler usage pattern
 const testHandlerWithScopedReverse: Handler<"/"> = (ctx) => {
-  // This is the recommended pattern for composable modules
+  // scopedReverse restricts to local routes only
   const reverse = scopedReverse<TestPatternsType>(ctx.reverse);
 
-  // Local routes are now type-safe
+  // Local routes are type-safe
   const _idx = reverse("index");
   const _det = reverse("detail", { id: "abc" });
 
-  // Cross-module still works
-  const _cross = reverse("blog.post", { slug: "hello" });
+  // For global routes, use ctx.reverse directly
+  const _cross = ctx.reverse("blog.post", { slug: "hello" });
 
   return null;
 };
