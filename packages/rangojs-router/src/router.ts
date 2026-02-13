@@ -502,7 +502,7 @@ export interface RSCRouterOptions<TEnv = any> {
 
   /**
    * Injected by the Vite transform at compile time.
-   * Static import of routeNames from the generated named-routes file.
+   * Static import of NamedRoutes from the generated named-routes file.
    * Provides O(1) reverse() fallback when lazy includes haven't resolved.
    * @internal
    */
@@ -2248,11 +2248,13 @@ export function createRouter<TEnv = any>(
     const routeEntries = routes as Record<string, string>;
     for (const [key, pattern] of Object.entries(routeEntries)) {
       // Build prefixed pattern: "/shop" + "/cart" -> "/shop/cart"
+      // Root prefix "/" is a no-op — don't double the leading slash.
+      const effectivePrefix = prefix === "/" ? "" : prefix;
       const prefixedPattern =
-        prefix && pattern !== "/"
-          ? `${prefix}${pattern}`
-          : prefix && pattern === "/"
-            ? prefix
+        effectivePrefix && pattern !== "/"
+          ? `${effectivePrefix}${pattern}`
+          : effectivePrefix && pattern === "/"
+            ? effectivePrefix
             : pattern;
 
       // Runtime validation: warn if key already exists with different pattern

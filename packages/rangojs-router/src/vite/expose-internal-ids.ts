@@ -415,7 +415,7 @@ function transformRouter(
 
   // Prepend the static import as the first line. MagicString tracks the
   // offset so all downstream source maps remain correct.
-  s.prepend(`import { routeNames as ${routeNamesVar} } from "${routeNamesImport}";\n`);
+  s.prepend(`import { NamedRoutes as ${routeNamesVar} } from "${routeNamesImport}";\n`);
 
   return {
     code: s.toString(),
@@ -601,6 +601,32 @@ ${lazyImports.join(",\n")}
 
       const filePath = normalizePath(path.relative(projectRoot, id));
       const isRscEnv = this.environment?.name === "rsc";
+
+      // Warn if named-routes.gen is imported in a client component.
+      // NamedRoutes is server-only data and would bloat the client bundle.
+      if (id.includes(".named-routes.gen.") && !isRscEnv && this.environment?.name === "client") {
+        this.warn(
+          `\n` +
+          `!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n` +
+          `!!                                                              !!\n` +
+          `!!  WARNING: NamedRoutes imported in a CLIENT component!        !!\n` +
+          `!!                                                              !!\n` +
+          `!!  File: ${filePath.padEnd(53)}!!\n` +
+          `!!                                                              !!\n` +
+          `!!  NamedRoutes contains your entire route structure — every    !!\n` +
+          `!!  route name and URL pattern in your application. Shipping    !!\n` +
+          `!!  this to the browser exposes your full routing topology to   !!\n` +
+          `!!  the client, which is a security concern (internal/admin     !!\n` +
+          `!!  routes, API endpoints, hidden paths become visible).        !!\n` +
+          `!!                                                              !!\n` +
+          `!!  It also bloats the client bundle — this map contains all    !!\n` +
+          `!!  named routes in your application.                           !!\n` +
+          `!!                                                              !!\n` +
+          `!!  Fix: remove the import or move it to a server component.    !!\n` +
+          `!!                                                              !!\n` +
+          `!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n`
+        );
+      }
 
       // Detect all relevant imports in one pass
       const has = detectImports(code);
