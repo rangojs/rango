@@ -279,6 +279,11 @@ export function createReverse<TRoutes extends Record<string, string>>(
   return ((name: string, params?: Record<string, string>, search?: Record<string, unknown>) => {
     const pattern = routeMap[name];
     if (!pattern) {
+      // During build-time discovery, lazy includes haven't resolved yet.
+      // Return a placeholder instead of crashing the build.
+      if ((globalThis as any).__rscRouterDiscoveryActive) {
+        return `/__unresolved_reverse/${name}`;
+      }
       throw new Error(`Unknown route: ${name}`);
     }
 
