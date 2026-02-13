@@ -248,6 +248,7 @@ import type { PathResponse, ValidPaths } from "../href-client.js";
 import { urls } from "../urls.js";
 import type { RouteResponse, ResponseEnvelope, ResponseHandlerContext, ResponseError } from "../urls.js";
 import { isResponseError } from "../client.js";
+import type { RouteParams, RouteSearchParams } from "../search-params.js";
 
 // Actual urls definitions using the real urls() / path.json() API.
 // This tests that response types propagate through the phantom type chain.
@@ -295,13 +296,17 @@ type ApiResponses = (typeof apiPatterns)["_responses"];
 // MergeRoutesWithResponses is the type router.ts applies when merging _routes + _responses.
 // RSC routes have TData = unknown (the TypedRouteItem default), so we skip those.
 type MergeRoutesWithResponses<
-  TRoutes extends Record<string, string>,
+  TRoutes extends Record<string, any>,
   TResponses,
 > = {
   [K in keyof TRoutes]: K extends keyof NonNullable<TResponses>
     ? unknown extends NonNullable<TResponses>[K]
       ? TRoutes[K]
-      : { readonly path: TRoutes[K]; readonly response: NonNullable<TResponses>[K] }
+      : TRoutes[K] extends string
+        ? { readonly path: TRoutes[K]; readonly response: NonNullable<TResponses>[K] }
+        : TRoutes[K] extends { readonly path: infer P }
+          ? { readonly path: P; readonly search: TRoutes[K] extends { readonly search: infer S } ? S : never; readonly response: NonNullable<TResponses>[K] }
+          : { readonly path: TRoutes[K]; readonly response: NonNullable<TResponses>[K] }
     : TRoutes[K]
 };
 
@@ -889,5 +894,197 @@ describe("Mountable module — ValidPaths after mounting blog", () => {
     expectTypeOf<"/blog/api/stats">().toMatchTypeOf<Paths>();
     expectTypeOf<"/blog/api/:slug/likes">().toMatchTypeOf<Paths>();
     expectTypeOf<"/blog/api/:slug/comments">().toMatchTypeOf<Paths>();
+  });
+});
+
+// ============================================================================
+// Mixed routes: RSC with search + JSON response routes
+// Tests that response types and search params coexist correctly
+// ============================================================================
+
+const mixedPatterns = urls(({ path }) => [
+  // RSC route with search schema
+  path("/search", () => null, { name: "search", search: { q: "string", page: "number?", sort: "string?" } }),
+  // RSC route with params + search schema
+  path("/category/:catId", () => null, { name: "category", search: { page: "number?", filter: "string?" } }),
+  // JSON response route (no search schema)
+  path.json("/api/health", () => ({ status: "ok" as const, uptime: 123 }), { name: "api.health" }),
+  // JSON response route with params
+  path.json("/api/products/:id", (ctx) => ({ id: ctx.params.id, name: "Widget", price: 9.99 }), { name: "api.product" }),
+  // JSON response route with search schema
+  path.json("/api/items", () => [{ id: "1", name: "Thing" }], { name: "api.items", search: { q: "string?", limit: "number?", offset: "number?" } }),
+  // JSON response route with params + search schema
+  path.json("/api/users/:userId/posts", (ctx) => [{ id: "p1", author: ctx.params.userId }], { name: "api.userPosts", search: { page: "number?", tag: "string?" } }),
+  // Plain RSC route
+  path("/", () => null, { name: "home" }),
+  path("/about", () => null, { name: "about" }),
+]);
+
+type MixedRoutes = NonNullable<(typeof mixedPatterns)["_routes"]>;
+type MixedResponses = (typeof mixedPatterns)["_responses"];
+type MixedMerged = MergeRoutesWithResponses<MixedRoutes, MixedResponses>;
+
+describe("RouteParams with mixed RSC + response routes", () => {
+  it("should extract empty params for static RSC route", () => {
+    type Params = RouteParams<"home", MixedMerged>;
+    expectTypeOf<Params>().toEqualTypeOf<{}>();
+  });
+
+  it("should extract empty params for RSC route with search (no path params)", () => {
+    type Params = RouteParams<"search", MixedMerged>;
+    expectTypeOf<Params>().toEqualTypeOf<{}>();
+  });
+
+  it("should extract path params for RSC route with search + params", () => {
+    type Params = RouteParams<"category", MixedMerged>;
+    expectTypeOf<Params>().toEqualTypeOf<{ catId: string }>();
+  });
+
+  it("should extract empty params for JSON response route (no path params)", () => {
+    type Params = RouteParams<"api.health", MixedMerged>;
+    expectTypeOf<Params>().toEqualTypeOf<{}>();
+  });
+
+  it("should extract params for JSON response route with path params", () => {
+    type Params = RouteParams<"api.product", MixedMerged>;
+    expectTypeOf<Params>().toEqualTypeOf<{ id: string }>();
+  });
+
+  it("should extract empty params for path.json() route with search but no path params", () => {
+    type Params = RouteParams<"api.items", MixedMerged>;
+    expectTypeOf<Params>().toEqualTypeOf<{}>();
+  });
+
+  it("should extract params for path.json() route with params + search", () => {
+    type Params = RouteParams<"api.userPosts", MixedMerged>;
+    expectTypeOf<Params>().toEqualTypeOf<{ userId: string }>();
+  });
+});
+
+describe("RouteSearchParams with mixed RSC + response routes", () => {
+  it("should resolve search schema for RSC route with search", () => {
+    type Search = RouteSearchParams<"search", MixedMerged>;
+    expectTypeOf<Search>().toEqualTypeOf<{ q: string; page?: number; sort?: string }>();
+  });
+
+  it("should resolve search schema for RSC route with params + search", () => {
+    type Search = RouteSearchParams<"category", MixedMerged>;
+    expectTypeOf<Search>().toEqualTypeOf<{ page?: number; filter?: string }>();
+  });
+
+  it("should return empty object for plain RSC route without search", () => {
+    type Search = RouteSearchParams<"home", MixedMerged>;
+    expectTypeOf<Search>().toEqualTypeOf<{}>();
+  });
+
+  it("should return empty object for JSON response route without search", () => {
+    type Search = RouteSearchParams<"api.health", MixedMerged>;
+    expectTypeOf<Search>().toEqualTypeOf<{}>();
+  });
+
+  it("should return empty object for JSON response route with params but no search", () => {
+    type Search = RouteSearchParams<"api.product", MixedMerged>;
+    expectTypeOf<Search>().toEqualTypeOf<{}>();
+  });
+
+  it("should resolve search schema for path.json() route with search", () => {
+    type Search = RouteSearchParams<"api.items", MixedMerged>;
+    expectTypeOf<Search>().toEqualTypeOf<{ q?: string; limit?: number; offset?: number }>();
+  });
+
+  it("should resolve search schema for path.json() route with params + search", () => {
+    type Search = RouteSearchParams<"api.userPosts", MixedMerged>;
+    expectTypeOf<Search>().toEqualTypeOf<{ page?: number; tag?: string }>();
+  });
+});
+
+describe("PathResponse with mixed RSC + response routes", () => {
+  it("should resolve response envelope for JSON health route", () => {
+    type Health = PathResponse<"/api/health", MixedMerged>;
+    expectTypeOf<Health>().toEqualTypeOf<ResponseEnvelope<{ status: "ok"; uptime: number }>>();
+  });
+
+  it("should resolve response envelope for JSON product route", () => {
+    type Product = PathResponse<"/api/products/:id", MixedMerged>;
+    expectTypeOf<Product>().toEqualTypeOf<ResponseEnvelope<{ id: string; name: string; price: number }>>();
+  });
+
+  it("should resolve response envelope for path.json() route with search", () => {
+    type Items = PathResponse<"/api/items", MixedMerged>;
+    expectTypeOf<Items>().toEqualTypeOf<ResponseEnvelope<{ id: string; name: string }[]>>();
+  });
+
+  it("should resolve response envelope for path.json() route with params + search", () => {
+    type Posts = PathResponse<"/api/users/:userId/posts", MixedMerged>;
+    expectTypeOf<Posts>().toEqualTypeOf<ResponseEnvelope<{ id: string; author: string }[]>>();
+  });
+
+  it("should return ResponseEnvelope<never> for RSC route with search", () => {
+    type Search = PathResponse<"/search", MixedMerged>;
+    expectTypeOf<Search>().toEqualTypeOf<ResponseEnvelope<never>>();
+  });
+
+  it("should return ResponseEnvelope<never> for RSC route with params + search", () => {
+    type Category = PathResponse<"/category/:catId", MixedMerged>;
+    expectTypeOf<Category>().toEqualTypeOf<ResponseEnvelope<never>>();
+  });
+
+  it("should return ResponseEnvelope<never> for plain RSC route", () => {
+    type Home = PathResponse<"/", MixedMerged>;
+    expectTypeOf<Home>().toEqualTypeOf<ResponseEnvelope<never>>();
+  });
+});
+
+describe("RouteResponse with mixed RSC + response routes", () => {
+  it("should resolve response for JSON route by name", () => {
+    type Health = RouteResponse<typeof mixedPatterns, "api.health">;
+    expectTypeOf<Health>().toEqualTypeOf<ResponseEnvelope<{ status: "ok"; uptime: number }>>();
+  });
+
+  it("should resolve response for JSON route with params by name", () => {
+    type Product = RouteResponse<typeof mixedPatterns, "api.product">;
+    expectTypeOf<Product>().toEqualTypeOf<ResponseEnvelope<{ id: string; name: string; price: number }>>();
+  });
+
+  it("should resolve response for path.json() route with search by name", () => {
+    type Items = RouteResponse<typeof mixedPatterns, "api.items">;
+    expectTypeOf<Items>().toEqualTypeOf<ResponseEnvelope<{ id: string; name: string }[]>>();
+  });
+
+  it("should resolve response for path.json() route with params + search by name", () => {
+    type Posts = RouteResponse<typeof mixedPatterns, "api.userPosts">;
+    expectTypeOf<Posts>().toEqualTypeOf<ResponseEnvelope<{ id: string; author: string }[]>>();
+  });
+});
+
+describe("ReverseFunction with mixed RSC + response routes", () => {
+  it("should accept all route names", () => {
+    type Href = ReverseFunction<MixedMerged>;
+    expectTypeOf<Href>().toBeCallableWith("home");
+    expectTypeOf<Href>().toBeCallableWith("about");
+    expectTypeOf<Href>().toBeCallableWith("search");
+    expectTypeOf<Href>().toBeCallableWith("api.health");
+    expectTypeOf<Href>().toBeCallableWith("api.items");
+  });
+
+  it("should require params for routes with path params", () => {
+    type Href = ReverseFunction<MixedMerged>;
+    expectTypeOf<Href>().toBeCallableWith("category", { catId: "electronics" });
+    expectTypeOf<Href>().toBeCallableWith("api.product", { id: "123" });
+    expectTypeOf<Href>().toBeCallableWith("api.userPosts", { userId: "42" });
+  });
+});
+
+describe("ValidPaths with mixed RSC + response routes", () => {
+  it("should include all paths from mixed sources", () => {
+    type Paths = ValidPaths<MixedMerged>;
+    expectTypeOf<"/">().toMatchTypeOf<Paths>();
+    expectTypeOf<"/about">().toMatchTypeOf<Paths>();
+    expectTypeOf<"/search">().toMatchTypeOf<Paths>();
+    expectTypeOf<"/category/:catId">().toMatchTypeOf<Paths>();
+    expectTypeOf<"/api/health">().toMatchTypeOf<Paths>();
+    expectTypeOf<"/api/products/:id">().toMatchTypeOf<Paths>();
+    expectTypeOf<"/api/items">().toMatchTypeOf<Paths>();
+    expectTypeOf<"/api/users/:userId/posts">().toMatchTypeOf<Paths>();
   });
 });

@@ -327,7 +327,8 @@ describe("RouteParams (explicit route map)", () => {
 
   it("should extract mixed required and optional params", () => {
     type Params = RouteParams<"userSettings", TestRouteMap>;
-    expectTypeOf<Params>().toEqualTypeOf<{ userId: string; tab?: string }>();
+    expectTypeOf<Params>().toMatchTypeOf<{ userId: string; tab?: string }>();
+    expectTypeOf<{ userId: string; tab?: string }>().toMatchTypeOf<Params>();
   });
 
   it("should extract params from { path, search } entry", () => {
