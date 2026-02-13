@@ -501,6 +501,14 @@ export interface RSCRouterOptions<TEnv = any> {
   urls?: UrlPatterns<TEnv, any>;
 
   /**
+   * Injected by the Vite transform at compile time.
+   * Static import of routeNames from the generated named-routes file.
+   * Provides O(1) reverse() fallback when lazy includes haven't resolved.
+   * @internal
+   */
+  $$routeNames?: Record<string, string>;
+
+  /**
    * Nonce provider for Content Security Policy (CSP).
    *
    * Can be:
@@ -1137,6 +1145,7 @@ export function createRouter<TEnv = any>(
     cache,
     theme: themeOption,
     urls: urlsOption,
+    $$routeNames: staticRouteNames,
     nonce,
     version,
     warmup: warmupOption,
@@ -2538,7 +2547,8 @@ export function createRouter<TEnv = any>(
 
     // Type-safe URL builder using merged route map
     // Types are tracked through the builder chain via TRoutes parameter
-    reverse: createReverse(mergedRouteMap),
+    // Falls back to static route names from the generated file (injected by Vite)
+    reverse: createReverse(mergedRouteMap, () => staticRouteNames),
 
     // Expose accumulated route map for typeof extraction
     // Returns {} initially, but builder chain accumulates specific route types

@@ -372,13 +372,19 @@ function transformPrerenderHandlers(
 function transformRouter(
   code: string,
   filePath: string,
-): { code: string; map: null } | null {
-  const pattern = /\bcreateRouter\s*(?:<[^>]*>)?\s*\(/g;
+): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
+  const pat = /\bcreateRouter\s*(?:<[^>]*>)?\s*\(/g;
   let match: RegExpExecArray | null;
-  let result = code;
-  let offset = 0;
+  const s = new MagicString(code);
+  let changed = false;
 
-  while ((match = pattern.exec(code)) !== null) {
+  // Compute the import path for the generated route names file.
+  // filePath is relative to project root (e.g., "src/router.tsx")
+  const basename = path.basename(filePath).replace(/\.(tsx?|jsx?)$/, "");
+  const routeNamesImport = `./${basename}.named-routes.gen.js`;
+  const routeNamesVar = `__rsc_rn`;
+
+  while ((match = pat.exec(code)) !== null) {
     const callStart = match.index;
     const parenPos = match.index + match[0].length - 1;
 
@@ -394,28 +400,27 @@ function transformRouter(
       .digest("hex")
       .slice(0, 8);
 
+    changed = true;
+    const injected = ` $$id: "${hash}", $$routeNames: ${routeNamesVar},`;
+
     if (afterParen.startsWith("{")) {
-      // createRouter({ ... }) -> createRouter({ $$id: "hash", ... })
       const bracePos = code.indexOf("{", parenPos + 1);
-      const insertPos = bracePos + 1 + offset;
-      result =
-        result.slice(0, insertPos) +
-        ` $$id: "${hash}",` +
-        result.slice(insertPos);
-      offset += ` $$id: "${hash}",`.length;
+      s.appendRight(bracePos + 1, injected);
     } else if (afterParen.startsWith(")")) {
-      // createRouter() -> createRouter({ $$id: "hash" })
-      const insertPos = parenPos + 1 + offset;
-      result =
-        result.slice(0, insertPos) +
-        `{ $$id: "${hash}" }` +
-        result.slice(insertPos);
-      offset += `{ $$id: "${hash}" }`.length;
+      s.appendRight(parenPos + 1, `{${injected} }`);
     }
   }
 
-  if (result === code) return null;
-  return { code: result, map: null };
+  if (!changed) return null;
+
+  // Prepend the static import as the first line. MagicString tracks the
+  // offset so all downstream source maps remain correct.
+  s.prepend(`import { routeNames as ${routeNamesVar} } from "${routeNamesImport}";\n`);
+
+  return {
+    code: s.toString(),
+    map: s.generateMap({ hires: true }),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -438,7 +443,7 @@ export function exposeRouterId(): Plugin {
     transform(code, id) {
       if (!code.includes("createRouter")) return null;
       if (
-        !/import\s*\{[^}]*\bcreateRouter\b[^}]*\}\s*from\s*["']@rangojs\/router["']/.test(
+        !/import\s*\{[^}]*\bcreateRouter\b[^}]*\}\s*from\s*["']@rangojs\/router(?:\/server)?["']/.test(
           code,
         )
       ) {

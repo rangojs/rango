@@ -274,10 +274,18 @@ export function scopedReverse<TPatterns>(
  * ```
  */
 export function createReverse<TRoutes extends Record<string, string>>(
-  routeMap: TRoutes
+  routeMap: TRoutes,
+  getFallbackMap?: () => Record<string, string> | undefined,
 ): ReverseFunction<TRoutes & Record<string, string>> {
   return ((name: string, params?: Record<string, string>, search?: Record<string, unknown>) => {
-    const pattern = routeMap[name];
+    let pattern = routeMap[name];
+    if (!pattern) {
+      // Try the static route names from the generated file (O(1) fallback)
+      const fallback = getFallbackMap?.();
+      if (fallback) {
+        pattern = fallback[name];
+      }
+    }
     if (!pattern) {
       // During build-time discovery, lazy includes haven't resolved yet.
       // Return a placeholder instead of crashing the build.
