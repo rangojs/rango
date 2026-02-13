@@ -60,6 +60,10 @@ const LinksDemoHandler: Handler<"links", routes> = async (ctx) => {
   const shopHome = ctx.reverse("shop.home");
   const shopProduct1 = ctx.reverse("shop.product.item1");
   const shopCat1 = ctx.reverse("shop.category.cat1");
+  // Routes from deep lazy includes (previously failed at module-level)
+  const shopProduct42 = ctx.reverse("shop.product.item42");
+  const shopCat42 = ctx.reverse("shop.category.cat42");
+  const shopProduct100 = ctx.reverse("shop.product.item100");
 
   // scopedReverse with local route names
   const localHome = reverse("home");
@@ -83,6 +87,9 @@ const LinksDemoHandler: Handler<"links", routes> = async (ctx) => {
         <li>shop.home: <code>{shopHome}</code></li>
         <li>shop.product.item1: <code>{shopProduct1}</code></li>
         <li>shop.category.cat1: <code>{shopCat1}</code></li>
+        <li data-testid="reverse-product42">shop.product.item42: <code>{shopProduct42}</code></li>
+        <li data-testid="reverse-cat42">shop.category.cat42: <code>{shopCat42}</code></li>
+        <li data-testid="reverse-product100">shop.product.item100: <code>{shopProduct100}</code></li>
       </ul>
 
       <h2>scopedReverse() - Local Route Names</h2>
@@ -98,6 +105,27 @@ const LinksDemoHandler: Handler<"links", routes> = async (ctx) => {
   );
 };
 
+// JSON endpoint for e2e testing ctx.reverse() with lazy includes
+const ReverseTestHandler: Handler<"reverseTest", routes> = async (ctx) => {
+  const results: Record<string, string> = {
+    home: ctx.reverse("home"),
+    "api.benchFirst": ctx.reverse("api.benchFirst"),
+    "api.benchLast": ctx.reverse("api.benchLast"),
+    "shop.home": ctx.reverse("shop.home"),
+    "shop.product.item1": ctx.reverse("shop.product.item1"),
+    "shop.product.item42": ctx.reverse("shop.product.item42"),
+    "shop.product.item100": ctx.reverse("shop.product.item100"),
+    "shop.category.cat1": ctx.reverse("shop.category.cat1"),
+    "shop.category.cat42": ctx.reverse("shop.category.cat42"),
+    "shop.category.cat100": ctx.reverse("shop.category.cat100"),
+    "shop.product.benchFirst": ctx.reverse("shop.product.benchFirst"),
+    "shop.product.benchLast": ctx.reverse("shop.product.benchLast"),
+  };
+  throw new Response(JSON.stringify(results), {
+    headers: { "Content-Type": "application/json" },
+  });
+};
+
 export const urlpatterns = urls(({ path, include }) => [
   // === BENCHMARK: First route (before any includes) ===
   path("/bench/first", BenchmarkHandler, { name: "benchFirst" }),
@@ -107,6 +135,9 @@ export const urlpatterns = urls(({ path, include }) => [
 
   // Links demo - showcases all href APIs with typecheck coverage
   path("/links", LinksDemoHandler, { name: "links" }),
+
+  // Reverse test - JSON endpoint for e2e testing ctx.reverse() with lazy includes
+  path("/reverse-test", ReverseTestHandler, { name: "reverseTest" }),
 
   // === LOCALIZED ROUTES (5,000+ under /site/:locale) ===
   // Static "/site" prefix enables short-circuit optimization

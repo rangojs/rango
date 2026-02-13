@@ -9,7 +9,12 @@ declare global {
       "benchFirst": "/bench/first";
       "benchLast": "/bench/last";
       "home": "/";
+      "jsonApi.health": "/json-api/health";
+      "jsonApi.item": "/json-api/items/:id";
+      "jsonApi.items": "/json-api/items";
+      "jsonApi.stats": "/json-api/stats";
       "links": "/links";
+      "reverseTest": "/reverse-test";
       "shop.category.benchFirst": "/shop/category/bench/first";
       "shop.category.benchLast": "/shop/category/bench/last";
       "shop.home": "/shop";

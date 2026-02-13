@@ -16,8 +16,6 @@ export const router = createRouter<AppEnv>({
     console.error("Router error:", error);
   },
 }).routes(urlpatterns);
-router.reverse("shop.product.item42");
-router.reverse("shop.category.cat42");
 type AppRoutes = typeof router.routeMap;
 
 declare global {
