@@ -512,7 +512,7 @@ export type PathFn<TEnv> = <
   const TPattern extends string,
   const TName extends string = UnnamedRoute,
   const TSearch extends SearchSchema = {},
-  TParams = ExtractParams<TPattern>,
+  TParams extends Record<string, any> = ExtractParams<TPattern>,
 >(
   pattern: TPattern,
   handler:

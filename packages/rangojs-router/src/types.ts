@@ -330,7 +330,7 @@ type ExtractSearchFromRouteMap<TRouteMap, T> =
     : {};
 
 export type Handler<
-  T = {},
+  T extends keyof TRouteMap | (string & {}) | Record<string, any> = {},
   TRouteMap extends {} = DefaultHandlerRouteMap,
   TEnv = DefaultEnv,
 > = (

@@ -54,7 +54,7 @@ export interface BuildContext<TParams> {
   pathname: string;
 }
 
-export interface PrerenderHandlerDefinition<TParams = any> {
+export interface PrerenderHandlerDefinition<TParams extends Record<string, any> = any> {
   readonly __brand: "prerenderHandler";
   /** Auto-generated unique ID (injected by Vite plugin). */
   $$id: string;
@@ -69,14 +69,14 @@ export interface PrerenderHandlerDefinition<TParams = any> {
 // -- Overloads --------------------------------------------------------------
 
 // Overload 1: Static handler (no params)
-export function createPrerenderHandler<TParams = {}>(
+export function createPrerenderHandler<TParams extends Record<string, any> = {}>(
   handler: (ctx: HandlerContext<TParams>) => ReactNode | Promise<ReactNode>,
   options?: PrerenderOptions,
   __injectedId?: string,
 ): PrerenderHandlerDefinition<TParams>;
 
 // Overload 2: Dynamic handler (getParams + handler)
-export function createPrerenderHandler<TParams>(
+export function createPrerenderHandler<TParams extends Record<string, any>>(
   getParams: () => Promise<TParams[]> | TParams[],
   handler: (ctx: HandlerContext<TParams>) => ReactNode | Promise<ReactNode>,
   options?: PrerenderOptions,
@@ -85,7 +85,7 @@ export function createPrerenderHandler<TParams>(
 
 // -- Implementation ---------------------------------------------------------
 
-export function createPrerenderHandler<TParams>(
+export function createPrerenderHandler<TParams extends Record<string, any>>(
   handlerOrGetParams: Function,
   handlerOrOptions?: Function | PrerenderOptions,
   optionsOrId?: PrerenderOptions | string,
