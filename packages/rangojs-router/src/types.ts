@@ -330,7 +330,7 @@ type ExtractSearchFromRouteMap<TRouteMap, T> =
     : {};
 
 export type Handler<
-  T = {},
+  T extends keyof TRouteMap | (string & {}) | Record<string, any> = {},
   TRouteMap extends {} = DefaultHandlerRouteMap,
   TEnv = DefaultEnv,
 > = (
@@ -347,7 +347,8 @@ export type Handler<
         ? ExtractParams<T>
         : T,
     TEnv,
-    ExtractSearchFromRouteMap<TRouteMap, T>
+    ExtractSearchFromRouteMap<TRouteMap, T>,
+    TRouteMap extends DefaultHandlerRouteMap ? never : TRouteMap
   >,
 ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>;
 
@@ -377,7 +378,7 @@ export type Handler<
  * }
  * ```
  */
-export type HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch extends SearchSchema = {}> = {
+export type HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch extends SearchSchema = {}, TRouteMap = never> = {
   /**
    * Route parameters extracted from the URL pattern.
    * Type-safe when using Handler<"/path/:param"> or Handler<{ param: string }>.
@@ -563,7 +564,7 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch extends Sear
    * ctx.reverse("/about")                       // ⚠ No type checking
    * ```
    */
-  reverse: ScopedReverseFunction<GetRegisteredRoutes>;
+  reverse: [TRouteMap] extends [never] ? ScopedReverseFunction<GetRegisteredRoutes> : ScopedReverseFunction<TRouteMap & GetRegisteredRoutes>;
 };
 
 /**

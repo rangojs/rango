@@ -512,7 +512,7 @@ export type PathFn<TEnv> = <
   const TPattern extends string,
   const TName extends string = UnnamedRoute,
   const TSearch extends SearchSchema = {},
-  TParams = ExtractParams<TPattern>,
+  TParams extends Record<string, any> = ExtractParams<TPattern>,
 >(
   pattern: TPattern,
   handler:
@@ -541,12 +541,13 @@ export type PathFn<TEnv> = <
 export type ResponsePathFn<TEnv> = <
   const TPattern extends string,
   const TName extends string = UnnamedRoute,
+  const TSearch extends SearchSchema = {},
 >(
   pattern: TPattern,
   handler: ResponseHandler<ExtractParams<TPattern>, TEnv>,
-  optionsOrUse?: PathOptions<TName> | (() => ResponseRouteUseItem[]),
+  optionsOrUse?: PathOptions<TName, TSearch> | (() => ResponseRouteUseItem[]),
   use?: () => ResponseRouteUseItem[],
-) => TypedRouteItem<TName, TPattern>;
+) => TypedRouteItem<TName, TPattern, unknown, TSearch>;
 
 /**
  * Path function for JSON response routes (path.json()).
@@ -556,15 +557,16 @@ export type ResponsePathFn<TEnv> = <
 export type JsonResponsePathFn<TEnv> = <
   const TPattern extends string,
   const TName extends string = UnnamedRoute,
+  const TSearch extends SearchSchema = {},
   TData = unknown,
 >(
   pattern: TPattern,
   handler: (
     ctx: ResponseHandlerContext<ExtractParams<TPattern>, TEnv>,
   ) => TData | Response | Promise<TData | Response>,
-  optionsOrUse?: PathOptions<TName> | (() => ResponseRouteUseItem[]),
+  optionsOrUse?: PathOptions<TName, TSearch> | (() => ResponseRouteUseItem[]),
   use?: () => ResponseRouteUseItem[],
-) => TypedRouteItem<TName, TPattern, TData>;
+) => TypedRouteItem<TName, TPattern, TData, TSearch>;
 
 /**
  * Path function for text-based response routes (path.text(), path.html(), path.xml()).
@@ -573,12 +575,13 @@ export type JsonResponsePathFn<TEnv> = <
 export type TextResponsePathFn<TEnv> = <
   const TPattern extends string,
   const TName extends string = UnnamedRoute,
+  const TSearch extends SearchSchema = {},
 >(
   pattern: TPattern,
   handler: TextResponseHandler<ExtractParams<TPattern>, TEnv>,
-  optionsOrUse?: PathOptions<TName> | (() => ResponseRouteUseItem[]),
+  optionsOrUse?: PathOptions<TName, TSearch> | (() => ResponseRouteUseItem[]),
   use?: () => ResponseRouteUseItem[],
-) => TypedRouteItem<TName, TPattern, string>;
+) => TypedRouteItem<TName, TPattern, string, TSearch>;
 
 /**
  * Base include function signature.

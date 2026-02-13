@@ -129,12 +129,6 @@ const _localIndex: string = localReverse("index");
 // Valid local route with params
 const _localPost: string = localReverse("post", { slug: "hello" });
 
-// Absolute routes (dot notation) - allowed as escape hatch
-const _absoluteRoute: string = localReverse("shop.cart");
-
-// Path-based URLs - allowed as escape hatch
-const _pathBased: string = localReverse("/about");
-
 // Test 12: ExtractParams extracts correct params from local patterns
 type IndexParams = ExtractParams<LocalBlogRoutes["index"]>;
 type PostParams = ExtractParams<LocalBlogRoutes["post"]>;
@@ -169,9 +163,11 @@ type EmptyExtractedReverse = EmptyPatternsType extends UrlPatterns<any, infer TR
   ? ScopedReverseFunction<TRoutes>
   : never;
 
-// Empty patterns should still allow path-based and absolute routes
+// Empty patterns with no routes - no valid names to call
 declare const emptyReverse: EmptyExtractedReverse;
+// @ts-expect-error - no routes registered, all names rejected
 const _emptyPathBased: string = emptyReverse("/fallback");
+// @ts-expect-error - no routes registered, all names rejected
 const _emptyAbsolute: string = emptyReverse("other.module.route");
 
 // =============================================================================
@@ -199,24 +195,22 @@ const _checkExtractedRoutesMatch: _AssertExtractedRoutesMatch = true;
 // Test scopedReverse returns properly typed function
 const localReverseFromHandler = scopedReverse<TestPatternsType>(globalReverse);
 
-// These should all type-check
+// These should all type-check (scoped to local routes only)
 const _handlerIndex: string = localReverseFromHandler("index");
 const _handlerDetail: string = localReverseFromHandler("detail", { id: "123" });
 const _handlerSettings: string = localReverseFromHandler("settings");
-const _handlerAbsolute: string = localReverseFromHandler("other.module.route");
-const _handlerPath: string = localReverseFromHandler("/raw/path");
 
 // Test 16: Handler usage pattern
 const testHandlerWithScopedReverse: Handler<"/"> = (ctx) => {
-  // This is the recommended pattern for composable modules
+  // scopedReverse restricts to local routes only
   const reverse = scopedReverse<TestPatternsType>(ctx.reverse);
 
-  // Local routes are now type-safe
+  // Local routes are type-safe
   const _idx = reverse("index");
   const _det = reverse("detail", { id: "abc" });
 
-  // Cross-module still works
-  const _cross = reverse("blog.post", { slug: "hello" });
+  // For global routes, use ctx.reverse directly
+  const _cross = ctx.reverse("blog.post", { slug: "hello" });
 
   return null;
 };
