@@ -901,10 +901,17 @@ function createRouterDiscoveryPlugin(
       }
       // Generate per-module route types from static source parsing.
       // Runs before the dev server starts so .gen.ts files exist immediately for IDE.
+      // In build mode, skip writeCombinedRouteTypes — the runtime discovery in
+      // buildStart produces the complete manifest (including dynamically generated
+      // routes) and will write the definitive named-routes.gen.ts. Running the
+      // static parser here would overwrite a previously generated complete file
+      // with a partial one (static-only routes).
       if (opts?.staticRouteTypesGeneration !== false) {
         writePerModuleRouteTypes(projectRoot, scanFilter);
         cachedRouterFiles = findRouterFiles(projectRoot, scanFilter);
-        writeCombinedRouteTypes(projectRoot, cachedRouterFiles);
+        if (!isBuildMode) {
+          writeCombinedRouteTypes(projectRoot, cachedRouterFiles, { preserveIfLarger: true });
+        }
       }
       // Resolve prerenderHandlerModules from the consolidated IDs plugin's API.
       if (opts?.enableBuildPrerender) {
@@ -964,14 +971,12 @@ function createRouterDiscoveryPlugin(
           // Store server origin for dev prerender endpoint (virtual module injection)
           devServerOrigin = getDevServerOrigin();
 
-          // Write per-router type files from runtime discovery.
-          // Skip when static route types generation is enabled (configResolved
-          // already wrote the files via writeCombinedRouteTypes and the file
-          // watcher handles HMR updates). Running both paths causes race
-          // conditions where the runtime path overwrites watcher updates.
-          if (opts?.staticRouteTypesGeneration === false) {
-            writeRouteTypesFiles();
-          }
+          // Update named-routes.gen.ts from runtime discovery.
+          // The runtime manifest is the source of truth: it evaluates dynamic
+          // routes (e.g. Array.from loops) that the static parser cannot see.
+          // writeRouteTypesFiles() only writes when content changes, so this
+          // won't cause unnecessary HMR triggers.
+          writeRouteTypesFiles();
 
           // Populate the route map in the RSC env
           if (mergedRouteManifest && serverMod?.setCachedManifest) {
@@ -1188,21 +1193,30 @@ function createRouterDiscoveryPlugin(
         }
 
         await discoverRouters(rscEnv);
-        // Skip when static route types generation is enabled (configResolved
-        // already wrote the files via writeCombinedRouteTypes). Same guard
-        // as dev mode to avoid writing a duplicate file from __sourceFile
-        // (which comes from runtime stack trace parsing).
-        if (opts?.staticRouteTypesGeneration === false) {
-          writeRouteTypesFiles();
-        }
+        // Update named-routes.gen.ts from runtime discovery.
+        // The runtime manifest includes dynamically generated routes
+        // that the static parser cannot extract from source code.
+        writeRouteTypesFiles();
       } catch (err: any) {
         // Clean up before re-throwing so the temp server doesn't leak
         delete (globalThis as any).__rscRouterDiscoveryActive;
         if (tempServer) {
           await tempServer.close();
         }
+        // Extract the user source file from the stack trace (skip internal frames)
+        const sourceFile = err.stack
+          ?.split("\n")
+          .find((line: string) => line.includes(projectRoot) && !line.includes("node_modules"))
+          ?.match(/\(([^)]+)\)/)?.[1];
+        // Extract the route name from "Unknown route: <name>" errors
+        const routeName = err.message?.match(/Unknown route: (.+)/)?.[1];
+        const details = [
+          routeName ? `  Route name: ${routeName}` : null,
+          sourceFile ? `  File: ${sourceFile}` : null,
+          err.stack ? `  Stack:\n${err.stack}` : null,
+        ].filter(Boolean).join("\n");
         throw new Error(
-          `[rsc-router] Build-time router discovery failed: ${err.message}`
+          `[rsc-router] Build-time router discovery failed:\n${details}`
         );
       } finally {
         delete (globalThis as any).__rscRouterDiscoveryActive;

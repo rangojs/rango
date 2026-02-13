@@ -279,15 +279,15 @@ describe("generateRouteTypesSource with search schemas", () => {
     const manifest = { search: "/search", about: "/about" };
     const searchSchemas = { search: { q: "string", page: "number?" } };
     const source = generateRouteTypesSource(manifest, searchSchemas);
-    expect(source).toContain('"about": "/about"');
-    expect(source).toContain('"search": { readonly path: "/search"; readonly search: { q: "string"; page: "number?" } }');
+    expect(source).toContain('about: "/about"');
+    expect(source).toContain('search: { path: "/search", search: { q: "string", page: "number?" } }');
   });
 
   it("should generate plain strings when no search schemas", () => {
     const manifest = { about: "/about", home: "/" };
     const source = generateRouteTypesSource(manifest);
-    expect(source).toContain('"about": "/about"');
-    expect(source).toContain('"home": "/"');
+    expect(source).toContain('about: "/about"');
+    expect(source).toContain('home: "/"');
     expect(source).not.toContain("readonly path");
   });
 });

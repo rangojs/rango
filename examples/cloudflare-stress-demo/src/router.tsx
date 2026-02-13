@@ -16,8 +16,11 @@ export const router = createRouter<AppEnv>({
     console.error("Router error:", error);
   },
 }).routes(urlpatterns);
-router.reverse("shop.product.item42");
-router.reverse("shop.category.cat42");
+
+// Module-level reverse() calls — resolved via static NamedRoutes fallback
+console.log("reverse shop.product.item42:", router.reverse("shop.product.item42"));
+console.log("reverse shop.category.cat42:", router.reverse("shop.category.cat42"));
+
 type AppRoutes = typeof router.routeMap;
 
 declare global {
