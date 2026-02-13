@@ -1199,8 +1199,20 @@ function createRouterDiscoveryPlugin(
         if (tempServer) {
           await tempServer.close();
         }
+        // Extract the user source file from the stack trace (skip internal frames)
+        const sourceFile = err.stack
+          ?.split("\n")
+          .find((line: string) => line.includes(projectRoot) && !line.includes("node_modules"))
+          ?.match(/\(([^)]+)\)/)?.[1];
+        // Extract the route name from "Unknown route: <name>" errors
+        const routeName = err.message?.match(/Unknown route: (.+)/)?.[1];
+        const details = [
+          routeName ? `  Route name: ${routeName}` : null,
+          sourceFile ? `  File: ${sourceFile}` : null,
+          err.stack ? `  Stack:\n${err.stack}` : null,
+        ].filter(Boolean).join("\n");
         throw new Error(
-          `[rsc-router] Build-time router discovery failed: ${err.message}`
+          `[rsc-router] Build-time router discovery failed:\n${details}`
         );
       } finally {
         delete (globalThis as any).__rscRouterDiscoveryActive;
