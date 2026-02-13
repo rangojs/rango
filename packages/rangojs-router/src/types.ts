@@ -348,7 +348,7 @@ export type Handler<
         : T,
     TEnv,
     ExtractSearchFromRouteMap<TRouteMap, T>,
-    TRouteMap
+    TRouteMap extends DefaultHandlerRouteMap ? never : TRouteMap
   >,
 ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>;
 

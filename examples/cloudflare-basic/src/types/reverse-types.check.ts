@@ -7,9 +7,9 @@
 
 import type { Handler, HandlerContext } from "@rangojs/router";
 
-// Test 1: ctx.reverse in handlers accepts route names
+// Test 1: ctx.reverse in handlers accepts route names from RegisteredRoutes
 const testHandlerReverse: Handler<"/"> = (ctx) => {
-  // Should work - ctx.reverse accepts any string for named route resolution
+  // Should work - ctx.reverse validates against registered routes
   const _homeUrl = ctx.reverse("home");
   const _aboutUrl = ctx.reverse("about");
   const _blogUrl = ctx.reverse("blog");
@@ -18,11 +18,8 @@ const testHandlerReverse: Handler<"/"> = (ctx) => {
   const _blogPostUrl = ctx.reverse("blogPost", { slug: "hello-world" });
   const _featureUrl = ctx.reverse("featuresDetail", { slug: "routing" });
 
-  // Should work - absolute route with dot notation (global lookup)
-  const _absoluteUrl = ctx.reverse("some.nested.route");
-
-  // Should work - path-based URL
-  const _pathUrl = ctx.reverse("/api/data");
+  // Should work - dotted names from included modules
+  const _apiRoute = ctx.reverse("api.health");
 
   return null;
 };
@@ -54,14 +51,12 @@ type _AssertReverseCallable = CheckCtxReverse extends (
   : never;
 const _checkReverseCallable: _AssertReverseCallable = true;
 
-// Test 5: Verify ctx.reverse accepts various route name formats
-// ctx.reverse is (name: string, params?) => string, accepts any route name
+// Test 5: Verify ctx.reverse validates registered route names
 declare function testGlobalRoutes(): void;
 if (false as boolean) {
   testGlobalRoutes();
-  // ctx.reverse accepts any string - named routes resolve at runtime via server routeMap
+  // ctx.reverse validates route names against RegisteredRoutes
   const ctx = {} as HandlerContext;
-  ctx.reverse("/blog");
   ctx.reverse("about");
   ctx.reverse("blog");
   ctx.reverse("blogPost", { slug: "test" });
@@ -109,12 +104,6 @@ const _localSettings: string = localReverse("settings");
 // Valid local route with params
 const _localDetail: string = localReverse("detail", { slug: "hello-world" });
 
-// Absolute routes (dot notation) - allowed as escape hatch for cross-module
-const _absoluteRoute: string = localReverse("shop.cart");
-
-// Path-based URLs - allowed as escape hatch
-const _pathBased: string = localReverse("/api/data");
-
 // Test 8: ExtractParams extracts correct params from patterns
 type IndexParams = ExtractParams<LocalRoutes["index"]>;
 type DetailParams = ExtractParams<LocalRoutes["detail"]>;
@@ -131,6 +120,7 @@ const _checkSettingsHasNoParams: _AssertSettingsHasNoParams = true;
 
 // Test 9: Composability - multiple independent url modules
 // Each module can use scopedReverse<typeof itsPatterns>(ctx.reverse) with local routes
+// The merge with global routes happens in scopedReverse() and HandlerContext, not in ScopedReverseFunction directly
 type BlogRoutes = { index: "/"; post: "/:postId" };
 type ShopRoutes = { index: "/"; cart: "/cart"; product: "/product/:sku" };
 
@@ -148,9 +138,5 @@ const _blogPost: string = blogReverse("post", { postId: "123" });
 const _shopIndex: string = shopReverse("index");
 const _shopCart: string = shopReverse("cart");
 const _shopProduct: string = shopReverse("product", { sku: "SKU-001" });
-
-// Cross-module navigation uses absolute names
-const _toBlog: string = shopReverse("blog.post", { postId: "abc" });
-const _toShop: string = blogReverse("shop.cart");
 
 export {};

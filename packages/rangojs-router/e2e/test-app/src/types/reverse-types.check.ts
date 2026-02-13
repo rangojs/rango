@@ -129,12 +129,6 @@ const _localIndex: string = localReverse("index");
 // Valid local route with params
 const _localPost: string = localReverse("post", { slug: "hello" });
 
-// Absolute routes (dot notation) - allowed as escape hatch
-const _absoluteRoute: string = localReverse("shop.cart");
-
-// Path-based URLs - allowed as escape hatch
-const _pathBased: string = localReverse("/about");
-
 // Test 12: ExtractParams extracts correct params from local patterns
 type IndexParams = ExtractParams<LocalBlogRoutes["index"]>;
 type PostParams = ExtractParams<LocalBlogRoutes["post"]>;
@@ -169,9 +163,11 @@ type EmptyExtractedReverse = EmptyPatternsType extends UrlPatterns<any, infer TR
   ? ScopedReverseFunction<TRoutes>
   : never;
 
-// Empty patterns should still allow path-based and absolute routes
+// Empty patterns with no routes - no valid names to call
 declare const emptyReverse: EmptyExtractedReverse;
+// @ts-expect-error - no routes registered, all names rejected
 const _emptyPathBased: string = emptyReverse("/fallback");
+// @ts-expect-error - no routes registered, all names rejected
 const _emptyAbsolute: string = emptyReverse("other.module.route");
 
 // =============================================================================
