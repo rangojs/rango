@@ -1062,6 +1062,8 @@ function createRouterDiscoveryPlugin(
                   rsc({ entries: { client: "virtual:entry-client", ssr: "virtual:entry-ssr", rsc: entryPath } }),
                   createVersionPlugin(),
                   createVirtualStubPlugin(),
+                  exposeInternalIds({ forceBuild: true }),
+                  exposeRouterId(),
                 ],
               });
 
