@@ -159,3 +159,12 @@ export const router = createRouter<AppEnv>({
   .routes(urlpatterns);
 
 export const reverse = router.reverse;
+
+// Module-level reverse() calls — these run before lazy includes resolve,
+// so they rely on the static NamedRoutes fallback from the generated file.
+export const moduleLevelReverseResults = {
+  "blog.index": router.reverse("blog.index"),
+  "blog.post": router.reverse("blog.post", { postId: "test-post" }),
+  "search.index": router.reverse("search.index"),
+  "middlewareTest.index": router.reverse("middlewareTest.index"),
+};

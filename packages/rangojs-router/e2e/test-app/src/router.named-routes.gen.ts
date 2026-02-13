@@ -86,6 +86,7 @@ export const NamedRoutes = {
   responseWrapText: "/response-wrap/text",
   responseWrapWithHeaders: "/response-wrap/with-headers",
   responseWrapXml: "/response-wrap/xml",
+  reverseFallbackTest: "/reverse-fallback-test",
   "search.detail": "/search/:category",
   "search.index": "/search",
   shopPlayground: "/shop-playground",

@@ -18,7 +18,7 @@ test.describe("route-types", () => {
     expect(content).toContain("namespace RSCRouter");
     expect(content).toContain("interface GeneratedRouteMap");
 
-    // Should export routeNames and contain known routes from the test app
+    // Should export NamedRoutes and contain known routes from the test app
     expect(content).toContain("export const NamedRoutes");
     expect(content).toContain('index: "/",');
     expect(content).toContain('"blog.index": "/blog",');
@@ -34,6 +34,15 @@ test.describe("route-types", () => {
     expect(routeLines).not.toBeNull();
     // The test app has many routes; verify at least a reasonable count
     expect(routeLines!.length).toBeGreaterThanOrEqual(30);
+  });
+
+  test("should not have double-slash patterns from include('/')", async () => {
+    const content = await fs.readFile(genFilePath, "utf-8");
+
+    // Routes from include("/", patterns) should not produce "//path" patterns.
+    // The prefix "/" is a root mount and should be a no-op.
+    const doubleSlashLines = content.match(/: "\/\//gm);
+    expect(doubleSlashLines).toBeNull();
   });
 });
 

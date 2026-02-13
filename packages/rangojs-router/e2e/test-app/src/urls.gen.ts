@@ -12,6 +12,7 @@ export const routes = {
   responseWrapJsonHeaders: "/response-wrap/json-headers",
   responseWrapText: "/response-wrap/text",
   responseWrapXml: "/response-wrap/xml",
+  reverseFallbackTest: "/reverse-fallback-test",
   shopPlayground: "/shop-playground",
   "slowProduct.detail": "/slow-product/:productId",
 } as const;
