@@ -910,7 +910,7 @@ function createRouterDiscoveryPlugin(
         writePerModuleRouteTypes(projectRoot, scanFilter);
         cachedRouterFiles = findRouterFiles(projectRoot, scanFilter);
         if (!isBuildMode) {
-          writeCombinedRouteTypes(projectRoot, cachedRouterFiles);
+          writeCombinedRouteTypes(projectRoot, cachedRouterFiles, { preserveIfLarger: true });
         }
       }
       // Resolve prerenderHandlerModules from the consolidated IDs plugin's API.

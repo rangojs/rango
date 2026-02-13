@@ -439,7 +439,7 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
 
     // Module-level reverse() test endpoint — returns results computed at
     // module load time (before lazy includes resolve) via NamedRoutes fallback
-    path.json("/reverse-fallback-test", async () => {
+    path.json("/reverse-fallback-test", async (): Promise<Record<string, string>> => {
       const { moduleLevelReverseResults } = await import("./router.js");
       return moduleLevelReverseResults;
     }, { name: "reverseFallbackTest" }),
