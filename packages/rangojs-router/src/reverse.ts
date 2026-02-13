@@ -1,4 +1,4 @@
-import type { ExtractParams, GetRegisteredRoutes } from "./types.js";
+import type { ExtractParams } from "./types.js";
 import type { SearchSchema, ResolveSearchSchema } from "./search-params.js";
 import { serializeSearchParams } from "./search-params.js";
 
@@ -238,8 +238,8 @@ export type { RouteResponse } from "./urls.js";
  */
 export function scopedReverse<TPatterns>(
   reverse: ((...args: any[]) => string)
-): ScopedReverseFunction<ExtractLocalRoutes<TPatterns> & GetRegisteredRoutes> {
-  return reverse as ScopedReverseFunction<ExtractLocalRoutes<TPatterns> & GetRegisteredRoutes>;
+): ScopedReverseFunction<ExtractLocalRoutes<TPatterns>> {
+  return reverse as ScopedReverseFunction<ExtractLocalRoutes<TPatterns>>;
 }
 
 /**
