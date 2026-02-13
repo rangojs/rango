@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "deploy": "wrangler deploy",
     "extract": "npx rango extract-names ./",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@rangojs/router": "workspace:*",

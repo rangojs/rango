@@ -1,7 +1,5 @@
 import { defineConfig } from "@playwright/test";
 
-const DEV_PORT = 5198;
-
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
@@ -10,18 +8,18 @@ export default defineConfig({
   workers: 1,
   reporter: [
     ["list"],
-    ...(process.env.CI ? [["github"], ["html", { open: "never" }]] : []),
-  ] as import("@playwright/test").ReporterDescription[],
-  timeout: process.env.CI ? 60000 : 30000,
-  webServer: {
-    command: `pnpm build && pnpm dev --port ${DEV_PORT}`,
-    port: DEV_PORT,
-    reuseExistingServer: !process.env.CI,
-  },
+    ...(process.env.CI ? [["github" as const], ["html" as const, { open: "never" }]] : []),
+  ],
+  timeout: process.env.CI ? 120000 : 60000,
   projects: [
     {
-      name: "dev",
-      use: { baseURL: `http://localhost:${DEV_PORT}` },
+      name: "build",
+      testMatch: "**/build.setup.ts",
+    },
+    {
+      name: "production",
+      testIgnore: ["**/*.setup.ts"],
+      dependencies: ["build"],
     },
   ],
 });
