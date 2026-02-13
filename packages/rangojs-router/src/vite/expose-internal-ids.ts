@@ -30,6 +30,10 @@ export interface ExposeInternalIdsApi {
    *  key: absolute module ID (filesystem path)
    *  value: array of export names (e.g., ["ArticlesIndex", "ArticleDetail"]) */
   prerenderHandlerModules: Map<string, string[]>;
+  /** Tracks absolute module IDs that contain static handler exports.
+   *  key: absolute module ID (filesystem path)
+   *  value: array of export names (e.g., ["DocsNav", "DocShell"]) */
+  staticHandlerModules: Map<string, string[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -366,6 +370,143 @@ function transformPrerenderHandlers(
 }
 
 // ---------------------------------------------------------------------------
+// StaticHandler helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Replace the entire file with lightweight stubs when ALL non-type exports are
+ * createStaticHandler calls. Returns null for files with mixed exports.
+ */
+function generateWholeFileStaticHandlerStubs(
+  code: string,
+  filePath: string,
+  isBuild: boolean,
+): { code: string; map: null } | null {
+  const handlerPattern = makeExportPattern("createStaticHandler");
+  const handlers: string[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = handlerPattern.exec(code)) !== null) {
+    handlers.push(match[1]);
+  }
+
+  if (handlers.length === 0) return null;
+
+  // Bail out if the file has re-exports or destructured exports
+  if (/export\s*\{/.test(code) || /export\s*\*/.test(code)) return null;
+
+  const allExports =
+    /export\s+(const|let|var|function|class|default)\s+(\w+)/g;
+  let exportMatch: RegExpExecArray | null;
+
+  while ((exportMatch = allExports.exec(code)) !== null) {
+    if (!handlers.includes(exportMatch[2])) return null;
+  }
+
+  const stubs = handlers.map((name) => {
+    const handlerId = isBuild
+      ? hashId(filePath, name)
+      : `${filePath}#${name}`;
+    return `export const ${name} = { __brand: "staticHandler", $$id: "${handlerId}" };`;
+  });
+
+  return { code: stubs.join("\n") + "\n", map: null };
+}
+
+/**
+ * Replace createStaticHandler(...) call expressions with lightweight stub objects
+ * in non-RSC environments. Other exports, imports, and module-level code remain
+ * untouched.
+ */
+function generateStaticHandlerStubs(
+  code: string,
+  filePath: string,
+  sourceId: string,
+  isBuild: boolean,
+): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
+  const pattern =
+    /export\s+const\s+(\w+)\s*=\s*(createStaticHandler\s*(?:<[^>]*>)?\s*\()/g;
+
+  const s = new MagicString(code);
+  let hasChanges = false;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(code)) !== null) {
+    const exportName = match[1];
+    const callStart = match.index + match[0].length - match[2].length;
+    const openParenPos = match.index + match[0].length;
+    const afterCloseParen = findMatchingParen(code, openParenPos);
+
+    const handlerId = isBuild
+      ? hashId(filePath, exportName)
+      : `${filePath}#${exportName}`;
+
+    s.overwrite(
+      callStart,
+      afterCloseParen,
+      `{ __brand: "staticHandler", $$id: "${handlerId}" }`,
+    );
+    hasChanges = true;
+  }
+
+  if (!hasChanges) return null;
+
+  return {
+    code: s.toString(),
+    map: s.generateMap({
+      source: sourceId,
+      includeContent: true,
+      hires: "boundary",
+    }),
+  };
+}
+
+function transformStaticHandlers(
+  s: MagicString,
+  code: string,
+  filePath: string,
+  isBuild: boolean,
+): boolean {
+  const pattern = makeExportPattern("createStaticHandler");
+  let hasChanges = false;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(code)) !== null) {
+    const exportName = match[1];
+    const matchEnd = match.index + match[0].length;
+
+    // String/comment-aware paren matching
+    const afterClose = findMatchingParen(code, matchEnd);
+    const closeParenPos = afterClose - 1;
+    const argCount = countArgs(code, matchEnd, closeParenPos);
+    const statementEnd = findStatementEnd(code, afterClose);
+
+    const handlerId = isBuild
+      ? hashId(filePath, exportName)
+      : `${filePath}#${exportName}`;
+
+    // Injection strategy matches the runtime overload signature:
+    //   1 arg  (handler)          -> inject undefined, "id"
+    //   2 args (handler+options)  -> inject , "id"
+    let paramInjection: string;
+    if (argCount === 0) {
+      paramInjection = `undefined, "${handlerId}"`;
+    } else if (argCount === 1) {
+      paramInjection = `, undefined, "${handlerId}"`;
+    } else {
+      paramInjection = `, "${handlerId}"`;
+    }
+    s.appendLeft(closeParenPos, paramInjection);
+
+    const propInjection = `\n${exportName}.$$id = "${handlerId}";`;
+    s.appendRight(statementEnd, propInjection);
+    hasChanges = true;
+  }
+
+  return hasChanges;
+}
+
+// ---------------------------------------------------------------------------
 // Router helpers
 // ---------------------------------------------------------------------------
 
@@ -477,12 +618,16 @@ export function exposeInternalIds(options?: {
   // Prerender handler module tracking (consumed via plugin API)
   const prerenderHandlerModules: Map<string, string[]> = new Map();
 
+  // Static handler module tracking (consumed via plugin API)
+  const staticHandlerModules: Map<string, string[]> = new Map();
+
   return {
     name: "@rangojs/router:expose-internal-ids",
     enforce: "post",
 
     api: {
       prerenderHandlerModules,
+      staticHandlerModules,
     } satisfies ExposeInternalIdsApi,
 
     configResolved(resolved) {
@@ -639,11 +784,14 @@ ${lazyImports.join(",\n")}
         has.locationState && code.includes("createLocationState");
       const hasPrerenderHandlerCode =
         has.prerenderHandler && code.includes("createPrerenderHandler");
+      const hasStaticHandlerCode =
+        has.staticHandler && code.includes("createStaticHandler");
       if (
         !hasLoaderCode &&
         !hasHandleCode &&
         !hasLocationStateCode &&
-        !hasPrerenderHandlerCode
+        !hasPrerenderHandlerCode &&
+        !hasStaticHandlerCode
       ) {
         return;
       }
@@ -701,6 +849,38 @@ ${lazyImports.join(",\n")}
         }
       }
 
+      // --- StaticHandler: non-RSC stub replacement ---
+      if (hasStaticHandlerCode && !isRscEnv) {
+        // Try whole-file replacement first, fall back to per-expression
+        const wholeFile = generateWholeFileStaticHandlerStubs(
+          code,
+          filePath,
+          isBuild,
+        );
+        if (wholeFile) return wholeFile;
+
+        const exprStubs = generateStaticHandlerStubs(
+          code,
+          filePath,
+          id,
+          isBuild,
+        );
+        if (exprStubs) return exprStubs;
+      }
+
+      // --- StaticHandler: RSC build module tracking ---
+      if (hasStaticHandlerCode && isRscEnv && isBuild) {
+        const handlerPattern = makeExportPattern("createStaticHandler");
+        const exportNames: string[] = [];
+        let m: RegExpExecArray | null;
+        while ((m = handlerPattern.exec(code)) !== null) {
+          exportNames.push(m[1]);
+        }
+        if (exportNames.length > 0) {
+          staticHandlerModules.set(id, exportNames);
+        }
+      }
+
       // --- Unified MagicString transforms ---
       const s = new MagicString(code);
       let changed = false;
@@ -718,6 +898,10 @@ ${lazyImports.join(",\n")}
       if (hasPrerenderHandlerCode && isRscEnv) {
         changed =
           transformPrerenderHandlers(s, code, filePath, isBuild) || changed;
+      }
+      if (hasStaticHandlerCode && isRscEnv) {
+        changed =
+          transformStaticHandlers(s, code, filePath, isBuild) || changed;
       }
 
       if (!changed) return;

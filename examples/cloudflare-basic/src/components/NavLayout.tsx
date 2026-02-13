@@ -49,6 +49,9 @@ export function NavLayout() {
         <Link to={href("/api/health")} data-testid="nav-api-health">
           API Health
         </Link>
+        <Link to={href("/static-content")} data-testid="nav-static-content">
+          Static Content
+        </Link>
       </nav>
       <BreadcrumbNav />
       <Outlet />

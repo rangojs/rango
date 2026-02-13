@@ -24,6 +24,7 @@ export interface DetectedImports {
   handle: boolean;
   locationState: boolean;
   prerenderHandler: boolean;
+  staticHandler: boolean;
   router: boolean;
   any: boolean;
 }
@@ -42,6 +43,7 @@ export function detectImports(code: string): DetectedImports {
     handle: false,
     locationState: false,
     prerenderHandler: false,
+    staticHandler: false,
     router: false,
     any: false,
   };
@@ -53,6 +55,7 @@ export function detectImports(code: string): DetectedImports {
     if (/\bcreateHandle\b/.test(imports)) result.handle = true;
     if (/\bcreateLocationState\b/.test(imports)) result.locationState = true;
     if (/\bcreatePrerenderHandler\b/.test(imports)) result.prerenderHandler = true;
+    if (/\bcreateStaticHandler\b/.test(imports)) result.staticHandler = true;
     if (/\bcreateRouter\b/.test(imports)) result.router = true;
   }
 
@@ -69,6 +72,7 @@ export function detectImports(code: string): DetectedImports {
     result.handle ||
     result.locationState ||
     result.prerenderHandler ||
+    result.staticHandler ||
     result.router;
 
   return result;

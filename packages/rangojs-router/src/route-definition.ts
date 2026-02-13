@@ -27,6 +27,7 @@ import {
   type InterceptSelectorContext,
 } from "./server/context";
 import { invariant } from "./errors";
+import { isStaticHandler } from "./static-handler.js";
 import RootLayout from "./server/root-layout";
 import type {
   AllUseItems,
@@ -824,6 +825,12 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
 
   const namespace = `${ctx.namespace}.$${store.getNextIndex("parallel")}`;
 
+  // Unwrap any static handler definitions in parallel slots
+  const unwrappedSlots: Record<string, any> = {};
+  for (const [slotName, slotHandler] of Object.entries(slots as Record<string, any>)) {
+    unwrappedSlots[slotName] = isStaticHandler(slotHandler) ? slotHandler.handler : slotHandler;
+  }
+
   // Create full EntryData for parallel with its own loaders/revalidate/loading
   const parallelUrlPrefix = getUrlPrefix();
   const entry = {
@@ -831,7 +838,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     shortCode: store.getShortCode("parallel"),
     type: "parallel",
     parent: null, // Parallels don't participate in parent chain traversal
-    handler: slots,
+    handler: unwrappedSlots,
     loading: undefined, // Allow loading() to attach loading state
     middleware: [],
     revalidate: [],
@@ -1071,13 +1078,17 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
   const namespace = `${ctx.namespace}.${nextIndex}`;
   const shortCode = store.getShortCode("layout");
 
+  // Unwrap static handler definition, extract the actual handler function
+  const isStatic = isStaticHandler(handler);
+  const unwrappedHandler = isStatic ? handler.handler : handler;
+
   const urlPrefix = getUrlPrefix();
   const entry = {
     id: namespace,
     shortCode,
     type: "layout",
     parent: ctx.parent,
-    handler,
+    handler: unwrappedHandler,
     loading: undefined, // Allow loading() to attach loading state
     middleware: [],
     revalidate: [],
@@ -1088,6 +1099,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     layout: [],
     loader: [],
     ...(urlPrefix ? { mountPath: urlPrefix } : {}),
+    ...(isStatic ? { isStaticPrerender: true as const } : {}),
   } satisfies EntryData;
 
   // Run use callback if provided

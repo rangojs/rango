@@ -27,6 +27,8 @@ export const NamedRoutes = {
   slow1: "/slow/1",
   slow2: "/slow/2",
   slowCache: "/slow-cache",
+  "staticContent.docsPage": "/static-content/:slug",
+  "staticContent.index": "/static-content",
   testMimeAny: "/test/mime/any",
   testMimeHtml: "/test/mime/html",
   testMimeImage: "/test/mime/image",

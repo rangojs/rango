@@ -83,6 +83,10 @@ import {
   isPrerenderHandler,
   type PrerenderHandlerDefinition,
 } from "./prerender.js";
+import {
+  isStaticHandler,
+  type StaticHandlerDefinition,
+} from "./static-handler.js";
 import type { SearchSchema } from "./search-params.js";
 import { registerSearchSchema } from "./route-map-builder.js";
 
@@ -518,7 +522,8 @@ export type PathFn<TEnv> = <
   handler:
     | ReactNode
     | ((ctx: HandlerContext<TParams, TEnv, TSearch>) => ReactNode | Promise<ReactNode> | Response | Promise<Response>)
-    | PrerenderHandlerDefinition<TParams>,
+    | PrerenderHandlerDefinition<TParams>
+    | StaticHandlerDefinition<TParams>,
   optionsOrUse?: PathOptions<TName, TSearch> | (() => RouteUseItem[]),
   use?: () => RouteUseItem[],
   // Generic handler bypass: when handler uses index-signature params
@@ -630,9 +635,9 @@ export type PathHelpers<TEnv> = {
    * Define a layout that wraps child routes
    */
   layout: {
-    (component: ReactNode | Handler<any, any, TEnv>): TypedLayoutItem<{}, {}>;
+    (component: ReactNode | Handler<any, any, TEnv> | StaticHandlerDefinition): TypedLayoutItem<{}, {}>;
     <const TChildren extends readonly LayoutUseItem[]>(
-      component: ReactNode | Handler<any, any, TEnv>,
+      component: ReactNode | Handler<any, any, TEnv> | StaticHandlerDefinition,
       use: () => TChildren,
     ): TypedLayoutItem<ExtractRoutes<TChildren>, ExtractResponses<TChildren>>;
   };
@@ -654,7 +659,7 @@ export type PathHelpers<TEnv> = {
    * Define parallel routes that render simultaneously in named slots
    */
   parallel: <
-    TSlots extends Record<`@${string}`, Handler<any, any, TEnv> | ReactNode>,
+    TSlots extends Record<`@${string}`, Handler<any, any, TEnv> | ReactNode | StaticHandlerDefinition>,
   >(
     slots: TSlots,
     use?: () => ParallelUseItem[],
@@ -851,13 +856,15 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
       return { type: "route" } as RouteItem;
     }
 
-    // Ensure handler is always a function (wrap ReactNode or extract from prerender def)
+    // Ensure handler is always a function (wrap ReactNode or extract from prerender/static def)
     const wrappedHandler: Handler<any, any, TEnv> =
       typeof handler === "function"
         ? (handler as Handler<any, any, TEnv>)
         : isPrerenderHandler(handler)
           ? (handler.handler as Handler<any, any, TEnv>)
-          : () => handler;
+          : isStaticHandler(handler)
+            ? (handler.handler as Handler<any, any, TEnv>)
+            : () => handler;
 
     const entry = {
       id: namespace,
@@ -882,6 +889,9 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
             isPrerender: true as const,
             prerenderDef: handler as PrerenderHandlerDefinition,
           }
+        : {}),
+      ...(isStaticHandler(handler)
+        ? { isStaticPrerender: true as const }
         : {}),
       ...(resolveResponseType(options)
         ? { responseType: resolveResponseType(options) }
@@ -1178,7 +1188,7 @@ export function urls<
       path: pathHelper as any,
       include: includeHelper as any,
       layout: baseHelpers.layout as PathHelpers<TEnv>["layout"],
-      parallel: baseHelpers.parallel,
+      parallel: baseHelpers.parallel as PathHelpers<TEnv>["parallel"],
       intercept: baseHelpers.intercept as PathHelpers<TEnv>["intercept"],
       middleware: baseHelpers.middleware,
       revalidate: baseHelpers.revalidate,

@@ -486,6 +486,15 @@ function createRouterDiscoveryPlugin(
   // Resolved prerender handler modules from the expose-internal-ids plugin.
   let resolvedPrerenderModules: Map<string, string[]> | undefined;
 
+  // Resolved static handler modules from the expose-internal-ids plugin.
+  let resolvedStaticModules: Map<string, string[]> | undefined;
+
+  // Static handler chunk metadata recorded during generateBundle for post-build eviction.
+  let staticHandlerChunkInfo: {
+    fileName: string;
+    exports: Array<{ name: string; handlerId: string; passthrough: boolean }>;
+  } | null = null;
+
   // Promise that resolves when dev-mode discovery completes.
   // The virtual module's load hook awaits this to ensure data is available.
   let discoveryDone: Promise<void> | null = null;
@@ -878,6 +887,9 @@ function createRouterDiscoveryPlugin(
                     if (resolvedPrerenderModules?.has(id)) {
                       return "__prerender-handlers";
                     }
+                    if (resolvedStaticModules?.has(id)) {
+                      return "__static-handlers";
+                    }
                   },
                 },
               },
@@ -913,13 +925,15 @@ function createRouterDiscoveryPlugin(
           writeCombinedRouteTypes(projectRoot, cachedRouterFiles, { preserveIfLarger: true });
         }
       }
-      // Resolve prerenderHandlerModules from the consolidated IDs plugin's API.
+      // Resolve prerenderHandlerModules and staticHandlerModules from the consolidated IDs plugin's API.
       if (opts?.enableBuildPrerender) {
         const idsPlugin = config.plugins.find(
           (p: any) => p.name === "@rangojs/router:expose-internal-ids",
         );
         resolvedPrerenderModules =
           (idsPlugin?.api as any)?.prerenderHandlerModules;
+        resolvedStaticModules =
+          (idsPlugin?.api as any)?.staticHandlerModules;
       }
     },
 
@@ -1380,6 +1394,62 @@ function createRouterDiscoveryPlugin(
         }
         break;
       }
+
+      // Detect static handler chunk (__static-handlers)
+      if (resolvedStaticModules?.size) {
+        for (const [fileName, chunk] of Object.entries(bundle) as [string, any][]) {
+          if (chunk.type !== "chunk") continue;
+          if (!fileName.includes("__static-handlers")) continue;
+
+          const handlers: Array<{ name: string; handlerId: string; passthrough: boolean }> = [];
+          for (const [, handlerNames] of resolvedStaticModules) {
+            for (const name of handlerNames) {
+              const idPattern = new RegExp(
+                `\\b${name}\\.\\$\\$id\\s*=\\s*"([^"]+)"`,
+              );
+              const match = chunk.code.match(idPattern);
+              if (match) {
+                // Detect passthrough option in the createStaticHandler call
+                const callStartRe = new RegExp(
+                  `const\\s+${name}\\s*=\\s*createStaticHandler\\s*(?:<[^>]*>)?\\s*\\(`,
+                );
+                const callStart = callStartRe.exec(chunk.code);
+                let isPassthrough = false;
+                if (callStart) {
+                  const openPos = callStart.index + callStart[0].length;
+                  let depth = 1;
+                  let p = openPos;
+                  while (p < chunk.code.length && depth > 0) {
+                    const ch = chunk.code[p];
+                    if (ch === '"' || ch === "'" || ch === "`") {
+                      p++;
+                      while (p < chunk.code.length && chunk.code[p] !== ch) {
+                        if (chunk.code[p] === "\\") p++;
+                        p++;
+                      }
+                    } else if (ch === "(") {
+                      depth++;
+                    } else if (ch === ")") {
+                      depth--;
+                    }
+                    p++;
+                  }
+                  if (depth === 0) {
+                    const callBody = chunk.code.slice(callStart.index, p);
+                    isPassthrough = /passthrough\s*:\s*(!0|true)/.test(callBody);
+                  }
+                }
+                handlers.push({ name, handlerId: match[1], passthrough: isPassthrough });
+              }
+            }
+          }
+
+          if (handlers.length > 0) {
+            staticHandlerChunkInfo = { fileName, exports: handlers };
+          }
+          break;
+        }
+      }
     },
 
     // Build-time pre-rendering: evict handler code and inject collected prerender data.
@@ -1468,6 +1538,16 @@ function createRouterDiscoveryPlugin(
           }
           // Clear after eviction to avoid re-running
           handlerChunkInfo = null;
+        }
+
+        // 1b. Static handler eviction.
+        // Static handler eviction requires build-time rendering + asset
+        // serialization (not yet implemented). For now, the handler code
+        // stays in the RSC bundle and runs at request time, same as dev.
+        // Once build-time rendering is added, handler bodies will be
+        // replaced with asset-loading stubs here.
+        if (staticHandlerChunkInfo) {
+          staticHandlerChunkInfo = null;
         }
 
         // 2. Remap dev-mode client reference IDs in prerender data to production IDs.
