@@ -256,17 +256,24 @@ export function scopedReverse<TPatterns>(
  * reverse("detail", { slug: "my-product" }); // "/shop/product/my-product"
  * ```
  */
+type RouteMapEntry = string | { path: string; search?: Record<string, string> };
+
+function resolveRoutePattern(entry: RouteMapEntry | undefined): string | undefined {
+  if (!entry) return undefined;
+  return typeof entry === "string" ? entry : entry.path;
+}
+
 export function createReverse<TRoutes extends Record<string, string>>(
   routeMap: TRoutes,
-  getFallbackMap?: () => Record<string, string> | undefined,
+  getFallbackMap?: () => Record<string, RouteMapEntry> | undefined,
 ): ReverseFunction<TRoutes & Record<string, string>> {
   return ((name: string, params?: Record<string, string>, search?: Record<string, unknown>) => {
-    let pattern = routeMap[name];
+    let pattern = resolveRoutePattern(routeMap[name] as unknown as RouteMapEntry);
     if (!pattern) {
       // Try the static route names from the generated file (O(1) fallback)
       const fallback = getFallbackMap?.();
       if (fallback) {
-        pattern = fallback[name];
+        pattern = resolveRoutePattern(fallback[name]);
       }
     }
     if (!pattern) {

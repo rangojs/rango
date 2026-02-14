@@ -169,6 +169,35 @@ path("/about", createPrerenderHandler(() => <div>About</div>));
     expect(output).not.toContain("createPrerenderHandler(() =>");
   });
 
+  it("preserves directive prologue when inserting virtual imports", () => {
+    const code = `"use client";
+import { createStaticHandler } from "@rangojs/router";
+layout(createStaticHandler(() => <nav />));
+`;
+    const s = new MagicString(code);
+    const registry = new Map<string, VirtualHandlerEntry>();
+
+    const result = transformInlineHandlers(
+      "createStaticHandler", "virtual:handler-extract:",
+      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+    );
+
+    expect(result).toBe(true);
+    const output = s.toString();
+
+    const directivePos = output.indexOf(`"use client";`);
+    const routerImportPos = output.indexOf(
+      `import { createStaticHandler } from "@rangojs/router";`,
+    );
+    const virtualImportPos = output.indexOf(
+      `import { __sh_`,
+    );
+
+    expect(directivePos).toBeGreaterThanOrEqual(0);
+    expect(routerImportPos).toBeGreaterThan(directivePos);
+    expect(virtualImportPos).toBeGreaterThan(routerImportPos);
+  });
+
   it("does not extract export const calls", () => {
     const code = `import { createStaticHandler } from "@rangojs/router";
 export const Nav = createStaticHandler(() => <nav />);

@@ -85,6 +85,11 @@ export const AboutPage = createPrerenderHandler(() => <main />);
 path("/inline", createPrerenderHandler(() => <aside />));
 `;
 
+const PRERENDER_INLINE_WHITESPACE_SOURCE = `import { createPrerenderHandler } from "@rangojs/router";
+path("/about", createPrerenderHandler
+(() => <div>About</div>));
+`;
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -366,6 +371,23 @@ export const Nav = createStaticHandler(() => {
       expect(vImports[0].exportName).not.toBe(vImports[1].exportName);
       // Different specifiers
       expect(vImports[0].specifier).not.toBe(vImports[1].specifier);
+    });
+
+    it("extracts inline call when fn name and paren are split by newline", () => {
+      const plugin = createPlugin();
+      initDev(plugin);
+
+      const result = plugin.transform.call(
+        rscCtx(),
+        PRERENDER_INLINE_WHITESPACE_SOURCE,
+        FILE_ID,
+      );
+      expect(result).toBeDefined();
+
+      const vImports = extractVirtualImports(result.code);
+      expect(vImports).toHaveLength(1);
+      expect(result.code).toContain(`path("/about", ${vImports[0].exportName})`);
+      expect(result.code).not.toContain("createPrerenderHandler\n(");
     });
 
     it("load returns null for unregistered virtual ID", () => {
