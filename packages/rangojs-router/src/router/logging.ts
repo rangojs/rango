@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { INTERNAL_DEBUG } from "../internal-debug.js";
+import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 
 interface RouterLogContext {
   requestId: string;
@@ -56,7 +56,7 @@ export function runWithRouterLogContext<T>(
   options: RouterLogOptions,
   fn: () => T,
 ): T {
-  if (!INTERNAL_DEBUG) {
+  if (!INTERNAL_RANGO_DEBUG) {
     return fn();
   }
 
@@ -78,7 +78,7 @@ export function withRouterLogScope<T>(label: string, fn: () => Promise<T>): Prom
 export function withRouterLogScope<T>(label: string, fn: () => T): T;
 export function withRouterLogScope<T>(label: string, fn: () => Promise<T> | T): Promise<T> | T {
   const ctx = routerLogContext.getStore();
-  if (!INTERNAL_DEBUG || !ctx) {
+  if (!INTERNAL_RANGO_DEBUG || !ctx) {
     return fn();
   }
 
@@ -102,7 +102,7 @@ export function withRouterLogScope<T>(label: string, fn: () => Promise<T> | T): 
 }
 
 export function isRouterDebugEnabled(): boolean {
-  return INTERNAL_DEBUG && !!routerLogContext.getStore();
+  return INTERNAL_RANGO_DEBUG && !!routerLogContext.getStore();
 }
 
 function formatPrefix(scope: string): string {

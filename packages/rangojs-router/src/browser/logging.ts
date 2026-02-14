@@ -1,4 +1,4 @@
-import { INTERNAL_DEBUG } from "../internal-debug.js";
+import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 
 interface BrowserLogContext {
   requestId: string;
@@ -10,7 +10,7 @@ let txCounter = 0;
 let requestCounter = 0;
 
 export function isBrowserDebugEnabled(): boolean {
-  return INTERNAL_DEBUG;
+  return INTERNAL_RANGO_DEBUG;
 }
 
 function nextId(prefix: string, counter: number): string {
@@ -32,7 +32,7 @@ export function browserDebugLog(
   message: string,
   details?: Record<string, unknown>,
 ): void {
-  if (!INTERNAL_DEBUG) return;
+  if (!INTERNAL_RANGO_DEBUG) return;
 
   const prefix = `[Browser][req:${ctx.requestId}][tx:${ctx.operation}-${ctx.txId}]`;
   if (details) {
