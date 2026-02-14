@@ -268,6 +268,18 @@ describe("extractRoutesFromSource with search", () => {
       { name: "items", pattern: "/items", search: { q: "string", page: "number?" } },
     ]);
   });
+
+  it("should extract routes from typed path helpers like path.md", () => {
+    const code = `
+      urls(({ path }) => [
+        path.md("/docs", () => "# docs", { name: "docs.md" }),
+      ]);
+    `;
+    const routes = extractRoutesFromSource(code);
+    expect(routes).toEqual([
+      { name: "docs.md", pattern: "/docs" },
+    ]);
+  });
 });
 
 // ============================================================================
