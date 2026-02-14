@@ -31,4 +31,18 @@ const router = cr({});
     const result = plugin.transform(code, "/project/src/router.tsx");
     expect(result).toBeNull();
   });
+
+  it("injects router id when createRouter call is exported via specifier alias", () => {
+    const plugin = createPlugin();
+    plugin.configResolved({ root: "/project" });
+
+    const code = `import { createRouter as cr } from "@rangojs/router";
+const routerDef = cr({});
+export { routerDef as router };
+`;
+    const result = plugin.transform(code, "/project/src/router.tsx");
+    expect(result).toBeDefined();
+    expect(result.code).toContain("$$id");
+    expect(result.code).toContain("$$routeNames");
+  });
 });

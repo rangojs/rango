@@ -87,8 +87,8 @@ export const NamedRoutes = {
   responseWrapWithHeaders: "/response-wrap/with-headers",
   responseWrapXml: "/response-wrap/xml",
   reverseFallbackTest: "/reverse-fallback-test",
-  "search.detail": "/search/:category",
-  "search.index": "/search",
+  "search.detail": { path: "/search/:category", search: { q: "string?", active: "boolean?" } },
+  "search.index": { path: "/search", search: { q: "string", page: "number?", sort: "string?" } },
   shopPlayground: "/shop-playground",
   slow: "/slow",
   "slowProduct.detail": "/slow-product/:productId",
@@ -99,6 +99,9 @@ export const NamedRoutes = {
   "trailingSlash.always": "/ts-always",
   "trailingSlash.ignore": "/ts-ignore",
   "trailingSlash.never": "/ts-never",
+  "transformCases.index": "/transform-cases",
+  "transformCases.prerendered": "/transform-cases/prerendered",
+  "transformCases.state": "/transform-cases/state",
 } as const;
 
 declare global {

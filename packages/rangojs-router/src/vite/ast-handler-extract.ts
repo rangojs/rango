@@ -130,6 +130,40 @@ export function findHandlerCalls(
 
   const sites: HandlerCallSite[] = [];
   const localNames = getImportedLocalNamesFromProgram(program, fnName);
+  const exportedNamesByLocal = new Map<string, string[]>();
+
+  const addExport = (localName: string, exportedName: string) => {
+    const names = exportedNamesByLocal.get(localName);
+    if (names) {
+      if (!names.includes(exportedName)) names.push(exportedName);
+      return;
+    }
+    exportedNamesByLocal.set(localName, [exportedName]);
+  };
+
+  for (const node of program.body as any[]) {
+    if (node?.type !== "ExportNamedDeclaration") continue;
+
+    if (node.declaration?.type === "VariableDeclaration") {
+      for (const decl of node.declaration.declarations ?? []) {
+        if (decl?.id?.type === "Identifier") {
+          addExport(decl.id.name, decl.id.name);
+        }
+      }
+    }
+
+    if (!node.source && Array.isArray(node.specifiers)) {
+      for (const spec of node.specifiers) {
+        if (
+          spec?.type === "ExportSpecifier" &&
+          spec.local?.type === "Identifier" &&
+          spec.exported?.type === "Identifier"
+        ) {
+          addExport(spec.local.name, spec.exported.name);
+        }
+      }
+    }
+  }
 
   walkNode(program, null, [], (node: any, parent: any, ancestors: any[]) => {
     if (
@@ -169,6 +203,17 @@ export function findHandlerCalls(
           exportInfo = {
             exportName,
             statementEnd: greatGrandParent.end,
+          };
+        }
+      } else if (
+        grandParent?.type === "VariableDeclaration" &&
+        parent.id?.type === "Identifier"
+      ) {
+        const exportedNames = exportedNamesByLocal.get(parent.id.name);
+        if (exportedNames && exportedNames.length > 0) {
+          exportInfo = {
+            exportName: exportedNames[0],
+            statementEnd: grandParent.end,
           };
         }
       }

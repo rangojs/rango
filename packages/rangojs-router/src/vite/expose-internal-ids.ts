@@ -40,6 +40,15 @@ interface HandlerTransformConfig {
   brand: string;
 }
 
+interface CreateExportBinding {
+  localName: string;
+  exportNames: string[];
+  callOpenParenPos: number;
+  callCloseParenPos: number;
+  argCount: number;
+  statementEnd: number;
+}
+
 interface StrictCreateTransformConfig {
   fnName: "createLoader" | "createHandle" | "createLocationState";
 }
@@ -80,10 +89,6 @@ function countCreateCallsForNames(code: string, fnNames: string[]): number {
   return (code.match(pattern) || []).length;
 }
 
-function countExportConstCallsForNames(code: string, fnNames: string[]): number {
-  return (code.match(buildExportPattern(fnNames)) || []).length;
-}
-
 function getImportedFnNames(
   code: string,
   importedName: string,
@@ -115,12 +120,208 @@ function getImportedFnNames(
   return names.length > 0 ? names : [importedName];
 }
 
+function getCalledIdentifierFromCall(callExpr: any): string | null {
+  const callee = callExpr?.callee;
+  if (callee?.type === "Identifier") return callee.name;
+  if (
+    callee?.type === "TSInstantiationExpression" &&
+    callee.expression?.type === "Identifier"
+  ) {
+    return callee.expression.name;
+  }
+  return null;
+}
+
+function collectCreateExportBindingsFallback(
+  code: string,
+  fnNames: string[],
+): CreateExportBinding[] {
+  const alternation = fnNames.map(escapeRegExp).join("|");
+  const exportConstPattern = new RegExp(
+    `export\\s+const\\s+(\\w+)\\s*=\\s*(?:${alternation})\\s*(?:<[^>]*>)?\\s*\\(`,
+    "g",
+  );
+  const localDeclPattern = new RegExp(
+    `\\bconst\\s+(\\w+)\\s*=\\s*(?:${alternation})\\s*(?:<[^>]*>)?\\s*\\(`,
+    "g",
+  );
+  const exportSpecPattern = /export\s*\{([^}]+)\}/g;
+
+  const exportMap = new Map<string, string[]>();
+  const pushExport = (local: string, exported: string) => {
+    const list = exportMap.get(local);
+    if (list) {
+      if (!list.includes(exported)) list.push(exported);
+      return;
+    }
+    exportMap.set(local, [exported]);
+  };
+
+  let match: RegExpExecArray | null;
+  while ((match = exportConstPattern.exec(code)) !== null) {
+    pushExport(match[1], match[1]);
+  }
+
+  while ((match = exportSpecPattern.exec(code)) !== null) {
+    const specifiers = match[1]
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const specifier of specifiers) {
+      const specMatch = specifier.match(
+        /^([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/,
+      );
+      if (!specMatch) continue;
+      const local = specMatch[1];
+      const exported = specMatch[2] || local;
+      pushExport(local, exported);
+    }
+  }
+
+  const bindings: CreateExportBinding[] = [];
+  while ((match = localDeclPattern.exec(code)) !== null) {
+    const localName = match[1];
+    const exportNames = exportMap.get(localName) ?? [];
+    if (exportNames.length === 0) continue;
+
+    const openParenPos = match.index + match[0].length - 1;
+    const closeParenPos = findMatchingParen(code, openParenPos + 1) - 1;
+    if (closeParenPos <= openParenPos) continue;
+
+    bindings.push({
+      localName,
+      exportNames,
+      callOpenParenPos: openParenPos,
+      callCloseParenPos: closeParenPos,
+      argCount: countArgs(code, openParenPos + 1, closeParenPos),
+      statementEnd: findStatementEnd(code, closeParenPos + 1),
+    });
+  }
+
+  return bindings;
+}
+
+function collectCreateExportBindings(
+  code: string,
+  fnNames: string[],
+): CreateExportBinding[] {
+  let program: any;
+  try {
+    program = parseAst(code, { jsx: true });
+  } catch {
+    return collectCreateExportBindingsFallback(code, fnNames);
+  }
+
+  const exportMap = new Map<string, string[]>();
+
+  const pushExport = (local: string, exported: string) => {
+    const list = exportMap.get(local);
+    if (list) {
+      if (!list.includes(exported)) list.push(exported);
+      return;
+    }
+    exportMap.set(local, [exported]);
+  };
+
+  for (const node of program.body ?? []) {
+    if (node?.type !== "ExportNamedDeclaration") continue;
+
+    if (node.declaration?.type === "VariableDeclaration") {
+      for (const decl of node.declaration.declarations ?? []) {
+        if (decl?.id?.type === "Identifier") {
+          pushExport(decl.id.name, decl.id.name);
+        }
+      }
+    }
+
+    if (!node.source && Array.isArray(node.specifiers)) {
+      for (const spec of node.specifiers) {
+        if (
+          spec?.type === "ExportSpecifier" &&
+          spec.local?.type === "Identifier" &&
+          spec.exported?.type === "Identifier"
+        ) {
+          pushExport(spec.local.name, spec.exported.name);
+        }
+      }
+    }
+  }
+
+  const fnNameSet = new Set(fnNames);
+  const bindings: CreateExportBinding[] = [];
+
+  const collectFromVarDecl = (varDecl: any, statementEnd: number) => {
+    if (varDecl?.type !== "VariableDeclaration" || varDecl.kind !== "const") {
+      return;
+    }
+
+    for (const decl of varDecl.declarations ?? []) {
+      const calledIdentifier = getCalledIdentifierFromCall(decl?.init);
+      if (
+        decl?.id?.type !== "Identifier" ||
+        decl?.init?.type !== "CallExpression" ||
+        !calledIdentifier ||
+        !fnNameSet.has(calledIdentifier)
+      ) {
+        continue;
+      }
+
+      const localName = decl.id.name;
+      const exportNames = exportMap.get(localName) ?? [];
+      if (exportNames.length === 0) continue;
+
+      const callStart = decl.init.start as number;
+      const callEnd = decl.init.end as number;
+      const calleeEnd = decl.init.callee.end as number;
+
+      let openParenPos = -1;
+      for (let i = calleeEnd; i < callEnd; i++) {
+        if (code[i] === "(") {
+          openParenPos = i;
+          break;
+        }
+      }
+      if (openParenPos === -1) continue;
+
+      const closeParenPos = findMatchingParen(code, openParenPos + 1) - 1;
+      if (closeParenPos <= openParenPos) continue;
+
+      bindings.push({
+        localName,
+        exportNames,
+        callOpenParenPos: openParenPos,
+        callCloseParenPos: closeParenPos,
+        argCount: decl.init.arguments?.length ?? 0,
+        statementEnd,
+      });
+    }
+  };
+
+  for (const node of program.body ?? []) {
+    if (node?.type === "VariableDeclaration") {
+      collectFromVarDecl(node, node.end as number);
+      continue;
+    }
+
+    if (
+      node?.type === "ExportNamedDeclaration" &&
+      node.declaration?.type === "VariableDeclaration"
+    ) {
+      collectFromVarDecl(node.declaration, node.end as number);
+    }
+  }
+
+  return bindings;
+}
+
 function buildUnsupportedShapeWarning(filePath: string, fnName: string): string {
   return [
     `[rsc-router] Unsupported ${fnName} shape in "${filePath}".`,
-    `Only "export const X = ${fnName}(...)" is transformed for stable IDs.`,
-    `Potentially unsupported forms include:`,
+    `Supported shapes are:`,
+    `  - export const X = ${fnName}(...)`,
     `  - const X = ${fnName}(...); export { X }`,
+    `  - const X = ${fnName}(...); export { X as Y }`,
+    `Potentially unsupported forms include:`,
     `  - export let/var X = ${fnName}(...)`,
     `  - inline ${fnName}(...) calls`,
     `See: packages/rangojs-router/src/vite/TRANSFORM-SUPPORT.md`,
@@ -206,20 +407,10 @@ function transformLoaders(
   filePath: string,
   isBuild: boolean,
 ): boolean {
-  const pattern = buildExportPattern(fnNames);
+  const bindings = collectCreateExportBindings(code, fnNames);
   let hasChanges = false;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(code)) !== null) {
-    const exportName = match[1];
-    const matchEnd = match.index + match[0].length;
-
-    // Find the end of the createLoader(...) call (simple depth counter)
-    const afterClose = findClosingParen(code, matchEnd);
-    const closeParenPos = afterClose - 1;
-
-    const argCount = countArgsSimple(code, matchEnd, closeParenPos);
-    const statementEnd = findStatementEnd(code, afterClose);
+  for (const binding of bindings) {
+    const exportName = binding.exportNames[0];
 
     const loaderId = isBuild
       ? hashId(filePath, exportName)
@@ -229,13 +420,13 @@ function transformLoaders(
     // createLoader(fn) -> createLoader(fn, undefined, "id")
     // createLoader(fn, true) -> createLoader(fn, true, "id")
     const paramInjection =
-      argCount === 1
+      binding.argCount === 1
         ? `, undefined, "${loaderId}"`
         : `, "${loaderId}"`;
-    s.appendLeft(closeParenPos, paramInjection);
+    s.appendLeft(binding.callCloseParenPos, paramInjection);
 
-    const propInjection = `\n${exportName}.$$id = "${loaderId}";`;
-    s.appendRight(statementEnd, propInjection);
+    const propInjection = `\n${binding.localName}.$$id = "${loaderId}";`;
+    s.appendRight(binding.statementEnd, propInjection);
     hasChanges = true;
   }
 
@@ -262,20 +453,15 @@ function transformHandles(
   filePath: string,
   isBuild: boolean,
 ): boolean {
-  const pattern = buildExportPattern(fnNames);
+  const bindings = collectCreateExportBindings(code, fnNames);
   let hasChanges = false;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(code)) !== null) {
-    const exportName = match[1];
-    const matchEnd = match.index + match[0].length;
-
-    // Simple depth-counter paren matching (original behavior)
-    const afterClose = findClosingParen(code, matchEnd);
-    const closeParenPos = afterClose - 1;
-
-    const args = analyzeCreateHandleArgs(code, matchEnd, closeParenPos);
-    const statementEnd = findStatementEnd(code, afterClose);
+  for (const binding of bindings) {
+    const exportName = binding.exportNames[0];
+    const args = analyzeCreateHandleArgs(
+      code,
+      binding.callOpenParenPos + 1,
+      binding.callCloseParenPos,
+    );
 
     const handleId = isBuild
       ? hashId(filePath, exportName)
@@ -287,10 +473,10 @@ function transformHandles(
     } else {
       paramInjection = `, "${handleId}"`;
     }
-    s.appendLeft(closeParenPos, paramInjection);
+    s.appendLeft(binding.callCloseParenPos, paramInjection);
 
-    const propInjection = `\n${exportName}.$$id = "${handleId}";`;
-    s.appendRight(statementEnd, propInjection);
+    const propInjection = `\n${binding.localName}.$$id = "${handleId}";`;
+    s.appendRight(binding.statementEnd, propInjection);
     hasChanges = true;
   }
 
@@ -308,33 +494,21 @@ function transformLocationState(
   filePath: string,
   isBuild: boolean,
 ): boolean {
-  const pattern = buildExportPattern(fnNames);
+  const bindings = collectCreateExportBindings(code, fnNames);
   let hasChanges = false;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(code)) !== null) {
-    const exportName = match[1];
-    const matchEnd = match.index + match[0].length;
-
-    // Simple depth-counter paren matching
-    const afterClose = findClosingParen(code, matchEnd);
-    const closeParenPos = afterClose - 1;
-
-    const content = code.slice(matchEnd, closeParenPos).trim();
-    const hasArgs = content.length > 0;
-
-    if (hasArgs) continue; // Already has a key, skip
-
-    const statementEnd = findStatementEnd(code, afterClose);
+  for (const binding of bindings) {
+    if (binding.argCount > 0) continue; // Already has a key, skip
+    const exportName = binding.exportNames[0];
 
     const stateKey = isBuild
       ? hashId(filePath, exportName)
       : `${filePath}#${exportName}`;
 
-    s.appendLeft(closeParenPos, `"${stateKey}"`);
+    s.appendLeft(binding.callCloseParenPos, `"${stateKey}"`);
 
-    const propInjection = `\n${exportName}.__rsc_ls_key = "__rsc_ls_${stateKey}";`;
-    s.appendRight(statementEnd, propInjection);
+    const propInjection =
+      `\n${binding.localName}.__rsc_ls_key = "__rsc_ls_${stateKey}";`;
+    s.appendRight(binding.statementEnd, propInjection);
     hasChanges = true;
   }
 
@@ -450,19 +624,10 @@ function transformHandlerIds(
   filePath: string,
   isBuild: boolean,
 ): boolean {
-  const pattern = buildExportPattern(fnNames);
+  const bindings = collectCreateExportBindings(code, fnNames);
   let hasChanges = false;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(code)) !== null) {
-    const exportName = match[1];
-    const matchEnd = match.index + match[0].length;
-
-    // String/comment-aware paren matching
-    const afterClose = findMatchingParen(code, matchEnd);
-    const closeParenPos = afterClose - 1;
-    const argCount = countArgs(code, matchEnd, closeParenPos);
-    const statementEnd = findStatementEnd(code, afterClose);
+  for (const binding of bindings) {
+    const exportName = binding.exportNames[0];
 
     const handlerId = isBuild
       ? hashId(filePath, exportName)
@@ -473,17 +638,17 @@ function transformHandlerIds(
     //   1 arg  (handler)                    -> inject , undefined, "id"
     //   2+ args                             -> inject , "id"
     let paramInjection: string;
-    if (argCount === 0) {
+    if (binding.argCount === 0) {
       paramInjection = `undefined, "${handlerId}"`;
-    } else if (argCount === 1) {
+    } else if (binding.argCount === 1) {
       paramInjection = `, undefined, "${handlerId}"`;
     } else {
       paramInjection = `, "${handlerId}"`;
     }
-    s.appendLeft(closeParenPos, paramInjection);
+    s.appendLeft(binding.callCloseParenPos, paramInjection);
 
-    const propInjection = `\n${exportName}.$$id = "${handlerId}";`;
-    s.appendRight(statementEnd, propInjection);
+    const propInjection = `\n${binding.localName}.$$id = "${handlerId}";`;
+    s.appendRight(binding.statementEnd, propInjection);
     hasChanges = true;
   }
 
@@ -733,14 +898,13 @@ ${lazyImports.join(",\n")}
           if (!hasCreateLoaderImport(content)) continue;
 
           const fnNames = getImportedFnNames(content, "createLoader");
-          const pattern = buildExportPattern(fnNames);
           const relativePath = normalizePath(
             path.relative(projectRoot, filePath),
           );
-          let match: RegExpExecArray | null;
+          const bindings = collectCreateExportBindings(content, fnNames);
 
-          while ((match = pattern.exec(content)) !== null) {
-            const exportName = match[1];
+          for (const binding of bindings) {
+            const exportName = binding.exportNames[0];
             const hashedId = hashId(relativePath, exportName);
             loaderRegistry.set(hashedId, {
               filePath: relativePath,
@@ -827,8 +991,8 @@ ${lazyImports.join(",\n")}
 
         const fnNames = getImportedFnNames(code, cfg.fnName);
         const totalCalls = countCreateCallsForNames(code, fnNames);
-        const exportConstCalls = countExportConstCallsForNames(code, fnNames);
-        if (totalCalls <= exportConstCalls) continue;
+        const supportedBindings = collectCreateExportBindings(code, fnNames).length;
+        if (totalCalls <= supportedBindings) continue;
 
         const warnKey = `${id}::${cfg.fnName}`;
         if (unsupportedShapeWarnings.has(warnKey)) continue;
@@ -839,10 +1003,9 @@ ${lazyImports.join(",\n")}
       // --- Loader: track for manifest (RSC env only) ---
       if (hasLoaderCode && isRscEnv) {
         const fnNames = getImportedFnNames(code, "createLoader");
-        const pattern = buildExportPattern(fnNames);
-        let match: RegExpExecArray | null;
-        while ((match = pattern.exec(code)) !== null) {
-          const exportName = match[1];
+        const bindings = collectCreateExportBindings(code, fnNames);
+        for (const binding of bindings) {
+          const exportName = binding.exportNames[0];
           const hashedId = hashId(filePath, exportName);
           loaderRegistry.set(hashedId, {
             filePath,
@@ -875,12 +1038,8 @@ ${lazyImports.join(",\n")}
       // --- PrerenderHandler: RSC build module tracking ---
       if (hasPrerenderHandlerCode && isRscEnv && isBuild) {
         const fnNames = getImportedFnNames(code, PRERENDER_CONFIG.fnName);
-        const handlerPattern = buildExportPattern(fnNames);
-        const exportNames: string[] = [];
-        let m: RegExpExecArray | null;
-        while ((m = handlerPattern.exec(code)) !== null) {
-          exportNames.push(m[1]);
-        }
+        const exportNames = collectCreateExportBindings(code, fnNames)
+          .map((b) => b.exportNames[0]);
         if (exportNames.length > 0) {
           prerenderHandlerModules.set(id, exportNames);
         }
@@ -909,9 +1068,9 @@ ${lazyImports.join(",\n")}
 
       for (const { cfg, fnNames } of handlerConfigs) {
         const totalCalls = countCreateCallsForNames(code, fnNames);
-        const exportCalls = countExportConstCallsForNames(code, fnNames);
+        const supportedBindings = collectCreateExportBindings(code, fnNames).length;
 
-        if (totalCalls > exportCalls) {
+        if (totalCalls > supportedBindings) {
           const iterS = new MagicString(code);
           const result = transformInlineHandlers(
             cfg.fnName, VIRTUAL_HANDLER_PREFIX,
@@ -942,12 +1101,8 @@ ${lazyImports.join(",\n")}
       // --- StaticHandler: RSC build module tracking ---
       if (hasStaticHandlerCode && isRscEnv && isBuild) {
         const fnNames = getImportedFnNames(code, STATIC_CONFIG.fnName);
-        const handlerPattern = buildExportPattern(fnNames);
-        const exportNames: string[] = [];
-        let m: RegExpExecArray | null;
-        while ((m = handlerPattern.exec(code)) !== null) {
-          exportNames.push(m[1]);
-        }
+        const exportNames = collectCreateExportBindings(code, fnNames)
+          .map((b) => b.exportNames[0]);
         if (exportNames.length > 0) {
           staticHandlerModules.set(id, exportNames);
         }

@@ -542,13 +542,12 @@ describe("exposeInternalIds - inline prerender handler integration", () => {
 });
 
 describe("exposeInternalIds - unsupported shape diagnostics", () => {
-  it("warns for createLoader when declaration is not export const", () => {
+  it("warns for createLoader when declaration uses let", () => {
     const plugin = createPlugin();
     initDev(plugin);
 
     const code = `import { createLoader } from "@rangojs/router";
-const LocalLoader = createLoader(async () => ({ ok: true }));
-export { LocalLoader };
+export let LocalLoader = createLoader(async () => ({ ok: true }));
 `;
     const ctx = rscCtx();
     plugin.transform.call(ctx, code, FILE_ID);
@@ -556,7 +555,7 @@ export { LocalLoader };
     expect(ctx.warn).toHaveBeenCalledTimes(1);
     const [msg] = ctx.warn.mock.calls[0];
     expect(msg).toContain("Unsupported createLoader shape");
-    expect(msg).toContain("export const X = createLoader(...)");
+    expect(msg).toContain("Supported shapes are:");
   });
 
   it("does not warn for supported createLoader export const shape", () => {
@@ -577,8 +576,7 @@ export const MyLoader = createLoader(async () => ({ ok: true }));
     initDev(plugin);
 
     const code = `import { createHandle } from "@rangojs/router";
-const Breadcrumbs = createHandle(() => []);
-export { Breadcrumbs };
+layout(createHandle(() => []));
 `;
     const ctx = rscCtx();
     plugin.transform.call(ctx, code, FILE_ID);
@@ -625,5 +623,72 @@ export const ProductState = cls<string>();
     const result = plugin.transform.call(rscCtx(), code, FILE_ID);
     expect(result).toBeDefined();
     expect(result.code).toContain("ProductState.__rsc_ls_key");
+  });
+
+  it("supports createLoader declared as const and exported via specifier alias", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+const LocalLoader = createLoader(async () => ({ ok: true }));
+export { LocalLoader as PublicLoader };
+`;
+    const ctx = rscCtx();
+    const result = plugin.transform.call(ctx, code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain('LocalLoader.$$id =');
+    expect(ctx.warn).not.toHaveBeenCalled();
+  });
+
+  it("supports createHandle declared as const and exported via specifier", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createHandle } from "@rangojs/router";
+const LocalHandle = createHandle(() => []);
+export { LocalHandle };
+`;
+    const result = plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain("LocalHandle.$$id");
+  });
+
+  it("supports createLocationState declared as const and exported via specifier alias", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLocationState } from "@rangojs/router/client";
+const ProductStateDef = createLocationState<string>();
+export { ProductStateDef as ProductState };
+`;
+    const result = plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain("ProductStateDef.__rsc_ls_key");
+  });
+});
+
+describe("exposeInternalIds - handler export specifiers", () => {
+  it("tracks static handler exported via specifier alias in build mode", () => {
+    const plugin = createPlugin({ forceBuild: true });
+    initDev(plugin);
+
+    const code = `import { createStaticHandler } from "@rangojs/router";
+const DocsNav = createStaticHandler(() => <nav />);
+export { DocsNav as DocsNavPublic };
+`;
+    plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(plugin.api.staticHandlerModules.get(FILE_ID)).toEqual(["DocsNavPublic"]);
+  });
+
+  it("tracks prerender handler exported via specifier alias in build mode", () => {
+    const plugin = createPlugin({ forceBuild: true });
+    initDev(plugin);
+
+    const code = `import { createPrerenderHandler } from "@rangojs/router";
+const DocsPage = createPrerenderHandler(() => <div />);
+export { DocsPage as DocsPagePublic };
+`;
+    plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(plugin.api.prerenderHandlerModules.get(FILE_ID)).toEqual(["DocsPagePublic"]);
   });
 });

@@ -38,6 +38,7 @@ import { releasesPatterns } from "./pages/releases.js";
 import { staticContentPatterns } from "./pages/static-content-urls.js";
 import { ApiDemoPage } from "./pages/api-demo.js";
 import { SearchPage } from "./pages/search.js";
+import { transformCasesPatterns } from "./pages/transform-cases.js";
 
 /**
  * Main URL patterns - Django-style routing API
@@ -232,6 +233,11 @@ export const urlpatterns = urls(
 
         // Static content (createStaticHandler: layout + index rendered once at build time)
         include("/static-content", staticContentPatterns, { name: "staticContent" }),
+
+        // Transform coverage routes (alias imports + export specifiers)
+        include("/transform-cases", transformCasesPatterns, {
+          name: "transformCases",
+        }),
       ]),
     ]),
   ],

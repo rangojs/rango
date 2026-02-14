@@ -26,6 +26,15 @@ Currently supported and transformed:
 export const X = createLoader(...);
 export const Y = createHandle(...);
 export const Z = createLocationState(...);
+
+const A = createLoader(...);
+export { A };
+
+const B = createHandle(...);
+export { B as PublicHandle };
+
+const C = createLocationState(...);
+export { C as PublicState };
 ```
 
 Aliased forms are also supported:
@@ -57,7 +66,6 @@ path("/about", createPrerenderHandler(() => <div />));
 
 For `createLoader`, `createHandle`, `createLocationState`, these are not guaranteed:
 
-- `const X = createLoader(...); export { X }`
 - `export let X = createLoader(...)`
 - `export var X = createLoader(...)`
 - inline `createLoader(...)` call sites
