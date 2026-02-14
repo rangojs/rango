@@ -288,7 +288,9 @@ export async function resolveParallelEntry<TEnv>(
 
   for (const [slot, handler] of Object.entries(slots)) {
     let component: ReactNode;
-    if (parallelEntry.loading) {
+    const hasLoadingFallback =
+      parallelEntry.loading !== undefined && parallelEntry.loading !== false;
+    if (hasLoadingFallback) {
       const result =
         typeof handler === "function" ? handler(context) : handler;
       component = result as ReactNode;
@@ -743,9 +745,11 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       })();
 
       let component: ReactNode;
+      const hasLoadingFallback =
+        parallelEntry.loading !== undefined && parallelEntry.loading !== false;
       if (!shouldResolve) {
         component = null;
-      } else if (parallelEntry.loading) {
+      } else if (hasLoadingFallback) {
         component =
           (typeof handler === "function"
             ? handler(context)
@@ -1078,9 +1082,11 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       })();
 
       let component: ReactNode;
+      const hasLoadingFallback =
+        parallelEntry.loading !== undefined && parallelEntry.loading !== false;
       if (!shouldResolve) {
         component = null;
-      } else if (parallelEntry.loading) {
+      } else if (hasLoadingFallback) {
         component =
           (typeof handler === "function"
             ? handler(context)

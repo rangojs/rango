@@ -156,4 +156,57 @@ describe("segment-resolution parallel loading", () => {
     deferred.resolve("done");
     await deferred.promise;
   });
+
+  it("awaits parallel handler when loading is explicitly false", async () => {
+    const deferred = createDeferred<string>();
+    const slotHandler = vi.fn(() => deferred.promise);
+    const context = createContext();
+    const entry = {
+      id: "blog.layout",
+      type: "layout",
+      shortCode: "L0",
+      handler: "layout",
+      loader: [],
+      layout: [],
+      parallel: [
+        {
+          ...createParallelEntry(slotHandler),
+          loading: false,
+        },
+      ],
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+    } as any;
+
+    const resultPromise = resolveParallelSegmentsWithRevalidation(
+      entry,
+      {},
+      context,
+      false,
+      new Set(),
+      {},
+      context.request,
+      context.url,
+      context.url,
+      "/blog",
+      {} as any,
+    );
+
+    const quickResult = await Promise.race([
+      resultPromise.then(() => "resolved"),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 30)),
+    ]);
+    expect(quickResult).toBe("timeout");
+
+    deferred.resolve("done");
+    await deferred.promise;
+
+    const result = await resultPromise;
+    expect(slotHandler).toHaveBeenCalledTimes(1);
+    expect(result.segments).toHaveLength(1);
+    expect(result.segments[0]?.type).toBe("parallel");
+  });
 });
