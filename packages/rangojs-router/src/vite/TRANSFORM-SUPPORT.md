@@ -52,6 +52,7 @@ Supported:
 
 - `export const X = createStaticHandler(...)`
 - `export const X = createPrerenderHandler(...)`
+- `const X = createStaticHandler(...); export { X }` / `export { X as Y }`
 - aliased imports are supported (e.g. `import { createStaticHandler as sh } ...`)
 - inline calls (extracted to virtual modules via AST)
 
@@ -85,8 +86,7 @@ instead of failing at runtime with missing IDs.
 
 ## Future Direction
 
-Planned direction is a unified AST export/call graph so strict APIs can support:
+Potential additions:
 
-- local declaration + named export (`const X ...; export { X }`)
-- alias exports (`export { X as Y }`)
+- `export let/var X = createLoader(...)` (currently unsupported, warns)
 - other declaration variants where safe

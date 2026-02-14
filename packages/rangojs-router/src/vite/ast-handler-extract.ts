@@ -1,5 +1,5 @@
 import type MagicString from "magic-string";
-import { hashInlineId } from "./expose-id-utils.ts";
+import { hashInlineId, buildExportMap } from "./expose-id-utils.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -130,40 +130,7 @@ export function findHandlerCalls(
 
   const sites: HandlerCallSite[] = [];
   const localNames = getImportedLocalNamesFromProgram(program, fnName);
-  const exportedNamesByLocal = new Map<string, string[]>();
-
-  const addExport = (localName: string, exportedName: string) => {
-    const names = exportedNamesByLocal.get(localName);
-    if (names) {
-      if (!names.includes(exportedName)) names.push(exportedName);
-      return;
-    }
-    exportedNamesByLocal.set(localName, [exportedName]);
-  };
-
-  for (const node of program.body as any[]) {
-    if (node?.type !== "ExportNamedDeclaration") continue;
-
-    if (node.declaration?.type === "VariableDeclaration") {
-      for (const decl of node.declaration.declarations ?? []) {
-        if (decl?.id?.type === "Identifier") {
-          addExport(decl.id.name, decl.id.name);
-        }
-      }
-    }
-
-    if (!node.source && Array.isArray(node.specifiers)) {
-      for (const spec of node.specifiers) {
-        if (
-          spec?.type === "ExportSpecifier" &&
-          spec.local?.type === "Identifier" &&
-          spec.exported?.type === "Identifier"
-        ) {
-          addExport(spec.local.name, spec.exported.name);
-        }
-      }
-    }
-  }
+  const exportedNamesByLocal = buildExportMap(program);
 
   walkNode(program, null, [], (node: any, parent: any, ancestors: any[]) => {
     if (

@@ -692,3 +692,140 @@ export { DocsPage as DocsPagePublic };
     expect(plugin.api.prerenderHandlerModules.get(FILE_ID)).toEqual(["DocsPagePublic"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Client loader stubs for const + export { X } pattern
+// ---------------------------------------------------------------------------
+
+describe("exposeInternalIds - client loader stubs for const + export patterns", () => {
+  it("generates client stub for const + export { X }", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+const MyLoader = createLoader(async () => ({ ok: true }));
+export { MyLoader };
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain('__brand: "loader"');
+    expect(result.code).toContain("$$id");
+    expect(result.code).toContain("export const MyLoader");
+    // Entire file replaced - no server code
+    expect(result.code).not.toContain("async");
+  });
+
+  it("generates client stub for const + export { X as Y }", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+const InternalLoader = createLoader(async () => ({ ok: true }));
+export { InternalLoader as PublicLoader };
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain('__brand: "loader"');
+    expect(result.code).toContain("export const PublicLoader");
+    // Uses the exported name, not the local name
+    expect(result.code).not.toContain("InternalLoader");
+    expect(result.code).not.toContain("async");
+  });
+
+  it("does not generate loader-only stub when file has mixed exports (const + export pattern)", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+const MyLoader = createLoader(async () => ({ ok: true }));
+export { MyLoader };
+export const helperFn = () => "not a loader";
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    // Should NOT replace entire file since helperFn is not a loader
+    if (result) {
+      expect(result.code).toContain("helperFn");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Whole-file handler stubs for const + export { X } pattern
+// ---------------------------------------------------------------------------
+
+describe("exposeInternalIds - whole-file handler stubs for const + export patterns", () => {
+  it("generates whole-file stub for static handler with const + export { X }", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createStaticHandler } from "@rangojs/router";
+const Nav = createStaticHandler(() => <nav />);
+export { Nav };
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain('__brand: "staticHandler"');
+    expect(result.code).toContain("$$id");
+    expect(result.code).toContain("export const Nav");
+    expect(result.code).not.toContain("createStaticHandler");
+  });
+
+  it("generates whole-file stub for prerender handler with const + export { X as Y }", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createPrerenderHandler } from "@rangojs/router";
+const InternalPage = createPrerenderHandler(() => <div />);
+export { InternalPage as PublicPage };
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain('__brand: "prerenderHandler"');
+    expect(result.code).toContain("export const PublicPage");
+    expect(result.code).not.toContain("InternalPage");
+    expect(result.code).not.toContain("createPrerenderHandler");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Expression stubs for const + export { X } pattern
+// ---------------------------------------------------------------------------
+
+describe("exposeInternalIds - expr stubs for const + export patterns", () => {
+  it("overwrites call expression for static handler with const + export { X }", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    // Mixed file: has a non-handler export, so whole-file stub won't apply
+    const code = `import { createStaticHandler } from "@rangojs/router";
+const Nav = createStaticHandler(() => <nav />);
+export { Nav };
+export const PAGE_TITLE = "docs";
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain('__brand: "staticHandler"');
+    expect(result.code).toContain("$$id");
+    // The non-handler export is preserved
+    expect(result.code).toContain("PAGE_TITLE");
+    // The call expression is replaced with a stub object
+    expect(result.code).not.toContain("createStaticHandler(");
+  });
+
+  it("overwrites call expression for handler with const + export { X as Y }", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createStaticHandler } from "@rangojs/router";
+const Nav = createStaticHandler(() => <nav />);
+export { Nav as PublicNav };
+export const PAGE_TITLE = "docs";
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain('__brand: "staticHandler"');
+    expect(result.code).toContain("$$id");
+    expect(result.code).toContain("PAGE_TITLE");
+    expect(result.code).not.toContain("createStaticHandler(");
+  });
+});
