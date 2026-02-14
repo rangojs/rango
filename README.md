@@ -65,7 +65,7 @@ export default map<typeof shopRoutes>(({ route, layout }) => [
 
 ## Documentation
 
-See [docs/README.md](./docs/README.md) for API reference and [NEXT.md](./NEXT.md) for roadmap.
+See [docs/README.md](./docs/README.md) for API reference.
 
 ## Scripts
 

@@ -341,7 +341,6 @@ function buildUnsupportedShapeWarning(filePath: string, fnName: string): string 
     `Potentially unsupported forms include:`,
     `  - export let/var X = ${fnName}(...)`,
     `  - inline ${fnName}(...) calls`,
-    `See: packages/rangojs-router/src/vite/TRANSFORM-SUPPORT.md`,
   ].join("\n");
 }
 
