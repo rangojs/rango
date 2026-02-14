@@ -774,7 +774,9 @@ ${lazyImports.join(",\n")}
       // Cheap pre-check: count total fnName( occurrences vs export const
       // patterns. If they match, every call is a named export and the
       // regex fast path handles them -- skip the AST parse entirely.
-      const s = new MagicString(code);
+      //
+      // Each iteration creates a fresh MagicString so that AST positions
+      // from findHandlerCalls always match the string they were parsed from.
       let changed = false;
 
       for (const cfg of [
@@ -788,14 +790,15 @@ ${lazyImports.join(",\n")}
         const exportCalls = (code.match(exportPattern) || []).length;
 
         if (totalCalls > exportCalls) {
+          const iterS = new MagicString(code);
           const result = transformInlineHandlers(
             cfg.fnName, VIRTUAL_HANDLER_PREFIX,
-            s, code, filePath, isBuild, path.basename(id),
+            iterS, code, filePath,
             virtualHandlers, id, parseAst,
           );
           if (result) {
             changed = true;
-            code = s.toString();
+            code = iterS.toString();
           }
         }
       }
@@ -827,44 +830,10 @@ ${lazyImports.join(",\n")}
       }
 
       // --- Unified MagicString transforms ---
-      // If inline extraction changed the code, create a fresh MagicString
-      // from the updated source for downstream transforms.
-      if (changed) {
-        const s2 = new MagicString(code);
-        let changed2 = false;
-
-        if (hasLoaderCode) {
-          changed2 = transformLoaders(s2, code, filePath, isBuild) || changed2;
-        }
-        if (hasHandleCode) {
-          changed2 = transformHandles(s2, code, filePath, isBuild) || changed2;
-        }
-        if (hasLocationStateCode) {
-          changed2 =
-            transformLocationState(s2, code, filePath, isBuild) || changed2;
-        }
-        if (hasPrerenderHandlerCode && isRscEnv) {
-          changed2 =
-            transformHandlerIds(PRERENDER_CONFIG, s2, code, filePath, isBuild) || changed2;
-        }
-        if (hasStaticHandlerCode && isRscEnv) {
-          changed2 =
-            transformHandlerIds(STATIC_CONFIG, s2, code, filePath, isBuild) || changed2;
-        }
-
-        if (changed2) {
-          return {
-            code: s2.toString(),
-            map: s2.generateMap({ source: id, includeContent: true }),
-          };
-        }
-
-        // Only inline extraction changed, return that result
-        return {
-          code,
-          map: s.generateMap({ source: id, includeContent: true }),
-        };
-      }
+      // Single pipeline for all downstream transforms (loaders, handles,
+      // locationState, handler IDs). Uses the post-extraction code so
+      // positions are always consistent.
+      const s = new MagicString(code);
 
       if (hasLoaderCode) {
         changed = transformLoaders(s, code, filePath, isBuild) || changed;

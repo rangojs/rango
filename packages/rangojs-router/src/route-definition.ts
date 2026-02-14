@@ -827,8 +827,14 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
 
   // Unwrap any static handler definitions in parallel slots
   const unwrappedSlots: Record<string, any> = {};
+  let hasStaticSlot = false;
   for (const [slotName, slotHandler] of Object.entries(slots as Record<string, any>)) {
-    unwrappedSlots[slotName] = isStaticHandler(slotHandler) ? slotHandler.handler : slotHandler;
+    if (isStaticHandler(slotHandler)) {
+      hasStaticSlot = true;
+      unwrappedSlots[slotName] = slotHandler.handler;
+    } else {
+      unwrappedSlots[slotName] = slotHandler;
+    }
   }
 
   // Create full EntryData for parallel with its own loaders/revalidate/loading
@@ -849,6 +855,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     intercept: [],
     loader: [],
     ...(parallelUrlPrefix ? { mountPath: parallelUrlPrefix } : {}),
+    ...(hasStaticSlot ? { isStaticPrerender: true as const } : {}),
   } satisfies EntryData;
 
   // Run use callback if provided to collect loaders, revalidate, loading

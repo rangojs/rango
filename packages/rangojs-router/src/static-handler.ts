@@ -71,12 +71,6 @@ export function createStaticHandler<TParams extends Record<string, any>>(
     id = maybeId ?? "";
   }
 
-  // Dev mode runs handlers live -- no caching, no ID needed.
-  // The Vite plugin injects IDs in all environments where it matters.
-  if (!id) {
-    id = "";
-  }
-
   return {
     __brand: "staticHandler" as const,
     $$id: id,

@@ -1,10 +1,15 @@
 import type MagicString from "magic-string";
-import type { ProgramNode } from "rollup";
 import { hashInlineId } from "./expose-id-utils.ts";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+/** Minimal ESTree Program node — avoids importing from `rollup` (not a direct dep). */
+interface ProgramNode {
+  type: "Program";
+  body: any[];
+}
 
 export interface HandlerCallSite {
   callStart: number;
@@ -25,15 +30,9 @@ export interface VirtualHandlerEntry {
   exportName: string;
 }
 
-// Backwards-compat aliases
-export type StaticHandlerCallSite = HandlerCallSite;
-export type VirtualStaticHandlerEntry = VirtualHandlerEntry;
-
 // ---------------------------------------------------------------------------
 // AST walking helper
 // ---------------------------------------------------------------------------
-
-type AstNode = ProgramNode["body"][number] & { start: number; end: number };
 
 /**
  * Recursively walk an ESTree AST node, calling `enter` on each node.
@@ -139,14 +138,6 @@ export function findHandlerCalls(
   return sites;
 }
 
-// Backwards-compat wrapper
-export function findStaticHandlerCalls(
-  code: string,
-  parseAst: (code: string, options?: any) => ProgramNode,
-): HandlerCallSite[] {
-  return findHandlerCalls(code, "createStaticHandler", parseAst);
-}
-
 /**
  * Extract all import declarations from the source as raw text slices.
  * Copies ALL imports -- Rollup tree-shakes unused ones from virtual modules.
@@ -192,8 +183,6 @@ export function transformInlineHandlers(
   s: MagicString,
   code: string,
   filePath: string,
-  _isBuild: boolean,
-  _fileName: string,
   virtualRegistry: Map<string, VirtualHandlerEntry>,
   moduleId: string,
   parseAst: (code: string, options?: any) => ProgramNode,
@@ -245,21 +234,4 @@ export function transformInlineHandlers(
   }
 
   return true;
-}
-
-// Backwards-compat wrapper
-export function transformInlineStaticHandlers(
-  s: MagicString,
-  code: string,
-  filePath: string,
-  isBuild: boolean,
-  fileName: string,
-  virtualRegistry: Map<string, VirtualHandlerEntry>,
-  moduleId: string,
-  parseAst: (code: string, options?: any) => ProgramNode,
-): boolean {
-  return transformInlineHandlers(
-    "createStaticHandler", "virtual:handler-extract:",
-    s, code, filePath, isBuild, fileName, virtualRegistry, moduleId, parseAst,
-  );
 }

@@ -135,10 +135,14 @@ async function* yieldFromStore<TEnv>(
     resolveLoadersOnly,
   } = getRouterContext<TEnv>();
 
-  const segments = await _deserializeSegments!(entry.segments);
+  if (!_deserializeSegments || !_hashParams || !_getRequestContext) {
+    throw new Error("yieldFromStore called before ensurePrerenderDeps");
+  }
+
+  const segments = await _deserializeSegments(entry.segments);
 
   // Replay handle data (same as runtime cache hit path)
-  const handleStore = _getRequestContext!()?._handleStore;
+  const handleStore = _getRequestContext()?._handleStore;
   if (handleStore) {
     for (const [segId, segHandles] of Object.entries(entry.handles)) {
       if (Object.keys(segHandles).length > 0) {
@@ -274,7 +278,7 @@ export function withCacheLookup<TEnv>(
     // in-process where Node APIs work, so no interception is needed.
     if (!ctx.isAction && !ctx.matched.pr && globalThis.__PRERENDER_DEV_URL) {
       const hasStatic = ctx.entries.some(
-        (e) => (e.type === "layout" || e.type === "route") && e.isStaticPrerender
+        (e) => (e.type === "layout" || e.type === "route" || e.type === "parallel") && e.isStaticPrerender
       );
       if (hasStatic) {
         await ensurePrerenderDeps();

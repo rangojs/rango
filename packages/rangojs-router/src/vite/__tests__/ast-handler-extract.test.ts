@@ -3,10 +3,8 @@ import { parseAst } from "vite";
 import MagicString from "magic-string";
 import {
   findHandlerCalls,
-  findStaticHandlerCalls,
   extractImportDeclarations,
   transformInlineHandlers,
-  transformInlineStaticHandlers,
   type VirtualHandlerEntry,
 } from "../ast-handler-extract.ts";
 import { hashInlineId } from "../expose-id-utils.ts";
@@ -79,116 +77,6 @@ export const Nav = createStaticHandler(() => <nav />);
 });
 
 // ---------------------------------------------------------------------------
-// findStaticHandlerCalls (backwards compat)
-// ---------------------------------------------------------------------------
-
-describe("findStaticHandlerCalls", () => {
-  it("detects export const pattern", () => {
-    const code = `
-import { createStaticHandler } from "@rangojs/router";
-export const Nav = createStaticHandler(() => <nav />);
-`;
-    const sites = findStaticHandlerCalls(code, parseAst);
-    expect(sites).toHaveLength(1);
-    expect(sites[0].exportInfo).not.toBeNull();
-    expect(sites[0].exportInfo!.exportName).toBe("Nav");
-    expect(sites[0].argCount).toBe(1);
-  });
-
-  it("detects export const with generics (post-esbuild JS)", () => {
-    // By the time our transform runs (enforce: "post"), esbuild has already
-    // stripped TypeScript generics, so the code is plain JS.
-    const code = `
-import { createStaticHandler } from "@rangojs/router";
-export const Nav = createStaticHandler(() => <nav />);
-`;
-    const sites = findStaticHandlerCalls(code, parseAst);
-    expect(sites).toHaveLength(1);
-    expect(sites[0].exportInfo).not.toBeNull();
-    expect(sites[0].exportInfo!.exportName).toBe("Nav");
-  });
-
-  it("detects export const with options", () => {
-    const code = `
-import { createStaticHandler } from "@rangojs/router";
-export const Nav = createStaticHandler(() => <nav />, { passthrough: true });
-`;
-    const sites = findStaticHandlerCalls(code, parseAst);
-    expect(sites).toHaveLength(1);
-    expect(sites[0].argCount).toBe(2);
-    expect(sites[0].exportInfo!.exportName).toBe("Nav");
-  });
-
-  it("detects inline call", () => {
-    const code = `
-import { createStaticHandler } from "@rangojs/router";
-layout(createStaticHandler(() => <nav />));
-`;
-    const sites = findStaticHandlerCalls(code, parseAst);
-    expect(sites).toHaveLength(1);
-    expect(sites[0].exportInfo).toBeNull();
-    expect(sites[0].argCount).toBe(1);
-  });
-
-  it("detects mixed file (export + inline)", () => {
-    const code = `
-import { createStaticHandler } from "@rangojs/router";
-export const Nav = createStaticHandler(() => <nav />);
-layout(createStaticHandler(() => <sidebar />));
-`;
-    const sites = findStaticHandlerCalls(code, parseAst);
-    expect(sites).toHaveLength(2);
-
-    const exported = sites.find((s) => s.exportInfo !== null);
-    const inline = sites.find((s) => s.exportInfo === null);
-
-    expect(exported).toBeDefined();
-    expect(exported!.exportInfo!.exportName).toBe("Nav");
-    expect(inline).toBeDefined();
-  });
-
-  it("computes correct line numbers", () => {
-    const code = `import { createStaticHandler } from "@rangojs/router";
-
-export const Nav = createStaticHandler(() => <nav />);
-
-layout(createStaticHandler(() => <sidebar />));
-`;
-    const sites = findStaticHandlerCalls(code, parseAst);
-    const exported = sites.find((s) => s.exportInfo !== null)!;
-    const inline = sites.find((s) => s.exportInfo === null)!;
-
-    expect(exported.lineNumber).toBe(3);
-    expect(inline.lineNumber).toBe(5);
-  });
-
-  it("handles JSX in handler body", () => {
-    const code = `
-import { createStaticHandler } from "@rangojs/router";
-layout(createStaticHandler(() => <div className="test"><span>Hello</span></div>));
-`;
-    const sites = findStaticHandlerCalls(code, parseAst);
-    expect(sites).toHaveLength(1);
-    expect(sites[0].exportInfo).toBeNull();
-  });
-
-  it("returns empty array on parse failure", () => {
-    const code = `this is not valid javascript {{{`;
-    const sites = findStaticHandlerCalls(code, parseAst);
-    expect(sites).toEqual([]);
-  });
-
-  it("ignores non-createStaticHandler calls", () => {
-    const code = `
-import { createLoader } from "@rangojs/router";
-export const MyLoader = createLoader(() => {});
-`;
-    const sites = findStaticHandlerCalls(code, parseAst);
-    expect(sites).toEqual([]);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // extractImportDeclarations
 // ---------------------------------------------------------------------------
 
@@ -234,7 +122,7 @@ layout(createStaticHandler(() => <nav />));
 
     const result = transformInlineHandlers(
       "createStaticHandler", "virtual:handler-extract:",
-      s, code, "src/urls.tsx", true, "urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
     );
 
     expect(result).toBe(true);
@@ -263,7 +151,7 @@ path("/about", createPrerenderHandler(() => <div>About</div>));
 
     const result = transformInlineHandlers(
       "createPrerenderHandler", "virtual:handler-extract:",
-      s, code, "src/urls.tsx", true, "urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
     );
 
     expect(result).toBe(true);
@@ -290,7 +178,7 @@ export const Nav = createStaticHandler(() => <nav />);
 
     const result = transformInlineHandlers(
       "createStaticHandler", "virtual:handler-extract:",
-      s, code, "src/urls.tsx", true, "urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
     );
 
     expect(result).toBe(false);
@@ -307,7 +195,7 @@ path("/about", createStaticHandler(() => <about />));
 
     const result = transformInlineHandlers(
       "createStaticHandler", "virtual:handler-extract:",
-      s, code, "src/urls.tsx", true, "urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
     );
 
     expect(result).toBe(true);
@@ -328,7 +216,7 @@ layout(createStaticHandler(() => <sidebar />));
 
     const result = transformInlineHandlers(
       "createStaticHandler", "virtual:handler-extract:",
-      s, code, "src/urls.tsx", true, "urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
     );
 
     expect(result).toBe(true);
@@ -353,7 +241,7 @@ layout(createStaticHandler(() => <Nav />));
 
     transformInlineHandlers(
       "createStaticHandler", "virtual:handler-extract:",
-      s, code, "src/urls.tsx", true, "urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
     );
 
     const entry = [...registry.values()][0];
@@ -372,49 +260,13 @@ layout(createStaticHandler(() => <a />), createStaticHandler(() => <b />));
 
     transformInlineHandlers(
       "createStaticHandler", "virtual:handler-extract:",
-      s, code, "src/urls.tsx", true, "urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
     );
 
     expect(registry.size).toBe(2);
     const exportNames = [...registry.values()].map((e) => e.exportName);
     // Different export names due to collision handling
     expect(exportNames[0]).not.toBe(exportNames[1]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// transformInlineStaticHandlers (backwards compat wrapper)
-// ---------------------------------------------------------------------------
-
-describe("transformInlineStaticHandlers", () => {
-  it("extracts inline call to virtual module", () => {
-    const code = `import { createStaticHandler } from "@rangojs/router";
-layout(createStaticHandler(() => <nav />));
-`;
-    const s = new MagicString(code);
-    const registry = new Map<string, VirtualHandlerEntry>();
-
-    const result = transformInlineStaticHandlers(
-      s, code, "src/urls.tsx", true, "urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
-    );
-
-    expect(result).toBe(true);
-    expect(registry.size).toBe(1);
-
-    const entry = [...registry.values()][0];
-    expect(entry.originalModuleId).toBe("/abs/src/urls.tsx");
-    expect(entry.handlerCode).toContain("createStaticHandler");
-    expect(entry.exportName).toMatch(/^__sh_[0-9a-f]{8}$/);
-    expect(entry.imports).toHaveLength(1);
-    expect(entry.imports[0]).toContain("@rangojs/router");
-
-    // The transformed code should import from the virtual module
-    const output = s.toString();
-    expect(output).toContain(`import { ${entry.exportName} }`);
-    expect(output).toContain("virtual:handler-extract:");
-    // The inline call should be replaced with the export name
-    expect(output).toContain(`layout(${entry.exportName})`);
-    expect(output).not.toContain("createStaticHandler(() => <nav />)");
   });
 });
 
