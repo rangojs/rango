@@ -444,6 +444,17 @@ function buildRouteToStaticPrefix(
 }
 
 /**
+ * Encode route param values for path interpolation while preserving path
+ * separators for wildcard params (splat-style values can include `/`).
+ */
+function encodePathParam(value: unknown): string {
+  return String(value)
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+/**
  * Plugin that discovers router instances at dev/build time via the RSC environment.
  *
  * Uses `server.environments.rsc.runner.import()` to load the user's router file
@@ -778,7 +789,18 @@ function createRouterDiscoveryPlugin(
                 for (const params of paramsList) {
                   let url = pattern;
                   for (const [key, value] of Object.entries(params as Record<string, string>)) {
-                    url = url.replace(`:${key}`, encodeURIComponent(String(value)));
+                    const encoded = encodePathParam(value);
+                    url = url.replace(`:${key}`, encoded);
+                    url = url.replace(`*${key}`, encoded);
+                  }
+                  // Anonymous wildcard fallback: use conventional keys if provided
+                  if (url.includes("*")) {
+                    const wildcardValue =
+                      (params as Record<string, string>)["*"]
+                      ?? (params as Record<string, string>).splat;
+                    if (wildcardValue !== undefined) {
+                      url = url.replace(/\*[^/]*$/, encodePathParam(wildcardValue));
+                    }
                   }
                   urls.push(url.replace(/\/$/, "") || "/");
                 }
@@ -799,14 +821,6 @@ function createRouterDiscoveryPlugin(
         console.log(
           `[rsc-router] Pre-render URLs: ${urls.join(", ")}`
         );
-
-        // In-process collection: call matchForPrerender() on each router directly.
-        // No HTTP handler, no middleware, no Request objects, no env bindings.
-        // Handlers receive a BuildContext (subset of HandlerContext).
-        const routersByHash = new Map<string, any>();
-        for (const [id, routerInstance] of registry) {
-          routersByHash.set(hashRouterId(id), routerInstance);
-        }
 
         const { hashParams } = await rscEnv.runner.import("@rangojs/router/build");
 
