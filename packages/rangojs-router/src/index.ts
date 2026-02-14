@@ -130,22 +130,22 @@ export function createHandle(): never {
 }
 
 /**
- * Error-throwing stub for server-only `createPrerenderHandler` function.
+ * Error-throwing stub for server-only `Prerender` function.
  * Import from "@rangojs/router/server" or use within RSC context instead.
  */
-export function createPrerenderHandler(): never {
+export function Prerender(): never {
   throw new Error(
-    'createPrerenderHandler() is server-only. Import from "@rangojs/router/server" instead.'
+    'Prerender() is server-only. Import from "@rangojs/router/server" instead.'
   );
 }
 
 /**
- * Error-throwing stub for server-only `createStaticHandler` function.
+ * Error-throwing stub for server-only `Static` function.
  * Import from "@rangojs/router/server" or use within RSC context instead.
  */
-export function createStaticHandler(): never {
+export function Static(): never {
   throw new Error(
-    'createStaticHandler() is server-only. Import from "@rangojs/router/server" instead.'
+    'Static() is server-only. Import from "@rangojs/router/server" instead.'
   );
 }
 

@@ -1,10 +1,10 @@
-import { urls, createPrerenderHandler } from "@rangojs/router";
+import { urls, Prerender } from "@rangojs/router";
 import { ChangelogPage } from "./prerender-fs.js";
 import { PrerenderTestLoader } from "../loaders.js";
 import { PrerenderClientTest } from "../components/PrerenderClientTest.js";
 
 // Static page -- no params, renders on-demand in dev mode
-export const DocsPage = createPrerenderHandler(
+export const DocsPage = Prerender(
   async (ctx) => {
     return (
       <div data-testid="docs-page">
@@ -17,7 +17,7 @@ export const DocsPage = createPrerenderHandler(
 );
 
 // Dynamic page -- with params, includes client component with loader/action/locationState
-export const DocsArticle = createPrerenderHandler(
+export const DocsArticle = Prerender(
   async () => [{ slug: "getting-started" }, { slug: "api-reference" }],
   async (ctx) => {
     return (

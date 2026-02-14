@@ -12,7 +12,7 @@ import {
 test.describe.configure({ mode: "serial" });
 
 // ==========================================================================
-// Dev mode: createStaticHandler behaves as a normal handler (runs live)
+// Dev mode: Static behaves as a normal handler (runs live)
 // Tests all three DSL positions: layout(), path(), parallel()
 // ==========================================================================
 
@@ -22,7 +22,7 @@ test.describe("static-handler (dev)", () => {
     mode: "dev",
   });
 
-  // -- layout() with createStaticHandler --
+  // -- layout() with Static --
 
   test("static layout renders on direct visit", async ({ page }) => {
     using _ = expectNoPageError(page);
@@ -63,7 +63,7 @@ test.describe("static-handler (dev)", () => {
     await expect(testId(page, "docs-nav-deployment")).toBeVisible();
   });
 
-  // -- path() with createStaticHandler --
+  // -- path() with Static --
 
   test("static path renders index page content", async ({ page }) => {
     using _ = expectNoPageError(page);
@@ -78,7 +78,7 @@ test.describe("static-handler (dev)", () => {
     await expect(testId(page, "static-docs-list")).toBeVisible();
   });
 
-  // -- parallel() with createStaticHandler --
+  // -- parallel() with Static --
 
   test("static parallel slot renders TOC sidebar", async ({ page }) => {
     using _ = expectNoPageError(page);
@@ -164,7 +164,7 @@ test.describe("static-handler (production)", () => {
     mode: "build",
   });
 
-  // -- layout() with createStaticHandler --
+  // -- layout() with Static --
 
   test("static layout renders on direct visit", async ({ page }) => {
     using _ = expectNoPageError(page);
@@ -206,7 +206,7 @@ test.describe("static-handler (production)", () => {
     await expect(testId(page, "docs-nav-deployment")).toBeVisible();
   });
 
-  // -- path() with createStaticHandler --
+  // -- path() with Static --
 
   test("static path renders index page content", async ({ page }) => {
     using _ = expectNoPageError(page);
@@ -225,7 +225,7 @@ test.describe("static-handler (production)", () => {
     await expect(testId(page, "docs-index-link-deployment")).toBeVisible();
   });
 
-  // -- parallel() with createStaticHandler --
+  // -- parallel() with Static --
 
   test("static parallel slot renders TOC sidebar on slug page", async ({
     page,
@@ -408,7 +408,7 @@ test.describe("static-handler build output (production)", () => {
     // Handler code lives in the RSC bundle until build-time rendering
     // + asset serialization is implemented. Once that's done, handler
     // bodies will be evicted and replaced with asset-loading stubs.
-    expect(staticHandlersBundle).toContain("createStaticHandler");
+    expect(staticHandlersBundle).toContain("Static");
     expect(staticHandlersBundle).toContain("Docs Navigation");
     expect(staticHandlersBundle).toContain("Table of Contents");
   });

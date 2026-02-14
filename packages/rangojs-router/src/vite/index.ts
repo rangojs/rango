@@ -1407,9 +1407,9 @@ function createRouterDiscoveryPlugin(
             );
             const match = chunk.code.match(idPattern);
             if (match) {
-              // Detect passthrough option in the createPrerenderHandler call.
+              // Detect passthrough option in the Prerender call.
               const callStartRe = new RegExp(
-                `const\\s+${name}\\s*=\\s*createPrerenderHandler\\s*(?:<[^>]*>)?\\s*\\(`,
+                `const\\s+${name}\\s*=\\s*Prerender\\s*(?:<[^>]*>)?\\s*\\(`,
               );
               const callStart = callStartRe.exec(chunk.code);
               let isPassthrough = false;
@@ -1478,7 +1478,7 @@ function createRouterDiscoveryPlugin(
               // Passthrough handlers stay in the bundle for live fallback
               if (passthrough) continue;
               const callStartRe = new RegExp(
-                `const\\s+${name}\\s*=\\s*createPrerenderHandler\\s*(?:<[^>]*>)?\\s*\\(`,
+                `const\\s+${name}\\s*=\\s*Prerender\\s*(?:<[^>]*>)?\\s*\\(`,
               );
               const startMatch = callStartRe.exec(code);
               if (!startMatch) continue;

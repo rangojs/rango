@@ -1,11 +1,11 @@
-import { urls, createPrerenderHandler } from "@rangojs/router";
+import { urls, Prerender } from "@rangojs/router";
 import { ParallelOutlet } from "@rangojs/router/client";
 import { PrerenderComplexLayout, PrerenderInnerLayout } from "../components/layouts/index.js";
 import { FreshTimestampLoader } from "../loaders.js";
 import { FreshDataDisplay } from "../components/FreshDataDisplay.js";
 
 // Static index page with a parallel sidebar slot and fresh loader data
-export const PrerenderComplexIndex = createPrerenderHandler(async () => {
+export const PrerenderComplexIndex = Prerender(async () => {
   return (
     <div data-testid="prerender-complex-index">
       <h1 data-testid="prerender-complex-index-title">Complex Index</h1>
@@ -21,7 +21,7 @@ export const PrerenderComplexIndex = createPrerenderHandler(async () => {
 });
 
 // Dynamic detail page with inner layout and fresh loader data
-export const PrerenderComplexDetail = createPrerenderHandler(
+export const PrerenderComplexDetail = Prerender(
   async () => [{ slug: "alpha" }, { slug: "beta" }],
   async (ctx) => {
     return (

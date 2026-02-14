@@ -1,4 +1,4 @@
-import { createPrerenderHandler } from "@rangojs/router";
+import { Prerender } from "@rangojs/router";
 
 interface Release {
   version: string;
@@ -11,7 +11,7 @@ interface Release {
 // All node:fs/path/url imports are dynamic (inside the handler body) so they
 // get evicted too — top-level imports would survive eviction and crash workerd
 // because import.meta.url is not a file:// URL in the bundled output.
-export const ReleasesPage = createPrerenderHandler(async (ctx) => {
+export const ReleasesPage = Prerender(async (ctx) => {
   const { readFileSync } = await import("node:fs");
   const { resolve, dirname } = await import("node:path");
   const { fileURLToPath } = await import("node:url");

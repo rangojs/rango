@@ -54,12 +54,12 @@ interface StrictCreateTransformConfig {
 }
 
 const PRERENDER_CONFIG: HandlerTransformConfig = {
-  fnName: "createPrerenderHandler",
+  fnName: "Prerender",
   brand: "prerenderHandler",
 };
 
 const STATIC_CONFIG: HandlerTransformConfig = {
-  fnName: "createStaticHandler",
+  fnName: "Static",
   brand: "staticHandler",
 };
 
@@ -934,9 +934,9 @@ ${lazyImports.join(",\n")}
       const hasLocationStateCode =
         has.locationState && code.includes("createLocationState");
       const hasPrerenderHandlerCode =
-        has.prerenderHandler && code.includes("createPrerenderHandler");
+        has.prerenderHandler && code.includes("Prerender");
       const hasStaticHandlerCode =
-        has.staticHandler && code.includes("createStaticHandler");
+        has.staticHandler && code.includes("Static");
       if (
         !hasLoaderCode &&
         !hasHandleCode &&

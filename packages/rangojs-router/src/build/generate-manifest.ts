@@ -43,7 +43,7 @@ export interface GeneratedManifest {
   routeManifest: Record<string, string>;
   /** Route name → trailing slash mode for trie redirect handling */
   routeTrailingSlash?: Record<string, string>;
-  /** Route names using createPrerenderHandler (for dev-mode Node.js delegation) */
+  /** Route names using Prerender (for dev-mode Node.js delegation) */
   prerenderRoutes?: string[];
   /** Route names with passthrough: true (handler kept in bundle for live fallback) */
   passthroughRoutes?: string[];

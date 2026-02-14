@@ -114,8 +114,8 @@ export function detectImports(code: string): DetectedImports {
     if (/\bcreateLoader\b/.test(imports)) result.loader = true;
     if (/\bcreateHandle\b/.test(imports)) result.handle = true;
     if (/\bcreateLocationState\b/.test(imports)) result.locationState = true;
-    if (/\bcreatePrerenderHandler\b/.test(imports)) result.prerenderHandler = true;
-    if (/\bcreateStaticHandler\b/.test(imports)) result.staticHandler = true;
+    if (/\bPrerender\b/.test(imports)) result.prerenderHandler = true;
+    if (/\bStatic\b/.test(imports)) result.staticHandler = true;
     if (/\bcreateRouter\b/.test(imports)) result.router = true;
   }
 

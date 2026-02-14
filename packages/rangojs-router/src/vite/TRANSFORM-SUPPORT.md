@@ -46,21 +46,21 @@ export const X = cl(...);
 
 These are transformed with stable IDs and extra runtime metadata.
 
-### `createStaticHandler`, `createPrerenderHandler`
+### `Static`, `Prerender`
 
 Supported:
 
-- `export const X = createStaticHandler(...)`
-- `export const X = createPrerenderHandler(...)`
-- `const X = createStaticHandler(...); export { X }` / `export { X as Y }`
-- aliased imports are supported (e.g. `import { createStaticHandler as sh } ...`)
+- `export const X = Static(...)`
+- `export const X = Prerender(...)`
+- `const X = Static(...); export { X }` / `export { X as Y }`
+- aliased imports are supported (e.g. `import { Static as sh } ...`)
 - inline calls (extracted to virtual modules via AST)
 
 Example inline shape:
 
 ```ts
-layout(createStaticHandler(() => <nav />));
-path("/about", createPrerenderHandler(() => <div />));
+layout(Static(() => <nav />));
+path("/about", Prerender(() => <div />));
 ```
 
 ## Currently Unsupported (strict APIs)
