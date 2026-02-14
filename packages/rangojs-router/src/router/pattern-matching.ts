@@ -6,6 +6,7 @@
 
 import type { RouteEntry, TrailingSlashMode } from "../types";
 import type { EntryData } from "../server/context";
+import { debugLog, isRouterDebugEnabled } from "./logging.js";
 
 /**
  * Parsed segment info
@@ -267,11 +268,17 @@ export function findMatch<TEnv>(
   pathname: string,
   routesEntries: RouteEntry<TEnv>[]
 ): RouteMatchResult<TEnv> | LazyEvaluationNeeded<TEnv> | null {
-  if (debugEnabled) {
+  const effectiveDebug = debugEnabled || isRouterDebugEnabled();
+
+  if (effectiveDebug) {
     debugStats = { entriesChecked: 0, entriesSkipped: 0, routesChecked: 0 };
-    console.log(`[findMatch] pathname="${pathname}", entries=${routesEntries.length}`);
+    debugLog("findMatch", "start", { pathname, entries: routesEntries.length });
     for (const e of routesEntries) {
-      console.log(`  entry: prefix="${e.prefix}", staticPrefix="${e.staticPrefix}", routes=${Object.keys(e.routes).length}`);
+      debugLog("findMatch", "entry", {
+        prefix: e.prefix,
+        staticPrefix: e.staticPrefix,
+        routeCount: Object.keys(e.routes).length,
+      });
     }
   }
 
@@ -285,9 +292,12 @@ export function findMatch<TEnv>(
     // Short-circuit: skip entry if pathname doesn't start with static prefix
     // staticPrefix is pre-computed at registration time, so this is O(1)
     if (entry.staticPrefix && !pathname.startsWith(entry.staticPrefix)) {
-      if (debugEnabled) {
+      if (effectiveDebug) {
         debugStats.entriesSkipped++;
-        console.log(`  SKIP entry prefix="${entry.prefix}" (staticPrefix="${entry.staticPrefix}" doesn't match)`);
+        debugLog("findMatch", "skipped entry", {
+          prefix: entry.prefix,
+          staticPrefix: entry.staticPrefix,
+        });
       }
       continue;
     }
@@ -295,20 +305,22 @@ export function findMatch<TEnv>(
     // Check if this is a lazy entry that needs evaluation
     // When staticPrefix matches but routes are not yet populated, signal caller to evaluate
     if (entry.lazy && !entry.lazyEvaluated) {
-      if (debugEnabled) {
-        console.log(`  LAZY entry needs evaluation: staticPrefix="${entry.staticPrefix}"`);
+      if (effectiveDebug) {
+        debugLog("findMatch", "lazy entry requires evaluation", {
+          staticPrefix: entry.staticPrefix,
+        });
       }
       return { lazyEntry: entry };
     }
 
-    if (debugEnabled) {
+    if (effectiveDebug) {
       debugStats.entriesChecked++;
     }
 
     const routeEntries = Object.entries(entry.routes);
 
     for (const [routeKey, pattern] of routeEntries) {
-      if (debugEnabled) {
+      if (effectiveDebug) {
         debugStats.routesChecked++;
       }
 
@@ -339,9 +351,12 @@ export function findMatch<TEnv>(
           params[name] = match[index + 1] ?? "";
         });
 
-        if (debugEnabled) {
-          console.log(`  MATCH: routeKey="${routeKey}", pattern="${fullPattern}"`);
-          console.log(`  Stats: entriesChecked=${debugStats.entriesChecked}, entriesSkipped=${debugStats.entriesSkipped}, routesChecked=${debugStats.routesChecked}`);
+        if (effectiveDebug) {
+          debugLog("findMatch", "matched route", {
+            routeKey,
+            pattern: fullPattern,
+            stats: { ...debugStats },
+          });
         }
 
         // Check if trailing slash mode requires redirect even on exact match

@@ -116,6 +116,7 @@ import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
+import { debugLog, debugWarn } from "../logging.js";
 
 /**
  * Creates background revalidation middleware
@@ -155,10 +156,11 @@ export function withBackgroundRevalidation<TEnv>(
     const requestCtx = getRequestContext();
     const cacheScope = ctx.cacheScope;
 
-    const logPrefix = ctx.isFullMatch ? "[Router.match]" : "[Router.matchPartial]";
-
     requestCtx?.waitUntil(async () => {
-      console.log(`${logPrefix} Revalidating stale route: ${ctx.pathname}`);
+      debugLog("backgroundRevalidation", "revalidating stale route", {
+        pathname: ctx.pathname,
+        fullMatch: ctx.isFullMatch,
+      });
       try {
         // Create a fresh handleStore for background revalidation
         // to avoid polluting the current response's handle stream
@@ -227,9 +229,14 @@ export function withBackgroundRevalidation<TEnv>(
           freshSegments,
           ctx.isIntercept
         );
-        console.log(`${logPrefix} Revalidation complete: ${ctx.pathname}`);
+        debugLog("backgroundRevalidation", "revalidation complete", {
+          pathname: ctx.pathname,
+        });
       } catch (error) {
-        console.error(`${logPrefix} Revalidation failed:`, error);
+        debugWarn("backgroundRevalidation", "revalidation failed", {
+          pathname: ctx.pathname,
+          error: String(error),
+        });
       }
     });
   };

@@ -8,6 +8,7 @@ import type { AppEnv } from "./env.js";
 // Document is a server component that wraps the HTML shell
 // Navigation is handled by NavLayout in urls.tsx
 export const router = createRouter<AppEnv>({
+  debug: true,
   document: Document,
   // Enable theme support with system detection
   theme: {

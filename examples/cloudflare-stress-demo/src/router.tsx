@@ -5,6 +5,7 @@ import { Document } from "./document.js";
 import type { AppEnv } from "./env.js";
 
 export const router = createRouter<AppEnv>({
+  debug: true,
   document: Document,
   debugPerformance: true, // Enable Server-Timing headers
   // CF cache store for segment caching

@@ -111,6 +111,7 @@ export interface InterceptResolutionDeps<TEnv = any> {
 export interface MatchApiDeps<TEnv = any> {
   findMatch: (pathname: string, ms?: any) => any;
   getMetricsStore: () => any;
+  debug: boolean;
   findInterceptForRoute: (
     routeKey: string,
     parentEntry: EntryData | null,

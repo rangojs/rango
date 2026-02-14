@@ -105,6 +105,7 @@ import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
+import { debugLog } from "../logging.js";
 
 /**
  * Creates intercept resolution middleware
@@ -165,9 +166,10 @@ export function withInterceptResolution<TEnv>(
     const { resolveInterceptEntry } = getRouterContext<TEnv>();
 
     const slotName = ctx.interceptResult!.intercept.slotName;
-    console.log(
-      `[Router.matchPartial] Found intercept for "${ctx.localRouteName}" -> slot "${slotName}"`
-    );
+    debugLog("matchPartial.intercept", "intercept resolved", {
+      routeName: ctx.localRouteName,
+      slotName,
+    });
 
     // Resolve intercept entry (middleware, loaders, handler)
     const Store = ctx.Store;
@@ -263,14 +265,16 @@ async function handleCacheHitIntercept<TEnv>(
       if (interceptMainSegment) {
         interceptMainSegment.loaderDataPromise = freshLoaderResult.loaderDataPromise;
         interceptMainSegment.loaderIds = freshLoaderResult.loaderIds;
-        console.log(
-          `[Router.matchPartial] Cache HIT + fresh loaders for intercept "${ctx.localRouteName}" -> slot "${slotName}"`
-        );
+        debugLog("matchPartial.intercept", "cache hit with fresh intercept loaders", {
+          routeName: ctx.localRouteName,
+          slotName,
+        });
       }
     } else {
-      console.log(
-        `[Router.matchPartial] Cache HIT for intercept "${ctx.localRouteName}" -> slot "${slotName}" (no loader revalidation)`
-      );
+      debugLog("matchPartial.intercept", "cache hit without intercept loader revalidation", {
+        routeName: ctx.localRouteName,
+        slotName,
+      });
     }
   }
 

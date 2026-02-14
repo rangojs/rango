@@ -23,6 +23,7 @@ import { isHandle, type Handle } from "../handle.js";
 import type { HandleStore } from "../server/handle-store.js";
 import { getFetchableLoader } from "../server/fetchable-loader-store.js";
 import { getRequestContext } from "../server/request-context.js";
+import { debugLog } from "./logging.js";
 
 /**
  * Internal callback signature for loader error notifications.
@@ -111,10 +112,10 @@ export function wrapLoaderWithErrorHandling<T>(
         renderedFallback = fallback;
       }
 
-      console.log(
-        `[Router] Loader error wrapped with boundary fallback in ${segmentId}:`,
-        errorInfo.message
-      );
+      debugLog("loader", "loader error wrapped with boundary fallback", {
+        segmentId,
+        message: errorInfo.message,
+      });
 
       return {
         __loaderResult: true,

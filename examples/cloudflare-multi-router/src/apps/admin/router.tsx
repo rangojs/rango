@@ -4,5 +4,6 @@ import { adminPatterns } from "./urls.js";
 import type { AppEnv } from "../../env.js";
 
 export const router = createRouter<AppEnv>({
+  debug: true,
   document: Document,
 }).routes(adminPatterns);
