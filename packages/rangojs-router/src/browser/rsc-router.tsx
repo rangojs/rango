@@ -11,7 +11,6 @@ import { createEventController } from "./event-controller.js";
 import { createNavigationClient } from "./navigation-client.js";
 import { createServerActionBridge } from "./server-action-bridge.js";
 import { createNavigationBridge } from "./navigation-bridge.js";
-import { setBrowserDebugEnabled } from "./logging.js";
 import { NavigationProvider, initHandleDataSync, initSegmentsSync } from "./react/index.js";
 import { initThemeConfigSync } from "../theme/theme-context.js";
 import type {
@@ -130,8 +129,6 @@ export async function initBrowserApp(
   // Load initial payload from SSR-injected __FLIGHT_DATA__
   const initialPayload =
     await deps.createFromReadableStream<RscPayload>(rscStream);
-
-  setBrowserDebugEnabled(initialPayload.metadata?.debug === true);
 
   // Extract themeConfig and initialTheme from payload if not explicitly provided
   // This allows virtual entries to work without importing the router

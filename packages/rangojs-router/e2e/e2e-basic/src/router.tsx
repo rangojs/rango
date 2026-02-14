@@ -24,7 +24,6 @@ declare global {
  * - Route names are defined inline with path()
  */
 export const router = createRouter<AppEnv>({
-  debug: true,
 })
   .routes(urlpatterns);
 

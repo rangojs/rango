@@ -29,8 +29,6 @@ export interface RscPayload {
     handles?: AsyncGenerator<HandleData, void, unknown>;
     /** RSC version string for cache invalidation */
     version?: string;
-    /** Whether router/browser debug logging is enabled */
-    debug?: boolean;
     /** Theme configuration for FOUC prevention */
     themeConfig?: ResolvedThemeConfig | null;
     /** Initial theme from cookie (for SSR hydration) */

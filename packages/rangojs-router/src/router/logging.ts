@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { INTERNAL_DEBUG } from "../internal-debug.js";
 
 interface RouterLogContext {
-  enabled: boolean;
   requestId: string;
   transactionId: string;
   depth: number;
@@ -9,7 +9,6 @@ interface RouterLogContext {
 
 interface RouterLogOptions {
   request: Request;
-  enabled: boolean;
   transaction: string;
 }
 
@@ -57,13 +56,16 @@ export function runWithRouterLogContext<T>(
   options: RouterLogOptions,
   fn: () => T,
 ): T {
+  if (!INTERNAL_DEBUG) {
+    return fn();
+  }
+
   const requestId = getOrCreateRequestId(options.request);
   transactionCounter += 1;
   const transactionId = `${options.transaction}-${nextId("tx-", transactionCounter)}`;
 
   return routerLogContext.run(
     {
-      enabled: options.enabled,
       requestId,
       transactionId,
       depth: 0,
@@ -76,7 +78,7 @@ export function withRouterLogScope<T>(label: string, fn: () => Promise<T>): Prom
 export function withRouterLogScope<T>(label: string, fn: () => T): T;
 export function withRouterLogScope<T>(label: string, fn: () => Promise<T> | T): Promise<T> | T {
   const ctx = routerLogContext.getStore();
-  if (!ctx?.enabled) {
+  if (!INTERNAL_DEBUG || !ctx) {
     return fn();
   }
 
@@ -100,7 +102,7 @@ export function withRouterLogScope<T>(label: string, fn: () => Promise<T> | T): 
 }
 
 export function isRouterDebugEnabled(): boolean {
-  return routerLogContext.getStore()?.enabled ?? false;
+  return INTERNAL_DEBUG && !!routerLogContext.getStore();
 }
 
 function formatPrefix(scope: string): string {

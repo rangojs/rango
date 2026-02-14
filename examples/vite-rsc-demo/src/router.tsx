@@ -68,7 +68,6 @@ declare global {
  * All routes are defined using the Django-style urls() API.
  */
 const router = createRouter<AppEnv>({
-  debug: true,
   debugPerformance: true,
   document: RootLayout,
   cache: { store: cacheStore },

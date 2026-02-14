@@ -1,19 +1,16 @@
+import { INTERNAL_DEBUG } from "../internal-debug.js";
+
 interface BrowserLogContext {
   requestId: string;
   txId: string;
   operation: string;
 }
 
-let debugEnabled = false;
 let txCounter = 0;
 let requestCounter = 0;
 
-export function setBrowserDebugEnabled(enabled: boolean): void {
-  debugEnabled = enabled;
-}
-
 export function isBrowserDebugEnabled(): boolean {
-  return debugEnabled;
+  return INTERNAL_DEBUG;
 }
 
 function nextId(prefix: string, counter: number): string {
@@ -35,7 +32,7 @@ export function browserDebugLog(
   message: string,
   details?: Record<string, unknown>,
 ): void {
-  if (!debugEnabled) return;
+  if (!INTERNAL_DEBUG) return;
 
   const prefix = `[Browser][req:${ctx.requestId}][tx:${ctx.operation}-${ctx.txId}]`;
   if (details) {

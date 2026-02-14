@@ -65,7 +65,6 @@ const cspMiddleware: Middleware = async (ctx, next) => {
 // Document wraps both route content and error boundaries,
 // preventing the document from unmounting during errors (avoids FOUC)
 export const router = createRouter<AppEnv>({
-  debug: true,
   document: Document,
   // Auto-generate a cryptographic nonce for each request (for CSP)
   nonce: () => true,

@@ -270,12 +270,6 @@ export interface RSCRouterOptions<TEnv = any> {
   $$id?: string;
 
   /**
-   * Enable router debug logs.
-   * Logs are partitioned by request and transaction and include nesting.
-   */
-  debug?: boolean;
-
-  /**
    * Enable performance metrics collection
    * When enabled, metrics are output to console and available via Server-Timing header
    */
@@ -969,7 +963,6 @@ export interface RSCRouter<
    * and the server responds with 204 No Content.
    */
   readonly warmupEnabled: boolean;
-  readonly debug: boolean;
 
   /**
    * Whether ?__debug_manifest is allowed in production.
@@ -1147,7 +1140,6 @@ export function createRouter<TEnv = any>(
   const {
     id: userProvidedId,
     $$id: injectedId,
-    debug = false,
     debugPerformance = false,
     document: documentOption,
     defaultErrorBoundary,
@@ -1379,7 +1371,6 @@ export function createRouter<TEnv = any>(
   const matchApiDeps: MatchApiDeps<TEnv> = {
     findMatch: (pathname: string, ms?: any) => findMatch(pathname, ms),
     getMetricsStore,
-    debug,
     findInterceptForRoute: (routeKey, parentEntry, selectorContext, isAction) =>
       findInterceptForRoute(routeKey, parentEntry, selectorContext, isAction),
     callOnError,
@@ -2008,7 +1999,7 @@ export function createRouter<TEnv = any>(
     };
 
     return runWithRouterLogContext(
-      { request, enabled: debug, transaction: "match" },
+      { request, transaction: "match" },
       () =>
         runWithRouterContext(routerCtx, async () =>
           withRouterLogScope("match", async () => {
@@ -2055,7 +2046,7 @@ export function createRouter<TEnv = any>(
     segmentType: ErrorInfo["segmentType"] = "route",
   ): Promise<MatchResult | null> {
     return runWithRouterLogContext(
-      { request, enabled: debug, transaction: "matchError" },
+      { request, transaction: "matchError" },
       () =>
         withRouterLogScope("matchError", () =>
           _matchError(
@@ -2125,7 +2116,7 @@ export function createRouter<TEnv = any>(
     };
 
     return runWithRouterLogContext(
-      { request, enabled: debug, transaction: "matchPartial" },
+      { request, transaction: "matchPartial" },
       () =>
         runWithRouterContext(routerCtx, async () =>
           withRouterLogScope("matchPartial", async () => {
@@ -2176,7 +2167,7 @@ export function createRouter<TEnv = any>(
     negotiated?: boolean;
   } | null> {
     return runWithRouterLogContext(
-      { request, enabled: debug, transaction: "previewMatch" },
+      { request, transaction: "previewMatch" },
       async () =>
         withRouterLogScope("previewMatch", async () => {
           const url = new URL(request.url);
@@ -2619,7 +2610,6 @@ export function createRouter<TEnv = any>(
 
     // Expose warmup enabled flag for handler and client
     warmupEnabled,
-    debug,
 
     // Expose debug manifest flag for handler
     allowDebugManifest: allowDebugManifestOption,

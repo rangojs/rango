@@ -62,13 +62,18 @@ export function createNavigationClient(
         hmr,
       } = options;
 
-      const tx = startBrowserTransaction(staleRevalidation ? "revalidate" : "navigate");
-      browserDebugLog(tx, "request start", {
-        from: previousUrl,
-        to: targetUrl,
-        segments: segmentIds,
-        staleRevalidation: !!staleRevalidation,
-      });
+      const debugEnabled = isBrowserDebugEnabled();
+      const tx = debugEnabled
+        ? startBrowserTransaction(staleRevalidation ? "revalidate" : "navigate")
+        : null;
+      if (tx) {
+        browserDebugLog(tx, "request start", {
+          from: previousUrl,
+          to: targetUrl,
+          segments: segmentIds,
+          staleRevalidation: !!staleRevalidation,
+        });
+      }
 
       // Build fetch URL with partial rendering params
       const fetchUrl = new URL(targetUrl, window.location.origin);
@@ -81,9 +86,11 @@ export function createNavigationClient(
         fetchUrl.searchParams.set("_rsc_v", version);
       }
 
-      browserDebugLog(tx, "fetching", {
-        path: `${fetchUrl.pathname}${fetchUrl.search}`,
-      });
+      if (tx) {
+        browserDebugLog(tx, "fetching", {
+          path: `${fetchUrl.pathname}${fetchUrl.search}`,
+        });
+      }
 
       // Track when the stream completes
       let resolveStreamComplete: () => void;
@@ -95,7 +102,7 @@ export function createNavigationClient(
       const responsePromise = fetch(fetchUrl, {
         headers: {
           "X-RSC-Router-Client-Path": previousUrl,
-          "X-RSC-Router-Request-Id": tx.requestId,
+          ...(tx && { "X-RSC-Router-Request-Id": tx.requestId }),
           ...(interceptSourceUrl && {
             "X-RSC-Router-Intercept-Source": interceptSourceUrl,
           }),
@@ -106,7 +113,9 @@ export function createNavigationClient(
         // Check for version mismatch - server wants us to reload
         const reloadUrl = response.headers.get("X-RSC-Reload");
         if (reloadUrl) {
-          browserDebugLog(tx, "version mismatch, reloading", { reloadUrl });
+          if (tx) {
+            browserDebugLog(tx, "version mismatch, reloading", { reloadUrl });
+          }
           window.location.href = reloadUrl;
           // Return a never-resolving promise to prevent further processing
           return new Promise<Response>(() => {});
@@ -137,7 +146,9 @@ export function createNavigationClient(
           } finally {
             signal?.removeEventListener("abort", onAbort);
             reader.releaseLock();
-            browserDebugLog(tx, "stream complete");
+            if (tx) {
+              browserDebugLog(tx, "stream complete");
+            }
             resolveStreamComplete();
           }
         })();
@@ -153,7 +164,7 @@ export function createNavigationClient(
       try {
         // Deserialize RSC payload
         const payload = await deps.createFromFetch<RscPayload>(responsePromise);
-        if (isBrowserDebugEnabled()) {
+        if (tx) {
           browserDebugLog(tx, "response received", {
             isPartial: payload.metadata?.isPartial,
             matchedCount: payload.metadata?.matched?.length ?? 0,

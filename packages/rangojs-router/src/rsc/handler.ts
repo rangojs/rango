@@ -750,7 +750,6 @@ export function createRSCHandler<
             isPartial: false,
             handles: handleStore.stream(),
             version,
-            debug: router.debug,
             themeConfig: router.themeConfig,
             warmupEnabled: router.warmupEnabled,
             initialTheme: requireRequestContext().theme,
@@ -924,7 +923,6 @@ export function createRSCHandler<
         rootLayout: router.rootLayout,
         handles: handleStore.stream(),
         version,
-        debug: router.debug,
         themeConfig: router.themeConfig,
         warmupEnabled: router.warmupEnabled,
         initialTheme: requireRequestContext().theme,
@@ -1025,7 +1023,6 @@ export function createRSCHandler<
             isError: true,
             handles: handleStore.stream(),
             version,
-            debug: router.debug,
           },
           returnValue,
         };
@@ -1086,7 +1083,6 @@ export function createRSCHandler<
           diff: fullMatch.diff,
           handles: handleStore.stream(),
           version,
-          debug: router.debug,
         },
         returnValue,
       };
@@ -1129,7 +1125,6 @@ export function createRSCHandler<
         slots: matchResult.slots,
         handles: handleStore.stream(),
         version,
-        debug: router.debug,
       },
       returnValue,
     };
@@ -1329,7 +1324,6 @@ export function createRSCHandler<
             isPartial: false,
             handles: handleStore.stream(),
             version,
-            debug: router.debug,
             themeConfig: router.themeConfig,
             initialTheme: reqCtx.theme,
           },
@@ -1349,7 +1343,6 @@ export function createRSCHandler<
             slots: result.slots,
             handles: handleStore.stream(),
             version,
-            debug: router.debug,
           },
         };
       }
@@ -1413,7 +1406,6 @@ export function createRSCHandler<
             rootLayout: router.rootLayout,
             handles: handleStore.stream(),
             version,
-            debug: router.debug,
             themeConfig: router.themeConfig,
             initialTheme: reqCtx.theme,
           },
