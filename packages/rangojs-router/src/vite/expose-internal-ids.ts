@@ -770,6 +770,11 @@ ${lazyImports.join(",\n")}
       // Runs before stubs/tracking so inline calls become imports, then
       // the existing regex fast path handles both the original file's
       // export const patterns and the virtual modules independently.
+      //
+      // Cheap pre-check: count total fnName( occurrences vs export const
+      // patterns. If they match, every call is a named export and the
+      // regex fast path handles them -- skip the AST parse entirely.
+      //
       // Each iteration creates a fresh MagicString so that AST positions
       // from findHandlerCalls always match the string they were parsed from.
       let changed = false;
@@ -778,15 +783,23 @@ ${lazyImports.join(",\n")}
         hasStaticHandlerCode && STATIC_CONFIG,
         hasPrerenderHandlerCode && PRERENDER_CONFIG,
       ].filter((c): c is HandlerTransformConfig => !!c)) {
-        const iterS = new MagicString(code);
-        const result = transformInlineHandlers(
-          cfg.fnName, VIRTUAL_HANDLER_PREFIX,
-          iterS, code, filePath,
-          virtualHandlers, id, parseAst,
+        const totalCalls = code.split(`${cfg.fnName}(`).length - 1;
+        const exportPattern = new RegExp(
+          `export\\s+const\\s+\\w+\\s*=\\s*${cfg.fnName}\\s*\\(`, "g",
         );
-        if (result) {
-          changed = true;
-          code = iterS.toString();
+        const exportCalls = (code.match(exportPattern) || []).length;
+
+        if (totalCalls > exportCalls) {
+          const iterS = new MagicString(code);
+          const result = transformInlineHandlers(
+            cfg.fnName, VIRTUAL_HANDLER_PREFIX,
+            iterS, code, filePath,
+            virtualHandlers, id, parseAst,
+          );
+          if (result) {
+            changed = true;
+            code = iterS.toString();
+          }
         }
       }
 
