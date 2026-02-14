@@ -14,7 +14,9 @@ export function extractRoutesFromSource(
   code: string
 ): Array<{ name: string; pattern: string; search?: Record<string, string> }> {
   const routes: Array<{ name: string; pattern: string; search?: Record<string, string> }> = [];
-  const regex = /\bpath(?:\.(?:json|text|html|xml|image|stream|any))?\s*\(/g;
+  // Match `path(...)` and typed helpers like `path.json(...)`, `path.md(...)`.
+  // Keep this generic so new helpers are picked up without parser updates.
+  const regex = /\bpath(?:\.[a-zA-Z_$][\w$]*)?\s*\(/g;
   let match;
 
   while ((match = regex.exec(code)) !== null) {
