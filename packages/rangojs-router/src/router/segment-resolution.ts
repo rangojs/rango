@@ -37,6 +37,7 @@ import type {
   SegmentRevalidationResult,
   ActionContext,
 } from "./types.js";
+import { debugLog } from "./logging.js";
 
 /**
  * Handle Response returns from handlers.
@@ -372,10 +373,10 @@ export async function resolveWithErrorHandling<TEnv>(
           requestStartTime: errorContext?.requestStartTime,
         });
 
-        console.log(
-          `[Router] NotFound caught by notFoundBoundary in ${entry.shortCode}:`,
-          notFoundInfo.message,
-        );
+        debugLog("segment", "notFound boundary handled error", {
+          segmentId: entry.shortCode,
+          message: notFoundInfo.message,
+        });
 
         const reqCtx = getRequestContext();
         if (reqCtx) {
@@ -410,10 +411,11 @@ export async function resolveWithErrorHandling<TEnv>(
       requestStartTime: errorContext?.requestStartTime,
     });
 
-    console.log(
-      `[Router] Error caught by ${fallback ? "error boundary" : "default fallback"} in ${entry.shortCode}:`,
-      errorInfo.message,
-    );
+    debugLog("segment", "error boundary handled error", {
+      segmentId: entry.shortCode,
+      boundary: fallback ? "custom" : "default",
+      message: errorInfo.message,
+    });
 
     {
       const reqCtx = getRequestContext();
@@ -816,9 +818,12 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
   const component = await revalidate(
     async () => {
       const hasSegment = clientSegmentIds.has(entry.shortCode);
-      console.log(
-        `[Router.resolveEntryHandler] ${entry.shortCode} (${entry.type}): client has=${hasSegment}, belongsToRoute=${belongsToRoute}`,
-      );
+      debugLog("segment.revalidate", "entry presence check", {
+        segmentId: entry.shortCode,
+        entryType: entry.type,
+        clientHasSegment: hasSegment,
+        belongsToRoute,
+      });
       if (!hasSegment) return true;
 
       const dummySegment: ResolvedSegment = {
@@ -854,9 +859,10 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
         actionContext,
         stale,
       });
-      console.log(
-        `[Router.resolveEntryHandler] ${entry.shortCode}: evaluateRevalidation returned ${shouldRevalidate}`,
-      );
+      debugLog("segment.revalidate", "entry revalidation decision", {
+        segmentId: entry.shortCode,
+        shouldRevalidate,
+      });
       return shouldRevalidate;
     },
     async () => {
@@ -876,9 +882,9 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
           content: result instanceof Promise ? deps.trackHandler(result) : result,
         };
       }
-      console.log(
-        `[Router] Resolving action route with awaited value: ${entry.id}`,
-      );
+      debugLog("segment.action", "resolving action route with awaited value", {
+        entryId: entry.id,
+      });
       return {
         content: Promise.resolve(
           handleHandlerResult(await routeEntry.handler(context)),
@@ -1224,10 +1230,10 @@ export async function resolveWithRevalidationErrorHandling<TEnv>(
           });
         }
 
-        console.log(
-          `[Router] NotFound caught by notFoundBoundary in ${entry.shortCode}:`,
-          notFoundInfo.message,
-        );
+        debugLog("segment", "notFound boundary handled error", {
+          segmentId: entry.shortCode,
+          message: notFoundInfo.message,
+        });
 
         const reqCtx = getRequestContext();
         if (reqCtx) {
@@ -1268,10 +1274,11 @@ export async function resolveWithRevalidationErrorHandling<TEnv>(
       });
     }
 
-    console.log(
-      `[Router] Error caught by ${fallback ? "error boundary" : "default fallback"} in ${entry.shortCode}:`,
-      errorInfo.message,
-    );
+    debugLog("segment", "error boundary handled error", {
+      segmentId: entry.shortCode,
+      boundary: fallback ? "custom" : "default",
+      message: errorInfo.message,
+    });
 
     {
       const reqCtx = getRequestContext();
@@ -1317,9 +1324,10 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
 
   for (const entry of entries) {
     if (entry.type === "route" && interceptResult) {
-      console.log(
-        `[Router.matchPartial] Intercepting "${localRouteName}" - skipping route handler`,
-      );
+      debugLog("matchPartial.intercept", "skipping route handler during intercept", {
+        localRouteName,
+        segmentId: entry.shortCode,
+      });
       matchedIds.push(entry.shortCode);
       continue;
     }

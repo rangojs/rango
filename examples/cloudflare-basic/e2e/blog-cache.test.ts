@@ -222,10 +222,10 @@ test.describe("proactive-caching", () => {
     const partialNavLogs = afterPartialNav.slice(beforePartialNav.length);
 
     // Check for valid cache interaction during partial navigation:
-    // - "Proactive caching" = we rendered null segments in background
+    // - "proactive caching started" = we rendered null segments in background
     // - "HIT: partial:" = partial cache hit, served from cache (already has complete segments)
     // Both are valid outcomes depending on cache state
-    const proactiveTriggered = partialNavLogs.includes("Proactive caching");
+    const proactiveTriggered = partialNavLogs.includes("proactive caching started");
     const partialCacheHit = partialNavLogs.includes("HIT: partial:");
     expect(proactiveTriggered || partialCacheHit).toBe(true);
   });

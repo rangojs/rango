@@ -134,6 +134,10 @@ import {
 } from "./router/match-context.js";
 import { createMatchPartialPipeline } from "./router/match-pipelines.js";
 import { collectMatchResult } from "./router/match-result.js";
+import {
+  runWithRouterLogContext,
+  withRouterLogScope,
+} from "./router/logging.js";
 import { resolveThemeConfig } from "./theme/constants.js";
 
 // Response type -> MIME type used for Accept header matching
@@ -1994,39 +1998,45 @@ export function createRouter<TEnv = any>(
       resolveLoadersOnly,
     };
 
-    return runWithRouterContext(routerCtx, async () => {
-      const result = await createMatchContextForFull(request, env);
+    return runWithRouterLogContext(
+      { request, transaction: "match" },
+      () =>
+        runWithRouterContext(routerCtx, async () =>
+          withRouterLogScope("match", async () => {
+            const result = await createMatchContextForFull(request, env);
 
-      // Handle redirect case
-      if ("type" in result && result.type === "redirect") {
-        return {
-          segments: [],
-          matched: [],
-          diff: [],
-          params: {},
-          redirect: result.redirectUrl,
-        };
-      }
+          // Handle redirect case
+          if ("type" in result && result.type === "redirect") {
+            return {
+              segments: [],
+              matched: [],
+              diff: [],
+              params: {},
+              redirect: result.redirectUrl,
+            };
+          }
 
-      const ctx = result as MatchContext<TEnv>;
+            const ctx = result as MatchContext<TEnv>;
 
-      try {
-        const state = createPipelineState();
-        const pipeline = createMatchPartialPipeline(ctx, state);
-        return await collectMatchResult(pipeline, ctx, state);
-      } catch (error) {
-        if (error instanceof Response) throw error;
-        // Report unhandled errors during full match pipeline
-        callOnError(error, "routing", {
-          request,
-          url: ctx.url,
-          env,
-          isPartial: false,
-          handledByBoundary: false,
-        });
-        throw sanitizeError(error);
-      }
-    });
+            try {
+              const state = createPipelineState();
+              const pipeline = createMatchPartialPipeline(ctx, state);
+              return await collectMatchResult(pipeline, ctx, state);
+            } catch (error) {
+              if (error instanceof Response) throw error;
+              // Report unhandled errors during full match pipeline
+              callOnError(error, "routing", {
+                request,
+                url: ctx.url,
+                env,
+                isPartial: false,
+                handledByBoundary: false,
+              });
+              throw sanitizeError(error);
+            }
+          }),
+        ),
+    );
   }
 
   async function matchError(
@@ -2035,7 +2045,20 @@ export function createRouter<TEnv = any>(
     error: unknown,
     segmentType: ErrorInfo["segmentType"] = "route",
   ): Promise<MatchResult | null> {
-    return _matchError(request, _context, error, matchApiDeps, defaultErrorBoundary, segmentType);
+    return runWithRouterLogContext(
+      { request, transaction: "matchError" },
+      () =>
+        withRouterLogScope("matchError", () =>
+          _matchError(
+            request,
+            _context,
+            error,
+            matchApiDeps,
+            defaultErrorBoundary,
+            segmentType,
+          ),
+        ),
+    );
   }
 
 
@@ -2092,32 +2115,38 @@ export function createRouter<TEnv = any>(
       resolveInterceptLoadersOnly,
     };
 
-    return runWithRouterContext(routerCtx, async () => {
-      const ctx = await createMatchContextForPartial(
-        request,
-        context,
-        actionContext,
-      );
-      if (!ctx) return null;
+    return runWithRouterLogContext(
+      { request, transaction: "matchPartial" },
+      () =>
+        runWithRouterContext(routerCtx, async () =>
+          withRouterLogScope("matchPartial", async () => {
+            const ctx = await createMatchContextForPartial(
+              request,
+              context,
+              actionContext,
+            );
+            if (!ctx) return null;
 
-      try {
-        const state = createPipelineState();
-        const pipeline = createMatchPartialPipeline(ctx, state);
-        return await collectMatchResult(pipeline, ctx, state);
-      } catch (error) {
-        if (error instanceof Response) throw error;
-        // Report unhandled errors during partial match pipeline
-        callOnError(error, actionContext ? "action" : "revalidation", {
-          request,
-          url: ctx.url,
-          env: context,
-          actionId: actionContext?.actionId,
-          isPartial: true,
-          handledByBoundary: false,
-        });
-        throw sanitizeError(error);
-      }
-    });
+            try {
+              const state = createPipelineState();
+              const pipeline = createMatchPartialPipeline(ctx, state);
+              return await collectMatchResult(pipeline, ctx, state);
+            } catch (error) {
+              if (error instanceof Response) throw error;
+              // Report unhandled errors during partial match pipeline
+              callOnError(error, actionContext ? "action" : "revalidation", {
+                request,
+                url: ctx.url,
+                env: context,
+                actionId: actionContext?.actionId,
+                isPartial: true,
+                handledByBoundary: false,
+              });
+              throw sanitizeError(error);
+            }
+          }),
+        ),
+    );
   }
 
   /**
@@ -2137,14 +2166,18 @@ export function createRouter<TEnv = any>(
     params?: Record<string, string>;
     negotiated?: boolean;
   } | null> {
-    const url = new URL(request.url);
-    const pathname = url.pathname;
+    return runWithRouterLogContext(
+      { request, transaction: "previewMatch" },
+      async () =>
+        withRouterLogScope("previewMatch", async () => {
+          const url = new URL(request.url);
+          const pathname = url.pathname;
 
-    // Quick route matching
-    const matched = findMatch(pathname);
-    if (!matched) {
-      return null;
-    }
+          // Quick route matching
+          const matched = findMatch(pathname);
+          if (!matched) {
+            return null;
+          }
 
     // Skip redirect check - will be handled in full match
     if (matched.redirectTo) {
@@ -2221,16 +2254,18 @@ export function createRouter<TEnv = any>(
 
     // If we passed through the negotiation block (variants exist), mark as
     // negotiated so the handler sets Vary: Accept on the response.
-    const hasVariants = matched.negotiateVariants && matched.negotiateVariants.length > 0;
-    return {
-      routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
-      ...(responseType ? {
-        responseType,
-        handler: manifestEntry.type === "route" ? manifestEntry.handler : undefined,
-        params: matched.params,
-      } : {}),
-      ...(hasVariants ? { negotiated: true } : {}),
-    };
+          const hasVariants = matched.negotiateVariants && matched.negotiateVariants.length > 0;
+          return {
+            routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
+            ...(responseType ? {
+              responseType,
+              handler: manifestEntry.type === "route" ? manifestEntry.handler : undefined,
+              params: matched.params,
+            } : {}),
+            ...(hasVariants ? { negotiated: true } : {}),
+          };
+        }),
+    );
   }
 
   /**
