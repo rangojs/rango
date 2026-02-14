@@ -998,11 +998,20 @@ export function writeCombinedRouteTypes(root: string, knownRouterFiles?: string[
       result = buildCombinedRouteMapWithSearch(routerFilePath, urlsVarName);
     }
 
-    if (Object.keys(result.routes).length === 0) continue;
-
     const routerBasename = pathBasename(routerFilePath).replace(/\.(tsx?|jsx?)$/, "");
     const outPath = join(dirname(routerFilePath), `${routerBasename}.named-routes.gen.ts`);
     const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
+
+    // When the static parser can't extract routes (e.g. callback-style urls()),
+    // write an empty placeholder so the build-time transform's injected import
+    // resolves. Runtime discovery will overwrite this with the real routes.
+    if (Object.keys(result.routes).length === 0) {
+      if (!existing) {
+        const emptySource = generateRouteTypesSource({});
+        writeFileSync(outPath, emptySource);
+      }
+      continue;
+    }
 
     const hasSearchSchemas = Object.keys(result.searchSchemas).length > 0;
     const source = generateRouteTypesSource(

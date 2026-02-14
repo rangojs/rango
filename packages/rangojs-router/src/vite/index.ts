@@ -966,17 +966,15 @@ function createRouterDiscoveryPlugin(
       }
       // Generate per-module route types from static source parsing.
       // Runs before the dev server starts so .gen.ts files exist immediately for IDE.
-      // In build mode, skip writeCombinedRouteTypes — the runtime discovery in
-      // buildStart produces the complete manifest (including dynamically generated
-      // routes) and will write the definitive named-routes.gen.ts. Running the
-      // static parser here would overwrite a previously generated complete file
-      // with a partial one (static-only routes).
+      // In build mode, the runtime discovery in buildStart produces the definitive
+      // named-routes.gen.ts (including dynamically generated routes). However, we
+      // still need to write initial gen files here so discovery can import router
+      // modules that reference them. preserveIfLarger prevents overwriting a
+      // previously generated complete file with a partial one.
       if (opts?.staticRouteTypesGeneration !== false) {
         writePerModuleRouteTypes(projectRoot, scanFilter);
         cachedRouterFiles = findRouterFiles(projectRoot, scanFilter);
-        if (!isBuildMode) {
-          writeCombinedRouteTypes(projectRoot, cachedRouterFiles, { preserveIfLarger: true });
-        }
+        writeCombinedRouteTypes(projectRoot, cachedRouterFiles, { preserveIfLarger: true });
       }
       // Resolve prerenderHandlerModules and staticHandlerModules from the consolidated IDs plugin's API.
       if (opts?.enableBuildPrerender) {
