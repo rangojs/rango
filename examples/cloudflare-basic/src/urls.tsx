@@ -231,7 +231,7 @@ export const urlpatterns = urls(
         // Pre-rendered releases page (uses node:fs at build time, evicted at deploy)
         include("/releases", releasesPatterns, { name: "releases" }),
 
-        // Static content (createStaticHandler: layout + index rendered once at build time)
+        // Static content (Static: layout + index rendered once at build time)
         include("/static-content", staticContentPatterns, { name: "staticContent" }),
 
         // Transform coverage routes (alias imports + export specifiers)

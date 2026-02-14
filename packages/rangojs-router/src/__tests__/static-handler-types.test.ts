@@ -1,5 +1,5 @@
 /**
- * Type-level tests for createStaticHandler and createPrerenderHandler DSL constraints
+ * Type-level tests for Static and Prerender DSL constraints
  *
  * Verifies that static/prerender handlers can only be used in supported DSL positions.
  * Uses compile-time type assertions (AssertTrue/AssertEqual) and expectTypeOf.
@@ -31,7 +31,7 @@ type ErrorBoundaryFallback = Parameters<Helpers["errorBoundary"]>[0];
 type NotFoundBoundaryFallback = Parameters<Helpers["notFoundBoundary"]>[0];
 
 // ============================================================================
-// createStaticHandler — allowed positions (compile-time assertions)
+// Static — allowed positions (compile-time assertions)
 // ============================================================================
 
 // StaticHandlerDefinition IS assignable to layout() handler param
@@ -41,7 +41,7 @@ type _SH_Layout = AssertTrue<IsAssignable<SH, LayoutHandler>>;
 // (verified via PathFn accepting StaticHandlerDefinition<TParams> in union)
 
 // ============================================================================
-// createStaticHandler — disallowed positions (compile-time assertions)
+// Static — disallowed positions (compile-time assertions)
 // ============================================================================
 
 // StaticHandlerDefinition is NOT assignable to loading() component param
@@ -57,7 +57,7 @@ type _SH_NotErrorBoundary = AssertTrue<IsNotAssignable<SH, ErrorBoundaryFallback
 type _SH_NotNotFound = AssertTrue<IsNotAssignable<SH, NotFoundBoundaryFallback>>;
 
 // ============================================================================
-// createPrerenderHandler — disallowed positions (compile-time assertions)
+// Prerender — disallowed positions (compile-time assertions)
 // ============================================================================
 
 // PrerenderHandlerDefinition is NOT assignable to layout() handler param
@@ -79,7 +79,7 @@ type _PH_NotNotFound = AssertTrue<IsNotAssignable<PH, NotFoundBoundaryFallback>>
 // Runtime tests using expectTypeOf
 // ============================================================================
 
-describe("createStaticHandler type constraints", () => {
+describe("Static type constraints", () => {
   it("is assignable to layout() handler", () => {
     expectTypeOf<SH>().toMatchTypeOf<LayoutHandler>();
   });
@@ -101,7 +101,7 @@ describe("createStaticHandler type constraints", () => {
   });
 });
 
-describe("createPrerenderHandler type constraints", () => {
+describe("Prerender type constraints", () => {
   it("is not assignable to layout() handler", () => {
     expectTypeOf<PH>().not.toMatchTypeOf<LayoutHandler>();
   });
@@ -127,14 +127,14 @@ describe("createPrerenderHandler type constraints", () => {
 // Runtime: inline usage allowed (Vite plugin handles ID injection)
 // ============================================================================
 
-describe("createStaticHandler runtime constraints", () => {
+describe("Static runtime constraints", () => {
   it("does not throw in dev when $$id is missing (inline usage supported)", async () => {
     const originalEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = "development";
 
     try {
-      const { createStaticHandler } = await import("../static-handler.js");
-      const result = createStaticHandler(() => null as any);
+      const { Static } = await import("../static-handler.js");
+      const result = Static(() => null as any);
       expect(result.__brand).toBe("staticHandler");
       expect(result.$$id).toBe("");
     } finally {

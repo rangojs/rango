@@ -63,10 +63,10 @@ Loaders are not affected — they run at request time as normal and are
 bundled into the server build. Users should not use APIs in loaders that
 won't exist on the target deployment.
 
-## API: `createPrerenderHandler`
+## API: `Prerender`
 
 Follows the same pattern as `createLoader` and `createHandle`. The Vite plugin
-detects `createPrerenderHandler()` exports via regex, injects `$$id`, and
+detects `Prerender()` exports via regex, injects `$$id`, and
 generates stubs in non-RSC environments — identical to how `exposeLoaderId`
 works today.
 
@@ -81,13 +81,13 @@ interface PrerenderOptions {
 }
 
 // Static route — no params
-function createPrerenderHandler<TParams>(
+function Prerender<TParams>(
   handler: (ctx: BuildContext<TParams>) => ReactNode,
   options?: PrerenderOptions
 ): PrerenderHandlerDefinition<TParams>;
 
 // Dynamic route — params first, handler second
-function createPrerenderHandler<TParams>(
+function Prerender<TParams>(
   getParams: () => Promise<TParams[]> | TParams[],
   handler: (ctx: BuildContext<TParams>) => ReactNode,
   options?: PrerenderOptions
@@ -126,7 +126,7 @@ Properties that depend on a real HTTP request (`req`, `headers`, `cookies`,
 the developer to move request-dependent logic elsewhere.
 
 **All use items inside the path receive `BuildContext` during pre-rendering.**
-This includes child layouts, parallels, and any `createPrerenderHandler`
+This includes child layouts, parallels, and any `Prerender`
 used as sub-components. They all run at build time with no request — the
 entire B segment tree operates in build context. This is different from
 the normal server context these items would receive at runtime.
@@ -144,7 +144,7 @@ import fs from "node:fs";
 import { markdownToJsx } from "./markdown-parser";
 
 // Params first, handler second
-export const BlogPost = createPrerenderHandler(
+export const BlogPost = Prerender(
   // 1. Params: which slugs to pre-render
   async () => {
     const files = await glob("content/blog/*.md");
@@ -165,7 +165,7 @@ path("/blog/:slug", BlogPost, { name: "blog.post" })
 
 ```ts
 // Static page, no params
-export const About = createPrerenderHandler(
+export const About = Prerender(
   async (ctx) => {
     const content = await fs.readFile("content/about.md", "utf-8");
     return <Page content={markdownToJsx(content)} />;
@@ -177,7 +177,7 @@ path("/about", About, { name: "about" })
 
 ```ts
 // Passthrough: handler stays in bundle, live fallback for unknown params
-export const ProductPage = createPrerenderHandler(
+export const ProductPage = Prerender(
   async () => {
     const top = await db.query("SELECT id FROM products WHERE featured");
     return top.map(p => ({ id: p.id }));
@@ -203,12 +203,12 @@ Follows the exact same pattern as `exposeLoaderId`:
 
 ```ts
 // Regex detection (same approach as exposeLoaderId)
-const pattern = /export\s+const\s+(\w+)\s*=\s*createPrerenderHandler\s*\(/g;
+const pattern = /export\s+const\s+(\w+)\s*=\s*Prerender\s*\(/g;
 ```
 
 ### Build-time flow
 
-1. **`buildStart()`**: scan `src/` for files containing `createPrerenderHandler`.
+1. **`buildStart()`**: scan `src/` for files containing `Prerender`.
    Build a registry of prerender handler exports (file path → export names).
 
 2. **Pre-render execution**: for each handler, resolve the params function,
@@ -220,7 +220,7 @@ const pattern = /export\s+const\s+(\w+)\s*=\s*createPrerenderHandler\s*\(/g;
 
 ```ts
 // Original (blog-post.tsx)
-export const BlogPost = createPrerenderHandler(getParams, handler);
+export const BlogPost = Prerender(getParams, handler);
 
 // Stubbed (what ships to the server bundle)
 export const BlogPost = { __brand: "prerenderHandler", $$id: "abc123#BlogPost" };
@@ -256,14 +256,14 @@ path("/blog/:slug", BlogPost, { name: "blog.post" }, () => [
 
 If a parallel, child layout, or any sub-component inside the `B` segment uses
 node APIs (`node:fs`, build-time-only libraries), it must be wrapped in
-`createPrerenderHandler` (static, no `getParams`). This makes it detectable
+`Prerender` (static, no `getParams`). This makes it detectable
 and stubbable by the Vite plugin — same as the route handler itself.
 
 ```ts
-// sidebar.tsx — uses node:fs, must be a createPrerenderHandler
+// sidebar.tsx — uses node:fs, must be a Prerender
 import fs from "node:fs";
 
-export const BlogSidebar = createPrerenderHandler(
+export const BlogSidebar = Prerender(
   async (ctx) => {
     const files = await fs.readdir("content/blog/");
     return <Sidebar posts={files.map(f => basename(f, ".md"))} />;
@@ -277,11 +277,11 @@ path("/blog/:slug", BlogPost, { name: "blog.post" }, () => [
 ```
 
 Without the wrapper, passing `<Sidebar />` directly as JSX would pull
-`node:fs` into the server bundle. The `createPrerenderHandler` wrapper
+`node:fs` into the server bundle. The `Prerender` wrapper
 ensures the Vite plugin can replace it with a stub at build time.
 
 Loaders already have `createLoader` for this purpose. The static
-`createPrerenderHandler` variant fills the same role for components and
+`Prerender` variant fills the same role for components and
 parallel slots that need node APIs at build time.
 
 ### Controlling the pre-render boundary
@@ -329,7 +329,7 @@ re-render live.
 
 ## Build Segment: `B` type
 
-`createPrerenderHandler` introduces a new segment type: `B` (build). The `B`
+`Prerender` introduces a new segment type: `B` (build). The `B`
 segment wraps the route's subtree, similar to how child layouts wrap routes.
 It is the atomic unit of pre-rendering — the entire `B` segment is served
 from cache, never partially.
@@ -382,7 +382,7 @@ When the segment resolver encounters a `B` segment:
 
 ## Dev Mode
 
-In dev mode, `createPrerenderHandler` is treated as a normal handler. The
+In dev mode, `Prerender` is treated as a normal handler. The
 route renders live on first request — same as normal SSR. No stubbing, no
 build-time pre-rendering. The handler runs with a full runtime context
 (not BuildContext) in dev.
@@ -433,7 +433,7 @@ process. We are already in the RSC environment during the build.
 
 ### Step 5: Discover pre-render handlers
 
-`buildStart()` scans `src/` for `createPrerenderHandler` exports (same
+`buildStart()` scans `src/` for `Prerender` exports (same
 pattern as `exposeLoaderId`). Builds registry: file path → export names.
 
 ### Step 6: Execute pre-renders
@@ -455,7 +455,7 @@ we call it, serialize the output. Same as how caching calls
 
 ### Step 7: Stub handlers in production bundle
 
-Replace `createPrerenderHandler` exports with plain object stubs (unless
+Replace `Prerender` exports with plain object stubs (unless
 `passthrough: true`). Same mechanism as `generateClientLoaderStubs()` in
 `exposeLoaderId`. The original module and its imports are excluded from
 the bundle.
@@ -529,7 +529,7 @@ Cloudflare).
 
 ### No revalidate() without passthrough
 
-`revalidate()` is incompatible with `createPrerenderHandler` when
+`revalidate()` is incompatible with `Prerender` when
 `passthrough: false` (default). The handler is eliminated from the bundle.
 Using both produces a build-time warning.
 
@@ -552,7 +552,7 @@ re-render of the handler itself.
 
 ## Interaction with Existing DSL
 
-| DSL item       | Interaction with `createPrerenderHandler`               |
+| DSL item       | Interaction with `Prerender`               |
 |----------------|--------------------------------------------------------|
 | `loader()`     | Live at runtime, bundled normally. Use `cache()` for caching |
 | `revalidate()` | Not allowed without passthrough. Allowed with passthrough |
@@ -577,7 +577,7 @@ re-render of the handler itself.
 - `ctx.use(handle)` returns push function for handle data
 - Accessing `ctx.req`, `ctx.headers`, `ctx.cookies`, `ctx.env` throws
   descriptive errors at build time (not silent undefined)
-- Sub-use items (child layouts, parallels, `createPrerenderHandler` for
+- Sub-use items (child layouts, parallels, `Prerender` for
   parallels) all receive `BuildContext` during pre-rendering, not the
   normal server context — request APIs throw in all of them
 - Sub-use items receive the same params from the parent path
@@ -613,7 +613,7 @@ re-render of the handler itself.
 ### Sub-use semantics
 - Child layout inside path is pre-rendered
 - Parallel slot inside path is pre-rendered
-- Parallel using `createPrerenderHandler` (node APIs) is stubbed correctly
+- Parallel using `Prerender` (node APIs) is stubbed correctly
 - Content outside the path (parent layouts) stays live
 
 ### Edge cases
@@ -624,7 +624,7 @@ re-render of the handler itself.
 - Route with no `name` in path options: build error (name required for storage key)
 - Pre-rendered route with no matching Flight payload at runtime (deleted/corrupted):
   graceful fallback vs 500
-- Mixed file: module exports both `createPrerenderHandler` and a normal export —
+- Mixed file: module exports both `Prerender` and a normal export —
   plugin must NOT eliminate the entire module
 
 ## Open Questions

@@ -62,21 +62,21 @@ describe("detectImports", () => {
     expect(result.locationState).toBe(true);
   });
 
-  it("should detect createPrerenderHandler from @rangojs/router", () => {
-    const code = `import { createPrerenderHandler } from "@rangojs/router";`;
+  it("should detect Prerender from @rangojs/router", () => {
+    const code = `import { Prerender } from "@rangojs/router";`;
     const result = detectImports(code);
     expect(result.prerenderHandler).toBe(true);
   });
 
-  it("should detect createStaticHandler from @rangojs/router", () => {
-    const code = `import { createStaticHandler } from "@rangojs/router";`;
+  it("should detect Static from @rangojs/router", () => {
+    const code = `import { Static } from "@rangojs/router";`;
     const result = detectImports(code);
     expect(result.staticHandler).toBe(true);
     expect(result.any).toBe(true);
   });
 
-  it("should detect createStaticHandler from @rangojs/router/server", () => {
-    const code = `import { createStaticHandler } from "@rangojs/router/server";`;
+  it("should detect Static from @rangojs/router/server", () => {
+    const code = `import { Static } from "@rangojs/router/server";`;
     const result = detectImports(code);
     expect(result.staticHandler).toBe(true);
   });

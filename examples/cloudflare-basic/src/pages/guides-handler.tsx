@@ -1,4 +1,4 @@
-import { createPrerenderHandler } from "@rangojs/router";
+import { Prerender } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { reverse } from "../router.js";
 
@@ -9,7 +9,7 @@ const knownGuides: Record<string, string> = {
   caching: "Caching Guide",
 };
 
-export const GuidesDetail = createPrerenderHandler<{ slug: string }>(
+export const GuidesDetail = Prerender<{ slug: string }>(
   async () => Object.keys(knownGuides).map((slug) => ({ slug })),
   async (ctx) => {
     const title = knownGuides[ctx.params.slug] ?? `Guide: ${ctx.params.slug}`;

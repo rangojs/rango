@@ -1,4 +1,4 @@
-import { Meta, createPrerenderHandler } from "@rangojs/router";
+import { Meta, Prerender } from "@rangojs/router";
 import { Link, ParallelOutlet } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 import { reverse } from "../router.js";
@@ -51,7 +51,7 @@ const articles: Article[] = Object.entries(mdFiles).map(([filePath, mod]) => {
 });
 
 // Article list
-export const ArticlesIndex = createPrerenderHandler(async (ctx) => {
+export const ArticlesIndex = Prerender(async (ctx) => {
   const meta = ctx.use(Meta);
   meta({ title: "Articles - RSC Router Cloudflare" });
   meta({
@@ -118,7 +118,7 @@ export const ArticlesIndex = createPrerenderHandler(async (ctx) => {
 });
 
 // Article detail -- derives params from discovered .md files
-export const ArticleDetail = createPrerenderHandler(
+export const ArticleDetail = Prerender(
   async () => articles.map((a) => ({ slug: a.slug })),
   async (ctx) => {
     const article = articles.find((a) => a.slug === ctx.params.slug);

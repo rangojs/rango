@@ -278,10 +278,10 @@ test.describe("prerender passthrough bundle output (production)", () => {
 
   test("passthrough handler code stays in RSC prerender-handlers chunk", () => {
     // GuidesDetail (passthrough: true) should NOT be replaced with a stub
-    // It should contain the full createPrerenderHandler call
+    // It should contain the full Prerender call
     expect(prerenderHandlersBundle).toContain("GuidesDetail");
     expect(prerenderHandlersBundle).toMatch(
-      /const\s+GuidesDetail\s*=\s*createPrerenderHandler/,
+      /const\s+GuidesDetail\s*=\s*Prerender/,
     );
   });
 

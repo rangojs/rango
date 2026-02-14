@@ -1,4 +1,4 @@
-import { createStaticHandler } from "@rangojs/router";
+import { Static } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 import { reverse } from "../router.js";
 
@@ -43,7 +43,7 @@ const BUILD_TIMESTAMP = new Date().toISOString();
 
 // --- Static layout: rendered once at build time, wraps child routes. ---
 // The nav never changes, so there's no reason to re-render it per request.
-export const DocsNavLayout = createStaticHandler(async () => {
+export const DocsNavLayout = Static(async () => {
   const docsNavItems = await readDocsNavItems();
   return (
     <div data-testid="static-docs-layout">
@@ -74,7 +74,7 @@ export const DocsNavLayout = createStaticHandler(async () => {
 
 // --- Static path: rendered once at build time on a path() route. ---
 // The index page content is fixed.
-export const DocsIndexPage = createStaticHandler(async () => {
+export const DocsIndexPage = Static(async () => {
   const docsNavItems = await readDocsNavItems();
   return (
     <div data-testid="static-docs-index">
@@ -104,7 +104,7 @@ export const DocsIndexPage = createStaticHandler(async () => {
 
 // --- Static parallel slot: rendered once at build time in a @sidebar slot. ---
 // Provides a table of contents that doesn't change between requests.
-export const DocsTocSidebar = createStaticHandler(async () => {
+export const DocsTocSidebar = Static(async () => {
   const docsNavItems = await readDocsNavItems();
   return (
     <aside data-testid="static-toc-sidebar">

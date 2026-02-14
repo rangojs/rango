@@ -10,7 +10,7 @@ For dynamic routes like `/articles/:slug`, the pre-render handler needs to know 
 ## Basic Usage
 
 ```typescript
-export const ArticlePage = createPrerenderHandler(
+export const ArticlePage = Prerender(
   // First arg: getParams — returns all slugs to pre-render
   async () => [
     { slug: "what-is-prerendering" },

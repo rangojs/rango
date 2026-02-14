@@ -69,7 +69,7 @@ export { createHandle, isHandle, type Handle } from "./handle.js";
 
 // Pre-render handler API
 export {
-  createPrerenderHandler,
+  Prerender,
   isPrerenderHandler,
   type PrerenderHandlerDefinition,
   type PrerenderOptions,
@@ -78,7 +78,7 @@ export {
 
 // Static handler API
 export {
-  createStaticHandler,
+  Static,
   isStaticHandler,
   type StaticHandlerDefinition,
 } from "./static-handler.js";

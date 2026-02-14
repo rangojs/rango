@@ -1,11 +1,11 @@
 import {
   urls,
-  createPrerenderHandler,
-  createStaticHandler,
+  Prerender,
+  Static,
 } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 
-export const TransformStatic = createStaticHandler(() => (
+export const TransformStatic = Static(() => (
   <div data-testid="cf-transform-static">
     cf-transform-static
     <Link
@@ -17,7 +17,7 @@ export const TransformStatic = createStaticHandler(() => (
   </div>
 ));
 
-export const TransformPrerender = createPrerenderHandler(() => (
+export const TransformPrerender = Prerender(() => (
   <div data-testid="cf-transform-prerender-page">cf-transform-prerender</div>
 ));
 

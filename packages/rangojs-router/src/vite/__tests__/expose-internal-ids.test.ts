@@ -55,46 +55,46 @@ function extractVirtualImports(
 // Test sources
 // ---------------------------------------------------------------------------
 
-const INLINE_SOURCE = `import { createStaticHandler } from "@rangojs/router";
-layout(createStaticHandler(() => <nav />));
+const INLINE_SOURCE = `import { Static } from "@rangojs/router";
+layout(Static(() => <nav />));
 `;
 
-const EXPORT_SOURCE = `import { createStaticHandler } from "@rangojs/router";
-export const Nav = createStaticHandler(() => <nav />);
+const EXPORT_SOURCE = `import { Static } from "@rangojs/router";
+export const Nav = Static(() => <nav />);
 `;
 
-const MIXED_SOURCE = `import { createStaticHandler } from "@rangojs/router";
-export const Nav = createStaticHandler(() => <nav />);
-layout(createStaticHandler(() => <sidebar />));
+const MIXED_SOURCE = `import { Static } from "@rangojs/router";
+export const Nav = Static(() => <nav />);
+layout(Static(() => <sidebar />));
 `;
 
-const SAME_LINE_SOURCE = `import { createStaticHandler } from "@rangojs/router";
-layout(createStaticHandler(() => <a />), createStaticHandler(() => <b />));
+const SAME_LINE_SOURCE = `import { Static } from "@rangojs/router";
+layout(Static(() => <a />), Static(() => <b />));
 `;
 
-const PRERENDER_INLINE_SOURCE = `import { createPrerenderHandler } from "@rangojs/router";
-path("/about", createPrerenderHandler(() => <div>About</div>));
+const PRERENDER_INLINE_SOURCE = `import { Prerender } from "@rangojs/router";
+path("/about", Prerender(() => <div>About</div>));
 `;
 
-const PRERENDER_EXPORT_SOURCE = `import { createPrerenderHandler } from "@rangojs/router";
-export const AboutPage = createPrerenderHandler(() => <div>About</div>);
+const PRERENDER_EXPORT_SOURCE = `import { Prerender } from "@rangojs/router";
+export const AboutPage = Prerender(() => <div>About</div>);
 `;
 
-const PRERENDER_MIXED_SOURCE = `import { createPrerenderHandler } from "@rangojs/router";
-export const AboutPage = createPrerenderHandler(() => <main />);
-path("/inline", createPrerenderHandler(() => <aside />));
+const PRERENDER_MIXED_SOURCE = `import { Prerender } from "@rangojs/router";
+export const AboutPage = Prerender(() => <main />);
+path("/inline", Prerender(() => <aside />));
 `;
 
-const PRERENDER_INLINE_WHITESPACE_SOURCE = `import { createPrerenderHandler } from "@rangojs/router";
-path("/about", createPrerenderHandler
+const PRERENDER_INLINE_WHITESPACE_SOURCE = `import { Prerender } from "@rangojs/router";
+path("/about", Prerender
 (() => <div>About</div>));
 `;
 
-const STATIC_ALIAS_INLINE_SOURCE = `import { createStaticHandler as sh } from "@rangojs/router";
+const STATIC_ALIAS_INLINE_SOURCE = `import { Static as sh } from "@rangojs/router";
 layout(sh(() => <nav />));
 `;
 
-const STATIC_ALIAS_EXPORT_SOURCE = `import { createStaticHandler as sh } from "@rangojs/router";
+const STATIC_ALIAS_EXPORT_SOURCE = `import { Static as sh } from "@rangojs/router";
 export const Nav = sh(() => <nav />);
 `;
 
@@ -124,7 +124,7 @@ describe("exposeInternalIds - inline static handler integration", () => {
 
       // The inline call should be replaced with the import name
       expect(r1.code).toContain(`layout(${exportName})`);
-      expect(r1.code).not.toContain("createStaticHandler(() => <nav />)");
+      expect(r1.code).not.toContain("Static(() => <nav />)");
 
       // Step 2: resolveId adds \0 prefix
       const resolved = plugin.resolveId.call({}, specifier, FILE_ID);
@@ -134,7 +134,7 @@ describe("exposeInternalIds - inline static handler integration", () => {
       const loaded = plugin.load.call({}, resolved);
       expect(loaded).toBeDefined();
       expect(loaded).toContain(`export const ${exportName}`);
-      expect(loaded).toContain("createStaticHandler");
+      expect(loaded).toContain("Static");
       expect(loaded).toContain("@rangojs/router");
 
       // Step 4: transform virtual module in RSC injects $$id
@@ -167,8 +167,8 @@ describe("exposeInternalIds - inline static handler integration", () => {
       expect(r2.code).toContain("__brand");
       expect(r2.code).toContain('"staticHandler"');
       expect(r2.code).toContain("$$id");
-      // No createStaticHandler call remains
-      expect(r2.code).not.toContain("createStaticHandler(");
+      // No Static call remains
+      expect(r2.code).not.toContain("Static(");
     });
   });
 
@@ -190,12 +190,12 @@ describe("exposeInternalIds - inline static handler integration", () => {
       expect(vImports).toHaveLength(1);
 
       // Export const Nav stays in the original file with $$id injected
-      expect(r1.code).toContain("export const Nav = createStaticHandler");
+      expect(r1.code).toContain("export const Nav = Static");
       expect(r1.code).toContain("Nav.$$id");
 
       // Inline call replaced with import name
       expect(r1.code).toContain(`layout(${vImports[0].exportName})`);
-      expect(r1.code).not.toContain("createStaticHandler(() => <sidebar />)");
+      expect(r1.code).not.toContain("Static(() => <sidebar />)");
 
       // Virtual module also gets $$id in RSC
       const resolved = plugin.resolveId.call(
@@ -283,9 +283,9 @@ describe("exposeInternalIds - inline static handler integration", () => {
       const plugin = createPlugin();
       initDev(plugin);
 
-      const source = `import { createStaticHandler } from "@rangojs/router";
+      const source = `import { Static } from "@rangojs/router";
 import { readFileSync } from "node:fs";
-layout(createStaticHandler(() => {
+layout(Static(() => {
   const data = readFileSync("data.json", "utf-8");
   return <pre>{data}</pre>;
 }));
@@ -315,9 +315,9 @@ layout(createStaticHandler(() => {
       const plugin = createPlugin();
       initDev(plugin);
 
-      const source = `import { createStaticHandler } from "@rangojs/router";
+      const source = `import { Static } from "@rangojs/router";
 import { readFileSync } from "node:fs";
-export const Nav = createStaticHandler(() => {
+export const Nav = Static(() => {
   const data = readFileSync("data.json", "utf-8");
   return <pre>{data}</pre>;
 });
@@ -395,7 +395,7 @@ export const Nav = createStaticHandler(() => {
       const vImports = extractVirtualImports(result.code);
       expect(vImports).toHaveLength(1);
       expect(result.code).toContain(`path("/about", ${vImports[0].exportName})`);
-      expect(result.code).not.toContain("createPrerenderHandler\n(");
+      expect(result.code).not.toContain("Prerender\n(");
     });
 
     it("load returns null for unregistered virtual ID", () => {
@@ -409,7 +409,7 @@ export const Nav = createStaticHandler(() => {
       expect(result).toBeNull();
     });
 
-    it("extracts inline call when createStaticHandler is imported with alias", () => {
+    it("extracts inline call when Static is imported with alias", () => {
       const plugin = createPlugin();
       initDev(plugin);
 
@@ -441,12 +441,12 @@ export const Nav = createStaticHandler(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Inline createPrerenderHandler integration
+// Inline Prerender integration
 // ---------------------------------------------------------------------------
 
 describe("exposeInternalIds - inline prerender handler integration", () => {
   describe("full round-trip: RSC dev mode", () => {
-    it("transforms inline createPrerenderHandler -> virtual -> $$id", () => {
+    it("transforms inline Prerender -> virtual -> $$id", () => {
       const plugin = createPlugin();
       initDev(plugin);
 
@@ -462,7 +462,7 @@ describe("exposeInternalIds - inline prerender handler integration", () => {
 
       // The inline call should be replaced with the import name
       expect(r1.code).toContain(`path("/about", ${exportName})`);
-      expect(r1.code).not.toContain("createPrerenderHandler(() =>");
+      expect(r1.code).not.toContain("Prerender(() =>");
 
       // Step 2: resolveId adds \0 prefix
       const resolved = plugin.resolveId.call({}, specifier, FILE_ID);
@@ -472,7 +472,7 @@ describe("exposeInternalIds - inline prerender handler integration", () => {
       const loaded = plugin.load.call({}, resolved);
       expect(loaded).toBeDefined();
       expect(loaded).toContain(`export const ${exportName}`);
-      expect(loaded).toContain("createPrerenderHandler");
+      expect(loaded).toContain("Prerender");
       expect(loaded).toContain("@rangojs/router");
 
       // Step 4: transform virtual module in RSC injects $$id
@@ -501,8 +501,8 @@ describe("exposeInternalIds - inline prerender handler integration", () => {
       expect(r2.code).toContain("__brand");
       expect(r2.code).toContain('"prerenderHandler"');
       expect(r2.code).toContain("$$id");
-      // No createPrerenderHandler call remains
-      expect(r2.code).not.toContain("createPrerenderHandler(");
+      // No Prerender call remains
+      expect(r2.code).not.toContain("Prerender(");
     });
   });
 
@@ -520,12 +520,12 @@ describe("exposeInternalIds - inline prerender handler integration", () => {
       expect(vImports).toHaveLength(1);
 
       // Export const stays in the original file with $$id injected
-      expect(r1.code).toContain("export const AboutPage = createPrerenderHandler");
+      expect(r1.code).toContain("export const AboutPage = Prerender");
       expect(r1.code).toContain("AboutPage.$$id");
 
       // Inline call replaced with import name
       expect(r1.code).toContain(`path("/inline", ${vImports[0].exportName})`);
-      expect(r1.code).not.toContain("createPrerenderHandler(() => <aside />)");
+      expect(r1.code).not.toContain("Prerender(() => <aside />)");
     });
   });
 
@@ -672,8 +672,8 @@ describe("exposeInternalIds - handler export specifiers", () => {
     const plugin = createPlugin({ forceBuild: true });
     initDev(plugin);
 
-    const code = `import { createStaticHandler } from "@rangojs/router";
-const DocsNav = createStaticHandler(() => <nav />);
+    const code = `import { Static } from "@rangojs/router";
+const DocsNav = Static(() => <nav />);
 export { DocsNav as DocsNavPublic };
 `;
     plugin.transform.call(rscCtx(), code, FILE_ID);
@@ -684,8 +684,8 @@ export { DocsNav as DocsNavPublic };
     const plugin = createPlugin({ forceBuild: true });
     initDev(plugin);
 
-    const code = `import { createPrerenderHandler } from "@rangojs/router";
-const DocsPage = createPrerenderHandler(() => <div />);
+    const code = `import { Prerender } from "@rangojs/router";
+const DocsPage = Prerender(() => <div />);
 export { DocsPage as DocsPagePublic };
 `;
     plugin.transform.call(rscCtx(), code, FILE_ID);
@@ -758,8 +758,8 @@ describe("exposeInternalIds - whole-file handler stubs for const + export patter
     const plugin = createPlugin();
     initDev(plugin);
 
-    const code = `import { createStaticHandler } from "@rangojs/router";
-const Nav = createStaticHandler(() => <nav />);
+    const code = `import { Static } from "@rangojs/router";
+const Nav = Static(() => <nav />);
 export { Nav };
 `;
     const result = plugin.transform.call(clientCtx(), code, FILE_ID);
@@ -767,15 +767,15 @@ export { Nav };
     expect(result.code).toContain('__brand: "staticHandler"');
     expect(result.code).toContain("$$id");
     expect(result.code).toContain("export const Nav");
-    expect(result.code).not.toContain("createStaticHandler");
+    expect(result.code).not.toContain("Static");
   });
 
   it("generates whole-file stub for prerender handler with const + export { X as Y }", () => {
     const plugin = createPlugin();
     initDev(plugin);
 
-    const code = `import { createPrerenderHandler } from "@rangojs/router";
-const InternalPage = createPrerenderHandler(() => <div />);
+    const code = `import { Prerender } from "@rangojs/router";
+const InternalPage = Prerender(() => <div />);
 export { InternalPage as PublicPage };
 `;
     const result = plugin.transform.call(clientCtx(), code, FILE_ID);
@@ -783,7 +783,7 @@ export { InternalPage as PublicPage };
     expect(result.code).toContain('__brand: "prerenderHandler"');
     expect(result.code).toContain("export const PublicPage");
     expect(result.code).not.toContain("InternalPage");
-    expect(result.code).not.toContain("createPrerenderHandler");
+    expect(result.code).not.toContain("Prerender");
   });
 });
 
@@ -797,8 +797,8 @@ describe("exposeInternalIds - expr stubs for const + export patterns", () => {
     initDev(plugin);
 
     // Mixed file: has a non-handler export, so whole-file stub won't apply
-    const code = `import { createStaticHandler } from "@rangojs/router";
-const Nav = createStaticHandler(() => <nav />);
+    const code = `import { Static } from "@rangojs/router";
+const Nav = Static(() => <nav />);
 export { Nav };
 export const PAGE_TITLE = "docs";
 `;
@@ -809,15 +809,15 @@ export const PAGE_TITLE = "docs";
     // The non-handler export is preserved
     expect(result.code).toContain("PAGE_TITLE");
     // The call expression is replaced with a stub object
-    expect(result.code).not.toContain("createStaticHandler(");
+    expect(result.code).not.toContain("Static(");
   });
 
   it("overwrites call expression for handler with const + export { X as Y }", () => {
     const plugin = createPlugin();
     initDev(plugin);
 
-    const code = `import { createStaticHandler } from "@rangojs/router";
-const Nav = createStaticHandler(() => <nav />);
+    const code = `import { Static } from "@rangojs/router";
+const Nav = Static(() => <nav />);
 export { Nav as PublicNav };
 export const PAGE_TITLE = "docs";
 `;
@@ -826,6 +826,6 @@ export const PAGE_TITLE = "docs";
     expect(result.code).toContain('__brand: "staticHandler"');
     expect(result.code).toContain("$$id");
     expect(result.code).toContain("PAGE_TITLE");
-    expect(result.code).not.toContain("createStaticHandler(");
+    expect(result.code).not.toContain("Static(");
   });
 });

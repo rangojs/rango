@@ -22,7 +22,7 @@ cache({ ttl: 60, swr: 300 }, () => [
 The payload is produced during `vite build`. No first-request cost, and build-only code (markdown parsers, file system reads) can be excluded from the production bundle entirely.
 
 ```typescript
-export const DocsPage = createPrerenderHandler(async (ctx) => {
+export const DocsPage = Prerender(async (ctx) => {
   const md = readFileSync("content/docs.md", "utf-8");
   return <Markdown content={md} />;
 });

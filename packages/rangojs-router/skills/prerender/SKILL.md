@@ -1,24 +1,24 @@
 ---
 name: prerender
-description: Pre-render route segments at build time with createPrerenderHandler and passthrough fallback
+description: Pre-render route segments at build time with Prerender and passthrough fallback
 argument-hint: [passthrough]
 ---
 
-# Pre-rendering with createPrerenderHandler
+# Pre-rendering with Prerender
 
 Pre-rendering is **caching at build time**. Same serialization format, same
 deserialization path, same segment system. The worker handles every request --
 there are NO static .html or .rsc files served from assets. The worker reads
 pre-computed Flight payloads instead of executing handler code.
 
-## API: createPrerenderHandler
+## API: Prerender
 
 ### Static Route (no params)
 
 ```typescript
-import { createPrerenderHandler } from "@rangojs/router";
+import { Prerender } from "@rangojs/router";
 
-export const AboutPage = createPrerenderHandler(async (ctx) => {
+export const AboutPage = Prerender(async (ctx) => {
   const content = await fs.readFile("content/about.md", "utf-8");
   return <Page content={markdownToJsx(content)} />;
 });
@@ -32,7 +32,7 @@ path("/about", AboutPage, { name: "about" })
 Params come first, handler second:
 
 ```typescript
-export const BlogPost = createPrerenderHandler(
+export const BlogPost = Prerender(
   // 1. Params: which slugs to pre-render
   async () => {
     const files = await glob("content/blog/*.md");
@@ -52,7 +52,7 @@ path("/blog/:slug", BlogPost, { name: "blog.post" })
 ### With Passthrough (live fallback for unknown params)
 
 ```typescript
-export const ProductPage = createPrerenderHandler(
+export const ProductPage = Prerender(
   async () => {
     const top = await db.query("SELECT id FROM products WHERE featured");
     return top.map(p => ({ id: p.id }));
@@ -113,31 +113,31 @@ All of the following are equivalent and fully supported by the Vite transform:
 
 ```typescript
 // Direct export (most common)
-export const BlogPost = createPrerenderHandler(getParams, handler);
+export const BlogPost = Prerender(getParams, handler);
 
 // Separate declaration + named export
-const BlogPost = createPrerenderHandler(getParams, handler);
+const BlogPost = Prerender(getParams, handler);
 export { BlogPost };
 
 // Aliased export
-const InternalPage = createPrerenderHandler(getParams, handler);
+const InternalPage = Prerender(getParams, handler);
 export { InternalPage as BlogPost };
 
 // Aliased import
-import { createPrerenderHandler as cph } from "@rangojs/router";
+import { Prerender as cph } from "@rangojs/router";
 export const BlogPost = cph(getParams, handler);
 ```
 
 All patterns support whole-file stubbing, expression stubbing, and build-time
-module tracking. The same applies to `createStaticHandler`.
+module tracking. The same applies to `Static`.
 
 ## Handler Eviction
 
-In production builds, `createPrerenderHandler` exports are replaced with stubs:
+In production builds, `Prerender` exports are replaced with stubs:
 
 ```typescript
 // Original
-export const BlogPost = createPrerenderHandler(getParams, handler);
+export const BlogPost = Prerender(getParams, handler);
 
 // Stubbed (ships to server bundle when passthrough: false)
 export const BlogPost = { __brand: "prerenderHandler", $$id: "abc123#BlogPost" };
@@ -163,12 +163,12 @@ path("/blog/:slug", BlogPost, { name: "blog.post" }, () => [
 ])
 ```
 
-If a parallel or child layout uses node APIs, wrap it in `createPrerenderHandler`
+If a parallel or child layout uses node APIs, wrap it in `Prerender`
 (static, no getParams) so the Vite plugin can stub it:
 
 ```typescript
-// sidebar.tsx -- uses node:fs, must be a createPrerenderHandler
-export const BlogSidebar = createPrerenderHandler(async (ctx) => {
+// sidebar.tsx -- uses node:fs, must be a Prerender
+export const BlogSidebar = Prerender(async (ctx) => {
   const files = await fs.readdir("content/blog/");
   return <Sidebar posts={files.map(f => basename(f, ".md"))} />;
 });
@@ -181,7 +181,7 @@ path("/blog/:slug", BlogPost, { name: "blog.post" }, () => [
 
 ## Interaction with DSL Items
 
-| DSL item       | Behavior with createPrerenderHandler |
+| DSL item       | Behavior with Prerender |
 |----------------|--------------------------------------|
 | `loader()`     | Live at runtime, bundled normally. Use `cache()` for caching. |
 | `revalidate()` | Not allowed without passthrough. Allowed with passthrough. |
@@ -194,7 +194,7 @@ path("/blog/:slug", BlogPost, { name: "blog.post" }, () => [
 
 ## Dev Mode
 
-In dev mode, `createPrerenderHandler` is a normal handler. Routes render live
+In dev mode, `Prerender` is a normal handler. Routes render live
 on every request. No stubbing, no build-time pre-rendering. The handler runs
 with full runtime context (not BuildContext).
 
@@ -231,7 +231,7 @@ and `revalidate()`, the handler itself can re-render live.
 If `getParams` returns an empty array, no Flight payloads are written. No error.
 
 ### Route name is required
-Routes using `createPrerenderHandler` must have a `name` in path options.
+Routes using `Prerender` must have a `name` in path options.
 The name is used as the storage key for Flight payloads.
 
 ### No revalidate without passthrough
@@ -246,7 +246,7 @@ With `passthrough: true`, `loading()` works for live fallback renders.
 
 ```typescript
 // pages/guides-handler.tsx
-import { createPrerenderHandler } from "@rangojs/router";
+import { Prerender } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { href } from "../router.js";
 
@@ -255,7 +255,7 @@ const knownGuides: Record<string, string> = {
   caching: "Caching Guide",
 };
 
-export const GuidesDetail = createPrerenderHandler<{ slug: string }>(
+export const GuidesDetail = Prerender<{ slug: string }>(
   async () => Object.keys(knownGuides).map((slug) => ({ slug })),
   async (ctx) => {
     const title = knownGuides[ctx.params.slug] ?? `Guide: ${ctx.params.slug}`;
