@@ -561,10 +561,12 @@ test.describe("shop-breadcrumbs", () => {
     // CRITICAL: Category breadcrumbs should be restored: Shop > Electronics
     await expect(breadcrumbNav.locator("text=Shop")).toBeVisible();
 
-    // Print console logs for debugging
-    console.log("=== Browser Console Logs ===");
-    logs.forEach((log) => console.log(log));
-    console.log("=== End Browser Console Logs ===");
+    // Print debug logs only when requested.
+    if (process.env.TEST_DEBUG) {
+      console.log("=== Browser Console Logs ===");
+      logs.forEach((log) => console.log(log));
+      console.log("=== End Browser Console Logs ===");
+    }
 
     await expect(breadcrumbNav.locator("text=Electronics")).toBeVisible({ timeout: 3000 });
   });
