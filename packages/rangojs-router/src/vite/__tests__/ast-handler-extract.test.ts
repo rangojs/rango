@@ -74,6 +74,28 @@ export const Nav = createStaticHandler(() => <nav />);
     const sites = findHandlerCalls(code, "createPrerenderHandler", parseAst);
     expect(sites).toEqual([]);
   });
+
+  it("detects aliased import calls for createStaticHandler", () => {
+    const code = `
+import { createStaticHandler as sh } from "@rangojs/router";
+layout(sh(() => <nav />));
+`;
+    const sites = findHandlerCalls(code, "createStaticHandler", parseAst);
+    expect(sites).toHaveLength(1);
+    expect(sites[0].calleeName).toBe("sh");
+    expect(sites[0].exportInfo).toBeNull();
+  });
+
+  it("detects aliased export const calls for createPrerenderHandler", () => {
+    const code = `
+import { createPrerenderHandler as ph } from "@rangojs/router";
+export const About = ph(() => <div />);
+`;
+    const sites = findHandlerCalls(code, "createPrerenderHandler", parseAst);
+    expect(sites).toHaveLength(1);
+    expect(sites[0].calleeName).toBe("ph");
+    expect(sites[0].exportInfo?.exportName).toBe("About");
+  });
 });
 
 // ---------------------------------------------------------------------------

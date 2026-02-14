@@ -90,6 +90,14 @@ path("/about", createPrerenderHandler
 (() => <div>About</div>));
 `;
 
+const STATIC_ALIAS_INLINE_SOURCE = `import { createStaticHandler as sh } from "@rangojs/router";
+layout(sh(() => <nav />));
+`;
+
+const STATIC_ALIAS_EXPORT_SOURCE = `import { createStaticHandler as sh } from "@rangojs/router";
+export const Nav = sh(() => <nav />);
+`;
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -400,6 +408,35 @@ export const Nav = createStaticHandler(() => {
       );
       expect(result).toBeNull();
     });
+
+    it("extracts inline call when createStaticHandler is imported with alias", () => {
+      const plugin = createPlugin();
+      initDev(plugin);
+
+      const result = plugin.transform.call(
+        rscCtx(),
+        STATIC_ALIAS_INLINE_SOURCE,
+        FILE_ID,
+      );
+      expect(result).toBeDefined();
+
+      const vImports = extractVirtualImports(result.code);
+      expect(vImports).toHaveLength(1);
+      expect(result.code).toContain(`layout(${vImports[0].exportName})`);
+    });
+
+    it("injects $$id for export const alias call", () => {
+      const plugin = createPlugin();
+      initDev(plugin);
+
+      const result = plugin.transform.call(
+        rscCtx(),
+        STATIC_ALIAS_EXPORT_SOURCE,
+        FILE_ID,
+      );
+      expect(result).toBeDefined();
+      expect(result.code).toContain("Nav.$$id");
+    });
   });
 });
 
@@ -501,5 +538,54 @@ describe("exposeInternalIds - inline prerender handler integration", () => {
 
       expect(plugin.api.prerenderHandlerModules.get(FILE_ID)).toEqual(["AboutPage"]);
     });
+  });
+});
+
+describe("exposeInternalIds - unsupported shape diagnostics", () => {
+  it("warns for createLoader when declaration is not export const", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+const LocalLoader = createLoader(async () => ({ ok: true }));
+export { LocalLoader };
+`;
+    const ctx = rscCtx();
+    plugin.transform.call(ctx, code, FILE_ID);
+
+    expect(ctx.warn).toHaveBeenCalledTimes(1);
+    const [msg] = ctx.warn.mock.calls[0];
+    expect(msg).toContain("Unsupported createLoader shape");
+    expect(msg).toContain("export const X = createLoader(...)");
+  });
+
+  it("does not warn for supported createLoader export const shape", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+export const MyLoader = createLoader(async () => ({ ok: true }));
+`;
+    const ctx = rscCtx();
+    plugin.transform.call(ctx, code, FILE_ID);
+
+    expect(ctx.warn).not.toHaveBeenCalled();
+  });
+
+  it("warns at most once per file/function shape", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createHandle } from "@rangojs/router";
+const Breadcrumbs = createHandle(() => []);
+export { Breadcrumbs };
+`;
+    const ctx = rscCtx();
+    plugin.transform.call(ctx, code, FILE_ID);
+    plugin.transform.call(ctx, code, FILE_ID);
+
+    expect(ctx.warn).toHaveBeenCalledTimes(1);
+    const [msg] = ctx.warn.mock.calls[0];
+    expect(msg).toContain("Unsupported createHandle shape");
   });
 });

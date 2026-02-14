@@ -16,6 +16,7 @@ import {
 } from "./expose-id-utils.ts";
 import {
   transformInlineHandlers,
+  getImportedLocalNames,
   type VirtualHandlerEntry,
 } from "./ast-handler-extract.ts";
 
@@ -41,6 +42,10 @@ interface HandlerTransformConfig {
   brand: string;
 }
 
+interface StrictCreateTransformConfig {
+  fnName: "createLoader" | "createHandle" | "createLocationState";
+}
+
 const PRERENDER_CONFIG: HandlerTransformConfig = {
   fnName: "createPrerenderHandler",
   brand: "prerenderHandler",
@@ -50,6 +55,57 @@ const STATIC_CONFIG: HandlerTransformConfig = {
   fnName: "createStaticHandler",
   brand: "staticHandler",
 };
+
+const STRICT_CREATE_CONFIGS: StrictCreateTransformConfig[] = [
+  { fnName: "createLoader" },
+  { fnName: "createHandle" },
+  { fnName: "createLocationState" },
+];
+
+function countCreateCalls(code: string, fnName: string): number {
+  const callPattern = new RegExp(`\\b${fnName}\\s*(?:<[^>]*>\\s*)?\\(`, "g");
+  return (code.match(callPattern) || []).length;
+}
+
+function countExportConstCalls(code: string, fnName: string): number {
+  return (code.match(makeExportPattern(fnName)) || []).length;
+}
+
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildExportPattern(fnNames: string[]): RegExp {
+  const alternation = fnNames.map(escapeRegExp).join("|");
+  return new RegExp(
+    `export\\s+const\\s+(\\w+)\\s*=\\s*(?:${alternation})\\s*(?:<[^>]*>)?\\s*\\(`,
+    "g",
+  );
+}
+
+function countCreateCallsForNames(code: string, fnNames: string[]): number {
+  const pattern = new RegExp(
+    `\\b(?:${fnNames.map(escapeRegExp).join("|")})\\s*(?:<[^>]*>\\s*)?\\(`,
+    "g",
+  );
+  return (code.match(pattern) || []).length;
+}
+
+function countExportConstCallsForNames(code: string, fnNames: string[]): number {
+  return (code.match(buildExportPattern(fnNames)) || []).length;
+}
+
+function buildUnsupportedShapeWarning(filePath: string, fnName: string): string {
+  return [
+    `[rsc-router] Unsupported ${fnName} shape in "${filePath}".`,
+    `Only "export const X = ${fnName}(...)" is transformed for stable IDs.`,
+    `Potentially unsupported forms include:`,
+    `  - const X = ${fnName}(...); export { X }`,
+    `  - export let/var X = ${fnName}(...)`,
+    `  - inline ${fnName}(...) calls`,
+    `See: packages/rangojs-router/src/vite/TRANSFORM-SUPPORT.md`,
+  ].join("\n");
+}
 
 // ---------------------------------------------------------------------------
 // Plugin API type (consumed by router-discovery in index.ts)
@@ -271,11 +327,12 @@ function transformLocationState(
  */
 function generateWholeFileStubs(
   cfg: HandlerTransformConfig,
+  fnNames: string[],
   code: string,
   filePath: string,
   isBuild: boolean,
 ): { code: string; map: null } | null {
-  const handlerPattern = makeExportPattern(cfg.fnName);
+  const handlerPattern = buildExportPattern(fnNames);
   const handlers: string[] = [];
   let match: RegExpExecArray | null;
 
@@ -312,13 +369,15 @@ function generateWholeFileStubs(
  */
 function generateExprStubs(
   cfg: HandlerTransformConfig,
+  fnNames: string[],
   code: string,
   filePath: string,
   sourceId: string,
   isBuild: boolean,
 ): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
+  const alternation = fnNames.map(escapeRegExp).join("|");
   const pattern = new RegExp(
-    `export\\s+const\\s+(\\w+)\\s*=\\s*(${cfg.fnName}\\s*(?:<[^>]*>)?\\s*\\()`,
+    `export\\s+const\\s+(\\w+)\\s*=\\s*((?:${alternation})\\s*(?:<[^>]*>)?\\s*\\()`,
     "g",
   );
 
@@ -361,12 +420,13 @@ function generateExprStubs(
  */
 function transformHandlerIds(
   cfg: HandlerTransformConfig,
+  fnNames: string[],
   s: MagicString,
   code: string,
   filePath: string,
   isBuild: boolean,
 ): boolean {
-  const pattern = makeExportPattern(cfg.fnName);
+  const pattern = buildExportPattern(fnNames);
   let hasChanges = false;
   let match: RegExpExecArray | null;
 
@@ -523,6 +583,8 @@ export function exposeInternalIds(options?: {
 
   // Virtual module registry for inline handler extraction (both types)
   const virtualHandlers = new Map<string, VirtualHandlerEntry>();
+  // De-duplicate unsupported shape warnings across repeated transforms.
+  const unsupportedShapeWarnings = new Set<string>();
 
   return {
     name: "@rangojs/router:expose-internal-ids",
@@ -696,6 +758,10 @@ ${lazyImports.join(",\n")}
         );
       }
 
+      // Fast exit: if the file doesn't import from @rangojs/router at all,
+      // skip all create* analysis and transforms.
+      if (!code.includes("@rangojs/router")) return;
+
       // Detect all relevant imports in one pass
       const has = detectImports(code);
 
@@ -717,6 +783,27 @@ ${lazyImports.join(",\n")}
         !hasStaticHandlerCode
       ) {
         return;
+      }
+
+      // Warn on create* declaration shapes that are currently unsupported by
+      // non-AST transforms (loader/handle/locationState only).
+      for (const cfg of STRICT_CREATE_CONFIGS) {
+        const hasCode =
+          cfg.fnName === "createLoader"
+            ? hasLoaderCode
+            : cfg.fnName === "createHandle"
+            ? hasHandleCode
+            : hasLocationStateCode;
+        if (!hasCode) continue;
+
+        const totalCalls = countCreateCalls(code, cfg.fnName);
+        const exportConstCalls = countExportConstCalls(code, cfg.fnName);
+        if (totalCalls <= exportConstCalls) continue;
+
+        const warnKey = `${id}::${cfg.fnName}`;
+        if (unsupportedShapeWarnings.has(warnKey)) continue;
+        unsupportedShapeWarnings.add(warnKey);
+        this.warn(buildUnsupportedShapeWarning(filePath, cfg.fnName));
       }
 
       // --- Loader: track for manifest (RSC env only) ---
@@ -742,20 +829,32 @@ ${lazyImports.join(",\n")}
 
       // --- PrerenderHandler: non-RSC stub replacement ---
       if (hasPrerenderHandlerCode && !isRscEnv) {
+        const prerenderNames = Array.from(
+          getImportedLocalNames(code, PRERENDER_CONFIG.fnName, parseAst),
+        );
+        const fnNames = prerenderNames.length > 0
+          ? prerenderNames
+          : [PRERENDER_CONFIG.fnName];
         const wholeFile = generateWholeFileStubs(
-          PRERENDER_CONFIG, code, filePath, isBuild,
+          PRERENDER_CONFIG, fnNames, code, filePath, isBuild,
         );
         if (wholeFile) return wholeFile;
 
         const exprStubs = generateExprStubs(
-          PRERENDER_CONFIG, code, filePath, id, isBuild,
+          PRERENDER_CONFIG, fnNames, code, filePath, id, isBuild,
         );
         if (exprStubs) return exprStubs;
       }
 
       // --- PrerenderHandler: RSC build module tracking ---
       if (hasPrerenderHandlerCode && isRscEnv && isBuild) {
-        const handlerPattern = makeExportPattern("createPrerenderHandler");
+        const prerenderNames = Array.from(
+          getImportedLocalNames(code, PRERENDER_CONFIG.fnName, parseAst),
+        );
+        const fnNames = prerenderNames.length > 0
+          ? prerenderNames
+          : [PRERENDER_CONFIG.fnName];
+        const handlerPattern = buildExportPattern(fnNames);
         const exportNames: string[] = [];
         let m: RegExpExecArray | null;
         while ((m = handlerPattern.exec(code)) !== null) {
@@ -779,18 +878,20 @@ ${lazyImports.join(",\n")}
       // from findHandlerCalls always match the string they were parsed from.
       let changed = false;
 
-      for (const cfg of [
+      const handlerConfigs = [
         hasStaticHandlerCode && STATIC_CONFIG,
         hasPrerenderHandlerCode && PRERENDER_CONFIG,
-      ].filter((c): c is HandlerTransformConfig => !!c)) {
-        const totalCallPattern = new RegExp(
-          `\\b${cfg.fnName}\\s*(?:<[^>]*>\\s*)?\\(`, "g",
-        );
-        const totalCalls = (code.match(totalCallPattern) || []).length;
-        const exportPattern = new RegExp(
-          `export\\s+const\\s+\\w+\\s*=\\s*${cfg.fnName}\\s*\\(`, "g",
-        );
-        const exportCalls = (code.match(exportPattern) || []).length;
+      ].filter((c): c is HandlerTransformConfig => !!c).map((cfg) => {
+        const importedNames = getImportedLocalNames(code, cfg.fnName, parseAst);
+        const fnNames = importedNames.size > 0
+          ? Array.from(importedNames)
+          : [cfg.fnName];
+        return { cfg, fnNames };
+      });
+
+      for (const { cfg, fnNames } of handlerConfigs) {
+        const totalCalls = countCreateCallsForNames(code, fnNames);
+        const exportCalls = countExportConstCallsForNames(code, fnNames);
 
         if (totalCalls > exportCalls) {
           const iterS = new MagicString(code);
@@ -808,20 +909,32 @@ ${lazyImports.join(",\n")}
 
       // --- StaticHandler: non-RSC stub replacement ---
       if (hasStaticHandlerCode && !isRscEnv) {
+        const staticNames = Array.from(
+          getImportedLocalNames(code, STATIC_CONFIG.fnName, parseAst),
+        );
+        const fnNames = staticNames.length > 0
+          ? staticNames
+          : [STATIC_CONFIG.fnName];
         const wholeFile = generateWholeFileStubs(
-          STATIC_CONFIG, code, filePath, isBuild,
+          STATIC_CONFIG, fnNames, code, filePath, isBuild,
         );
         if (wholeFile) return wholeFile;
 
         const exprStubs = generateExprStubs(
-          STATIC_CONFIG, code, filePath, id, isBuild,
+          STATIC_CONFIG, fnNames, code, filePath, id, isBuild,
         );
         if (exprStubs) return exprStubs;
       }
 
       // --- StaticHandler: RSC build module tracking ---
       if (hasStaticHandlerCode && isRscEnv && isBuild) {
-        const handlerPattern = makeExportPattern("createStaticHandler");
+        const staticNames = Array.from(
+          getImportedLocalNames(code, STATIC_CONFIG.fnName, parseAst),
+        );
+        const fnNames = staticNames.length > 0
+          ? staticNames
+          : [STATIC_CONFIG.fnName];
+        const handlerPattern = buildExportPattern(fnNames);
         const exportNames: string[] = [];
         let m: RegExpExecArray | null;
         while ((m = handlerPattern.exec(code)) !== null) {
@@ -849,12 +962,24 @@ ${lazyImports.join(",\n")}
           transformLocationState(s, code, filePath, isBuild) || changed;
       }
       if (hasPrerenderHandlerCode && isRscEnv) {
+        const prerenderNames = Array.from(
+          getImportedLocalNames(code, PRERENDER_CONFIG.fnName, parseAst),
+        );
+        const fnNames = prerenderNames.length > 0
+          ? prerenderNames
+          : [PRERENDER_CONFIG.fnName];
         changed =
-          transformHandlerIds(PRERENDER_CONFIG, s, code, filePath, isBuild) || changed;
+          transformHandlerIds(PRERENDER_CONFIG, fnNames, s, code, filePath, isBuild) || changed;
       }
       if (hasStaticHandlerCode && isRscEnv) {
+        const staticNames = Array.from(
+          getImportedLocalNames(code, STATIC_CONFIG.fnName, parseAst),
+        );
+        const fnNames = staticNames.length > 0
+          ? staticNames
+          : [STATIC_CONFIG.fnName];
         changed =
-          transformHandlerIds(STATIC_CONFIG, s, code, filePath, isBuild) || changed;
+          transformHandlerIds(STATIC_CONFIG, fnNames, s, code, filePath, isBuild) || changed;
       }
 
       if (!changed) return;
