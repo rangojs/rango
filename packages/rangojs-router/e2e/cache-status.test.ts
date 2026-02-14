@@ -14,8 +14,8 @@ import { waitForHydration, expectNoPageError } from "./helper";
  *
  * Log patterns:
  * - [CacheScope] Cached: ... - Cache write for 200 responses
- * - [CacheStore] Skipping cache: non-200 status 404 ... - Skip cache for notFound
- * - [CacheStore] Skipping cache: non-200 status 500 ... - Skip cache for errors
+ * - [cacheStore] skipping cache for non-200 response { status: 404, ... } - Skip cache for notFound
+ * - [cacheStore] skipping cache for non-200 response { status: 500, ... } - Skip cache for errors
  */
 
 test.describe("cache-status-behavior", () => {
@@ -40,8 +40,8 @@ test.describe("cache-status-behavior", () => {
       misses: lines.filter((line) => line.includes("[CacheScope] MISS:")),
       hits: lines.filter((line) => line.includes("[CacheScope] HIT:")),
       cached: lines.filter((line) => line.includes("[CacheScope] Cached:")),
-      skipped404: lines.filter((line) => line.includes("[CacheStore] Skipping cache: non-200 status 404")),
-      skipped500: lines.filter((line) => line.includes("[CacheStore] Skipping cache: non-200 status 500")),
+      skipped404: lines.filter((line) => line.includes("skipping cache for non-200 response") && line.includes("404")),
+      skipped500: lines.filter((line) => line.includes("skipping cache for non-200 response") && line.includes("500")),
     };
   }
 

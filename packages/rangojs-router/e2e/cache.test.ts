@@ -623,7 +623,7 @@ test.describe("proactive-caching", () => {
     const partialNavLogs = afterPartialNav.slice(beforePartialNav.length);
 
     // Check for proactive caching log - this proves the feature triggered
-    expect(partialNavLogs).toContain("Proactive caching");
+    expect(partialNavLogs).toContain("proactive caching started");
   });
 
   test("layout renders correctly after proactive caching", async ({ page }) => {
