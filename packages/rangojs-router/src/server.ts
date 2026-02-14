@@ -76,6 +76,13 @@ export {
   type BuildContext,
 } from "./prerender.js";
 
+// Static handler API
+export {
+  createStaticHandler,
+  isStaticHandler,
+  type StaticHandlerDefinition,
+} from "./static-handler.js";
+
 // Built-in handles
 export { Meta } from "./handles/meta.js";
 

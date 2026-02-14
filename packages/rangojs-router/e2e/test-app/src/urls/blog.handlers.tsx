@@ -43,7 +43,7 @@ export const BlogIndexHandler: Handler<"index", routes> = (ctx) => {
       <div data-testid="blog-product-links" style={{ marginTop: "1rem" }}>
         <h3>Featured Products</h3>
         <Link
-          to={href("product.detail", { productId: "product-a" })}
+          to={ctx.reverse("product.detail", { productId: "product-a" })}
           data-testid="blog-product-link"
         >
           View Product A

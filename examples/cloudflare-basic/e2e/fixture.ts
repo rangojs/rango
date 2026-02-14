@@ -5,10 +5,26 @@ import { stripVTControlCharacters, styleText } from "node:util";
 import test from "@playwright/test";
 import { x } from "tinyexec";
 
+function sanitizeNodeOptions(value?: string): string | undefined {
+  if (!value) return value;
+  const tokens = value.split(/\s+/).filter(Boolean);
+  const filtered = tokens.filter(
+    (token) => !token.startsWith("--inspect")
+  );
+  return filtered.length > 0 ? filtered.join(" ") : undefined;
+}
+
 function runCli(options: { command: string; label?: string } & SpawnOptions) {
   const [name, ...args] = options.command.split(" ");
+  const env = { ...process.env, ...options.env };
+  const sanitizedNodeOptions = sanitizeNodeOptions(env.NODE_OPTIONS);
+  if (sanitizedNodeOptions) {
+    env.NODE_OPTIONS = sanitizedNodeOptions;
+  } else {
+    delete env.NODE_OPTIONS;
+  }
   const child = x(name!, args, {
-    nodeOptions: { ...options, detached: true },
+    nodeOptions: { ...options, env, detached: true },
   }).process!;
   const label = `[${options.label ?? "cli"}]`;
   let stdout = "";

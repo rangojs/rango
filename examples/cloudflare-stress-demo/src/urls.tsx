@@ -52,7 +52,7 @@ const BenchmarkHandler: Handler<"benchFirst", routes> = async (ctx) => {
 
 // Links demo handler - showcases ctx.reverse() and scopedReverse() on the server
 const LinksDemoHandler: Handler<"links", routes> = async (ctx) => {
-  const reverse = scopedReverse<typeof urlpatterns>(ctx.reverse);
+  const reverse = ctx.reverse;
 
   // ctx.reverse with global named routes
   const homeUrl = ctx.reverse("home");
@@ -76,27 +76,49 @@ const LinksDemoHandler: Handler<"links", routes> = async (ctx) => {
     <div style={{ maxWidth: "800px", margin: "0 auto", padding: "2rem" }}>
       <h1>Links Demo (14k+ routes)</h1>
       <p style={{ color: "#666" }}>
-        Server-side ctx.reverse() and scopedReverse() with type-safe route resolution
-        across 14,000+ routes.
+        Server-side ctx.reverse() and scopedReverse() with type-safe route
+        resolution across 14,000+ routes.
       </p>
 
       <h2>ctx.reverse() - Global Named Routes</h2>
       <ul>
-        <li>home: <code>{homeUrl}</code></li>
-        <li>api.benchFirst: <code>{apiBench}</code></li>
-        <li>shop.home: <code>{shopHome}</code></li>
-        <li>shop.product.item1: <code>{shopProduct1}</code></li>
-        <li>shop.category.cat1: <code>{shopCat1}</code></li>
-        <li data-testid="reverse-product42">shop.product.item42: <code>{shopProduct42}</code></li>
-        <li data-testid="reverse-cat42">shop.category.cat42: <code>{shopCat42}</code></li>
-        <li data-testid="reverse-product100">shop.product.item100: <code>{shopProduct100}</code></li>
+        <li>
+          home: <code>{homeUrl}</code>
+        </li>
+        <li>
+          api.benchFirst: <code>{apiBench}</code>
+        </li>
+        <li>
+          shop.home: <code>{shopHome}</code>
+        </li>
+        <li>
+          shop.product.item1: <code>{shopProduct1}</code>
+        </li>
+        <li>
+          shop.category.cat1: <code>{shopCat1}</code>
+        </li>
+        <li data-testid="reverse-product42">
+          shop.product.item42: <code>{shopProduct42}</code>
+        </li>
+        <li data-testid="reverse-cat42">
+          shop.category.cat42: <code>{shopCat42}</code>
+        </li>
+        <li data-testid="reverse-product100">
+          shop.product.item100: <code>{shopProduct100}</code>
+        </li>
       </ul>
 
       <h2>scopedReverse() - Local Route Names</h2>
       <ul>
-        <li>home (local): <code>{localHome}</code></li>
-        <li>benchFirst (local): <code>{localBenchFirst}</code></li>
-        <li>api.benchLast (cross-module): <code>{crossModuleApi}</code></li>
+        <li>
+          home (local): <code>{localHome}</code>
+        </li>
+        <li>
+          benchFirst (local): <code>{localBenchFirst}</code>
+        </li>
+        <li>
+          api.benchLast (cross-module): <code>{crossModuleApi}</code>
+        </li>
       </ul>
 
       <h2>Client-Side href() and useHref()</h2>

@@ -811,8 +811,14 @@ function buildRouteMapFromBlock(
     // Apply prefixes
     for (const [name, pattern] of Object.entries(childResult.routes)) {
       const prefixedName = namePrefix ? `${namePrefix}.${name}` : name;
-      const prefixedPattern =
-        pattern === "/" ? pathPrefix || "/" : pathPrefix + pattern;
+      let prefixedPattern: string;
+      if (pattern === "/") {
+        prefixedPattern = pathPrefix || "/";
+      } else if (pathPrefix.endsWith("/") && pattern.startsWith("/")) {
+        prefixedPattern = pathPrefix + pattern.slice(1);
+      } else {
+        prefixedPattern = pathPrefix + pattern;
+      }
       routeMap[prefixedName] = prefixedPattern;
       // Propagate search schemas with prefix
       if (childResult.searchSchemas[name] && searchSchemasOut) {
@@ -883,6 +889,37 @@ function extractUrlsVariableFromRouter(
   if (urlsOptionMatch) return urlsOptionMatch[1];
 
   return null;
+}
+
+/**
+ * Resolve routes and search schemas from a router source file by following the
+ * variable passed to `.routes(...)` or `urls: ...` in createRouter options.
+ */
+export function buildCombinedRouteMapForRouterFile(
+  routerFilePath: string,
+): { routes: Record<string, string>; searchSchemas: Record<string, Record<string, string>> } {
+  let routerSource: string;
+  try {
+    routerSource = readFileSync(routerFilePath, "utf-8");
+  } catch {
+    return { routes: {}, searchSchemas: {} };
+  }
+
+  const urlsVarName = extractUrlsVariableFromRouter(routerSource);
+  if (!urlsVarName) {
+    return { routes: {}, searchSchemas: {} };
+  }
+
+  const imported = resolveImportedVariable(routerSource, urlsVarName);
+  if (imported) {
+    const targetFile = resolveImportPath(imported.specifier, routerFilePath);
+    if (!targetFile) {
+      return { routes: {}, searchSchemas: {} };
+    }
+    return buildCombinedRouteMapWithSearch(targetFile, imported.exportedName);
+  }
+
+  return buildCombinedRouteMapWithSearch(routerFilePath, urlsVarName);
 }
 
 // ---------------------------------------------------------------------------

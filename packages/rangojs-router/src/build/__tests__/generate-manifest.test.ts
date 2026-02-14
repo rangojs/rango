@@ -105,4 +105,48 @@ describe("generateManifest", () => {
     expect(manifest.generatedAt).toBeDefined();
     expect(new Date(manifest.generatedAt).getTime()).not.toBeNaN();
   });
+
+  it("should extract search schemas for named routes", () => {
+    const urlpatterns = urls(({ path }) => [
+      path("/search/:category", () => null, {
+        name: "search.detail",
+        search: { q: "string?", active: "boolean?" },
+      }),
+      path("/search", () => null, {
+        name: "search.index",
+        search: { q: "string", page: "number?", sort: "string?" },
+      }),
+    ]);
+
+    const manifest = generateManifest(urlpatterns);
+
+    expect(manifest.routeSearchSchemas).toEqual({
+      "search.detail": { q: "string?", active: "boolean?" },
+      "search.index": { q: "string", page: "number?", sort: "string?" },
+    });
+  });
+
+  it("should extract search schemas from included patterns with prefixes", () => {
+    const searchPatterns = urls(({ path }) => [
+      path("/", () => null, {
+        name: "index",
+        search: { q: "string", page: "number?", sort: "string?" },
+      }),
+      path("/:category", () => null, {
+        name: "detail",
+        search: { q: "string?", active: "boolean?" },
+      }),
+    ]);
+
+    const urlpatterns = urls(({ include }) => [
+      include("/search", searchPatterns, { name: "search" }),
+    ]);
+
+    const manifest = generateManifest(urlpatterns);
+
+    expect(manifest.routeSearchSchemas).toEqual({
+      "search.detail": { q: "string?", active: "boolean?" },
+      "search.index": { q: "string", page: "number?", sort: "string?" },
+    });
+  });
 });

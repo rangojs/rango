@@ -84,6 +84,13 @@ export {
   type BuildContext,
 } from "./prerender.js";
 
+// Static handler API
+export {
+  createStaticHandler,
+  isStaticHandler,
+  type StaticHandlerDefinition,
+} from "./static-handler.js";
+
 // Django-style URL patterns (RSC/server context)
 export {
   urls,

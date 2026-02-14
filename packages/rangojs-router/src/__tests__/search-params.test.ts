@@ -8,6 +8,8 @@ import {
   serializeSearchParams,
   type SearchSchema,
   type ResolveSearchSchema,
+  type RouteParams,
+  type RouteSearchParams,
 } from "../search-params.js";
 import type { HandlerContext } from "../types.js";
 import { urls } from "../urls.js";
@@ -301,5 +303,134 @@ describe("generateRouteTypesSource with search schemas", () => {
     expect(source).toContain('about: "/about"');
     expect(source).toContain('home: "/"');
     expect(source).not.toContain("readonly path");
+  });
+});
+
+// ============================================================================
+// Type-level tests: RouteParams (with explicit route map)
+// ============================================================================
+
+// Test route map with mixed plain strings and { path, search } entries
+type TestRouteMap = {
+  readonly home: "/";
+  readonly about: "/about";
+  readonly blogPost: "/blog/:slug";
+  readonly userProfile: "/user/:userId/profile";
+  readonly userSettings: "/user/:userId/settings/:tab?";
+  readonly search: { readonly path: "/search"; readonly search: { q: "string"; page: "number?" } };
+  readonly products: { readonly path: "/products/:category"; readonly search: { sort: "string?"; page: "number?" } };
+};
+
+describe("RouteParams (explicit route map)", () => {
+  it("should return empty object for static route", () => {
+    type Params = RouteParams<"home", TestRouteMap>;
+    expectTypeOf<Params>().toEqualTypeOf<{}>();
+  });
+
+  it("should extract single param", () => {
+    type Params = RouteParams<"blogPost", TestRouteMap>;
+    expectTypeOf<Params>().toEqualTypeOf<{ slug: string }>();
+  });
+
+  it("should extract multiple params", () => {
+    type Params = RouteParams<"userProfile", TestRouteMap>;
+    expectTypeOf<Params>().toEqualTypeOf<{ userId: string }>();
+  });
+
+  it("should extract mixed required and optional params", () => {
+    type Params = RouteParams<"userSettings", TestRouteMap>;
+    expectTypeOf<Params>().toMatchTypeOf<{ userId: string; tab?: string }>();
+    expectTypeOf<{ userId: string; tab?: string }>().toMatchTypeOf<Params>();
+  });
+
+  it("should extract params from { path, search } entry", () => {
+    type Params = RouteParams<"products", TestRouteMap>;
+    expectTypeOf<Params>().toEqualTypeOf<{ category: string }>();
+  });
+
+  it("should return empty object for { path, search } entry with no params", () => {
+    type Params = RouteParams<"search", TestRouteMap>;
+    expectTypeOf<Params>().toEqualTypeOf<{}>();
+  });
+
+  it("should return empty object for unknown route name", () => {
+    type Params = RouteParams<"nonexistent", TestRouteMap>;
+    expectTypeOf<Params>().toEqualTypeOf<{}>();
+  });
+});
+
+// ============================================================================
+// Type-level tests: RouteSearchParams (with explicit route map)
+// ============================================================================
+
+describe("RouteSearchParams (explicit route map)", () => {
+  it("should return empty object for route without search schema", () => {
+    type Search = RouteSearchParams<"home", TestRouteMap>;
+    expectTypeOf<Search>().toEqualTypeOf<{}>();
+  });
+
+  it("should return empty object for route with plain string pattern", () => {
+    type Search = RouteSearchParams<"blogPost", TestRouteMap>;
+    expectTypeOf<Search>().toEqualTypeOf<{}>();
+  });
+
+  it("should resolve search schema with required and optional params", () => {
+    type Search = RouteSearchParams<"search", TestRouteMap>;
+    expectTypeOf<Search>().toEqualTypeOf<{ q: string; page?: number }>();
+  });
+
+  it("should resolve search schema on route with path params", () => {
+    type Search = RouteSearchParams<"products", TestRouteMap>;
+    expectTypeOf<Search>().toEqualTypeOf<{ sort?: string; page?: number }>();
+  });
+
+  it("should return empty object for unknown route name", () => {
+    type Search = RouteSearchParams<"nonexistent", TestRouteMap>;
+    expectTypeOf<Search>().toEqualTypeOf<{}>();
+  });
+});
+
+// ============================================================================
+// Type-level tests: RouteParams + RouteSearchParams with urls() patterns
+// ============================================================================
+
+describe("RouteParams + RouteSearchParams from urls() patterns", () => {
+  const testPatterns = urls(({ path }) => [
+    path("/", () => null, { name: "home" }),
+    path("/blog/:slug", () => null, { name: "blogPost" }),
+    path("/search", () => null, { name: "search", search: { q: "string", page: "number?", sort: "string?" } }),
+    path("/items/:category", () => null, { name: "items", search: { page: "number?", limit: "number?" } }),
+  ]);
+
+  type Routes = NonNullable<(typeof testPatterns)["_routes"]>;
+
+  it("should extract params from urls()-defined routes", () => {
+    type Params = RouteParams<"blogPost", Routes>;
+    expectTypeOf<Params>().toEqualTypeOf<{ slug: string }>();
+  });
+
+  it("should return empty params for static urls()-defined route", () => {
+    type Params = RouteParams<"home", Routes>;
+    expectTypeOf<Params>().toEqualTypeOf<{}>();
+  });
+
+  it("should extract params from route with both path params and search", () => {
+    type Params = RouteParams<"items", Routes>;
+    expectTypeOf<Params>().toEqualTypeOf<{ category: string }>();
+  });
+
+  it("should resolve search params from urls()-defined route", () => {
+    type Search = RouteSearchParams<"search", Routes>;
+    expectTypeOf<Search>().toEqualTypeOf<{ q: string; page?: number; sort?: string }>();
+  });
+
+  it("should resolve search params on route with path params", () => {
+    type Search = RouteSearchParams<"items", Routes>;
+    expectTypeOf<Search>().toEqualTypeOf<{ page?: number; limit?: number }>();
+  });
+
+  it("should return empty search for route without search schema", () => {
+    type Search = RouteSearchParams<"blogPost", Routes>;
+    expectTypeOf<Search>().toEqualTypeOf<{}>();
   });
 });

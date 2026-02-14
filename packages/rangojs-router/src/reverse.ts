@@ -150,21 +150,16 @@ export type ReverseFunction<TRoutes> = {
 };
 
 /**
- * Type-safe scoped reverse function signature for use with scopedReverse<typeof patterns>()
+ * Type-safe scoped reverse function that validates all route names and params.
  *
- * **Recommended: Use route names for type safety.**
- * Route names validate both the route exists and params are correct.
- * Path-based URLs (`/...`) are an escape hatch with no validation.
+ * When used via HandlerContext or scopedReverse(), local routes are merged with
+ * global RegisteredRoutes so all names are fully type-checked.
  *
  * @example
  * ```typescript
- * // RECOMMENDED: Use route names for type safety
- * reverse("blog.post", { slug: "hello" })  // ✓ Validates route + params
- * reverse("shop.cart")                      // ✓ Validates route exists
- *
- * // ESCAPE HATCH: Path-based URLs (no validation)
- * reverse("/about")                         // ⚠ No type checking
- * reverse("/typo/in/path")                  // ⚠ Won't catch errors
+ * reverse("cart")                           // ✓ Validates local route
+ * reverse("blog.post", { slug: "hello" })   // ✓ Validates global route + params
+ * reverse("typo")                           // ✗ Compile error
  * ```
  */
 export type ScopedReverseFunction<TLocalRoutes> = {
@@ -193,18 +188,6 @@ export type ScopedReverseFunction<TLocalRoutes> = {
     params: ExtractParams<RoutePatternFor<TLocalRoutes, TName>>,
     search: ResolveSearchSchema<ExtractSearchSchema<TLocalRoutes, TName>>
   ): string;
-
-  /**
-   * Absolute route name (contains dot) - global lookup
-   * Use for cross-module navigation: "shop.cart", "blog.post"
-   */
-  (name: `${string}.${string}`, params?: Record<string, string>, search?: Record<string, unknown>): string;
-
-  /**
-   * Path-based URL - ESCAPE HATCH, no type validation
-   * Prefer route names for type safety. Only use paths when necessary.
-   */
-  (name: `/${string}`, params?: Record<string, string>): string;
 };
 
 /**
@@ -244,7 +227,7 @@ export type { RouteResponse } from "./urls.js";
  *
  *     reverse("index");              // ✓ Type-safe local route
  *     reverse("post", { slug: "x" }); // ✓ Type-safe with params
- *     reverse("shop.cart");          // ✓ Cross-module (absolute name)
+ *     reverse("shop.cart");          // ✓ Type-safe global route
  *
  *     return <BlogIndex />;
  *   }, { name: "index" }),
@@ -273,17 +256,24 @@ export function scopedReverse<TPatterns>(
  * reverse("detail", { slug: "my-product" }); // "/shop/product/my-product"
  * ```
  */
+type RouteMapEntry = string | { path: string; search?: Record<string, string> };
+
+function resolveRoutePattern(entry: RouteMapEntry | undefined): string | undefined {
+  if (!entry) return undefined;
+  return typeof entry === "string" ? entry : entry.path;
+}
+
 export function createReverse<TRoutes extends Record<string, string>>(
   routeMap: TRoutes,
-  getFallbackMap?: () => Record<string, string> | undefined,
+  getFallbackMap?: () => Record<string, RouteMapEntry> | undefined,
 ): ReverseFunction<TRoutes & Record<string, string>> {
   return ((name: string, params?: Record<string, string>, search?: Record<string, unknown>) => {
-    let pattern = routeMap[name];
+    let pattern = resolveRoutePattern(routeMap[name] as unknown as RouteMapEntry);
     if (!pattern) {
       // Try the static route names from the generated file (O(1) fallback)
       const fallback = getFallbackMap?.();
       if (fallback) {
-        pattern = fallback[name];
+        pattern = resolveRoutePattern(fallback[name]);
       }
     }
     if (!pattern) {

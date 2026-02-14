@@ -35,6 +35,7 @@ import {
 import { articlesPatterns } from "./pages/articles.js";
 import { guidesPatterns } from "./pages/guides.js";
 import { releasesPatterns } from "./pages/releases.js";
+import { staticContentPatterns } from "./pages/static-content-urls.js";
 import { ApiDemoPage } from "./pages/api-demo.js";
 import { SearchPage } from "./pages/search.js";
 
@@ -228,6 +229,9 @@ export const urlpatterns = urls(
 
         // Pre-rendered releases page (uses node:fs at build time, evicted at deploy)
         include("/releases", releasesPatterns, { name: "releases" }),
+
+        // Static content (createStaticHandler: layout + index rendered once at build time)
+        include("/static-content", staticContentPatterns, { name: "staticContent" }),
       ]),
     ]),
   ],

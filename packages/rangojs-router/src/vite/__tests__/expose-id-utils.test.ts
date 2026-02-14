@@ -69,6 +69,19 @@ describe("detectImports", () => {
     expect(result.prerenderHandler).toBe(true);
   });
 
+  it("should detect createStaticHandler from @rangojs/router", () => {
+    const code = `import { createStaticHandler } from "@rangojs/router";`;
+    const result = detectImports(code);
+    expect(result.staticHandler).toBe(true);
+    expect(result.any).toBe(true);
+  });
+
+  it("should detect createStaticHandler from @rangojs/router/server", () => {
+    const code = `import { createStaticHandler } from "@rangojs/router/server";`;
+    const result = detectImports(code);
+    expect(result.staticHandler).toBe(true);
+  });
+
   it("should detect createRouter from @rangojs/router only (not sub-paths)", () => {
     const code = `import { createRouter } from "@rangojs/router";`;
     const result = detectImports(code);

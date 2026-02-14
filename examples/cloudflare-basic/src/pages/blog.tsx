@@ -51,7 +51,9 @@ export function BlogSidebar({ data }: { data: BlogSidebarData }) {
           </li>
         ))}
       </ul>
-      <h3 style={{ marginTop: "1.5rem", marginBottom: "1rem", fontSize: "1rem" }}>
+      <h3
+        style={{ marginTop: "1.5rem", marginBottom: "1rem", fontSize: "1rem" }}
+      >
         Popular Tags
       </h3>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
@@ -93,17 +95,80 @@ export function SidebarSkeleton() {
       data-testid="sidebar-skeleton"
       style={{ padding: "1rem", background: "#f5f5f5", borderRadius: "8px" }}
     >
-      <div style={{ height: "1.25rem", background: "#ddd", borderRadius: "4px", marginBottom: "1rem", width: "60%" }} />
-      <div style={{ height: "0.875rem", background: "#ddd", borderRadius: "4px", marginBottom: "0.75rem", width: "90%" }} />
-      <div style={{ height: "0.875rem", background: "#ddd", borderRadius: "4px", marginBottom: "0.75rem", width: "75%" }} />
-      <div style={{ height: "0.875rem", background: "#ddd", borderRadius: "4px", marginBottom: "1.5rem", width: "85%" }} />
-      <div style={{ height: "1.25rem", background: "#ddd", borderRadius: "4px", marginBottom: "1rem", width: "50%" }} />
+      <div
+        style={{
+          height: "1.25rem",
+          background: "#ddd",
+          borderRadius: "4px",
+          marginBottom: "1rem",
+          width: "60%",
+        }}
+      />
+      <div
+        style={{
+          height: "0.875rem",
+          background: "#ddd",
+          borderRadius: "4px",
+          marginBottom: "0.75rem",
+          width: "90%",
+        }}
+      />
+      <div
+        style={{
+          height: "0.875rem",
+          background: "#ddd",
+          borderRadius: "4px",
+          marginBottom: "0.75rem",
+          width: "75%",
+        }}
+      />
+      <div
+        style={{
+          height: "0.875rem",
+          background: "#ddd",
+          borderRadius: "4px",
+          marginBottom: "1.5rem",
+          width: "85%",
+        }}
+      />
+      <div
+        style={{
+          height: "1.25rem",
+          background: "#ddd",
+          borderRadius: "4px",
+          marginBottom: "1rem",
+          width: "50%",
+        }}
+      />
       <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
-        <div style={{ height: "1.5rem", width: "3rem", background: "#ddd", borderRadius: "4px" }} />
-        <div style={{ height: "1.5rem", width: "4rem", background: "#ddd", borderRadius: "4px" }} />
-        <div style={{ height: "1.5rem", width: "3.5rem", background: "#ddd", borderRadius: "4px" }} />
+        <div
+          style={{
+            height: "1.5rem",
+            width: "3rem",
+            background: "#ddd",
+            borderRadius: "4px",
+          }}
+        />
+        <div
+          style={{
+            height: "1.5rem",
+            width: "4rem",
+            background: "#ddd",
+            borderRadius: "4px",
+          }}
+        />
+        <div
+          style={{
+            height: "1.5rem",
+            width: "3.5rem",
+            background: "#ddd",
+            borderRadius: "4px",
+          }}
+        />
       </div>
-      <p style={{ marginTop: "1.5rem", fontSize: "0.75rem", color: "#999" }}>Loading sidebar...</p>
+      <p style={{ marginTop: "1.5rem", fontSize: "0.75rem", color: "#999" }}>
+        Loading sidebar...
+      </p>
     </div>
   );
 }
@@ -113,7 +178,11 @@ export function BlogIndexPage(ctx: HandlerContext) {
 
   const meta = ctx.use(Meta);
   meta({ title: "Blog - RSC Router Cloudflare" });
-  meta({ name: "description", content: "Read our latest articles about RSC, Cloudflare, and web development" });
+  meta({
+    name: "description",
+    content:
+      "Read our latest articles about RSC, Cloudflare, and web development",
+  });
 
   const posts = getBlogPosts();
 
@@ -127,21 +196,43 @@ export function BlogIndexPage(ctx: HandlerContext) {
         {posts.map((post) => (
           <article
             key={post.slug}
-            style={{ marginBottom: "2rem", paddingBottom: "1.5rem", borderBottom: "1px solid #eee" }}
+            style={{
+              marginBottom: "2rem",
+              paddingBottom: "1.5rem",
+              borderBottom: "1px solid #eee",
+            }}
             data-testid={`blog-post-${post.slug}`}
           >
             <h2 style={{ marginBottom: "0.5rem" }}>
-              <Link to={reverse("blogPost", { slug: post.slug })} style={{ color: "#0070f3", textDecoration: "none" }} data-testid={`blog-link-${post.slug}`}>
+              <Link
+                to={reverse("blogPost", { slug: post.slug })}
+                style={{ color: "#0070f3", textDecoration: "none" }}
+                data-testid={`blog-link-${post.slug}`}
+              >
                 {post.title}
               </Link>
             </h2>
-            <p style={{ color: "#666", fontSize: "0.875rem", marginBottom: "0.5rem" }}>
+            <p
+              style={{
+                color: "#666",
+                fontSize: "0.875rem",
+                marginBottom: "0.5rem",
+              }}
+            >
               By {post.author} on {post.publishedAt}
             </p>
             <p style={{ marginBottom: "0.5rem" }}>{post.excerpt}</p>
             <div style={{ display: "flex", gap: "0.5rem" }}>
               {post.tags.map((tag) => (
-                <span key={tag} style={{ fontSize: "0.75rem", padding: "0.25rem 0.5rem", background: "#f0f0f0", borderRadius: "4px" }}>
+                <span
+                  key={tag}
+                  style={{
+                    fontSize: "0.75rem",
+                    padding: "0.25rem 0.5rem",
+                    background: "#f0f0f0",
+                    borderRadius: "4px",
+                  }}
+                >
                   {tag}
                 </span>
               ))}
@@ -149,7 +240,10 @@ export function BlogIndexPage(ctx: HandlerContext) {
           </article>
         ))}
       </div>
-      <p data-testid="cache-info" style={{ marginTop: "2rem", fontSize: "0.875rem", color: "#999" }}>
+      <p
+        data-testid="cache-info"
+        style={{ marginTop: "2rem", fontSize: "0.875rem", color: "#999" }}
+      >
         This page is cached at the edge with TTL=60s, SWR=300s.
         <br />
         Rendered at: {new Date().toISOString()}
@@ -171,30 +265,65 @@ export function BlogPostPage(ctx: HandlerContext<{ slug: string }>) {
   meta({ name: "description", content: post.excerpt });
 
   const breadcrumb = ctx.use(Breadcrumbs);
-  breadcrumb({ label: post.title, href: reverse("blogPost", { slug: post.slug }) });
+  breadcrumb({
+    label: post.title,
+    href: reverse("blogPost", { slug: post.slug }),
+  });
 
   return (
     <article data-testid="blog-post-detail">
-      <nav style={{ marginBottom: "1rem", paddingBottom: "0.5rem", borderBottom: "1px solid #eee" }}>
-        <Link to={reverse("blog")} style={{ color: "#0070f3", textDecoration: "none" }}>&larr; Back to Blog</Link>
+      <nav
+        style={{
+          marginBottom: "1rem",
+          paddingBottom: "0.5rem",
+          borderBottom: "1px solid #eee",
+        }}
+      >
+        <Link
+          to={reverse("blog")}
+          style={{ color: "#0070f3", textDecoration: "none" }}
+        >
+          &larr; Back to Blog
+        </Link>
       </nav>
       <header style={{ marginBottom: "2rem" }}>
         <h1 data-testid="post-title">{post.title}</h1>
         <p style={{ color: "#666", fontSize: "0.875rem" }}>
-          By <span data-testid="post-author">{post.author}</span> on <span data-testid="post-date">{post.publishedAt}</span>
+          By <span data-testid="post-author">{post.author}</span> on{" "}
+          <span data-testid="post-date">{post.publishedAt}</span>
         </p>
         <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
           {post.tags.map((tag) => (
-            <span key={tag} style={{ fontSize: "0.75rem", padding: "0.25rem 0.5rem", background: "#f0f0f0", borderRadius: "4px" }}>
+            <span
+              key={tag}
+              style={{
+                fontSize: "0.75rem",
+                padding: "0.25rem 0.5rem",
+                background: "#f0f0f0",
+                borderRadius: "4px",
+              }}
+            >
               {tag}
             </span>
           ))}
         </div>
       </header>
-      <div data-testid="post-content" style={{ lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+      <div
+        data-testid="post-content"
+        style={{ lineHeight: 1.7, whiteSpace: "pre-wrap" }}
+      >
         {post.content}
       </div>
-      <footer data-testid="cache-info" style={{ marginTop: "3rem", paddingTop: "1rem", borderTop: "1px solid #eee", fontSize: "0.875rem", color: "#999" }}>
+      <footer
+        data-testid="cache-info"
+        style={{
+          marginTop: "3rem",
+          paddingTop: "1rem",
+          borderTop: "1px solid #eee",
+          fontSize: "0.875rem",
+          color: "#999",
+        }}
+      >
         This page is cached at the edge with TTL=60s, SWR=300s.
         <br />
         Rendered at: {new Date().toISOString()}
