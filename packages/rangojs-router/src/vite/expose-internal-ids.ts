@@ -783,7 +783,10 @@ ${lazyImports.join(",\n")}
         hasStaticHandlerCode && STATIC_CONFIG,
         hasPrerenderHandlerCode && PRERENDER_CONFIG,
       ].filter((c): c is HandlerTransformConfig => !!c)) {
-        const totalCalls = code.split(`${cfg.fnName}(`).length - 1;
+        const totalCallPattern = new RegExp(
+          `\\b${cfg.fnName}\\s*(?:<[^>]*>\\s*)?\\(`, "g",
+        );
+        const totalCalls = (code.match(totalCallPattern) || []).length;
         const exportPattern = new RegExp(
           `export\\s+const\\s+\\w+\\s*=\\s*${cfg.fnName}\\s*\\(`, "g",
         );
