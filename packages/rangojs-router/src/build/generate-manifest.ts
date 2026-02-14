@@ -49,6 +49,8 @@ export interface GeneratedManifest {
   passthroughRoutes?: string[];
   /** Route name → response type for non-RSC routes */
   responseTypeRoutes?: Record<string, string>;
+  /** Route name -> search schema descriptor for typed URL helpers */
+  routeSearchSchemas?: Record<string, Record<string, string>>;
   /** Generation timestamp */
   generatedAt: string;
 }
@@ -70,6 +72,7 @@ function buildPrefixTreeNode(
   prerenderDefs?: Record<string, any>,
   passthroughRoutes?: string[],
   responseTypeRoutes?: Record<string, string>,
+  routeSearchSchemas?: Record<string, Record<string, string>>,
 ): PrefixTreeNode {
   if (visited.has(patterns)) {
     console.warn(
@@ -89,6 +92,7 @@ function buildPrefixTreeNode(
   const patternsMap = new Map<string, string>();
   const patternsByPrefix = new Map<string, Map<string, string>>();
   const trailingSlashMap = new Map<string, TrailingSlashMode>();
+  const searchSchemasMap = new Map<string, Record<string, string>>();
   const trackedIncludes: TrackedInclude[] = [];
 
   RSCRouterContext.run(
@@ -97,6 +101,7 @@ function buildPrefixTreeNode(
       patterns: patternsMap,
       patternsByPrefix,
       trailingSlash: trailingSlashMap,
+      searchSchemas: searchSchemasMap,
       namespace: "build",
       parent: null,
       counters: {},
@@ -128,6 +133,11 @@ function buildPrefixTreeNode(
   if (routeTrailingSlash) {
     for (const [name, mode] of trailingSlashMap.entries()) {
       routeTrailingSlash[name] = mode;
+    }
+  }
+  if (routeSearchSchemas) {
+    for (const [name, schema] of searchSchemasMap.entries()) {
+      routeSearchSchemas[name] = schema;
     }
   }
 
@@ -177,6 +187,7 @@ function buildPrefixTreeNode(
       prerenderDefs,
       passthroughRoutes,
       responseTypeRoutes,
+      routeSearchSchemas,
     );
 
     const existing = children[include.fullPrefix];
@@ -250,6 +261,7 @@ export function generateManifest<TEnv>(
   const patternsMap = new Map<string, string>();
   const patternsByPrefix = new Map<string, Map<string, string>>();
   const trailingSlashMap = new Map<string, TrailingSlashMode>();
+  const searchSchemasMap = new Map<string, Record<string, string>>();
   const trackedIncludes: TrackedInclude[] = [];
 
   RSCRouterContext.run(
@@ -258,6 +270,7 @@ export function generateManifest<TEnv>(
       patterns: patternsMap,
       patternsByPrefix,
       trailingSlash: trailingSlashMap,
+      searchSchemas: searchSchemasMap,
       namespace: "build",
       parent: null,
       counters: {},
@@ -280,6 +293,10 @@ export function generateManifest<TEnv>(
   }
   for (const [name, mode] of trailingSlashMap.entries()) {
     routeTrailingSlash[name] = mode;
+  }
+  const routeSearchSchemas: Record<string, Record<string, string>> = {};
+  for (const [name, schema] of searchSchemasMap.entries()) {
+    routeSearchSchemas[name] = schema;
   }
 
   // Capture ancestry from manifest entries' parent chains
@@ -323,6 +340,7 @@ export function generateManifest<TEnv>(
       prerenderDefs,
       passthroughRoutes,
       responseTypeRoutes,
+      routeSearchSchemas,
     );
 
     const existing = prefixTree[include.fullPrefix];
@@ -341,6 +359,7 @@ export function generateManifest<TEnv>(
     prerenderRoutes: prerenderRoutes.length > 0 ? prerenderRoutes : undefined,
     passthroughRoutes: passthroughRoutes.length > 0 ? passthroughRoutes : undefined,
     responseTypeRoutes: Object.keys(responseTypeRoutes).length > 0 ? responseTypeRoutes : undefined,
+    routeSearchSchemas: Object.keys(routeSearchSchemas).length > 0 ? routeSearchSchemas : undefined,
     generatedAt: new Date().toISOString(),
     // Internal: routeAncestry is used only for trie building, not exported
     _routeAncestry: routeAncestry,

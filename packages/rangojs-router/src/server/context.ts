@@ -159,6 +159,8 @@ export type EntryData =
       isPrerender?: true;
       /** Original PrerenderHandlerDefinition (for build-time getParams access) */
       prerenderDef?: { getParams?: () => Promise<any[]> | any[]; options?: { passthrough?: boolean } };
+      /** Set when handler is a createStaticHandler definition (build-time only) */
+      isStaticPrerender?: true;
       /** Response type for non-RSC routes (json, text, image, any) */
       responseType?: string;
     } & EntryPropCommon &
@@ -168,6 +170,8 @@ export type EntryData =
       type: "layout";
       handler: ReactNode | Handler<any, any, any>;
       loading?: ReactNode | false;
+      /** Set when handler is a createStaticHandler definition (build-time only) */
+      isStaticPrerender?: true;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments)
@@ -175,6 +179,8 @@ export type EntryData =
       type: "parallel";
       handler: Record<`@${string}`, Handler<any, any, any> | ReactNode>;
       loading?: ReactNode | false;
+      /** Set when any parallel slot is a createStaticHandler definition */
+      isStaticPrerender?: true;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments)

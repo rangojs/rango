@@ -139,6 +139,16 @@ export function createPrerenderHandler(): never {
   );
 }
 
+/**
+ * Error-throwing stub for server-only `createStaticHandler` function.
+ * Import from "@rangojs/router/server" or use within RSC context instead.
+ */
+export function createStaticHandler(): never {
+  throw new Error(
+    'createStaticHandler() is server-only. Import from "@rangojs/router/server" instead.'
+  );
+}
+
 // Handle API (type-only exports safe for client)
 export { isHandle, type Handle } from "./handle.js";
 
