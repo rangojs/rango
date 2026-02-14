@@ -56,8 +56,8 @@ describe("detectImports", () => {
     expect(result.any).toBe(true);
   });
 
-  it("should detect createLocationState from @rangojs/router/client", () => {
-    const code = `import { createLocationState } from "@rangojs/router/client";`;
+  it("should detect createLocationState from @rangojs/router", () => {
+    const code = `import { createLocationState } from "@rangojs/router";`;
     const result = detectImports(code);
     expect(result.locationState).toBe(true);
   });

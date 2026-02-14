@@ -1,5 +1,5 @@
 import { RouterError } from "@rangojs/router";
-import type { ResponseHandlerContext } from "@rangojs/router/server";
+import type { ResponseHandlerContext } from "@rangojs/router";
 
 // -- Types --
 // Using `type` (not `interface`) so values satisfy JsonValue's index signature.

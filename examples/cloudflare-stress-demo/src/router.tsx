@@ -1,4 +1,4 @@
-import { createRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router";
 import { CFCacheStore } from "@rangojs/router/cache";
 import { urlpatterns } from "./urls.js";
 import { Document } from "./document.js";

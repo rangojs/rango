@@ -18,7 +18,7 @@ Declare the same URL pattern with both an RSC route and one or more response-typ
 Order within the `urls()` array does not matter — the trie merges them at build time.
 
 ```typescript
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 
 export const urlpatterns = urls(({ path, layout, include }) => [
   // RSC page + JSON API on the same URL

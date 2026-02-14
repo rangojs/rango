@@ -1,4 +1,4 @@
-import { urls, type ResponseHandlerContext } from "@rangojs/router/server";
+import { urls, type ResponseHandlerContext } from "@rangojs/router";
 import { NavLayout } from "./components/NavLayout.js";
 import { RootLayout } from "./components/SlowRootLayout.js";
 import { FeatureLoading } from "./components/FeatureLoading.js";

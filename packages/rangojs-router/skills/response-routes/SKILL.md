@@ -14,7 +14,7 @@ XML feeds, image proxies, and any route that returns a `Response` instead of Rea
 Inside any `urls()` callback, use `path.json()`, `path.text()`, or other tags alongside regular RSC routes:
 
 ```typescript
-import { urls, RouterError } from "@rangojs/router/server";
+import { urls, RouterError } from "@rangojs/router";
 
 export const urlpatterns = urls(({ path, layout, include }) => [
   // RSC routes (normal)
@@ -129,7 +129,7 @@ in a `ResponseEnvelope<T>` discriminated union:
 Throw `RouterError` to return structured error envelopes:
 
 ```typescript
-import { RouterError } from "@rangojs/router/server";
+import { RouterError } from "@rangojs/router";
 
 path.json("/api/users/:id", (ctx) => {
   const user = users.get(ctx.params.id);
@@ -188,7 +188,7 @@ if (isResponseError(result)) {
 Look up response type from a `path.json()` or `path.text()` module by route name:
 
 ```typescript
-import type { RouteResponse } from "@rangojs/router/server";
+import type { RouteResponse } from "@rangojs/router";
 
 // From the apiPatterns module (before include)
 type HealthData = RouteResponse<typeof apiPatterns, "health">;
@@ -269,7 +269,7 @@ A self-contained module with RSC pages + JSON APIs, mountable via `include()`:
 
 ```typescript
 // blog/api/urls.tsx
-import { urls, RouterError } from "@rangojs/router/server";
+import { urls, RouterError } from "@rangojs/router";
 
 export const blogApiPatterns = urls(({ path }) => [
   path.json("/stats", (ctx) => ({
@@ -287,7 +287,7 @@ export const blogApiPatterns = urls(({ path }) => [
 ]);
 
 // blog/urls.tsx
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 import { blogApiPatterns } from "./api/urls";
 
 export const blogPatterns = urls(({ path, include }) => [
@@ -299,7 +299,7 @@ export const blogPatterns = urls(({ path, include }) => [
 ]);
 
 // app/urls.tsx
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 import { blogPatterns } from "./blog/urls";
 
 export const urlpatterns = urls(({ path, include }) => [
@@ -311,7 +311,7 @@ export const urlpatterns = urls(({ path, include }) => [
 ### Type safety after mounting
 
 ```typescript
-import type { RouteResponse } from "@rangojs/router/server";
+import type { RouteResponse } from "@rangojs/router";
 import type { PathResponse, ParamsFor } from "@rangojs/router/client";
 
 // Scoped (before mount) -- use the module directly

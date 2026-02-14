@@ -14,7 +14,7 @@
  * - 404s for non-prefixed paths skip ~10,000 routes
  */
 import { urls, scopedReverse, type Handler } from "@rangojs/router";
-import { enableMatchDebug, getMatchDebugStats } from "@rangojs/router/server";
+import { enableMatchDebug, getMatchDebugStats } from "@rangojs/router";
 import type { routes } from "./urls.gen.js";
 import { includedPatterns } from "./included-patterns.js";
 import { localizedPatterns } from "./localized-patterns.js";

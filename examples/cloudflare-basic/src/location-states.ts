@@ -1,4 +1,4 @@
-import { createLocationState } from "@rangojs/router/client";
+import { createLocationState } from "@rangojs/router";
 
 export interface FeatureState {
   name: string;

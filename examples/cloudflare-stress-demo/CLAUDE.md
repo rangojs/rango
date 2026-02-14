@@ -43,7 +43,7 @@ curl -s https://cloudflare-stress-demo.devcorner.workers.dev/site/en/bench/last 
 
 Enable debug logging in `src/urls.tsx`:
 ```typescript
-import { enableMatchDebug } from "@rangojs/router/server";
+import { enableMatchDebug } from "@rangojs/router";
 enableMatchDebug(true);
 ```
 
