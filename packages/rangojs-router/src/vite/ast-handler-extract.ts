@@ -30,6 +30,45 @@ export interface VirtualHandlerEntry {
   exportName: string;
 }
 
+function isDirectivePrologueStatement(node: any): boolean {
+  return (
+    node?.type === "ExpressionStatement" &&
+    typeof node.directive === "string"
+  );
+}
+
+/**
+ * Find where generated imports should be inserted:
+ * after the directive prologue and any contiguous import declarations.
+ */
+function findImportInsertionPos(
+  code: string,
+  parseAst: (code: string, options?: any) => ProgramNode,
+): number {
+  let program: ProgramNode;
+  try {
+    program = parseAst(code, { jsx: true });
+  } catch {
+    return 0;
+  }
+
+  const body = program.body as any[];
+  let i = 0;
+  let insertionPos = 0;
+
+  while (i < body.length && isDirectivePrologueStatement(body[i])) {
+    insertionPos = body[i].end;
+    i++;
+  }
+
+  while (i < body.length && body[i]?.type === "ImportDeclaration") {
+    insertionPos = body[i].end;
+    i++;
+  }
+
+  return insertionPos;
+}
+
 // ---------------------------------------------------------------------------
 // AST walking helper
 // ---------------------------------------------------------------------------
@@ -228,9 +267,15 @@ export function transformInlineHandlers(
     );
   }
 
-  // Prepend all import statements at the top of the file
+  // Insert imports after directive prologue + existing import block
   if (importStatements.length > 0) {
-    s.prepend(importStatements.join("\n") + "\n");
+    const importBlock = importStatements.join("\n") + "\n";
+    const insertionPos = findImportInsertionPos(code, parseAst);
+    if (insertionPos === 0) {
+      s.prepend(importBlock);
+    } else {
+      s.appendLeft(insertionPos, "\n" + importBlock);
+    }
   }
 
   return true;
