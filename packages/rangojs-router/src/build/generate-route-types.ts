@@ -1019,7 +1019,7 @@ export function writeCombinedRouteTypes(root: string, knownRouterFiles?: string[
         const existingCount = (existing.match(/^\s+["a-zA-Z_$][^:]*:\s*"/gm) || []).length;
         const newCount = Object.keys(result.routes).length;
         if (existingCount > newCount) {
-          return;
+          continue;
         }
       }
       writeFileSync(outPath, source);

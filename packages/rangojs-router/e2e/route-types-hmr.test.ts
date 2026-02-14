@@ -143,4 +143,24 @@ test.describe.serial("route-types-hmr", () => {
     await fs.writeFile(handlersPath, handlerContent);
     await new Promise((r) => setTimeout(r, 500));
   });
+
+  test("should update route types when a route is renamed", async () => {
+    const before = await fs.readFile(genFilePath, "utf-8");
+    expect(before).toContain('"blog.post"');
+    expect(before).not.toContain('"blog.article"');
+
+    // Rename "post" -> "article"
+    const modified = originalBlogContent.replace(
+      '{ name: "post" }',
+      '{ name: "article" }'
+    );
+    expect(modified).not.toBe(originalBlogContent);
+    await fs.writeFile(blogUrlsPath, modified);
+
+    await expect(async () => {
+      const after = await fs.readFile(genFilePath, "utf-8");
+      expect(after).not.toContain('"blog.post"');
+      expect(after).toContain('"blog.article"');
+    }).toPass({ timeout: 10000 });
+  });
 });
