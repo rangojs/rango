@@ -1,4 +1,4 @@
-import { createReverse } from "@rangojs/router/server";
+import { createReverse } from "@rangojs/router";
 import type { RouteResponse, ExtractParams } from "@rangojs/router";
 import { routes } from "./urls/api-shop.gen.js";
 import type { apiShopPatterns } from "./urls/api-shop.js";

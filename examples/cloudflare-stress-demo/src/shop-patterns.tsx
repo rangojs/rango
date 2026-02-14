@@ -8,7 +8,7 @@
  * Requests to /shop/product/* skip the /shop/category entry (and vice versa)
  */
 import { urls, type Handler } from "@rangojs/router";
-import { getMatchDebugStats } from "@rangojs/router/server";
+import { getMatchDebugStats } from "@rangojs/router";
 import type { routes } from "./shop-patterns.gen.js";
 
 // Benchmark handler - returns JSON with matchStats

@@ -1,4 +1,4 @@
-import { urls, RouterError } from "@rangojs/router/server";
+import { urls, RouterError } from "@rangojs/router";
 
 /**
  * API routes using urls.json() - handlers return plain objects,

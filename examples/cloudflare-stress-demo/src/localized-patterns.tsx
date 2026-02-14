@@ -7,7 +7,7 @@
  */
 import { urls, type Handler } from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";
-import { getMatchDebugStats } from "@rangojs/router/server";
+import { getMatchDebugStats } from "@rangojs/router";
 import type { routes } from "./localized-patterns.gen.js";
 
 // Benchmark route - returns raw Response with debug stats, bypasses RSC

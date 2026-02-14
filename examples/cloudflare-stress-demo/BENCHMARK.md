@@ -206,7 +206,7 @@ Always reference the previous benchmark to show improvement:
 
 Enable in `src/urls.tsx`:
 ```typescript
-import { enableMatchDebug } from "@rangojs/router/server";
+import { enableMatchDebug } from "@rangojs/router";
 enableMatchDebug(true);
 ```
 

@@ -1,9 +1,9 @@
 /**
- * rsc-router (react-server environment)
+ * @rangojs/router (react-server environment)
  *
- * This file is used when importing "rsc-router" from RSC (server components).
+ * This file is used when importing "@rangojs/router" from RSC (server components).
  * It re-exports everything from the universal index.ts plus adds server-side
- * createLoader that includes the actual loader function.
+ * implementations that replace the client-side error stubs.
  *
  * The bundler uses the "react-server" export condition to select this file
  * in RSC context, while the regular index.ts is used in client components.
@@ -34,6 +34,9 @@ export type {
   RouterEnv,
   DefaultEnv,
   RouteDefinition,
+  RouteConfig,
+  RouteDefinitionOptions,
+  TrailingSlashMode,
   // Handler types
   Handler,
   ScopedRouteMap,
@@ -94,6 +97,7 @@ export {
 // Django-style URL patterns (RSC/server context)
 export {
   urls,
+  RESPONSE_TYPE,
   type PathHelpers,
   type PathOptions,
   type UrlPatterns,
@@ -102,6 +106,14 @@ export {
   type RouteResponse,
   type ResponseError,
   type ResponseEnvelope,
+  type ResponseHandler,
+  type ResponseHandlerContext,
+  type JsonResponseHandler,
+  type TextResponseHandler,
+  type JsonValue,
+  type ResponsePathFn,
+  type JsonResponsePathFn,
+  type TextResponsePathFn,
 } from "./urls.js";
 
 // Core router (server-side)
@@ -118,14 +130,40 @@ export type { HandlerCacheConfig } from "./rsc/types.js";
 export { Meta } from "./handles/meta.js";
 
 // Request context (for accessing request data in server actions/components)
-export { getRequestContext, type RequestContext } from "./server/request-context.js";
+export {
+  getRequestContext,
+  requireRequestContext,
+  type RequestContext,
+} from "./server/request-context.js";
 
 // Meta types
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 
+// Middleware context types
+export type {
+  MiddlewareContext,
+  CookieOptions,
+} from "./router/middleware.js";
+
 // Reverse type utilities for type-safe URL generation (Django-style URL reversal)
-export type { ScopedReverseFunction, ReverseFunction, ExtractLocalRoutes } from "./reverse.js";
-export { scopedReverse } from "./reverse.js";
+export type { ScopedReverseFunction, ReverseFunction, ExtractLocalRoutes, PrefixedRoutes, PrefixRoutePatterns, ParamsFor, SanitizePrefix, MergeRoutes } from "./reverse.js";
+export { scopedReverse, createReverse } from "./reverse.js";
 
 // Search params schema types
 export type { SearchSchema, SearchSchemaValue, ResolveSearchSchema, RouteSearchParams, RouteParams } from "./search-params.js";
+
+// Performance tracking (server-only)
+export { track } from "./server/context.js";
+
+// Debug utilities for route matching (development only)
+export {
+  enableMatchDebug,
+  getMatchDebugStats,
+} from "./router/pattern-matching.js";
+
+// Location state (universal)
+export {
+  createLocationState,
+  type LocationStateDefinition,
+  type LocationStateEntry,
+} from "./browser/react/location-state-shared.js";

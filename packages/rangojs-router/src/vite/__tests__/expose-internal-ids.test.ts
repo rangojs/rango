@@ -617,7 +617,7 @@ export const Breadcrumbs = ch(() => []);
     const plugin = createPlugin();
     initDev(plugin);
 
-    const code = `import { createLocationState as cls } from "@rangojs/router/client";
+    const code = `import { createLocationState as cls } from "@rangojs/router";
 export const ProductState = cls<string>();
 `;
     const result = plugin.transform.call(rscCtx(), code, FILE_ID);
@@ -657,7 +657,7 @@ export { LocalHandle };
     const plugin = createPlugin();
     initDev(plugin);
 
-    const code = `import { createLocationState } from "@rangojs/router/client";
+    const code = `import { createLocationState } from "@rangojs/router";
 const ProductStateDef = createLocationState<string>();
 export { ProductStateDef as ProductState };
 `;
