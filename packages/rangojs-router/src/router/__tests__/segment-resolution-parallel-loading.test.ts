@@ -1,0 +1,159 @@
+import { describe, it, expect, vi } from "vitest";
+import {
+  resolveOrphanLayoutWithRevalidation,
+  resolveParallelSegmentsWithRevalidation,
+} from "../segment-resolution";
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+function createContext() {
+  const request = new Request("https://example.com/blog");
+  return {
+    params: {},
+    request,
+    searchParams: new URLSearchParams(),
+    pathname: "/blog",
+    url: new URL(request.url),
+    env: {},
+    var: {},
+    get: () => undefined,
+    set: () => {},
+    header: () => {},
+    status: () => {},
+    html: () => new Response(""),
+    json: () => new Response(""),
+    text: () => new Response(""),
+    redirect: () => new Response(""),
+    notFound: () => {
+      throw new Error("notFound not implemented in test context");
+    },
+    use: vi.fn(),
+  } as any;
+}
+
+function createParallelEntry(handler: any) {
+  return {
+    id: "blog.sidebar",
+    type: "parallel",
+    shortCode: "L0P0",
+    handler: { "@sidebar": handler },
+    loading: "sidebar-loading",
+    loader: [],
+    layout: [],
+    parallel: [],
+    intercept: [],
+    middleware: [],
+    revalidate: [],
+    errorBoundary: [],
+    notFoundBoundary: [],
+  } as any;
+}
+
+describe("segment-resolution parallel loading", () => {
+  it("does not await parallel handler promise in revalidation path when loading is set", async () => {
+    const deferred = createDeferred<string>();
+    const slotHandler = vi.fn(() => deferred.promise);
+    const context = createContext();
+    const parallelEntry = createParallelEntry(slotHandler);
+    const entry = {
+      id: "blog.layout",
+      type: "layout",
+      shortCode: "L0",
+      handler: "layout",
+      loader: [],
+      layout: [],
+      parallel: [parallelEntry],
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+    } as any;
+
+    const resultPromise = resolveParallelSegmentsWithRevalidation(
+      entry,
+      {},
+      context,
+      false,
+      new Set(),
+      {},
+      context.request,
+      context.url,
+      context.url,
+      "/blog",
+      {} as any,
+    );
+
+    const quickResult = await Promise.race([
+      resultPromise.then(() => "resolved"),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 30)),
+    ]);
+    expect(quickResult).toBe("resolved");
+
+    const result = await resultPromise;
+    expect(slotHandler).toHaveBeenCalledTimes(1);
+    expect(result.segments).toHaveLength(1);
+    expect(result.segments[0]?.type).toBe("parallel");
+    expect(result.segments[0]?.component).toBe(deferred.promise);
+
+    deferred.resolve("done");
+    await deferred.promise;
+  });
+
+  it("does not await orphan parallel handler promise in revalidation path when loading is set", async () => {
+    const deferred = createDeferred<string>();
+    const slotHandler = vi.fn(() => deferred.promise);
+    const context = createContext();
+    const orphan = {
+      id: "blog.orphan",
+      type: "layout",
+      shortCode: "L1",
+      handler: "layout",
+      loading: "layout-loading",
+      loader: [],
+      layout: [],
+      parallel: [createParallelEntry(slotHandler)],
+      intercept: [],
+      middleware: [],
+      revalidate: [],
+      errorBoundary: [],
+      notFoundBoundary: [],
+    } as any;
+
+    const resultPromise = resolveOrphanLayoutWithRevalidation(
+      orphan,
+      {},
+      context,
+      new Set(),
+      {},
+      context.request,
+      context.url,
+      context.url,
+      "/blog",
+      new Map(),
+      false,
+      {} as any,
+    );
+
+    const quickResult = await Promise.race([
+      resultPromise.then(() => "resolved"),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 30)),
+    ]);
+    expect(quickResult).toBe("resolved");
+
+    const result = await resultPromise;
+    const parallelSegment = result.segments.find((s) => s.type === "parallel");
+    expect(slotHandler).toHaveBeenCalledTimes(1);
+    expect(parallelSegment).toBeDefined();
+    expect(parallelSegment?.component).toBe(deferred.promise);
+
+    deferred.resolve("done");
+    await deferred.promise;
+  });
+});

@@ -705,55 +705,57 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
         matchedIds.push(parallelId);
       }
 
-      const component = await revalidate(
-        async () => {
-          if (isFullRefetch) return true;
-          if (!clientSegmentIds.has(parallelId)) return belongsToRoute || isNewParent;
+      const shouldResolve = await (async () => {
+        if (isFullRefetch) return true;
+        if (!clientSegmentIds.has(parallelId)) return belongsToRoute || isNewParent;
 
-          const dummySegment: ResolvedSegment = {
-            id: parallelId,
-            namespace: parallelEntry.id,
-            type: "parallel",
-            index: 0,
-            component: null as any,
-            params,
-            slot,
-            belongsToRoute,
-            parallelName: `${parallelEntry.id}.${slot}`,
-            ...(parallelEntry.mountPath
-              ? { mountPath: parallelEntry.mountPath }
-              : {}),
-          };
+        const dummySegment: ResolvedSegment = {
+          id: parallelId,
+          namespace: parallelEntry.id,
+          type: "parallel",
+          index: 0,
+          component: null as any,
+          params,
+          slot,
+          belongsToRoute,
+          parallelName: `${parallelEntry.id}.${slot}`,
+          ...(parallelEntry.mountPath
+            ? { mountPath: parallelEntry.mountPath }
+            : {}),
+        };
 
-          return await evaluateRevalidation({
-            segment: dummySegment,
-            prevParams,
-            getPrevSegment: null,
-            request,
-            prevUrl,
-            nextUrl,
-            revalidations: parallelEntry.revalidate.map((fn, i) => ({
-              name: `revalidate${i}`,
-              fn,
-            })),
-            routeKey,
-            context,
-            actionContext,
-            stale,
-          });
-        },
-        async () => {
-          if (parallelEntry.loading) {
-            const result =
-              typeof handler === "function" ? handler(context) : handler;
-            return result;
-          }
-          return typeof handler === "function"
+        return await evaluateRevalidation({
+          segment: dummySegment,
+          prevParams,
+          getPrevSegment: null,
+          request,
+          prevUrl,
+          nextUrl,
+          revalidations: parallelEntry.revalidate.map((fn, i) => ({
+            name: `revalidate${i}`,
+            fn,
+          })),
+          routeKey,
+          context,
+          actionContext,
+          stale,
+        });
+      })();
+
+      let component: ReactNode;
+      if (!shouldResolve) {
+        component = null;
+      } else if (parallelEntry.loading) {
+        component =
+          (typeof handler === "function"
+            ? handler(context)
+            : handler) as ReactNode;
+      } else {
+        component =
+          typeof handler === "function"
             ? await handler(context)
             : handler;
-        },
-        () => null,
-      );
+      }
 
       segments.push({
         id: parallelId,
@@ -1039,54 +1041,56 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       const parallelId = `${parallelEntry.shortCode}.${slot}`;
       matchedIds.push(parallelId);
 
-      const component = await revalidate(
-        async () => {
-          if (!clientSegmentIds.has(parallelId)) return true;
+      const shouldResolve = await (async () => {
+        if (!clientSegmentIds.has(parallelId)) return true;
 
-          const dummySegment: ResolvedSegment = {
-            id: parallelId,
-            namespace: parallelEntry.id,
-            type: "parallel",
-            index: 0,
-            component: null as any,
-            params,
-            slot,
-            belongsToRoute,
-            parallelName: `${parallelEntry.id}.${slot}`,
-            ...(parallelEntry.mountPath
-              ? { mountPath: parallelEntry.mountPath }
-              : {}),
-          };
+        const dummySegment: ResolvedSegment = {
+          id: parallelId,
+          namespace: parallelEntry.id,
+          type: "parallel",
+          index: 0,
+          component: null as any,
+          params,
+          slot,
+          belongsToRoute,
+          parallelName: `${parallelEntry.id}.${slot}`,
+          ...(parallelEntry.mountPath
+            ? { mountPath: parallelEntry.mountPath }
+            : {}),
+        };
 
-          return await evaluateRevalidation({
-            segment: dummySegment,
-            prevParams,
-            getPrevSegment: null,
-            request,
-            prevUrl,
-            nextUrl,
-            revalidations: parallelEntry.revalidate.map((fn, i) => ({
-              name: `revalidate${i}`,
-              fn,
-            })),
-            routeKey,
-            context,
-            actionContext,
-            stale,
-          });
-        },
-        async () => {
-          if (parallelEntry.loading) {
-            const result =
-              typeof handler === "function" ? handler(context) : handler;
-            return result;
-          }
-          return typeof handler === "function"
+        return await evaluateRevalidation({
+          segment: dummySegment,
+          prevParams,
+          getPrevSegment: null,
+          request,
+          prevUrl,
+          nextUrl,
+          revalidations: parallelEntry.revalidate.map((fn, i) => ({
+            name: `revalidate${i}`,
+            fn,
+          })),
+          routeKey,
+          context,
+          actionContext,
+          stale,
+        });
+      })();
+
+      let component: ReactNode;
+      if (!shouldResolve) {
+        component = null;
+      } else if (parallelEntry.loading) {
+        component =
+          (typeof handler === "function"
+            ? handler(context)
+            : handler) as ReactNode;
+      } else {
+        component =
+          typeof handler === "function"
             ? await handler(context)
             : handler;
-        },
-        () => null,
-      );
+      }
 
       segments.push({
         id: parallelId,
