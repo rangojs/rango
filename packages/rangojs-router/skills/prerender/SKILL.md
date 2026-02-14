@@ -107,6 +107,30 @@ All items inside the path's use() callback (child layouts, parallels) also recei
 `BuildContext` during pre-rendering. Loaders are the exception -- they run at
 request time with full server context.
 
+## Supported Export Patterns
+
+All of the following are equivalent and fully supported by the Vite transform:
+
+```typescript
+// Direct export (most common)
+export const BlogPost = createPrerenderHandler(getParams, handler);
+
+// Separate declaration + named export
+const BlogPost = createPrerenderHandler(getParams, handler);
+export { BlogPost };
+
+// Aliased export
+const InternalPage = createPrerenderHandler(getParams, handler);
+export { InternalPage as BlogPost };
+
+// Aliased import
+import { createPrerenderHandler as cph } from "@rangojs/router";
+export const BlogPost = cph(getParams, handler);
+```
+
+All patterns support whole-file stubbing, expression stubbing, and build-time
+module tracking. The same applies to `createStaticHandler`.
+
 ## Handler Eviction
 
 In production builds, `createPrerenderHandler` exports are replaced with stubs:
