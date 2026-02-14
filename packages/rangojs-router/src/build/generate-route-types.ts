@@ -809,8 +809,14 @@ function buildRouteMapFromBlock(
     // Apply prefixes
     for (const [name, pattern] of Object.entries(childResult.routes)) {
       const prefixedName = namePrefix ? `${namePrefix}.${name}` : name;
-      const prefixedPattern =
-        pattern === "/" ? pathPrefix || "/" : pathPrefix + pattern;
+      let prefixedPattern: string;
+      if (pattern === "/") {
+        prefixedPattern = pathPrefix || "/";
+      } else if (pathPrefix.endsWith("/") && pattern.startsWith("/")) {
+        prefixedPattern = pathPrefix + pattern.slice(1);
+      } else {
+        prefixedPattern = pathPrefix + pattern;
+      }
       routeMap[prefixedName] = prefixedPattern;
       // Propagate search schemas with prefix
       if (childResult.searchSchemas[name] && searchSchemasOut) {

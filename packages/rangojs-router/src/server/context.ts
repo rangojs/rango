@@ -401,10 +401,17 @@ export function runWithPrefixes<T>(
     throw new Error("runWithPrefixes must be called within router context");
   }
 
-  // Combine prefixes if there are existing ones
-  const combinedUrlPrefix = store.urlPrefix
-    ? `${store.urlPrefix}${urlPrefix}`
-    : urlPrefix;
+  // Combine prefixes if there are existing ones, avoiding double slashes
+  let combinedUrlPrefix: string;
+  if (store.urlPrefix) {
+    if (store.urlPrefix.endsWith("/") && urlPrefix.startsWith("/")) {
+      combinedUrlPrefix = store.urlPrefix + urlPrefix.slice(1);
+    } else {
+      combinedUrlPrefix = store.urlPrefix + urlPrefix;
+    }
+  } else {
+    combinedUrlPrefix = urlPrefix;
+  }
   const combinedNamePrefix = namePrefix
     ? store.namePrefix
       ? `${store.namePrefix}.${namePrefix}`

@@ -1076,7 +1076,11 @@ function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
     const capturedUrlPrefix = getUrlPrefix();
     const capturedNamePrefix = getNamePrefix();
     const capturedParent = ctx.parent;
-    const fullPrefix = capturedUrlPrefix ? capturedUrlPrefix + prefix : prefix;
+    const fullPrefix = capturedUrlPrefix
+      ? (capturedUrlPrefix.endsWith("/") && prefix.startsWith("/")
+        ? capturedUrlPrefix + prefix.slice(1)
+        : capturedUrlPrefix + prefix)
+      : prefix;
     const fullNamePrefix = namePrefix
       ? capturedNamePrefix
         ? `${capturedNamePrefix}.${namePrefix}`
