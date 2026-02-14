@@ -15,9 +15,9 @@ import {
   countArgsSimple,
 } from "./expose-id-utils.ts";
 import {
-  transformInlineStaticHandlers,
-  type VirtualStaticHandlerEntry,
-} from "./ast-static-handler.ts";
+  transformInlineHandlers,
+  type VirtualHandlerEntry,
+} from "./ast-handler-extract.ts";
 
 // ---------------------------------------------------------------------------
 // Virtual module for loader manifest
@@ -25,6 +25,31 @@ import {
 
 const VIRTUAL_LOADER_MANIFEST = "virtual:rsc-router/loader-manifest";
 const RESOLVED_VIRTUAL_LOADER_MANIFEST = "\0" + VIRTUAL_LOADER_MANIFEST;
+
+// ---------------------------------------------------------------------------
+// Virtual module prefix for extracted inline handlers
+// ---------------------------------------------------------------------------
+
+const VIRTUAL_HANDLER_PREFIX = "virtual:handler-extract:";
+
+// ---------------------------------------------------------------------------
+// Handler transform config
+// ---------------------------------------------------------------------------
+
+interface HandlerTransformConfig {
+  fnName: string;
+  brand: string;
+}
+
+const PRERENDER_CONFIG: HandlerTransformConfig = {
+  fnName: "createPrerenderHandler",
+  brand: "prerenderHandler",
+};
+
+const STATIC_CONFIG: HandlerTransformConfig = {
+  fnName: "createStaticHandler",
+  brand: "staticHandler",
+};
 
 // ---------------------------------------------------------------------------
 // Plugin API type (consumed by router-discovery in index.ts)
@@ -237,19 +262,20 @@ function transformLocationState(
 }
 
 // ---------------------------------------------------------------------------
-// PrerenderHandler helpers
+// Parameterized handler helpers (prerender + static)
 // ---------------------------------------------------------------------------
 
 /**
  * Replace the entire file with lightweight stubs when ALL non-type exports are
- * createPrerenderHandler calls. Returns null for files with mixed exports.
+ * handler calls of the given type. Returns null for files with mixed exports.
  */
-function generateWholeFileHandlerStubs(
+function generateWholeFileStubs(
+  cfg: HandlerTransformConfig,
   code: string,
   filePath: string,
   isBuild: boolean,
 ): { code: string; map: null } | null {
-  const handlerPattern = makeExportPattern("createPrerenderHandler");
+  const handlerPattern = makeExportPattern(cfg.fnName);
   const handlers: string[] = [];
   let match: RegExpExecArray | null;
 
@@ -274,25 +300,27 @@ function generateWholeFileHandlerStubs(
     const handlerId = isBuild
       ? hashId(filePath, name)
       : `${filePath}#${name}`;
-    return `export const ${name} = { __brand: "prerenderHandler", $$id: "${handlerId}" };`;
+    return `export const ${name} = { __brand: "${cfg.brand}", $$id: "${handlerId}" };`;
   });
 
   return { code: stubs.join("\n") + "\n", map: null };
 }
 
 /**
- * Replace createPrerenderHandler(...) call expressions with lightweight stub objects
- * in non-RSC environments. Other exports, imports, and module-level code remain
- * untouched.
+ * Replace handler call expressions with lightweight stub objects in non-RSC
+ * environments. Other exports, imports, and module-level code remain untouched.
  */
-function generatePrerenderHandlerStubs(
+function generateExprStubs(
+  cfg: HandlerTransformConfig,
   code: string,
   filePath: string,
   sourceId: string,
   isBuild: boolean,
 ): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
-  const pattern =
-    /export\s+const\s+(\w+)\s*=\s*(createPrerenderHandler\s*(?:<[^>]*>)?\s*\()/g;
+  const pattern = new RegExp(
+    `export\\s+const\\s+(\\w+)\\s*=\\s*(${cfg.fnName}\\s*(?:<[^>]*>)?\\s*\\()`,
+    "g",
+  );
 
   const s = new MagicString(code);
   let hasChanges = false;
@@ -311,7 +339,7 @@ function generatePrerenderHandlerStubs(
     s.overwrite(
       callStart,
       afterCloseParen,
-      `{ __brand: "prerenderHandler", $$id: "${handlerId}" }`,
+      `{ __brand: "${cfg.brand}", $$id: "${handlerId}" }`,
     );
     hasChanges = true;
   }
@@ -328,151 +356,17 @@ function generatePrerenderHandlerStubs(
   };
 }
 
-function transformPrerenderHandlers(
+/**
+ * Inject $$id into export const handler calls in RSC environments.
+ */
+function transformHandlerIds(
+  cfg: HandlerTransformConfig,
   s: MagicString,
   code: string,
   filePath: string,
   isBuild: boolean,
 ): boolean {
-  const pattern = makeExportPattern("createPrerenderHandler");
-  let hasChanges = false;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(code)) !== null) {
-    const exportName = match[1];
-    const matchEnd = match.index + match[0].length;
-
-    // String/comment-aware paren matching (preserves original behavior)
-    const afterClose = findMatchingParen(code, matchEnd);
-    const closeParenPos = afterClose - 1;
-    const argCount = countArgs(code, matchEnd, closeParenPos);
-    const statementEnd = findStatementEnd(code, afterClose);
-
-    const handlerId = isBuild
-      ? hashId(filePath, exportName)
-      : `${filePath}#${exportName}`;
-
-    // Injection strategy matches the runtime overload signatures:
-    //   1 arg  (handler)                 -> inject undefined, "id"
-    //   2 args (getParams+handler OR handler+options) -> inject , "id"
-    //   3 args (getParams+handler+options)            -> inject , "id"
-    let paramInjection: string;
-    if (argCount === 0) {
-      paramInjection = `undefined, "${handlerId}"`;
-    } else if (argCount === 1) {
-      paramInjection = `, undefined, "${handlerId}"`;
-    } else {
-      paramInjection = `, "${handlerId}"`;
-    }
-    s.appendLeft(closeParenPos, paramInjection);
-
-    const propInjection = `\n${exportName}.$$id = "${handlerId}";`;
-    s.appendRight(statementEnd, propInjection);
-    hasChanges = true;
-  }
-
-  return hasChanges;
-}
-
-// ---------------------------------------------------------------------------
-// StaticHandler helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Replace the entire file with lightweight stubs when ALL non-type exports are
- * createStaticHandler calls. Returns null for files with mixed exports.
- */
-function generateWholeFileStaticHandlerStubs(
-  code: string,
-  filePath: string,
-  isBuild: boolean,
-): { code: string; map: null } | null {
-  const handlerPattern = makeExportPattern("createStaticHandler");
-  const handlers: string[] = [];
-  let match: RegExpExecArray | null;
-
-  while ((match = handlerPattern.exec(code)) !== null) {
-    handlers.push(match[1]);
-  }
-
-  if (handlers.length === 0) return null;
-
-  // Bail out if the file has re-exports or destructured exports
-  if (/export\s*\{/.test(code) || /export\s*\*/.test(code)) return null;
-
-  const allExports =
-    /export\s+(const|let|var|function|class|default)\s+(\w+)/g;
-  let exportMatch: RegExpExecArray | null;
-
-  while ((exportMatch = allExports.exec(code)) !== null) {
-    if (!handlers.includes(exportMatch[2])) return null;
-  }
-
-  const stubs = handlers.map((name) => {
-    const handlerId = isBuild
-      ? hashId(filePath, name)
-      : `${filePath}#${name}`;
-    return `export const ${name} = { __brand: "staticHandler", $$id: "${handlerId}" };`;
-  });
-
-  return { code: stubs.join("\n") + "\n", map: null };
-}
-
-/**
- * Replace createStaticHandler(...) call expressions with lightweight stub objects
- * in non-RSC environments. Other exports, imports, and module-level code remain
- * untouched.
- */
-function generateStaticHandlerStubs(
-  code: string,
-  filePath: string,
-  sourceId: string,
-  isBuild: boolean,
-): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
-  const pattern =
-    /export\s+const\s+(\w+)\s*=\s*(createStaticHandler\s*(?:<[^>]*>)?\s*\()/g;
-
-  const s = new MagicString(code);
-  let hasChanges = false;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(code)) !== null) {
-    const exportName = match[1];
-    const callStart = match.index + match[0].length - match[2].length;
-    const openParenPos = match.index + match[0].length;
-    const afterCloseParen = findMatchingParen(code, openParenPos);
-
-    const handlerId = isBuild
-      ? hashId(filePath, exportName)
-      : `${filePath}#${exportName}`;
-
-    s.overwrite(
-      callStart,
-      afterCloseParen,
-      `{ __brand: "staticHandler", $$id: "${handlerId}" }`,
-    );
-    hasChanges = true;
-  }
-
-  if (!hasChanges) return null;
-
-  return {
-    code: s.toString(),
-    map: s.generateMap({
-      source: sourceId,
-      includeContent: true,
-      hires: "boundary",
-    }),
-  };
-}
-
-function transformStaticHandlers(
-  s: MagicString,
-  code: string,
-  filePath: string,
-  isBuild: boolean,
-): boolean {
-  const pattern = makeExportPattern("createStaticHandler");
+  const pattern = makeExportPattern(cfg.fnName);
   let hasChanges = false;
   let match: RegExpExecArray | null;
 
@@ -490,9 +384,10 @@ function transformStaticHandlers(
       ? hashId(filePath, exportName)
       : `${filePath}#${exportName}`;
 
-    // Injection strategy matches the runtime overload signature:
-    //   1 arg  (handler)          -> inject undefined, "id"
-    //   2 args (handler+options)  -> inject , "id"
+    // Injection strategy matches the runtime overload signatures:
+    //   0 args                              -> inject undefined, "id"
+    //   1 arg  (handler)                    -> inject , undefined, "id"
+    //   2+ args                             -> inject , "id"
     let paramInjection: string;
     if (argCount === 0) {
       paramInjection = `undefined, "${handlerId}"`;
@@ -626,8 +521,8 @@ export function exposeInternalIds(options?: {
   // Static handler module tracking (consumed via plugin API)
   const staticHandlerModules: Map<string, string[]> = new Map();
 
-  // Virtual module registry for inline static handler extraction
-  const virtualStaticHandlers = new Map<string, VirtualStaticHandlerEntry>();
+  // Virtual module registry for inline handler extraction (both types)
+  const virtualHandlers = new Map<string, VirtualHandlerEntry>();
 
   return {
     name: "@rangojs/router:expose-internal-ids",
@@ -650,12 +545,12 @@ export function exposeInternalIds(options?: {
       if (id === VIRTUAL_LOADER_MANIFEST) {
         return RESOLVED_VIRTUAL_LOADER_MANIFEST;
       }
-      if (id.startsWith("virtual:static-handler:")) {
+      if (id.startsWith(VIRTUAL_HANDLER_PREFIX)) {
         return "\0" + id;
       }
       // Resolve imports FROM virtual modules against the original file
-      if (importer?.startsWith("\0virtual:static-handler:")) {
-        const entry = virtualStaticHandlers.get(importer);
+      if (importer?.startsWith("\0" + VIRTUAL_HANDLER_PREFIX)) {
+        const entry = virtualHandlers.get(importer);
         if (entry) {
           return this.resolve(id, entry.originalModuleId, { skipSelf: true });
         }
@@ -663,9 +558,9 @@ export function exposeInternalIds(options?: {
     },
 
     load(id) {
-      // Virtual static handler modules
-      if (id.startsWith("\0virtual:static-handler:")) {
-        const entry = virtualStaticHandlers.get(id);
+      // Virtual handler modules (both prerender and static)
+      if (id.startsWith("\0" + VIRTUAL_HANDLER_PREFIX)) {
+        const entry = virtualHandlers.get(id);
         if (!entry) return null;
         return [
           ...entry.imports,
@@ -847,19 +742,13 @@ ${lazyImports.join(",\n")}
 
       // --- PrerenderHandler: non-RSC stub replacement ---
       if (hasPrerenderHandlerCode && !isRscEnv) {
-        // Try whole-file replacement first, fall back to per-expression
-        const wholeFile = generateWholeFileHandlerStubs(
-          code,
-          filePath,
-          isBuild,
+        const wholeFile = generateWholeFileStubs(
+          PRERENDER_CONFIG, code, filePath, isBuild,
         );
         if (wholeFile) return wholeFile;
 
-        const exprStubs = generatePrerenderHandlerStubs(
-          code,
-          filePath,
-          id,
-          isBuild,
+        const exprStubs = generateExprStubs(
+          PRERENDER_CONFIG, code, filePath, id, isBuild,
         );
         if (exprStubs) return exprStubs;
       }
@@ -877,32 +766,35 @@ ${lazyImports.join(",\n")}
         }
       }
 
-      // --- StaticHandler: extract inline calls to virtual modules ---
+      // --- Inline handler extraction to virtual modules ---
       // Runs before stubs/tracking so inline calls become imports, then
       // the existing regex fast path handles both the original file's
       // export const patterns and the virtual modules independently.
       //
-      // Cheap pre-check: count total createStaticHandler( occurrences vs
-      // export const patterns. If they match, every call is a named export
-      // and the regex fast path handles them — skip the AST parse entirely.
+      // Cheap pre-check: count total fnName( occurrences vs export const
+      // patterns. If they match, every call is a named export and the
+      // regex fast path handles them -- skip the AST parse entirely.
       const s = new MagicString(code);
       let changed = false;
 
-      if (hasStaticHandlerCode) {
-        const totalCalls = code.split("createStaticHandler(").length - 1;
-        const exportPattern = /export\s+const\s+\w+\s*=\s*createStaticHandler\s*\(/g;
+      for (const cfg of [
+        hasStaticHandlerCode && STATIC_CONFIG,
+        hasPrerenderHandlerCode && PRERENDER_CONFIG,
+      ].filter((c): c is HandlerTransformConfig => !!c)) {
+        const totalCalls = code.split(`${cfg.fnName}(`).length - 1;
+        const exportPattern = new RegExp(
+          `export\\s+const\\s+\\w+\\s*=\\s*${cfg.fnName}\\s*\\(`, "g",
+        );
         const exportCalls = (code.match(exportPattern) || []).length;
-        const mayHaveInlineCalls = totalCalls > exportCalls;
 
-        if (mayHaveInlineCalls) {
-          const inlineResult = transformInlineStaticHandlers(
+        if (totalCalls > exportCalls) {
+          const result = transformInlineHandlers(
+            cfg.fnName, VIRTUAL_HANDLER_PREFIX,
             s, code, filePath, isBuild, path.basename(id),
-            virtualStaticHandlers, id, parseAst,
+            virtualHandlers, id, parseAst,
           );
-          if (inlineResult) {
+          if (result) {
             changed = true;
-            // Update code reference -- inline calls are now imports.
-            // Downstream regex transforms operate on the updated source.
             code = s.toString();
           }
         }
@@ -910,19 +802,13 @@ ${lazyImports.join(",\n")}
 
       // --- StaticHandler: non-RSC stub replacement ---
       if (hasStaticHandlerCode && !isRscEnv) {
-        // Try whole-file replacement first, fall back to per-expression
-        const wholeFile = generateWholeFileStaticHandlerStubs(
-          code,
-          filePath,
-          isBuild,
+        const wholeFile = generateWholeFileStubs(
+          STATIC_CONFIG, code, filePath, isBuild,
         );
         if (wholeFile) return wholeFile;
 
-        const exprStubs = generateStaticHandlerStubs(
-          code,
-          filePath,
-          id,
-          isBuild,
+        const exprStubs = generateExprStubs(
+          STATIC_CONFIG, code, filePath, id, isBuild,
         );
         if (exprStubs) return exprStubs;
       }
@@ -959,11 +845,11 @@ ${lazyImports.join(",\n")}
         }
         if (hasPrerenderHandlerCode && isRscEnv) {
           changed2 =
-            transformPrerenderHandlers(s2, code, filePath, isBuild) || changed2;
+            transformHandlerIds(PRERENDER_CONFIG, s2, code, filePath, isBuild) || changed2;
         }
         if (hasStaticHandlerCode && isRscEnv) {
           changed2 =
-            transformStaticHandlers(s2, code, filePath, isBuild) || changed2;
+            transformHandlerIds(STATIC_CONFIG, s2, code, filePath, isBuild) || changed2;
         }
 
         if (changed2) {
@@ -992,11 +878,11 @@ ${lazyImports.join(",\n")}
       }
       if (hasPrerenderHandlerCode && isRscEnv) {
         changed =
-          transformPrerenderHandlers(s, code, filePath, isBuild) || changed;
+          transformHandlerIds(PRERENDER_CONFIG, s, code, filePath, isBuild) || changed;
       }
       if (hasStaticHandlerCode && isRscEnv) {
         changed =
-          transformStaticHandlers(s, code, filePath, isBuild) || changed;
+          transformHandlerIds(STATIC_CONFIG, s, code, filePath, isBuild) || changed;
       }
 
       if (!changed) return;

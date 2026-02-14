@@ -35,7 +35,7 @@ function clientCtx() {
 }
 
 /**
- * Extract `import { __sh_xxx } from "virtual:static-handler:..."` entries
+ * Extract `import { __sh_xxx } from "virtual:handler-extract:..."` entries
  * from transformed code.
  */
 function extractVirtualImports(
@@ -43,7 +43,7 @@ function extractVirtualImports(
 ): Array<{ exportName: string; specifier: string }> {
   const results: Array<{ exportName: string; specifier: string }> = [];
   const re =
-    /import\s*\{\s*(__sh_\w+)\s*\}\s*from\s*"(virtual:static-handler:[^"]+)"/g;
+    /import\s*\{\s*(__sh_\w+)\s*\}\s*from\s*"(virtual:handler-extract:[^"]+)"/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(code)) !== null) {
     results.push({ exportName: m[1], specifier: m[2] });
@@ -70,6 +70,19 @@ layout(createStaticHandler(() => <sidebar />));
 
 const SAME_LINE_SOURCE = `import { createStaticHandler } from "@rangojs/router";
 layout(createStaticHandler(() => <a />), createStaticHandler(() => <b />));
+`;
+
+const PRERENDER_INLINE_SOURCE = `import { createPrerenderHandler } from "@rangojs/router";
+path("/about", createPrerenderHandler(() => <div>About</div>));
+`;
+
+const PRERENDER_EXPORT_SOURCE = `import { createPrerenderHandler } from "@rangojs/router";
+export const AboutPage = createPrerenderHandler(() => <div>About</div>);
+`;
+
+const PRERENDER_MIXED_SOURCE = `import { createPrerenderHandler } from "@rangojs/router";
+export const AboutPage = createPrerenderHandler(() => <main />);
+path("/inline", createPrerenderHandler(() => <aside />));
 `;
 
 // ---------------------------------------------------------------------------
@@ -361,9 +374,110 @@ export const Nav = createStaticHandler(() => {
 
       const result = plugin.load.call(
         {},
-        "\0virtual:static-handler:nonexistent:99",
+        "\0virtual:handler-extract:nonexistent:99",
       );
       expect(result).toBeNull();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Inline createPrerenderHandler integration
+// ---------------------------------------------------------------------------
+
+describe("exposeInternalIds - inline prerender handler integration", () => {
+  describe("full round-trip: RSC dev mode", () => {
+    it("transforms inline createPrerenderHandler -> virtual -> $$id", () => {
+      const plugin = createPlugin();
+      initDev(plugin);
+
+      // Step 1: Transform source with inline call in RSC env
+      const r1 = plugin.transform.call(rscCtx(), PRERENDER_INLINE_SOURCE, FILE_ID);
+      expect(r1).toBeDefined();
+
+      // Should have a virtual module import
+      const vImports = extractVirtualImports(r1.code);
+      expect(vImports).toHaveLength(1);
+      const { exportName, specifier } = vImports[0];
+      expect(exportName).toMatch(/^__sh_[0-9a-f]{8}$/);
+
+      // The inline call should be replaced with the import name
+      expect(r1.code).toContain(`path("/about", ${exportName})`);
+      expect(r1.code).not.toContain("createPrerenderHandler(() =>");
+
+      // Step 2: resolveId adds \0 prefix
+      const resolved = plugin.resolveId.call({}, specifier, FILE_ID);
+      expect(resolved).toBe("\0" + specifier);
+
+      // Step 3: load synthesises the virtual module
+      const loaded = plugin.load.call({}, resolved);
+      expect(loaded).toBeDefined();
+      expect(loaded).toContain(`export const ${exportName}`);
+      expect(loaded).toContain("createPrerenderHandler");
+      expect(loaded).toContain("@rangojs/router");
+
+      // Step 4: transform virtual module in RSC injects $$id
+      const r2 = plugin.transform.call(rscCtx(), loaded, resolved);
+      expect(r2).toBeDefined();
+      expect(r2.code).toContain("$$id");
+      expect(r2.code).toContain(`${exportName}.$$id`);
+    });
+  });
+
+  describe("full round-trip: non-RSC (client/SSR)", () => {
+    it("replaces virtual prerender module with stub in client env", () => {
+      const plugin = createPlugin();
+      initDev(plugin);
+
+      // Populate virtual registry via RSC transform
+      const r1 = plugin.transform.call(rscCtx(), PRERENDER_INLINE_SOURCE, FILE_ID);
+      const { exportName, specifier } = extractVirtualImports(r1.code)[0];
+
+      const resolved = plugin.resolveId.call({}, specifier, FILE_ID);
+      const loaded = plugin.load.call({}, resolved);
+
+      // Transform virtual module in client env -> stub
+      const r2 = plugin.transform.call(clientCtx(), loaded, resolved);
+      expect(r2).toBeDefined();
+      expect(r2.code).toContain("__brand");
+      expect(r2.code).toContain('"prerenderHandler"');
+      expect(r2.code).toContain("$$id");
+      // No createPrerenderHandler call remains
+      expect(r2.code).not.toContain("createPrerenderHandler(");
+    });
+  });
+
+  describe("mixed files (export const + inline)", () => {
+    it("extracts inline, leaves export const, both get $$id in RSC", () => {
+      const plugin = createPlugin();
+      initDev(plugin);
+
+      // Transform mixed source in RSC
+      const r1 = plugin.transform.call(rscCtx(), PRERENDER_MIXED_SOURCE, FILE_ID);
+      expect(r1).toBeDefined();
+
+      // Inline call extracted to virtual module
+      const vImports = extractVirtualImports(r1.code);
+      expect(vImports).toHaveLength(1);
+
+      // Export const stays in the original file with $$id injected
+      expect(r1.code).toContain("export const AboutPage = createPrerenderHandler");
+      expect(r1.code).toContain("AboutPage.$$id");
+
+      // Inline call replaced with import name
+      expect(r1.code).toContain(`path("/inline", ${vImports[0].exportName})`);
+      expect(r1.code).not.toContain("createPrerenderHandler(() => <aside />)");
+    });
+  });
+
+  describe("module tracking (RSC build mode)", () => {
+    it("populates prerenderHandlerModules for export const patterns", () => {
+      const plugin = createPlugin({ forceBuild: true });
+      initDev(plugin);
+
+      plugin.transform.call(rscCtx(), PRERENDER_EXPORT_SOURCE, FILE_ID);
+
+      expect(plugin.api.prerenderHandlerModules.get(FILE_ID)).toEqual(["AboutPage"]);
     });
   });
 });

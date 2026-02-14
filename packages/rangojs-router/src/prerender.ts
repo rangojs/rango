@@ -122,12 +122,8 @@ export function createPrerenderHandler<TParams extends Record<string, any>>(
     }
   }
 
-  if (!id && process.env.NODE_ENV !== "production") {
-    throw new Error(
-      "[rsc-router] PrerenderHandler is missing $$id. " +
-        "Make sure the exposeInternalIds Vite plugin is enabled and " +
-        "the handler is exported with: export const MyPage = createPrerenderHandler(...)"
-    );
+  if (!id) {
+    id = "";
   }
 
   return {

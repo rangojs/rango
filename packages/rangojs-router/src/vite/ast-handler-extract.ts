@@ -6,7 +6,7 @@ import { hashInlineId } from "./expose-id-utils.ts";
 // Types
 // ---------------------------------------------------------------------------
 
-export interface StaticHandlerCallSite {
+export interface HandlerCallSite {
   callStart: number;
   callEnd: number;
   argCount: number;
@@ -18,12 +18,16 @@ export interface StaticHandlerCallSite {
   } | null;
 }
 
-export interface VirtualStaticHandlerEntry {
+export interface VirtualHandlerEntry {
   originalModuleId: string;
   imports: string[];
   handlerCode: string;
   exportName: string;
 }
+
+// Backwards-compat aliases
+export type StaticHandlerCallSite = HandlerCallSite;
+export type VirtualStaticHandlerEntry = VirtualHandlerEntry;
 
 // ---------------------------------------------------------------------------
 // AST walking helper
@@ -69,15 +73,15 @@ function walkNode(
 // ---------------------------------------------------------------------------
 
 /**
- * Parse the file with Vite's parseAst and find all createStaticHandler() call
- * sites. Distinguishes between `export const X = createStaticHandler(...)`
- * (exportInfo set) and inline calls like `layout(createStaticHandler(...))`
- * (exportInfo null).
+ * Parse the file with Vite's parseAst and find all calls to `fnName`.
+ * Distinguishes between `export const X = fnName(...)` (exportInfo set)
+ * and inline calls like `layout(fnName(...))` (exportInfo null).
  */
-export function findStaticHandlerCalls(
+export function findHandlerCalls(
   code: string,
+  fnName: string,
   parseAst: (code: string, options?: any) => ProgramNode,
-): StaticHandlerCallSite[] {
+): HandlerCallSite[] {
   let program: ProgramNode;
   try {
     program = parseAst(code, { jsx: true });
@@ -85,13 +89,13 @@ export function findStaticHandlerCalls(
     return [];
   }
 
-  const sites: StaticHandlerCallSite[] = [];
+  const sites: HandlerCallSite[] = [];
 
   walkNode(program, null, [], (node: any, parent: any, ancestors: any[]) => {
     if (
       node.type !== "CallExpression" ||
       node.callee?.type !== "Identifier" ||
-      node.callee.name !== "createStaticHandler"
+      node.callee.name !== fnName
     ) {
       return;
     }
@@ -108,7 +112,7 @@ export function findStaticHandlerCalls(
 
     // Check if this is an export const pattern:
     // ExportNamedDeclaration > VariableDeclaration > VariableDeclarator(init=CallExpression)
-    let exportInfo: StaticHandlerCallSite["exportInfo"] = null;
+    let exportInfo: HandlerCallSite["exportInfo"] = null;
 
     if (parent?.type === "VariableDeclarator" && parent.init === node) {
       // ancestors: [..., ExportNamedDecl, VarDecl, VarDeclarator, CallExpr]
@@ -133,6 +137,14 @@ export function findStaticHandlerCalls(
   });
 
   return sites;
+}
+
+// Backwards-compat wrapper
+export function findStaticHandlerCalls(
+  code: string,
+  parseAst: (code: string, options?: any) => ProgramNode,
+): HandlerCallSite[] {
+  return findHandlerCalls(code, "createStaticHandler", parseAst);
 }
 
 /**
@@ -164,9 +176,9 @@ export function extractImportDeclarations(
 // ---------------------------------------------------------------------------
 
 /**
- * Transform inline createStaticHandler() calls by extracting them into virtual
- * modules. Only processes inline calls (exportInfo === null); export const
- * calls are handled by the existing regex fast path.
+ * Transform inline handler calls by extracting them into virtual modules.
+ * Only processes inline calls (exportInfo === null); export const calls are
+ * handled by the existing regex fast path.
  *
  * Always extracts (dev and build) to keep server-only imports out of non-RSC
  * environments. The virtual module goes through the standard transform pipeline
@@ -174,17 +186,19 @@ export function extractImportDeclarations(
  *
  * Returns true if any inline calls were transformed.
  */
-export function transformInlineStaticHandlers(
+export function transformInlineHandlers(
+  fnName: string,
+  virtualPrefix: string,
   s: MagicString,
   code: string,
   filePath: string,
   _isBuild: boolean,
   _fileName: string,
-  virtualRegistry: Map<string, VirtualStaticHandlerEntry>,
+  virtualRegistry: Map<string, VirtualHandlerEntry>,
   moduleId: string,
   parseAst: (code: string, options?: any) => ProgramNode,
 ): boolean {
-  const sites = findStaticHandlerCalls(code, parseAst);
+  const sites = findHandlerCalls(code, fnName, parseAst);
   const inlineSites = sites.filter((site) => site.exportInfo === null);
   if (inlineSites.length === 0) return false;
 
@@ -202,9 +216,9 @@ export function transformInlineStaticHandlers(
 
     const hash = hashInlineId(filePath, site.lineNumber, lineCount);
     const exportName = `__sh_${hash}`;
-    const virtualId = `\0virtual:static-handler:${filePath}:${site.lineNumber}${lineCount > 0 ? `:${lineCount}` : ""}`;
+    const virtualId = `\0${virtualPrefix}${filePath}:${site.lineNumber}${lineCount > 0 ? `:${lineCount}` : ""}`;
 
-    // Extract the full createStaticHandler(...) expression text
+    // Extract the full handler call expression text
     const handlerCode = code.slice(site.callStart, site.callEnd);
 
     // Register virtual module
@@ -219,7 +233,7 @@ export function transformInlineStaticHandlers(
     s.overwrite(site.callStart, site.callEnd, exportName);
 
     // Build the import specifier for this virtual module
-    const importId = `virtual:static-handler:${filePath}:${site.lineNumber}${lineCount > 0 ? `:${lineCount}` : ""}`;
+    const importId = `${virtualPrefix}${filePath}:${site.lineNumber}${lineCount > 0 ? `:${lineCount}` : ""}`;
     importStatements.push(
       `import { ${exportName} } from "${importId}";`,
     );
@@ -231,4 +245,21 @@ export function transformInlineStaticHandlers(
   }
 
   return true;
+}
+
+// Backwards-compat wrapper
+export function transformInlineStaticHandlers(
+  s: MagicString,
+  code: string,
+  filePath: string,
+  isBuild: boolean,
+  fileName: string,
+  virtualRegistry: Map<string, VirtualHandlerEntry>,
+  moduleId: string,
+  parseAst: (code: string, options?: any) => ProgramNode,
+): boolean {
+  return transformInlineHandlers(
+    "createStaticHandler", "virtual:handler-extract:",
+    s, code, filePath, isBuild, fileName, virtualRegistry, moduleId, parseAst,
+  );
 }
