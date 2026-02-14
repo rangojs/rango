@@ -74,6 +74,40 @@ export const Nav = createStaticHandler(() => <nav />);
     const sites = findHandlerCalls(code, "createPrerenderHandler", parseAst);
     expect(sites).toEqual([]);
   });
+
+  it("detects aliased import calls for createStaticHandler", () => {
+    const code = `
+import { createStaticHandler as sh } from "@rangojs/router";
+layout(sh(() => <nav />));
+`;
+    const sites = findHandlerCalls(code, "createStaticHandler", parseAst);
+    expect(sites).toHaveLength(1);
+    expect(sites[0].calleeName).toBe("sh");
+    expect(sites[0].exportInfo).toBeNull();
+  });
+
+  it("detects aliased export const calls for createPrerenderHandler", () => {
+    const code = `
+import { createPrerenderHandler as ph } from "@rangojs/router";
+export const About = ph(() => <div />);
+`;
+    const sites = findHandlerCalls(code, "createPrerenderHandler", parseAst);
+    expect(sites).toHaveLength(1);
+    expect(sites[0].calleeName).toBe("ph");
+    expect(sites[0].exportInfo?.exportName).toBe("About");
+  });
+
+  it("detects const + export specifier for createStaticHandler", () => {
+    const code = `
+import { createStaticHandler } from "@rangojs/router";
+const NavDef = createStaticHandler(() => <nav />);
+export { NavDef as Nav };
+`;
+    const sites = findHandlerCalls(code, "createStaticHandler", parseAst);
+    expect(sites).toHaveLength(1);
+    expect(sites[0].exportInfo).not.toBeNull();
+    expect(sites[0].exportInfo?.exportName).toBe("Nav");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -201,6 +235,23 @@ layout(createStaticHandler(() => <nav />));
   it("does not extract export const calls", () => {
     const code = `import { createStaticHandler } from "@rangojs/router";
 export const Nav = createStaticHandler(() => <nav />);
+`;
+    const s = new MagicString(code);
+    const registry = new Map<string, VirtualHandlerEntry>();
+
+    const result = transformInlineHandlers(
+      "createStaticHandler", "virtual:handler-extract:",
+      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+    );
+
+    expect(result).toBe(false);
+    expect(registry.size).toBe(0);
+  });
+
+  it("does not extract const + export specifier calls", () => {
+    const code = `import { createStaticHandler } from "@rangojs/router";
+const NavDef = createStaticHandler(() => <nav />);
+export { NavDef as Nav };
 `;
     const s = new MagicString(code);
     const registry = new Map<string, VirtualHandlerEntry>();

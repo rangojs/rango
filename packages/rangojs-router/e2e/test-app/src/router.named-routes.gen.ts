@@ -99,6 +99,9 @@ export const NamedRoutes = {
   "trailingSlash.always": "/ts-always",
   "trailingSlash.ignore": "/ts-ignore",
   "trailingSlash.never": "/ts-never",
+  "transformCases.index": "/transform-cases",
+  "transformCases.prerendered": "/transform-cases/prerendered",
+  "transformCases.state": "/transform-cases/state",
 } as const;
 
 declare global {

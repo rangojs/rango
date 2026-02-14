@@ -7,12 +7,10 @@ import {
   normalizePath,
   hashId,
   detectImports,
-  makeExportPattern,
   findMatchingParen,
   countArgs,
   findStatementEnd,
-  findClosingParen,
-  countArgsSimple,
+  buildExportMap,
 } from "./expose-id-utils.ts";
 import {
   transformInlineHandlers,
@@ -41,6 +39,20 @@ interface HandlerTransformConfig {
   brand: string;
 }
 
+interface CreateExportBinding {
+  localName: string;
+  exportNames: string[];
+  callExprStart: number;
+  callOpenParenPos: number;
+  callCloseParenPos: number;
+  argCount: number;
+  statementEnd: number;
+}
+
+interface StrictCreateTransformConfig {
+  fnName: "createLoader" | "createHandle" | "createLocationState";
+}
+
 const PRERENDER_CONFIG: HandlerTransformConfig = {
   fnName: "createPrerenderHandler",
   brand: "prerenderHandler",
@@ -50,6 +62,288 @@ const STATIC_CONFIG: HandlerTransformConfig = {
   fnName: "createStaticHandler",
   brand: "staticHandler",
 };
+
+const STRICT_CREATE_CONFIGS: StrictCreateTransformConfig[] = [
+  { fnName: "createLoader" },
+  { fnName: "createHandle" },
+  { fnName: "createLocationState" },
+];
+
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Check whether every non-type export in `code` is accounted for by the given
+ * bindings. Returns false if any export exists that is not one of the known
+ * create* call locals/exports, allowing callers to bail out for mixed-export
+ * files.
+ */
+function isExportOnlyFile(
+  code: string,
+  bindings: CreateExportBinding[],
+): boolean {
+  if (bindings.length === 0) return false;
+
+  const knownLocals = new Set<string>();
+  const knownExports = new Set<string>();
+  for (const b of bindings) {
+    knownLocals.add(b.localName);
+    for (const e of b.exportNames) knownExports.add(e);
+  }
+
+  // Bail on star re-exports (unknown exports)
+  if (/export\s*\*/.test(code)) return false;
+
+  // Check `export const/let/var/function/class/default X` declarations
+  const declExportPattern =
+    /export\s+(const|let|var|function|class|default)\s+(\w+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = declExportPattern.exec(code)) !== null) {
+    if (!knownExports.has(match[2])) return false;
+  }
+
+  // Check `export { X }` and `export { X as Y }` specifiers: the local name
+  // must reference a known create* binding.
+  const specExportPattern = /export\s*\{([^}]+)\}/g;
+  while ((match = specExportPattern.exec(code)) !== null) {
+    const specifiers = match[1]
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const spec of specifiers) {
+      const m = spec.match(
+        /^([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/,
+      );
+      if (!m) continue;
+      const local = m[1];
+      if (!knownLocals.has(local)) return false;
+    }
+  }
+
+  return true;
+}
+
+// NOTE: This regex may over-count when the fn name appears inside strings or
+// comments, but it's only used for the warning heuristic (totalCalls >
+// supportedBindings) and the inline-extraction pre-check, so over-counting
+// triggers a harmless extra AST parse rather than affecting correctness.
+function countCreateCallsForNames(code: string, fnNames: string[]): number {
+  const pattern = new RegExp(
+    `\\b(?:${fnNames.map(escapeRegExp).join("|")})\\s*(?:<[^>]*>\\s*)?\\(`,
+    "g",
+  );
+  return (code.match(pattern) || []).length;
+}
+
+function getImportedFnNames(
+  code: string,
+  importedName: string,
+): string[] {
+  const importPattern =
+    /import\s*\{([^}]*)\}\s*from\s*["']@rangojs\/router(?:\/[^"']*)?["']/g;
+
+  const localNames = new Set<string>();
+  let match: RegExpExecArray | null;
+
+  while ((match = importPattern.exec(code)) !== null) {
+    const specList = match[1]
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    for (const spec of specList) {
+      const m = spec.match(/^([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/);
+      if (!m) continue;
+      const imported = m[1];
+      const local = m[2] || imported;
+      if (imported === importedName) {
+        localNames.add(local);
+      }
+    }
+  }
+
+  const names = Array.from(localNames);
+  return names.length > 0 ? names : [importedName];
+}
+
+function getCalledIdentifierFromCall(callExpr: any): string | null {
+  const callee = callExpr?.callee;
+  if (callee?.type === "Identifier") return callee.name;
+  if (
+    callee?.type === "TSInstantiationExpression" &&
+    callee.expression?.type === "Identifier"
+  ) {
+    return callee.expression.name;
+  }
+  return null;
+}
+
+function collectCreateExportBindingsFallback(
+  code: string,
+  fnNames: string[],
+): CreateExportBinding[] {
+  const alternation = fnNames.map(escapeRegExp).join("|");
+  const exportConstPattern = new RegExp(
+    `export\\s+const\\s+(\\w+)\\s*=\\s*(?:${alternation})\\s*(?:<[^>]*>)?\\s*\\(`,
+    "g",
+  );
+  const localDeclPattern = new RegExp(
+    `\\bconst\\s+(\\w+)\\s*=\\s*((?:${alternation})\\s*(?:<[^>]*>)?\\s*\\()`,
+    "g",
+  );
+  const exportSpecPattern = /export\s*\{([^}]+)\}/g;
+
+  const exportMap = new Map<string, string[]>();
+  const pushExport = (local: string, exported: string) => {
+    const list = exportMap.get(local);
+    if (list) {
+      if (!list.includes(exported)) list.push(exported);
+      return;
+    }
+    exportMap.set(local, [exported]);
+  };
+
+  let match: RegExpExecArray | null;
+  while ((match = exportConstPattern.exec(code)) !== null) {
+    pushExport(match[1], match[1]);
+  }
+
+  while ((match = exportSpecPattern.exec(code)) !== null) {
+    const specifiers = match[1]
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const specifier of specifiers) {
+      const specMatch = specifier.match(
+        /^([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/,
+      );
+      if (!specMatch) continue;
+      const local = specMatch[1];
+      const exported = specMatch[2] || local;
+      pushExport(local, exported);
+    }
+  }
+
+  const bindings: CreateExportBinding[] = [];
+  while ((match = localDeclPattern.exec(code)) !== null) {
+    const localName = match[1];
+    const exportNames = exportMap.get(localName) ?? [];
+    if (exportNames.length === 0) continue;
+
+    const openParenPos = match.index + match[0].length - 1;
+    const closeParenPos = findMatchingParen(code, openParenPos + 1) - 1;
+    if (closeParenPos <= openParenPos) continue;
+
+    bindings.push({
+      localName,
+      exportNames,
+      callExprStart: match.index + match[0].length - match[2].length,
+      callOpenParenPos: openParenPos,
+      callCloseParenPos: closeParenPos,
+      argCount: countArgs(code, openParenPos + 1, closeParenPos),
+      statementEnd: findStatementEnd(code, closeParenPos + 1),
+    });
+  }
+
+  return bindings;
+}
+
+function collectCreateExportBindings(
+  code: string,
+  fnNames: string[],
+  program?: any,
+): CreateExportBinding[] {
+  if (!program) {
+    try {
+      program = parseAst(code, { jsx: true });
+    } catch {
+      return collectCreateExportBindingsFallback(code, fnNames);
+    }
+  }
+
+  const exportMap = buildExportMap(program);
+  const fnNameSet = new Set(fnNames);
+  const bindings: CreateExportBinding[] = [];
+
+  const collectFromVarDecl = (varDecl: any, statementEnd: number) => {
+    if (varDecl?.type !== "VariableDeclaration" || varDecl.kind !== "const") {
+      return;
+    }
+
+    for (const decl of varDecl.declarations ?? []) {
+      const calledIdentifier = getCalledIdentifierFromCall(decl?.init);
+      if (
+        decl?.id?.type !== "Identifier" ||
+        decl?.init?.type !== "CallExpression" ||
+        !calledIdentifier ||
+        !fnNameSet.has(calledIdentifier)
+      ) {
+        continue;
+      }
+
+      const localName = decl.id.name;
+      const exportNames = exportMap.get(localName) ?? [];
+      if (exportNames.length === 0) continue;
+
+      const callStart = decl.init.start as number;
+      const callEnd = decl.init.end as number;
+      const calleeEnd = decl.init.callee.end as number;
+
+      let openParenPos = -1;
+      for (let i = calleeEnd; i < callEnd; i++) {
+        if (code[i] === "(") {
+          openParenPos = i;
+          break;
+        }
+      }
+      if (openParenPos === -1) continue;
+
+      const closeParenPos = findMatchingParen(code, openParenPos + 1) - 1;
+      if (closeParenPos <= openParenPos) continue;
+
+      bindings.push({
+        localName,
+        exportNames,
+        callExprStart: decl.init.start as number,
+        callOpenParenPos: openParenPos,
+        callCloseParenPos: closeParenPos,
+        argCount: decl.init.arguments?.length ?? 0,
+        statementEnd,
+      });
+    }
+  };
+
+  for (const node of program.body ?? []) {
+    if (node?.type === "VariableDeclaration") {
+      collectFromVarDecl(node, node.end as number);
+      continue;
+    }
+
+    if (
+      node?.type === "ExportNamedDeclaration" &&
+      node.declaration?.type === "VariableDeclaration"
+    ) {
+      collectFromVarDecl(node.declaration, node.end as number);
+    }
+  }
+
+  return bindings;
+}
+
+function buildUnsupportedShapeWarning(filePath: string, fnName: string): string {
+  return [
+    `[rsc-router] Unsupported ${fnName} shape in "${filePath}".`,
+    `Supported shapes are:`,
+    `  - export const X = ${fnName}(...)`,
+    `  - const X = ${fnName}(...); export { X }`,
+    `  - const X = ${fnName}(...); export { X as Y }`,
+    `Potentially unsupported forms include:`,
+    `  - export let/var X = ${fnName}(...)`,
+    `  - inline ${fnName}(...) calls`,
+    `See: packages/rangojs-router/src/vite/TRANSFORM-SUPPORT.md`,
+  ].join("\n");
+}
 
 // ---------------------------------------------------------------------------
 // Plugin API type (consumed by router-discovery in index.ts)
@@ -89,30 +383,15 @@ function hasCreateLoaderImport(code: string): boolean {
  * which are erased at compile time). Files with mixed exports are left untouched.
  */
 function generateClientLoaderStubs(
+  bindings: CreateExportBinding[],
   code: string,
   filePath: string,
   isBuild: boolean,
 ): { code: string; map?: undefined } | null {
-  const loaderPattern = /export\s+const\s+(\w+)\s*=\s*createLoader\s*\(/g;
-  const loaders: string[] = [];
-  let match: RegExpExecArray | null;
+  if (!isExportOnlyFile(code, bindings)) return null;
 
-  while ((match = loaderPattern.exec(code)) !== null) {
-    loaders.push(match[1]);
-  }
-
-  if (loaders.length === 0) return null;
-
-  // Check that every non-type export is a createLoader call.
-  const allExports =
-    /export\s+(const|let|var|function|class|default)\s+(\w+)/g;
-  let exportMatch: RegExpExecArray | null;
-
-  while ((exportMatch = allExports.exec(code)) !== null) {
-    if (!loaders.includes(exportMatch[2])) return null;
-  }
-
-  const stubs = loaders.map((name) => {
+  const exportNames = bindings.flatMap((b) => b.exportNames);
+  const stubs = exportNames.map((name) => {
     const loaderId = isBuild
       ? hashId(filePath, name)
       : `${filePath}#${name}`;
@@ -123,25 +402,14 @@ function generateClientLoaderStubs(
 }
 
 function transformLoaders(
+  bindings: CreateExportBinding[],
   s: MagicString,
-  code: string,
   filePath: string,
   isBuild: boolean,
 ): boolean {
-  const pattern = makeExportPattern("createLoader");
   let hasChanges = false;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(code)) !== null) {
-    const exportName = match[1];
-    const matchEnd = match.index + match[0].length;
-
-    // Find the end of the createLoader(...) call (simple depth counter)
-    const afterClose = findClosingParen(code, matchEnd);
-    const closeParenPos = afterClose - 1;
-
-    const argCount = countArgsSimple(code, matchEnd, closeParenPos);
-    const statementEnd = findStatementEnd(code, afterClose);
+  for (const binding of bindings) {
+    const exportName = binding.exportNames[0];
 
     const loaderId = isBuild
       ? hashId(filePath, exportName)
@@ -151,13 +419,13 @@ function transformLoaders(
     // createLoader(fn) -> createLoader(fn, undefined, "id")
     // createLoader(fn, true) -> createLoader(fn, true, "id")
     const paramInjection =
-      argCount === 1
+      binding.argCount === 1
         ? `, undefined, "${loaderId}"`
         : `, "${loaderId}"`;
-    s.appendLeft(closeParenPos, paramInjection);
+    s.appendLeft(binding.callCloseParenPos, paramInjection);
 
-    const propInjection = `\n${exportName}.$$id = "${loaderId}";`;
-    s.appendRight(statementEnd, propInjection);
+    const propInjection = `\n${binding.localName}.$$id = "${loaderId}";`;
+    s.appendRight(binding.statementEnd, propInjection);
     hasChanges = true;
   }
 
@@ -178,25 +446,20 @@ function analyzeCreateHandleArgs(
 }
 
 function transformHandles(
+  bindings: CreateExportBinding[],
   s: MagicString,
   code: string,
   filePath: string,
   isBuild: boolean,
 ): boolean {
-  const pattern = makeExportPattern("createHandle");
   let hasChanges = false;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(code)) !== null) {
-    const exportName = match[1];
-    const matchEnd = match.index + match[0].length;
-
-    // Simple depth-counter paren matching (original behavior)
-    const afterClose = findClosingParen(code, matchEnd);
-    const closeParenPos = afterClose - 1;
-
-    const args = analyzeCreateHandleArgs(code, matchEnd, closeParenPos);
-    const statementEnd = findStatementEnd(code, afterClose);
+  for (const binding of bindings) {
+    const exportName = binding.exportNames[0];
+    const args = analyzeCreateHandleArgs(
+      code,
+      binding.callOpenParenPos + 1,
+      binding.callCloseParenPos,
+    );
 
     const handleId = isBuild
       ? hashId(filePath, exportName)
@@ -208,10 +471,10 @@ function transformHandles(
     } else {
       paramInjection = `, "${handleId}"`;
     }
-    s.appendLeft(closeParenPos, paramInjection);
+    s.appendLeft(binding.callCloseParenPos, paramInjection);
 
-    const propInjection = `\n${exportName}.$$id = "${handleId}";`;
-    s.appendRight(statementEnd, propInjection);
+    const propInjection = `\n${binding.localName}.$$id = "${handleId}";`;
+    s.appendRight(binding.statementEnd, propInjection);
     hasChanges = true;
   }
 
@@ -223,38 +486,25 @@ function transformHandles(
 // ---------------------------------------------------------------------------
 
 function transformLocationState(
+  bindings: CreateExportBinding[],
   s: MagicString,
-  code: string,
   filePath: string,
   isBuild: boolean,
 ): boolean {
-  const pattern = makeExportPattern("createLocationState");
   let hasChanges = false;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(code)) !== null) {
-    const exportName = match[1];
-    const matchEnd = match.index + match[0].length;
-
-    // Simple depth-counter paren matching
-    const afterClose = findClosingParen(code, matchEnd);
-    const closeParenPos = afterClose - 1;
-
-    const content = code.slice(matchEnd, closeParenPos).trim();
-    const hasArgs = content.length > 0;
-
-    if (hasArgs) continue; // Already has a key, skip
-
-    const statementEnd = findStatementEnd(code, afterClose);
+  for (const binding of bindings) {
+    if (binding.argCount > 0) continue; // Already has a key, skip
+    const exportName = binding.exportNames[0];
 
     const stateKey = isBuild
       ? hashId(filePath, exportName)
       : `${filePath}#${exportName}`;
 
-    s.appendLeft(closeParenPos, `"${stateKey}"`);
+    s.appendLeft(binding.callCloseParenPos, `"${stateKey}"`);
 
-    const propInjection = `\n${exportName}.__rsc_ls_key = "__rsc_ls_${stateKey}";`;
-    s.appendRight(statementEnd, propInjection);
+    const propInjection =
+      `\n${binding.localName}.__rsc_ls_key = "__rsc_ls_${stateKey}";`;
+    s.appendRight(binding.statementEnd, propInjection);
     hasChanges = true;
   }
 
@@ -271,32 +521,15 @@ function transformLocationState(
  */
 function generateWholeFileStubs(
   cfg: HandlerTransformConfig,
+  bindings: CreateExportBinding[],
   code: string,
   filePath: string,
   isBuild: boolean,
 ): { code: string; map: null } | null {
-  const handlerPattern = makeExportPattern(cfg.fnName);
-  const handlers: string[] = [];
-  let match: RegExpExecArray | null;
+  if (!isExportOnlyFile(code, bindings)) return null;
 
-  while ((match = handlerPattern.exec(code)) !== null) {
-    handlers.push(match[1]);
-  }
-
-  if (handlers.length === 0) return null;
-
-  // Bail out if the file has re-exports or destructured exports
-  if (/export\s*\{/.test(code) || /export\s*\*/.test(code)) return null;
-
-  const allExports =
-    /export\s+(const|let|var|function|class|default)\s+(\w+)/g;
-  let exportMatch: RegExpExecArray | null;
-
-  while ((exportMatch = allExports.exec(code)) !== null) {
-    if (!handlers.includes(exportMatch[2])) return null;
-  }
-
-  const stubs = handlers.map((name) => {
+  const exportNames = bindings.flatMap((b) => b.exportNames);
+  const stubs = exportNames.map((name) => {
     const handlerId = isBuild
       ? hashId(filePath, name)
       : `${filePath}#${name}`;
@@ -312,33 +545,26 @@ function generateWholeFileStubs(
  */
 function generateExprStubs(
   cfg: HandlerTransformConfig,
+  bindings: CreateExportBinding[],
   code: string,
   filePath: string,
   sourceId: string,
   isBuild: boolean,
 ): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
-  const pattern = new RegExp(
-    `export\\s+const\\s+(\\w+)\\s*=\\s*(${cfg.fnName}\\s*(?:<[^>]*>)?\\s*\\()`,
-    "g",
-  );
+  if (bindings.length === 0) return null;
 
   const s = new MagicString(code);
   let hasChanges = false;
-  let match: RegExpExecArray | null;
 
-  while ((match = pattern.exec(code)) !== null) {
-    const exportName = match[1];
-    const callStart = match.index + match[0].length - match[2].length;
-    const openParenPos = match.index + match[0].length;
-    const afterCloseParen = findMatchingParen(code, openParenPos);
-
+  for (const binding of bindings) {
+    const exportName = binding.exportNames[0];
     const handlerId = isBuild
       ? hashId(filePath, exportName)
       : `${filePath}#${exportName}`;
 
     s.overwrite(
-      callStart,
-      afterCloseParen,
+      binding.callExprStart,
+      binding.callCloseParenPos + 1,
       `{ __brand: "${cfg.brand}", $$id: "${handlerId}" }`,
     );
     hasChanges = true;
@@ -361,24 +587,14 @@ function generateExprStubs(
  */
 function transformHandlerIds(
   cfg: HandlerTransformConfig,
+  bindings: CreateExportBinding[],
   s: MagicString,
-  code: string,
   filePath: string,
   isBuild: boolean,
 ): boolean {
-  const pattern = makeExportPattern(cfg.fnName);
   let hasChanges = false;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(code)) !== null) {
-    const exportName = match[1];
-    const matchEnd = match.index + match[0].length;
-
-    // String/comment-aware paren matching
-    const afterClose = findMatchingParen(code, matchEnd);
-    const closeParenPos = afterClose - 1;
-    const argCount = countArgs(code, matchEnd, closeParenPos);
-    const statementEnd = findStatementEnd(code, afterClose);
+  for (const binding of bindings) {
+    const exportName = binding.exportNames[0];
 
     const handlerId = isBuild
       ? hashId(filePath, exportName)
@@ -389,17 +605,17 @@ function transformHandlerIds(
     //   1 arg  (handler)                    -> inject , undefined, "id"
     //   2+ args                             -> inject , "id"
     let paramInjection: string;
-    if (argCount === 0) {
+    if (binding.argCount === 0) {
       paramInjection = `undefined, "${handlerId}"`;
-    } else if (argCount === 1) {
+    } else if (binding.argCount === 1) {
       paramInjection = `, undefined, "${handlerId}"`;
     } else {
       paramInjection = `, "${handlerId}"`;
     }
-    s.appendLeft(closeParenPos, paramInjection);
+    s.appendLeft(binding.callCloseParenPos, paramInjection);
 
-    const propInjection = `\n${exportName}.$$id = "${handlerId}";`;
-    s.appendRight(statementEnd, propInjection);
+    const propInjection = `\n${binding.localName}.$$id = "${handlerId}";`;
+    s.appendRight(binding.statementEnd, propInjection);
     hasChanges = true;
   }
 
@@ -413,8 +629,12 @@ function transformHandlerIds(
 function transformRouter(
   code: string,
   filePath: string,
+  routerFnNames: string[],
 ): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
-  const pat = /\bcreateRouter\s*(?:<[^>]*>)?\s*\(/g;
+  const pat = new RegExp(
+    `\\b(?:${routerFnNames.map(escapeRegExp).join("|")})\\s*(?:<[^>]*>)?\\s*\\(`,
+    "g",
+  );
   let match: RegExpExecArray | null;
   const s = new MagicString(code);
   let changed = false;
@@ -493,7 +713,8 @@ export function exposeRouterId(): Plugin {
       if (id.includes("node_modules")) return null;
 
       const filePath = normalizePath(path.relative(projectRoot, id));
-      return transformRouter(code, filePath);
+      const routerFnNames = getImportedFnNames(code, "createRouter");
+      return transformRouter(code, filePath, routerFnNames);
     },
   };
 }
@@ -523,6 +744,8 @@ export function exposeInternalIds(options?: {
 
   // Virtual module registry for inline handler extraction (both types)
   const virtualHandlers = new Map<string, VirtualHandlerEntry>();
+  // De-duplicate unsupported shape warnings across repeated transforms.
+  const unsupportedShapeWarnings = new Set<string>();
 
   return {
     name: "@rangojs/router:expose-internal-ids",
@@ -641,15 +864,14 @@ ${lazyImports.join(",\n")}
           if (!content.includes("createLoader")) continue;
           if (!hasCreateLoaderImport(content)) continue;
 
-          const pattern =
-            /export\s+const\s+(\w+)\s*=\s*createLoader\s*\(/g;
+          const fnNames = getImportedFnNames(content, "createLoader");
           const relativePath = normalizePath(
             path.relative(projectRoot, filePath),
           );
-          let match: RegExpExecArray | null;
+          const bindings = collectCreateExportBindings(content, fnNames);
 
-          while ((match = pattern.exec(content)) !== null) {
-            const exportName = match[1];
+          for (const binding of bindings) {
+            const exportName = binding.exportNames[0];
             const hashedId = hashId(relativePath, exportName);
             loaderRegistry.set(hashedId, {
               filePath: relativePath,
@@ -696,11 +918,17 @@ ${lazyImports.join(",\n")}
         );
       }
 
+      // Fast exit: if the file doesn't import from @rangojs/router at all,
+      // skip all create* analysis and transforms.
+      if (!code.includes("@rangojs/router")) return;
+
       // Detect all relevant imports in one pass
       const has = detectImports(code);
 
-      // Quick bail-out: also check for raw create* identifiers for the
-      // code.includes() guard that each original plugin had
+      // Quick bail-out: also check for raw create* identifiers.
+      // This is safe even with aliases (e.g., `import { createLoader as cl }`)
+      // because the import statement itself always contains the canonical name
+      // "createLoader", so code.includes("createLoader") will still match.
       const hasLoaderCode = has.loader && code.includes("createLoader");
       const hasHandleCode = has.handle && code.includes("createHandle");
       const hasLocationStateCode =
@@ -719,13 +947,80 @@ ${lazyImports.join(",\n")}
         return;
       }
 
+      // Per-invocation caches to avoid redundant AST parsing.
+      // getImportedFnNames is cached by canonical name (imports never change).
+      // collectCreateExportBindings is cached by fnNames key; the cache is
+      // cleared when `code` changes (e.g., after inline handler extraction).
+      const _fnNamesCache = new Map<string, string[]>();
+      const _bindingsCache = new Map<string, CreateExportBinding[]>();
+      let _cachedAst: any;
+      let _astParseFailed = false;
+      let _astCodeRef = code;
+
+      const getFnNames = (canonicalName: string): string[] => {
+        let result = _fnNamesCache.get(canonicalName);
+        if (!result) {
+          result = getImportedFnNames(code, canonicalName);
+          _fnNamesCache.set(canonicalName, result);
+        }
+        return result;
+      };
+
+      // Lazy AST parse: parsed once and shared across all
+      // collectCreateExportBindings calls for the same code string.
+      const lazyAst = (): any | undefined => {
+        if (code !== _astCodeRef) {
+          _cachedAst = undefined;
+          _astParseFailed = false;
+          _astCodeRef = code;
+        }
+        if (_cachedAst !== undefined || _astParseFailed) return _cachedAst;
+        try {
+          _cachedAst = parseAst(code, { jsx: true });
+        } catch {
+          _astParseFailed = true;
+        }
+        return _cachedAst;
+      };
+
+      const getBindings = (currentCode: string, fnNames: string[]): CreateExportBinding[] => {
+        const key = fnNames.join("\0");
+        let result = _bindingsCache.get(key);
+        if (!result) {
+          result = collectCreateExportBindings(currentCode, fnNames, lazyAst());
+          _bindingsCache.set(key, result);
+        }
+        return result;
+      };
+
+      // Warn on create* declaration shapes that are currently unsupported by
+      // non-AST transforms (loader/handle/locationState only).
+      for (const cfg of STRICT_CREATE_CONFIGS) {
+        const hasCode =
+          cfg.fnName === "createLoader"
+            ? hasLoaderCode
+            : cfg.fnName === "createHandle"
+            ? hasHandleCode
+            : hasLocationStateCode;
+        if (!hasCode) continue;
+
+        const fnNames = getFnNames(cfg.fnName);
+        const totalCalls = countCreateCallsForNames(code, fnNames);
+        const supportedBindings = getBindings(code, fnNames).length;
+        if (totalCalls <= supportedBindings) continue;
+
+        const warnKey = `${id}::${cfg.fnName}`;
+        if (unsupportedShapeWarnings.has(warnKey)) continue;
+        unsupportedShapeWarnings.add(warnKey);
+        this.warn(buildUnsupportedShapeWarning(filePath, cfg.fnName));
+      }
+
       // --- Loader: track for manifest (RSC env only) ---
       if (hasLoaderCode && isRscEnv) {
-        const pattern =
-          /export\s+const\s+(\w+)\s*=\s*createLoader\s*\(/g;
-        let match: RegExpExecArray | null;
-        while ((match = pattern.exec(code)) !== null) {
-          const exportName = match[1];
+        const fnNames = getFnNames("createLoader");
+        const bindings = getBindings(code, fnNames);
+        for (const binding of bindings) {
+          const exportName = binding.exportNames[0];
           const hashedId = hashId(filePath, exportName);
           loaderRegistry.set(hashedId, {
             filePath,
@@ -736,31 +1031,32 @@ ${lazyImports.join(",\n")}
 
       // --- Loader: client stubs for non-RSC environments ---
       if (hasLoaderCode && !isRscEnv) {
-        const stubResult = generateClientLoaderStubs(code, filePath, isBuild);
+        const fnNames = getFnNames("createLoader");
+        const bindings = getBindings(code, fnNames);
+        const stubResult = generateClientLoaderStubs(bindings, code, filePath, isBuild);
         if (stubResult) return stubResult;
       }
 
       // --- PrerenderHandler: non-RSC stub replacement ---
       if (hasPrerenderHandlerCode && !isRscEnv) {
+        const fnNames = getFnNames(PRERENDER_CONFIG.fnName);
+        const bindings = getBindings(code, fnNames);
         const wholeFile = generateWholeFileStubs(
-          PRERENDER_CONFIG, code, filePath, isBuild,
+          PRERENDER_CONFIG, bindings, code, filePath, isBuild,
         );
         if (wholeFile) return wholeFile;
 
         const exprStubs = generateExprStubs(
-          PRERENDER_CONFIG, code, filePath, id, isBuild,
+          PRERENDER_CONFIG, bindings, code, filePath, id, isBuild,
         );
         if (exprStubs) return exprStubs;
       }
 
       // --- PrerenderHandler: RSC build module tracking ---
       if (hasPrerenderHandlerCode && isRscEnv && isBuild) {
-        const handlerPattern = makeExportPattern("createPrerenderHandler");
-        const exportNames: string[] = [];
-        let m: RegExpExecArray | null;
-        while ((m = handlerPattern.exec(code)) !== null) {
-          exportNames.push(m[1]);
-        }
+        const fnNames = getFnNames(PRERENDER_CONFIG.fnName);
+        const exportNames = getBindings(code, fnNames)
+          .map((b) => b.exportNames[0]);
         if (exportNames.length > 0) {
           prerenderHandlerModules.set(id, exportNames);
         }
@@ -779,20 +1075,19 @@ ${lazyImports.join(",\n")}
       // from findHandlerCalls always match the string they were parsed from.
       let changed = false;
 
-      for (const cfg of [
+      const handlerConfigs = [
         hasStaticHandlerCode && STATIC_CONFIG,
         hasPrerenderHandlerCode && PRERENDER_CONFIG,
-      ].filter((c): c is HandlerTransformConfig => !!c)) {
-        const totalCallPattern = new RegExp(
-          `\\b${cfg.fnName}\\s*(?:<[^>]*>\\s*)?\\(`, "g",
-        );
-        const totalCalls = (code.match(totalCallPattern) || []).length;
-        const exportPattern = new RegExp(
-          `export\\s+const\\s+\\w+\\s*=\\s*${cfg.fnName}\\s*\\(`, "g",
-        );
-        const exportCalls = (code.match(exportPattern) || []).length;
+      ].filter((c): c is HandlerTransformConfig => !!c).map((cfg) => {
+        const fnNames = getFnNames(cfg.fnName);
+        return { cfg, fnNames };
+      });
 
-        if (totalCalls > exportCalls) {
+      for (const { cfg, fnNames } of handlerConfigs) {
+        const totalCalls = countCreateCallsForNames(code, fnNames);
+        const supportedBindings = getBindings(code, fnNames).length;
+
+        if (totalCalls > supportedBindings) {
           const iterS = new MagicString(code);
           const result = transformInlineHandlers(
             cfg.fnName, VIRTUAL_HANDLER_PREFIX,
@@ -802,31 +1097,31 @@ ${lazyImports.join(",\n")}
           if (result) {
             changed = true;
             code = iterS.toString();
+            _bindingsCache.clear();
           }
         }
       }
 
       // --- StaticHandler: non-RSC stub replacement ---
       if (hasStaticHandlerCode && !isRscEnv) {
+        const fnNames = getFnNames(STATIC_CONFIG.fnName);
+        const bindings = getBindings(code, fnNames);
         const wholeFile = generateWholeFileStubs(
-          STATIC_CONFIG, code, filePath, isBuild,
+          STATIC_CONFIG, bindings, code, filePath, isBuild,
         );
         if (wholeFile) return wholeFile;
 
         const exprStubs = generateExprStubs(
-          STATIC_CONFIG, code, filePath, id, isBuild,
+          STATIC_CONFIG, bindings, code, filePath, id, isBuild,
         );
         if (exprStubs) return exprStubs;
       }
 
       // --- StaticHandler: RSC build module tracking ---
       if (hasStaticHandlerCode && isRscEnv && isBuild) {
-        const handlerPattern = makeExportPattern("createStaticHandler");
-        const exportNames: string[] = [];
-        let m: RegExpExecArray | null;
-        while ((m = handlerPattern.exec(code)) !== null) {
-          exportNames.push(m[1]);
-        }
+        const fnNames = getFnNames(STATIC_CONFIG.fnName);
+        const exportNames = getBindings(code, fnNames)
+          .map((b) => b.exportNames[0]);
         if (exportNames.length > 0) {
           staticHandlerModules.set(id, exportNames);
         }
@@ -839,22 +1134,27 @@ ${lazyImports.join(",\n")}
       const s = new MagicString(code);
 
       if (hasLoaderCode) {
-        changed = transformLoaders(s, code, filePath, isBuild) || changed;
+        const fnNames = getFnNames("createLoader");
+        changed = transformLoaders(getBindings(code, fnNames), s, filePath, isBuild) || changed;
       }
       if (hasHandleCode) {
-        changed = transformHandles(s, code, filePath, isBuild) || changed;
+        const fnNames = getFnNames("createHandle");
+        changed = transformHandles(getBindings(code, fnNames), s, code, filePath, isBuild) || changed;
       }
       if (hasLocationStateCode) {
+        const fnNames = getFnNames("createLocationState");
         changed =
-          transformLocationState(s, code, filePath, isBuild) || changed;
+          transformLocationState(getBindings(code, fnNames), s, filePath, isBuild) || changed;
       }
       if (hasPrerenderHandlerCode && isRscEnv) {
+        const fnNames = getFnNames(PRERENDER_CONFIG.fnName);
         changed =
-          transformHandlerIds(PRERENDER_CONFIG, s, code, filePath, isBuild) || changed;
+          transformHandlerIds(PRERENDER_CONFIG, getBindings(code, fnNames), s, filePath, isBuild) || changed;
       }
       if (hasStaticHandlerCode && isRscEnv) {
+        const fnNames = getFnNames(STATIC_CONFIG.fnName);
         changed =
-          transformHandlerIds(STATIC_CONFIG, s, code, filePath, isBuild) || changed;
+          transformHandlerIds(STATIC_CONFIG, getBindings(code, fnNames), s, filePath, isBuild) || changed;
       }
 
       if (!changed) return;

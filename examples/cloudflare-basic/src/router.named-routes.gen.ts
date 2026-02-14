@@ -49,6 +49,9 @@ export const NamedRoutes = {
   testNegotiateXml: "/test/negotiate-xml",
   testNegotiateXmlApi: "/test/negotiate-xml",
   theme: "/theme",
+  "transformCases.index": "/transform-cases",
+  "transformCases.prerendered": "/transform-cases/prerendered",
+  "transformCases.state": "/transform-cases/state",
 } as const;
 
 declare global {

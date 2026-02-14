@@ -1,5 +1,5 @@
 import type MagicString from "magic-string";
-import { hashInlineId } from "./expose-id-utils.ts";
+import { hashInlineId, buildExportMap } from "./expose-id-utils.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -16,6 +16,7 @@ export interface HandlerCallSite {
   callEnd: number;
   argCount: number;
   lineNumber: number;
+  calleeName: string;
 
   exportInfo: {
     exportName: string;
@@ -128,12 +129,14 @@ export function findHandlerCalls(
   }
 
   const sites: HandlerCallSite[] = [];
+  const localNames = getImportedLocalNamesFromProgram(program, fnName);
+  const exportedNamesByLocal = buildExportMap(program);
 
   walkNode(program, null, [], (node: any, parent: any, ancestors: any[]) => {
     if (
       node.type !== "CallExpression" ||
       node.callee?.type !== "Identifier" ||
-      node.callee.name !== fnName
+      !localNames.has(node.callee.name)
     ) {
       return;
     }
@@ -141,6 +144,7 @@ export function findHandlerCalls(
     const callStart: number = node.start;
     const callEnd: number = node.end;
     const argCount: number = node.arguments?.length ?? 0;
+    const calleeName: string = node.callee.name;
 
     // Compute 1-based line number
     let lineNumber = 1;
@@ -168,13 +172,72 @@ export function findHandlerCalls(
             statementEnd: greatGrandParent.end,
           };
         }
+      } else if (
+        grandParent?.type === "VariableDeclaration" &&
+        parent.id?.type === "Identifier"
+      ) {
+        const exportedNames = exportedNamesByLocal.get(parent.id.name);
+        if (exportedNames && exportedNames.length > 0) {
+          exportInfo = {
+            exportName: exportedNames[0],
+            statementEnd: grandParent.end,
+          };
+        }
       }
     }
 
-    sites.push({ callStart, callEnd, argCount, lineNumber, exportInfo });
+    sites.push({
+      callStart,
+      callEnd,
+      argCount,
+      lineNumber,
+      calleeName,
+      exportInfo,
+    });
   });
 
   return sites;
+}
+
+function getImportedLocalNamesFromProgram(
+  program: ProgramNode,
+  importedName: string,
+): Set<string> {
+  const localNames = new Set<string>();
+  const body = program.body as any[];
+
+  for (const node of body) {
+    if (node?.type !== "ImportDeclaration") continue;
+    const source = node.source?.value;
+    if (typeof source !== "string") continue;
+    if (!source.startsWith("@rangojs/router")) continue;
+
+    const specifiers = Array.isArray(node.specifiers) ? node.specifiers : [];
+    for (const spec of specifiers) {
+      if (spec?.type !== "ImportSpecifier") continue;
+      if (spec.imported?.type !== "Identifier") continue;
+      if (spec.imported.name !== importedName) continue;
+
+      if (spec.local?.type === "Identifier") {
+        localNames.add(spec.local.name);
+      }
+    }
+  }
+
+  return localNames;
+}
+
+export function getImportedLocalNames(
+  code: string,
+  importedName: string,
+  parseAst: (code: string, options?: any) => ProgramNode,
+): Set<string> {
+  try {
+    const program = parseAst(code, { jsx: true });
+    return getImportedLocalNamesFromProgram(program, importedName);
+  } catch {
+    return new Set<string>();
+  }
 }
 
 /**

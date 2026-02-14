@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type APIRequestContext } from "@playwright/test";
 import { useFixture } from "./fixture";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -35,6 +35,32 @@ test.describe.serial("loader-hmr", () => {
     await new Promise((r) => setTimeout(r, 500));
   });
 
+  async function waitForLoaderResponse(
+    request: APIRequestContext,
+    url: string,
+    expectedStatus: number,
+  ) {
+    let lastBody = "";
+    await expect
+      .poll(
+        async () => {
+          const response = await request.get(url, {
+            headers: { Accept: "text/x-component" },
+          });
+          lastBody = await response.text();
+          return response.status();
+        },
+        {
+          timeout: 10_000,
+          intervals: [200, 400, 800],
+          message: `waiting for ${url} to return ${expectedStatus}`,
+        },
+      )
+      .toBe(expectedStatus);
+
+    return lastBody;
+  }
+
   test("should make new fetchable loader available after HMR", async ({
     request,
   }) => {
@@ -63,15 +89,11 @@ export const HMRDynamicLoader = createLoader(
     await new Promise((r) => setTimeout(r, 1000));
 
     // Test that the new loader is accessible
-    const response = await request.get(
+    const text = await waitForLoaderResponse(
+      request,
       f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23HMRDynamicLoader"),
-      {
-        headers: { Accept: "text/x-component" },
-      }
+      200,
     );
-
-    expect(response.status()).toBe(200);
-    const text = await response.text();
     expect(text).toContain("HMR Dynamic Loader Works!");
   });
 
@@ -89,28 +111,22 @@ export const HMRRemovableLoader = createLoader(
     await new Promise((r) => setTimeout(r, 1000));
 
     // Verify it's accessible
-    const response1 = await request.get(
+    await waitForLoaderResponse(
+      request,
       f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23HMRRemovableLoader"),
-      {
-        headers: { Accept: "text/x-component" },
-      }
+      200,
     );
-    expect(response1.status()).toBe(200);
 
     // Now remove it by restoring original content
     await fs.writeFile(loadersPath, originalContent);
     await new Promise((r) => setTimeout(r, 1000));
 
     // Test that the loader returns 404
-    const response2 = await request.get(
+    const text = await waitForLoaderResponse(
+      request,
       f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23HMRRemovableLoader"),
-      {
-        headers: { Accept: "text/x-component" },
-      }
+      404,
     );
-
-    expect(response2.status()).toBe(404);
-    const text = await response2.text();
     expect(text).toContain("not found");
   });
 
@@ -118,14 +134,11 @@ export const HMRRemovableLoader = createLoader(
     request,
   }) => {
     // Fetch from existing loader first
-    const response1 = await request.get(
+    const text1 = await waitForLoaderResponse(
+      request,
       f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23FetchableTestLoader"),
-      {
-        headers: { Accept: "text/x-component" },
-      }
+      200,
     );
-    expect(response1.status()).toBe(200);
-    const text1 = await response1.text();
     expect(text1).toContain("Fetched via GET!");
 
     // Add a new loader (triggers HMR)
@@ -140,14 +153,11 @@ export const HMRAnotherLoader = createLoader(
     await new Promise((r) => setTimeout(r, 1000));
 
     // Existing loader should still work
-    const response2 = await request.get(
+    const text2 = await waitForLoaderResponse(
+      request,
       f.url("/fetch-loader?_rsc_loader=src/loaders.ts%23FetchableTestLoader"),
-      {
-        headers: { Accept: "text/x-component" },
-      }
+      200,
     );
-    expect(response2.status()).toBe(200);
-    const text2 = await response2.text();
     expect(text2).toContain("Fetched via GET!");
   });
 });

@@ -294,6 +294,7 @@ Handles have typed data:
 // handles/breadcrumbs.ts
 import { createHandle } from "@rangojs/router";
 
+// All export patterns work: export const, const + export { X }, export { X as Y }
 export const Breadcrumbs = createHandle<{ label: string; href: string }>();
 
 // In route definition - use handle() DSL
@@ -355,6 +356,7 @@ full functionality from module-level registries.
 // location-states.ts
 import { createLocationState } from "@rangojs/router";
 
+// All export patterns work: export const, const + export { X }, export { X as Y }
 export const ProductPreview = createLocationState<{
   name: string;
   price: number;

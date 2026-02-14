@@ -46,6 +46,50 @@ export interface DetectedImports {
 }
 
 /**
+ * Build a map from local binding name to exported names by walking
+ * ExportNamedDeclaration nodes. Handles `export const X`, `export { X }`,
+ * and `export { X as Y }`. Skips re-exports (`export { X } from "..."`).
+ */
+export function buildExportMap(program: any): Map<string, string[]> {
+  const exportMap = new Map<string, string[]>();
+
+  const pushExport = (local: string, exported: string) => {
+    const list = exportMap.get(local);
+    if (list) {
+      if (!list.includes(exported)) list.push(exported);
+      return;
+    }
+    exportMap.set(local, [exported]);
+  };
+
+  for (const node of program.body ?? []) {
+    if (node?.type !== "ExportNamedDeclaration") continue;
+
+    if (node.declaration?.type === "VariableDeclaration") {
+      for (const decl of node.declaration.declarations ?? []) {
+        if (decl?.id?.type === "Identifier") {
+          pushExport(decl.id.name, decl.id.name);
+        }
+      }
+    }
+
+    if (!node.source && Array.isArray(node.specifiers)) {
+      for (const spec of node.specifiers) {
+        if (
+          spec?.type === "ExportSpecifier" &&
+          spec.local?.type === "Identifier" &&
+          spec.exported?.type === "Identifier"
+        ) {
+          pushExport(spec.local.name, spec.exported.name);
+        }
+      }
+    }
+  }
+
+  return exportMap;
+}
+
+/**
  * Single-pass detection of all create* imports from @rangojs/router.
  * Returns which create functions are imported so we can skip unnecessary transforms.
  */
@@ -92,17 +136,6 @@ export function detectImports(code: string): DetectedImports {
     result.router;
 
   return result;
-}
-
-/**
- * Build regex for `export const X = createFoo<...>(`.
- * The optional generics group handles TypeScript type parameters.
- */
-export function makeExportPattern(fnName: string): RegExp {
-  return new RegExp(
-    `export\\s+const\\s+(\\w+)\\s*=\\s*${fnName}\\s*(?:<[^>]*>)?\\s*\\(`,
-    "g",
-  );
 }
 
 /**

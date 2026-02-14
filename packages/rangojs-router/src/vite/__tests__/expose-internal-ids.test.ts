@@ -90,6 +90,14 @@ path("/about", createPrerenderHandler
 (() => <div>About</div>));
 `;
 
+const STATIC_ALIAS_INLINE_SOURCE = `import { createStaticHandler as sh } from "@rangojs/router";
+layout(sh(() => <nav />));
+`;
+
+const STATIC_ALIAS_EXPORT_SOURCE = `import { createStaticHandler as sh } from "@rangojs/router";
+export const Nav = sh(() => <nav />);
+`;
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -400,6 +408,35 @@ export const Nav = createStaticHandler(() => {
       );
       expect(result).toBeNull();
     });
+
+    it("extracts inline call when createStaticHandler is imported with alias", () => {
+      const plugin = createPlugin();
+      initDev(plugin);
+
+      const result = plugin.transform.call(
+        rscCtx(),
+        STATIC_ALIAS_INLINE_SOURCE,
+        FILE_ID,
+      );
+      expect(result).toBeDefined();
+
+      const vImports = extractVirtualImports(result.code);
+      expect(vImports).toHaveLength(1);
+      expect(result.code).toContain(`layout(${vImports[0].exportName})`);
+    });
+
+    it("injects $$id for export const alias call", () => {
+      const plugin = createPlugin();
+      initDev(plugin);
+
+      const result = plugin.transform.call(
+        rscCtx(),
+        STATIC_ALIAS_EXPORT_SOURCE,
+        FILE_ID,
+      );
+      expect(result).toBeDefined();
+      expect(result.code).toContain("Nav.$$id");
+    });
   });
 });
 
@@ -501,5 +538,294 @@ describe("exposeInternalIds - inline prerender handler integration", () => {
 
       expect(plugin.api.prerenderHandlerModules.get(FILE_ID)).toEqual(["AboutPage"]);
     });
+  });
+});
+
+describe("exposeInternalIds - unsupported shape diagnostics", () => {
+  it("warns for createLoader when declaration uses let", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+export let LocalLoader = createLoader(async () => ({ ok: true }));
+`;
+    const ctx = rscCtx();
+    plugin.transform.call(ctx, code, FILE_ID);
+
+    expect(ctx.warn).toHaveBeenCalledTimes(1);
+    const [msg] = ctx.warn.mock.calls[0];
+    expect(msg).toContain("Unsupported createLoader shape");
+    expect(msg).toContain("Supported shapes are:");
+  });
+
+  it("does not warn for supported createLoader export const shape", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+export const MyLoader = createLoader(async () => ({ ok: true }));
+`;
+    const ctx = rscCtx();
+    plugin.transform.call(ctx, code, FILE_ID);
+
+    expect(ctx.warn).not.toHaveBeenCalled();
+  });
+
+  it("warns at most once per file/function shape", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createHandle } from "@rangojs/router";
+layout(createHandle(() => []));
+`;
+    const ctx = rscCtx();
+    plugin.transform.call(ctx, code, FILE_ID);
+    plugin.transform.call(ctx, code, FILE_ID);
+
+    expect(ctx.warn).toHaveBeenCalledTimes(1);
+    const [msg] = ctx.warn.mock.calls[0];
+    expect(msg).toContain("Unsupported createHandle shape");
+  });
+});
+
+describe("exposeInternalIds - alias support (strict create APIs)", () => {
+  it("injects $$id for createLoader imported with alias", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader as cl } from "@rangojs/router";
+export const MyLoader = cl(async () => ({ ok: true }));
+`;
+    const result = plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain("MyLoader.$$id");
+  });
+
+  it("injects $$id for createHandle imported with alias", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createHandle as ch } from "@rangojs/router";
+export const Breadcrumbs = ch(() => []);
+`;
+    const result = plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain("Breadcrumbs.$$id");
+  });
+
+  it("injects __rsc_ls_key for createLocationState imported with alias", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLocationState as cls } from "@rangojs/router/client";
+export const ProductState = cls<string>();
+`;
+    const result = plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain("ProductState.__rsc_ls_key");
+  });
+
+  it("supports createLoader declared as const and exported via specifier alias", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+const LocalLoader = createLoader(async () => ({ ok: true }));
+export { LocalLoader as PublicLoader };
+`;
+    const ctx = rscCtx();
+    const result = plugin.transform.call(ctx, code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain('LocalLoader.$$id =');
+    expect(ctx.warn).not.toHaveBeenCalled();
+  });
+
+  it("supports createHandle declared as const and exported via specifier", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createHandle } from "@rangojs/router";
+const LocalHandle = createHandle(() => []);
+export { LocalHandle };
+`;
+    const result = plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain("LocalHandle.$$id");
+  });
+
+  it("supports createLocationState declared as const and exported via specifier alias", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLocationState } from "@rangojs/router/client";
+const ProductStateDef = createLocationState<string>();
+export { ProductStateDef as ProductState };
+`;
+    const result = plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain("ProductStateDef.__rsc_ls_key");
+  });
+});
+
+describe("exposeInternalIds - handler export specifiers", () => {
+  it("tracks static handler exported via specifier alias in build mode", () => {
+    const plugin = createPlugin({ forceBuild: true });
+    initDev(plugin);
+
+    const code = `import { createStaticHandler } from "@rangojs/router";
+const DocsNav = createStaticHandler(() => <nav />);
+export { DocsNav as DocsNavPublic };
+`;
+    plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(plugin.api.staticHandlerModules.get(FILE_ID)).toEqual(["DocsNavPublic"]);
+  });
+
+  it("tracks prerender handler exported via specifier alias in build mode", () => {
+    const plugin = createPlugin({ forceBuild: true });
+    initDev(plugin);
+
+    const code = `import { createPrerenderHandler } from "@rangojs/router";
+const DocsPage = createPrerenderHandler(() => <div />);
+export { DocsPage as DocsPagePublic };
+`;
+    plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(plugin.api.prerenderHandlerModules.get(FILE_ID)).toEqual(["DocsPagePublic"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Client loader stubs for const + export { X } pattern
+// ---------------------------------------------------------------------------
+
+describe("exposeInternalIds - client loader stubs for const + export patterns", () => {
+  it("generates client stub for const + export { X }", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+const MyLoader = createLoader(async () => ({ ok: true }));
+export { MyLoader };
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain('__brand: "loader"');
+    expect(result.code).toContain("$$id");
+    expect(result.code).toContain("export const MyLoader");
+    // Entire file replaced - no server code
+    expect(result.code).not.toContain("async");
+  });
+
+  it("generates client stub for const + export { X as Y }", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+const InternalLoader = createLoader(async () => ({ ok: true }));
+export { InternalLoader as PublicLoader };
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain('__brand: "loader"');
+    expect(result.code).toContain("export const PublicLoader");
+    // Uses the exported name, not the local name
+    expect(result.code).not.toContain("InternalLoader");
+    expect(result.code).not.toContain("async");
+  });
+
+  it("does not generate loader-only stub when file has mixed exports (const + export pattern)", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+const MyLoader = createLoader(async () => ({ ok: true }));
+export { MyLoader };
+export const helperFn = () => "not a loader";
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    // Should NOT replace entire file since helperFn is not a loader
+    if (result) {
+      expect(result.code).toContain("helperFn");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Whole-file handler stubs for const + export { X } pattern
+// ---------------------------------------------------------------------------
+
+describe("exposeInternalIds - whole-file handler stubs for const + export patterns", () => {
+  it("generates whole-file stub for static handler with const + export { X }", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createStaticHandler } from "@rangojs/router";
+const Nav = createStaticHandler(() => <nav />);
+export { Nav };
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain('__brand: "staticHandler"');
+    expect(result.code).toContain("$$id");
+    expect(result.code).toContain("export const Nav");
+    expect(result.code).not.toContain("createStaticHandler");
+  });
+
+  it("generates whole-file stub for prerender handler with const + export { X as Y }", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createPrerenderHandler } from "@rangojs/router";
+const InternalPage = createPrerenderHandler(() => <div />);
+export { InternalPage as PublicPage };
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain('__brand: "prerenderHandler"');
+    expect(result.code).toContain("export const PublicPage");
+    expect(result.code).not.toContain("InternalPage");
+    expect(result.code).not.toContain("createPrerenderHandler");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Expression stubs for const + export { X } pattern
+// ---------------------------------------------------------------------------
+
+describe("exposeInternalIds - expr stubs for const + export patterns", () => {
+  it("overwrites call expression for static handler with const + export { X }", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    // Mixed file: has a non-handler export, so whole-file stub won't apply
+    const code = `import { createStaticHandler } from "@rangojs/router";
+const Nav = createStaticHandler(() => <nav />);
+export { Nav };
+export const PAGE_TITLE = "docs";
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain('__brand: "staticHandler"');
+    expect(result.code).toContain("$$id");
+    // The non-handler export is preserved
+    expect(result.code).toContain("PAGE_TITLE");
+    // The call expression is replaced with a stub object
+    expect(result.code).not.toContain("createStaticHandler(");
+  });
+
+  it("overwrites call expression for handler with const + export { X as Y }", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createStaticHandler } from "@rangojs/router";
+const Nav = createStaticHandler(() => <nav />);
+export { Nav as PublicNav };
+export const PAGE_TITLE = "docs";
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain('__brand: "staticHandler"');
+    expect(result.code).toContain("$$id");
+    expect(result.code).toContain("PAGE_TITLE");
+    expect(result.code).not.toContain("createStaticHandler(");
   });
 });
