@@ -6,6 +6,11 @@ import type {
   RscBrowserDependencies,
 } from "./types.js";
 import { NetworkError, isNetworkError } from "../errors.js";
+import {
+  browserDebugLog,
+  isBrowserDebugEnabled,
+  startBrowserTransaction,
+} from "./logging.js";
 
 /**
  * Create a navigation client for fetching RSC payloads
@@ -57,13 +62,13 @@ export function createNavigationClient(
         hmr,
       } = options;
 
-      console.log(`\n[Browser] >>> NAVIGATION`);
-      console.log(`[Browser] From: ${previousUrl}`);
-      console.log(`[Browser] To: ${targetUrl}`);
-      console.log(`[Browser] Segments to send: ${segmentIds.join(", ")}`);
-      if (staleRevalidation) {
-        console.log(`[Browser] Stale revalidation request`);
-      }
+      const tx = startBrowserTransaction(staleRevalidation ? "revalidate" : "navigate");
+      browserDebugLog(tx, "request start", {
+        from: previousUrl,
+        to: targetUrl,
+        segments: segmentIds,
+        staleRevalidation: !!staleRevalidation,
+      });
 
       // Build fetch URL with partial rendering params
       const fetchUrl = new URL(targetUrl, window.location.origin);
@@ -76,7 +81,9 @@ export function createNavigationClient(
         fetchUrl.searchParams.set("_rsc_v", version);
       }
 
-      console.log(`[Browser] Fetching: ${fetchUrl.pathname}${fetchUrl.search}`);
+      browserDebugLog(tx, "fetching", {
+        path: `${fetchUrl.pathname}${fetchUrl.search}`,
+      });
 
       // Track when the stream completes
       let resolveStreamComplete: () => void;
@@ -88,6 +95,7 @@ export function createNavigationClient(
       const responsePromise = fetch(fetchUrl, {
         headers: {
           "X-RSC-Router-Client-Path": previousUrl,
+          "X-RSC-Router-Request-Id": tx.requestId,
           ...(interceptSourceUrl && {
             "X-RSC-Router-Intercept-Source": interceptSourceUrl,
           }),
@@ -98,7 +106,7 @@ export function createNavigationClient(
         // Check for version mismatch - server wants us to reload
         const reloadUrl = response.headers.get("X-RSC-Reload");
         if (reloadUrl) {
-          console.log(`[Browser] Version mismatch - reloading: ${reloadUrl}`);
+          browserDebugLog(tx, "version mismatch, reloading", { reloadUrl });
           window.location.href = reloadUrl;
           // Return a never-resolving promise to prevent further processing
           return new Promise<Response>(() => {});
@@ -129,7 +137,7 @@ export function createNavigationClient(
           } finally {
             signal?.removeEventListener("abort", onAbort);
             reader.releaseLock();
-            console.log("[STREAMING] RSC stream complete");
+            browserDebugLog(tx, "stream complete");
             resolveStreamComplete();
           }
         })();
@@ -145,6 +153,13 @@ export function createNavigationClient(
       try {
         // Deserialize RSC payload
         const payload = await deps.createFromFetch<RscPayload>(responsePromise);
+        if (isBrowserDebugEnabled()) {
+          browserDebugLog(tx, "response received", {
+            isPartial: payload.metadata?.isPartial,
+            matchedCount: payload.metadata?.matched?.length ?? 0,
+            diffCount: payload.metadata?.diff?.length ?? 0,
+          });
+        }
         return { payload, streamComplete };
       } catch (error) {
         // Convert network-level errors to NetworkError for proper handling

@@ -53,6 +53,8 @@ export interface RscMetadata {
    * Used to detect version mismatches after HMR/deployment.
    */
   version?: string;
+  /** Whether router/browser debug logging is enabled */
+  debug?: boolean;
   /**
    * Theme configuration from router.
    * Included when theme is enabled in router config.

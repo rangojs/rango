@@ -16,6 +16,7 @@ import { startTransition, createElement } from "react";
 import type { EventController, ActionHandle } from "./event-controller.js";
 import { NetworkError, isNetworkError } from "../errors.js";
 import { NetworkErrorThrower } from "../network-error-thrower.js";
+import { browserDebugLog, startBrowserTransaction } from "./logging.js";
 
 // Polyfill Symbol.dispose/asyncDispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -80,16 +81,17 @@ export function createServerActionBridge(
    * Server action callback handler
    */
   async function handleServerAction(id: string, args: any[]): Promise<unknown> {
+    const tx = startBrowserTransaction("action");
     // Normalize action ID to just the function name for store tracking
     const locationKey = window.history.state?.key;
     const actionId = normalizeActionId(id);
-    console.log("ID", { id, actionId, args });
+    browserDebugLog(tx, "action start", { id, actionId, argsCount: args.length });
 
     // Start action in event controller - handles lifecycle tracking
     using handle = eventController.startAction(actionId, args);
 
     const segmentState = store.getSegmentState();
-    console.log(`[Browser] Args:`, args);
+    browserDebugLog(tx, "action args prepared");
 
     // Mark cache as stale immediately when action starts
     // This ensures SWR pattern kicks in if user navigates away during action
@@ -118,15 +120,12 @@ export function createServerActionBridge(
     // Encode arguments
     const encodedBody = await deps.encodeReply(args, { temporaryReferences });
 
-    console.log(
-      `[Browser] Encoded body type:`,
-      typeof encodedBody,
-      encodedBody instanceof FormData
-    );
-    console.log(`[Browser] Sending action request to: ${url.href}`);
-    console.log(
-      `[Browser] Current segments: ${segmentState.currentSegmentIds.join(", ")}`
-    );
+    browserDebugLog(tx, "sending action request", {
+      url: url.href,
+      bodyType: typeof encodedBody,
+      isFormData: encodedBody instanceof FormData,
+      segmentCount: segmentState.currentSegmentIds.length,
+    });
 
     // Track when the stream completes
     let resolveStreamComplete: () => void;
@@ -146,6 +145,7 @@ export function createServerActionBridge(
       headers: {
         "rsc-action": id,
         "X-RSC-Router-Client-Path": segmentState.currentUrl,
+        "X-RSC-Router-Request-Id": tx.requestId,
         // Send intercept source URL so server can maintain intercept context
         ...(interceptSourceUrl && {
           "X-RSC-Router-Intercept-Source": interceptSourceUrl,
@@ -156,7 +156,7 @@ export function createServerActionBridge(
       // Check for version mismatch - server wants us to reload
       const reloadUrl = response.headers.get("X-RSC-Reload");
       if (reloadUrl) {
-        console.log(`[Browser] Version mismatch on action - reloading: ${reloadUrl}`);
+        browserDebugLog(tx, "version mismatch on action, reloading", { reloadUrl });
         window.location.href = reloadUrl;
         // Return a never-resolving promise to prevent further processing
         return new Promise<Response>(() => {});
@@ -187,7 +187,7 @@ export function createServerActionBridge(
           }
         } finally {
           reader.releaseLock();
-          console.log("[STREAMING] RSC stream complete");
+          browserDebugLog(tx, "stream complete");
           streamingToken?.end();
           resolveStreamComplete();
         }
@@ -250,7 +250,12 @@ export function createServerActionBridge(
       throw error;
     }
 
-    console.log(`[Browser] Action response received:`, payload.metadata);
+    browserDebugLog(tx, "action response received", {
+      isPartial: payload.metadata?.isPartial,
+      isError: payload.metadata?.isError,
+      matchedCount: payload.metadata?.matched?.length ?? 0,
+      diffCount: payload.metadata?.diff?.length ?? 0,
+    });
 
     // Process response
     const { metadata, returnValue } = payload;
