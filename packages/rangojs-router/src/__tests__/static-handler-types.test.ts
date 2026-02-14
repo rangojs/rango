@@ -124,20 +124,19 @@ describe("createPrerenderHandler type constraints", () => {
 });
 
 // ============================================================================
-// Runtime: inline usage throws in dev
+// Runtime: inline usage allowed (Vite plugin handles ID injection)
 // ============================================================================
 
 describe("createStaticHandler runtime constraints", () => {
-  it("throws in dev when $$id is missing (inline usage)", async () => {
-    // Simulate dev environment
+  it("does not throw in dev when $$id is missing (inline usage supported)", async () => {
     const originalEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = "development";
 
     try {
       const { createStaticHandler } = await import("../static-handler.js");
-      expect(() => {
-        createStaticHandler(() => null as any);
-      }).toThrow("must be used as a named export");
+      const result = createStaticHandler(() => null as any);
+      expect(result.__brand).toBe("staticHandler");
+      expect(result.$$id).toBe("");
     } finally {
       process.env.NODE_ENV = originalEnv;
     }

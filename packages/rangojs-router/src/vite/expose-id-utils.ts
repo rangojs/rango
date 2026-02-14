@@ -19,6 +19,22 @@ export function hashId(filePath: string, exportName: string): string {
   return `${hash.slice(0, 8)}#${exportName}`;
 }
 
+/**
+ * Generate an 8-char hex hash for an inline static handler call site.
+ * Uses file path and line number (plus optional index for same-line collisions).
+ */
+export function hashInlineId(
+  filePath: string,
+  lineNumber: number,
+  index?: number,
+): string {
+  const input =
+    index !== undefined && index > 0
+      ? `${filePath}:${lineNumber}:${index}`
+      : `${filePath}:${lineNumber}`;
+  return crypto.createHash("sha256").update(input).digest("hex").slice(0, 8);
+}
+
 export interface DetectedImports {
   loader: boolean;
   handle: boolean;

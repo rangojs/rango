@@ -92,7 +92,7 @@
 import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
-import type { PrerenderStore } from "../../prerender/store.js";
+import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
 
 // Lazily initialized prerender store singleton and dynamically imported deps.
 // Dynamic imports prevent pulling in @vitejs/plugin-rsc/rsc virtual module at
@@ -116,6 +116,98 @@ async function ensurePrerenderDeps() {
     if (prerenderStoreInstance === undefined) {
       prerenderStoreInstance = store.createPrerenderStore();
     }
+  }
+}
+
+/**
+ * Shared yield logic for prerender and static handler store entries.
+ * Deserializes segments, replays handle data, yields segments with partial
+ * navigation nullification, and resolves fresh loaders.
+ */
+async function* yieldFromStore<TEnv>(
+  entry: PrerenderEntry,
+  ctx: MatchContext<TEnv>,
+  state: MatchPipelineState,
+  pipelineStart: number,
+): AsyncGenerator<ResolvedSegment> {
+  const {
+    resolveLoadersOnlyWithRevalidation,
+    resolveLoadersOnly,
+  } = getRouterContext<TEnv>();
+
+  const segments = await _deserializeSegments!(entry.segments);
+
+  // Replay handle data (same as runtime cache hit path)
+  const handleStore = _getRequestContext!()?._handleStore;
+  if (handleStore) {
+    for (const [segId, segHandles] of Object.entries(entry.handles)) {
+      if (Object.keys(segHandles).length > 0) {
+        handleStore.replaySegmentData(segId, segHandles);
+      }
+    }
+  }
+
+  state.cacheHit = true;
+  state.cachedSegments = segments;
+  state.cachedMatchedIds = segments.map((s) => s.id);
+
+  // For partial navigation, nullify components the client already has
+  // so parent layouts stay live (client keeps its existing versions).
+  // When params changed (e.g., different guide slug), the segments have
+  // different content, so we must NOT nullify.
+  const paramsChanged = !ctx.isFullMatch &&
+    JSON.stringify(ctx.matched.params) !== JSON.stringify(ctx.prevParams);
+  for (const segment of segments) {
+    if (!ctx.isFullMatch && !paramsChanged && ctx.clientSegmentSet.has(segment.id)) {
+      segment.component = null;
+      segment.loading = undefined;
+    }
+    yield segment;
+  }
+
+  // Resolve loaders fresh (loaders are never pre-rendered/cached)
+  if (ctx.isFullMatch) {
+    if (resolveLoadersOnly) {
+      const loaderSegments = await ctx.Store.run(() =>
+        resolveLoadersOnly(ctx.entries, ctx.handlerContext),
+      );
+      state.matchedIds = state.cachedMatchedIds!;
+      for (const segment of loaderSegments) {
+        yield segment;
+      }
+    } else {
+      state.matchedIds = state.cachedMatchedIds!;
+    }
+  } else {
+    if (resolveLoadersOnlyWithRevalidation) {
+      const loaderResult = await ctx.Store.run(() =>
+        resolveLoadersOnlyWithRevalidation(
+          ctx.entries,
+          ctx.handlerContext,
+          ctx.clientSegmentSet,
+          ctx.prevParams,
+          ctx.request,
+          ctx.prevUrl,
+          ctx.url,
+          ctx.routeKey,
+          ctx.actionContext,
+        ),
+      );
+      state.matchedIds = [
+        ...state.cachedMatchedIds!,
+        ...loaderResult.matchedIds,
+      ];
+      for (const segment of loaderResult.segments) {
+        yield segment;
+      }
+    } else {
+      state.matchedIds = state.cachedMatchedIds!;
+    }
+  }
+
+  const ms = ctx.metricsStore;
+  if (ms) {
+    ms.metrics.push({ label: "pipeline:cache-lookup", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
   }
 }
 
@@ -166,81 +258,35 @@ export function withCacheLookup<TEnv>(
           ctx.matched.routeKey, paramHash, { pathname: ctx.pathname }
         );
         if (entry) {
-          const segments = await _deserializeSegments!(entry.segments);
-
-          // Replay handle data (same as runtime cache hit path)
-          const handleStore = _getRequestContext!()?._handleStore;
-          if (handleStore) {
-            for (const [segId, segHandles] of Object.entries(entry.handles)) {
-              if (Object.keys(segHandles).length > 0) {
-                handleStore.replaySegmentData(segId, segHandles);
-              }
-            }
-          }
-
-          state.cacheHit = true;
-          state.cachedSegments = segments;
-          state.cachedMatchedIds = segments.map((s) => s.id);
-
-          // Yield prerendered segments (same flow as cache hit)
-          // For partial navigation, nullify components the client already has
-          // so parent layouts stay live (client keeps its existing versions).
-          // However, when params changed (e.g., different guide slug), the
-          // prerendered segments have different content, so we must NOT nullify.
-          const paramsChanged = !ctx.isFullMatch &&
-            JSON.stringify(ctx.matched.params) !== JSON.stringify(ctx.prevParams);
-          for (const segment of segments) {
-            if (!ctx.isFullMatch && !paramsChanged && ctx.clientSegmentSet.has(segment.id)) {
-              segment.component = null;
-              segment.loading = undefined;
-            }
-            yield segment;
-          }
-
-          // Resolve loaders fresh (loaders are never pre-rendered)
-          if (ctx.isFullMatch) {
-            if (resolveLoadersOnly) {
-              const loaderSegments = await ctx.Store.run(() =>
-                resolveLoadersOnly(ctx.entries, ctx.handlerContext),
-              );
-              state.matchedIds = state.cachedMatchedIds!;
-              for (const segment of loaderSegments) {
-                yield segment;
-              }
-            } else {
-              state.matchedIds = state.cachedMatchedIds!;
-            }
-          } else {
-            if (resolveLoadersOnlyWithRevalidation) {
-              const loaderResult = await ctx.Store.run(() =>
-                resolveLoadersOnlyWithRevalidation(
-                  ctx.entries,
-                  ctx.handlerContext,
-                  ctx.clientSegmentSet,
-                  ctx.prevParams,
-                  ctx.request,
-                  ctx.prevUrl,
-                  ctx.url,
-                  ctx.routeKey,
-                  ctx.actionContext,
-                ),
-              );
-              state.matchedIds = [
-                ...state.cachedMatchedIds!,
-                ...loaderResult.matchedIds,
-              ];
-              for (const segment of loaderResult.segments) {
-                yield segment;
-              }
-            } else {
-              state.matchedIds = state.cachedMatchedIds!;
-            }
-          }
-
-          if (ms) {
-            ms.metrics.push({ label: "pipeline:cache-lookup", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
-          }
+          yield* yieldFromStore(entry, ctx, state, pipelineStart);
           return;
+        }
+      }
+    }
+
+    // Dev-mode static handler interception for non-Node.js runtimes.
+    // __PRERENDER_DEV_URL is set by the Vite plugin when the RSC environment
+    // lacks a Node.js module runner (e.g. workerd, Deno workers). In those
+    // runtimes, handlers that depend on Node APIs like node:fs can't run
+    // in-process. We redirect them to the /__rsc_prerender endpoint which
+    // resolves segments in a Node.js temp server, same as prerender routes.
+    // In Node.js dev mode this variable is undefined -- handlers run
+    // in-process where Node APIs work, so no interception is needed.
+    if (!ctx.isAction && !ctx.matched.pr && globalThis.__PRERENDER_DEV_URL) {
+      const hasStatic = ctx.entries.some(
+        (e) => (e.type === "layout" || e.type === "route") && e.isStaticPrerender
+      );
+      if (hasStatic) {
+        await ensurePrerenderDeps();
+        if (prerenderStoreInstance) {
+          const paramHash = _hashParams!(ctx.matched.params);
+          const entry = await prerenderStoreInstance.get(
+            ctx.matched.routeKey, paramHash, { pathname: ctx.pathname }
+          );
+          if (entry) {
+            yield* yieldFromStore(entry, ctx, state, pipelineStart);
+            return;
+          }
         }
       }
     }

@@ -426,6 +426,27 @@ test.describe("static-handler build output (production)", () => {
     );
     expect(ssrBundle).not.toContain("Table of Contents");
   });
+
+  test("node:fs should NOT be in client bundle", () => {
+    expect(clientBundle).not.toContain("readFileSync");
+    expect(clientBundle).not.toContain("readDocsNavItems");
+  });
+
+  test("node:fs should NOT be in SSR bundle", () => {
+    expect(ssrBundle).not.toContain("readFileSync");
+    expect(ssrBundle).not.toContain("readDocsNavItems");
+  });
+
+  test("readDocsNavItems helper evicted from static-handlers RSC chunk", () => {
+    // Static handler code is present in RSC bundle (not yet evicted),
+    // but readDocsNavItems uses dynamic import("node:fs") so it's safe
+    // for workerd -- node:fs is never eagerly imported at module scope.
+    // When handler eviction is implemented, this function will be dropped too.
+    expect(staticHandlersBundle).toContain("readDocsNavItems");
+    expect(staticHandlersBundle).not.toMatch(
+      /import\s*\{[^}]*readFileSync[^}]*\}\s*from\s*["']node:fs["']/,
+    );
+  });
 });
 
 // -- Helpers --

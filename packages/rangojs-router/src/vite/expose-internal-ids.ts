@@ -1,4 +1,5 @@
 import type { Plugin, ResolvedConfig } from "vite";
+import { parseAst } from "vite";
 import MagicString from "magic-string";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -13,6 +14,10 @@ import {
   findClosingParen,
   countArgsSimple,
 } from "./expose-id-utils.ts";
+import {
+  transformInlineStaticHandlers,
+  type VirtualStaticHandlerEntry,
+} from "./ast-static-handler.ts";
 
 // ---------------------------------------------------------------------------
 // Virtual module for loader manifest
@@ -621,6 +626,9 @@ export function exposeInternalIds(options?: {
   // Static handler module tracking (consumed via plugin API)
   const staticHandlerModules: Map<string, string[]> = new Map();
 
+  // Virtual module registry for inline static handler extraction
+  const virtualStaticHandlers = new Map<string, VirtualStaticHandlerEntry>();
+
   return {
     name: "@rangojs/router:expose-internal-ids",
     enforce: "post",
@@ -636,15 +644,35 @@ export function exposeInternalIds(options?: {
       projectRoot = config.root;
     },
 
-    // --------------- Loader virtual module support ---------------
+    // --------------- Virtual module support ---------------
 
-    resolveId(id) {
+    resolveId(id, importer) {
       if (id === VIRTUAL_LOADER_MANIFEST) {
         return RESOLVED_VIRTUAL_LOADER_MANIFEST;
+      }
+      if (id.startsWith("virtual:static-handler:")) {
+        return "\0" + id;
+      }
+      // Resolve imports FROM virtual modules against the original file
+      if (importer?.startsWith("\0virtual:static-handler:")) {
+        const entry = virtualStaticHandlers.get(importer);
+        if (entry) {
+          return this.resolve(id, entry.originalModuleId, { skipSelf: true });
+        }
       }
     },
 
     load(id) {
+      // Virtual static handler modules
+      if (id.startsWith("\0virtual:static-handler:")) {
+        const entry = virtualStaticHandlers.get(id);
+        if (!entry) return null;
+        return [
+          ...entry.imports,
+          `export const ${entry.exportName} = ${entry.handlerCode};`,
+        ].join("\n") + "\n";
+      }
+
       if (id !== RESOLVED_VIRTUAL_LOADER_MANIFEST) return;
 
       if (!isBuild) {
@@ -849,6 +877,37 @@ ${lazyImports.join(",\n")}
         }
       }
 
+      // --- StaticHandler: extract inline calls to virtual modules ---
+      // Runs before stubs/tracking so inline calls become imports, then
+      // the existing regex fast path handles both the original file's
+      // export const patterns and the virtual modules independently.
+      //
+      // Cheap pre-check: count total createStaticHandler( occurrences vs
+      // export const patterns. If they match, every call is a named export
+      // and the regex fast path handles them — skip the AST parse entirely.
+      const s = new MagicString(code);
+      let changed = false;
+
+      if (hasStaticHandlerCode) {
+        const totalCalls = code.split("createStaticHandler(").length - 1;
+        const exportPattern = /export\s+const\s+\w+\s*=\s*createStaticHandler\s*\(/g;
+        const exportCalls = (code.match(exportPattern) || []).length;
+        const mayHaveInlineCalls = totalCalls > exportCalls;
+
+        if (mayHaveInlineCalls) {
+          const inlineResult = transformInlineStaticHandlers(
+            s, code, filePath, isBuild, path.basename(id),
+            virtualStaticHandlers, id, parseAst,
+          );
+          if (inlineResult) {
+            changed = true;
+            // Update code reference -- inline calls are now imports.
+            // Downstream regex transforms operate on the updated source.
+            code = s.toString();
+          }
+        }
+      }
+
       // --- StaticHandler: non-RSC stub replacement ---
       if (hasStaticHandlerCode && !isRscEnv) {
         // Try whole-file replacement first, fall back to per-expression
@@ -882,8 +941,44 @@ ${lazyImports.join(",\n")}
       }
 
       // --- Unified MagicString transforms ---
-      const s = new MagicString(code);
-      let changed = false;
+      // If inline extraction changed the code, create a fresh MagicString
+      // from the updated source for downstream transforms.
+      if (changed) {
+        const s2 = new MagicString(code);
+        let changed2 = false;
+
+        if (hasLoaderCode) {
+          changed2 = transformLoaders(s2, code, filePath, isBuild) || changed2;
+        }
+        if (hasHandleCode) {
+          changed2 = transformHandles(s2, code, filePath, isBuild) || changed2;
+        }
+        if (hasLocationStateCode) {
+          changed2 =
+            transformLocationState(s2, code, filePath, isBuild) || changed2;
+        }
+        if (hasPrerenderHandlerCode && isRscEnv) {
+          changed2 =
+            transformPrerenderHandlers(s2, code, filePath, isBuild) || changed2;
+        }
+        if (hasStaticHandlerCode && isRscEnv) {
+          changed2 =
+            transformStaticHandlers(s2, code, filePath, isBuild) || changed2;
+        }
+
+        if (changed2) {
+          return {
+            code: s2.toString(),
+            map: s2.generateMap({ source: id, includeContent: true }),
+          };
+        }
+
+        // Only inline extraction changed, return that result
+        return {
+          code,
+          map: s.generateMap({ source: id, includeContent: true }),
+        };
+      }
 
       if (hasLoaderCode) {
         changed = transformLoaders(s, code, filePath, isBuild) || changed;

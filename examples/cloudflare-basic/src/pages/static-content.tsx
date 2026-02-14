@@ -2,13 +2,40 @@ import { createStaticHandler } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 import { reverse } from "../router.js";
 
-// Build-time data: simulates reading a docs nav structure.
-// In a real app this could be readFileSync, a database call, etc.
-const docsNavItems = [
-  { label: "Getting Started", slug: "getting-started" },
-  { label: "Configuration", slug: "configuration" },
-  { label: "Deployment", slug: "deployment" },
-];
+interface NavItem {
+  label: string;
+  slug: string;
+}
+
+// Read docs nav data at build time via node:fs (dynamic import).
+// Dynamic import ensures node:fs is not in the module scope and doesn't
+// crash workerd at runtime. The whole-file stub replacement drops
+// everything for client/SSR bundles.
+//
+// In Cloudflare dev mode, static handlers are intercepted by the
+// cache-lookup middleware and resolved via the prerender endpoint
+// (Node.js), so this function runs in Node.js — not workerd.
+// The try/catch remains for production Cloudflare where handlers still
+// run in workerd until build-time rendering + eviction is implemented.
+async function readDocsNavItems(): Promise<NavItem[]> {
+  try {
+    const { readFileSync } = await import("node:fs");
+    const { resolve, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    return JSON.parse(
+      readFileSync(resolve(__dirname, "../../content/docs-nav.json"), "utf-8"),
+    );
+  } catch {
+    // Dev mode fallback: workerd can't access host filesystem.
+    // Must match content/docs-nav.json.
+    return [
+      { label: "Getting Started", slug: "getting-started" },
+      { label: "Configuration", slug: "configuration" },
+      { label: "Deployment", slug: "deployment" },
+    ];
+  }
+}
 
 // Build-time unique marker to verify the handler ran at build time
 // and is NOT re-executing at runtime (timestamp would differ)
@@ -16,7 +43,8 @@ const BUILD_TIMESTAMP = new Date().toISOString();
 
 // --- Static layout: rendered once at build time, wraps child routes. ---
 // The nav never changes, so there's no reason to re-render it per request.
-export const DocsNavLayout = createStaticHandler(() => {
+export const DocsNavLayout = createStaticHandler(async () => {
+  const docsNavItems = await readDocsNavItems();
   return (
     <div data-testid="static-docs-layout">
       <nav data-testid="static-docs-nav">
@@ -46,7 +74,8 @@ export const DocsNavLayout = createStaticHandler(() => {
 
 // --- Static path: rendered once at build time on a path() route. ---
 // The index page content is fixed.
-export const DocsIndexPage = createStaticHandler(() => {
+export const DocsIndexPage = createStaticHandler(async () => {
+  const docsNavItems = await readDocsNavItems();
   return (
     <div data-testid="static-docs-index">
       <h1>Documentation</h1>
@@ -75,7 +104,8 @@ export const DocsIndexPage = createStaticHandler(() => {
 
 // --- Static parallel slot: rendered once at build time in a @sidebar slot. ---
 // Provides a table of contents that doesn't change between requests.
-export const DocsTocSidebar = createStaticHandler(() => {
+export const DocsTocSidebar = createStaticHandler(async () => {
+  const docsNavItems = await readDocsNavItems();
   return (
     <aside data-testid="static-toc-sidebar">
       <h4>Table of Contents</h4>

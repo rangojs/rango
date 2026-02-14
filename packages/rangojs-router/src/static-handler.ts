@@ -71,14 +71,10 @@ export function createStaticHandler<TParams extends Record<string, any>>(
     id = maybeId ?? "";
   }
 
-  if (!id && process.env.NODE_ENV !== "production") {
-    throw new Error(
-      "[rsc-router] createStaticHandler() must be used as a named export:\n" +
-        "  export const MyHandler = createStaticHandler(() => <MyComponent />);\n\n" +
-        "Inline usage inside urls() is not supported because the Vite plugin\n" +
-        "cannot track and evict inline handlers from the production bundle.\n" +
-        "Move the handler to a separate export."
-    );
+  // Dev mode runs handlers live -- no caching, no ID needed.
+  // The Vite plugin injects IDs in all environments where it matters.
+  if (!id) {
+    id = "";
   }
 
   return {
