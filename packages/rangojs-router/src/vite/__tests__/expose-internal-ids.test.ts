@@ -589,3 +589,41 @@ export { Breadcrumbs };
     expect(msg).toContain("Unsupported createHandle shape");
   });
 });
+
+describe("exposeInternalIds - alias support (strict create APIs)", () => {
+  it("injects $$id for createLoader imported with alias", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader as cl } from "@rangojs/router";
+export const MyLoader = cl(async () => ({ ok: true }));
+`;
+    const result = plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain("MyLoader.$$id");
+  });
+
+  it("injects $$id for createHandle imported with alias", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createHandle as ch } from "@rangojs/router";
+export const Breadcrumbs = ch(() => []);
+`;
+    const result = plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain("Breadcrumbs.$$id");
+  });
+
+  it("injects __rsc_ls_key for createLocationState imported with alias", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLocationState as cls } from "@rangojs/router/client";
+export const ProductState = cls<string>();
+`;
+    const result = plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain("ProductState.__rsc_ls_key");
+  });
+});

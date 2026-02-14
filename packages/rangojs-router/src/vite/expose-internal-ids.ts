@@ -7,7 +7,6 @@ import {
   normalizePath,
   hashId,
   detectImports,
-  makeExportPattern,
   findMatchingParen,
   countArgs,
   findStatementEnd,
@@ -16,7 +15,6 @@ import {
 } from "./expose-id-utils.ts";
 import {
   transformInlineHandlers,
-  getImportedLocalNames,
   type VirtualHandlerEntry,
 } from "./ast-handler-extract.ts";
 
@@ -62,15 +60,6 @@ const STRICT_CREATE_CONFIGS: StrictCreateTransformConfig[] = [
   { fnName: "createLocationState" },
 ];
 
-function countCreateCalls(code: string, fnName: string): number {
-  const callPattern = new RegExp(`\\b${fnName}\\s*(?:<[^>]*>\\s*)?\\(`, "g");
-  return (code.match(callPattern) || []).length;
-}
-
-function countExportConstCalls(code: string, fnName: string): number {
-  return (code.match(makeExportPattern(fnName)) || []).length;
-}
-
 function escapeRegExp(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -93,6 +82,37 @@ function countCreateCallsForNames(code: string, fnNames: string[]): number {
 
 function countExportConstCallsForNames(code: string, fnNames: string[]): number {
   return (code.match(buildExportPattern(fnNames)) || []).length;
+}
+
+function getImportedFnNames(
+  code: string,
+  importedName: string,
+): string[] {
+  const importPattern =
+    /import\s*\{([^}]*)\}\s*from\s*["']@rangojs\/router(?:\/[^"']*)?["']/g;
+
+  const localNames = new Set<string>();
+  let match: RegExpExecArray | null;
+
+  while ((match = importPattern.exec(code)) !== null) {
+    const specList = match[1]
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    for (const spec of specList) {
+      const m = spec.match(/^([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/);
+      if (!m) continue;
+      const imported = m[1];
+      const local = m[2] || imported;
+      if (imported === importedName) {
+        localNames.add(local);
+      }
+    }
+  }
+
+  const names = Array.from(localNames);
+  return names.length > 0 ? names : [importedName];
 }
 
 function buildUnsupportedShapeWarning(filePath: string, fnName: string): string {
@@ -145,11 +165,12 @@ function hasCreateLoaderImport(code: string): boolean {
  * which are erased at compile time). Files with mixed exports are left untouched.
  */
 function generateClientLoaderStubs(
+  fnNames: string[],
   code: string,
   filePath: string,
   isBuild: boolean,
 ): { code: string; map?: undefined } | null {
-  const loaderPattern = /export\s+const\s+(\w+)\s*=\s*createLoader\s*\(/g;
+  const loaderPattern = buildExportPattern(fnNames);
   const loaders: string[] = [];
   let match: RegExpExecArray | null;
 
@@ -179,12 +200,13 @@ function generateClientLoaderStubs(
 }
 
 function transformLoaders(
+  fnNames: string[],
   s: MagicString,
   code: string,
   filePath: string,
   isBuild: boolean,
 ): boolean {
-  const pattern = makeExportPattern("createLoader");
+  const pattern = buildExportPattern(fnNames);
   let hasChanges = false;
   let match: RegExpExecArray | null;
 
@@ -234,12 +256,13 @@ function analyzeCreateHandleArgs(
 }
 
 function transformHandles(
+  fnNames: string[],
   s: MagicString,
   code: string,
   filePath: string,
   isBuild: boolean,
 ): boolean {
-  const pattern = makeExportPattern("createHandle");
+  const pattern = buildExportPattern(fnNames);
   let hasChanges = false;
   let match: RegExpExecArray | null;
 
@@ -279,12 +302,13 @@ function transformHandles(
 // ---------------------------------------------------------------------------
 
 function transformLocationState(
+  fnNames: string[],
   s: MagicString,
   code: string,
   filePath: string,
   isBuild: boolean,
 ): boolean {
-  const pattern = makeExportPattern("createLocationState");
+  const pattern = buildExportPattern(fnNames);
   let hasChanges = false;
   let match: RegExpExecArray | null;
 
@@ -473,8 +497,12 @@ function transformHandlerIds(
 function transformRouter(
   code: string,
   filePath: string,
+  routerFnNames: string[],
 ): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
-  const pat = /\bcreateRouter\s*(?:<[^>]*>)?\s*\(/g;
+  const pat = new RegExp(
+    `\\b(?:${routerFnNames.map(escapeRegExp).join("|")})\\s*(?:<[^>]*>)?\\s*\\(`,
+    "g",
+  );
   let match: RegExpExecArray | null;
   const s = new MagicString(code);
   let changed = false;
@@ -553,7 +581,8 @@ export function exposeRouterId(): Plugin {
       if (id.includes("node_modules")) return null;
 
       const filePath = normalizePath(path.relative(projectRoot, id));
-      return transformRouter(code, filePath);
+      const routerFnNames = getImportedFnNames(code, "createRouter");
+      return transformRouter(code, filePath, routerFnNames);
     },
   };
 }
@@ -703,8 +732,8 @@ ${lazyImports.join(",\n")}
           if (!content.includes("createLoader")) continue;
           if (!hasCreateLoaderImport(content)) continue;
 
-          const pattern =
-            /export\s+const\s+(\w+)\s*=\s*createLoader\s*\(/g;
+          const fnNames = getImportedFnNames(content, "createLoader");
+          const pattern = buildExportPattern(fnNames);
           const relativePath = normalizePath(
             path.relative(projectRoot, filePath),
           );
@@ -796,8 +825,9 @@ ${lazyImports.join(",\n")}
             : hasLocationStateCode;
         if (!hasCode) continue;
 
-        const totalCalls = countCreateCalls(code, cfg.fnName);
-        const exportConstCalls = countExportConstCalls(code, cfg.fnName);
+        const fnNames = getImportedFnNames(code, cfg.fnName);
+        const totalCalls = countCreateCallsForNames(code, fnNames);
+        const exportConstCalls = countExportConstCallsForNames(code, fnNames);
         if (totalCalls <= exportConstCalls) continue;
 
         const warnKey = `${id}::${cfg.fnName}`;
@@ -808,8 +838,8 @@ ${lazyImports.join(",\n")}
 
       // --- Loader: track for manifest (RSC env only) ---
       if (hasLoaderCode && isRscEnv) {
-        const pattern =
-          /export\s+const\s+(\w+)\s*=\s*createLoader\s*\(/g;
+        const fnNames = getImportedFnNames(code, "createLoader");
+        const pattern = buildExportPattern(fnNames);
         let match: RegExpExecArray | null;
         while ((match = pattern.exec(code)) !== null) {
           const exportName = match[1];
@@ -823,18 +853,14 @@ ${lazyImports.join(",\n")}
 
       // --- Loader: client stubs for non-RSC environments ---
       if (hasLoaderCode && !isRscEnv) {
-        const stubResult = generateClientLoaderStubs(code, filePath, isBuild);
+        const fnNames = getImportedFnNames(code, "createLoader");
+        const stubResult = generateClientLoaderStubs(fnNames, code, filePath, isBuild);
         if (stubResult) return stubResult;
       }
 
       // --- PrerenderHandler: non-RSC stub replacement ---
       if (hasPrerenderHandlerCode && !isRscEnv) {
-        const prerenderNames = Array.from(
-          getImportedLocalNames(code, PRERENDER_CONFIG.fnName, parseAst),
-        );
-        const fnNames = prerenderNames.length > 0
-          ? prerenderNames
-          : [PRERENDER_CONFIG.fnName];
+        const fnNames = getImportedFnNames(code, PRERENDER_CONFIG.fnName);
         const wholeFile = generateWholeFileStubs(
           PRERENDER_CONFIG, fnNames, code, filePath, isBuild,
         );
@@ -848,12 +874,7 @@ ${lazyImports.join(",\n")}
 
       // --- PrerenderHandler: RSC build module tracking ---
       if (hasPrerenderHandlerCode && isRscEnv && isBuild) {
-        const prerenderNames = Array.from(
-          getImportedLocalNames(code, PRERENDER_CONFIG.fnName, parseAst),
-        );
-        const fnNames = prerenderNames.length > 0
-          ? prerenderNames
-          : [PRERENDER_CONFIG.fnName];
+        const fnNames = getImportedFnNames(code, PRERENDER_CONFIG.fnName);
         const handlerPattern = buildExportPattern(fnNames);
         const exportNames: string[] = [];
         let m: RegExpExecArray | null;
@@ -882,10 +903,7 @@ ${lazyImports.join(",\n")}
         hasStaticHandlerCode && STATIC_CONFIG,
         hasPrerenderHandlerCode && PRERENDER_CONFIG,
       ].filter((c): c is HandlerTransformConfig => !!c).map((cfg) => {
-        const importedNames = getImportedLocalNames(code, cfg.fnName, parseAst);
-        const fnNames = importedNames.size > 0
-          ? Array.from(importedNames)
-          : [cfg.fnName];
+        const fnNames = getImportedFnNames(code, cfg.fnName);
         return { cfg, fnNames };
       });
 
@@ -909,12 +927,7 @@ ${lazyImports.join(",\n")}
 
       // --- StaticHandler: non-RSC stub replacement ---
       if (hasStaticHandlerCode && !isRscEnv) {
-        const staticNames = Array.from(
-          getImportedLocalNames(code, STATIC_CONFIG.fnName, parseAst),
-        );
-        const fnNames = staticNames.length > 0
-          ? staticNames
-          : [STATIC_CONFIG.fnName];
+        const fnNames = getImportedFnNames(code, STATIC_CONFIG.fnName);
         const wholeFile = generateWholeFileStubs(
           STATIC_CONFIG, fnNames, code, filePath, isBuild,
         );
@@ -928,12 +941,7 @@ ${lazyImports.join(",\n")}
 
       // --- StaticHandler: RSC build module tracking ---
       if (hasStaticHandlerCode && isRscEnv && isBuild) {
-        const staticNames = Array.from(
-          getImportedLocalNames(code, STATIC_CONFIG.fnName, parseAst),
-        );
-        const fnNames = staticNames.length > 0
-          ? staticNames
-          : [STATIC_CONFIG.fnName];
+        const fnNames = getImportedFnNames(code, STATIC_CONFIG.fnName);
         const handlerPattern = buildExportPattern(fnNames);
         const exportNames: string[] = [];
         let m: RegExpExecArray | null;
@@ -952,32 +960,25 @@ ${lazyImports.join(",\n")}
       const s = new MagicString(code);
 
       if (hasLoaderCode) {
-        changed = transformLoaders(s, code, filePath, isBuild) || changed;
+        const fnNames = getImportedFnNames(code, "createLoader");
+        changed = transformLoaders(fnNames, s, code, filePath, isBuild) || changed;
       }
       if (hasHandleCode) {
-        changed = transformHandles(s, code, filePath, isBuild) || changed;
+        const fnNames = getImportedFnNames(code, "createHandle");
+        changed = transformHandles(fnNames, s, code, filePath, isBuild) || changed;
       }
       if (hasLocationStateCode) {
+        const fnNames = getImportedFnNames(code, "createLocationState");
         changed =
-          transformLocationState(s, code, filePath, isBuild) || changed;
+          transformLocationState(fnNames, s, code, filePath, isBuild) || changed;
       }
       if (hasPrerenderHandlerCode && isRscEnv) {
-        const prerenderNames = Array.from(
-          getImportedLocalNames(code, PRERENDER_CONFIG.fnName, parseAst),
-        );
-        const fnNames = prerenderNames.length > 0
-          ? prerenderNames
-          : [PRERENDER_CONFIG.fnName];
+        const fnNames = getImportedFnNames(code, PRERENDER_CONFIG.fnName);
         changed =
           transformHandlerIds(PRERENDER_CONFIG, fnNames, s, code, filePath, isBuild) || changed;
       }
       if (hasStaticHandlerCode && isRscEnv) {
-        const staticNames = Array.from(
-          getImportedLocalNames(code, STATIC_CONFIG.fnName, parseAst),
-        );
-        const fnNames = staticNames.length > 0
-          ? staticNames
-          : [STATIC_CONFIG.fnName];
+        const fnNames = getImportedFnNames(code, STATIC_CONFIG.fnName);
         changed =
           transformHandlerIds(STATIC_CONFIG, fnNames, s, code, filePath, isBuild) || changed;
       }

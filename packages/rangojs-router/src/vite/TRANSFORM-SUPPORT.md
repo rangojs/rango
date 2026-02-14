@@ -13,6 +13,9 @@ This document defines which source shapes are transformed by Vite ID injection.
 The plugin exits early unless the module source contains `@rangojs/router`.
 This avoids unnecessary work on unrelated files.
 
+Aliased imports are supported for transformed APIs, e.g.
+`import { createLoader as cl } from "@rangojs/router"`.
+
 ## Supported Patterns
 
 ### `createLoader`, `createHandle`, `createLocationState`
@@ -23,6 +26,13 @@ Currently supported and transformed:
 export const X = createLoader(...);
 export const Y = createHandle(...);
 export const Z = createLocationState(...);
+```
+
+Aliased forms are also supported:
+
+```ts
+import { createLoader as cl } from "@rangojs/router";
+export const X = cl(...);
 ```
 
 These are transformed with stable IDs and extra runtime metadata.
