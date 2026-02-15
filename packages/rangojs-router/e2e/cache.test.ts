@@ -593,7 +593,7 @@ test.describe("proactive-caching", () => {
     isolatedServer: true,
   });
 
-  test("proactive caching triggers when navigating within cached layout", async ({
+  test("proactive caching populates cache for future partial navigations", async ({
     page,
   }) => {
     // Step 1: Document request to item-a (MISS - first visit)
@@ -612,18 +612,16 @@ test.describe("proactive-caching", () => {
 
     // Step 2: Partial navigation to item-b (within same layout)
     // This triggers proactive caching because layout has null component
-    const beforePartialNav = f.proc().stdout();
     await page.getByTestId("proactive-nav-b").click();
     await expect(page.getByTestId("proactive-item-b-page")).toBeVisible();
 
-    // Give proactive caching time to complete in background
-    await page.waitForTimeout(500);
-
-    const afterPartialNav = f.proc().stdout();
-    const partialNavLogs = afterPartialNav.slice(beforePartialNav.length);
-
-    // Check for proactive caching log - this proves the feature triggered
-    expect(partialNavLogs).toContain("proactive caching started");
+    // Wait for proactive caching to complete in background
+    // Proactive caching stores under the partial: key prefix, so verify
+    // with a [CacheScope] Cached: log for item-b
+    await expect.poll(() => {
+      const stdout = f.proc().stdout().slice(afterFirstVisit.length);
+      return stdout.includes("[CacheScope] Cached:") && stdout.includes("/proactive-cache/item-b");
+    }, { timeout: 5000, message: "Expected proactive cache write for /proactive-cache/item-b" }).toBeTruthy();
   });
 
   test("layout renders correctly after proactive caching", async ({ page }) => {
