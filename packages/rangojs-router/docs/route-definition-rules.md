@@ -143,12 +143,26 @@ the included patterns.
 
 ## TypeScript Coverage
 
-Some rules are also enforced at the type level:
+Some rules are enforced at the type level via branded union types (`RouteUseItem`,
+`ParallelUseItem`, etc.). TypeScript only checks the **direct child** of a
+callback — nested violations (e.g., `path` inside `layout` inside `path`) are
+NOT caught because the direct child (`LayoutItem`) is a valid member of the union.
 
-- `path()` is not in `ParallelUseItem` (cannot be inside parallel)
-- `when()` is not in `RouteUseItem` or `LayoutUseItem` (only in intercept)
-- `parallel()` is not in `ParallelUseItem` (cannot nest)
-- `intercept()` is not in `ParallelUseItem` (cannot be inside parallel)
+### Caught by TypeScript (direct child violations)
 
-Runtime guards exist as a safety net for cases where TypeScript types are
-bypassed (e.g., dynamic route construction, `as any` casts).
+- `path()` (RouteItem) is not in `RouteUseItem` — direct path-in-path caught
+- `path()` is not in `ParallelUseItem` — cannot be inside parallel
+- `when()` (WhenItem) is not in `RouteUseItem` or `LayoutUseItem` — only in intercept
+- `parallel()` is not in `ParallelUseItem` — cannot nest
+- `intercept()` is not in `ParallelUseItem` — cannot be inside parallel
+
+### Runtime-only guards (TS cannot catch)
+
+- `path()` inside `layout()` inside `path()` — direct child is `LayoutItem` (valid)
+- `path()` inside `cache()` inside `path()` — direct child is `CacheItem` (valid)
+- Orphan layout containing another orphan layout — both are `LayoutItem` (valid)
+- `layout()` inside `parallel()` — `LayoutItem` is not in `ParallelUseItem` at
+  the type level, but the runtime guard provides the error message
+
+Runtime guards use ancestor walks and context checks to catch these nested
+violations at route tree build time.
