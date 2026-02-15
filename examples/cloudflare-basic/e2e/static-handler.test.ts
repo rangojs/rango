@@ -151,6 +151,25 @@ test.describe("static-handler (dev)", () => {
     await expect(testId(page, "static-docs-layout")).toBeVisible();
     await expect(testId(page, "static-toc-sidebar")).toBeVisible();
   });
+
+  test("client navigation from static-content to docs shows docs content", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-content"));
+    await waitForHydration(page);
+
+    // Verify we're on static-content
+    await expect(testId(page, "static-docs-index")).toBeVisible();
+
+    // Navigate to docs via nav link
+    await testId(page, "nav-docs").click();
+
+    // Should show docs content, not static-content
+    await expect(testId(page, "docs-index")).toBeVisible();
+    await expect(testId(page, "static-docs-index")).not.toBeVisible();
+  });
 });
 
 // ==========================================================================
@@ -263,6 +282,21 @@ test.describe("static-handler (production)", () => {
     );
   });
 
+  test("static layout sidebar renders on direct visit to slug page", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-content/configuration"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "static-docs-layout")).toBeVisible();
+    await expect(testId(page, "static-docs-nav")).toBeVisible();
+    await expect(testId(page, "docs-nav-getting-started")).toBeVisible();
+    await expect(testId(page, "docs-nav-configuration")).toBeVisible();
+    await expect(testId(page, "docs-nav-deployment")).toBeVisible();
+  });
+
   // -- Client navigation (covers all three) --
 
   test("client navigation to static content from another page", async ({
@@ -362,6 +396,25 @@ test.describe("static-handler (production)", () => {
     await testId(page, "nav-static-content").click();
     await expect(testId(page, "static-docs-layout")).toBeVisible();
     await expect(testId(page, "static-docs-index")).toBeVisible();
+  });
+
+  test("client navigation from static-content to docs shows docs content", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-content"));
+    await waitForHydration(page);
+
+    // Verify we're on static-content
+    await expect(testId(page, "static-docs-index")).toBeVisible();
+
+    // Navigate to docs via nav link
+    await testId(page, "nav-docs").click();
+
+    // Should show docs content, not static-content
+    await expect(testId(page, "docs-index")).toBeVisible();
+    await expect(testId(page, "static-docs-index")).not.toBeVisible();
   });
 
 });

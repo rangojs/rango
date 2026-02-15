@@ -135,6 +135,95 @@ test.describe("composable docs package", () => {
 
     await expect(testId(page, "docs-not-found")).toBeVisible();
   });
+
+  // Static layout (node:fs sidebar)
+
+  test("Static layout sidebar renders on docs pages", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/docs"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "docs-layout")).toBeVisible();
+    await expect(testId(page, "docs-sidebar")).toBeVisible();
+    await expect(testId(page, "sidebar-build-time")).toBeVisible();
+  });
+
+  test("Static sidebar contains reference doc links", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/docs"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "sidebar-link-url-patterns")).toBeVisible();
+    await expect(testId(page, "sidebar-link-response-types")).toBeVisible();
+  });
+
+  // Prerender reference routes (node:fs data)
+
+  test("GET /docs/ref renders prerendered reference index", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/docs/ref"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "ref-index")).toBeVisible();
+    await expect(testId(page, "ref-title")).toHaveText("API Reference");
+    await expect(testId(page, "ref-item-url-patterns")).toBeVisible();
+    await expect(testId(page, "ref-item-response-types")).toBeVisible();
+    await expect(testId(page, "ref-build-time")).toBeVisible();
+  });
+
+  test("GET /docs/ref/:slug renders prerendered reference detail", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/docs/ref/url-patterns"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "ref-detail")).toBeVisible();
+    await expect(testId(page, "ref-detail-title")).toHaveText("URL Patterns API");
+    await expect(testId(page, "ref-detail-content")).toBeVisible();
+    await expect(testId(page, "ref-detail-build-time")).toBeVisible();
+  });
+
+  test("navigate from sidebar to reference detail", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/docs"));
+    await waitForHydration(page);
+
+    await testId(page, "sidebar-link-url-patterns").click();
+    await expect(page).toHaveURL(/\/docs\/ref\/url-patterns/);
+    await expect(testId(page, "ref-detail")).toBeVisible();
+    await expect(testId(page, "ref-detail-title")).toHaveText("URL Patterns API");
+  });
+
+  test("navigate from reference detail back to reference index", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/docs/ref/url-patterns"));
+    await waitForHydration(page);
+
+    await testId(page, "ref-back-link").click();
+    await expect(page).toHaveURL(/\/docs\/ref$/);
+    await expect(testId(page, "ref-index")).toBeVisible();
+  });
+
+  test("Static sidebar persists across navigation", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/docs"));
+    await waitForHydration(page);
+
+    const buildTime = await testId(page, "sidebar-build-time").textContent();
+
+    await testId(page, "sidebar-link-response-types").click();
+    await expect(testId(page, "ref-detail")).toBeVisible();
+
+    // Sidebar still present with same build timestamp
+    await expect(testId(page, "docs-sidebar")).toBeVisible();
+    await expect(testId(page, "sidebar-build-time")).toHaveText(buildTime!);
+  });
 });
 
 test.describe("composable docs package (production)", () => {
@@ -180,5 +269,37 @@ test.describe("composable docs package (production)", () => {
     expect(response.headers()["content-type"]).toContain("application/json");
     const body = await response.json();
     expect(body.data.total).toBeGreaterThanOrEqual(1);
+  });
+
+  test("Static sidebar renders in production", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/docs"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "docs-sidebar")).toBeVisible();
+    await expect(testId(page, "sidebar-link-url-patterns")).toBeVisible();
+  });
+
+  test("GET /docs/ref renders prerendered index in production", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/docs/ref"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "ref-index")).toBeVisible();
+    await expect(testId(page, "ref-title")).toHaveText("API Reference");
+    await expect(testId(page, "ref-item-url-patterns")).toBeVisible();
+  });
+
+  test("GET /docs/ref/:slug renders prerendered detail in production", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/docs/ref/response-types"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "ref-detail")).toBeVisible();
+    await expect(testId(page, "ref-detail-title")).toHaveText("Response Types");
+    await expect(testId(page, "ref-detail-content")).toBeVisible();
   });
 });

@@ -1131,6 +1131,17 @@ function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
     // sibling entries (e.g., BlogLayout and ArticlesLayout under NavLayout).
     const capturedCounters = { ...ctx.counters };
 
+    // Reserve a layout slot in the parent's counter so sibling lazy includes
+    // produce different shortCode indices for their root layout.
+    // Without this, consecutive include() calls capture identical counters
+    // and their first child layouts get the same shortCode (e.g., both M0L0L0),
+    // causing the client partial-update diff to see no changes on navigation.
+    if (capturedParent?.shortCode) {
+      const layoutCounterKey = `${capturedParent.shortCode}_layout`;
+      ctx.counters[layoutCounterKey] ??= 0;
+      ctx.counters[layoutCounterKey]++;
+    }
+
     // All includes are lazy - patterns are evaluated on first matching request
     // This improves cold start time significantly for large route sets
     return {

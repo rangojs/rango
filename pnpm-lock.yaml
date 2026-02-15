@@ -40,7 +40,7 @@ importers:
         version: link:../../packages/rangojs-router
       '@shared/docs':
         specifier: workspace:*
-        version: link:../../packages/rangojs-docs
+        version: link:../../packages/shared-docs
       react:
         specifier: ^19.2.1
         version: 19.2.3
@@ -251,22 +251,6 @@ importers:
         specifier: ^1.0.0
         version: 1.0.0(vite@7.3.0(@types/node@24.10.4)(jiti@2.6.1)(tsx@4.21.0))
 
-  packages/rangojs-docs:
-    dependencies:
-      '@rangojs/router':
-        specifier: workspace:*
-        version: link:../rangojs-router
-      react:
-        specifier: ^19.2.1
-        version: 19.2.3
-    devDependencies:
-      '@types/react':
-        specifier: 'catalog:'
-        version: 19.2.7
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
   packages/rangojs-router:
     dependencies:
       '@cloudflare/vite-plugin':
@@ -374,6 +358,22 @@ importers:
       vite-plugin-devtools-json:
         specifier: ^1.0.0
         version: 1.0.0(vite@7.3.0(@types/node@24.10.4)(jiti@2.6.1)(tsx@4.21.0))
+
+  packages/shared-docs:
+    dependencies:
+      '@rangojs/router':
+        specifier: workspace:*
+        version: link:../rangojs-router
+      react:
+        specifier: ^19.2.1
+        version: 19.2.3
+    devDependencies:
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.2.7
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
 
 packages:
 
