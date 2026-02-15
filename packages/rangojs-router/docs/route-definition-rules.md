@@ -125,7 +125,21 @@ layout(AuthLayout, () => [
   middleware(authMw),
   include("/blog", blogPatterns, { name: "blog" }),
 ])
+
+// VALID: middleware inside included patterns (stacks with parent middleware)
+const blogPatterns = urls(({ path, layout, middleware }) => [
+  layout(BlogLayout, () => [
+    middleware(blogMw),  // applies to all blog routes
+    path("/", BlogIndex, { name: "index" }),
+    path("/:postId", BlogPost, { name: "post" }),
+  ]),
+])
 ```
+
+Included patterns use the full `urls()` builder, so they support `layout()`,
+`middleware()`, `cache()`, nested `include()`, and all other helpers. Middleware
+chains stack: parent layout middleware runs first, then middleware from within
+the included patterns.
 
 ## TypeScript Coverage
 
