@@ -104,8 +104,8 @@ import type { ResolvedSegment } from "../../types.js";
 import { getRequestContext } from "../../server/request-context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
-import type { GeneratorMiddleware } from "./cache-lookup.js";
 import { debugLog, debugWarn } from "../logging.js";
+import type { GeneratorMiddleware } from "./cache-lookup.js";
 
 /**
  * Creates cache store middleware

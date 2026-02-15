@@ -813,6 +813,24 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
     const ctx = store.getStore();
     if (!ctx) throw new Error("path() must be called inside urls()");
 
+    invariant(
+      !ctx.parent || ctx.parent.type !== "parallel",
+      "path() cannot be used inside parallel()"
+    );
+
+    // Walk the parent chain to prevent path() nested under another path(),
+    // even when separated by intermediate layouts (e.g. path(layout(path())))
+    {
+      let ancestor = ctx.parent;
+      while (ancestor) {
+        invariant(
+          ancestor.type !== "route",
+          "path() cannot be nested inside another path()"
+        );
+        ancestor = ancestor.parent;
+      }
+    }
+
     // Determine options and use based on argument types
     let options: PathOptions | undefined;
     let use: (() => RouteUseItem[]) | undefined;

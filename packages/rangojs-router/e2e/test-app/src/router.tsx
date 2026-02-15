@@ -33,6 +33,8 @@ export interface AppVariables {
   outerMw?: string;
   innerMw?: string;
   role?: string;
+  // Include + layout middleware test variable
+  includeLayoutMw?: string;
 }
 
 export type AppEnv = RouterEnv<AppBindings, AppVariables>;

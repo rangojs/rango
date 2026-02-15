@@ -23,6 +23,8 @@ import { prerenderPatterns } from "./urls/prerender.js";
 import { prerenderComplexPatterns } from "./urls/prerender-complex.js";
 import { transformCasesPatterns } from "./urls/transform-cases.js";
 import { apiShopPatterns } from "./urls/api-shop.js";
+import { includeMiddlewarePatterns } from "./urls/include-middleware.js";
+import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
   ProductsLoader,
@@ -428,6 +430,20 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
 
     // Shop API patterns (JSON response routes)
     include("/api/shop", apiShopPatterns, { name: "apiShop" }),
+
+    // Include under layout with middleware — tests that layout middleware
+    // is applied to routes inside include() even when include() is the
+    // only child of the layout (the hasRoutesInItem fix).
+    layout(IncludeMwLayout, () => [
+      middleware(async (ctx, next) => {
+        ctx.set("includeLayoutMw", "applied");
+        await next();
+        ctx.header("X-Include-Layout-Middleware", "applied");
+      }),
+      include("/include-mw-test", includeMiddlewarePatterns, {
+        name: "includeMw",
+      }),
+    ]),
 
     // Shop playground page
     path(

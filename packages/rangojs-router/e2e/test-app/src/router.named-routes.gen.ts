@@ -37,6 +37,8 @@ export const NamedRoutes = {
   "href.index": "/href",
   "href.nested.index": "/href/nested",
   hydrationTest: "/hydration-test",
+  "includeMw.detail": "/include-mw-test/:itemId",
+  "includeMw.index": "/include-mw-test",
   index: "/",
   inlineAction: "/inline-action",
   loaderComposition: "/loader-composition",
