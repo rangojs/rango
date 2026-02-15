@@ -766,6 +766,53 @@ describe("route tree inspection", () => {
     expect(orphan.loading).toBe(LoadingSpinner);
   });
 
+  it("nested orphan layouts stack as composable wrappers", () => {
+    const Wrapper1 = (<div>w1</div>) as React.ReactNode;
+    const Wrapper2 = (<div>w2</div>) as React.ReactNode;
+
+    const tree = buildRouteTree(
+      urls(({ path, layout, middleware, loading }) => [
+        layout(RootLayout, () => [
+          layout(Wrapper1, () => [
+            middleware(logMiddleware),
+            layout(Wrapper2, () => [
+              middleware(authMiddleware),
+              loading(LoadingSpinner),
+            ]),
+          ]),
+          path("/", HomePage, { name: "home" }),
+        ]),
+      ]),
+    );
+
+    expect(tree.routes()).toEqual({ home: "/" });
+
+    const homeEntry = tree.entry("home")!;
+    const rootLayout = homeEntry.parent!;
+
+    // Wrapper1 is an orphan layout on RootLayout
+    expect(rootLayout.layout).toHaveLength(1);
+    const wrapper1 = rootLayout.layout[0];
+    expect(wrapper1.type).toBe("layout");
+    expect(wrapper1.parent).toBeNull();
+    expect(wrapper1.middleware).toHaveLength(1);
+    expect(wrapper1.middleware[0]).toBe(logMiddleware);
+    expect(wrapper1.shortCode).toBe("M0L0L0L0");
+
+    // Wrapper2 is an orphan layout nested inside Wrapper1
+    expect(wrapper1.layout).toHaveLength(1);
+    const wrapper2 = wrapper1.layout[0];
+    expect(wrapper2.type).toBe("layout");
+    expect(wrapper2.parent).toBeNull();
+    expect(wrapper2.middleware).toHaveLength(1);
+    expect(wrapper2.middleware[0]).toBe(authMiddleware);
+    expect(wrapper2.loading).toBe(LoadingSpinner);
+    expect(wrapper2.shortCode).toBe("M0L0L0L0L0");
+
+    // At runtime: RootLayout → Wrapper1 (logMw) → Wrapper2 (authMw, loading) → home
+    expect(homeEntry.shortCode).toBe("M0L0L0R0");
+  });
+
   it("orphan cache attaches to parent and wraps subsequent siblings", () => {
     const tree = buildRouteTree(
       urls(({ path, layout, cache }) => [
@@ -792,6 +839,166 @@ describe("route tree inspection", () => {
     // but the segment path still shows the hierarchy
     const homePath = tree.segmentPath("home");
     expect(homePath.map((s) => s.type)).toContain("cache");
+  });
+
+  // -------------------------------------------------------------------------
+  // Invalid configurations — must error at definition time
+  // -------------------------------------------------------------------------
+
+  it("layout inside parallel throws", () => {
+    expect(() => {
+      buildRouteTree(
+        urls(({ path, layout, parallel }) => [
+          layout(RootLayout, () => [
+            path("/", HomePage, { name: "home" }),
+            // @ts-expect-error layout is not a valid parallel use item
+            parallel({ "@sidebar": Sidebar }, () => [
+              layout(AuthLayout, () => [
+                // layout inside parallel is not allowed
+              ]),
+            ]),
+          ]),
+        ]),
+      );
+    }).toThrow(/layout\(\) cannot be used inside parallel/);
+  });
+
+  it("orphan layout inside parallel throws", () => {
+    expect(() => {
+      buildRouteTree(
+        urls(({ path, layout, parallel }) => [
+          layout(RootLayout, () => [
+            path("/", HomePage, { name: "home" }),
+            // @ts-expect-error layout is not a valid parallel use item
+            parallel({ "@sidebar": Sidebar }, () => [
+              layout(AuthLayout),
+            ]),
+          ]),
+        ]),
+      );
+    }).toThrow(/layout\(\) cannot be used inside parallel/);
+  });
+
+  it("when() outside intercept throws", () => {
+    expect(() => {
+      buildRouteTree(
+        urls(({ path, layout, when }) => [
+          layout(RootLayout, () => [
+            path("/", HomePage, { name: "home" }),
+            // @ts-expect-error when is not a valid layout use item
+            when(() => true),
+          ]),
+        ]),
+      );
+    }).toThrow(/when\(\) can only be used inside intercept/);
+  });
+
+  it("duplicate route names throw", () => {
+    expect(() => {
+      buildRouteTree(
+        urls(({ path }) => [
+          path("/", HomePage, { name: "home" }),
+          path("/other", AboutPage, { name: "home" }),
+        ]),
+      );
+    }).toThrow(/Duplicate route name: home/);
+  });
+
+  it("parallel inside parallel throws", () => {
+    expect(() => {
+      buildRouteTree(
+        urls(({ path, layout, parallel }) => [
+          layout(RootLayout, () => [
+            path("/", HomePage, { name: "home" }),
+            // @ts-expect-error parallel is not a valid parallel use item
+            parallel({ "@sidebar": Sidebar }, () => [
+              parallel({ "@inner": MainContent }),
+            ]),
+          ]),
+        ]),
+      );
+    }).toThrow(/parallel\(\) cannot be nested inside another parallel/);
+  });
+
+  it("intercept inside parallel throws", () => {
+    expect(() => {
+      buildRouteTree(
+        urls(({ path, layout, parallel, intercept }) => [
+          layout(RootLayout, () => [
+            path("/", HomePage, { name: "home" }),
+            path("/detail", AboutPage, { name: "detail" }),
+            // @ts-expect-error intercept is not a valid parallel use item
+            parallel({ "@sidebar": Sidebar }, () => [
+              intercept("@modal", "detail", ProductModal),
+            ]),
+          ]),
+        ]),
+      );
+    }).toThrow(/intercept\(\) cannot be used inside parallel/);
+  });
+
+  it("path inside parallel throws", () => {
+    expect(() => {
+      buildRouteTree(
+        urls(({ path, layout, parallel }) => [
+          layout(RootLayout, () => [
+            // @ts-expect-error path is not a valid parallel use item
+            parallel({ "@sidebar": Sidebar }, () => [
+              path("/nested", HomePage, { name: "nested" }),
+            ]),
+          ]),
+        ]),
+      );
+    }).toThrow(/path\(\) cannot be used inside parallel/);
+  });
+
+  it("path inside path throws", () => {
+    expect(() => {
+      buildRouteTree(
+        urls(({ path, layout }) => [
+          layout(RootLayout, () => [
+            // @ts-expect-error path is not a valid route use item
+            path("/parent", HomePage, { name: "parent" }, () => [
+              path("/child", AboutPage, { name: "child" }),
+            ]),
+          ]),
+        ]),
+      );
+    }).toThrow(/path\(\) cannot be nested inside another path/);
+  });
+
+  it("path inside layout inside path throws", () => {
+    expect(() => {
+      buildRouteTree(
+        urls(({ path, layout }) => [
+          layout(RootLayout, () => [
+            path("/parent", HomePage, { name: "parent" }, () => [
+              layout(AuthLayout, () => [
+                path("/child", AboutPage, { name: "child" }),
+              ]),
+            ]),
+          ]),
+        ]),
+      );
+    }).toThrow(/path\(\) cannot be nested inside another path/);
+  });
+
+  it("path inside cache inside layout inside path throws", () => {
+    expect(() => {
+      buildRouteTree(
+        urls(({ path, layout, cache }) => [
+          layout(RootLayout, () => [
+            path("/parent", HomePage, { name: "parent" }, () => [
+              layout(AuthLayout, () => [
+                cache({ ttl: 60 }, () => [
+                  path("/child", AboutPage, { name: "child" }),
+                ]),
+              ]),
+            ]),
+          ]),
+        ]),
+      );
+    }).toThrow(/path\(\) cannot be nested inside another path/);
   });
 
   // -------------------------------------------------------------------------
