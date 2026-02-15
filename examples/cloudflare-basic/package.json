@@ -15,6 +15,7 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
+    "@shared/docs": "workspace:*",
     "@rangojs/router": "workspace:*",
     "react": "catalog:",
     "react-dom": "catalog:",

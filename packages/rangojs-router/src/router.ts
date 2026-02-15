@@ -98,7 +98,7 @@ import {
 } from "./router/match-api.js";
 
 import type { SegmentResolutionDeps, MatchApiDeps } from "./router/types.js";
-import { createHandlerContext, createBuildContext } from "./router/handler-context.js";
+import { createHandlerContext } from "./router/handler-context.js";
 import {
   setupLoaderAccess,
   setupLoaderAccessSilent,
@@ -1655,7 +1655,7 @@ export function createRouter<TEnv = any>(
         routes: {} as ResolvedRouteMap<any>, // Empty until first match
         trailingSlash: entry.trailingSlash,
         handler: (lazyInclude.patterns as UrlPatterns<TEnv>).handler,
-        mountIndex: entry.mountIndex,
+        mountIndex: mountIndex++,
         // Lazy evaluation fields
         lazy: true,
         lazyPatterns: lazyInclude.patterns,
@@ -1911,11 +1911,18 @@ export function createRouter<TEnv = any>(
       };
 
       return runWithRequestContext(minimalRequestContext, async () => {
-        // 6. Create BuildContext (no request/env/headers/cookies)
-        const buildCtx = createBuildContext<TEnv>(
+        // 6. Create handler context with synthetic request for pre-rendering.
+        // The synthetic request and route map are available at build time,
+        // so reverse() and other context properties work normally.
+        const buildCtx = createHandlerContext<TEnv>(
           matchedParams,
+          minimalRequestContext.request,
+          minimalRequestContext.url.searchParams,
           pathname,
-          handleStore,
+          minimalRequestContext.url,
+          {},
+          mergedRouteMap,
+          matched.routeKey,
         );
 
         // 7. Wire use() for handles only (loaders throw)
@@ -2527,7 +2534,7 @@ export function createRouter<TEnv = any>(
             routes: {} as ResolvedRouteMap<any>, // Empty until first match
             trailingSlash: trailingSlashConfig,
             handler: urlPatterns.handler,
-            mountIndex: currentMountIndex,
+            mountIndex: mountIndex++,
             // Lazy evaluation fields
             lazy: true,
             lazyPatterns: lazyInclude.patterns,
