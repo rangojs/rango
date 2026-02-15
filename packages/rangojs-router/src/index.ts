@@ -68,6 +68,10 @@ export type {
   NotFoundInfo,
   NotFoundBoundaryFallbackProps,
   NotFoundBoundaryHandler,
+  // Error handling callback types
+  ErrorPhase,
+  OnErrorContext,
+  OnErrorCallback,
 } from "./types.js";
 
 // Search params schema types
@@ -76,6 +80,9 @@ export type { SearchSchema, SearchSchemaValue, ResolveSearchSchema, RouteSearchP
 // Client-safe createLoader - only stores the $$id, function is not included
 // Use this when defining loaders that will be imported by client components
 export { createLoader } from "./loader.js";
+
+// Route definition types (safe to import anywhere)
+export type { RouteHelpers, RouteHandlers } from "./route-definition.js";
 
 // Response route types (usable in both server and client contexts)
 export type {
