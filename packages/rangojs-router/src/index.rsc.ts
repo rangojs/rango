@@ -67,13 +67,22 @@ export type {
   NotFoundInfo,
   NotFoundBoundaryFallbackProps,
   NotFoundBoundaryHandler,
+  // Error handling callback types
+  ErrorPhase,
+  OnErrorContext,
+  OnErrorCallback,
 } from "./types.js";
 
 // Router options type (server-only, so import directly)
 export type { RSCRouterOptions } from "./router.js";
 
 // Server-side createLoader and redirect
-export { createLoader, redirect } from "./route-definition.js";
+export {
+  createLoader,
+  redirect,
+  type RouteHelpers,
+  type RouteHandlers,
+} from "./route-definition.js";
 
 // Handle API
 export { createHandle, isHandle, type Handle } from "./handle.js";
@@ -167,3 +176,6 @@ export {
   type LocationStateDefinition,
   type LocationStateEntry,
 } from "./browser/react/location-state-shared.js";
+
+// Path-based response type lookup from RegisteredRoutes
+export type { PathResponse } from "./href-client.js";
