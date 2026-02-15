@@ -4,20 +4,19 @@ import { SlowLoader } from "../loaders.js";
 import { Breadcrumbs } from "../handles.js";
 import { RefTestLoaderProp } from "../components/RefTestLoaderProp.js";
 import { RefTestHandleProp } from "../components/RefTestHandleProp.js";
-import type { routes } from "./ref-test.gen.js";
 
-export const RefTestLoaderPropHandler: Handler<"loaderProp", routes> = () => (
+export const RefTestLoaderPropHandler: Handler<"refTest.loaderProp"> = () => (
   <RefTestLoaderProp loader={SlowLoader} />
 );
 
-export const RefTestHandlePropHandler: Handler<"handleProp", routes> = (ctx) => {
+export const RefTestHandlePropHandler: Handler<"refTest.handleProp"> = (ctx) => {
   const push = ctx.use(Breadcrumbs);
   push({ label: "Home", href: "/" });
   push({ label: "Ref Test", href: "/ref-test/handle-prop" });
   return <RefTestHandleProp handle={Breadcrumbs} />;
 };
 
-export const RefTestBothPropsHandler: Handler<"bothProps", routes> = (ctx) => {
+export const RefTestBothPropsHandler: Handler<"refTest.bothProps"> = (ctx) => {
   const push = ctx.use(Breadcrumbs);
   push({ label: "Home", href: "/" });
   push({ label: "Both Props", href: "/ref-test/both-props" });

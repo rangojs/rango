@@ -1,9 +1,8 @@
 import type { Handler } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { ClientErrorThrower } from "../components/ClientErrorThrower.js";
-import type { routes } from "./errors.gen.js";
 
-export const ErrorsIndexHandler: Handler<"errors.index", routes> = () => (
+export const ErrorsIndexHandler: Handler<"errors.index"> = () => (
   <div data-testid="errors-index-page">
     <Link to="/" data-testid="back-link">
       ← Back to Home
@@ -32,7 +31,7 @@ export const ErrorsIndexHandler: Handler<"errors.index", routes> = () => (
   </div>
 );
 
-export const ErrorsClientErrorHandler: Handler<"errors.clientError", routes> = () => (
+export const ErrorsClientErrorHandler: Handler<"errors.clientError"> = () => (
   <div data-testid="client-error-page">
     <Link to="/errors" data-testid="back-link">
       ← Back to Error Tests
@@ -45,7 +44,7 @@ export const ErrorsClientErrorHandler: Handler<"errors.clientError", routes> = (
   </div>
 );
 
-export const ErrorsServerErrorHandler: Handler<"errors.serverError", routes> = () => {
+export const ErrorsServerErrorHandler: Handler<"errors.serverError"> = () => {
   throw new Error("Server error: This error was thrown during server-side render");
   return (
     <div data-testid="server-error-page">
@@ -54,7 +53,7 @@ export const ErrorsServerErrorHandler: Handler<"errors.serverError", routes> = (
   );
 };
 
-export const ErrorsStreamingErrorHandler: Handler<"errors.streamingError", routes> = async () => {
+export const ErrorsStreamingErrorHandler: Handler<"errors.streamingError"> = async () => {
   // Simulate async work then throw
   await new Promise((resolve) => setTimeout(resolve, 500));
   throw new Error("Streaming error: This error was thrown during async streaming");

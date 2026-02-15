@@ -7,8 +7,6 @@ import { createRequire } from "node:module";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
 import {
   generateRouteTypesSource,
-  writePerModuleRouteTypes,
-  writePerModuleRouteTypesForFile,
   writeCombinedRouteTypes,
   findRouterFiles,
   createScanFilter,
@@ -111,9 +109,8 @@ interface RangoBaseOptions {
   banner?: boolean;
 
   /**
-   * Generate static route type files (.gen.ts) by parsing url modules at startup.
-   * Creates per-module route maps and per-router named-routes.gen.ts for type-safe
-   * Handler<"name", routes> and href() without executing router code.
+   * Generate named-routes.gen.ts by parsing url modules at startup.
+   * Provides type-safe Handler<"name"> and href() without executing router code.
    * Set to `false` to disable (run `npx rango extract-names` manually instead).
    * @default true
    */
@@ -964,15 +961,13 @@ function createRouterDiscoveryPlugin(
           exclude: opts.exclude,
         });
       }
-      // Generate per-module route types from static source parsing.
-      // Runs before the dev server starts so .gen.ts files exist immediately for IDE.
+      // Generate combined named-routes.gen.ts from static source parsing.
+      // Runs before the dev server starts so the gen file exists immediately for IDE.
       // In build mode, the runtime discovery in buildStart produces the definitive
-      // named-routes.gen.ts (including dynamically generated routes). However, we
-      // still need to write initial gen files here so discovery can import router
-      // modules that reference them. preserveIfLarger prevents overwriting a
-      // previously generated complete file with a partial one.
+      // named-routes.gen.ts (including dynamically generated routes).
+      // preserveIfLarger prevents overwriting a previously generated complete
+      // file with a partial one.
       if (opts?.staticRouteTypesGeneration !== false) {
-        writePerModuleRouteTypes(projectRoot, scanFilter);
         cachedRouterFiles = findRouterFiles(projectRoot, scanFilter);
         writeCombinedRouteTypes(projectRoot, cachedRouterFiles, { preserveIfLarger: true });
       }
@@ -1173,8 +1168,8 @@ function createRouterDiscoveryPlugin(
         res.end("No prerender match");
       });
 
-      // Watch url module and router files for changes and regenerate route types.
-      // Process files containing urls( (per-module types) or createRouter( (per-router types).
+      // Watch url module and router files for changes and regenerate named-routes.gen.ts.
+      // Process files containing urls( or createRouter( to update the combined route map.
       if (opts?.staticRouteTypesGeneration !== false) {
         server.watcher.on("change", (filePath) => {
           if (filePath.endsWith(".gen.ts")) return;
@@ -1188,9 +1183,6 @@ function createRouterDiscoveryPlugin(
             const hasUrls = source.includes("urls(");
             const hasCreateRouter = /\bcreateRouter\s*[<(]/.test(source);
             if (!hasUrls && !hasCreateRouter) return;
-            if (hasUrls) {
-              writePerModuleRouteTypesForFile(filePath);
-            }
             // Invalidate cache when a router file changes (new router added/removed)
             if (hasCreateRouter) {
               cachedRouterFiles = undefined;

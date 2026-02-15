@@ -9,10 +9,9 @@
  */
 import { urls, type Handler } from "@rangojs/router";
 import { getMatchDebugStats } from "@rangojs/router";
-import type { routes } from "./shop-patterns.gen.js";
 
 // Benchmark handler - returns JSON with matchStats
-const ShopBenchmarkHandler: Handler<"home", routes> = async (ctx) => {
+const ShopBenchmarkHandler: Handler<"home"> = async (ctx) => {
   const matchStats = getMatchDebugStats();
   throw new Response(
     JSON.stringify({
@@ -25,7 +24,7 @@ const ShopBenchmarkHandler: Handler<"home", routes> = async (ctx) => {
 };
 
 // Product page handler (no URL params, just static paths like /1, /2, ...)
-const ProductPage: Handler<"home", routes> = async (ctx) => {
+const ProductPage: Handler<"home"> = async (ctx) => {
   return (
     <div>
       <h1>Product {ctx.pathname}</h1>
@@ -36,7 +35,7 @@ const ProductPage: Handler<"home", routes> = async (ctx) => {
 };
 
 // Category page handler (no URL params, just static paths like /1, /2, ...)
-const CategoryPage: Handler<"home", routes> = async (ctx) => {
+const CategoryPage: Handler<"home"> = async (ctx) => {
   return (
     <div>
       <h1>Category {ctx.pathname}</h1>
