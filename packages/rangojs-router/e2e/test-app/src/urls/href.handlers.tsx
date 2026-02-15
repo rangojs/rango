@@ -1,9 +1,8 @@
 import type { Handler } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { HrefTestClient } from "../components/HrefTestClient.js";
-import type { routes } from "./href.gen.js";
 
-export const HrefIndexHandler: Handler<"index", routes> = (ctx) => {
+export const HrefIndexHandler: Handler<"href.index"> = (ctx) => {
   // Server-side ctx.reverse tests
   // Using absolute names for type safety (local names work at runtime but aren't type-safe)
   const localIndexHref = ctx.reverse("href.index"); // Absolute name for /href
@@ -73,7 +72,7 @@ export const HrefIndexHandler: Handler<"index", routes> = (ctx) => {
   );
 };
 
-export const HrefDetailHandler: Handler<"detail", routes> = (ctx) => {
+export const HrefDetailHandler: Handler<"href.detail"> = (ctx) => {
   // Test ctx.reverse inside detail route
   // Using absolute names for type safety
   const backToIndex = ctx.reverse("href.index");

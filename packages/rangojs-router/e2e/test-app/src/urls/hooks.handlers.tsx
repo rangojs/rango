@@ -27,9 +27,8 @@ import {
   FormActionTest,
   FormActionProgressiveTest,
 } from "../components/HookTests.js";
-import type { routes } from "./hooks.gen.js";
 
-export const FetchLoaderHandler: Handler<"fetchLoader", routes> = () => (
+export const FetchLoaderHandler: Handler<"fetchLoader"> = () => (
   <div data-testid="fetch-loader-page">
     <Link to="/" data-testid="back-link">
       ← Back to Home
@@ -42,7 +41,7 @@ export const FetchLoaderHandler: Handler<"fetchLoader", routes> = () => (
   </div>
 );
 
-export const HookTestsIndexHandler: Handler<"hookTests.index", routes> = () => (
+export const HookTestsIndexHandler: Handler<"hookTests.index"> = () => (
   <div data-testid="hook-tests-index">
     <Link to="/" data-testid="back-link">
       ← Back to Home
@@ -60,7 +59,7 @@ export const HookTestsIndexHandler: Handler<"hookTests.index", routes> = () => (
   </div>
 );
 
-export const HookTestsRouteAHandler: Handler<"hookTests.routeA", routes> = () => (
+export const HookTestsRouteAHandler: Handler<"hookTests.routeA"> = () => (
   <div data-testid="hook-tests-route-a">
     <Link to="/" data-testid="back-link">
       ← Back to Home
@@ -95,7 +94,7 @@ export const HookTestsRouteAHandler: Handler<"hookTests.routeA", routes> = () =>
   </div>
 );
 
-export const HookTestsRouteBHandler: Handler<"hookTests.routeB", routes> = () => (
+export const HookTestsRouteBHandler: Handler<"hookTests.routeB"> = () => (
   <div data-testid="hook-tests-route-b">
     <Link to="/" data-testid="back-link">
       ← Back to Home
@@ -116,7 +115,7 @@ export const HookTestsRouteBHandler: Handler<"hookTests.routeB", routes> = () =>
   </div>
 );
 
-export const HookTestsNoLoaderHandler: Handler<"hookTests.noLoader", routes> = () => (
+export const HookTestsNoLoaderHandler: Handler<"hookTests.noLoader"> = () => (
   <div data-testid="hook-tests-no-loader">
     <Link to="/" data-testid="back-link">
       ← Back to Home
@@ -130,7 +129,7 @@ export const HookTestsNoLoaderHandler: Handler<"hookTests.noLoader", routes> = (
   </div>
 );
 
-export const HookTestsFormActionHandler: Handler<"hookTests.formAction", routes> = () => (
+export const HookTestsFormActionHandler: Handler<"hookTests.formAction"> = () => (
   <div data-testid="hook-tests-form-action">
     <Link to="/" data-testid="back-link">
       ← Back to Home
@@ -145,7 +144,7 @@ export const HookTestsFormActionHandler: Handler<"hookTests.formAction", routes>
   </div>
 );
 
-export const LoaderCompositionHandler: Handler<"loaderComposition", routes> = async (ctx) => {
+export const LoaderCompositionHandler: Handler<"loaderComposition"> = async (ctx) => {
   // Load all four composition scenarios
   const nfUsesNf = await ctx.use(ComposingNonFetchableUsesNonFetchable);
   const nfUsesF = await ctx.use(ComposingNonFetchableUsesFetchable);
@@ -190,7 +189,7 @@ export const LoaderCompositionHandler: Handler<"loaderComposition", routes> = as
   );
 };
 
-export const InlineActionHandler: Handler<"inlineAction", routes> = () => {
+export const InlineActionHandler: Handler<"inlineAction"> = () => {
   // Inline action defined directly in the RSC component
   async function inlineTestAction(formData: FormData): Promise<void> {
     "use server";
@@ -227,7 +226,7 @@ export const InlineActionHandler: Handler<"inlineAction", routes> = () => {
   );
 };
 
-export const ProgressiveEnhancementHandler: Handler<"progressiveEnhancement", routes> = async () => {
+export const ProgressiveEnhancementHandler: Handler<"progressiveEnhancement"> = async () => {
   const { submitNameAction, getLastSubmittedName } = await import("../actions.js");
   const lastSubmitted = await getLastSubmittedName();
 

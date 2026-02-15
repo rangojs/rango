@@ -7,8 +7,6 @@ import { createRequire } from "node:module";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
 import {
   generateRouteTypesSource,
-  writePerModuleRouteTypes,
-  writePerModuleRouteTypesForFile,
   writeCombinedRouteTypes,
   findRouterFiles,
   createScanFilter,
@@ -964,15 +962,13 @@ function createRouterDiscoveryPlugin(
           exclude: opts.exclude,
         });
       }
-      // Generate per-module route types from static source parsing.
-      // Runs before the dev server starts so .gen.ts files exist immediately for IDE.
+      // Generate combined named-routes.gen.ts from static source parsing.
+      // Runs before the dev server starts so the gen file exists immediately for IDE.
       // In build mode, the runtime discovery in buildStart produces the definitive
-      // named-routes.gen.ts (including dynamically generated routes). However, we
-      // still need to write initial gen files here so discovery can import router
-      // modules that reference them. preserveIfLarger prevents overwriting a
-      // previously generated complete file with a partial one.
+      // named-routes.gen.ts (including dynamically generated routes).
+      // preserveIfLarger prevents overwriting a previously generated complete
+      // file with a partial one.
       if (opts?.staticRouteTypesGeneration !== false) {
-        writePerModuleRouteTypes(projectRoot, scanFilter);
         cachedRouterFiles = findRouterFiles(projectRoot, scanFilter);
         writeCombinedRouteTypes(projectRoot, cachedRouterFiles, { preserveIfLarger: true });
       }
@@ -1188,9 +1184,6 @@ function createRouterDiscoveryPlugin(
             const hasUrls = source.includes("urls(");
             const hasCreateRouter = /\bcreateRouter\s*[<(]/.test(source);
             if (!hasUrls && !hasCreateRouter) return;
-            if (hasUrls) {
-              writePerModuleRouteTypesForFile(filePath);
-            }
             // Invalidate cache when a router file changes (new router added/removed)
             if (hasCreateRouter) {
               cachedRouterFiles = undefined;

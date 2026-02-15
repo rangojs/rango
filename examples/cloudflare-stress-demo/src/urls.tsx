@@ -13,9 +13,8 @@
  * - /shop/product/* requests skip /shop/category routes (nested optimization!)
  * - 404s for non-prefixed paths skip ~10,000 routes
  */
-import { urls, scopedReverse, type Handler } from "@rangojs/router";
+import { urls, type Handler } from "@rangojs/router";
 import { enableMatchDebug, getMatchDebugStats } from "@rangojs/router";
-import type { routes } from "./urls.gen.js";
 import { includedPatterns } from "./included-patterns.js";
 import { localizedPatterns } from "./localized-patterns.js";
 import { shopPatterns } from "./shop-patterns.js";
@@ -27,7 +26,7 @@ import { LinksDemo } from "./pages/links-demo.js";
 enableMatchDebug(true);
 
 // Benchmark handler - bypasses RSC, returns raw JSON with debug stats
-const BenchmarkHandler: Handler<"benchFirst", routes> = async (ctx) => {
+const BenchmarkHandler: Handler<"benchFirst"> = async (ctx) => {
   const now = Date.now();
   const start = ctx.var.dateStart ?? 0;
   const elapsed = now - start;
@@ -51,7 +50,7 @@ const BenchmarkHandler: Handler<"benchFirst", routes> = async (ctx) => {
 };
 
 // Links demo handler - showcases ctx.reverse() and scopedReverse() on the server
-const LinksDemoHandler: Handler<"links", routes> = async (ctx) => {
+const LinksDemoHandler: Handler<"links"> = async (ctx) => {
   const reverse = ctx.reverse;
 
   // ctx.reverse with global named routes
@@ -128,7 +127,7 @@ const LinksDemoHandler: Handler<"links", routes> = async (ctx) => {
 };
 
 // JSON endpoint for e2e testing ctx.reverse() with lazy includes
-const ReverseTestHandler: Handler<"reverseTest", routes> = async (ctx) => {
+const ReverseTestHandler: Handler<"reverseTest"> = async (ctx) => {
   const results: Record<string, string> = {
     home: ctx.reverse("home"),
     "api.benchFirst": ctx.reverse("api.benchFirst"),
