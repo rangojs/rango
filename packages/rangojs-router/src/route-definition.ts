@@ -517,6 +517,10 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
  */
 const hasRoutesInItem = (item: AllUseItems): boolean => {
   if (item.type === "route") return true;
+  // Lazy includes contain deferred routes — treat them as having routes
+  // to prevent the parent layout from being misclassified as orphan,
+  // which would clear its parent pointer and break the middleware chain.
+  if (item.type === "include") return true;
   if (item.type === "cache" && item.uses) {
     return item.uses.some((child) => hasRoutesInItem(child));
   }

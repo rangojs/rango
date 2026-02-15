@@ -705,8 +705,61 @@ describe("route tree inspection", () => {
     // of AuthLayout. Since lazy includes capture AuthLayout as parent,
     // the middleware chain traverses from AuthLayout upward.
     const chain = tree.middlewareChain("api.detail");
-    // AuthLayout itself has no middleware, but its ancestors do via parent chain
-    expect(chain.length).toBeGreaterThanOrEqual(0);
+    // authMw on RootLayout must be reachable through the parent chain
+    expect(chain).toEqual([
+      { segmentId: "M0L0L0", count: 1 },
+    ]);
+
+    // AuthLayout's parent must NOT be null — it must point to RootLayout
+    // so the middleware chain is intact
+    const authLayout = detailEntry.parent!;
+    expect(authLayout.parent).not.toBeNull();
+    expect(authLayout.parent!.shortCode).toBe("M0L0L0");
+  });
+
+  it("layout with middleware and only include children preserves middleware chain", () => {
+    const blogPatterns = urls(({ path }) => [
+      path("/", BlogIndex, { name: "index" }),
+      path("/:slug", BlogPost, { name: "post" }),
+    ]);
+
+    const tree = buildRouteTree(
+      urls(({ path, layout, include, middleware }) => [
+        layout(RootLayout, () => [
+          middleware(logMiddleware),
+          path("/", HomePage, { name: "home" }),
+          layout(AuthLayout, () => [
+            middleware(authMiddleware),
+            include("/blog", blogPatterns, { name: "blog" }),
+          ]),
+        ]),
+      ]),
+    );
+
+    // Routes include both direct and included routes
+    expect(tree.routeNames()).toEqual(
+      expect.arrayContaining(["home", "blog.index", "blog.post"]),
+    );
+
+    // AuthLayout must NOT be orphaned — it has include children with routes
+    const postEntry = tree.entry("blog.post")!;
+    expect(postEntry.parent!.type).toBe("layout"); // AuthLayout
+    expect(postEntry.parent!.parent).not.toBeNull(); // parent chain intact
+    expect(postEntry.parent!.middleware).toHaveLength(1);
+    expect(postEntry.parent!.middleware[0]).toBe(authMiddleware);
+
+    // Full middleware chain: logMw (RootLayout) + authMw (AuthLayout)
+    const chain = tree.middlewareChain("blog.post");
+    expect(chain).toEqual([
+      { segmentId: "M0L0L0", count: 1 },   // logMw on RootLayout
+      { segmentId: "M0L0L0L0", count: 1 },  // authMw on AuthLayout
+    ]);
+
+    // Home route only gets logMw (not under AuthLayout)
+    const homeChain = tree.middlewareChain("home");
+    expect(homeChain).toEqual([
+      { segmentId: "M0L0L0", count: 1 },
+    ]);
   });
 
   // -------------------------------------------------------------------------
