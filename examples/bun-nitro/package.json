@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && nitro build",
+    "build": "vite build",
     "deploy": "npx vercel deploy --prebuilt --prod"
   },
   "dependencies": {
@@ -19,8 +19,7 @@
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "latest",
-    "h3": "^1.15.3",
-    "nitropack": "^2.11.12",
+    "nitro": "^3.0.1-alpha.2",
     "typescript": "^5.9.3",
     "vite": "catalog:"
   }
