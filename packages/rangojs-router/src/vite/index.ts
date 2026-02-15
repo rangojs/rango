@@ -109,9 +109,8 @@ interface RangoBaseOptions {
   banner?: boolean;
 
   /**
-   * Generate static route type files (.gen.ts) by parsing url modules at startup.
-   * Creates per-module route maps and per-router named-routes.gen.ts for type-safe
-   * Handler<"name", routes> and href() without executing router code.
+   * Generate named-routes.gen.ts by parsing url modules at startup.
+   * Provides type-safe Handler<"name"> and href() without executing router code.
    * Set to `false` to disable (run `npx rango extract-names` manually instead).
    * @default true
    */
@@ -1169,8 +1168,8 @@ function createRouterDiscoveryPlugin(
         res.end("No prerender match");
       });
 
-      // Watch url module and router files for changes and regenerate route types.
-      // Process files containing urls( (per-module types) or createRouter( (per-router types).
+      // Watch url module and router files for changes and regenerate named-routes.gen.ts.
+      // Process files containing urls( or createRouter( to update the combined route map.
       if (opts?.staticRouteTypesGeneration !== false) {
         server.watcher.on("change", (filePath) => {
           if (filePath.endsWith(".gen.ts")) return;
