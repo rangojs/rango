@@ -1147,6 +1147,17 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     result.some((item) => hasRoutesInItem(item));
 
   if (!hasRoutes) {
+    // Orphan layouts must not contain other layouts as children.
+    // If we're here, all child layouts are also orphan (if any had routes,
+    // hasRoutesInItem would have returned true). Nested orphan chains are
+    // confusing — use sibling orphan layouts instead.
+    if (result) {
+      invariant(
+        !result.some((item) => item?.type === "layout"),
+        `orphan layout cannot contain other layouts as children [${namespace}]`
+      );
+    }
+
     const parent = ctx.parent;
 
     // Allow orphan layouts at root level if they're part of map() builder result

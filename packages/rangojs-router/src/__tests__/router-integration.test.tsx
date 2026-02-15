@@ -819,7 +819,29 @@ describe("route tree inspection", () => {
     expect(orphan.loading).toBe(LoadingSpinner);
   });
 
-  it("nested orphan layouts stack as composable wrappers", () => {
+  it("orphan layout containing another orphan layout throws", () => {
+    const Wrapper1 = (<div>w1</div>) as React.ReactNode;
+    const Wrapper2 = (<div>w2</div>) as React.ReactNode;
+
+    expect(() =>
+      buildRouteTree(
+        urls(({ path, layout, middleware, loading }) => [
+          layout(RootLayout, () => [
+            layout(Wrapper1, () => [
+              middleware(logMiddleware),
+              layout(Wrapper2, () => [
+                middleware(authMiddleware),
+                loading(LoadingSpinner),
+              ]),
+            ]),
+            path("/", HomePage, { name: "home" }),
+          ]),
+        ]),
+      ),
+    ).toThrow("orphan layout cannot contain other layouts as children");
+  });
+
+  it("sibling orphan layouts stack as composable wrappers", () => {
     const Wrapper1 = (<div>w1</div>) as React.ReactNode;
     const Wrapper2 = (<div>w2</div>) as React.ReactNode;
 
@@ -828,10 +850,10 @@ describe("route tree inspection", () => {
         layout(RootLayout, () => [
           layout(Wrapper1, () => [
             middleware(logMiddleware),
-            layout(Wrapper2, () => [
-              middleware(authMiddleware),
-              loading(LoadingSpinner),
-            ]),
+          ]),
+          layout(Wrapper2, () => [
+            middleware(authMiddleware),
+            loading(LoadingSpinner),
           ]),
           path("/", HomePage, { name: "home" }),
         ]),
@@ -843,26 +865,24 @@ describe("route tree inspection", () => {
     const homeEntry = tree.entry("home")!;
     const rootLayout = homeEntry.parent!;
 
-    // Wrapper1 is an orphan layout on RootLayout
-    expect(rootLayout.layout).toHaveLength(1);
+    // Both wrappers are sibling orphan layouts on RootLayout
+    expect(rootLayout.layout).toHaveLength(2);
     const wrapper1 = rootLayout.layout[0];
+    const wrapper2 = rootLayout.layout[1];
     expect(wrapper1.type).toBe("layout");
+    expect(wrapper2.type).toBe("layout");
     expect(wrapper1.parent).toBeNull();
+    expect(wrapper2.parent).toBeNull();
+
     expect(wrapper1.middleware).toHaveLength(1);
     expect(wrapper1.middleware[0]).toBe(logMiddleware);
     expect(wrapper1.shortCode).toBe("M0L0L0L0");
 
-    // Wrapper2 is an orphan layout nested inside Wrapper1
-    expect(wrapper1.layout).toHaveLength(1);
-    const wrapper2 = wrapper1.layout[0];
-    expect(wrapper2.type).toBe("layout");
-    expect(wrapper2.parent).toBeNull();
     expect(wrapper2.middleware).toHaveLength(1);
     expect(wrapper2.middleware[0]).toBe(authMiddleware);
     expect(wrapper2.loading).toBe(LoadingSpinner);
-    expect(wrapper2.shortCode).toBe("M0L0L0L0L0");
+    expect(wrapper2.shortCode).toBe("M0L0L0L1");
 
-    // At runtime: RootLayout → Wrapper1 (logMw) → Wrapper2 (authMw, loading) → home
     expect(homeEntry.shortCode).toBe("M0L0L0R0");
   });
 
@@ -1141,9 +1161,9 @@ describe("route tree inspection", () => {
               loading(InnerLoading),
               loader(DeepLoader),
               parallel({ "@panelA": PanelA, "@panelB": PanelB }),
-              layout(DeepLayout, () => [
-                middleware(authMiddleware),
-              ]),
+            ]),
+            layout(DeepLayout, () => [
+              middleware(authMiddleware),
             ]),
           ]),
         ]),
@@ -1164,11 +1184,12 @@ describe("route tree inspection", () => {
     expect(entry.loader[0].loader).toBe(ComplexLoader);
     expect(entry.loading).toBe(LoadingSpinner);
 
-    // The child layouts inside path() wrap the route.
-    // InnerLayout is in the route's layout array (wraps the route content).
-    expect(entry.layout).toHaveLength(1);
+    // Both orphan layouts are siblings on the route's layout array
+    expect(entry.layout).toHaveLength(2);
     const innerLayout = entry.layout[0];
+    const deepLayout = entry.layout[1];
     expect(innerLayout.type).toBe("layout");
+    expect(deepLayout.type).toBe("layout");
 
     // InnerLayout carries its own loading and loader
     expect(innerLayout.loading).toBe(InnerLoading);
@@ -1184,24 +1205,18 @@ describe("route tree inspection", () => {
       expect.arrayContaining(["@panelA", "@panelB"]),
     );
 
-    // DeepLayout is nested inside InnerLayout
-    expect(innerLayout.layout).toHaveLength(1);
-    const deepLayout = innerLayout.layout[0];
-    expect(deepLayout.type).toBe("layout");
+    // DeepLayout carries middleware (no nested orphan layouts)
+    expect(innerLayout.layout).toHaveLength(0);
     expect(deepLayout.middleware).toHaveLength(1);
     expect(deepLayout.middleware[0]).toBe(authMiddleware);
 
     // Segment IDs: route is under RootLayout
     expect(tree.segmentId("complex.very")).toBe("M0L0L0R0");
 
-    // InnerLayout gets an L shortCode under the route
-    expect(innerLayout.shortCode).toMatch(/^M0L0L0R0L/);
-
-    // DeepLayout is nested under InnerLayout
-    expect(deepLayout.shortCode).toMatch(/^M0L0L0R0L\d+L/);
-
-    // Parallel gets a P shortCode under InnerLayout
-    expect(parallelEntry.shortCode).toMatch(/^M0L0L0R0L\d+P/);
+    // Both layouts get L shortCodes directly under the route
+    expect(innerLayout.shortCode).toBe("M0L0L0R0L0");
+    expect(deepLayout.shortCode).toBe("M0L0L0R0L1");
+    expect(parallelEntry.shortCode).toBe("M0L0L0R0L0P0");
 
     // Middleware chain for the route: only logMw from RootLayout
     // (authMw is on DeepLayout which wraps inside the route, not in parent chain)
@@ -1209,15 +1224,6 @@ describe("route tree inspection", () => {
     expect(chain).toEqual([
       { segmentId: "M0L0L0", count: 1 },
     ]);
-
-    // Full segment structure under the route:
-    // Route (M0L0L0R0)
-    //   └── InnerLayout (M0L0L0R0L0) — loading, loader, parallel
-    //         ├── Parallel (@panelA, @panelB) — M0L0L0R0L0P0
-    //         └── DeepLayout (M0L0L0R0L0L0) — middleware
-    expect(innerLayout.shortCode).toBe("M0L0L0R0L0");
-    expect(parallelEntry.shortCode).toBe("M0L0L0R0L0P0");
-    expect(deepLayout.shortCode).toBe("M0L0L0R0L0L0");
   });
 
   it("complex app: cache + parallel + nested layouts + intercept", () => {
