@@ -39,6 +39,10 @@ import { staticContentPatterns } from "./pages/static-content-urls.js";
 import { ApiDemoPage } from "./pages/api-demo.js";
 import { SearchPage } from "./pages/search.js";
 import { transformCasesPatterns } from "./pages/transform-cases.js";
+import { createDocsPatterns } from "@shared/docs";
+import { docsArticles } from "./docs-content.js";
+
+const docsPatterns = createDocsPatterns({ articles: docsArticles });
 
 /**
  * Main URL patterns - Django-style routing API
@@ -233,6 +237,9 @@ export const urlpatterns = urls(
 
         // Static content (Static: layout + index rendered once at build time)
         include("/static-content", staticContentPatterns, { name: "staticContent" }),
+
+        // Composable docs package (demonstrates include + factory pattern)
+        include("/docs", docsPatterns, { name: "docs" }),
 
         // Transform coverage routes (alias imports + export specifiers)
         include("/transform-cases", transformCasesPatterns, {
