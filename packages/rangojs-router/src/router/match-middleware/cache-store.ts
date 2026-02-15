@@ -105,7 +105,6 @@ import { getRequestContext } from "../../server/request-context.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
 import type { GeneratorMiddleware } from "./cache-lookup.js";
-import { debugLog, debugWarn } from "../logging.js";
 
 /**
  * Creates cache store middleware
@@ -173,7 +172,7 @@ export function withCacheStore<TEnv>(
     requestCtx.onResponse((response) => {
       // Only cache successful responses
       if (response.status !== 200) {
-        debugLog("cacheStore", "skipping cache for non-200 response", {
+        console.log(`[cacheStore] skipping cache for non-200 response`, {
           status: response.status,
           pathname: ctx.pathname,
         });
@@ -184,7 +183,7 @@ export function withCacheStore<TEnv>(
         // Proactive caching: render all segments fresh in background
         // This ensures cache has complete components for future requests
         requestCtx.waitUntil(async () => {
-          debugLog("cacheStore", "proactive caching started", {
+          console.log(`[cacheStore] proactive caching started`, {
             pathname: ctx.pathname,
           });
           try {
@@ -245,11 +244,11 @@ export function withCacheStore<TEnv>(
               completeSegments,
               ctx.isIntercept,
             );
-            debugLog("cacheStore", "proactive caching complete", {
+            console.log(`[cacheStore] proactive caching complete`, {
               pathname: ctx.pathname,
             });
           } catch (error) {
-            debugWarn("cacheStore", "proactive caching failed", {
+            console.warn(`[cacheStore] proactive caching failed`, {
               pathname: ctx.pathname,
               error: String(error),
             });
