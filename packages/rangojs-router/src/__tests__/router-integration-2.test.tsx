@@ -355,7 +355,6 @@ describe("route definition edge cases", () => {
           urls(({ path, layout }) => [
             layout(RootLayout, () => [
               path("/", HomePage, { name: "home" }, () => [
-                // @ts-expect-error - layout not allowed in parallel
                 layout(AuthLayout, () => [
                   layout(RootLayout),
                 ]),
@@ -371,7 +370,7 @@ describe("route definition edge cases", () => {
         buildRouteTree(
           urls(({ path, layout }) => [
             layout(RootLayout, () => [
-              // @ts-expect-error - path callback returns RouteUseItem[] not PathItem[]
+              // @ts-expect-error - RouteItem is not in RouteUseItem
               path("/parent", HomePage, { name: "parent" }, () => [
                 path("/child", AboutPage, { name: "child" }),
               ]),
@@ -386,7 +385,6 @@ describe("route definition edge cases", () => {
         buildRouteTree(
           urls(({ path, layout }) => [
             layout(RootLayout, () => [
-              // @ts-expect-error - path callback with layout wrapping another path
               path("/parent", HomePage, { name: "parent" }, () => [
                 layout(AuthLayout, () => [
                   path("/child", AboutPage, { name: "child" }),
@@ -403,7 +401,6 @@ describe("route definition edge cases", () => {
         buildRouteTree(
           urls(({ path, layout, cache }) => [
             layout(RootLayout, () => [
-              // @ts-expect-error - path callback returns RouteUseItem[]
               path("/parent", HomePage, { name: "parent" }, () => [
                 cache({ ttl: 300 }, () => [
                   path("/child", AboutPage, { name: "child" }),
@@ -433,8 +430,8 @@ describe("route definition edge cases", () => {
         buildRouteTree(
           urls(({ path, layout, when }) => [
             layout(RootLayout, () => [
+              // @ts-expect-error - WhenItem is not in RouteUseItem
               path("/", HomePage, { name: "home" }, () => [
-                // @ts-expect-error - when() is not in RouteUseItem
                 when(() => true),
               ]),
             ]),
