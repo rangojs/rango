@@ -114,17 +114,16 @@ export default defineConfig({
           testMatch: "**/client-component-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
-          // Run after dev and production tests but BEFORE hmr (which corrupts RSC module state)
           dependencies: process.env.CI ? [] : ["dev", "production"],
         },
         {
           name: "hmr",
-          // Only run HMR test files
+          // Only run HMR test files (loader-hmr and route-types-hmr modify server modules
+          // that can corrupt RSC module state, so they run after hmr-client)
           testMatch: ["**/loader-hmr.test.ts", "**/route-types-hmr.test.ts"],
           use: browserConfig,
           // HMR tests modify files, run serially to avoid conflicts
           fullyParallel: false,
-          // Run after client-component HMR tests (loader-hmr/route-types-hmr corrupt RSC module state)
           dependencies: process.env.CI ? [] : ["dev", "production", "hmr-client"],
         },
       ],

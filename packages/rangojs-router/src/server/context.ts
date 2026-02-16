@@ -234,8 +234,15 @@ interface HelperContext {
   /** Tracked includes for build-time manifest generation */
   trackedIncludes?: TrackedInclude[];
 }
+// Use a global symbol key so the AsyncLocalStorage instance survives HMR
+// module re-evaluation. Without this, Vite's RSC module runner may create
+// a new instance when context.ts is re-evaluated, while other modules still
+// hold references to the old instance — causing getStore() to return
+// undefined even inside a run() callback.
+const RSC_CONTEXT_KEY = Symbol.for("rangojs-router:rsc-context");
 export const RSCRouterContext: AsyncLocalStorage<HelperContext> =
-  new AsyncLocalStorage<HelperContext>();
+  (globalThis as any)[RSC_CONTEXT_KEY] ??=
+    new AsyncLocalStorage<HelperContext>();
 
 export const getContext = (): {
   context: AsyncLocalStorage<HelperContext>;
