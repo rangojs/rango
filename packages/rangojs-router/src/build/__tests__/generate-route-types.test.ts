@@ -1,9 +1,18 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { rmSync } from "node:fs";
-import { writeCombinedRouteTypes, generateRouteTypesSource } from "../generate-route-types";
+import {
+  writeCombinedRouteTypes,
+  generateRouteTypesSource,
+  extractRoutesFromSource,
+  extractIncludesFromSource,
+  extractParamsFromPattern,
+  formatRouteEntry,
+  generatePerModuleTypesSource,
+  writePerModuleRouteTypesForFile,
+} from "../generate-route-types";
 
 // Helper: create a minimal urls module that the static parser can extract routes from.
 // The parser looks for path("pattern", ..., { name: "..." }) calls -- it does not
@@ -232,5 +241,510 @@ describe("writeCombinedRouteTypes", () => {
     const afterB = readFileSync(genBPath, "utf-8");
     expect(afterB).toContain("dashboard");
     expect(afterB).toContain("settings");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractParamsFromPattern
+// ---------------------------------------------------------------------------
+
+describe("extractParamsFromPattern", () => {
+  it("returns undefined for patterns without params", () => {
+    expect(extractParamsFromPattern("/")).toBeUndefined();
+    expect(extractParamsFromPattern("/about")).toBeUndefined();
+    expect(extractParamsFromPattern("/api/search")).toBeUndefined();
+  });
+
+  it("extracts required params", () => {
+    expect(extractParamsFromPattern("/:slug")).toEqual({ slug: "string" });
+    expect(extractParamsFromPattern("/:id/items")).toEqual({ id: "string" });
+  });
+
+  it("extracts optional params", () => {
+    expect(extractParamsFromPattern("/:id?")).toEqual({ id: "string?" });
+  });
+
+  it("extracts multiple params", () => {
+    expect(extractParamsFromPattern("/:category/:slug")).toEqual({
+      category: "string",
+      slug: "string",
+    });
+  });
+
+  it("handles params with regex constraints", () => {
+    expect(extractParamsFromPattern("/:id(\\d+)")).toEqual({ id: "string" });
+  });
+
+  it("handles mixed required and optional params", () => {
+    expect(extractParamsFromPattern("/:id/comments/:commentId?")).toEqual({
+      id: "string",
+      commentId: "string?",
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractRoutesFromSource (AST)
+// ---------------------------------------------------------------------------
+
+describe("extractRoutesFromSource", () => {
+  it("extracts named path() calls", () => {
+    const code = `
+      const handler = () => null;
+      path("/", handler, { name: "index" });
+      path("/about", handler, { name: "about" });
+    `;
+    const routes = extractRoutesFromSource(code);
+    expect(routes).toEqual([
+      { name: "index", pattern: "/" },
+      { name: "about", pattern: "/about" },
+    ]);
+  });
+
+  it("skips unnamed path() calls", () => {
+    const code = `
+      path("/", handler);
+      path("/about", handler, { name: "about" });
+    `;
+    const routes = extractRoutesFromSource(code);
+    expect(routes).toHaveLength(1);
+    expect(routes[0].name).toBe("about");
+  });
+
+  it("handles path.json() and path.md() helpers", () => {
+    const code = `
+      path.json("/api/data", handler, { name: "api" });
+      path.md("/docs/readme", handler, { name: "readme" });
+    `;
+    const routes = extractRoutesFromSource(code);
+    expect(routes).toEqual([
+      { name: "api", pattern: "/api/data" },
+      { name: "readme", pattern: "/docs/readme" },
+    ]);
+  });
+
+  it("extracts search schemas", () => {
+    const code = `
+      path("/search", handler, {
+        name: "search",
+        search: { q: "string", page: "number?" },
+      });
+    `;
+    const routes = extractRoutesFromSource(code);
+    expect(routes).toEqual([
+      {
+        name: "search",
+        pattern: "/search",
+        search: { q: "string", page: "number?" },
+      },
+    ]);
+  });
+
+  it("extracts params from pattern", () => {
+    const code = `
+      path("/:slug", handler, { name: "detail" });
+    `;
+    const routes = extractRoutesFromSource(code);
+    expect(routes).toEqual([
+      { name: "detail", pattern: "/:slug", params: { slug: "string" } },
+    ]);
+  });
+
+  it("extracts params and search together", () => {
+    const code = `
+      path("/:id/items", handler, {
+        name: "items",
+        search: { page: "number?" },
+      });
+    `;
+    const routes = extractRoutesFromSource(code);
+    expect(routes).toEqual([
+      {
+        name: "items",
+        pattern: "/:id/items",
+        params: { id: "string" },
+        search: { page: "number?" },
+      },
+    ]);
+  });
+
+  it("handles JSX handlers and multi-line expressions", () => {
+    const code = `
+      path(
+        "/:slug",
+        (ctx) => (
+          <Article
+            article={articles.find((a) => a.slug === ctx.params.slug) ?? null}
+            slug={ctx.params.slug}
+          />
+        ),
+        { name: "detail" },
+      )
+    `;
+    const routes = extractRoutesFromSource(code);
+    expect(routes).toHaveLength(1);
+    expect(routes[0].name).toBe("detail");
+    expect(routes[0].pattern).toBe("/:slug");
+  });
+
+  it("handles paths inside urls() callback", () => {
+    const code = `
+      import { urls } from "@rangojs/router";
+      export const patterns = urls(({ path }) => [
+        path("/", handler, { name: "index" }),
+        path("/:slug", handler, { name: "detail" }),
+      ]);
+    `;
+    const routes = extractRoutesFromSource(code);
+    expect(routes).toHaveLength(2);
+    expect(routes[0]).toEqual({ name: "index", pattern: "/" });
+    expect(routes[1]).toEqual({
+      name: "detail",
+      pattern: "/:slug",
+      params: { slug: "string" },
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractIncludesFromSource (AST)
+// ---------------------------------------------------------------------------
+
+describe("extractIncludesFromSource", () => {
+  it("extracts include() calls with path prefix and variable", () => {
+    const code = `include("/api", apiUrls)`;
+    const includes = extractIncludesFromSource(code);
+    expect(includes).toEqual([
+      { pathPrefix: "/api", variableName: "apiUrls", namePrefix: null },
+    ]);
+  });
+
+  it("extracts include() with name prefix", () => {
+    const code = `include("/api", apiUrls, { name: "api" })`;
+    const includes = extractIncludesFromSource(code);
+    expect(includes).toEqual([
+      { pathPrefix: "/api", variableName: "apiUrls", namePrefix: "api" },
+    ]);
+  });
+
+  it("extracts multiple includes", () => {
+    const code = `
+      include("/api", apiUrls, { name: "api" });
+      include("/docs", docsUrls, { name: "docs" });
+    `;
+    const includes = extractIncludesFromSource(code);
+    expect(includes).toHaveLength(2);
+    expect(includes[0].variableName).toBe("apiUrls");
+    expect(includes[1].variableName).toBe("docsUrls");
+  });
+
+  it("skips include() with non-string first arg", () => {
+    const code = `include(variable, apiUrls)`;
+    const includes = extractIncludesFromSource(code);
+    expect(includes).toHaveLength(0);
+  });
+
+  it("skips include() with non-identifier second arg", () => {
+    const code = `include("/api", "not-an-identifier")`;
+    const includes = extractIncludesFromSource(code);
+    expect(includes).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatRouteEntry
+// ---------------------------------------------------------------------------
+
+describe("formatRouteEntry", () => {
+  it("formats plain routes as strings", () => {
+    expect(formatRouteEntry("index", "/")).toBe('  index: "/",');
+    expect(formatRouteEntry("about", "/about")).toBe('  about: "/about",');
+  });
+
+  it("formats routes with params as plain strings (params extracted at type level)", () => {
+    expect(formatRouteEntry("detail", "/:slug", { slug: "string" })).toBe(
+      '  detail: "/:slug",'
+    );
+  });
+
+  it("formats routes with search as objects", () => {
+    expect(
+      formatRouteEntry("search", "/search", undefined, { q: "string" })
+    ).toBe('  search: { path: "/search", search: { q: "string" } },');
+  });
+
+  it("formats routes with params and search as objects with search only", () => {
+    expect(
+      formatRouteEntry("items", "/:id/items", { id: "string" }, { page: "number?" })
+    ).toBe(
+      '  items: { path: "/:id/items", search: { page: "number?" } },'
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Consistency: per-module vs named-routes output
+// ---------------------------------------------------------------------------
+
+describe("per-module vs named-routes consistency", () => {
+  it("produces same route entries for static patterns", () => {
+    const source = `
+      path("/", handler, { name: "index" });
+      path("/about", handler, { name: "about" });
+    `;
+    const routes = extractRoutesFromSource(source);
+    const perModule = generatePerModuleTypesSource(routes);
+
+    const manifest: Record<string, string> = {};
+    for (const r of routes) manifest[r.name] = r.pattern;
+    const namedRoutes = generateRouteTypesSource(manifest);
+
+    // Both should contain the same route entries (different wrapper structure)
+    expect(perModule).toContain('about: "/about"');
+    expect(namedRoutes).toContain('about: "/about"');
+    expect(perModule).toContain('index: "/"');
+    expect(namedRoutes).toContain('index: "/"');
+  });
+
+  it("produces same route entries for parameterized patterns", () => {
+    const source = `
+      path("/:slug", handler, { name: "detail" });
+      path("/:id/items", handler, {
+        name: "items",
+        search: { page: "number?" },
+      });
+    `;
+    const routes = extractRoutesFromSource(source);
+    const perModule = generatePerModuleTypesSource(routes);
+
+    const manifest: Record<string, string> = {};
+    const searchSchemas: Record<string, Record<string, string>> = {};
+    for (const r of routes) {
+      manifest[r.name] = r.pattern;
+      if (r.search) searchSchemas[r.name] = r.search;
+    }
+    const namedRoutes = generateRouteTypesSource(manifest, searchSchemas);
+
+    // Parameterized routes without search stay as plain strings
+    expect(perModule).toContain('detail: "/:slug"');
+    expect(namedRoutes).toContain('detail: "/:slug"');
+
+    // Routes with search use object format (params excluded, extracted at type level)
+    const itemsEntry = 'items: { path: "/:id/items", search: { page: "number?" } }';
+    expect(perModule).toContain(itemsEntry);
+    expect(namedRoutes).toContain(itemsEntry);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// writePerModuleRouteTypesForFile with recursive includes
+// ---------------------------------------------------------------------------
+
+describe("writePerModuleRouteTypesForFile with includes", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "per-module-includes-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("follows include() to a sub-module and merges routes", () => {
+    // Sub-module with API routes
+    const apiPath = join(tempDir, "api-urls.ts");
+    writeFileSync(apiPath, `import { urls } from "@rangojs/router";
+const handler = () => null;
+export const apiUrls = urls(({ path }) => [
+  path("/users", handler, { name: "users" }),
+  path("/posts", handler, { name: "posts" }),
+]);
+`);
+
+    // Main module that includes the sub-module
+    const mainPath = join(tempDir, "urls.ts");
+    writeFileSync(mainPath, `import { urls } from "@rangojs/router";
+import { apiUrls } from "./api-urls.js";
+const handler = () => null;
+export const patterns = urls(({ path, include }) => [
+  path("/", handler, { name: "index" }),
+  include("/api", apiUrls, { name: "api" }),
+]);
+`);
+
+    writePerModuleRouteTypesForFile(mainPath);
+
+    const genPath = mainPath.replace(/\.ts$/, ".gen.ts");
+    expect(existsSync(genPath)).toBe(true);
+
+    const content = readFileSync(genPath, "utf-8");
+    // Local route
+    expect(content).toContain('index: "/"');
+    // Included routes with prefixes
+    expect(content).toContain("api.users");
+    expect(content).toContain("/api/users");
+    expect(content).toContain("api.posts");
+    expect(content).toContain("/api/posts");
+  });
+
+  it("follows multi-level includes (A -> B -> C)", () => {
+    // Level C: leaf routes
+    const cPath = join(tempDir, "c-urls.ts");
+    writeFileSync(cPath, `import { urls } from "@rangojs/router";
+const handler = () => null;
+export const cUrls = urls(({ path }) => [
+  path("/leaf", handler, { name: "leaf" }),
+]);
+`);
+
+    // Level B: includes C
+    const bPath = join(tempDir, "b-urls.ts");
+    writeFileSync(bPath, `import { urls } from "@rangojs/router";
+import { cUrls } from "./c-urls.js";
+const handler = () => null;
+export const bUrls = urls(({ path, include }) => [
+  path("/mid", handler, { name: "mid" }),
+  include("/nested", cUrls, { name: "nested" }),
+]);
+`);
+
+    // Level A: includes B
+    const aPath = join(tempDir, "urls.ts");
+    writeFileSync(aPath, `import { urls } from "@rangojs/router";
+import { bUrls } from "./b-urls.js";
+const handler = () => null;
+export const patterns = urls(({ path, include }) => [
+  path("/", handler, { name: "index" }),
+  include("/b", bUrls, { name: "b" }),
+]);
+`);
+
+    writePerModuleRouteTypesForFile(aPath);
+
+    const genPath = aPath.replace(/\.ts$/, ".gen.ts");
+    const content = readFileSync(genPath, "utf-8");
+
+    // Local route
+    expect(content).toContain('index: "/"');
+    // Level B route with prefix
+    expect(content).toContain("b.mid");
+    expect(content).toContain("/b/mid");
+    // Level C route with chained prefixes
+    expect(content).toContain("b.nested.leaf");
+    expect(content).toContain("/b/nested/leaf");
+  });
+
+  it("handles circular includes without infinite loop and warns", () => {
+    // Module A includes B, module B includes A
+    const aPath = join(tempDir, "a-urls.ts");
+    const bPath = join(tempDir, "b-urls.ts");
+
+    writeFileSync(aPath, `import { urls } from "@rangojs/router";
+import { bUrls } from "./b-urls.js";
+const handler = () => null;
+export const aUrls = urls(({ path, include }) => [
+  path("/a-route", handler, { name: "aRoute" }),
+  include("/b", bUrls, { name: "b" }),
+]);
+`);
+
+    writeFileSync(bPath, `import { urls } from "@rangojs/router";
+import { aUrls } from "./a-urls.js";
+const handler = () => null;
+export const bUrls = urls(({ path, include }) => [
+  path("/b-route", handler, { name: "bRoute" }),
+  include("/a", aUrls, { name: "a" }),
+]);
+`);
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // Should not hang or throw — the visited set breaks the cycle
+    writePerModuleRouteTypesForFile(aPath);
+
+    const genPath = aPath.replace(/\.ts$/, ".gen.ts");
+    const content = readFileSync(genPath, "utf-8");
+
+    // A's own route
+    expect(content).toContain("aRoute");
+    // B's route included from A
+    expect(content).toContain("b.bRoute");
+
+    // Should warn about the circular reference
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Circular include detected")
+    );
+
+    warnSpy.mockRestore();
+  });
+
+  it("includes params from sub-module parameterized routes", () => {
+    const subPath = join(tempDir, "detail-urls.ts");
+    writeFileSync(subPath, `import { urls } from "@rangojs/router";
+const handler = () => null;
+export const detailUrls = urls(({ path }) => [
+  path("/:slug", handler, { name: "detail" }),
+]);
+`);
+
+    const mainPath = join(tempDir, "urls.ts");
+    writeFileSync(mainPath, `import { urls } from "@rangojs/router";
+import { detailUrls } from "./detail-urls.js";
+const handler = () => null;
+export const patterns = urls(({ path, include }) => [
+  path("/", handler, { name: "index" }),
+  include("/docs", detailUrls, { name: "docs" }),
+]);
+`);
+
+    writePerModuleRouteTypesForFile(mainPath);
+
+    const genPath = mainPath.replace(/\.ts$/, ".gen.ts");
+    const content = readFileSync(genPath, "utf-8");
+
+    // The included route should have the combined prefix + pattern with param
+    expect(content).toContain('"docs.detail": "/docs/:slug",');
+  });
+
+  it("falls back to direct extraction when no urls() variable exists", () => {
+    // File with path() calls but no urls() variable assignment
+    const filePath = join(tempDir, "urls.ts");
+    writeFileSync(filePath, `import { urls } from "@rangojs/router";
+const handler = () => null;
+export default urls(({ path }) => [
+  path("/", handler, { name: "index" }),
+]);
+`);
+
+    writePerModuleRouteTypesForFile(filePath);
+
+    const genPath = filePath.replace(/\.ts$/, ".gen.ts");
+    expect(existsSync(genPath)).toBe(true);
+    const content = readFileSync(genPath, "utf-8");
+    expect(content).toContain('index: "/"');
+  });
+
+  it("handles same-file includes (no import needed)", () => {
+    const filePath = join(tempDir, "urls.ts");
+    writeFileSync(filePath, `import { urls } from "@rangojs/router";
+const handler = () => null;
+const apiUrls = urls(({ path }) => [
+  path("/users", handler, { name: "users" }),
+]);
+export const patterns = urls(({ path, include }) => [
+  path("/", handler, { name: "index" }),
+  include("/api", apiUrls, { name: "api" }),
+]);
+`);
+
+    writePerModuleRouteTypesForFile(filePath);
+
+    const genPath = filePath.replace(/\.ts$/, ".gen.ts");
+    const content = readFileSync(genPath, "utf-8");
+
+    expect(content).toContain('index: "/"');
+    expect(content).toContain("api.users");
+    expect(content).toContain("/api/users");
   });
 });

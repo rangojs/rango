@@ -53,3 +53,65 @@ export default createRouter({ document: Document }).urls(urlpatterns);
 ```
 
 Use `/typesafety` for type-safe href and environment setup.
+
+## CLI: `npx rango generate`
+
+Single command to generate `.gen.ts` route type files. Auto-detects file type and
+generates the appropriate output.
+
+```bash
+# Single file
+npx rango generate src/urls.tsx
+
+# Multiple files
+npx rango generate src/router.tsx src/urls.tsx
+
+# Directory (recursive scan)
+npx rango generate src/
+
+# Mix of files and directories
+npx rango generate src/urls.tsx src/api/
+```
+
+### Auto-detection
+
+Each file is classified by its contents:
+
+| Contains | Generated output |
+|----------|-----------------|
+| `urls(` | Per-module `*.gen.ts` with route names, patterns, params, search |
+| `createRouter` | Per-router `*.named-routes.gen.ts` with global route map |
+| Both | Both files |
+
+Directories are scanned recursively for `.ts`/`.tsx` files, skipping `node_modules`,
+dotfiles, and existing `.gen.` files.
+
+### Recursive includes
+
+The generator follows `include()` calls across files, resolving imports to build
+the full route tree. Circular includes are detected and warned about.
+
+### First-wins deduplication
+
+When a route name appears more than once, the first definition wins and duplicates
+are dropped with a warning. This applies only to the generated `.gen.ts` type files.
+Define the primary route before any fallback variant that reuses the same name.
+
+Content negotiation (see `/mime-routes`) is unaffected — negotiated routes use
+distinct names (e.g. `"product"` and `"productJson"`) and the Accept header
+dispatching happens at runtime in the trie, not in the type generator.
+
+### Limitations
+
+The CLI uses static source analysis (AST walking), not runtime execution. It cannot
+extract routes defined dynamically:
+
+- `Array.from()` or `.map()` generating path() calls
+- Conditional routes behind `import.meta.env` or feature flags
+- Routes computed from external data (databases, config files)
+- Template literal patterns with interpolated variables
+
+These routes are only discovered by the Vite plugin's runtime discovery during
+`pnpm dev` or `pnpm build`. The CLI-generated `.gen.ts` may have fewer routes
+than the runtime-generated version. During dev, the `preserveIfLarger` guard
+prevents the static parser from overwriting a larger runtime-discovered file.

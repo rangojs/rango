@@ -2,37 +2,160 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from
 import { join, dirname, resolve, relative, basename as pathBasename } from "node:path";
 // @ts-ignore -- picomatch ships no .d.ts; types are trivial
 import picomatch from "picomatch";
+import ts from "typescript";
+
+// ---------------------------------------------------------------------------
+// AST helpers
+// ---------------------------------------------------------------------------
+
+function getStringValue(node: ts.Node): string | null {
+  if (ts.isStringLiteral(node)) return node.text;
+  if (ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  return null;
+}
+
+function extractObjectStringProperties(node: ts.ObjectLiteralExpression): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const prop of node.properties) {
+    if (!ts.isPropertyAssignment(prop)) continue;
+    const key = ts.isIdentifier(prop.name) ? prop.name.text
+      : ts.isStringLiteral(prop.name) ? prop.name.text
+      : null;
+    if (!key) continue;
+    const val = getStringValue(prop.initializer);
+    if (val !== null) result[key] = val;
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Param extraction from route patterns
+// ---------------------------------------------------------------------------
 
 /**
- * Extract route definitions from source code by statically parsing path() calls.
- * No code execution needed -- works on raw source text.
- *
- * Handles multi-line handlers with JSX, nested braces, string literals,
- * and comments. Skips unnamed paths (no { name: "..." }).
+ * Extract typed params from a route pattern string.
+ * Matches `:paramName` and `:paramName?` (optional).
+ * Custom regex constraints like `:id(\d+)` are ignored for type purposes.
+ */
+export function extractParamsFromPattern(pattern: string): Record<string, string> | undefined {
+  const params: Record<string, string> = {};
+  const regex = /:([a-zA-Z_$][\w$]*)(?:\([^)]+\))?(\?)?/g;
+  let match;
+  while ((match = regex.exec(pattern)) !== null) {
+    params[match[1]!] = match[2] ? "string?" : "string";
+  }
+  return Object.keys(params).length > 0 ? params : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Shared route entry formatter
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a single route entry for codegen output.
+ * Routes without search remain plain strings (params are extracted from
+ * the pattern at the type level by ExtractParams).
+ * Routes with search become objects with path and search fields.
+ */
+export function formatRouteEntry(
+  key: string,
+  pattern: string,
+  _params?: Record<string, string>,
+  search?: Record<string, string>,
+): string {
+  const hasSearch = search && Object.keys(search).length > 0;
+
+  if (!hasSearch) {
+    return `  ${key}: "${pattern}",`;
+  }
+
+  const searchBody = Object.entries(search!)
+    .map(([k, v]) => `${k}: "${v}"`)
+    .join(", ");
+  return `  ${key}: { path: "${pattern}", search: { ${searchBody} } },`;
+}
+
+// ---------------------------------------------------------------------------
+// AST-based route extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract route definitions from source code by walking the TypeScript AST.
+ * Finds path() and path.json(), path.md(), etc. call expressions and extracts
+ * the pattern, name, params, and optional search schema from each.
+ * Skips unnamed paths (no { name: "..." }).
  */
 export function extractRoutesFromSource(
   code: string
-): Array<{ name: string; pattern: string; search?: Record<string, string> }> {
-  const routes: Array<{ name: string; pattern: string; search?: Record<string, string> }> = [];
-  // Match `path(...)` and typed helpers like `path.json(...)`, `path.md(...)`.
-  // Keep this generic so new helpers are picked up without parser updates.
-  const regex = /\bpath(?:\.[a-zA-Z_$][\w$]*)?\s*\(/g;
-  let match;
+): Array<{ name: string; pattern: string; params?: Record<string, string>; search?: Record<string, string> }> {
+  const sourceFile = ts.createSourceFile("input.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const routes: Array<{ name: string; pattern: string; params?: Record<string, string>; search?: Record<string, string> }> = [];
 
-  while ((match = regex.exec(code)) !== null) {
-    const result = parsePathCall(code, match.index + match[0].length);
-    if (result) routes.push(result);
+  function visit(node: ts.Node) {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      const isPath =
+        (ts.isIdentifier(callee) && callee.text === "path") ||
+        (ts.isPropertyAccessExpression(callee) &&
+         ts.isIdentifier(callee.expression) && callee.expression.text === "path");
+
+      if (isPath && node.arguments.length >= 1) {
+        const route = extractRouteFromCallExpression(node);
+        if (route) routes.push(route);
+      }
+    }
+    ts.forEachChild(node, visit);
   }
 
+  visit(sourceFile);
   return routes;
 }
+
+function extractRouteFromCallExpression(
+  node: ts.CallExpression
+): { name: string; pattern: string; params?: Record<string, string>; search?: Record<string, string> } | null {
+  const patternNode = node.arguments[0];
+  const pattern = getStringValue(patternNode);
+  if (pattern === null) return null;
+
+  let name: string | null = null;
+  let search: Record<string, string> | undefined;
+
+  for (let i = 1; i < node.arguments.length; i++) {
+    const arg = node.arguments[i];
+    if (ts.isObjectLiteralExpression(arg)) {
+      for (const prop of arg.properties) {
+        if (!ts.isPropertyAssignment(prop)) continue;
+        const propName = ts.isIdentifier(prop.name) ? prop.name.text : null;
+        if (propName === "name") {
+          name = getStringValue(prop.initializer);
+        } else if (propName === "search" && ts.isObjectLiteralExpression(prop.initializer)) {
+          search = extractObjectStringProperties(prop.initializer);
+        }
+      }
+    }
+  }
+
+  if (!name) return null;
+  const params = extractParamsFromPattern(pattern);
+  return {
+    name,
+    pattern,
+    ...(params ? { params } : {}),
+    ...(search && Object.keys(search).length > 0 ? { search } : {}),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Code generation
+// ---------------------------------------------------------------------------
 
 /**
  * Generate a per-module types file from extracted routes.
  * Output has zero imports, preventing circular references.
  */
 export function generatePerModuleTypesSource(
-  routes: Array<{ name: string; pattern: string; search?: Record<string, string> }>
+  routes: Array<{ name: string; pattern: string; params?: Record<string, string>; search?: Record<string, string> }>
 ): string {
   const valid = routes.filter(({ name }) => {
     if (!name || /["'\\`\n\r]/.test(name)) {
@@ -42,296 +165,24 @@ export function generatePerModuleTypesSource(
     return true;
   });
 
-  // Deduplicate by name (last definition wins for same name)
-  const deduped = new Map<string, { pattern: string; search?: Record<string, string> }>();
-  for (const { name, pattern, search } of valid) {
-    deduped.set(name, { pattern, search });
+  // Deduplicate by name (first definition wins — primary route before variants)
+  const deduped = new Map<string, { pattern: string; params?: Record<string, string>; search?: Record<string, string> }>();
+  for (const { name, pattern, params, search } of valid) {
+    if (deduped.has(name)) {
+      console.warn(`[rsc-router] Duplicate route name "${name}" — keeping first definition`);
+      continue;
+    }
+    deduped.set(name, { pattern, params, search });
   }
   const sorted = [...deduped.entries()]
     .sort(([a], [b]) => a.localeCompare(b));
   const body = sorted
-    .map(([name, { pattern, search }]) => {
-      // Quote names that aren't valid bare identifiers (dots, dashes, etc.)
+    .map(([name, { pattern, params, search }]) => {
       const key = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(name) ? name : `"${name}"`;
-      if (search && Object.keys(search).length > 0) {
-        const searchBody = Object.entries(search)
-          .map(([k, v]) => `${k}: "${v}"`)
-          .join(", ");
-        return `  ${key}: { path: "${pattern}", search: { ${searchBody} } },`;
-      }
-      return `  ${key}: "${pattern}",`;
+      return formatRouteEntry(key, pattern, params, search);
     })
     .join("\n");
   return `// Auto-generated by @rangojs/router - do not edit\nexport const routes = {\n${body}\n} as const;\nexport type routes = typeof routes;\n`;
-}
-
-// ---------------------------------------------------------------------------
-// Mini-parser internals
-// ---------------------------------------------------------------------------
-
-function isWhitespace(ch: string): boolean {
-  return ch === " " || ch === "\t" || ch === "\n" || ch === "\r";
-}
-
-/** Read a single- or double-quoted string literal starting at pos. */
-function readString(
-  code: string,
-  pos: number
-): { value: string; end: number } | null {
-  const quote = code[pos];
-  if (quote !== '"' && quote !== "'") return null;
-
-  let value = "";
-  pos++;
-  while (pos < code.length) {
-    if (code[pos] === "\\") {
-      pos++;
-      if (pos < code.length) {
-        value += code[pos];
-        pos++;
-      }
-      continue;
-    }
-    if (code[pos] === quote) {
-      return { value, end: pos + 1 };
-    }
-    value += code[pos];
-    pos++;
-  }
-  return null;
-}
-
-/** Skip past any string literal (single, double, or template). */
-function skipStringLiteral(code: string, pos: number): number {
-  const quote = code[pos];
-
-  if (quote === "`") {
-    pos++;
-    while (pos < code.length) {
-      if (code[pos] === "\\") {
-        pos += 2;
-        continue;
-      }
-      if (code[pos] === "`") return pos + 1;
-      if (code[pos] === "$" && pos + 1 < code.length && code[pos + 1] === "{") {
-        pos += 2;
-        let braceDepth = 1;
-        while (pos < code.length && braceDepth > 0) {
-          if (code[pos] === "{") braceDepth++;
-          else if (code[pos] === "}") braceDepth--;
-          else if (code[pos] === "\\") pos++;
-          else if (
-            code[pos] === '"' ||
-            code[pos] === "'" ||
-            code[pos] === "`"
-          ) {
-            pos = skipStringLiteral(code, pos);
-            continue;
-          }
-          if (braceDepth > 0) pos++;
-        }
-        continue;
-      }
-      pos++;
-    }
-    return pos;
-  }
-
-  // Simple single/double quoted string
-  pos++;
-  while (pos < code.length) {
-    if (code[pos] === "\\") {
-      pos += 2;
-      continue;
-    }
-    if (code[pos] === quote) return pos + 1;
-    pos++;
-  }
-  return pos;
-}
-
-/**
- * Check if code at pos starts with `name` as a standalone identifier
- * followed by `:` (an object property).
- */
-function matchesNameColon(code: string, pos: number): boolean {
-  if (code.slice(pos, pos + 4) !== "name") return false;
-  if (pos > 0 && /\w/.test(code[pos - 1])) return false;
-  const afterName = pos + 4;
-  if (afterName < code.length && /\w/.test(code[afterName])) return false;
-  let checkPos = afterName;
-  while (checkPos < code.length && isWhitespace(code[checkPos])) checkPos++;
-  return code[checkPos] === ":";
-}
-
-/** Extract the string value after `name:` starting at the `n` of `name`. */
-function extractNameValue(
-  code: string,
-  pos: number
-): { value: string; end: number } | null {
-  pos += 4; // skip 'name'
-  while (pos < code.length && isWhitespace(code[pos])) pos++;
-  pos++; // skip ':'
-  while (pos < code.length && isWhitespace(code[pos])) pos++;
-  return readString(code, pos);
-}
-
-/**
- * Parse a single path() call starting right after the opening paren.
- * Returns { name, pattern } or null if the call is unnamed.
- */
-/**
- * Check if code at pos starts with `search` as a standalone identifier
- * followed by `:` (an object property).
- */
-function matchesSearchColon(code: string, pos: number): boolean {
-  if (code.slice(pos, pos + 6) !== "search") return false;
-  if (pos > 0 && /\w/.test(code[pos - 1])) return false;
-  const afterSearch = pos + 6;
-  if (afterSearch < code.length && /\w/.test(code[afterSearch])) return false;
-  let checkPos = afterSearch;
-  while (checkPos < code.length && isWhitespace(code[checkPos])) checkPos++;
-  return code[checkPos] === ":";
-}
-
-/**
- * Extract a search schema object literal after `search:`.
- * Parses { key: "type", key2: "type2" } at the position after `search:`.
- * Returns the parsed schema and end position, or null if not an object literal.
- */
-function extractSearchValue(
-  code: string,
-  pos: number
-): { value: Record<string, string>; end: number } | null {
-  pos += 6; // skip 'search'
-  while (pos < code.length && isWhitespace(code[pos])) pos++;
-  pos++; // skip ':'
-  while (pos < code.length && isWhitespace(code[pos])) pos++;
-
-  if (code[pos] !== "{") return null;
-  pos++; // skip '{'
-
-  const schema: Record<string, string> = {};
-
-  while (pos < code.length) {
-    while (pos < code.length && isWhitespace(code[pos])) pos++;
-    if (code[pos] === "}") return { value: schema, end: pos + 1 };
-    if (code[pos] === ",") { pos++; continue; }
-
-    // Parse key (identifier or string)
-    let key: string;
-    if (code[pos] === '"' || code[pos] === "'") {
-      const keyStr = readString(code, pos);
-      if (!keyStr) return null;
-      key = keyStr.value;
-      pos = keyStr.end;
-    } else {
-      const keyStart = pos;
-      while (pos < code.length && /[\w$]/.test(code[pos])) pos++;
-      if (pos === keyStart) return null;
-      key = code.slice(keyStart, pos);
-    }
-
-    // Skip colon
-    while (pos < code.length && isWhitespace(code[pos])) pos++;
-    if (code[pos] !== ":") return null;
-    pos++;
-    while (pos < code.length && isWhitespace(code[pos])) pos++;
-
-    // Parse value (must be a string literal)
-    const valStr = readString(code, pos);
-    if (!valStr) return null;
-    schema[key] = valStr.value;
-    pos = valStr.end;
-  }
-
-  return null;
-}
-
-function parsePathCall(
-  code: string,
-  pos: number
-): { name: string; pattern: string; search?: Record<string, string> } | null {
-  // Skip whitespace to first argument
-  while (pos < code.length && isWhitespace(code[pos])) pos++;
-
-  // First argument must be a string literal (the pattern)
-  const patternStr = readString(code, pos);
-  if (!patternStr) return null;
-  const pattern = patternStr.value;
-  pos = patternStr.end;
-
-  // Scan the rest of the call tracking depth.
-  // depth=1: inside path(), depth=2: inside an object/paren at top level of call.
-  // We look for `name: "..."` and `search: { ... }` at depth 2 (options object properties).
-  let depth = 1;
-  let name: string | null = null;
-  let search: Record<string, string> | undefined;
-
-  while (pos < code.length && depth > 0) {
-    const ch = code[pos];
-
-    if (isWhitespace(ch)) {
-      pos++;
-      continue;
-    }
-
-    // Line comment
-    if (ch === "/" && pos + 1 < code.length && code[pos + 1] === "/") {
-      pos += 2;
-      while (pos < code.length && code[pos] !== "\n") pos++;
-      continue;
-    }
-
-    // Block comment
-    if (ch === "/" && pos + 1 < code.length && code[pos + 1] === "*") {
-      pos += 2;
-      while (
-        pos < code.length - 1 &&
-        !(code[pos] === "*" && code[pos + 1] === "/")
-      )
-        pos++;
-      pos += 2;
-      continue;
-    }
-
-    // At depth 2 (inside an object at call top-level), look for name: "..." and search: { ... }
-    if (depth === 2 && ch === "n" && matchesNameColon(code, pos)) {
-      const nameResult = extractNameValue(code, pos);
-      if (nameResult) {
-        name = nameResult.value;
-        pos = nameResult.end;
-        continue;
-      }
-    }
-
-    if (depth === 2 && ch === "s" && matchesSearchColon(code, pos)) {
-      const searchResult = extractSearchValue(code, pos);
-      if (searchResult) {
-        search = searchResult.value;
-        pos = searchResult.end;
-        continue;
-      }
-    }
-
-    // Skip string literals.
-    // Treat ' preceded by a word char as an apostrophe (e.g. "shouldn't"),
-    // not a string delimiter. In valid JS/TS, opening ' is never preceded
-    // by a word character.
-    if (ch === '"' || ch === "`" || (ch === "'" && (pos === 0 || !/\w/.test(code[pos - 1])))) {
-      pos = skipStringLiteral(code, pos);
-      continue;
-    }
-
-    // Track depth
-    if (ch === "(" || ch === "{" || ch === "[") depth++;
-    else if (ch === ")" || ch === "}" || ch === "]") depth--;
-
-    pos++;
-  }
-
-  if (name === null) return null;
-  return { name, pattern, ...(search ? { search } : {}) };
 }
 
 /**
@@ -350,14 +201,9 @@ export function generateRouteTypesSource(
   const objectBody = entries
     .map(([name, pattern]) => {
       const key = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(name) ? name : `"${name}"`;
+      const params = extractParamsFromPattern(pattern);
       const search = searchSchemas?.[name];
-      if (search && Object.keys(search).length > 0) {
-        const searchBody = Object.entries(search)
-          .map(([k, v]) => `${k}: "${v}"`)
-          .join(", ");
-        return `  ${key}: { path: "${pattern}", search: { ${searchBody} } },`;
-      }
-      return `  ${key}: "${pattern}",`;
+      return formatRouteEntry(key, pattern, params, search);
     })
     .join("\n");
 
@@ -455,7 +301,35 @@ export function writePerModuleRouteTypes(root: string, filter?: ScanFilter): voi
 }
 
 /**
+ * Find all variable names assigned to urls() calls in source code.
+ * e.g. `export const patterns = urls(...)` → ["patterns"]
+ */
+function findUrlsVariableNames(code: string): string[] {
+  const sourceFile = ts.createSourceFile("input.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const names: string[] = [];
+
+  function visit(node: ts.Node) {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isCallExpression(node.initializer)
+    ) {
+      const callee = node.initializer.expression;
+      if (ts.isIdentifier(callee) && callee.text === "urls") {
+        names.push(node.name.text);
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return names;
+}
+
+/**
  * Generate per-module route types for a single url module file.
+ * Follows include() calls recursively to produce the full route tree.
  * No-ops if the file doesn't contain `urls(` or has no named routes.
  */
 export function writePerModuleRouteTypesForFile(filePath: string): void {
@@ -463,7 +337,32 @@ export function writePerModuleRouteTypesForFile(filePath: string): void {
     const source = readFileSync(filePath, "utf-8");
     if (!source.includes("urls(")) return;
 
-    const routes = extractRoutesFromSource(source);
+    const varNames = findUrlsVariableNames(source);
+
+    type Route = { name: string; pattern: string; params?: Record<string, string>; search?: Record<string, string> };
+    let routes: Route[];
+
+    if (varNames.length > 0) {
+      // Follow includes recursively via the combined route map builder.
+      // The visited set in buildCombinedRouteMapWithSearch prevents infinite loops.
+      routes = [];
+      for (const varName of varNames) {
+        const { routes: routeMap, searchSchemas } = buildCombinedRouteMapWithSearch(filePath, varName);
+        for (const [name, pattern] of Object.entries(routeMap)) {
+          const params = extractParamsFromPattern(pattern);
+          routes.push({
+            name,
+            pattern,
+            ...(params ? { params } : {}),
+            ...(searchSchemas[name] ? { search: searchSchemas[name] } : {}),
+          });
+        }
+      }
+    } else {
+      // Fallback: no urls() variable found, extract path() calls directly
+      routes = extractRoutesFromSource(source);
+    }
+
     if (routes.length === 0) return;
 
     const genPath = filePath.replace(/\.(tsx?)$/, ".gen.ts");
@@ -479,121 +378,58 @@ export function writePerModuleRouteTypesForFile(filePath: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Static include() parsing
+// AST-based include() parsing
 // ---------------------------------------------------------------------------
 
 /**
- * Extract include() calls from source code by statically parsing.
+ * Extract include() calls from source code by walking the TypeScript AST.
  * Returns the path prefix, variable name, and optional name prefix for each.
  */
 export function extractIncludesFromSource(
   code: string
 ): Array<{ pathPrefix: string; variableName: string; namePrefix: string | null }> {
-  const results: Array<{
-    pathPrefix: string;
-    variableName: string;
-    namePrefix: string | null;
-  }> = [];
-  const regex = /\binclude\s*\(/g;
-  let match;
+  const sourceFile = ts.createSourceFile("input.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const results: Array<{ pathPrefix: string; variableName: string; namePrefix: string | null }> = [];
 
-  while ((match = regex.exec(code)) !== null) {
-    const result = parseIncludeCall(code, match.index + match[0].length);
-    if (result) results.push(result);
+  function visit(node: ts.Node) {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      if (ts.isIdentifier(callee) && callee.text === "include") {
+        const result = extractIncludeFromCallExpression(node);
+        if (result) results.push(result);
+      }
+    }
+    ts.forEachChild(node, visit);
   }
 
+  visit(sourceFile);
   return results;
 }
 
-/**
- * Parse a single include() call starting right after the opening paren.
- * Expects: include("prefix", variableName, { name: "prefix" })
- */
-function parseIncludeCall(
-  code: string,
-  pos: number
-): {
-  pathPrefix: string;
-  variableName: string;
-  namePrefix: string | null;
-} | null {
-  // Skip whitespace to first argument
-  while (pos < code.length && isWhitespace(code[pos])) pos++;
+function extractIncludeFromCallExpression(
+  node: ts.CallExpression
+): { pathPrefix: string; variableName: string; namePrefix: string | null } | null {
+  if (node.arguments.length < 2) return null;
 
-  // First arg: string literal (pathPrefix)
-  const prefixStr = readString(code, pos);
-  if (!prefixStr) return null;
-  const pathPrefix = prefixStr.value;
-  pos = prefixStr.end;
+  const pathPrefix = getStringValue(node.arguments[0]);
+  if (pathPrefix === null) return null;
 
-  // Comma
-  while (pos < code.length && isWhitespace(code[pos])) pos++;
-  if (pos >= code.length || code[pos] !== ",") return null;
-  pos++;
-  while (pos < code.length && isWhitespace(code[pos])) pos++;
+  const secondArg = node.arguments[1];
+  if (!ts.isIdentifier(secondArg)) return null;
+  const variableName = secondArg.text;
 
-  // Second arg: identifier (variableName)
-  const varStart = pos;
-  while (pos < code.length && /[\w$]/.test(code[pos])) pos++;
-  if (pos === varStart) return null;
-  const variableName = code.slice(varStart, pos);
-
-  // Scan rest of call for optional { name: "..." }
   let namePrefix: string | null = null;
-  let depth = 1; // inside include()
-
-  while (pos < code.length && depth > 0) {
-    const ch = code[pos];
-
-    if (isWhitespace(ch)) {
-      pos++;
-      continue;
-    }
-
-    // Line comment
-    if (ch === "/" && pos + 1 < code.length && code[pos + 1] === "/") {
-      pos += 2;
-      while (pos < code.length && code[pos] !== "\n") pos++;
-      continue;
-    }
-
-    // Block comment
-    if (ch === "/" && pos + 1 < code.length && code[pos + 1] === "*") {
-      pos += 2;
-      while (
-        pos < code.length - 1 &&
-        !(code[pos] === "*" && code[pos + 1] === "/")
-      )
-        pos++;
-      pos += 2;
-      continue;
-    }
-
-    // At depth 2 (inside options object), look for name: "..."
-    if (depth === 2 && ch === "n" && matchesNameColon(code, pos)) {
-      const nameResult = extractNameValue(code, pos);
-      if (nameResult) {
-        namePrefix = nameResult.value;
-        pos = nameResult.end;
-        continue;
+  if (node.arguments.length >= 3) {
+    const thirdArg = node.arguments[2];
+    if (ts.isObjectLiteralExpression(thirdArg)) {
+      for (const prop of thirdArg.properties) {
+        if (!ts.isPropertyAssignment(prop)) continue;
+        const propName = ts.isIdentifier(prop.name) ? prop.name.text : null;
+        if (propName === "name") {
+          namePrefix = getStringValue(prop.initializer);
+        }
       }
     }
-
-    // Skip string literals
-    if (
-      ch === '"' ||
-      ch === "`" ||
-      (ch === "'" && (pos === 0 || !/\w/.test(code[pos - 1])))
-    ) {
-      pos = skipStringLiteral(code, pos);
-      continue;
-    }
-
-    // Track depth
-    if (ch === "(" || ch === "{" || ch === "[") depth++;
-    else if (ch === ")" || ch === "}" || ch === "]") depth--;
-
-    pos++;
   }
 
   return { pathPrefix, variableName, namePrefix };
@@ -665,69 +501,37 @@ function resolveImportPath(
 // urls() block extraction for same-file variables
 // ---------------------------------------------------------------------------
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /**
- * Extract the source of a specific `const varName = urls(...)` block.
- * Used for same-file variables where include() references a urls() defined
- * in the same module rather than imported.
+ * Extract the source of a specific `const varName = urls(...)` call using
+ * the TypeScript AST. Returns the full text of the urls() call expression.
  */
 function extractUrlsBlockForVariable(
   code: string,
   varName: string
 ): string | null {
-  const pattern = new RegExp(
-    `(?:export\\s+)?(?:const|let|var)\\s+${escapeRegExp(varName)}\\s*=\\s*urls\\s*\\(`
-  );
-  const match = pattern.exec(code);
-  if (!match) return null;
+  const sourceFile = ts.createSourceFile("input.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let result: string | null = null;
 
-  // Start from the opening paren of urls(
-  const openParen = match.index + match[0].length - 1;
-  let depth = 1;
-  let pos = openParen + 1;
-
-  while (pos < code.length && depth > 0) {
-    const ch = code[pos];
-
-    // Skip strings
+  function visit(node: ts.Node) {
+    if (result) return;
     if (
-      ch === '"' ||
-      ch === "`" ||
-      (ch === "'" && (pos === 0 || !/\w/.test(code[pos - 1])))
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === varName &&
+      node.initializer &&
+      ts.isCallExpression(node.initializer)
     ) {
-      pos = skipStringLiteral(code, pos);
-      continue;
+      const callee = node.initializer.expression;
+      if (ts.isIdentifier(callee) && callee.text === "urls") {
+        result = node.initializer.getText(sourceFile);
+        return;
+      }
     }
-
-    // Line comment
-    if (ch === "/" && pos + 1 < code.length && code[pos + 1] === "/") {
-      pos += 2;
-      while (pos < code.length && code[pos] !== "\n") pos++;
-      continue;
-    }
-
-    // Block comment
-    if (ch === "/" && pos + 1 < code.length && code[pos + 1] === "*") {
-      pos += 2;
-      while (
-        pos < code.length - 1 &&
-        !(code[pos] === "*" && code[pos + 1] === "/")
-      )
-        pos++;
-      pos += 2;
-      continue;
-    }
-
-    if (ch === "(" || ch === "{" || ch === "[") depth++;
-    else if (ch === ")" || ch === "}" || ch === "]") depth--;
-
-    pos++;
+    ts.forEachChild(node, visit);
   }
 
-  return code.slice(openParen, pos);
+  visit(sourceFile);
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -747,7 +551,10 @@ export function buildCombinedRouteMap(
   visited = visited ?? new Set();
   const realPath = resolve(filePath);
   const key = variableName ? `${realPath}:${variableName}` : realPath;
-  if (visited.has(key)) return {};
+  if (visited.has(key)) {
+    console.warn(`[rsc-router] Circular include detected, skipping: ${key}`);
+    return {};
+  }
   visited.add(key);
 
   let source: string;
@@ -842,7 +649,10 @@ function buildCombinedRouteMapWithSearch(
   visited = visited ?? new Set();
   const realPath = resolve(filePath);
   const key = variableName ? `${realPath}:${variableName}` : realPath;
-  if (visited.has(key)) return { routes: {}, searchSchemas: {} };
+  if (visited.has(key)) {
+    console.warn(`[rsc-router] Circular include detected, skipping: ${key}`);
+    return { routes: {}, searchSchemas: {} };
+  }
   visited.add(key);
 
   let source: string;
@@ -1025,7 +835,7 @@ export function writeCombinedRouteTypes(root: string, knownRouterFiles?: string[
       // or other dynamic code. During HMR (file watcher), always write so
       // newly added routes appear immediately.
       if (opts?.preserveIfLarger && existing) {
-        const existingCount = (existing.match(/^\s+["a-zA-Z_$][^:]*:\s*"/gm) || []).length;
+        const existingCount = (existing.match(/^\s+["a-zA-Z_$][^:]*:\s*["{]/gm) || []).length;
         const newCount = Object.keys(result.routes).length;
         if (existingCount > newCount) {
           continue;
