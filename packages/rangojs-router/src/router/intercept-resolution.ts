@@ -139,11 +139,26 @@ export async function resolveInterceptEntry<TEnv>(
 
   const loaderPromises: Promise<any>[] = [];
   const loaderIds: string[] = [];
+  const clientLoaderIds: string[] = [];
 
   for (let i = 0; i < interceptEntry.loader.length; i++) {
     const { loader, revalidate: loaderRevalidateFns } =
       interceptEntry.loader[i];
     const segmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}D${i}.${loader.$$id}`;
+    const brand = loader.__brand;
+
+    // Client loaders have no server function - skip and flag for client resolution
+    if (brand === "clientLoader") {
+      clientLoaderIds.push(loader.$$id);
+      continue;
+    }
+
+    // Isomorphic loaders during partial (navigation) requests: skip server fn,
+    // flag for client resolution. During SSR, fall through to run server fn.
+    if (brand === "isomorphicLoader" && revalidationContext) {
+      clientLoaderIds.push(loader.$$id);
+      continue;
+    }
 
     if (revalidationContext) {
       const {
@@ -203,7 +218,7 @@ export async function resolveInterceptEntry<TEnv>(
     loaderIds.push(loader.$$id);
     loaderPromises.push(
       deps.wrapLoaderPromise(
-        context.use(loader),
+        context.use(loader as any),
         parentEntry,
         segmentId,
         context.pathname,
@@ -265,6 +280,7 @@ export async function resolveInterceptEntry<TEnv>(
     parallelName: `intercept:${interceptEntry.routeName}.${interceptEntry.slotName}`,
     loaderDataPromise,
     loaderIds: loaderIds.length > 0 ? loaderIds : undefined,
+    clientLoaderIds: clientLoaderIds.length > 0 ? clientLoaderIds : undefined,
   };
   segments.push(interceptSegment);
 
@@ -323,6 +339,14 @@ export async function resolveInterceptLoadersOnly<TEnv>(
     const { loader, revalidate: loaderRevalidateFns } =
       interceptEntry.loader[i];
     const segmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}D${i}.${loader.$$id}`;
+    const brand = loader.__brand;
+
+    // Client loaders have no server function - skip entirely.
+    // resolveInterceptLoadersOnly is always a partial/navigation request,
+    // so isomorphic loaders are also skipped for client resolution.
+    if (brand === "clientLoader" || brand === "isomorphicLoader") {
+      continue;
+    }
 
     const interceptSegmentId = `${parentEntry.shortCode}.${interceptEntry.slotName}`;
     if (clientSegmentIds.has(interceptSegmentId)) {
@@ -369,7 +393,7 @@ export async function resolveInterceptLoadersOnly<TEnv>(
     loaderIds.push(loader.$$id);
     loaderPromises.push(
       deps.wrapLoaderPromise(
-        context.use(loader),
+        context.use(loader as any),
         parentEntry,
         segmentId,
         context.pathname,

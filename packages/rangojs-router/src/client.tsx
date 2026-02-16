@@ -640,4 +640,10 @@ export { useHref } from "./browser/react/use-href.js";
 export type { ScopedReverseFunction } from "./reverse.js";
 
 // Loader definition type - for typing loader props in client components
-export type { LoaderDefinition } from "./types.js";
+export type { LoaderDefinition, ClientLoaderDefinition, IsomorphicLoaderDefinition, ClientLoaderFn, ClientLoaderContext } from "./types.js";
+
+// Client loader - runs only in the browser
+export { createClientLoader } from "./client-loader.js";
+
+// Isomorphic loader - client bundle version (keeps clientFn, strips server fn)
+export { createIsomorphicLoader } from "./isomorphic-loader.js";

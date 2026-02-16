@@ -8,6 +8,7 @@ import type {
   HandlersForRouteMap,
   LoaderDefinition,
   LoaderFn,
+  AnyLoaderDefinition,
   MiddlewareFn,
   NotFoundBoundaryHandler,
   ResolvedRouteMap,
@@ -356,7 +357,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * @param use - Optional callback for loader-specific revalidation rules
    */
   loader: <TData>(
-    loaderDef: LoaderDefinition<TData>,
+    loaderDef: AnyLoaderDefinition<TData>,
     use?: () => LoaderUseItem[]
   ) => LoaderItem;
   /**

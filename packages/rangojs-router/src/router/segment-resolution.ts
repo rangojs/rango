@@ -68,6 +68,14 @@ export function handleHandlerResult(
 /**
  * Resolve loaders for an entry and emit segments.
  * Loaders are run lazily via ctx.use() and memoized for parallel execution.
+ *
+ * Client loaders (brand "clientLoader") are never executed on the server.
+ * They emit segments with null loaderData and a clientLoaderIds flag so
+ * the browser can resolve them during navigation.
+ *
+ * Isomorphic loaders (brand "isomorphicLoader") run the server fn during
+ * SSR (document request). During partial/navigation requests, they are
+ * skipped on the server and flagged for client-side resolution.
  */
 export async function resolveLoaders<TEnv>(
   entry: EntryData,
@@ -75,6 +83,7 @@ export async function resolveLoaders<TEnv>(
   belongsToRoute: boolean,
   deps: SegmentResolutionDeps<TEnv>,
   shortCodeOverride?: string,
+  options?: ResolveSegmentOptions,
 ): Promise<ResolvedSegment[]> {
   const loaderEntries = entry.loader ?? [];
   if (loaderEntries.length === 0) return [];
@@ -82,10 +91,51 @@ export async function resolveLoaders<TEnv>(
   const shortCode = shortCodeOverride ?? entry.shortCode;
   const hasLoading = "loading" in entry && entry.loading !== undefined;
   const loadingDisabled = hasLoading && entry.loading === false;
+  const isPartial = options?.isPartial ?? false;
 
   return Promise.all(
     loaderEntries.map(async ({ loader }, i) => {
       const segmentId = `${shortCode}D${i}.${loader.$$id}`;
+      const brand = loader.__brand;
+
+      // Client loaders: never run on server, flag for client resolution.
+      // loaderData is omitted so the segment system skips this loader during
+      // rendering (filter: loaderData !== undefined). The browser will resolve
+      // it via clientLoaderIds after navigation.
+      if (brand === "clientLoader") {
+        return {
+          id: segmentId,
+          namespace: entry.id,
+          type: "loader" as const,
+          index: i,
+          component: null,
+          params: ctx.params,
+          loaderId: loader.$$id,
+          clientLoaderIds: [loader.$$id],
+          belongsToRoute,
+        };
+      }
+
+      // Isomorphic loaders: run server fn during SSR, skip during navigation
+      if (brand === "isomorphicLoader") {
+        if (isPartial) {
+          // Navigation request: skip server fn, flag for client resolution
+          return {
+            id: segmentId,
+            namespace: entry.id,
+            type: "loader" as const,
+            index: i,
+            component: null,
+            params: ctx.params,
+            loaderId: loader.$$id,
+            clientLoaderIds: [loader.$$id],
+            belongsToRoute,
+          };
+        }
+        // SSR: execute server fn normally (fn is in fetchable-loader-store)
+      }
+
+      // Standard loader or isomorphic loader during SSR
       return {
         id: segmentId,
         namespace: entry.id,
@@ -95,7 +145,7 @@ export async function resolveLoaders<TEnv>(
         params: ctx.params,
         loaderId: loader.$$id,
         loaderData: deps.wrapLoaderPromise(
-          loadingDisabled ? await ctx.use(loader) : ctx.use(loader),
+          (loadingDisabled ? await ctx.use(loader as any) : ctx.use(loader as any)) as Promise<any>,
           entry,
           segmentId,
           ctx.pathname,
@@ -112,6 +162,8 @@ export async function resolveLoaders<TEnv>(
 export interface ResolveSegmentOptions {
   /** When true, skip resolveLoaders() calls (used for pre-rendering) */
   skipLoaders?: boolean;
+  /** When true, this is a partial/navigation request (not SSR). Isomorphic loaders skip server fn. */
+  isPartial?: boolean;
 }
 
 /**
@@ -133,7 +185,7 @@ export async function resolveSegment<TEnv>(
 
   if (entry.type === "layout" || entry.type === "cache") {
     if (!options?.skipLoaders) {
-      const loaderSegments = await resolveLoaders(entry, context, false, deps);
+      const loaderSegments = await resolveLoaders(entry, context, false, deps, undefined, options);
       segments.push(...loaderSegments);
     }
 
@@ -171,7 +223,7 @@ export async function resolveSegment<TEnv>(
     }
   } else if (entry.type === "route") {
     if (!options?.skipLoaders) {
-      const loaderSegments = await resolveLoaders(entry, context, true, deps);
+      const loaderSegments = await resolveLoaders(entry, context, true, deps, undefined, options);
       segments.push(...loaderSegments);
     }
 
@@ -465,12 +517,13 @@ export async function resolveLoadersOnly<TEnv>(
   entries: EntryData[],
   context: HandlerContext<any, TEnv>,
   deps: SegmentResolutionDeps<TEnv>,
+  options?: { isPartial?: boolean },
 ): Promise<ResolvedSegment[]> {
   const loaderSegments: ResolvedSegment[] = [];
 
   for (const entry of entries) {
     const belongsToRoute = entry.type === "route";
-    const segments = await resolveLoaders(entry, context, belongsToRoute, deps);
+    const segments = await resolveLoaders(entry, context, belongsToRoute, deps, undefined, options);
     loaderSegments.push(...segments);
   }
 
@@ -561,22 +614,41 @@ export async function resolveLoadersWithRevalidation<TEnv>(
 
   const loadersToRun = revalidationChecks.filter((c) => c.shouldRun);
   const segments: ResolvedSegment[] = loadersToRun.map(
-    ({ loader, segmentId, index }) => ({
-      id: segmentId,
-      namespace: entry.id,
-      type: "loader" as const,
-      index,
-      component: null,
-      params: ctx.params,
-      loaderId: loader.$$id,
-      loaderData: deps.wrapLoaderPromise(
-        ctx.use(loader),
-        entry,
-        segmentId,
-        ctx.pathname,
-      ),
-      belongsToRoute,
-    }),
+    ({ loader, segmentId, index }) => {
+      const brand = loader.__brand;
+
+      // Client/isomorphic loaders during navigation: flag for client resolution
+      if (brand === "clientLoader" || brand === "isomorphicLoader") {
+        return {
+          id: segmentId,
+          namespace: entry.id,
+          type: "loader" as const,
+          index,
+          component: null,
+          params: ctx.params,
+          loaderId: loader.$$id,
+          clientLoaderIds: [loader.$$id],
+          belongsToRoute,
+        };
+      }
+
+      return {
+        id: segmentId,
+        namespace: entry.id,
+        type: "loader" as const,
+        index,
+        component: null,
+        params: ctx.params,
+        loaderId: loader.$$id,
+        loaderData: deps.wrapLoaderPromise(
+          ctx.use(loader as any) as Promise<any>,
+          entry,
+          segmentId,
+          ctx.pathname,
+        ),
+        belongsToRoute,
+      };
+    },
   );
 
   return { segments, matchedIds };

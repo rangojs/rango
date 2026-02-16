@@ -32,6 +32,7 @@ import type {
   ExtractParams,
   Handler,
   HandlerContext,
+  AnyLoaderDefinition,
   LoaderDefinition,
   MiddlewareFn,
   NotFoundBoundaryHandler,
@@ -690,7 +691,7 @@ export type PathHelpers<TEnv> = {
    * Attach a data loader to the current route/layout
    */
   loader: <TData>(
-    loaderDef: LoaderDefinition<TData>,
+    loaderDef: AnyLoaderDefinition<TData>,
     use?: () => LoaderUseItem[],
   ) => LoaderItem;
 

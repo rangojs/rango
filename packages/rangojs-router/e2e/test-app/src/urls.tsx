@@ -24,6 +24,7 @@ import { prerenderComplexPatterns } from "./urls/prerender-complex.js";
 import { transformCasesPatterns } from "./urls/transform-cases.js";
 import { apiShopPatterns } from "./urls/api-shop.js";
 import { includeMiddlewarePatterns } from "./urls/include-middleware.js";
+import { clientLoaderPatterns } from "./urls/client-loader.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -141,6 +142,26 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
                     data-testid="slow-product-link-no-state"
                   >
                     /slow-product - Intercept without state
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/client-loader" data-testid="client-loader-link">
+                    /client-loader - Client-only loader
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/isomorphic-loader" data-testid="isomorphic-loader-link">
+                    /isomorphic-loader - Isomorphic loader
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/mixed-loader" data-testid="mixed-loader-link">
+                    /mixed-loader - Mixed server + client loaders
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/isolated-isomorphic" data-testid="isolated-isomorphic-link">
+                    /isolated-isomorphic - Export-only isomorphic loader
                   </Link>
                 </li>
               </ul>
@@ -430,6 +451,9 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
 
     // Shop API patterns (JSON response routes)
     include("/api/shop", apiShopPatterns, { name: "apiShop" }),
+
+    // Client and isomorphic loader patterns
+    include("/", clientLoaderPatterns),
 
     // Include under layout with middleware — tests that layout middleware
     // is applied to routes inside include() even when include() is the

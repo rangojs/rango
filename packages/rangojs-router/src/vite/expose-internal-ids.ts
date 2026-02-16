@@ -50,7 +50,7 @@ interface CreateExportBinding {
 }
 
 interface StrictCreateTransformConfig {
-  fnName: "createLoader" | "createHandle" | "createLocationState";
+  fnName: "createLoader" | "createClientLoader" | "createIsomorphicLoader" | "createHandle" | "createLocationState";
 }
 
 const PRERENDER_CONFIG: HandlerTransformConfig = {
@@ -65,6 +65,8 @@ const STATIC_CONFIG: HandlerTransformConfig = {
 
 const STRICT_CREATE_CONFIGS: StrictCreateTransformConfig[] = [
   { fnName: "createLoader" },
+  { fnName: "createClientLoader" },
+  { fnName: "createIsomorphicLoader" },
   { fnName: "createHandle" },
   { fnName: "createLocationState" },
 ];
@@ -369,6 +371,18 @@ function hasCreateLoaderImport(code: string): boolean {
   );
 }
 
+function hasCreateClientLoaderImport(code: string): boolean {
+  return /import\s*\{[^}]*\bcreateClientLoader\b[^}]*\}\s*from\s*["']@rangojs\/router(?:\/[^"']*)?["']/.test(
+    code,
+  );
+}
+
+function hasCreateIsomorphicLoaderImport(code: string): boolean {
+  return /import\s*\{[^}]*\bcreateIsomorphicLoader\b[^}]*\}\s*from\s*["']@rangojs\/router(?:\/[^"']*)?["']/.test(
+    code,
+  );
+}
+
 /**
  * Generate lightweight client stubs for loader files.
  *
@@ -395,6 +409,53 @@ function generateClientLoaderStubs(
       ? hashId(filePath, name)
       : `${filePath}#${name}`;
     return `export const ${name} = { __brand: "loader", $$id: "${loaderId}" };`;
+  });
+
+  return { code: stubs.join("\n") + "\n" };
+}
+
+/**
+ * Generate RSC-environment stubs for createClientLoader files.
+ * On the server, client loaders only need { __brand: "clientLoader", $$id }.
+ */
+function generateRscClientLoaderStubs(
+  bindings: CreateExportBinding[],
+  code: string,
+  filePath: string,
+  isBuild: boolean,
+): { code: string; map?: undefined } | null {
+  if (!isExportOnlyFile(code, bindings)) return null;
+
+  const exportNames = bindings.flatMap((b) => b.exportNames);
+  const stubs = exportNames.map((name) => {
+    const loaderId = isBuild
+      ? hashId(filePath, name)
+      : `${filePath}#${name}`;
+    return `export const ${name} = { __brand: "clientLoader", $$id: "${loaderId}" };`;
+  });
+
+  return { code: stubs.join("\n") + "\n" };
+}
+
+/**
+ * Generate RSC-environment stubs for createIsomorphicLoader in non-RSC.
+ * On the client, isomorphic loaders only need { __brand: "isomorphicLoader", $$id }.
+ * The server fn is stripped; the client fn is preserved by the normal transform.
+ */
+function generateClientIsomorphicLoaderStubs(
+  bindings: CreateExportBinding[],
+  code: string,
+  filePath: string,
+  isBuild: boolean,
+): { code: string; map?: undefined } | null {
+  if (!isExportOnlyFile(code, bindings)) return null;
+
+  const exportNames = bindings.flatMap((b) => b.exportNames);
+  const stubs = exportNames.map((name) => {
+    const loaderId = isBuild
+      ? hashId(filePath, name)
+      : `${filePath}#${name}`;
+    return `export const ${name} = { __brand: "isomorphicLoader", $$id: "${loaderId}" };`;
   });
 
   return { code: stubs.join("\n") + "\n" };
@@ -428,6 +489,60 @@ function transformLoaders(
     hasChanges = true;
   }
 
+  return hasChanges;
+}
+
+/**
+ * Inject $$id into createClientLoader(fn) calls.
+ * createClientLoader(fn) -> createClientLoader(fn, "id")
+ */
+function transformClientLoaders(
+  bindings: CreateExportBinding[],
+  s: MagicString,
+  filePath: string,
+  isBuild: boolean,
+): boolean {
+  let hasChanges = false;
+  for (const binding of bindings) {
+    const exportName = binding.exportNames[0];
+    const loaderId = isBuild
+      ? hashId(filePath, exportName)
+      : `${filePath}#${exportName}`;
+
+    // createClientLoader(fn) -> createClientLoader(fn, "id")
+    s.appendLeft(binding.callCloseParenPos, `, "${loaderId}"`);
+
+    const propInjection = `\n${binding.localName}.$$id = "${loaderId}";`;
+    s.appendRight(binding.statementEnd, propInjection);
+    hasChanges = true;
+  }
+  return hasChanges;
+}
+
+/**
+ * Inject $$id into createIsomorphicLoader(serverFn, clientFn) calls.
+ * createIsomorphicLoader(serverFn, clientFn) -> createIsomorphicLoader(serverFn, clientFn, "id")
+ */
+function transformIsomorphicLoaders(
+  bindings: CreateExportBinding[],
+  s: MagicString,
+  filePath: string,
+  isBuild: boolean,
+): boolean {
+  let hasChanges = false;
+  for (const binding of bindings) {
+    const exportName = binding.exportNames[0];
+    const loaderId = isBuild
+      ? hashId(filePath, exportName)
+      : `${filePath}#${exportName}`;
+
+    // createIsomorphicLoader(serverFn, clientFn) -> createIsomorphicLoader(serverFn, clientFn, "id")
+    s.appendLeft(binding.callCloseParenPos, `, "${loaderId}"`);
+
+    const propInjection = `\n${binding.localName}.$$id = "${loaderId}";`;
+    s.appendRight(binding.statementEnd, propInjection);
+    hasChanges = true;
+  }
   return hasChanges;
 }
 
@@ -860,22 +975,34 @@ ${lazyImports.join(",\n")}
         for (const filePath of files) {
           const content = await fs.readFile(filePath, "utf-8");
 
-          if (!content.includes("createLoader")) continue;
-          if (!hasCreateLoaderImport(content)) continue;
+          if (
+            !content.includes("createLoader") &&
+            !content.includes("createClientLoader") &&
+            !content.includes("createIsomorphicLoader")
+          ) continue;
 
-          const fnNames = getImportedFnNames(content, "createLoader");
           const relativePath = normalizePath(
             path.relative(projectRoot, filePath),
           );
-          const bindings = collectCreateExportBindings(content, fnNames);
 
-          for (const binding of bindings) {
-            const exportName = binding.exportNames[0];
-            const hashedId = hashId(relativePath, exportName);
-            loaderRegistry.set(hashedId, {
-              filePath: relativePath,
-              exportName,
-            });
+          // Scan all loader types
+          const loaderTypes = [
+            { fn: "createLoader", check: hasCreateLoaderImport },
+            { fn: "createIsomorphicLoader", check: hasCreateIsomorphicLoaderImport },
+          ];
+          for (const { fn, check } of loaderTypes) {
+            if (!content.includes(fn)) continue;
+            if (!check(content)) continue;
+            const fnNames = getImportedFnNames(content, fn);
+            const bindings = collectCreateExportBindings(content, fnNames);
+            for (const binding of bindings) {
+              const exportName = binding.exportNames[0];
+              const hashedId = hashId(relativePath, exportName);
+              loaderRegistry.set(hashedId, {
+                filePath: relativePath,
+                exportName,
+              });
+            }
           }
         }
       } catch (error) {
@@ -929,6 +1056,8 @@ ${lazyImports.join(",\n")}
       // because the import statement itself always contains the canonical name
       // "createLoader", so code.includes("createLoader") will still match.
       const hasLoaderCode = has.loader && code.includes("createLoader");
+      const hasClientLoaderCode = has.clientLoader && code.includes("createClientLoader");
+      const hasIsomorphicLoaderCode = has.isomorphicLoader && code.includes("createIsomorphicLoader");
       const hasHandleCode = has.handle && code.includes("createHandle");
       const hasLocationStateCode =
         has.locationState && code.includes("createLocationState");
@@ -938,6 +1067,8 @@ ${lazyImports.join(",\n")}
         has.staticHandler && code.includes("Static");
       if (
         !hasLoaderCode &&
+        !hasClientLoaderCode &&
+        !hasIsomorphicLoaderCode &&
         !hasHandleCode &&
         !hasLocationStateCode &&
         !hasPrerenderHandlerCode &&
@@ -998,6 +1129,10 @@ ${lazyImports.join(",\n")}
         const hasCode =
           cfg.fnName === "createLoader"
             ? hasLoaderCode
+            : cfg.fnName === "createClientLoader"
+            ? hasClientLoaderCode
+            : cfg.fnName === "createIsomorphicLoader"
+            ? hasIsomorphicLoaderCode
             : cfg.fnName === "createHandle"
             ? hasHandleCode
             : hasLocationStateCode;
@@ -1035,6 +1170,35 @@ ${lazyImports.join(",\n")}
         const stubResult = generateClientLoaderStubs(bindings, code, filePath, isBuild);
         if (stubResult) return stubResult;
       }
+
+      // --- ClientLoader: RSC stubs (server doesn't need the client fn) ---
+      if (hasClientLoaderCode && isRscEnv) {
+        const fnNames = getFnNames("createClientLoader");
+        const bindings = getBindings(code, fnNames);
+        const stubResult = generateRscClientLoaderStubs(bindings, code, filePath, isBuild);
+        if (stubResult) return stubResult;
+      }
+
+      // --- IsomorphicLoader: track for manifest (RSC env only) ---
+      if (hasIsomorphicLoaderCode && isRscEnv) {
+        const fnNames = getFnNames("createIsomorphicLoader");
+        const bindings = getBindings(code, fnNames);
+        for (const binding of bindings) {
+          const exportName = binding.exportNames[0];
+          const hashedId = hashId(filePath, exportName);
+          loaderRegistry.set(hashedId, {
+            filePath,
+            exportName,
+          });
+        }
+      }
+
+      // Isomorphic loaders in non-RSC (client) environments must NOT be
+      // stubbed even for export-only files. The runtime createIsomorphicLoader
+      // call must execute so registerClientLoader(id, clientFn) runs. Without
+      // it, client-side resolution has no function to execute. The normal
+      // transformIsomorphicLoaders path (below) handles $$id injection and
+      // the client runtime strips the server fn.
 
       // --- PrerenderHandler: non-RSC stub replacement ---
       if (hasPrerenderHandlerCode && !isRscEnv) {
@@ -1135,6 +1299,14 @@ ${lazyImports.join(",\n")}
       if (hasLoaderCode) {
         const fnNames = getFnNames("createLoader");
         changed = transformLoaders(getBindings(code, fnNames), s, filePath, isBuild) || changed;
+      }
+      if (hasClientLoaderCode) {
+        const fnNames = getFnNames("createClientLoader");
+        changed = transformClientLoaders(getBindings(code, fnNames), s, filePath, isBuild) || changed;
+      }
+      if (hasIsomorphicLoaderCode) {
+        const fnNames = getFnNames("createIsomorphicLoader");
+        changed = transformIsomorphicLoaders(getBindings(code, fnNames), s, filePath, isBuild) || changed;
       }
       if (hasHandleCode) {
         const fnNames = getFnNames("createHandle");

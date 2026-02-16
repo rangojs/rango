@@ -513,6 +513,9 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch extends Sear
     <T, TLoaderParams = any>(
       loader: LoaderDefinition<T, TLoaderParams>,
     ): Promise<T>;
+    <T>(
+      loader: IsomorphicLoaderDefinition<T>,
+    ): Promise<T>;
     <TData, TAccumulated = TData[]>(
       handle: Handle<TData, TAccumulated>,
     ): (data: TData | Promise<TData> | (() => Promise<TData>)) => void;
@@ -975,6 +978,8 @@ export interface ResolvedSegment {
   // Loader-specific fields
   loaderId?: string; // For loaders: the loader $$id identifier
   loaderData?: any; // For loaders: the resolved data from loader execution
+  // Client loader fields (resolved in the browser, not on the server)
+  clientLoaderIds?: string[]; // IDs of client/isomorphic loaders needing browser resolution
   // Intercept loader fields (for streaming loader data in parallel segments)
   loaderDataPromise?: Promise<any[]> | any[]; // Loader data promise or resolved array
   loaderIds?: string[]; // IDs ($$id) of loaders for this segment
@@ -1601,6 +1606,60 @@ export type LoaderDefinition<
   fn?: LoaderFn<T, TParams, any>; // Optional - server-side only, stored in registry for RSC
   action?: LoaderAction<T>; // Optional - for fetchable loaders
 };
+
+// ============================================================================
+// Client Loader Types
+// ============================================================================
+
+/**
+ * Context passed to client loader functions (browser-only).
+ * Subset of LoaderContext available in the browser environment.
+ */
+export type ClientLoaderContext = {
+  params: Record<string, string | undefined>;
+  searchParams: URLSearchParams;
+  pathname: string;
+  url: URL;
+  signal: AbortSignal;
+};
+
+/**
+ * Client loader function signature.
+ * Runs only in the browser during SPA navigation.
+ */
+export type ClientLoaderFn<T> = (ctx: ClientLoaderContext) => Promise<T> | T;
+
+/**
+ * Client loader definition.
+ * Created via createClientLoader(). The clientFn is only available in client
+ * bundles; the RSC bundle only receives the $$id for identification.
+ */
+export type ClientLoaderDefinition<T = any> = {
+  __brand: "clientLoader";
+  $$id: string;
+  clientFn?: ClientLoaderFn<T>;
+};
+
+/**
+ * Isomorphic loader definition.
+ * Created via createIsomorphicLoader(). Contains a server fn (RSC bundle)
+ * and a client fn (client bundle). During SSR the server fn runs; during
+ * SPA navigation the client fn runs in the browser.
+ */
+export type IsomorphicLoaderDefinition<T = any> = {
+  __brand: "isomorphicLoader";
+  $$id: string;
+  fn?: LoaderFn<T, Record<string, string | undefined>, any>;
+  clientFn?: ClientLoaderFn<T>;
+};
+
+/**
+ * Union of all loader definition types accepted by the loader() helper.
+ */
+export type AnyLoaderDefinition<T = any> =
+  | LoaderDefinition<T>
+  | ClientLoaderDefinition<T>
+  | IsomorphicLoaderDefinition<T>;
 
 // ============================================================================
 // Error Handling Types

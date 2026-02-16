@@ -58,6 +58,11 @@ export type {
   LoaderActionContext,
   LoaderAction,
   LoaderMiddlewareFn,
+  // Client/isomorphic loader types
+  ClientLoaderDefinition,
+  ClientLoaderFn,
+  ClientLoaderContext,
+  IsomorphicLoaderDefinition,
   // Error boundary types
   ErrorInfo,
   ErrorBoundaryFallbackProps,
@@ -83,6 +88,12 @@ export {
   type RouteHelpers,
   type RouteHandlers,
 } from "./route-definition.js";
+
+// Client loader (RSC version - stub with just $id, no function)
+export { createClientLoader } from "./client-loader.rsc.js";
+
+// Isomorphic loader (RSC version - keeps server fn, strips client fn)
+export { createIsomorphicLoader } from "./isomorphic-loader.rsc.js";
 
 // Handle API
 export { createHandle, isHandle, type Handle } from "./handle.js";

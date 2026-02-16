@@ -12,7 +12,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { CookieOptions } from "../router/middleware.js";
-import type { LoaderDefinition, LoaderContext } from "../types.js";
+import type { LoaderDefinition, IsomorphicLoaderDefinition, LoaderContext } from "../types.js";
 import type { Handle } from "../handle.js";
 import { createHandleStore, type HandleStore } from "./handle-store.js";
 import { isHandle } from "../handle.js";
@@ -91,6 +91,7 @@ export interface RequestContext<
    */
   use: {
     <T, TLoaderParams = any>(loader: LoaderDefinition<T, TLoaderParams>): Promise<T>;
+    <T>(loader: IsomorphicLoaderDefinition<T>): Promise<T>;
     <TData, TAccumulated = TData[]>(handle: Handle<TData, TAccumulated>): (
       data: TData | Promise<TData> | (() => Promise<TData>)
     ) => void;
@@ -496,6 +497,14 @@ export function createUseFunction<TEnv>(
 
     // Loader case
     const loader = item as LoaderDefinition<any, any>;
+
+    // Client loaders have no server function and cannot be used in ctx.use()
+    if ((loader as any).__brand === "clientLoader") {
+      throw new Error(
+        `ctx.use() cannot execute client loader "${loader.$$id}" on the server. ` +
+        `Client loaders only run in the browser. Use createLoader() or createIsomorphicLoader() instead.`
+      );
+    }
 
     // Return cached promise if already started
     if (loaderPromises.has(loader.$$id)) {

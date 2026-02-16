@@ -59,6 +59,11 @@ export type {
   LoaderActionContext,
   LoaderAction,
   LoaderMiddlewareFn,
+  // Client/isomorphic loader types
+  ClientLoaderDefinition,
+  ClientLoaderFn,
+  ClientLoaderContext,
+  IsomorphicLoaderDefinition,
   // Error boundary types
   ErrorInfo,
   ErrorBoundaryFallbackProps,
@@ -80,6 +85,12 @@ export type { SearchSchema, SearchSchemaValue, ResolveSearchSchema, RouteSearchP
 // Client-safe createLoader - only stores the $$id, function is not included
 // Use this when defining loaders that will be imported by client components
 export { createLoader } from "./loader.js";
+
+// Client loader - runs only in the browser, never on the server
+export { createClientLoader } from "./client-loader.js";
+
+// Isomorphic loader - server fn for SSR, client fn for SPA navigation
+export { createIsomorphicLoader } from "./isomorphic-loader.js";
 
 // Route definition types (safe to import anywhere)
 export type { RouteHelpers, RouteHandlers } from "./route-definition.js";

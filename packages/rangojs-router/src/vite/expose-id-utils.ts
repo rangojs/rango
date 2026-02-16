@@ -37,6 +37,8 @@ export function hashInlineId(
 
 export interface DetectedImports {
   loader: boolean;
+  clientLoader: boolean;
+  isomorphicLoader: boolean;
   handle: boolean;
   locationState: boolean;
   prerenderHandler: boolean;
@@ -100,6 +102,8 @@ export function detectImports(code: string): DetectedImports {
 
   const result: DetectedImports = {
     loader: false,
+    clientLoader: false,
+    isomorphicLoader: false,
     handle: false,
     locationState: false,
     prerenderHandler: false,
@@ -112,6 +116,8 @@ export function detectImports(code: string): DetectedImports {
   while ((match = importPattern.exec(code)) !== null) {
     const imports = match[1];
     if (/\bcreateLoader\b/.test(imports)) result.loader = true;
+    if (/\bcreateClientLoader\b/.test(imports)) result.clientLoader = true;
+    if (/\bcreateIsomorphicLoader\b/.test(imports)) result.isomorphicLoader = true;
     if (/\bcreateHandle\b/.test(imports)) result.handle = true;
     if (/\bcreateLocationState\b/.test(imports)) result.locationState = true;
     if (/\bPrerender\b/.test(imports)) result.prerenderHandler = true;
@@ -129,6 +135,8 @@ export function detectImports(code: string): DetectedImports {
 
   result.any =
     result.loader ||
+    result.clientLoader ||
+    result.isomorphicLoader ||
     result.handle ||
     result.locationState ||
     result.prerenderHandler ||

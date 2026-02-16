@@ -27,6 +27,7 @@ interface RenderToReadableStreamOptions {
   bootstrapScriptContent?: string;
   nonce?: string;
   formState?: unknown;
+  onError?: (error: unknown) => void;
 }
 
 /**
@@ -45,6 +46,19 @@ export interface SSRRenderOptions {
    * Nonce for Content Security Policy (CSP)
    */
   nonce?: string;
+
+  /**
+   * Timeout in milliseconds before aborting unresolved Suspense boundaries.
+   *
+   * If any Suspense boundary hasn't resolved within this timeout, the stream
+   * is aborted and fallback HTML is flushed. Useful as a safety net for
+   * slow server-side data fetching with loading() fallbacks.
+   *
+   * Set to 0 to disable the abort timer.
+   *
+   * @default 200
+   */
+  suspenseAbortTimeout?: number;
 }
 
 /**
@@ -205,7 +219,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
     rscStream: ReadableStream<Uint8Array>,
     options?: SSRRenderOptions
   ): Promise<ReadableStream<Uint8Array>> {
-    const { nonce, formState } = options ?? {};
+    const { nonce, formState, suspenseAbortTimeout = 200 } = options ?? {};
 
     try {
       // Tee the stream:
@@ -272,11 +286,38 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
       // Render React tree to HTML stream
       // Pass formState for useActionState progressive enhancement if provided
       // Pass nonce for CSP if provided
+      // The abort controller provides a timeout for Suspense boundaries.
+      // If any boundary hasn't resolved within suspenseAbortTimeout, the stream
+      // is aborted and fallback HTML is flushed instead.
+      const ssrAbort = new AbortController();
       const htmlStream = await renderToReadableStream(<SsrRoot />, {
         bootstrapScriptContent,
         formState,
         nonce,
-      });
+        signal: ssrAbort.signal,
+        // Suppress intentional AbortError from the suspense abort timer.
+        // Forward genuine errors to the user's onError callback.
+        onError: (error: unknown) => {
+          if (error instanceof DOMException && error.name === "AbortError") return;
+          if (onError && error instanceof Error) {
+            onError(error, { phase: "rendering" });
+          }
+        },
+      } as any);
+
+      // If all Suspense boundaries resolve quickly, cancel the abort timer.
+      // Otherwise the timer fires and closes the stream with fallback HTML
+      // for any unresolved boundaries (client-only loaders).
+      if (suspenseAbortTimeout > 0) {
+        const abortTimer = setTimeout(() => ssrAbort.abort(), suspenseAbortTimeout);
+        const allReady = (htmlStream as any).allReady as Promise<void> | undefined;
+        if (allReady) {
+          allReady.then(
+            () => clearTimeout(abortTimer),
+            () => clearTimeout(abortTimer),
+          );
+        }
+      }
 
       // Inject RSC payload into HTML as <script nonce="...">__FLIGHT_DATA__</script>
       return htmlStream.pipeThrough(injectRSCPayload(rscStream2, { nonce }));

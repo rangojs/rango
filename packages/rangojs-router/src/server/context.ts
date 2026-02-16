@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ReactNode } from "react";
-import type { PartialCacheOptions, ErrorBoundaryHandler, Handler, LoaderDefinition, MiddlewareFn, NotFoundBoundaryHandler, ShouldRevalidateFn } from "../types";
+import type { PartialCacheOptions, ErrorBoundaryHandler, Handler, LoaderDefinition, AnyLoaderDefinition, MiddlewareFn, NotFoundBoundaryHandler, ShouldRevalidateFn } from "../types";
 import { invariant } from "../errors";
 
 // ============================================================================
@@ -76,7 +76,7 @@ export type EntryPropDatas = {
  * @internal This type is an implementation detail and may change without notice.
  */
 export type LoaderEntry = {
-  loader: LoaderDefinition<any>;
+  loader: AnyLoaderDefinition<any>;
   revalidate: ShouldRevalidateFn<any, any>[];
   /** Cache config for this specific loader (loaders are NOT cached by default) */
   cache?: EntryCacheConfig;

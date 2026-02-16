@@ -1,12 +1,15 @@
 /**
  * Tests for RequestContext, specifically the onResponse callback API
+ * and ctx.use() loader brand validation.
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   createRequestContext,
+  createUseFunction,
   runWithRequestContext,
   getRequestContext,
 } from "../request-context.js";
+import { createHandleStore } from "../handle-store.js";
 
 describe("RequestContext", () => {
   describe("onResponse", () => {
@@ -166,6 +169,57 @@ describe("RequestContext", () => {
       }
 
       expect(callbackCalled).toBe(true);
+    });
+  });
+
+  describe("ctx.use() with client loaders", () => {
+    function createTestUse() {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com/test"),
+        url: new URL("https://example.com/test"),
+        variables: {},
+      });
+      const useFn = createUseFunction({
+        handleStore: createHandleStore(),
+        loaderPromises: new Map(),
+        getContext: () => ctx,
+      });
+      return useFn;
+    }
+
+    it("should throw when called with a client loader", () => {
+      const useFn = createTestUse();
+      const clientLoader = {
+        __brand: "clientLoader" as const,
+        $$id: "test-client-loader",
+      };
+
+      expect(() => useFn(clientLoader as any)).toThrow(
+        /ctx\.use\(\) cannot execute client loader/,
+      );
+    });
+
+    it("should include loader id in the error message", () => {
+      const useFn = createTestUse();
+      const clientLoader = {
+        __brand: "clientLoader" as const,
+        $$id: "my-theme-loader",
+      };
+
+      expect(() => useFn(clientLoader as any)).toThrow("my-theme-loader");
+    });
+
+    it("should not throw for regular loaders with a function", async () => {
+      const useFn = createTestUse();
+      const regularLoader = {
+        __brand: "loader" as const,
+        $$id: "test-regular-loader",
+        fn: async () => ({ data: "test" }),
+      };
+
+      const result = await (useFn as any)(regularLoader);
+      expect(result).toEqual({ data: "test" });
     });
   });
 });

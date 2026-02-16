@@ -432,3 +432,6 @@ export type InterceptCacheTestLoaderData = {
   message: string;
   loadedAt: string;
 };
+
+// Client & isomorphic loader definitions are in client-loaders.ts to prevent
+// server-side implementation details from leaking into client bundles.
