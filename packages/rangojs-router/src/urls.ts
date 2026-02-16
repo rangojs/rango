@@ -83,6 +83,12 @@ import {
   isPrerenderHandler,
   type PrerenderHandlerDefinition,
 } from "./prerender.js";
+import {
+  isStaticHandler,
+  type StaticHandlerDefinition,
+} from "./static-handler.js";
+import type { SearchSchema } from "./search-params.js";
+import { registerSearchSchema } from "./route-map-builder.js";
 
 // ============================================================================
 // Response Route Symbol and Types
@@ -182,9 +188,11 @@ export type UnnamedRoute = "$unnamed";
 /**
  * Options for path() function
  */
-export interface PathOptions<TName extends string = string> {
+export interface PathOptions<TName extends string = string, TSearch extends SearchSchema = {}> {
   /** Route name for href() lookups */
   name?: TName;
+  /** Search param schema for typed query parameters */
+  search?: TSearch;
   /** Trailing slash behavior: "never" (redirect /path/ to /path), "always" (redirect /path to /path/), "ignore" (match both) */
   trailingSlash?: TrailingSlashMode;
   /** Response type marker (set by path.json(), etc.) */
@@ -206,7 +214,7 @@ export interface PathDefinition {
  */
 export interface UrlPatterns<
   TEnv = any,
-  TRoutes extends Record<string, string> = Record<string, string>,
+  TRoutes extends Record<string, any> = Record<string, string>,
   TResponses extends Record<string, unknown> = Record<string, unknown>,
 > {
   /** Internal: route definitions */
@@ -259,7 +267,7 @@ export interface IncludeOptions<TNamePrefix extends string = string> {
  * valid paths without type errors.
  */
 type PrefixRoutes<
-  TRoutes extends Record<string, string>,
+  TRoutes extends Record<string, any>,
   TPrefix extends string,
 > = TPrefix extends ""
   ? TRoutes
@@ -275,12 +283,14 @@ type PrefixRoutes<
  * Prefix route patterns with a URL prefix (e.g., "/blog" + "/:slug" = "/blog/:slug")
  */
 type PrefixPatterns<
-  TRoutes extends Record<string, string>,
+  TRoutes extends Record<string, any>,
   TUrlPrefix extends string,
 > = {
   [K in keyof TRoutes]: TRoutes[K] extends string
     ? `${TUrlPrefix}${TRoutes[K]}`
-    : TRoutes[K];
+    : TRoutes[K] extends { readonly path: infer P extends string; readonly search: infer S }
+      ? { readonly path: `${TUrlPrefix}${P}`; readonly search: S }
+      : TRoutes[K];
 };
 
 /**
@@ -356,11 +366,14 @@ type UnionToIntersection<U> = (U extends any ? (k: U) => void : never) extends (
 type ExtractRoutesFromItem<T, D extends number = 40> = [D] extends [never]
   ? {} // Max depth reached, stop recursion
   : // TypedRouteItem: extract name -> pattern (exclude unnamed routes)
-    T extends TypedRouteItem<infer TName, infer TPattern>
+    // When search schema is non-empty, value becomes { path, search } object
+    T extends TypedRouteItem<infer TName, infer TPattern, any, infer TSearch>
     ? TName extends string
       ? TName extends UnnamedRoute
         ? {} // Exclude unnamed routes from type map
-        : { [K in TName]: TPattern }
+        : {} extends TSearch
+          ? { [K in TName]: TPattern }
+          : { [K in TName]: { readonly path: TPattern; readonly search: TSearch } }
       : {}
     : // TypedIncludeItem: extract prefixed routes (both name and URL prefix)
       T extends TypedIncludeItem<
@@ -397,7 +410,7 @@ type ExtractRoutesFromItems<
   ? UnionToIntersection<
       { [K in keyof T]: ExtractRoutesFromItem<T[K], D> }[number]
     > extends infer R
-    ? R extends Record<string, string>
+    ? R extends Record<string, any>
       ? R
       : {}
     : {}
@@ -502,24 +515,26 @@ export type ExtractResponses<T extends readonly any[]> =
 export type PathFn<TEnv> = <
   const TPattern extends string,
   const TName extends string = UnnamedRoute,
-  TParams = ExtractParams<TPattern>,
+  const TSearch extends SearchSchema = {},
+  TParams extends Record<string, any> = ExtractParams<TPattern>,
 >(
   pattern: TPattern,
   handler:
     | ReactNode
-    | ((ctx: HandlerContext<TParams, TEnv>) => ReactNode | Promise<ReactNode> | Response | Promise<Response>)
-    | PrerenderHandlerDefinition<TParams>,
-  optionsOrUse?: PathOptions<TName> | (() => RouteUseItem[]),
+    | ((ctx: HandlerContext<TParams, TEnv, TSearch>) => ReactNode | Promise<ReactNode> | Response | Promise<Response>)
+    | PrerenderHandlerDefinition<TParams>
+    | StaticHandlerDefinition<TParams>,
+  optionsOrUse?: PathOptions<TName, TSearch> | (() => RouteUseItem[]),
   use?: () => RouteUseItem[],
   // Generic handler bypass: when handler uses index-signature params
   // (e.g. Handler<Record<string, any>>), skip the biconditional.
   // `string extends keyof TParams` is true for index signatures,
   // false for concrete params ({id: string}) and empty ({}).
 ) => string extends keyof TParams
-  ? TypedRouteItem<TName, TPattern>
+  ? TypedRouteItem<TName, TPattern, unknown, TSearch>
   : ExtractParams<TPattern> extends TParams
     ? TParams extends ExtractParams<TPattern>
-      ? TypedRouteItem<TName, TPattern>
+      ? TypedRouteItem<TName, TPattern, unknown, TSearch>
       : { __error: `Handler params do not match pattern "${TPattern}"` }
     : { __error: `Handler params do not match pattern "${TPattern}"` };
 
@@ -531,12 +546,13 @@ export type PathFn<TEnv> = <
 export type ResponsePathFn<TEnv> = <
   const TPattern extends string,
   const TName extends string = UnnamedRoute,
+  const TSearch extends SearchSchema = {},
 >(
   pattern: TPattern,
   handler: ResponseHandler<ExtractParams<TPattern>, TEnv>,
-  optionsOrUse?: PathOptions<TName> | (() => ResponseRouteUseItem[]),
+  optionsOrUse?: PathOptions<TName, TSearch> | (() => ResponseRouteUseItem[]),
   use?: () => ResponseRouteUseItem[],
-) => TypedRouteItem<TName, TPattern>;
+) => TypedRouteItem<TName, TPattern, unknown, TSearch>;
 
 /**
  * Path function for JSON response routes (path.json()).
@@ -546,15 +562,16 @@ export type ResponsePathFn<TEnv> = <
 export type JsonResponsePathFn<TEnv> = <
   const TPattern extends string,
   const TName extends string = UnnamedRoute,
+  const TSearch extends SearchSchema = {},
   TData = unknown,
 >(
   pattern: TPattern,
   handler: (
     ctx: ResponseHandlerContext<ExtractParams<TPattern>, TEnv>,
   ) => TData | Response | Promise<TData | Response>,
-  optionsOrUse?: PathOptions<TName> | (() => ResponseRouteUseItem[]),
+  optionsOrUse?: PathOptions<TName, TSearch> | (() => ResponseRouteUseItem[]),
   use?: () => ResponseRouteUseItem[],
-) => TypedRouteItem<TName, TPattern, TData>;
+) => TypedRouteItem<TName, TPattern, TData, TSearch>;
 
 /**
  * Path function for text-based response routes (path.text(), path.html(), path.xml()).
@@ -563,18 +580,19 @@ export type JsonResponsePathFn<TEnv> = <
 export type TextResponsePathFn<TEnv> = <
   const TPattern extends string,
   const TName extends string = UnnamedRoute,
+  const TSearch extends SearchSchema = {},
 >(
   pattern: TPattern,
   handler: TextResponseHandler<ExtractParams<TPattern>, TEnv>,
-  optionsOrUse?: PathOptions<TName> | (() => ResponseRouteUseItem[]),
+  optionsOrUse?: PathOptions<TName, TSearch> | (() => ResponseRouteUseItem[]),
   use?: () => ResponseRouteUseItem[],
-) => TypedRouteItem<TName, TPattern, string>;
+) => TypedRouteItem<TName, TPattern, string, TSearch>;
 
 /**
  * Base include function signature.
  */
 export type IncludeFn<TEnv> = <
-  TRoutes extends Record<string, string>,
+  TRoutes extends Record<string, any>,
   const TUrlPrefix extends string,
   const TNamePrefix extends string = never,
   TResponses extends Record<string, unknown> = Record<string, unknown>,
@@ -617,9 +635,9 @@ export type PathHelpers<TEnv> = {
    * Define a layout that wraps child routes
    */
   layout: {
-    (component: ReactNode | Handler<any, any, TEnv>): TypedLayoutItem<{}, {}>;
+    (component: ReactNode | Handler<any, any, TEnv> | StaticHandlerDefinition): TypedLayoutItem<{}, {}>;
     <const TChildren extends readonly LayoutUseItem[]>(
-      component: ReactNode | Handler<any, any, TEnv>,
+      component: ReactNode | Handler<any, any, TEnv> | StaticHandlerDefinition,
       use: () => TChildren,
     ): TypedLayoutItem<ExtractRoutes<TChildren>, ExtractResponses<TChildren>>;
   };
@@ -641,7 +659,7 @@ export type PathHelpers<TEnv> = {
    * Define parallel routes that render simultaneously in named slots
    */
   parallel: <
-    TSlots extends Record<`@${string}`, Handler<any, any, TEnv> | ReactNode>,
+    TSlots extends Record<`@${string}`, Handler<any, any, TEnv> | ReactNode | StaticHandlerDefinition>,
   >(
     slots: TSlots,
     use?: () => ParallelUseItem[],
@@ -795,6 +813,24 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
     const ctx = store.getStore();
     if (!ctx) throw new Error("path() must be called inside urls()");
 
+    invariant(
+      !ctx.parent || ctx.parent.type !== "parallel",
+      "path() cannot be used inside parallel()"
+    );
+
+    // Walk the parent chain to prevent path() nested under another path(),
+    // even when separated by intermediate layouts (e.g. path(layout(path())))
+    {
+      let ancestor = ctx.parent;
+      while (ancestor) {
+        invariant(
+          ancestor.type !== "route",
+          "path() cannot be nested inside another path()"
+        );
+        ancestor = ancestor.parent;
+      }
+    }
+
     // Determine options and use based on argument types
     let options: PathOptions | undefined;
     let use: (() => RouteUseItem[]) | undefined;
@@ -838,13 +874,15 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
       return { type: "route" } as RouteItem;
     }
 
-    // Ensure handler is always a function (wrap ReactNode or extract from prerender def)
+    // Ensure handler is always a function (wrap ReactNode or extract from prerender/static def)
     const wrappedHandler: Handler<any, any, TEnv> =
       typeof handler === "function"
         ? (handler as Handler<any, any, TEnv>)
         : isPrerenderHandler(handler)
           ? (handler.handler as Handler<any, any, TEnv>)
-          : () => handler;
+          : isStaticHandler(handler)
+            ? (handler.handler as Handler<any, any, TEnv>)
+            : () => handler;
 
     const entry = {
       id: namespace,
@@ -869,6 +907,9 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
             isPrerender: true as const,
             prerenderDef: handler as PrerenderHandlerDefinition,
           }
+        : {}),
+      ...(isStaticHandler(handler)
+        ? { isStaticPrerender: true as const }
         : {}),
       ...(resolveResponseType(options)
         ? { responseType: resolveResponseType(options) }
@@ -901,6 +942,14 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
     // Store trailing slash config if specified
     if (options?.trailingSlash && ctx.trailingSlash) {
       ctx.trailingSlash.set(routeName, options.trailingSlash);
+    }
+
+    // Store search schema if specified
+    if (options?.search) {
+      if (ctx.searchSchemas) {
+        ctx.searchSchemas.set(routeName, options.search);
+      }
+      registerSearchSchema(routeName, options.search);
     }
 
     // Run use callback if provided
@@ -1055,7 +1104,11 @@ function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
     const capturedUrlPrefix = getUrlPrefix();
     const capturedNamePrefix = getNamePrefix();
     const capturedParent = ctx.parent;
-    const fullPrefix = capturedUrlPrefix ? capturedUrlPrefix + prefix : prefix;
+    const fullPrefix = capturedUrlPrefix
+      ? (capturedUrlPrefix.endsWith("/") && prefix.startsWith("/")
+        ? capturedUrlPrefix + prefix.slice(1)
+        : capturedUrlPrefix + prefix)
+      : prefix;
     const fullNamePrefix = namePrefix
       ? capturedNamePrefix
         ? `${capturedNamePrefix}.${namePrefix}`
@@ -1077,6 +1130,17 @@ function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
     // at the correct index, preventing shortCode collisions with
     // sibling entries (e.g., BlogLayout and ArticlesLayout under NavLayout).
     const capturedCounters = { ...ctx.counters };
+
+    // Reserve a layout slot in the parent's counter so sibling lazy includes
+    // produce different shortCode indices for their root layout.
+    // Without this, consecutive include() calls capture identical counters
+    // and their first child layouts get the same shortCode (e.g., both M0L0L0),
+    // causing the client partial-update diff to see no changes on navigation.
+    if (capturedParent?.shortCode) {
+      const layoutCounterKey = `${capturedParent.shortCode}_layout`;
+      ctx.counters[layoutCounterKey] ??= 0;
+      ctx.counters[layoutCounterKey]++;
+    }
 
     // All includes are lazy - patterns are evaluated on first matching request
     // This improves cold start time significantly for large route sets
@@ -1157,7 +1221,7 @@ export function urls<
       path: pathHelper as any,
       include: includeHelper as any,
       layout: baseHelpers.layout as PathHelpers<TEnv>["layout"],
-      parallel: baseHelpers.parallel,
+      parallel: baseHelpers.parallel as PathHelpers<TEnv>["parallel"],
       intercept: baseHelpers.intercept as PathHelpers<TEnv>["intercept"],
       middleware: baseHelpers.middleware,
       revalidate: baseHelpers.revalidate,

@@ -1,4 +1,4 @@
-import { urls } from "@rangojs/router/server";
+import { urls } from "@rangojs/router";
 import { Meta, type HandlerContext } from "@rangojs/router";
 import { SiteLayout } from "./components/Layout.js";
 

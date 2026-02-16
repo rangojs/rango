@@ -302,3 +302,26 @@ export function setManifestReadyPromise(promise: Promise<void>): void {
 export function waitForManifestReady(): Promise<void> | null {
   return manifestReadyPromise;
 }
+
+// ============================================================================
+// Search Schema Registry
+// ============================================================================
+
+import type { SearchSchema } from "./search-params.js";
+
+// Global search schema map: route name -> search schema descriptor.
+// Populated by path() when a search option is provided.
+const globalSearchSchemas: Map<string, SearchSchema> = new Map();
+
+export function registerSearchSchema(
+  routeName: string,
+  schema: SearchSchema,
+): void {
+  globalSearchSchemas.set(routeName, schema);
+}
+
+export function getSearchSchema(
+  routeName: string,
+): SearchSchema | undefined {
+  return globalSearchSchemas.get(routeName);
+}

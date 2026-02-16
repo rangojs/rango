@@ -7,11 +7,10 @@
  */
 import { urls, type Handler } from "@rangojs/router";
 import { Outlet } from "@rangojs/router/client";
-import { getMatchDebugStats } from "@rangojs/router/server";
-import type { routes } from "./localized-patterns.gen.js";
+import { getMatchDebugStats } from "@rangojs/router";
 
 // Benchmark route - returns raw Response with debug stats, bypasses RSC
-const BenchmarkHandler: Handler<"benchFirst", routes> = async (ctx) => {
+const BenchmarkHandler: Handler<"benchFirst"> = async (ctx) => {
   const now = Date.now();
   const start = ctx.var.dateStart ?? 0;
   const elapsed = now - start;
@@ -58,7 +57,7 @@ const ParamPage: Handler<Record<string, any>> = async (ctx) => {
 };
 
 // Simple page component for stress routes (no params)
-const StressPage: Handler<"localeHome", routes> = async (ctx) => {
+const StressPage: Handler<"localeHome"> = async (ctx) => {
   await new Promise((r) => setTimeout(r, 1));
 
   const renderTime = Date.now();

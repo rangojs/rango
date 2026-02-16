@@ -4,6 +4,7 @@ import type { Handle } from "./handle.js";
 import type { MiddlewareFn } from "./router/middleware.js";
 import type { Theme } from "./theme/types.js";
 import type { ScopedReverseFunction } from "./reverse.js";
+import type { SearchSchema, ResolveSearchSchema } from "./search-params.js";
 
 // Re-export MiddlewareFn for internal/advanced use
 export type { MiddlewareFn } from "./router/middleware.js";
@@ -68,6 +69,16 @@ declare global {
 export type GetRegisteredRoutes = keyof RSCRouter.RegisteredRoutes extends never
   ? Record<string, string>
   : RSCRouter.RegisteredRoutes;
+
+/**
+ * Default route map for Handler type.
+ * Uses GeneratedRouteMap (from gen file) instead of RegisteredRoutes to avoid
+ * circular dependencies: router.tsx -> urls.tsx -> handler.tsx -> RegisteredRoutes -> router.tsx.
+ * GeneratedRouteMap is declared in a standalone gen file with no imports.
+ */
+type DefaultHandlerRouteMap = keyof RSCRouter.GeneratedRouteMap extends never
+  ? {}
+  : RSCRouter.GeneratedRouteMap;
 
 /**
  * Default environment type - uses global augmentation if available, any otherwise
@@ -305,22 +316,39 @@ export type ScopedRouteMap<
     : never]: TMap[K];
 };
 
+/**
+ * Extract the search schema from a route map entry.
+ * - string value (old format): no search schema -> {}
+ * - { path, search } value: extract search
+ * - { path, response } value (no search): -> {}
+ */
+type ExtractSearchFromRouteMap<TRouteMap, T> =
+  T extends keyof TRouteMap
+    ? TRouteMap[T] extends { readonly search: infer S extends SearchSchema }
+      ? S
+      : {}
+    : {};
+
 export type Handler<
-  T = {},
-  TRouteMap extends {} = {},
+  T extends keyof TRouteMap | (string & {}) | Record<string, any> = {},
+  TRouteMap extends {} = DefaultHandlerRouteMap,
   TEnv = DefaultEnv,
 > = (
   ctx: HandlerContext<
     T extends keyof TRouteMap
       ? TRouteMap[T] extends string
         ? ExtractParams<TRouteMap[T]>
-        : T extends string
-          ? ExtractParams<T>
-          : T
+        : TRouteMap[T] extends { readonly path: infer P extends string }
+          ? ExtractParams<P>
+          : T extends string
+            ? ExtractParams<T>
+            : T
       : T extends string
         ? ExtractParams<T>
         : T,
-    TEnv
+    TEnv,
+    ExtractSearchFromRouteMap<TRouteMap, T>,
+    TRouteMap extends DefaultHandlerRouteMap ? never : TRouteMap
   >,
 ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>;
 
@@ -350,7 +378,7 @@ export type Handler<
  * }
  * ```
  */
-export type HandlerContext<TParams = {}, TEnv = DefaultEnv> = {
+export type HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch extends SearchSchema = {}, TRouteMap = never> = {
   /**
    * Route parameters extracted from the URL pattern.
    * Type-safe when using Handler<"/path/:param"> or Handler<{ param: string }>.
@@ -365,9 +393,11 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv> = {
   request: Request;
   /**
    * Query parameters from the URL (system params like `_rsc*` are filtered).
-   * Use for user-facing query strings only.
+   *
+   * When a route defines a `search` schema, this is a typed object with
+   * parsed values. Otherwise it is the standard URLSearchParams.
    */
-  searchParams: URLSearchParams;
+  searchParams: {} extends TSearch ? URLSearchParams : ResolveSearchSchema<TSearch>;
   /**
    * The pathname portion of the request URL.
    */
@@ -534,7 +564,7 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv> = {
    * ctx.reverse("/about")                       // ⚠ No type checking
    * ```
    */
-  reverse: ScopedReverseFunction<GetRegisteredRoutes>;
+  reverse: [TRouteMap] extends [never] ? ScopedReverseFunction<GetRegisteredRoutes> : ScopedReverseFunction<TRouteMap & GetRegisteredRoutes>;
 };
 
 /**
@@ -545,7 +575,8 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv> = {
 export type InternalHandlerContext<
   TParams = {},
   TEnv = DefaultEnv,
-> = HandlerContext<TParams, TEnv> & {
+  TSearch extends SearchSchema = {},
+> = HandlerContext<TParams, TEnv, TSearch> & {
   /** Raw request with all system parameters intact. */
   _originalRequest: Request;
   /** Current segment ID for handle data attribution. */
@@ -1408,10 +1439,11 @@ export type LoaderContext<
   TParams = Record<string, string | undefined>,
   TEnv = DefaultEnv,
   TBody = unknown,
+  TSearch extends SearchSchema = {},
 > = {
   params: TParams;
   request: Request;
-  searchParams: URLSearchParams;
+  searchParams: {} extends TSearch ? URLSearchParams : ResolveSearchSchema<TSearch>;
   pathname: string;
   url: URL;
   env: TEnv extends RouterEnv<infer B, any> ? B : {};

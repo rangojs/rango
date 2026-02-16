@@ -22,7 +22,7 @@ test.describe.configure({ mode: "serial" });
  * - Loading indicators not showing when navigating to slow routes
  * - All segments replaced instead of partial update
  */
-test.describe("prerender navigation (build)", () => {
+test.describe("prerender navigation (production)", () => {
   const f = useFixture({
     root: ".",
     mode: "build",

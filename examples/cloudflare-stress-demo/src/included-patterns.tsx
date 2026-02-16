@@ -2,11 +2,10 @@
  * 500 routes for include() testing with various param patterns
  */
 import { urls, type Handler } from "@rangojs/router";
-import { getMatchDebugStats } from "@rangojs/router/server";
-import type { routes } from "./included-patterns.gen.js";
+import { getMatchDebugStats } from "@rangojs/router";
 
 // Benchmark handler for API routes - returns debug stats
-const ApiBenchmarkHandler: Handler<"benchFirst", routes> = async (ctx) => {
+const ApiBenchmarkHandler: Handler<"benchFirst"> = async (ctx) => {
   const matchStats = getMatchDebugStats();
   throw new Response(
     JSON.stringify({

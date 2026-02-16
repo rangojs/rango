@@ -4,5 +4,6 @@ export const routes = {
   benchLast: "/bench/last",
   home: "/",
   links: "/links",
+  reverseTest: "/reverse-test",
 } as const;
 export type routes = typeof routes;

@@ -193,11 +193,14 @@ test.describe("shop-navigation", () => {
     await expect(page.locator("text=Intercepted")).not.toBeVisible({
       timeout: 3000,
     });
+    await expect(page).toHaveURL(/\/shop\/product\/wireless-headphones/, {
+      timeout: 5000,
+    });
 
     // Full product page content should be visible
-    await expect(
-      page.locator("text=Test Revalidation Behavior")
-    ).toBeVisible({ timeout: 3000 });
+    await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({
+      timeout: 10000,
+    });
   });
 
   test("should navigate from intercept modal to full product page multiple times", async ({
@@ -216,7 +219,12 @@ test.describe("shop-navigation", () => {
     await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 3000 });
     await page.locator("text=View Full Details").click();
     await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 3000 });
-    await expect(page.locator("text=Test Revalidation Behavior")).toBeVisible({ timeout: 3000 });
+    await expect(page).toHaveURL(/\/shop\/product\/wireless-headphones/, {
+      timeout: 5000,
+    });
+    await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({
+      timeout: 10000,
+    });
 
     // Go back to shop
     await page.locator('a[href="/shop"]').first().click();
@@ -232,7 +240,12 @@ test.describe("shop-navigation", () => {
     await expect(page.locator("h2:has-text('Running Shoes')")).toBeVisible({ timeout: 3000 });
     await page.locator("text=View Full Details").click();
     await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 3000 });
-    await expect(page.locator("text=Test Revalidation Behavior")).toBeVisible({ timeout: 3000 });
+    await expect(page).toHaveURL(/\/shop\/product\/running-shoes/, {
+      timeout: 5000,
+    });
+    await expect(page.locator("h2:has-text('Running Shoes')")).toBeVisible({
+      timeout: 10000,
+    });
 
     // Go back to shop again
     await page.locator('a[href="/shop"]').first().click();
@@ -246,7 +259,12 @@ test.describe("shop-navigation", () => {
     await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 3000 });
     await page.locator("text=View Full Details").click();
     await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 3000 });
-    await expect(page.locator("text=Test Revalidation Behavior")).toBeVisible({ timeout: 3000 });
+    await expect(page).toHaveURL(/\/shop\/product\/wireless-headphones/, {
+      timeout: 5000,
+    });
+    await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({
+      timeout: 10000,
+    });
   });
 });
 
@@ -543,10 +561,12 @@ test.describe("shop-breadcrumbs", () => {
     // CRITICAL: Category breadcrumbs should be restored: Shop > Electronics
     await expect(breadcrumbNav.locator("text=Shop")).toBeVisible();
 
-    // Print console logs for debugging
-    console.log("=== Browser Console Logs ===");
-    logs.forEach((log) => console.log(log));
-    console.log("=== End Browser Console Logs ===");
+    // Print debug logs only when requested.
+    if (process.env.TEST_DEBUG) {
+      console.log("=== Browser Console Logs ===");
+      logs.forEach((log) => console.log(log));
+      console.log("=== End Browser Console Logs ===");
+    }
 
     await expect(breadcrumbNav.locator("text=Electronics")).toBeVisible({ timeout: 3000 });
   });

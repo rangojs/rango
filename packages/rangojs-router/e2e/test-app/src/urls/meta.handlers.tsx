@@ -4,11 +4,10 @@ import { Link } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles.js";
 import { ChildMetaSetter } from "../components/ChildMetaSetter.js";
 import { AsyncChildMetaSetter } from "../components/AsyncChildMetaSetter.js";
-import type { routes } from "./meta.gen.js";
 
 // --- metaTemplatePatterns handlers ---
 
-export const MetaTemplateIndexHandler: Handler<"index", routes> = () => (
+export const MetaTemplateIndexHandler: Handler<"metaTemplate.index"> = () => (
   <div data-testid="meta-template-index-page">
     <h1 data-testid="meta-template-index-title">Template Index</h1>
     <p data-testid="meta-template-index-description">
@@ -17,7 +16,7 @@ export const MetaTemplateIndexHandler: Handler<"index", routes> = () => (
   </div>
 );
 
-export const MetaTemplateChildHandler: Handler<"child", routes> = (ctx) => {
+export const MetaTemplateChildHandler: Handler<"metaTemplate.child"> = (ctx) => {
   const meta = ctx.use(Meta);
   meta({ title: "Child Page" }); // Should become "Child Page | Test Site"
   meta({ name: "description", content: "Child page description" });
@@ -32,7 +31,7 @@ export const MetaTemplateChildHandler: Handler<"child", routes> = (ctx) => {
   );
 };
 
-export const MetaTemplateAbsoluteHandler: Handler<"absolute", routes> = (ctx) => {
+export const MetaTemplateAbsoluteHandler: Handler<"metaTemplate.absolute"> = (ctx) => {
   const meta = ctx.use(Meta);
   meta({ title: { absolute: "Custom Absolute Title" } }); // No template
   meta({ name: "description", content: "Absolute page description" });
@@ -47,7 +46,7 @@ export const MetaTemplateAbsoluteHandler: Handler<"absolute", routes> = (ctx) =>
   );
 };
 
-export const MetaTemplateNestedHandler: Handler<"nested", routes> = () => (
+export const MetaTemplateNestedHandler: Handler<"metaTemplate.nested"> = () => (
   <div data-testid="meta-template-nested-page">
     <h1 data-testid="meta-template-nested-title">Nested Index</h1>
     <p data-testid="meta-template-nested-description">
@@ -56,7 +55,7 @@ export const MetaTemplateNestedHandler: Handler<"nested", routes> = () => (
   </div>
 );
 
-export const MetaTemplateNestedChildHandler: Handler<"nestedChild", routes> = (ctx) => {
+export const MetaTemplateNestedChildHandler: Handler<"metaTemplate.nestedChild"> = (ctx) => {
   const meta = ctx.use(Meta);
   meta({ title: "Nested Child" }); // Should become "Nested Child | Nested Section"
 
@@ -72,7 +71,7 @@ export const MetaTemplateNestedChildHandler: Handler<"nestedChild", routes> = (c
 
 // --- metaUnsetPatterns handlers ---
 
-export const MetaUnsetIndexHandler: Handler<"index", routes> = () => (
+export const MetaUnsetIndexHandler: Handler<"metaUnset.index"> = () => (
   <div data-testid="meta-unset-index-page">
     <h1 data-testid="meta-unset-index-title">Unset Index</h1>
     <p data-testid="meta-unset-index-description">
@@ -81,7 +80,7 @@ export const MetaUnsetIndexHandler: Handler<"index", routes> = () => (
   </div>
 );
 
-export const MetaUnsetChildHandler: Handler<"child", routes> = (ctx) => {
+export const MetaUnsetChildHandler: Handler<"metaUnset.child"> = (ctx) => {
   const meta = ctx.use(Meta);
   // Unset various meta tags
   meta({ unset: "name:robots" });
@@ -97,7 +96,7 @@ export const MetaUnsetChildHandler: Handler<"child", routes> = (ctx) => {
   );
 };
 
-export const MetaUnsetThenSetHandler: Handler<"unsetThenSet", routes> = (ctx) => {
+export const MetaUnsetThenSetHandler: Handler<"metaUnset.unsetThenSet"> = (ctx) => {
   const meta = ctx.use(Meta);
   // Unset parent description, then set a new one
   meta({ unset: "name:description" });
@@ -118,7 +117,7 @@ export const MetaUnsetThenSetHandler: Handler<"unsetThenSet", routes> = (ctx) =>
 
 // --- metaMergePatterns handlers ---
 
-export const MetaMergeIndexHandler: Handler<"index", routes> = () => (
+export const MetaMergeIndexHandler: Handler<"metaMerge.index"> = () => (
   <div data-testid="meta-merge-index-page">
     <h1 data-testid="meta-merge-index-title">Merge Index</h1>
     <p data-testid="meta-merge-index-description">
@@ -127,7 +126,7 @@ export const MetaMergeIndexHandler: Handler<"index", routes> = () => (
   </div>
 );
 
-export const MetaMergeChildHandler: Handler<"child", routes> = (ctx) => {
+export const MetaMergeChildHandler: Handler<"metaMerge.child"> = (ctx) => {
   const meta = ctx.use(Meta);
   // Override title
   meta({ title: "Merge Child" });
@@ -147,7 +146,7 @@ export const MetaMergeChildHandler: Handler<"child", routes> = (ctx) => {
   );
 };
 
-export const MetaMergeDeepHandler: Handler<"deep", routes> = (ctx) => {
+export const MetaMergeDeepHandler: Handler<"metaMerge.deep"> = (ctx) => {
   const meta = ctx.use(Meta);
   // Deep page overrides title only
   meta({ title: "Deep Nested Page" });
@@ -167,7 +166,7 @@ export const MetaMergeDeepHandler: Handler<"deep", routes> = (ctx) => {
 
 // --- handlePatterns handlers ---
 
-export const HandlePassthroughHandler: Handler<"handlePassthrough", routes> = (ctx) => {
+export const HandlePassthroughHandler: Handler<"handlePassthrough"> = (ctx) => {
   const pushBreadcrumb = ctx.use(Breadcrumbs);
   const meta = ctx.use(Meta);
 
@@ -193,7 +192,7 @@ export const HandlePassthroughHandler: Handler<"handlePassthrough", routes> = (c
   );
 };
 
-export const HandlePassthroughAsyncHandler: Handler<"handlePassthroughAsync", routes> = (ctx) => {
+export const HandlePassthroughAsyncHandler: Handler<"handlePassthroughAsync"> = (ctx) => {
   const pushBreadcrumb = ctx.use(Breadcrumbs);
   const meta = ctx.use(Meta);
 
@@ -222,7 +221,7 @@ export const HandlePassthroughAsyncHandler: Handler<"handlePassthroughAsync", ro
 
 // --- hydrationPatterns handlers ---
 
-export const HydrationTestHandler: Handler<"hydrationTest", routes> = async () => {
+export const HydrationTestHandler: Handler<"hydrationTest"> = async () => {
   const { HydrationMismatch } = await import("../components/HydrationMismatch.js");
   return (
     <div data-testid="hydration-test-page">
@@ -237,7 +236,7 @@ export const HydrationTestHandler: Handler<"hydrationTest", routes> = async () =
 
 // --- trailingSlashPatterns handlers ---
 
-export const TrailingSlashIgnoreHandler: Handler<"trailingSlash.ignore", routes> = () => (
+export const TrailingSlashIgnoreHandler: Handler<"trailingSlash.ignore"> = () => (
   <div data-testid="ts-ignore-page">
     <Link to="/" data-testid="back-link">← Back to Home</Link>
     <h1 data-testid="ts-ignore-title">Trailing Slash: Ignore</h1>
@@ -247,7 +246,7 @@ export const TrailingSlashIgnoreHandler: Handler<"trailingSlash.ignore", routes>
   </div>
 );
 
-export const TrailingSlashAlwaysHandler: Handler<"trailingSlash.always", routes> = () => (
+export const TrailingSlashAlwaysHandler: Handler<"trailingSlash.always"> = () => (
   <div data-testid="ts-always-page">
     <Link to="/" data-testid="back-link">← Back to Home</Link>
     <h1 data-testid="ts-always-title">Trailing Slash: Always</h1>
@@ -257,7 +256,7 @@ export const TrailingSlashAlwaysHandler: Handler<"trailingSlash.always", routes>
   </div>
 );
 
-export const TrailingSlashNeverHandler: Handler<"trailingSlash.never", routes> = () => (
+export const TrailingSlashNeverHandler: Handler<"trailingSlash.never"> = () => (
   <div data-testid="ts-never-page">
     <Link to="/" data-testid="back-link">← Back to Home</Link>
     <h1 data-testid="ts-never-title">Trailing Slash: Never</h1>

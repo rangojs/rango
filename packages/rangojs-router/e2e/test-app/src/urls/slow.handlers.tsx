@@ -6,9 +6,8 @@ import {
   SlowStreamingContent,
   SlowSkipSsrContent,
 } from "../components/SlowStreamingContent.js";
-import type { routes } from "./slow.gen.js";
 
-export const SlowHandler: Handler<"slow", routes> = async (ctx) => {
+export const SlowHandler: Handler<"slow"> = async (ctx) => {
   const { message, count, loadedAt } = await ctx.use(SlowLoader);
   return (
     <div data-testid="slow-page">
@@ -26,10 +25,10 @@ export const SlowHandler: Handler<"slow", routes> = async (ctx) => {
   );
 };
 
-export const SlowStreamingHandler: Handler<"slowStreaming", routes> = () => (
+export const SlowStreamingHandler: Handler<"slowStreaming"> = () => (
   <SlowStreamingContent loader={SlowLoader} />
 );
 
-export const SlowStreamingSkipSsrHandler: Handler<"slowStreamingSkipSsr", routes> = () => (
+export const SlowStreamingSkipSsrHandler: Handler<"slowStreamingSkipSsr"> = () => (
   <SlowSkipSsrContent loader={SlowLoader} />
 );

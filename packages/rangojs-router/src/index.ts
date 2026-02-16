@@ -1,13 +1,13 @@
 /**
- * rsc-router
+ * @rangojs/router
  *
- * Universal exports - types and utilities safe for both server and client
+ * Single user-facing entrypoint for all router APIs.
  *
- * For server-only exports (urls, createRouter, createLoader, etc.):
- *   import from "rsc-router/server"
+ * The "react-server" export condition selects index.rsc.ts (real implementations)
+ * vs this file (client stubs for server-only functions).
  *
- * For client-only exports (Outlet, useOutlet, etc.):
- *   import from "rsc-router/client"
+ * For client-only exports (Outlet, useOutlet, hooks, components):
+ *   import from "@rangojs/router/client"
  */
 
 // Universal rendering utilities (work on both server and client)
@@ -35,6 +35,9 @@ export type {
   RouterEnv,
   DefaultEnv,
   RouteDefinition,
+  RouteConfig,
+  RouteDefinitionOptions,
+  TrailingSlashMode,
   // Handler types
   Handler,            // Supports params object, path pattern, or route name
   ScopedRouteMap,     // Scoped view of GeneratedRouteMap for Handler<"localName", ScopedRouteMap<"prefix">>
@@ -65,11 +68,21 @@ export type {
   NotFoundInfo,
   NotFoundBoundaryFallbackProps,
   NotFoundBoundaryHandler,
+  // Error handling callback types
+  ErrorPhase,
+  OnErrorContext,
+  OnErrorCallback,
 } from "./types.js";
+
+// Search params schema types
+export type { SearchSchema, SearchSchemaValue, ResolveSearchSchema, RouteSearchParams, RouteParams } from "./search-params.js";
 
 // Client-safe createLoader - only stores the $$id, function is not included
 // Use this when defining loaders that will be imported by client components
 export { createLoader } from "./loader.js";
+
+// Route definition types (safe to import anywhere)
+export type { RouteHelpers, RouteHandlers } from "./route-definition.js";
 
 // Response route types (usable in both server and client contexts)
 export type {
@@ -86,66 +99,111 @@ export type {
   ResponseEnvelope,
 } from "./urls.js";
 
+// Middleware context types
+export type {
+  MiddlewareContext,
+  CookieOptions,
+} from "./router/middleware.js";
+
 /**
  * Error-throwing stub for server-only `urls` function.
- * Import from "@rangojs/router/server" or use within RSC context instead.
  */
 export function urls(): never {
   throw new Error(
-    'urls() is server-only. Import from "@rangojs/router/server" instead, or ensure you\'re using it in a server component.'
+    'urls() is server-only and requires RSC context.'
   );
 }
 
 /**
  * Error-throwing stub for server-only `createRouter` function.
- * Import from "@rangojs/router/server" instead.
  */
 export function createRouter(): never {
   throw new Error(
-    'createRouter() is server-only. Import from "@rangojs/router/server" instead.'
+    'createRouter() is server-only and requires RSC context.'
   );
 }
 
 /**
  * Error-throwing stub for server-only `redirect` function.
- * Import from "@rangojs/router/server" or use within RSC context instead.
  */
 export function redirect(): never {
   throw new Error(
-    'redirect() is server-only. Import from "@rangojs/router/server" instead.'
+    'redirect() is server-only and requires RSC context.'
+  );
+}
+
+// Handle API (universal - works on both server and client)
+export { createHandle, isHandle, type Handle } from "./handle.js";
+
+/**
+ * Error-throwing stub for server-only `Prerender` function.
+ */
+export function Prerender(): never {
+  throw new Error(
+    'Prerender() is server-only and requires RSC context.'
   );
 }
 
 /**
- * Error-throwing stub for server-only `createHandle` function.
- * Import from "@rangojs/router/server" or use within RSC context instead.
+ * Error-throwing stub for server-only `Static` function.
  */
-export function createHandle(): never {
+export function Static(): never {
   throw new Error(
-    'createHandle() is server-only. Import from "@rangojs/router/server" instead.'
+    'Static() is server-only and requires RSC context.'
   );
 }
-
-/**
- * Error-throwing stub for server-only `createPrerenderHandler` function.
- * Import from "@rangojs/router/server" or use within RSC context instead.
- */
-export function createPrerenderHandler(): never {
-  throw new Error(
-    'createPrerenderHandler() is server-only. Import from "@rangojs/router/server" instead.'
-  );
-}
-
-// Handle API (type-only exports safe for client)
-export { isHandle, type Handle } from "./handle.js";
 
 /**
  * Error-throwing stub for server-only `getRequestContext` function.
- * Import from "@rangojs/router/server" or use within RSC context instead.
  */
 export function getRequestContext(): never {
   throw new Error(
-    'getRequestContext() is server-only. Import from "@rangojs/router/server" instead.'
+    'getRequestContext() is server-only and requires RSC context.'
+  );
+}
+
+/**
+ * Error-throwing stub for server-only `requireRequestContext` function.
+ */
+export function requireRequestContext(): never {
+  throw new Error(
+    'requireRequestContext() is server-only and requires RSC context.'
+  );
+}
+
+/**
+ * Error-throwing stub for server-only `createReverse` function.
+ */
+export function createReverse(): never {
+  throw new Error(
+    'createReverse() is server-only and requires RSC context.'
+  );
+}
+
+/**
+ * Error-throwing stub for server-only `enableMatchDebug` function.
+ */
+export function enableMatchDebug(): never {
+  throw new Error(
+    'enableMatchDebug() is server-only and requires RSC context.'
+  );
+}
+
+/**
+ * Error-throwing stub for server-only `getMatchDebugStats` function.
+ */
+export function getMatchDebugStats(): never {
+  throw new Error(
+    'getMatchDebugStats() is server-only and requires RSC context.'
+  );
+}
+
+/**
+ * Error-throwing stub for server-only `track` function.
+ */
+export function track(): never {
+  throw new Error(
+    'track() is server-only and requires RSC context.'
   );
 }
 
@@ -156,10 +214,16 @@ export type { RequestContext } from "./server/request-context.js";
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 
 // Reverse type utilities for type-safe URL generation (Django-style URL reversal)
-// ScopedReverseFunction is used with scopedReverse<typeof patterns>() for composable modules
-export type { ScopedReverseFunction, ReverseFunction, ExtractLocalRoutes } from "./reverse.js";
+export type { ScopedReverseFunction, ReverseFunction, ExtractLocalRoutes, PrefixedRoutes, PrefixRoutePatterns, ParamsFor, SanitizePrefix, MergeRoutes } from "./reverse.js";
 // scopedReverse() helper for handlers to get locally-typed reverse
 export { scopedReverse } from "./reverse.js";
+
+// Location state (universal - works on both server and client)
+export {
+  createLocationState,
+  type LocationStateDefinition,
+  type LocationStateEntry,
+} from "./browser/react/location-state-shared.js";
 
 // Path-based response type lookup from RegisteredRoutes
 export type { PathResponse } from "./href-client.js";

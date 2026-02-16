@@ -27,6 +27,7 @@ import {
   type InterceptSelectorContext,
 } from "./server/context";
 import { invariant } from "./errors";
+import { isStaticHandler } from "./static-handler.js";
 import RootLayout from "./server/root-layout";
 import type {
   AllUseItems,
@@ -516,6 +517,10 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
  */
 const hasRoutesInItem = (item: AllUseItems): boolean => {
   if (item.type === "route") return true;
+  // Lazy includes contain deferred routes — treat them as having routes
+  // to prevent the parent layout from being misclassified as orphan,
+  // which would clear its parent pointer and break the middleware chain.
+  if (item.type === "include") return true;
   if (item.type === "cache" && item.uses) {
     return item.uses.some((child) => hasRoutesInItem(child));
   }
@@ -822,7 +827,24 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     invariant(false, "No parent entry available for parallel()");
   }
 
+  invariant(
+    ctx.parent.type !== "parallel",
+    "parallel() cannot be nested inside another parallel()"
+  );
+
   const namespace = `${ctx.namespace}.$${store.getNextIndex("parallel")}`;
+
+  // Unwrap any static handler definitions in parallel slots
+  const unwrappedSlots: Record<string, any> = {};
+  let hasStaticSlot = false;
+  for (const [slotName, slotHandler] of Object.entries(slots as Record<string, any>)) {
+    if (isStaticHandler(slotHandler)) {
+      hasStaticSlot = true;
+      unwrappedSlots[slotName] = slotHandler.handler;
+    } else {
+      unwrappedSlots[slotName] = slotHandler;
+    }
+  }
 
   // Create full EntryData for parallel with its own loaders/revalidate/loading
   const parallelUrlPrefix = getUrlPrefix();
@@ -831,7 +853,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     shortCode: store.getShortCode("parallel"),
     type: "parallel",
     parent: null, // Parallels don't participate in parent chain traversal
-    handler: slots,
+    handler: unwrappedSlots,
     loading: undefined, // Allow loading() to attach loading state
     middleware: [],
     revalidate: [],
@@ -842,6 +864,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     intercept: [],
     loader: [],
     ...(parallelUrlPrefix ? { mountPath: parallelUrlPrefix } : {}),
+    ...(hasStaticSlot ? { isStaticPrerender: true as const } : {}),
   } satisfies EntryData;
 
   // Run use callback if provided to collect loaders, revalidate, loading
@@ -873,6 +896,11 @@ const intercept: RouteHelpers<any, any>["intercept"] = (
   if (!ctx.parent || !ctx.parent?.intercept) {
     invariant(false, "No parent entry available for intercept()");
   }
+
+  invariant(
+    ctx.parent.type !== "parallel",
+    "intercept() cannot be used inside parallel()"
+  );
 
   const namespace = `${ctx.namespace}.$${store.getNextIndex("intercept")}.${slotName}`;
 
@@ -1066,10 +1094,20 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
   const store = getContext();
   const ctx = store.getStore();
   if (!ctx) throw new Error("layout() must be called inside map()");
+
+  invariant(
+    !ctx.parent || ctx.parent.type !== "parallel",
+    "layout() cannot be used inside parallel()"
+  );
+
   const isRoot = !ctx.parent || ctx.parent === null;
   const nextIndex = isRoot ? "$root" : store.getNextIndex("layout");
   const namespace = `${ctx.namespace}.${nextIndex}`;
   const shortCode = store.getShortCode("layout");
+
+  // Unwrap static handler definition, extract the actual handler function
+  const isStatic = isStaticHandler(handler);
+  const unwrappedHandler = isStatic ? handler.handler : handler;
 
   const urlPrefix = getUrlPrefix();
   const entry = {
@@ -1077,7 +1115,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     shortCode,
     type: "layout",
     parent: ctx.parent,
-    handler,
+    handler: unwrappedHandler,
     loading: undefined, // Allow loading() to attach loading state
     middleware: [],
     revalidate: [],
@@ -1088,6 +1126,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     layout: [],
     loader: [],
     ...(urlPrefix ? { mountPath: urlPrefix } : {}),
+    ...(isStatic ? { isStaticPrerender: true as const } : {}),
   } satisfies EntryData;
 
   // Run use callback if provided
@@ -1108,6 +1147,17 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     result.some((item) => hasRoutesInItem(item));
 
   if (!hasRoutes) {
+    // Orphan layouts must not contain other layouts as children.
+    // If we're here, all child layouts are also orphan (if any had routes,
+    // hasRoutesInItem would have returned true). Nested orphan chains are
+    // confusing — use sibling orphan layouts instead.
+    if (result) {
+      invariant(
+        !result.some((item) => item?.type === "layout"),
+        `orphan layout cannot contain other layouts as children [${namespace}]`
+      );
+    }
+
     const parent = ctx.parent;
 
     // Allow orphan layouts at root level if they're part of map() builder result

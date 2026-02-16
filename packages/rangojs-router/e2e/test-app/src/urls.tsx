@@ -17,9 +17,14 @@ import { middlewarePatterns } from "./urls/middleware.js";
 import { cachePatterns } from "./urls/cache.js";
 import { themePatterns } from "./urls/theme.js";
 import { hrefPatterns } from "./urls/href.js";
+import { searchPatterns } from "./urls/search.js";
 import { refTestPatterns } from "./urls/ref-test.js";
 import { prerenderPatterns } from "./urls/prerender.js";
+import { prerenderComplexPatterns } from "./urls/prerender-complex.js";
+import { transformCasesPatterns } from "./urls/transform-cases.js";
 import { apiShopPatterns } from "./urls/api-shop.js";
+import { includeMiddlewarePatterns } from "./urls/include-middleware.js";
+import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
   ProductsLoader,
@@ -408,14 +413,37 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
     // Href test patterns
     include("/href", hrefPatterns, { name: "href" }),
 
+    // Search params test patterns
+    include("/search", searchPatterns, { name: "search" }),
+
     // Ref serialization test patterns
     include("/ref-test", refTestPatterns, { name: "refTest" }),
 
     // Pre-render handler test patterns
     include("/", prerenderPatterns),
 
+    // Pre-render complex test patterns (layout + parallel + fresh loader)
+    include("/prerender-complex", prerenderComplexPatterns, { name: "prerenderComplex" }),
+
+    // Transform coverage patterns (alias imports + export specifiers)
+    include("/transform-cases", transformCasesPatterns, { name: "transformCases" }),
+
     // Shop API patterns (JSON response routes)
     include("/api/shop", apiShopPatterns, { name: "apiShop" }),
+
+    // Include under layout with middleware — tests that layout middleware
+    // is applied to routes inside include() even when include() is the
+    // only child of the layout (the hasRoutesInItem fix).
+    layout(IncludeMwLayout, () => [
+      middleware(async (ctx, next) => {
+        ctx.set("includeLayoutMw", "applied");
+        await next();
+        ctx.header("X-Include-Layout-Middleware", "applied");
+      }),
+      include("/include-mw-test", includeMiddlewarePatterns, {
+        name: "includeMw",
+      }),
+    ]),
 
     // Shop playground page
     path(
@@ -428,6 +456,13 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
       ),
       { name: "shopPlayground" },
     ),
+
+    // Module-level reverse() test endpoint — returns results computed at
+    // module load time (before lazy includes resolve) via NamedRoutes fallback
+    path.json("/reverse-fallback-test", async (): Promise<Record<string, string>> => {
+      const { moduleLevelReverseResults } = await import("./router.js");
+      return moduleLevelReverseResults;
+    }, { name: "reverseFallbackTest" }),
 
     // Content negotiation test: RSC + JSON + MD on same URL
     path(

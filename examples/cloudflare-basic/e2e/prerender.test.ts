@@ -14,7 +14,7 @@ test.describe.configure({ mode: "serial" });
  * Verifies that pre-rendered .rsc files (partial format) work correctly
  * for both direct visits (index.html) and client-side navigation (index.rsc).
  */
-test.describe("prerender", () => {
+test.describe("prerender (production)", () => {
   const f = useFixture({
     root: ".",
     mode: "build",

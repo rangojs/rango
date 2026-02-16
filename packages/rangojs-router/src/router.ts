@@ -98,7 +98,7 @@ import {
 } from "./router/match-api.js";
 
 import type { SegmentResolutionDeps, MatchApiDeps } from "./router/types.js";
-import { createHandlerContext, createBuildContext } from "./router/handler-context.js";
+import { createHandlerContext } from "./router/handler-context.js";
 import {
   setupLoaderAccess,
   setupLoaderAccessSilent,
@@ -134,6 +134,10 @@ import {
 } from "./router/match-context.js";
 import { createMatchPartialPipeline } from "./router/match-pipelines.js";
 import { collectMatchResult } from "./router/match-result.js";
+import {
+  runWithRouterLogContext,
+  withRouterLogScope,
+} from "./router/logging.js";
 import { resolveThemeConfig } from "./theme/constants.js";
 
 // Response type -> MIME type used for Accept header matching
@@ -501,6 +505,14 @@ export interface RSCRouterOptions<TEnv = any> {
   urls?: UrlPatterns<TEnv, any>;
 
   /**
+   * Injected by the Vite transform at compile time.
+   * Static import of NamedRoutes from the generated named-routes file.
+   * Provides O(1) reverse() fallback when lazy includes haven't resolved.
+   * @internal
+   */
+  $$routeNames?: Record<string, string>;
+
+  /**
    * Nonce provider for Content Security Policy (CSP).
    *
    * Can be:
@@ -553,15 +565,18 @@ export interface RSCRouterOptions<TEnv = any> {
 /**
  * Merge route patterns with response types into a single route map.
  * Routes with response types get { path, response } objects; others stay as strings.
+ * Handles both plain string routes and { path, search } object routes.
  */
 type MergeRoutesWithResponses<
-  TRoutes extends Record<string, string>,
+  TRoutes extends Record<string, unknown>,
   TResponses,
 > = {
   [K in keyof TRoutes]: K extends keyof NonNullable<TResponses>
     ? unknown extends NonNullable<TResponses>[K]
-      ? TRoutes[K] // RSC route — TData defaults to unknown, keep as plain string
-      : { readonly path: TRoutes[K]; readonly response: NonNullable<TResponses>[K] }
+      ? TRoutes[K] // RSC route — TData defaults to unknown, keep as-is
+      : TRoutes[K] extends { readonly path: infer P extends string }
+        ? TRoutes[K] & { readonly response: NonNullable<TResponses>[K] }
+        : { readonly path: TRoutes[K] & string; readonly response: NonNullable<TResponses>[K] }
     : TRoutes[K]
 };
 
@@ -856,7 +871,7 @@ export interface RSCRouter<
   ): RSCRouter<
     TEnv,
     TRoutes &
-      (NonNullable<T["_routes"]> extends Record<string, string>
+      (NonNullable<T["_routes"]> extends Record<string, unknown>
         ? MergeRoutesWithResponses<NonNullable<T["_routes"]>, T["_responses"]>
         : Record<string, string>)
   >;
@@ -1134,6 +1149,7 @@ export function createRouter<TEnv = any>(
     cache,
     theme: themeOption,
     urls: urlsOption,
+    $$routeNames: staticRouteNames,
     nonce,
     version,
     warmup: warmupOption,
@@ -1639,7 +1655,7 @@ export function createRouter<TEnv = any>(
         routes: {} as ResolvedRouteMap<any>, // Empty until first match
         trailingSlash: entry.trailingSlash,
         handler: (lazyInclude.patterns as UrlPatterns<TEnv>).handler,
-        mountIndex: entry.mountIndex,
+        mountIndex: mountIndex++,
         // Lazy evaluation fields
         lazy: true,
         lazyPatterns: lazyInclude.patterns,
@@ -1895,11 +1911,18 @@ export function createRouter<TEnv = any>(
       };
 
       return runWithRequestContext(minimalRequestContext, async () => {
-        // 6. Create BuildContext (no request/env/headers/cookies)
-        const buildCtx = createBuildContext<TEnv>(
+        // 6. Create handler context with synthetic request for pre-rendering.
+        // The synthetic request and route map are available at build time,
+        // so reverse() and other context properties work normally.
+        const buildCtx = createHandlerContext<TEnv>(
           matchedParams,
+          minimalRequestContext.request,
+          minimalRequestContext.url.searchParams,
           pathname,
-          handleStore,
+          minimalRequestContext.url,
+          {},
+          mergedRouteMap,
+          matched.routeKey,
         );
 
         // 7. Wire use() for handles only (loaders throw)
@@ -1982,39 +2005,45 @@ export function createRouter<TEnv = any>(
       resolveLoadersOnly,
     };
 
-    return runWithRouterContext(routerCtx, async () => {
-      const result = await createMatchContextForFull(request, env);
+    return runWithRouterLogContext(
+      { request, transaction: "match" },
+      () =>
+        runWithRouterContext(routerCtx, async () =>
+          withRouterLogScope("match", async () => {
+            const result = await createMatchContextForFull(request, env);
 
-      // Handle redirect case
-      if ("type" in result && result.type === "redirect") {
-        return {
-          segments: [],
-          matched: [],
-          diff: [],
-          params: {},
-          redirect: result.redirectUrl,
-        };
-      }
+          // Handle redirect case
+          if ("type" in result && result.type === "redirect") {
+            return {
+              segments: [],
+              matched: [],
+              diff: [],
+              params: {},
+              redirect: result.redirectUrl,
+            };
+          }
 
-      const ctx = result as MatchContext<TEnv>;
+            const ctx = result as MatchContext<TEnv>;
 
-      try {
-        const state = createPipelineState();
-        const pipeline = createMatchPartialPipeline(ctx, state);
-        return await collectMatchResult(pipeline, ctx, state);
-      } catch (error) {
-        if (error instanceof Response) throw error;
-        // Report unhandled errors during full match pipeline
-        callOnError(error, "routing", {
-          request,
-          url: ctx.url,
-          env,
-          isPartial: false,
-          handledByBoundary: false,
-        });
-        throw sanitizeError(error);
-      }
-    });
+            try {
+              const state = createPipelineState();
+              const pipeline = createMatchPartialPipeline(ctx, state);
+              return await collectMatchResult(pipeline, ctx, state);
+            } catch (error) {
+              if (error instanceof Response) throw error;
+              // Report unhandled errors during full match pipeline
+              callOnError(error, "routing", {
+                request,
+                url: ctx.url,
+                env,
+                isPartial: false,
+                handledByBoundary: false,
+              });
+              throw sanitizeError(error);
+            }
+          }),
+        ),
+    );
   }
 
   async function matchError(
@@ -2023,7 +2052,20 @@ export function createRouter<TEnv = any>(
     error: unknown,
     segmentType: ErrorInfo["segmentType"] = "route",
   ): Promise<MatchResult | null> {
-    return _matchError(request, _context, error, matchApiDeps, defaultErrorBoundary, segmentType);
+    return runWithRouterLogContext(
+      { request, transaction: "matchError" },
+      () =>
+        withRouterLogScope("matchError", () =>
+          _matchError(
+            request,
+            _context,
+            error,
+            matchApiDeps,
+            defaultErrorBoundary,
+            segmentType,
+          ),
+        ),
+    );
   }
 
 
@@ -2080,32 +2122,38 @@ export function createRouter<TEnv = any>(
       resolveInterceptLoadersOnly,
     };
 
-    return runWithRouterContext(routerCtx, async () => {
-      const ctx = await createMatchContextForPartial(
-        request,
-        context,
-        actionContext,
-      );
-      if (!ctx) return null;
+    return runWithRouterLogContext(
+      { request, transaction: "matchPartial" },
+      () =>
+        runWithRouterContext(routerCtx, async () =>
+          withRouterLogScope("matchPartial", async () => {
+            const ctx = await createMatchContextForPartial(
+              request,
+              context,
+              actionContext,
+            );
+            if (!ctx) return null;
 
-      try {
-        const state = createPipelineState();
-        const pipeline = createMatchPartialPipeline(ctx, state);
-        return await collectMatchResult(pipeline, ctx, state);
-      } catch (error) {
-        if (error instanceof Response) throw error;
-        // Report unhandled errors during partial match pipeline
-        callOnError(error, actionContext ? "action" : "revalidation", {
-          request,
-          url: ctx.url,
-          env: context,
-          actionId: actionContext?.actionId,
-          isPartial: true,
-          handledByBoundary: false,
-        });
-        throw sanitizeError(error);
-      }
-    });
+            try {
+              const state = createPipelineState();
+              const pipeline = createMatchPartialPipeline(ctx, state);
+              return await collectMatchResult(pipeline, ctx, state);
+            } catch (error) {
+              if (error instanceof Response) throw error;
+              // Report unhandled errors during partial match pipeline
+              callOnError(error, actionContext ? "action" : "revalidation", {
+                request,
+                url: ctx.url,
+                env: context,
+                actionId: actionContext?.actionId,
+                isPartial: true,
+                handledByBoundary: false,
+              });
+              throw sanitizeError(error);
+            }
+          }),
+        ),
+    );
   }
 
   /**
@@ -2125,14 +2173,18 @@ export function createRouter<TEnv = any>(
     params?: Record<string, string>;
     negotiated?: boolean;
   } | null> {
-    const url = new URL(request.url);
-    const pathname = url.pathname;
+    return runWithRouterLogContext(
+      { request, transaction: "previewMatch" },
+      async () =>
+        withRouterLogScope("previewMatch", async () => {
+          const url = new URL(request.url);
+          const pathname = url.pathname;
 
-    // Quick route matching
-    const matched = findMatch(pathname);
-    if (!matched) {
-      return null;
-    }
+          // Quick route matching
+          const matched = findMatch(pathname);
+          if (!matched) {
+            return null;
+          }
 
     // Skip redirect check - will be handled in full match
     if (matched.redirectTo) {
@@ -2209,16 +2261,18 @@ export function createRouter<TEnv = any>(
 
     // If we passed through the negotiation block (variants exist), mark as
     // negotiated so the handler sets Vary: Accept on the response.
-    const hasVariants = matched.negotiateVariants && matched.negotiateVariants.length > 0;
-    return {
-      routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
-      ...(responseType ? {
-        responseType,
-        handler: manifestEntry.type === "route" ? manifestEntry.handler : undefined,
-        params: matched.params,
-      } : {}),
-      ...(hasVariants ? { negotiated: true } : {}),
-    };
+          const hasVariants = matched.negotiateVariants && matched.negotiateVariants.length > 0;
+          return {
+            routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
+            ...(responseType ? {
+              responseType,
+              handler: manifestEntry.type === "route" ? manifestEntry.handler : undefined,
+              params: matched.params,
+            } : {}),
+            ...(hasVariants ? { negotiated: true } : {}),
+          };
+        }),
+    );
   }
 
   /**
@@ -2236,11 +2290,13 @@ export function createRouter<TEnv = any>(
     const routeEntries = routes as Record<string, string>;
     for (const [key, pattern] of Object.entries(routeEntries)) {
       // Build prefixed pattern: "/shop" + "/cart" -> "/shop/cart"
+      // Root prefix "/" is a no-op — don't double the leading slash.
+      const effectivePrefix = prefix === "/" ? "" : prefix;
       const prefixedPattern =
-        prefix && pattern !== "/"
-          ? `${prefix}${pattern}`
-          : prefix && pattern === "/"
-            ? prefix
+        effectivePrefix && pattern !== "/"
+          ? `${effectivePrefix}${pattern}`
+          : effectivePrefix && pattern === "/"
+            ? effectivePrefix
             : pattern;
 
       // Runtime validation: warn if key already exists with different pattern
@@ -2478,7 +2534,7 @@ export function createRouter<TEnv = any>(
             routes: {} as ResolvedRouteMap<any>, // Empty until first match
             trailingSlash: trailingSlashConfig,
             handler: urlPatterns.handler,
-            mountIndex: currentMountIndex,
+            mountIndex: mountIndex++,
             // Lazy evaluation fields
             lazy: true,
             lazyPatterns: lazyInclude.patterns,
@@ -2535,7 +2591,8 @@ export function createRouter<TEnv = any>(
 
     // Type-safe URL builder using merged route map
     // Types are tracked through the builder chain via TRoutes parameter
-    reverse: createReverse(mergedRouteMap),
+    // Falls back to static route names from the generated file (injected by Vite)
+    reverse: createReverse(mergedRouteMap, () => staticRouteNames),
 
     // Expose accumulated route map for typeof extraction
     // Returns {} initially, but builder chain accumulates specific route types

@@ -2,9 +2,8 @@ import type { ReactNode } from "react";
 import type { Handler } from "@rangojs/router";
 import { BlogPostPage } from "../pages/blog.js";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
-import type { routes } from "./blog.gen.js";
 
-export const BlogPostHandler: Handler<"post", routes> = (ctx) => {
+export const BlogPostHandler: Handler<"blog.post"> = (ctx) => {
   const push = ctx.use(Breadcrumbs);
   const title = ctx.params.slug
     .split("-")

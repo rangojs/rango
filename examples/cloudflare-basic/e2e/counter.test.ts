@@ -6,6 +6,8 @@ import {
   testId,
 } from "./helper";
 
+test.describe.configure({ mode: "serial" });
+
 test.describe("counter server actions", () => {
   const f = useFixture({
     root: ".",

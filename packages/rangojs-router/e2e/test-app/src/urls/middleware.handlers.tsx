@@ -1,8 +1,7 @@
 import type { Handler } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
-import type { routes } from "./middleware.gen.js";
 
-export const MiddlewareProtectedHandler: Handler<"protected", routes> = (ctx) => {
+export const MiddlewareProtectedHandler: Handler<"middlewareTest.protected"> = (ctx) => {
   // Get user from middleware-set context variable
   const user = ctx.get("user");
   return (
@@ -23,7 +22,7 @@ export const MiddlewareProtectedHandler: Handler<"protected", routes> = (ctx) =>
   );
 };
 
-export const MiddlewareIndexHandler: Handler<"index", routes> = (ctx) => {
+export const MiddlewareIndexHandler: Handler<"middlewareTest.index"> = (ctx) => {
   // Check if redirected from protected route
   const authRequired = ctx.url.searchParams.get("auth") === "required";
   return (
@@ -73,7 +72,7 @@ export const MiddlewareIndexHandler: Handler<"index", routes> = (ctx) => {
   );
 };
 
-export const MiddlewareProtectedDashboardHandler: Handler<"protectedDashboard", routes> = (ctx) => {
+export const MiddlewareProtectedDashboardHandler: Handler<"middlewareTest.protectedDashboard"> = (ctx) => {
   const user = ctx.get("user");
   return (
     <div data-testid="middleware-test-protected-dashboard">
@@ -88,7 +87,7 @@ export const MiddlewareProtectedDashboardHandler: Handler<"protectedDashboard", 
   );
 };
 
-export const MiddlewareErrorHandlerHandler: Handler<"errorHandler", routes> = () => {
+export const MiddlewareErrorHandlerHandler: Handler<"middlewareTest.errorHandler"> = () => {
   throw new Error("Test error from handler");
   return (
     <div data-testid="error-handler-page">
@@ -97,7 +96,7 @@ export const MiddlewareErrorHandlerHandler: Handler<"errorHandler", routes> = ()
   );
 };
 
-export const MiddlewareCookiesHandler: Handler<"cookies", routes> = (ctx) => {
+export const MiddlewareCookiesHandler: Handler<"middlewareTest.cookies"> = (ctx) => {
   const visitCount = ctx.get("visitCount");
   return (
     <div data-testid="middleware-test-cookies">
@@ -113,7 +112,7 @@ export const MiddlewareCookiesHandler: Handler<"cookies", routes> = (ctx) => {
   );
 };
 
-export const MiddlewareParamsHandler: Handler<"params", routes> = (ctx) => {
+export const MiddlewareParamsHandler: Handler<"middlewareTest.params"> = (ctx) => {
   const middlewareParams = ctx.get("middlewareParams");
   return (
     <div data-testid="middleware-test-params">
@@ -129,7 +128,7 @@ export const MiddlewareParamsHandler: Handler<"params", routes> = (ctx) => {
   );
 };
 
-export const MiddlewareSharedVarsHandler: Handler<"sharedVars", routes> = () => (
+export const MiddlewareSharedVarsHandler: Handler<"middlewareTest.sharedVars"> = () => (
   <div data-testid="middleware-test-shared-vars">
     <Link to="/middleware-test" data-testid="back-link">
       ← Back to Middleware Tests
@@ -141,7 +140,7 @@ export const MiddlewareSharedVarsHandler: Handler<"sharedVars", routes> = () => 
   </div>
 );
 
-export const MiddlewareRouteLevelHandler: Handler<"routeLevel", routes> = (ctx) => {
+export const MiddlewareRouteLevelHandler: Handler<"middlewareTest.routeLevel"> = (ctx) => {
   // Read variable set by route-level middleware
   const routeMiddlewareValue = ctx.get("routeMiddlewareApplied");
   return (
@@ -160,7 +159,7 @@ export const MiddlewareRouteLevelHandler: Handler<"routeLevel", routes> = (ctx) 
   );
 };
 
-export const MiddlewareRouteLevelWithParamsHandler: Handler<"routeLevelWithParams", routes> = (ctx) => {
+export const MiddlewareRouteLevelWithParamsHandler: Handler<"middlewareTest.routeLevelWithParams"> = (ctx) => {
   // Read variables set by route-level middleware (which read from ctx.params)
   const middlewareRouteId = ctx.get("middlewareRouteId");
   const paramsAvailableInMiddleware = ctx.get("paramsAvailableInMiddleware");

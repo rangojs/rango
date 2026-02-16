@@ -1,0 +1,5 @@
+[
+  { "label": "Getting Started", "slug": "getting-started" },
+  { "label": "Configuration", "slug": "configuration" },
+  { "label": "Deployment", "slug": "deployment" }
+]

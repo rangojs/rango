@@ -1,6 +1,6 @@
-import { createReverse } from "@rangojs/router/server";
+import { createReverse } from "@rangojs/router";
 import type { RouteResponse, ExtractParams } from "@rangojs/router";
-import { routes } from "./urls/api-shop.gen.js";
+import { NamedRoutes } from "./router.named-routes.gen.js";
 import type { apiShopPatterns } from "./urls/api-shop.js";
 
 type CatalogResponse = RouteResponse<typeof apiShopPatterns, "catalog">;
@@ -9,13 +9,21 @@ type CartResponse = RouteResponse<typeof apiShopPatterns, "cart">;
 type CartItemResponse = RouteResponse<typeof apiShopPatterns, "cartItem">;
 type HealthResponse = RouteResponse<typeof apiShopPatterns, "health">;
 
-type ProductParams = ExtractParams<(typeof routes)["product"]>;
-type CartItemParams = ExtractParams<(typeof routes)["cartItem"]>;
+type ProductParams = ExtractParams<(typeof NamedRoutes)["apiShop.product"]>;
+type CartItemParams = ExtractParams<(typeof NamedRoutes)["apiShop.cartItem"]>;
+
+const apiShopRoutes = {
+  "apiShop.cart": NamedRoutes["apiShop.cart"],
+  "apiShop.cartItem": NamedRoutes["apiShop.cartItem"],
+  "apiShop.catalog": NamedRoutes["apiShop.catalog"],
+  "apiShop.health": NamedRoutes["apiShop.health"],
+  "apiShop.product": NamedRoutes["apiShop.product"],
+} as const;
 
 export function createShopClient(baseUrl: string) {
-  const reverse = createReverse(routes);
+  const reverse = createReverse(apiShopRoutes);
 
-  function url(name: keyof typeof routes, params?: Record<string, string>): string {
+  function url(name: keyof typeof apiShopRoutes, params?: Record<string, string>): string {
     const path = params ? (reverse as any)(name, params) : (reverse as any)(name);
     return `${baseUrl}${path}`;
   }
@@ -27,19 +35,19 @@ export function createShopClient(baseUrl: string) {
 
   return {
     getCatalog(): Promise<CatalogResponse> {
-      return fetchJson(url("catalog"));
+      return fetchJson(url("apiShop.catalog"));
     },
 
     getProduct(productId: string): Promise<ProductResponse> {
-      return fetchJson(url("product", { productId }));
+      return fetchJson(url("apiShop.product", { productId }));
     },
 
     getCart(): Promise<CartResponse> {
-      return fetchJson(url("cart"));
+      return fetchJson(url("apiShop.cart"));
     },
 
     addToCart(productId: string, quantity?: number): Promise<CartResponse> {
-      return fetchJson(url("cart"), {
+      return fetchJson(url("apiShop.cart"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ productId, quantity }),
@@ -47,7 +55,7 @@ export function createShopClient(baseUrl: string) {
     },
 
     updateCartItem(itemId: string, updates: { quantity: number }): Promise<CartItemResponse> {
-      return fetchJson(url("cartItem", { itemId }), {
+      return fetchJson(url("apiShop.cartItem", { itemId }), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
@@ -55,7 +63,7 @@ export function createShopClient(baseUrl: string) {
     },
 
     replaceCartItem(itemId: string, data: { productId: string; quantity: number }): Promise<CartItemResponse> {
-      return fetchJson(url("cartItem", { itemId }), {
+      return fetchJson(url("apiShop.cartItem", { itemId }), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -63,24 +71,24 @@ export function createShopClient(baseUrl: string) {
     },
 
     removeCartItem(itemId: string): Promise<CartItemResponse> {
-      return fetchJson(url("cartItem", { itemId }), {
+      return fetchJson(url("apiShop.cartItem", { itemId }), {
         method: "DELETE",
       });
     },
 
     clearCart(): Promise<CartResponse> {
-      return fetchJson(url("cart"), {
+      return fetchJson(url("apiShop.cart"), {
         method: "DELETE",
       });
     },
 
     async checkHealth(): Promise<{ ok: boolean; status: number }> {
-      const res = await fetch(url("health"), { method: "HEAD" });
+      const res = await fetch(url("apiShop.health"), { method: "HEAD" });
       return { ok: res.ok, status: res.status };
     },
 
     getHealth(): Promise<HealthResponse> {
-      return fetchJson(url("health"));
+      return fetchJson(url("apiShop.health"));
     },
   };
 }

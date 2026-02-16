@@ -16,9 +16,9 @@ test.describe("theme", () => {
       await page.goto(f.url("/theme"));
       await waitForHydration(page);
 
-      // Server should have theme available (defaults to "system" when no cookie)
+      // Server should have theme available (defaults to "light" when no cookie)
       const serverTheme = testId(page, "server-theme");
-      await expect(serverTheme).toContainText("system");
+      await expect(serverTheme).toContainText("light");
     });
 
     test("should include theme script in initial HTML", async ({ request }) => {

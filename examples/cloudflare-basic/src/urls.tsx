@@ -1,4 +1,4 @@
-import { urls, type ResponseHandlerContext } from "@rangojs/router/server";
+import { urls, type ResponseHandlerContext } from "@rangojs/router";
 import { NavLayout } from "./components/NavLayout.js";
 import { RootLayout } from "./components/SlowRootLayout.js";
 import { FeatureLoading } from "./components/FeatureLoading.js";
@@ -35,7 +35,14 @@ import {
 import { articlesPatterns } from "./pages/articles.js";
 import { guidesPatterns } from "./pages/guides.js";
 import { releasesPatterns } from "./pages/releases.js";
+import { staticContentPatterns } from "./pages/static-content-urls.js";
 import { ApiDemoPage } from "./pages/api-demo.js";
+import { SearchPage } from "./pages/search.js";
+import { transformCasesPatterns } from "./pages/transform-cases.js";
+import { createDocsPatterns } from "@shared/docs";
+import { docsArticles } from "./docs-content.js";
+
+const docsPatterns = createDocsPatterns({ articles: docsArticles });
 
 /**
  * Main URL patterns - Django-style routing API
@@ -160,6 +167,9 @@ export const urlpatterns = urls(
         path("/about", AboutPage, { name: "about" }),
         path("/counter", CounterPage, { name: "counter" }),
         path("/api-demo", ApiDemoPage, { name: "apiDemo" }),
+
+        // Search route with typed search params
+        path("/search", SearchPage, { name: "search", search: { q: "string", page: "number?", sort: "string?" } }),
         path(
           "/features/:slug",
           FeatureDetailPage,
@@ -224,6 +234,17 @@ export const urlpatterns = urls(
 
         // Pre-rendered releases page (uses node:fs at build time, evicted at deploy)
         include("/releases", releasesPatterns, { name: "releases" }),
+
+        // Static content (Static: layout + index rendered once at build time)
+        include("/static-content", staticContentPatterns, { name: "staticContent" }),
+
+        // Composable docs package (demonstrates include + factory pattern)
+        include("/docs", docsPatterns, { name: "docs" }),
+
+        // Transform coverage routes (alias imports + export specifiers)
+        include("/transform-cases", transformCasesPatterns, {
+          name: "transformCases",
+        }),
       ]),
     ]),
   ],

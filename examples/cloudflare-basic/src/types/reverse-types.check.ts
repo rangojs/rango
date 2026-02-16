@@ -7,9 +7,9 @@
 
 import type { Handler, HandlerContext } from "@rangojs/router";
 
-// Test 1: ctx.reverse in handlers accepts route names
+// Test 1: ctx.reverse in handlers accepts route names from RegisteredRoutes
 const testHandlerReverse: Handler<"/"> = (ctx) => {
-  // Should work - ctx.reverse accepts any string for named route resolution
+  // Should work - ctx.reverse validates against registered routes
   const _homeUrl = ctx.reverse("home");
   const _aboutUrl = ctx.reverse("about");
   const _blogUrl = ctx.reverse("blog");
@@ -18,11 +18,8 @@ const testHandlerReverse: Handler<"/"> = (ctx) => {
   const _blogPostUrl = ctx.reverse("blogPost", { slug: "hello-world" });
   const _featureUrl = ctx.reverse("featuresDetail", { slug: "routing" });
 
-  // Should work - absolute route with dot notation (global lookup)
-  const _absoluteUrl = ctx.reverse("some.nested.route");
-
-  // Should work - path-based URL
-  const _pathUrl = ctx.reverse("/api/data");
+  // Should work - dotted names from included modules
+  const _apiRoute = ctx.reverse("api.health");
 
   return null;
 };
@@ -54,14 +51,12 @@ type _AssertReverseCallable = CheckCtxReverse extends (
   : never;
 const _checkReverseCallable: _AssertReverseCallable = true;
 
-// Test 5: Verify ctx.reverse accepts various route name formats
-// ctx.reverse is (name: string, params?) => string, accepts any route name
+// Test 5: Verify ctx.reverse validates registered route names
 declare function testGlobalRoutes(): void;
 if (false as boolean) {
   testGlobalRoutes();
-  // ctx.reverse accepts any string - named routes resolve at runtime via server routeMap
+  // ctx.reverse validates route names against RegisteredRoutes
   const ctx = {} as HandlerContext;
-  ctx.reverse("/blog");
   ctx.reverse("about");
   ctx.reverse("blog");
   ctx.reverse("blogPost", { slug: "test" });
@@ -77,7 +72,6 @@ import type { UrlPatterns } from "@rangojs/router";
 // ScopedReverseFunction and ExtractParams are safe client types
 import type { ScopedReverseFunction, ExtractParams } from "@rangojs/router";
 
-
 // Simulate a local module's patterns type
 // When you define: const myPatterns = urls(({ path }) => [...])
 // The resulting type is: UrlPatterns<TEnv, { routeName: pattern }>
@@ -89,14 +83,14 @@ type LocalRoutes = {
 type LocalPatternsType = UrlPatterns<unknown, LocalRoutes>;
 
 // Type-level assertion: scopedReverse should extract local routes from UrlPatterns
-type ExtractedReverse = LocalPatternsType extends UrlPatterns<any, infer TRoutes>
-  ? ScopedReverseFunction<TRoutes>
-  : never;
+type ExtractedReverse =
+  LocalPatternsType extends UrlPatterns<any, infer TRoutes>
+    ? ScopedReverseFunction<TRoutes>
+    : never;
 
 // Verify the extracted type is ScopedReverseFunction with our local routes
-type _AssertExtractsLocalRoutes = ExtractedReverse extends ScopedReverseFunction<LocalRoutes>
-  ? true
-  : never;
+type _AssertExtractsLocalRoutes =
+  ExtractedReverse extends ScopedReverseFunction<LocalRoutes> ? true : never;
 const _checkExtractsLocalRoutes: _AssertExtractsLocalRoutes = true;
 
 // Test 7: Local route name validation in ScopedReverseFunction
@@ -109,12 +103,6 @@ const _localSettings: string = localReverse("settings");
 // Valid local route with params
 const _localDetail: string = localReverse("detail", { slug: "hello-world" });
 
-// Absolute routes (dot notation) - allowed as escape hatch for cross-module
-const _absoluteRoute: string = localReverse("shop.cart");
-
-// Path-based URLs - allowed as escape hatch
-const _pathBased: string = localReverse("/api/data");
-
 // Test 8: ExtractParams extracts correct params from patterns
 type IndexParams = ExtractParams<LocalRoutes["index"]>;
 type DetailParams = ExtractParams<LocalRoutes["detail"]>;
@@ -123,14 +111,19 @@ type SettingsParams = ExtractParams<LocalRoutes["settings"]>;
 type _AssertIndexHasNoParams = keyof IndexParams extends never ? true : never;
 const _checkIndexHasNoParams: _AssertIndexHasNoParams = true;
 
-type _AssertDetailHasSlug = DetailParams extends { slug: string } ? true : never;
+type _AssertDetailHasSlug = DetailParams extends { slug: string }
+  ? true
+  : never;
 const _checkDetailHasSlug: _AssertDetailHasSlug = true;
 
-type _AssertSettingsHasNoParams = keyof SettingsParams extends never ? true : never;
+type _AssertSettingsHasNoParams = keyof SettingsParams extends never
+  ? true
+  : never;
 const _checkSettingsHasNoParams: _AssertSettingsHasNoParams = true;
 
 // Test 9: Composability - multiple independent url modules
 // Each module can use scopedReverse<typeof itsPatterns>(ctx.reverse) with local routes
+// The merge with global routes happens in scopedReverse() and HandlerContext, not in ScopedReverseFunction directly
 type BlogRoutes = { index: "/"; post: "/:postId" };
 type ShopRoutes = { index: "/"; cart: "/cart"; product: "/product/:sku" };
 
@@ -148,9 +141,5 @@ const _blogPost: string = blogReverse("post", { postId: "123" });
 const _shopIndex: string = shopReverse("index");
 const _shopCart: string = shopReverse("cart");
 const _shopProduct: string = shopReverse("product", { sku: "SKU-001" });
-
-// Cross-module navigation uses absolute names
-const _toBlog: string = shopReverse("blog.post", { postId: "abc" });
-const _toShop: string = blogReverse("shop.cart");
 
 export {};

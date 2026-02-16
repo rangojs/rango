@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   hashId,
   detectImports,
-  makeExportPattern,
   skipStringOrComment,
   findMatchingParen,
   countArgs,
@@ -57,16 +56,29 @@ describe("detectImports", () => {
     expect(result.any).toBe(true);
   });
 
-  it("should detect createLocationState from @rangojs/router/client", () => {
-    const code = `import { createLocationState } from "@rangojs/router/client";`;
+  it("should detect createLocationState from @rangojs/router", () => {
+    const code = `import { createLocationState } from "@rangojs/router";`;
     const result = detectImports(code);
     expect(result.locationState).toBe(true);
   });
 
-  it("should detect createPrerenderHandler from @rangojs/router", () => {
-    const code = `import { createPrerenderHandler } from "@rangojs/router";`;
+  it("should detect Prerender from @rangojs/router", () => {
+    const code = `import { Prerender } from "@rangojs/router";`;
     const result = detectImports(code);
     expect(result.prerenderHandler).toBe(true);
+  });
+
+  it("should detect Static from @rangojs/router", () => {
+    const code = `import { Static } from "@rangojs/router";`;
+    const result = detectImports(code);
+    expect(result.staticHandler).toBe(true);
+    expect(result.any).toBe(true);
+  });
+
+  it("should detect Static from @rangojs/router/server", () => {
+    const code = `import { Static } from "@rangojs/router/server";`;
+    const result = detectImports(code);
+    expect(result.staticHandler).toBe(true);
   });
 
   it("should detect createRouter from @rangojs/router only (not sub-paths)", () => {
@@ -110,33 +122,6 @@ describe("detectImports", () => {
     const code = `import { route, map } from "@rangojs/router";`;
     const result = detectImports(code);
     expect(result.any).toBe(false);
-  });
-});
-
-describe("makeExportPattern", () => {
-  it("should match export const X = createFoo(", () => {
-    const pattern = makeExportPattern("createLoader");
-    const code = `export const MyLoader = createLoader(`;
-    expect(pattern.test(code)).toBe(true);
-  });
-
-  it("should capture the export name", () => {
-    const pattern = makeExportPattern("createHandle");
-    const code = `export const Breadcrumbs = createHandle<Item>(`;
-    const match = pattern.exec(code);
-    expect(match?.[1]).toBe("Breadcrumbs");
-  });
-
-  it("should handle generic type params", () => {
-    const pattern = makeExportPattern("createLocationState");
-    const code = `export const ProductState = createLocationState<Product>(`;
-    expect(pattern.test(code)).toBe(true);
-  });
-
-  it("should NOT match non-exported declarations", () => {
-    const pattern = makeExportPattern("createLoader");
-    const code = `const MyLoader = createLoader(`;
-    expect(pattern.test(code)).toBe(false);
   });
 });
 

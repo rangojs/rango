@@ -204,9 +204,18 @@ Always reference the previous benchmark to show improvement:
 
 ## Debug Mode
 
-Enable in `src/urls.tsx`:
+### Structured debug logging
+
+Enable router debug logs with the `INTERNAL_RANGO_DEBUG` env var:
+```bash
+INTERNAL_RANGO_DEBUG=1 pnpm dev
+```
+
+### Match debug stats
+
+Enable match statistics in `src/urls.tsx`:
 ```typescript
-import { enableMatchDebug } from "@rangojs/router/server";
+import { enableMatchDebug } from "@rangojs/router";
 enableMatchDebug(true);
 ```
 

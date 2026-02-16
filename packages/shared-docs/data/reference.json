@@ -1,0 +1,14 @@
+[
+  {
+    "slug": "url-patterns",
+    "title": "URL Patterns API",
+    "excerpt": "Define routes with the urls() builder function.",
+    "content": "The urls() function accepts a builder callback that receives helpers like path, layout, include, and parallel. Each helper creates a route definition that the router evaluates at request time.\n\n## path()\n\nDefines a route that matches a URL pattern. The handler receives a context object with params, request, and reverse.\n\n## layout()\n\nWraps child routes in a shared UI shell. The layout renders an Outlet where matched children appear."
+  },
+  {
+    "slug": "response-types",
+    "title": "Response Types",
+    "excerpt": "Return JSON, text, markdown, and other formats from routes.",
+    "content": "Response routes skip the RSC pipeline and return raw data. Use path.json() for JSON APIs, path.text() for plain text, path.md() for markdown, and path.xml() for XML responses.\n\n## Content Negotiation\n\nWhen a path has both an RSC handler and a response handler, the router negotiates based on the Accept header. Browsers get HTML, API clients get JSON."
+  }
+]

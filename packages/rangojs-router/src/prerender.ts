@@ -1,7 +1,7 @@
 /**
  * Pre-render handler definition for build-time rendering of route segments.
  *
- * createPrerenderHandler wraps a handler so that in production (phase 2)
+ * Prerender wraps a handler so that in production (phase 2)
  * it can be pre-rendered at build time and served as a static Flight payload.
  * In dev mode (phase 1), it behaves as a normal handler — the handler runs
  * on every request just like a regular path() handler.
@@ -12,12 +12,12 @@
  * @example
  * ```ts
  * // Static page — no params
- * export const DocsPage = createPrerenderHandler(async (ctx) => {
+ * export const DocsPage = Prerender(async (ctx) => {
  *   return <div>Documentation</div>;
  * });
  *
  * // Dynamic page — params first, handler second
- * export const DocsArticle = createPrerenderHandler(
+ * export const DocsArticle = Prerender(
  *   async () => [{ slug: "getting-started" }, { slug: "api-reference" }],
  *   async (ctx) => {
  *     return <div>{ctx.params.slug}</div>;
@@ -54,7 +54,7 @@ export interface BuildContext<TParams> {
   pathname: string;
 }
 
-export interface PrerenderHandlerDefinition<TParams = any> {
+export interface PrerenderHandlerDefinition<TParams extends Record<string, any> = any> {
   readonly __brand: "prerenderHandler";
   /** Auto-generated unique ID (injected by Vite plugin). */
   $$id: string;
@@ -69,14 +69,14 @@ export interface PrerenderHandlerDefinition<TParams = any> {
 // -- Overloads --------------------------------------------------------------
 
 // Overload 1: Static handler (no params)
-export function createPrerenderHandler<TParams = {}>(
+export function Prerender<TParams extends Record<string, any> = {}>(
   handler: (ctx: HandlerContext<TParams>) => ReactNode | Promise<ReactNode>,
   options?: PrerenderOptions,
   __injectedId?: string,
 ): PrerenderHandlerDefinition<TParams>;
 
 // Overload 2: Dynamic handler (getParams + handler)
-export function createPrerenderHandler<TParams>(
+export function Prerender<TParams extends Record<string, any>>(
   getParams: () => Promise<TParams[]> | TParams[],
   handler: (ctx: HandlerContext<TParams>) => ReactNode | Promise<ReactNode>,
   options?: PrerenderOptions,
@@ -85,15 +85,15 @@ export function createPrerenderHandler<TParams>(
 
 // -- Implementation ---------------------------------------------------------
 
-export function createPrerenderHandler<TParams>(
+export function Prerender<TParams extends Record<string, any>>(
   handlerOrGetParams: Function,
   handlerOrOptions?: Function | PrerenderOptions,
   optionsOrId?: PrerenderOptions | string,
   maybeId?: string,
 ): PrerenderHandlerDefinition<TParams> {
   // Resolve overloads:
-  // 1 fn arg:  createPrerenderHandler(handler, options?, __injectedId?)
-  // 2 fn args: createPrerenderHandler(getParams, handler, options?, __injectedId?)
+  // 1 fn arg:  Prerender(handler, options?, __injectedId?)
+  // 2 fn args: Prerender(getParams, handler, options?, __injectedId?)
   let handler: Handler<TParams>;
   let getParams: (() => Promise<TParams[]> | TParams[]) | undefined;
   let options: PrerenderOptions | undefined;
@@ -122,12 +122,14 @@ export function createPrerenderHandler<TParams>(
     }
   }
 
-  if (!id && process.env.NODE_ENV !== "production") {
-    console.warn(
-      "[rsc-router] PrerenderHandler is missing $$id. " +
-        "Make sure the exposeInternalIds Vite plugin is enabled and " +
-        "the handler is exported with: export const MyPage = createPrerenderHandler(...)"
-    );
+  if (!id) {
+    if (process.env.NODE_ENV !== "production") {
+      throw new Error(
+        "[rsc-router] Prerender: missing $$id. " +
+        "Ensure the exposeInternalIds Vite plugin is configured.",
+      );
+    }
+    id = "";
   }
 
   return {

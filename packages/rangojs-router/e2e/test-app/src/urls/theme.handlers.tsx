@@ -2,9 +2,8 @@ import { Meta } from "@rangojs/router";
 import type { Handler } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { ThemeToggle } from "../components/ThemeToggle.js";
-import type { routes } from "./theme.gen.js";
 
-export const ThemeIndexHandler: Handler<"index", routes> = (ctx) => {
+export const ThemeIndexHandler: Handler<"theme.index"> = (ctx) => {
   const meta = ctx.use(Meta);
   meta({ title: "Theme Test - RSC Router" });
 
@@ -29,7 +28,7 @@ export const ThemeIndexHandler: Handler<"index", routes> = (ctx) => {
   );
 };
 
-export const ThemeToggleHandler: Handler<"toggle", routes> = (ctx) => {
+export const ThemeToggleHandler: Handler<"theme.toggle"> = (ctx) => {
   const meta = ctx.use(Meta);
   meta({ title: "Theme Toggle - RSC Router" });
 

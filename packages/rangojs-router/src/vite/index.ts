@@ -5,7 +5,14 @@ import { resolve, join, dirname, basename, relative } from "node:path";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
-import { generateRouteTypesSource, writePerModuleRouteTypes, writePerModuleRouteTypesForFile, writeCombinedRouteTypes, findRouterFiles, createScanFilter, type ScanFilter } from "../build/generate-route-types.ts";
+import {
+  generateRouteTypesSource,
+  writeCombinedRouteTypes,
+  findRouterFiles,
+  createScanFilter,
+  buildCombinedRouteMapForRouterFile,
+  type ScanFilter,
+} from "../build/generate-route-types.ts";
 import { exposeActionId } from "./expose-action-id.ts";
 import { exposeInternalIds, exposeRouterId } from "./expose-internal-ids.ts";
 import {
@@ -102,9 +109,8 @@ interface RangoBaseOptions {
   banner?: boolean;
 
   /**
-   * Generate static route type files (.gen.ts) by parsing url modules at startup.
-   * Creates per-module route maps and per-router named-routes.gen.ts for type-safe
-   * Handler<"name", routes> and href() without executing router code.
+   * Generate named-routes.gen.ts by parsing url modules at startup.
+   * Provides type-safe Handler<"name"> and href() without executing router code.
    * Set to `false` to disable (run `npx rango extract-names` manually instead).
    * @default true
    */
@@ -245,17 +251,18 @@ function createVirtualEntriesPlugin(
  * Rollup onwarn handler that suppresses known harmless warnings:
  * - "use client" directives: handled by the RSC plugin, not relevant to Rollup
  * - sourcemap errors: caused by "use client" directive at line 1:0 confusing sourcemap resolution
- * - sourcemap incomplete: router plugins that transform without generating sourcemaps
+ * - sourcemap incomplete: plugins that transform without generating sourcemaps (router + RSC plugin)
  * - dynamic/static mixed imports: expected for router internals (e.g. request-context, cache-scope)
  */
 function onwarn(warning: Vite.Rollup.RollupLog, defaultHandler: (warning: Vite.Rollup.RollupLog) => void): void {
   if (warning.code === "MODULE_LEVEL_DIRECTIVE" || warning.code === "SOURCEMAP_ERROR") {
     return;
   }
-  if (
-    warning.plugin?.startsWith("@rangojs/router:") &&
-    warning.message?.includes("Sourcemap is likely to be incorrect")
-  ) {
+  // @vitejs/plugin-rsc@0.5.14: rsc:virtual:vite-rsc/assets-manifest renderChunk
+  // returns { code } without map, causing Rollup to warn about incorrect sourcemaps.
+  // This is harmless (simple string replacement). Remove this suppression if a
+  // future version of @vitejs/plugin-rsc fixes the missing sourcemap.
+  if (warning.message?.includes("Sourcemap is likely to be incorrect")) {
     return;
   }
   if (
@@ -434,6 +441,17 @@ function buildRouteToStaticPrefix(
 }
 
 /**
+ * Encode route param values for path interpolation while preserving path
+ * separators for wildcard params (splat-style values can include `/`).
+ */
+function encodePathParam(value: unknown): string {
+  return String(value)
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+/**
  * Plugin that discovers router instances at dev/build time via the RSC environment.
  *
  * Uses `server.environments.rsc.runner.import()` to load the user's router file
@@ -466,7 +484,12 @@ function createRouterDiscoveryPlugin(
   let mergedRouteManifest: Record<string, string> | null = null;
 
   // Per-router route manifests for generating typed route files.
-  let perRouterManifests: Array<{ id: string; routeManifest: Record<string, string>; sourceFile?: string }> = [];
+  let perRouterManifests: Array<{
+    id: string;
+    routeManifest: Record<string, string>;
+    routeSearchSchemas?: Record<string, Record<string, string>>;
+    sourceFile?: string;
+  }> = [];
 
 
   // Collected prerender data from in-process collection during discoverRouters().
@@ -484,6 +507,9 @@ function createRouterDiscoveryPlugin(
 
   // Resolved prerender handler modules from the expose-internal-ids plugin.
   let resolvedPrerenderModules: Map<string, string[]> | undefined;
+
+  // Resolved static handler modules from the expose-internal-ids plugin.
+  let resolvedStaticModules: Map<string, string[]> | undefined;
 
   // Promise that resolves when dev-mode discovery completes.
   // The virtual module's load hook awaits this to ensure data is available.
@@ -609,7 +635,12 @@ function createRouterDiscoveryPlugin(
 
       // Merge into the combined manifest
       Object.assign(mergedRouteManifest, manifest.routeManifest);
-      perRouterManifests.push({ id, routeManifest: manifest.routeManifest, sourceFile: router.__sourceFile });
+      perRouterManifests.push({
+        id,
+        routeManifest: manifest.routeManifest,
+        routeSearchSchemas: manifest.routeSearchSchemas,
+        sourceFile: router.__sourceFile,
+      });
 
       // Merge ancestry (internal field, used only for trie building)
       if (manifest._routeAncestry) {
@@ -734,7 +765,7 @@ function createRouterDiscoveryPlugin(
 
     // Expand prerender routes into concrete URLs for build-time rendering.
     // Static routes use pattern as-is; dynamic routes call getParams() to enumerate.
-    if (opts?.enableBuildPrerender) {
+    if (opts?.enableBuildPrerender && isBuildMode) {
       const urls: string[] = [];
       for (const { manifest } of allManifests) {
         if (!manifest.prerenderRoutes) continue;
@@ -755,7 +786,18 @@ function createRouterDiscoveryPlugin(
                 for (const params of paramsList) {
                   let url = pattern;
                   for (const [key, value] of Object.entries(params as Record<string, string>)) {
-                    url = url.replace(`:${key}`, encodeURIComponent(String(value)));
+                    const encoded = encodePathParam(value);
+                    url = url.replace(`:${key}`, encoded);
+                    url = url.replace(`*${key}`, encoded);
+                  }
+                  // Anonymous wildcard fallback: use conventional keys if provided
+                  if (url.includes("*")) {
+                    const wildcardValue =
+                      (params as Record<string, string>)["*"]
+                      ?? (params as Record<string, string>).splat;
+                    if (wildcardValue !== undefined) {
+                      url = url.replace(/\*[^/]*$/, encodePathParam(wildcardValue));
+                    }
                   }
                   urls.push(url.replace(/\/$/, "") || "/");
                 }
@@ -776,14 +818,6 @@ function createRouterDiscoveryPlugin(
         console.log(
           `[rsc-router] Pre-render URLs: ${urls.join(", ")}`
         );
-
-        // In-process collection: call matchForPrerender() on each router directly.
-        // No HTTP handler, no middleware, no Request objects, no env bindings.
-        // Handlers receive a BuildContext (subset of HandlerContext).
-        const routersByHash = new Map<string, any>();
-        for (const [id, routerInstance] of registry) {
-          routersByHash.set(hashRouterId(id), routerInstance);
-        }
 
         const { hashParams } = await rscEnv.runner.import("@rangojs/router/build");
 
@@ -836,7 +870,7 @@ function createRouterDiscoveryPlugin(
       }
     } catch {}
 
-    for (const { id, routeManifest, sourceFile } of perRouterManifests) {
+    for (const { id, routeManifest, routeSearchSchemas, sourceFile } of perRouterManifests) {
       if (!sourceFile) continue;
 
       // Validate sourceFile points to a real project file, not node_modules or
@@ -853,7 +887,33 @@ function createRouterDiscoveryPlugin(
       const routerDir = dirname(sourceFile);
       const routerBasename = basename(sourceFile).replace(/\.(tsx?|jsx?)$/, "");
       const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
-      const source = generateRouteTypesSource(routeManifest);
+      let effectiveSearchSchemas = routeSearchSchemas;
+
+      // Runtime manifest may omit search schema metadata in some module-runner
+      // flows. Fall back to static source parsing from the router file.
+      if (
+        (!effectiveSearchSchemas || Object.keys(effectiveSearchSchemas).length === 0) &&
+        sourceFile
+      ) {
+        const staticParsed = buildCombinedRouteMapForRouterFile(sourceFile);
+        if (Object.keys(staticParsed.searchSchemas).length > 0) {
+          const filtered: Record<string, Record<string, string>> = {};
+          for (const name of Object.keys(routeManifest)) {
+            const schema = staticParsed.searchSchemas[name];
+            if (schema) filtered[name] = schema;
+          }
+          if (Object.keys(filtered).length > 0) {
+            effectiveSearchSchemas = filtered;
+          }
+        }
+      }
+
+      const source = generateRouteTypesSource(
+        routeManifest,
+        effectiveSearchSchemas && Object.keys(effectiveSearchSchemas).length > 0
+          ? effectiveSearchSchemas
+          : undefined,
+      );
       const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
       if (existing !== source) {
         writeFileSync(outPath, source);
@@ -877,6 +937,9 @@ function createRouterDiscoveryPlugin(
                     if (resolvedPrerenderModules?.has(id)) {
                       return "__prerender-handlers";
                     }
+                    if (resolvedStaticModules?.has(id)) {
+                      return "__static-handlers";
+                    }
                   },
                 },
               },
@@ -898,20 +961,25 @@ function createRouterDiscoveryPlugin(
           exclude: opts.exclude,
         });
       }
-      // Generate per-module route types from static source parsing.
-      // Runs before the dev server starts so .gen.ts files exist immediately for IDE.
+      // Generate combined named-routes.gen.ts from static source parsing.
+      // Runs before the dev server starts so the gen file exists immediately for IDE.
+      // In build mode, the runtime discovery in buildStart produces the definitive
+      // named-routes.gen.ts (including dynamically generated routes).
+      // preserveIfLarger prevents overwriting a previously generated complete
+      // file with a partial one.
       if (opts?.staticRouteTypesGeneration !== false) {
-        writePerModuleRouteTypes(projectRoot, scanFilter);
         cachedRouterFiles = findRouterFiles(projectRoot, scanFilter);
-        writeCombinedRouteTypes(projectRoot, cachedRouterFiles);
+        writeCombinedRouteTypes(projectRoot, cachedRouterFiles, { preserveIfLarger: true });
       }
-      // Resolve prerenderHandlerModules from the consolidated IDs plugin's API.
+      // Resolve prerenderHandlerModules and staticHandlerModules from the consolidated IDs plugin's API.
       if (opts?.enableBuildPrerender) {
         const idsPlugin = config.plugins.find(
           (p: any) => p.name === "@rangojs/router:expose-internal-ids",
         );
         resolvedPrerenderModules =
           (idsPlugin?.api as any)?.prerenderHandlerModules;
+        resolvedStaticModules =
+          (idsPlugin?.api as any)?.staticHandlerModules;
       }
     },
 
@@ -963,14 +1031,12 @@ function createRouterDiscoveryPlugin(
           // Store server origin for dev prerender endpoint (virtual module injection)
           devServerOrigin = getDevServerOrigin();
 
-          // Write per-router type files from runtime discovery.
-          // Skip when static route types generation is enabled (configResolved
-          // already wrote the files via writeCombinedRouteTypes and the file
-          // watcher handles HMR updates). Running both paths causes race
-          // conditions where the runtime path overwrites watcher updates.
-          if (opts?.staticRouteTypesGeneration === false) {
-            writeRouteTypesFiles();
-          }
+          // Update named-routes.gen.ts from runtime discovery.
+          // The runtime manifest is the source of truth: it evaluates dynamic
+          // routes (e.g. Array.from loops) that the static parser cannot see.
+          // writeRouteTypesFiles() only writes when content changes, so this
+          // won't cause unnecessary HMR triggers.
+          writeRouteTypesFiles();
 
           // Populate the route map in the RSC env
           if (mergedRouteManifest && serverMod?.setCachedManifest) {
@@ -1061,6 +1127,8 @@ function createRouterDiscoveryPlugin(
                   rsc({ entries: { client: "virtual:entry-client", ssr: "virtual:entry-ssr", rsc: entryPath } }),
                   createVersionPlugin(),
                   createVirtualStubPlugin(),
+                  exposeInternalIds({ forceBuild: true }),
+                  exposeRouterId(),
                 ],
               });
 
@@ -1100,8 +1168,8 @@ function createRouterDiscoveryPlugin(
         res.end("No prerender match");
       });
 
-      // Watch url module and router files for changes and regenerate route types.
-      // Process files containing urls( (per-module types) or createRouter( (per-router types).
+      // Watch url module and router files for changes and regenerate named-routes.gen.ts.
+      // Process files containing urls( or createRouter( to update the combined route map.
       if (opts?.staticRouteTypesGeneration !== false) {
         server.watcher.on("change", (filePath) => {
           if (filePath.endsWith(".gen.ts")) return;
@@ -1115,9 +1183,6 @@ function createRouterDiscoveryPlugin(
             const hasUrls = source.includes("urls(");
             const hasCreateRouter = /\bcreateRouter\s*[<(]/.test(source);
             if (!hasUrls && !hasCreateRouter) return;
-            if (hasUrls) {
-              writePerModuleRouteTypesForFile(filePath);
-            }
             // Invalidate cache when a router file changes (new router added/removed)
             if (hasCreateRouter) {
               cachedRouterFiles = undefined;
@@ -1185,21 +1250,30 @@ function createRouterDiscoveryPlugin(
         }
 
         await discoverRouters(rscEnv);
-        // Skip when static route types generation is enabled (configResolved
-        // already wrote the files via writeCombinedRouteTypes). Same guard
-        // as dev mode to avoid writing a duplicate file from __sourceFile
-        // (which comes from runtime stack trace parsing).
-        if (opts?.staticRouteTypesGeneration === false) {
-          writeRouteTypesFiles();
-        }
+        // Update named-routes.gen.ts from runtime discovery.
+        // The runtime manifest includes dynamically generated routes
+        // that the static parser cannot extract from source code.
+        writeRouteTypesFiles();
       } catch (err: any) {
         // Clean up before re-throwing so the temp server doesn't leak
         delete (globalThis as any).__rscRouterDiscoveryActive;
         if (tempServer) {
           await tempServer.close();
         }
+        // Extract the user source file from the stack trace (skip internal frames)
+        const sourceFile = err.stack
+          ?.split("\n")
+          .find((line: string) => line.includes(projectRoot) && !line.includes("node_modules"))
+          ?.match(/\(([^)]+)\)/)?.[1];
+        // Extract the route name from "Unknown route: <name>" errors
+        const routeName = err.message?.match(/Unknown route: (.+)/)?.[1];
+        const details = [
+          routeName ? `  Route name: ${routeName}` : null,
+          sourceFile ? `  File: ${sourceFile}` : null,
+          err.stack ? `  Stack:\n${err.stack}` : null,
+        ].filter(Boolean).join("\n");
         throw new Error(
-          `[rsc-router] Build-time router discovery failed: ${err.message}`
+          `[rsc-router] Build-time router discovery failed:\n${details}`
         );
       } finally {
         delete (globalThis as any).__rscRouterDiscoveryActive;
@@ -1323,9 +1397,9 @@ function createRouterDiscoveryPlugin(
             );
             const match = chunk.code.match(idPattern);
             if (match) {
-              // Detect passthrough option in the createPrerenderHandler call.
+              // Detect passthrough option in the Prerender call.
               const callStartRe = new RegExp(
-                `const\\s+${name}\\s*=\\s*createPrerenderHandler\\s*(?:<[^>]*>)?\\s*\\(`,
+                `const\\s+${name}\\s*=\\s*Prerender\\s*(?:<[^>]*>)?\\s*\\(`,
               );
               const callStart = callStartRe.exec(chunk.code);
               let isPassthrough = false;
@@ -1363,6 +1437,7 @@ function createRouterDiscoveryPlugin(
         }
         break;
       }
+
     },
 
     // Build-time pre-rendering: evict handler code and inject collected prerender data.
@@ -1393,7 +1468,7 @@ function createRouterDiscoveryPlugin(
               // Passthrough handlers stay in the bundle for live fallback
               if (passthrough) continue;
               const callStartRe = new RegExp(
-                `const\\s+${name}\\s*=\\s*createPrerenderHandler\\s*(?:<[^>]*>)?\\s*\\(`,
+                `const\\s+${name}\\s*=\\s*Prerender\\s*(?:<[^>]*>)?\\s*\\(`,
               );
               const startMatch = callStartRe.exec(code);
               if (!startMatch) continue;
@@ -2179,4 +2254,3 @@ function createCjsToEsmPlugin(): Plugin {
     },
   };
 }
-

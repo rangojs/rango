@@ -186,6 +186,7 @@ test.describe("proactive-caching", () => {
   const f = useFixture({
     root: ".",
     mode: "dev",
+    isolatedServer: true,
   });
 
   test("proactive caching triggers when navigating within cached layout", async ({
@@ -221,12 +222,12 @@ test.describe("proactive-caching", () => {
     const partialNavLogs = afterPartialNav.slice(beforePartialNav.length);
 
     // Check for valid cache interaction during partial navigation:
-    // - "Proactive caching" = we rendered null segments in background
+    // - "[CacheScope] Cached:" = proactive caching completed and stored segments
     // - "HIT: partial:" = partial cache hit, served from cache (already has complete segments)
     // Both are valid outcomes depending on cache state
-    const proactiveTriggered = partialNavLogs.includes("Proactive caching");
+    const proactiveCached = partialNavLogs.includes("[CacheScope] Cached:");
     const partialCacheHit = partialNavLogs.includes("HIT: partial:");
-    expect(proactiveTriggered || partialCacheHit).toBe(true);
+    expect(proactiveCached || partialCacheHit).toBe(true);
   });
 
   test("layout renders correctly after proactive caching", async ({ page }) => {

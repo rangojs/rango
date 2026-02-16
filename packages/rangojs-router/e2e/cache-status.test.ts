@@ -11,11 +11,13 @@ import { waitForHydration, expectNoPageError } from "./helper";
  * - 200 for successful responses
  *
  * Cache is skipped for non-200 responses via onResponse callback.
+ * Tests verify behavior (MISS/HIT patterns) rather than log output,
+ * since onResponse callbacks run outside the debug logging scope.
  *
- * Log patterns:
+ * Log patterns used (from CacheScope, runs inside ALS scope):
+ * - [CacheScope] MISS: ... - Cache miss
+ * - [CacheScope] HIT: ... - Cache hit
  * - [CacheScope] Cached: ... - Cache write for 200 responses
- * - [CacheStore] Skipping cache: non-200 status 404 ... - Skip cache for notFound
- * - [CacheStore] Skipping cache: non-200 status 500 ... - Skip cache for errors
  */
 
 test.describe("cache-status-behavior", () => {
@@ -26,22 +28,19 @@ test.describe("cache-status-behavior", () => {
   });
 
   /**
-   * Helper to get cache-related log entries from server stdout
+   * Helper to get cache-related log entries from server stdout.
+   * Only checks CacheScope logs which run inside the ALS scope.
    */
   function getCacheLogs(stdout: string): {
     misses: string[];
     hits: string[];
     cached: string[];
-    skipped404: string[];
-    skipped500: string[];
   } {
     const lines = stdout.split("\n");
     return {
       misses: lines.filter((line) => line.includes("[CacheScope] MISS:")),
       hits: lines.filter((line) => line.includes("[CacheScope] HIT:")),
       cached: lines.filter((line) => line.includes("[CacheScope] Cached:")),
-      skipped404: lines.filter((line) => line.includes("[CacheStore] Skipping cache: non-200 status 404")),
-      skipped500: lines.filter((line) => line.includes("[CacheStore] Skipping cache: non-200 status 500")),
     };
   }
 
@@ -79,14 +78,6 @@ test.describe("cache-status-behavior", () => {
     expect(
       firstLogs.cached.some((log) => log.includes("/cache-status/success"))
     ).toBeTruthy();
-
-    // Should NOT have any skip logs
-    expect(
-      firstLogs.skipped404.some((log) => log.includes("/cache-status/success"))
-    ).toBeFalsy();
-    expect(
-      firstLogs.skipped500.some((log) => log.includes("/cache-status/success"))
-    ).toBeFalsy();
   });
 
   test("notFound() should return 404 and NOT be cached", async ({ page }) => {
@@ -99,24 +90,18 @@ test.describe("cache-status-behavior", () => {
     // Visit not-found route
     await page.goto(f.url("/cache-status/not-found"));
 
-    // Wait for response and cache decision
+    // Wait for response processing
     await page.waitForTimeout(500);
 
-    // Check logs
+    // Check logs - should have MISS but no Cached (404 is never cached)
     const afterStdout = f.proc().stdout();
     const logs = getCacheLogs(afterStdout.substring(initialLength));
 
-    // Should have MISS (first visit)
     expect(
       logs.misses.some((log) => log.includes("/cache-status/not-found"))
     ).toBeTruthy();
 
-    // Should have skipped due to 404 status
-    expect(
-      logs.skipped404.some((log) => log.includes("/cache-status/not-found"))
-    ).toBeTruthy();
-
-    // Should NOT have Cached
+    // Should NOT have Cached (non-200 responses are skipped)
     expect(
       logs.cached.some((log) => log.includes("/cache-status/not-found"))
     ).toBeFalsy();
@@ -132,24 +117,18 @@ test.describe("cache-status-behavior", () => {
     // Visit server-error route
     await page.goto(f.url("/cache-status/server-error"));
 
-    // Wait for response and cache decision
+    // Wait for response processing
     await page.waitForTimeout(500);
 
-    // Check logs
+    // Check logs - should have MISS but no Cached (500 is never cached)
     const afterStdout = f.proc().stdout();
     const logs = getCacheLogs(afterStdout.substring(initialLength));
 
-    // Should have MISS (first visit)
     expect(
       logs.misses.some((log) => log.includes("/cache-status/server-error"))
     ).toBeTruthy();
 
-    // Should have skipped due to 500 status
-    expect(
-      logs.skipped500.some((log) => log.includes("/cache-status/server-error"))
-    ).toBeTruthy();
-
-    // Should NOT have Cached
+    // Should NOT have Cached (non-200 responses are skipped)
     expect(
       logs.cached.some((log) => log.includes("/cache-status/server-error"))
     ).toBeFalsy();
@@ -228,10 +207,5 @@ test.describe("cache-status-behavior", () => {
     expect(
       secondLogs.hits.some((log) => log.includes("/cache-status/not-found"))
     ).toBeFalsy();
-
-    // Should still have skipped due to 404 status
-    expect(
-      secondLogs.skipped404.some((log) => log.includes("/cache-status/not-found"))
-    ).toBeTruthy();
   });
 });

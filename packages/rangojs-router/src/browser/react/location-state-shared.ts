@@ -61,7 +61,7 @@ export function createLocationState<TState>(
   key?: string
 ): LocationStateDefinition<[TState | (() => TState)], TState> {
   if (!key && process.env.NODE_ENV !== "production") {
-    console.warn(
+    throw new Error(
       "[rsc-router] createLocationState is missing a key. " +
         "Make sure the exposeInternalIds Vite plugin is enabled and " +
         "the state is exported with: export const MyState = createLocationState(...)"

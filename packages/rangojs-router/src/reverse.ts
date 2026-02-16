@@ -1,4 +1,6 @@
 import type { ExtractParams } from "./types.js";
+import type { SearchSchema, ResolveSearchSchema } from "./search-params.js";
+import { serializeSearchParams } from "./search-params.js";
 
 /**
  * Sanitize prefix string by removing leading slash
@@ -101,6 +103,15 @@ export type ParamsFor<
 type IsEmptyObject<T> = keyof T extends never ? true : false;
 
 /**
+ * Extract search schema from a route entry.
+ * Returns {} if no search schema is defined.
+ */
+type ExtractSearchSchema<TRoutes, TName extends keyof TRoutes> =
+  TRoutes[TName] extends { readonly search: infer S extends SearchSchema }
+    ? S
+    : {};
+
+/**
  * Type-safe reverse function signature (Django-style URL reversal)
  *
  * Validates route names and params at compile time.
@@ -127,24 +138,28 @@ export type ReverseFunction<TRoutes> = {
     name: TName,
     params: ExtractParams<RoutePatternFor<TRoutes, TName>>
   ): string;
+
+  /**
+   * Route with params and search - validates route name, params, and search
+   */
+  <TName extends keyof TRoutes & string>(
+    name: TName,
+    params: ExtractParams<RoutePatternFor<TRoutes, TName>>,
+    search: ResolveSearchSchema<ExtractSearchSchema<TRoutes, TName>>
+  ): string;
 };
 
 /**
- * Type-safe scoped reverse function signature for use with scopedReverse<typeof patterns>()
+ * Type-safe scoped reverse function that validates all route names and params.
  *
- * **Recommended: Use route names for type safety.**
- * Route names validate both the route exists and params are correct.
- * Path-based URLs (`/...`) are an escape hatch with no validation.
+ * When used via HandlerContext or scopedReverse(), local routes are merged with
+ * global RegisteredRoutes so all names are fully type-checked.
  *
  * @example
  * ```typescript
- * // RECOMMENDED: Use route names for type safety
- * reverse("blog.post", { slug: "hello" })  // ✓ Validates route + params
- * reverse("shop.cart")                      // ✓ Validates route exists
- *
- * // ESCAPE HATCH: Path-based URLs (no validation)
- * reverse("/about")                         // ⚠ No type checking
- * reverse("/typo/in/path")                  // ⚠ Won't catch errors
+ * reverse("cart")                           // ✓ Validates local route
+ * reverse("blog.post", { slug: "hello" })   // ✓ Validates global route + params
+ * reverse("typo")                           // ✗ Compile error
  * ```
  */
 export type ScopedReverseFunction<TLocalRoutes> = {
@@ -166,16 +181,13 @@ export type ScopedReverseFunction<TLocalRoutes> = {
   ): string;
 
   /**
-   * Absolute route name (contains dot) - global lookup
-   * Use for cross-module navigation: "shop.cart", "blog.post"
+   * Route with params and search - validates route name, params, and search
    */
-  (name: `${string}.${string}`, params?: Record<string, string>): string;
-
-  /**
-   * Path-based URL - ESCAPE HATCH, no type validation
-   * Prefer route names for type safety. Only use paths when necessary.
-   */
-  (name: `/${string}`, params?: Record<string, string>): string;
+  <TName extends keyof TLocalRoutes & string>(
+    name: TName,
+    params: ExtractParams<RoutePatternFor<TLocalRoutes, TName>>,
+    search: ResolveSearchSchema<ExtractSearchSchema<TLocalRoutes, TName>>
+  ): string;
 };
 
 /**
@@ -215,7 +227,7 @@ export type { RouteResponse } from "./urls.js";
  *
  *     reverse("index");              // ✓ Type-safe local route
  *     reverse("post", { slug: "x" }); // ✓ Type-safe with params
- *     reverse("shop.cart");          // ✓ Cross-module (absolute name)
+ *     reverse("shop.cart");          // ✓ Type-safe global route
  *
  *     return <BlogIndex />;
  *   }, { name: "index" }),
@@ -244,24 +256,55 @@ export function scopedReverse<TPatterns>(
  * reverse("detail", { slug: "my-product" }); // "/shop/product/my-product"
  * ```
  */
+type RouteMapEntry = string | { path: string; search?: Record<string, string> };
+
+function resolveRoutePattern(entry: RouteMapEntry | undefined): string | undefined {
+  if (!entry) return undefined;
+  return typeof entry === "string" ? entry : entry.path;
+}
+
 export function createReverse<TRoutes extends Record<string, string>>(
-  routeMap: TRoutes
+  routeMap: TRoutes,
+  getFallbackMap?: () => Record<string, RouteMapEntry> | undefined,
 ): ReverseFunction<TRoutes & Record<string, string>> {
-  return ((name: string, params?: Record<string, string>) => {
-    const pattern = routeMap[name];
+  return ((name: string, params?: Record<string, string>, search?: Record<string, unknown>) => {
+    let pattern = resolveRoutePattern(routeMap[name] as unknown as RouteMapEntry);
     if (!pattern) {
+      // Try the static route names from the generated file (O(1) fallback)
+      const fallback = getFallbackMap?.();
+      if (fallback) {
+        pattern = resolveRoutePattern(fallback[name]);
+      }
+    }
+    if (!pattern) {
+      // During build-time discovery, lazy includes haven't resolved yet.
+      // Return a placeholder instead of crashing the build.
+      if ((globalThis as any).__rscRouterDiscoveryActive) {
+        return `/__unresolved_reverse/${name}`;
+      }
       throw new Error(`Unknown route: ${name}`);
     }
 
-    if (!params) return pattern;
+    let result = pattern;
+    if (params) {
+      // Replace :param placeholders with actual values
+      result = result.replace(/:([^/]+)/g, (_: string, key: string) => {
+        const value = params[key];
+        if (value === undefined) {
+          throw new Error(`Missing param "${key}" for route "${name}"`);
+        }
+        return encodeURIComponent(value);
+      });
+    }
 
-    // Replace :param placeholders with actual values
-    return pattern.replace(/:([^/]+)/g, (_, key) => {
-      const value = params[key];
-      if (value === undefined) {
-        throw new Error(`Missing param "${key}" for route "${name}"`);
+    // Append search params as query string
+    if (search) {
+      const qs = serializeSearchParams(search);
+      if (qs) {
+        result += `?${qs}`;
       }
-      return encodeURIComponent(value);
-    });
+    }
+
+    return result;
   }) as ReverseFunction<TRoutes>;
 }

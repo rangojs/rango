@@ -428,7 +428,7 @@ path("/", Dashboard, { name: "index" }, () => [
 ## Router Setup
 
 ```typescript
-import { createRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router";
 import { urlpatterns } from "./urls";
 
 export const router = createRouter<AppEnv>({

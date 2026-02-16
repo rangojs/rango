@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "extract": "npx rango extract-names ./",
     "typecheck": "tsc --noEmit",
-    "test": "playwright test",
+    "test": "playwright test --project=dev",
+    "test:full": "playwright test",
+    "test:production": "playwright test --project=production",
     "test:ui": "playwright test --ui"
   },
   "dependencies": {

@@ -1,17 +1,15 @@
-import { scopedReverse, Meta } from "@rangojs/router";
+import { Meta } from "@rangojs/router";
 import type { Handler } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles.js";
-import type { routes } from "./blog.gen.js";
 
 /**
  * Blog index page handler
  */
-export const BlogIndexHandler: Handler<"index", routes> = (ctx) => {
-  const href = scopedReverse<routes>(ctx.reverse);
+export const BlogIndexHandler: Handler<"blog.index"> = (ctx) => {
   const pushBreadcrumb = ctx.use(Breadcrumbs);
   const meta = ctx.use(Meta);
-  pushBreadcrumb({ label: "Blog", href: href("index") });
+  pushBreadcrumb({ label: "Blog", href: ctx.reverse("blog.index") });
   meta({ title: "Blog - RSC Router Test App" });
   meta({ name: "description", content: "Blog posts from RSC Router" });
 
@@ -25,7 +23,7 @@ export const BlogIndexHandler: Handler<"index", routes> = (ctx) => {
       <ul data-testid="blog-posts">
         <li>
           <Link
-            to={href("post", { postId: "post-1" })}
+            to={ctx.reverse("blog.post", { postId: "post-1" })}
             data-testid="blog-post-link-1"
           >
             Post 1
@@ -33,7 +31,7 @@ export const BlogIndexHandler: Handler<"index", routes> = (ctx) => {
         </li>
         <li>
           <Link
-            to={href("post", { postId: "post-2" })}
+            to={ctx.reverse("blog.post", { postId: "post-2" })}
             data-testid="blog-post-link-2"
           >
             Post 2
@@ -43,7 +41,7 @@ export const BlogIndexHandler: Handler<"index", routes> = (ctx) => {
       <div data-testid="blog-product-links" style={{ marginTop: "1rem" }}>
         <h3>Featured Products</h3>
         <Link
-          to={href("product.detail", { productId: "product-a" })}
+          to={ctx.reverse("product.detail", { productId: "product-a" })}
           data-testid="blog-product-link"
         >
           View Product A
@@ -56,15 +54,13 @@ export const BlogIndexHandler: Handler<"index", routes> = (ctx) => {
 /**
  * Blog post detail handler
  */
-export const BlogPostHandler: Handler<"post", routes> = (ctx) => {
-  const href = scopedReverse<routes>(ctx.reverse);
-
+export const BlogPostHandler: Handler<"blog.post"> = (ctx) => {
   const pushBreadcrumb = ctx.use(Breadcrumbs);
   const meta = ctx.use(Meta);
-  pushBreadcrumb({ label: "Blog", href: href("index") });
+  pushBreadcrumb({ label: "Blog", href: ctx.reverse("blog.index") });
   pushBreadcrumb({
     label: `Post ${ctx.params.postId}`,
-    href: href("post", { postId: ctx.params.postId }),
+    href: ctx.reverse("blog.post", { postId: ctx.params.postId }),
   });
   meta({ title: `Post ${ctx.params.postId} - Blog - RSC Router Test App` });
   meta({
@@ -94,7 +90,7 @@ export const BlogPostHandler: Handler<"post", routes> = (ctx) => {
 
   return (
     <div data-testid="blog-post-page">
-      <Link to={href("index")} data-testid="back-to-blog">
+      <Link to={ctx.reverse("blog.index")} data-testid="back-to-blog">
         ← Back to Blog
       </Link>
       <h1 data-testid="blog-post-title">Post: {ctx.params.postId}</h1>

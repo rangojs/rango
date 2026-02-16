@@ -1,88 +1,20 @@
 /**
- * rsc-router/server
+ * @rangojs/router/server — Internal subpath
  *
- * Server-only exports for route definition and building
- * These should only be imported in server-side handler files
+ * This module is NOT user-facing. Import from "@rangojs/router" instead.
+ *
+ * Exports here are consumed by the Vite plugin (discovery, manifest injection,
+ * virtual modules) and the RSC handler internals. They are not part of the
+ * public API and may change without notice.
  */
 
-// Route definition helpers (server-only)
+// Router registry (used by Vite plugin for build-time discovery)
 export {
-  createLoader,
-  redirect,
-  type RouteHelpers,
-  type RouteHandlers,
-} from "./route-definition.js";
-
-// Django-style URL patterns (server-only)
-export {
-  urls,
-  RESPONSE_TYPE,
-  type PathHelpers,
-  type PathOptions,
-  type UrlPatterns,
-  type IncludeOptions,
-  type ResponseHandler,
-  type ResponseHandlerContext,
-  type JsonResponseHandler,
-  type TextResponseHandler,
-  type JsonValue,
-  type ResponsePathFn,
-  type JsonResponsePathFn,
-  type TextResponsePathFn,
-  type RouteResponse,
-  type ResponseError,
-  type ResponseEnvelope,
-} from "./urls.js";
-
-// Re-export IncludeItem from route-types
-export type { IncludeItem } from "./route-types.js";
-
-// Core router (server-only)
-export {
-  createRouter,
   RSC_ROUTER_BRAND,
   RouterRegistry,
-  type RSCRouter,
-  type RSCRouterOptions,
-  type RootLayoutProps,
 } from "./router.js";
 
-// Type-safe reverse utilities (Django-style URL reversal)
-export {
-  createReverse,
-  type ReverseFunction,
-  type PrefixedRoutes,
-  type PrefixRoutePatterns,
-  type ParamsFor,
-  type SanitizePrefix,
-  type MergeRoutes,
-} from "./reverse.js";
-
-// Segment system (server-only)
-export { renderSegments } from "./segment-system.js";
-
-// Performance tracking (server-only)
-export { track } from "./server/context.js";
-
-// Handle API (works in both server and client contexts)
-export { createHandle, isHandle, type Handle } from "./handle.js";
-
-// Pre-render handler API
-export {
-  createPrerenderHandler,
-  isPrerenderHandler,
-  type PrerenderHandlerDefinition,
-  type PrerenderOptions,
-  type BuildContext,
-} from "./prerender.js";
-
-// Built-in handles
-export { Meta } from "./handles/meta.js";
-
-// Loader registry (for GET-based loader fetching)
-export { registerLoaderById, setLoaderImports } from "./server/loader-registry.js";
-
-// Route map builder (for build-time manifest registration)
+// Route map builder (Vite plugin injects these via virtual modules)
 export {
   registerRouteMap,
   setCachedManifest,
@@ -96,87 +28,17 @@ export {
   ensureRouterManifest,
 } from "./route-map-builder.js";
 
-// Request context (for accessing request data in server components/actions)
+// Loader registry (Vite plugin registers lazy loader imports)
+export { registerLoaderById, setLoaderImports } from "./server/loader-registry.js";
+
+// Request context creation (used by RSC handler, not user-facing)
 export {
-  getRequestContext,
-  requireRequestContext,
   createRequestContext,
-  type RequestContext,
   type CreateRequestContextOptions,
 } from "./server/request-context.js";
 
-// Meta types
-export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
-
-// Middleware context types (Middleware type is exported from types.ts)
-export type {
-  MiddlewareContext,
-  CookieOptions,
-} from "./router/middleware.js";
-
-// Error classes and utilities
-export {
-  RouteNotFoundError,
-  DataNotFoundError,
-  notFound,
-  MiddlewareError,
-  HandlerError,
-  BuildError,
-  InvalidHandlerError,
-  sanitizeError,
-  RouterError,
-} from "./errors.js";
-
-// Component utilities
+// Component utilities (used internally for server/client boundary checks)
 export {
   isClientComponent,
   assertClientComponent,
 } from "./component-utils.js";
-
-// Debug utilities for route matching (development only)
-export {
-  enableMatchDebug,
-  getMatchDebugStats,
-} from "./router/pattern-matching.js";
-
-// Types (re-exported for convenience - user-facing only)
-export type {
-  // Configuration types
-  RouterEnv,
-  DefaultEnv,
-  RouteDefinition,
-  RouteConfig,
-  RouteDefinitionOptions,
-  TrailingSlashMode,
-  // Handler types
-  Handler,            // Supports params object, path pattern, or route name
-  HandlerContext,
-  ExtractParams,
-  GenericParams,
-  // Middleware types (also exported from router/middleware.js above)
-  Middleware,         // Supports env type and optional route name for params
-  // Revalidation types
-  RevalidateParams,
-  Revalidate,
-  RouteKeys,
-  // Loader types
-  LoaderDefinition,
-  LoaderFn,
-  LoaderContext,
-  // Error boundary types
-  ErrorInfo,
-  ErrorBoundaryFallbackProps,
-  ErrorBoundaryHandler,
-  ClientErrorBoundaryFallbackProps,
-  // NotFound boundary types
-  NotFoundInfo,
-  NotFoundBoundaryFallbackProps,
-  NotFoundBoundaryHandler,
-  // Error handling callback types
-  ErrorPhase,
-  OnErrorContext,
-  OnErrorCallback,
-} from "./types.js";
-
-// Path-based response type lookup from RegisteredRoutes
-export type { PathResponse } from "./href-client.js";

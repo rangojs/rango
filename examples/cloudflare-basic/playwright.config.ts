@@ -1,27 +1,96 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const isUIMode = process.argv.includes("--ui");
+
+const DEV_PORT = 5199;
+
 export default defineConfig({
   testDir: "./e2e",
-  // Run tests serially since cloudflare dev server has port conflicts when running in parallel
-  fullyParallel: false,
+  fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  // Use single worker to avoid multiple dev server instances
-  workers: 1,
-  reporter: "html",
-  // Global timeout to prevent hanging
-  globalTimeout: process.env.CI ? 10 * 60 * 1000 : undefined, // 10 min on CI
-  // Extended timeout for CI where workerd startup can be slow
+  workers: process.env.CI ? 1 : 2,
+  reporter: [
+    ["list"],
+    ...(process.env.CI ? [["github"], ["html", { open: "never" }]] : []),
+  ] as import("@playwright/test").ReporterDescription[],
+  globalTimeout: process.env.CI ? 10 * 60 * 1000 : undefined,
   timeout: process.env.CI ? 60000 : 30000,
   use: {
     trace: "on-first-retry",
-    // Extended action timeout for CI
     actionTimeout: process.env.CI ? 30000 : 15000,
   },
-  projects: [
-    {
-      name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
-    },
-  ],
+  webServer: {
+    // Build first so dist/ is ready for production tests and deps_ssr is
+    // populated before the dev server starts (wrangler's module runner does
+    // not recover from ERR_OUTDATED_OPTIMIZED_DEP if the build runs later).
+    command: `pnpm build && rm -rf node_modules/.vite && pnpm dev --port ${DEV_PORT}`,
+    port: DEV_PORT,
+    reuseExistingServer: !process.env.CI,
+  },
+  // In UI mode, flatten projects to avoid the dependency chain that breaks
+  // Playwright's --ui filtering (--grep, --project, file args).
+  projects: isUIMode
+    ? [
+        {
+          name: "dev",
+          grep: /^(?!.*\(production\))/,
+          testIgnore: ["**/hmr.test.ts", "**/*.setup.ts"],
+          use: {
+            ...devices["Desktop Chrome"],
+            baseURL: `http://localhost:${DEV_PORT}`,
+          },
+        },
+        {
+          name: "production",
+          grep: /\(production\)/,
+          testIgnore: ["**/*.setup.ts"],
+          use: { ...devices["Desktop Chrome"] },
+        },
+        {
+          name: "hmr",
+          testMatch: ["**/hmr.test.ts"],
+          use: { ...devices["Desktop Chrome"] },
+          fullyParallel: false,
+        },
+      ]
+    : [
+        {
+          name: "dev-warmup",
+          testMatch: "**/dev-warmup.setup.ts",
+          use: {
+            ...devices["Desktop Chrome"],
+            baseURL: `http://localhost:${DEV_PORT}`,
+          },
+        },
+        {
+          name: "dev",
+          grep: /^(?!.*\(production\))/,
+          testIgnore: ["**/hmr.test.ts", "**/*.setup.ts"],
+          use: {
+            ...devices["Desktop Chrome"],
+            baseURL: `http://localhost:${DEV_PORT}`,
+          },
+          dependencies: ["dev-warmup"],
+        },
+        {
+          name: "production",
+          grep: /\(production\)/,
+          testIgnore: ["**/*.setup.ts"],
+          use: { ...devices["Desktop Chrome"] },
+          // Each production describe block starts its own wrangler preview server.
+          // Run serially within files to avoid multiple simultaneous servers.
+          // Run after dev tests to reduce concurrent wrangler processes.
+          fullyParallel: false,
+          timeout: 60000,
+          dependencies: ["dev"],
+        },
+        {
+          name: "hmr",
+          testMatch: ["**/hmr.test.ts"],
+          use: { ...devices["Desktop Chrome"] },
+          fullyParallel: false,
+          dependencies: process.env.CI ? [] : ["dev", "production"],
+        },
+      ],
 });

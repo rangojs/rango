@@ -42,6 +42,18 @@ path("/product/:slug", (ctx) => {
 }, { name: "product" })
 ```
 
+### reverse with search params
+
+When a route has a `search` schema, pass a typed search object as the third argument:
+
+```typescript
+path("/search", (ctx) => {
+  // Generates: /search?q=react&page=2
+  const url = ctx.reverse("search", {}, { q: "react", page: 2 });
+  return <Link to={url}>Search React</Link>;
+}, { name: "search", search: { q: "string", page: "number?" } })
+```
+
 ### scopedReverse() - type-safe ctx.reverse
 
 Wraps `ctx.reverse` with local route type information for autocomplete and validation:

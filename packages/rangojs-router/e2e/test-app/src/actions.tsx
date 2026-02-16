@@ -1,7 +1,7 @@
 "use server";
 
 import { ReactNode } from "react";
-import { requireRequestContext } from "@rangojs/router/server";
+import { requireRequestContext } from "@rangojs/router";
 
 // Simulated delay helper
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

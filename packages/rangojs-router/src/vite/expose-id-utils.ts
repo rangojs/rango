@@ -19,13 +19,74 @@ export function hashId(filePath: string, exportName: string): string {
   return `${hash.slice(0, 8)}#${exportName}`;
 }
 
+/**
+ * Generate an 8-char hex hash for an inline static handler call site.
+ * Uses file path and line number (plus optional index for same-line collisions).
+ */
+export function hashInlineId(
+  filePath: string,
+  lineNumber: number,
+  index?: number,
+): string {
+  const input =
+    index !== undefined && index > 0
+      ? `${filePath}:${lineNumber}:${index}`
+      : `${filePath}:${lineNumber}`;
+  return crypto.createHash("sha256").update(input).digest("hex").slice(0, 8);
+}
+
 export interface DetectedImports {
   loader: boolean;
   handle: boolean;
   locationState: boolean;
   prerenderHandler: boolean;
+  staticHandler: boolean;
   router: boolean;
   any: boolean;
+}
+
+/**
+ * Build a map from local binding name to exported names by walking
+ * ExportNamedDeclaration nodes. Handles `export const X`, `export { X }`,
+ * and `export { X as Y }`. Skips re-exports (`export { X } from "..."`).
+ */
+export function buildExportMap(program: any): Map<string, string[]> {
+  const exportMap = new Map<string, string[]>();
+
+  const pushExport = (local: string, exported: string) => {
+    const list = exportMap.get(local);
+    if (list) {
+      if (!list.includes(exported)) list.push(exported);
+      return;
+    }
+    exportMap.set(local, [exported]);
+  };
+
+  for (const node of program.body ?? []) {
+    if (node?.type !== "ExportNamedDeclaration") continue;
+
+    if (node.declaration?.type === "VariableDeclaration") {
+      for (const decl of node.declaration.declarations ?? []) {
+        if (decl?.id?.type === "Identifier") {
+          pushExport(decl.id.name, decl.id.name);
+        }
+      }
+    }
+
+    if (!node.source && Array.isArray(node.specifiers)) {
+      for (const spec of node.specifiers) {
+        if (
+          spec?.type === "ExportSpecifier" &&
+          spec.local?.type === "Identifier" &&
+          spec.exported?.type === "Identifier"
+        ) {
+          pushExport(spec.local.name, spec.exported.name);
+        }
+      }
+    }
+  }
+
+  return exportMap;
 }
 
 /**
@@ -42,6 +103,7 @@ export function detectImports(code: string): DetectedImports {
     handle: false,
     locationState: false,
     prerenderHandler: false,
+    staticHandler: false,
     router: false,
     any: false,
   };
@@ -52,7 +114,8 @@ export function detectImports(code: string): DetectedImports {
     if (/\bcreateLoader\b/.test(imports)) result.loader = true;
     if (/\bcreateHandle\b/.test(imports)) result.handle = true;
     if (/\bcreateLocationState\b/.test(imports)) result.locationState = true;
-    if (/\bcreatePrerenderHandler\b/.test(imports)) result.prerenderHandler = true;
+    if (/\bPrerender\b/.test(imports)) result.prerenderHandler = true;
+    if (/\bStatic\b/.test(imports)) result.staticHandler = true;
     if (/\bcreateRouter\b/.test(imports)) result.router = true;
   }
 
@@ -69,20 +132,10 @@ export function detectImports(code: string): DetectedImports {
     result.handle ||
     result.locationState ||
     result.prerenderHandler ||
+    result.staticHandler ||
     result.router;
 
   return result;
-}
-
-/**
- * Build regex for `export const X = createFoo<...>(`.
- * The optional generics group handles TypeScript type parameters.
- */
-export function makeExportPattern(fnName: string): RegExp {
-  return new RegExp(
-    `export\\s+const\\s+(\\w+)\\s*=\\s*${fnName}\\s*(?:<[^>]*>)?\\s*\\(`,
-    "g",
-  );
 }
 
 /**

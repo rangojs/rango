@@ -894,17 +894,34 @@ export function createNavigationBridge(
         this.handlePopstate();
       };
 
+      // When the browser restores a page from bfcache (back-forward cache),
+      // any in-flight navigation state is stale. This happens when:
+      // 1. A navigation triggers X-RSC-Reload (e.g., response route hit via SPA)
+      // 2. window.location.href does a hard navigation
+      // 3. The user presses back and the browser restores from bfcache
+      // At that point, currentNavigation is still set from step 1, so
+      // getState() returns "loading" and the progress bar shows.
+      // Abort the stale navigation to reset state to idle.
+      const handlePageShow = (event: PageTransitionEvent) => {
+        if (event.persisted) {
+          console.log("[Browser] Page restored from bfcache, resetting navigation state");
+          eventController.abortNavigation();
+        }
+      };
+
       // Register cross-tab refresh callback with the store
       store.setCrossTabRefreshCallback(() => {
         this.refresh();
       });
 
       window.addEventListener("popstate", handlePopstate);
+      window.addEventListener("pageshow", handlePageShow);
       console.log("[Browser] Navigation bridge ready");
 
       return () => {
         cleanupLinks();
         window.removeEventListener("popstate", handlePopstate);
+        window.removeEventListener("pageshow", handlePageShow);
       };
     },
   };
