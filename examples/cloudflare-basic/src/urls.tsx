@@ -47,6 +47,13 @@ import {
   ProductReviewsPage,
   CatchAllPage,
 } from "./pages/trie-routing-test.js";
+import {
+  CssTestPanelAPage,
+  CssTestPanelBPage,
+  CssTestPanelCPage,
+  CssTestPanelDPage,
+  CssTestAllPage,
+} from "./pages/css-test.js";
 
 const docsPatterns = createDocsPatterns({ articles: docsArticles });
 
@@ -190,6 +197,13 @@ export const urlpatterns = urls(
           { name: "featuresDetail" },
           () => [loading(<FeatureLoading />)],
         ),
+
+        // CSS isolation test routes
+        path("/css-test/a", CssTestPanelAPage, { name: "cssTestA" }),
+        path("/css-test/b", CssTestPanelBPage, { name: "cssTestB" }),
+        path("/css-test/c", CssTestPanelCPage, { name: "cssTestC" }),
+        path("/css-test/d", CssTestPanelDPage, { name: "cssTestD" }),
+        path("/css-test/all", CssTestAllPage, { name: "cssTestAll" }),
 
         // Blog routes with sidebar
         layout(BlogLayout, () => [
