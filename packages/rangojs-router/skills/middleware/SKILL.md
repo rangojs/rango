@@ -89,6 +89,26 @@ export const myMiddleware = createMiddleware(async (ctx, next) => {
 });
 ```
 
+## Redirect with State in Middleware
+
+```typescript
+import { createMiddleware, redirect, createLocationState } from "@rangojs/router";
+
+export const FlashMessage = createLocationState<{ text: string }>();
+
+export const requireAuthMiddleware = createMiddleware(async (ctx, next) => {
+  const token = ctx.request.headers.get("Authorization");
+  if (!token) {
+    return redirect("/login", {
+      state: [FlashMessage({ text: "Please log in to continue" })],
+    });
+  }
+  await next();
+});
+```
+
+Read the flash on the target page with `useFlashState(FlashMessage)`. See `/hooks`.
+
 ## Authentication Middleware
 
 ```typescript

@@ -22,8 +22,10 @@ import {
   setRequestContextParams,
   requireRequestContext,
   createRequestContext,
+  getLocationState,
   type ExecutionContext,
 } from "../server/request-context.js";
+import { resolveLocationStateEntries } from "../browser/react/location-state-shared.js";
 import * as rscDeps from "@vitejs/plugin-rsc/rsc";
 
 import type {
@@ -140,6 +142,31 @@ export function createRSCHandler<
     context: Parameters<typeof invokeOnError<TEnv>>[3],
   ): void {
     invokeOnError(router.onError, error, phase, context, "RSC");
+  }
+
+  /**
+   * Build a 200 Flight response that carries a redirect URL and optional state.
+   * Used when a partial/action request results in a redirect -- fetch
+   * auto-follows 3xx so we send the redirect as payload metadata instead.
+   */
+  function createRedirectFlightResponse(
+    redirectUrl: string,
+    locationState?: Record<string, unknown>,
+  ): Response {
+    const redirectPayload: RscPayload = {
+      root: null,
+      metadata: {
+        pathname: redirectUrl,
+        segments: [],
+        redirect: { url: redirectUrl },
+        ...(locationState && { locationState }),
+      },
+    };
+    const rscStream = renderToReadableStream<RscPayload>(redirectPayload);
+    return createResponseWithMergedHeaders(rscStream, {
+      status: 200,
+      headers: { "content-type": "text/x-component;charset=utf-8" },
+    });
   }
 
   return async function handler(
@@ -327,13 +354,31 @@ export function createRSCHandler<
 
       // Execute middleware chain if any, otherwise call core handler directly
       if (matchedMiddleware.length > 0) {
-        return executeMiddleware(
+        const mwResponse = await executeMiddleware(
           matchedMiddleware,
           request,
           env,
           variables,
           coreHandler,
         );
+
+        // If global middleware returned a redirect with location state during
+        // a partial (SPA) request, convert to Flight payload. Without this,
+        // fetch auto-follows the 3xx and the state is lost.
+        const isPartial = url.searchParams.has("_rsc_partial");
+        const redirectUrl = mwResponse.headers.get("Location");
+        const isRedirect = mwResponse.status >= 300 && mwResponse.status < 400 && redirectUrl;
+        if (isPartial && isRedirect) {
+          const locationState = getLocationState();
+          if (locationState) {
+            return createRedirectFlightResponse(
+              redirectUrl,
+              resolveLocationStateEntries(locationState),
+            );
+          }
+        }
+
+        return mwResponse;
       }
 
       return coreHandler();
@@ -546,7 +591,26 @@ export function createRSCHandler<
       }));
 
       // Execute route middleware wrapping the actual request handling
-      return executeMiddleware(middlewareEntries, request, env, variables, rscHandler);
+      const mwResponse = await executeMiddleware(middlewareEntries, request, env, variables, rscHandler);
+
+      // If route middleware returned a redirect with location state during
+      // a partial (SPA) request, convert to a 200 Flight payload so the
+      // browser can perform the redirect with pushState. Without this,
+      // fetch auto-follows the 3xx, losing the state.
+      const isPartial = url.searchParams.has("_rsc_partial");
+      const mwRedirectUrl = mwResponse.headers.get("Location");
+      const isMwRedirect = mwResponse.status >= 300 && mwResponse.status < 400 && mwRedirectUrl;
+      if (isPartial && isMwRedirect) {
+        const locationState = getLocationState();
+        if (locationState) {
+          return createRedirectFlightResponse(
+            mwRedirectUrl,
+            resolveLocationStateEntries(locationState),
+          );
+        }
+      }
+
+      return mwResponse;
     }
 
     // No route middleware, proceed directly
@@ -701,6 +765,23 @@ export function createRSCHandler<
             },
           });
         }
+
+        // For partial requests: intercept redirects that carry location state.
+        // HTTP 3xx redirects are auto-followed by fetch, losing the state.
+        // Instead, return a 200 with a Flight payload containing the redirect
+        // URL and state so the browser can perform the redirect with pushState.
+        const redirectUrl = error.headers.get("Location");
+        const isRedirect = error.status >= 300 && error.status < 400 && redirectUrl;
+        if (isPartial && isRedirect) {
+          const locationState = getLocationState();
+          if (locationState) {
+            return createRedirectFlightResponse(
+              redirectUrl,
+              resolveLocationStateEntries(locationState),
+            );
+          }
+        }
+
         return error;
       }
 
@@ -992,6 +1073,30 @@ export function createRSCHandler<
     try {
       loadedAction = await loadServerAction(actionId);
       const data = await loadedAction!.apply(null, args);
+
+      // Intercept redirect responses from actions. Without this, the redirect
+      // Response would be serialized as the action returnValue (which fails)
+      // and the revalidation step would run unnecessarily.
+      if (data instanceof Response) {
+        const redirectUrl = data.headers.get("Location");
+        const isRedirect = data.status >= 300 && data.status < 400 && redirectUrl;
+        if (isRedirect) {
+          const locationState = getLocationState();
+          if (locationState) {
+            // Redirect with state: needs Flight payload to carry state
+            return createRedirectFlightResponse(
+              redirectUrl,
+              resolveLocationStateEntries(locationState),
+            );
+          }
+          // Simple redirect: short-circuit with a header, no RSC serialization
+          return createResponseWithMergedHeaders(null, {
+            status: 204,
+            headers: { "X-RSC-Redirect": redirectUrl },
+          });
+        }
+      }
+
       returnValue = { ok: true, data };
     } catch (error) {
       returnValue = { ok: false, data: error };
@@ -1410,6 +1515,16 @@ export function createRSCHandler<
             initialTheme: reqCtx.theme,
           },
         };
+      }
+    }
+
+    // For partial requests, include any server-set location state in the payload.
+    // SSR (full page) requests ignore location state since there's no history.state
+    // to write to on a fresh page load.
+    if (isPartial && payload.metadata) {
+      const locationState = getLocationState();
+      if (locationState) {
+        payload.metadata.locationState = resolveLocationStateEntries(locationState);
       }
     }
 

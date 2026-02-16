@@ -50,6 +50,8 @@ export interface ServerActionBridgeConfigWithController
   eventController: EventController;
   /** RSC version from initial payload metadata */
   version?: string;
+  /** Callback to trigger SPA navigation (for action redirects) */
+  onNavigate?: (url: string, options?: { state?: unknown; replace?: boolean }) => Promise<void>;
 }
 
 /**
@@ -68,7 +70,7 @@ export interface ServerActionBridgeConfigWithController
 export function createServerActionBridge(
   config: ServerActionBridgeConfigWithController
 ): ServerActionBridge {
-  const { store, client, eventController, deps, onUpdate, renderSegments, version } =
+  const { store, client, eventController, deps, onUpdate, renderSegments, version, onNavigate } =
     config;
 
   let isRegistered = false;
@@ -176,6 +178,24 @@ export function createServerActionBridge(
         return new Promise<Response>(() => {});
       }
 
+      // Simple redirect from action (no state, no RSC payload).
+      // Short-circuits before createFromFetch — no Flight deserialization needed.
+      // Check handle.signal.aborted to avoid redirecting from a stale action
+      // when the user has already navigated away.
+      const simpleRedirectUrl = response.headers.get("X-RSC-Redirect");
+      if (simpleRedirectUrl && !handle.signal.aborted) {
+        if (tx) {
+          browserDebugLog(tx, "action simple redirect", { url: simpleRedirectUrl });
+        }
+        handle.complete(undefined);
+        if (onNavigate) {
+          await onNavigate(simpleRedirectUrl, { replace: true });
+        } else {
+          window.location.href = simpleRedirectUrl;
+        }
+        return new Promise<Response>(() => {});
+      }
+
       // Start streaming immediately when response arrives
       if (!handle.signal.aborted) {
         streamingToken = handle.startStreaming();
@@ -277,6 +297,27 @@ export function createServerActionBridge(
 
     // Process response
     const { metadata, returnValue } = payload;
+
+    // Handle action redirect: server converted the redirect to a Flight payload
+    // so we can perform SPA navigation instead of a full page reload.
+    // Check handle.signal.aborted to avoid redirecting from a stale action
+    // when the user has already navigated away.
+    if (metadata?.redirect && !handle.signal.aborted) {
+      const { url: redirectUrl } = metadata.redirect;
+      const redirectState = metadata.locationState;
+      console.log(`[Browser] Action redirect to ${redirectUrl}`);
+      handle.complete(returnValue?.data);
+      if (onNavigate) {
+        await onNavigate(redirectUrl, {
+          state: redirectState,
+          replace: true,
+        });
+      } else {
+        window.location.href = redirectUrl;
+      }
+      return returnValue?.data;
+    }
+
     const { matched, diff, segments, isPartial, isError } = metadata || {};
 
     // Log action result

@@ -313,6 +313,55 @@ import { ProductState } from "./state";
 </Link>
 ```
 
+### useFlashState()
+
+Read-once state that auto-clears after first read. Ideal for flash messages
+(success/error notifications after redirect):
+
+```tsx
+"use client";
+import { useFlashState } from "@rangojs/router/client";
+import { FlashMessage } from "../location-states";
+
+function FlashBanner() {
+  const flash = useFlashState(FlashMessage);
+  // { text: string } | undefined
+
+  if (!flash) return null;
+  return <div className="flash">{flash.text}</div>;
+}
+```
+
+`useFlashState` reads the value synchronously during render, then clears it
+from `history.state` via `replaceState` in a `useEffect`. Multiple components
+reading the same flash definition all see the value. Pressing back/forward
+will not re-show the flash since it was cleared.
+
+Set flash state from the server via `redirect()` with state:
+
+```tsx
+// In a route handler
+import { redirect, createLocationState } from "@rangojs/router";
+
+export const FlashMessage = createLocationState<{ text: string }>();
+
+// Handler
+(ctx) => {
+  return redirect("/dashboard", {
+    state: [FlashMessage({ text: "Item saved!" })],
+  });
+}
+```
+
+Or via `ctx.setLocationState()` on any response:
+
+```tsx
+(ctx) => {
+  ctx.setLocationState([FlashMessage({ text: "Welcome back!" })]);
+  return <Dashboard />;
+}
+```
+
 ## Cache Hooks
 
 ### useClientCache()
@@ -442,5 +491,6 @@ See `/links` for full URL generation guide including server-side `ctx.reverse`.
 | `useLoaderData()` | All loader data | Record<string, any> |
 | `useHandle()` | Accumulated handle data | T (handle type) |
 | `useAction()` | Server action state | state, error, result |
-| `useLocationState()` | History state | T \| undefined |
+| `useLocationState()` | History state (persists on back/forward) | T \| undefined |
+| `useFlashState()` | Read-once state (auto-clears) | T \| undefined |
 | `useClientCache()` | Cache control | { clear } |

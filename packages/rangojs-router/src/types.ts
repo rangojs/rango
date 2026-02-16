@@ -5,6 +5,7 @@ import type { MiddlewareFn } from "./router/middleware.js";
 import type { Theme } from "./theme/types.js";
 import type { ScopedReverseFunction } from "./reverse.js";
 import type { SearchSchema, ResolveSearchSchema } from "./search-params.js";
+import type { LocationStateEntry } from "./browser/react/location-state-shared.js";
 
 // Re-export MiddlewareFn for internal/advanced use
 export type { MiddlewareFn } from "./router/middleware.js";
@@ -547,6 +548,20 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch extends Sear
    * ```
    */
   setTheme?: (theme: Theme) => void;
+  /**
+   * Attach location state entries to this response.
+   * State is delivered to the client via history.pushState and accessible
+   * through useLocationState() or useFlashState() hooks.
+   *
+   * @example
+   * ```typescript
+   * route("product", (ctx) => {
+   *   ctx.setLocationState([ServerInfo({ data: "value" })]);
+   *   return <ProductPage />;
+   * });
+   * ```
+   */
+  setLocationState(entries: LocationStateEntry[]): void;
   /**
    * Generate URLs from route names (Django-style URL reversal).
    *

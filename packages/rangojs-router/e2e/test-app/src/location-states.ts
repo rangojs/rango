@@ -12,3 +12,15 @@ export interface PrerenderTestState {
 }
 
 export const PrerenderTestLocationState = createLocationState<PrerenderTestState>();
+
+export interface FlashMessageState {
+  text: string;
+}
+
+export const FlashMessage = createLocationState<FlashMessageState>();
+
+export interface ServerInfoState {
+  data: string;
+}
+
+export const ServerInfo = createLocationState<ServerInfoState>();

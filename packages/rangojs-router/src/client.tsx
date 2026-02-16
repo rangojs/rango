@@ -600,6 +600,7 @@ export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 export {
   createLocationState,
   useLocationState,
+  useFlashState,
   type LocationStateDefinition,
   type LocationStateEntry,
 } from "./browser/react/location-state.js";
