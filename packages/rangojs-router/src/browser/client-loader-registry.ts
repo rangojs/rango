@@ -11,16 +11,44 @@
 import type { ClientLoaderFn } from "../types.js";
 
 const clientLoaderRegistry = new Map<string, ClientLoaderFn<any>>();
+const pendingWaiters = new Map<string, Set<(fn: ClientLoaderFn<any>) => void>>();
 
 export function registerClientLoader(
   id: string,
   fn: ClientLoaderFn<any>,
 ): void {
   clientLoaderRegistry.set(id, fn);
+
+  // Notify any waiters (e.g. prepareClientLoaders during hydration
+  // before the module has been imported by React)
+  const waiters = pendingWaiters.get(id);
+  if (waiters) {
+    for (const cb of waiters) cb(fn);
+    pendingWaiters.delete(id);
+  }
 }
 
 export function getClientLoader(
   id: string,
 ): ClientLoaderFn<any> | undefined {
   return clientLoaderRegistry.get(id);
+}
+
+/**
+ * Returns a Promise that resolves with the client loader function
+ * once it's registered. If already registered, resolves immediately.
+ *
+ * Used during hydration when prepareClientLoaders runs before React
+ * has imported the client modules that register loader functions.
+ */
+export function waitForClientLoader(
+  id: string,
+): Promise<ClientLoaderFn<any>> {
+  const fn = clientLoaderRegistry.get(id);
+  if (fn) return Promise.resolve(fn);
+
+  return new Promise((resolve) => {
+    if (!pendingWaiters.has(id)) pendingWaiters.set(id, new Set());
+    pendingWaiters.get(id)!.add(resolve);
+  });
 }

@@ -3,6 +3,7 @@ import {
   renderSegments as baseRenderSegments,
   type RenderSegmentsOptions,
 } from "../segment-system.js";
+import { prepareClientLoaders } from "./client-loader-resolution.js";
 import {
   createNavigationStore,
   generateHistoryKey,
@@ -107,6 +108,8 @@ export interface BrowserAppContext {
   initialTheme?: Theme;
   /** Whether connection warmup is enabled */
   warmupEnabled?: boolean;
+  /** Bound renderSegments for post-hydration client loader resolution */
+  renderSegments: (segments: ResolvedSegment[], options?: RenderSegmentsOptions) => Promise<React.ReactNode>;
 }
 
 // Module-level state for the initialized app
@@ -223,6 +226,8 @@ export async function initBrowserApp(
   }
 
   // Build initial tree with rootLayout
+  // Client loaders are NOT resolved here — they're handled post-hydration
+  // via RSCRouter's useEffect to avoid hydration mismatch.
   const initialTree = renderSegments(initialPayload.metadata!.segments);
 
   // Setup HMR
@@ -280,6 +285,7 @@ export async function initBrowserApp(
     themeConfig: effectiveThemeConfig,
     initialTheme: effectiveInitialTheme,
     warmupEnabled: initialPayload.metadata?.warmupEnabled ?? true,
+    renderSegments,
   };
   browserAppContext = context;
 
@@ -335,8 +341,30 @@ export interface RSCRouterProps {}
  * ```
  */
 export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
-  const { store, eventController, bridge, initialPayload, initialTree, themeConfig, initialTheme, warmupEnabled } =
+  const { store, eventController, bridge, initialPayload, initialTree, themeConfig, initialTheme, warmupEnabled, renderSegments } =
     getBrowserAppContext();
+
+  // After hydration, resolve client loaders and re-render via store update.
+  // Client loaders can't run during SSR (they need browser APIs), so the server
+  // renders without their data. This effect patches the segments with client
+  // loader Promises and emits a store update so the segment system's
+  // LoaderBoundary handles the Suspense lifecycle.
+  React.useEffect(() => {
+    const segments = initialPayload.metadata?.segments;
+    if (!segments) return;
+
+    const hasClientLoaders = segments.some(
+      (s: ResolvedSegment) => s.clientLoaderIds && s.clientLoaderIds.length > 0,
+    );
+    if (!hasClientLoaders) return;
+
+    prepareClientLoaders(segments, new URL(window.location.href));
+
+    store.emitUpdate({
+      root: renderSegments(segments),
+      metadata: initialPayload.metadata!,
+    });
+  }, []);
 
   return (
     <NavigationProvider

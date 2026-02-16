@@ -14,7 +14,7 @@ import {
 } from "./merge-segment-loaders.js";
 import { assertSegmentStructure } from "./segment-structure-assert.js";
 import type { BoundTransaction } from "./navigation-bridge.js";
-import { resolveClientLoaders } from "./client-loader-resolution.js";
+import { prepareClientLoaders } from "./client-loader-resolution.js";
 
 /**
  * Configuration for creating a partial updater
@@ -417,11 +417,12 @@ export function createPartialUpdater(
         return streamComplete;
       }
 
-      // Resolve client-side loaders (client loaders + isomorphic loaders during navigation)
+      // Prepare client loaders: put pending Promises in loaderData.
+      // The segment system's LoaderBoundary handles Suspense lifecycle.
       const parsedUrl = typeof window !== "undefined"
         ? new URL(url, window.location.origin)
         : new URL(url, "http://localhost");
-      await resolveClientLoaders(allSegments, parsedUrl, signal);
+      prepareClientLoaders(allSegments, parsedUrl, signal);
 
       // Rebuild tree on client (await for loader data resolution)
       // Race against abort signal to allow cancellation during loader awaiting
@@ -557,11 +558,11 @@ export function createPartialUpdater(
 
       const segmentIds = segments.map((s: ResolvedSegment) => s.id);
 
-      // Resolve client-side loaders before rendering
+      // Prepare client loaders before rendering
       const parsedUrlFull = typeof window !== "undefined"
         ? new URL(url, window.location.origin)
         : new URL(url, "http://localhost");
-      await resolveClientLoaders(segments, parsedUrlFull, signal);
+      prepareClientLoaders(segments, parsedUrlFull, signal);
 
       // Render on client for consistent component references
       const newTree = await renderSegments(segments);

@@ -6,37 +6,6 @@ import type { LoaderDefinition, AnyLoaderDefinition, LoadOptions, ClientLoaderCo
 import { getClientLoader } from "./browser/client-loader-registry.js";
 
 /**
- * Execute a client loader function and return the result.
- * Looks up the function from the registry or the loader definition.
- */
-function executeClientLoader<T>(
-  loaderId: string,
-  loader: AnyLoaderDefinition<T>,
-  params?: Record<string, string>,
-): Promise<T> {
-  const clientFn = getClientLoader(loaderId) ?? (loader as any).clientFn;
-  if (!clientFn) {
-    return Promise.reject(
-      new Error(
-        `Client loader "${loaderId}" has no registered client function. ` +
-          `Ensure the loader module is imported in the client bundle.`,
-      ),
-    );
-  }
-
-  const url = new URL(window.location.href);
-  const ctx: ClientLoaderContext = {
-    params: params ?? {},
-    searchParams: url.searchParams,
-    pathname: url.pathname,
-    url,
-    signal: new AbortController().signal,
-  };
-
-  return Promise.resolve(clientFn(ctx));
-}
-
-/**
  * Payload returned by loader RSC requests
  */
 interface LoaderRscPayload<T = unknown> {
@@ -119,18 +88,9 @@ function useLoaderInternal<T>(
 
   const contextData = getContextData();
 
-  // Determine loader brand before state hooks (needed for initial state)
-  const isClientBrand =
-    loader.__brand === "clientLoader" ||
-    loader.__brand === "isomorphicLoader";
-
   // Local state for fetched data (from load() calls)
   const [fetchedData, setFetchedData] = useState<T | undefined>(undefined);
-  // Client brands start in loading state when no data is available yet.
-  // This ensures SSR renders a loading state (not a crash on undefined data).
-  const [isLoading, setIsLoading] = useState(
-    isClientBrand && contextData === undefined,
-  );
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
   // Track context data changes to reset fetched data on navigation
@@ -146,26 +106,6 @@ function useLoaderInternal<T>(
 
   // Data priority: fetched data (if any) > context data
   const data = fetchedData ?? contextData;
-  const needsClientResolution = isClientBrand && data === undefined;
-  const hasTriggeredRef = useRef(false);
-
-  useEffect(() => {
-    if (!needsClientResolution || hasTriggeredRef.current) return;
-    if (typeof window === "undefined") return;
-    hasTriggeredRef.current = true;
-
-    setIsLoading(true);
-    executeClientLoader(loader.$$id, loader)
-      .then((result) => {
-        setFetchedData(result as T);
-      })
-      .catch((err) => {
-        setError(err instanceof Error ? err : new Error(String(err)));
-      })
-      .finally(() => {
-        setIsLoading(false);
-      });
-  }, [needsClientResolution, loader.$$id]);
 
   const throwOnError = options?.throwOnError ?? true;
 
@@ -375,9 +315,9 @@ export function useLoader<T>(
 
   // Strict mode: throw if data is not in context
   if (result.data === undefined) {
-    // Client/isomorphic loaders may not have data during SSR or initial hydration.
-    // The useEffect in useLoaderInternal resolves data on the client.
-    // isLoading is initialized to true so the component can show a loading state.
+    // Client/isomorphic loaders don't have data during SSR or initial hydration.
+    // The data arrives post-hydration via a segment-system re-render
+    // triggered by RSCRouter's useEffect.
     const isClientBrand =
       loader.__brand === "clientLoader" ||
       loader.__brand === "isomorphicLoader";

@@ -12,7 +12,7 @@ import {
   needsLoaderMerge,
 } from "./merge-segment-loaders.js";
 import { assertSegmentStructure } from "./segment-structure-assert.js";
-import { resolveClientLoaders } from "./client-loader-resolution.js";
+import { prepareClientLoaders } from "./client-loader-resolution.js";
 import { startTransition, createElement } from "react";
 import type { EventController, ActionHandle } from "./event-controller.js";
 import { NetworkError, isNetworkError } from "../errors.js";
@@ -698,8 +698,8 @@ export function createServerActionBridge(
       }
 
       // No concurrent actions - normal flow with single action
-      // Resolve client-side loaders (client loaders + isomorphic loaders during revalidation)
-      await resolveClientLoaders(fullSegments, new URL(window.location.href));
+      // Prepare client loaders: put pending Promises in loaderData
+      prepareClientLoaders(fullSegments, new URL(window.location.href));
 
       // INTERCEPT HANDLING: Separate intercept segments for explicit injection
       const isInterceptSegment = (s: ResolvedSegment) =>

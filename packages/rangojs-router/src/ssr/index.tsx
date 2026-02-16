@@ -56,7 +56,7 @@ export interface SSRRenderOptions {
    *
    * Set to 0 to disable the abort timer.
    *
-   * @default 200
+   * @default 0
    */
   suspenseAbortTimeout?: number;
 }
@@ -219,7 +219,7 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
     rscStream: ReadableStream<Uint8Array>,
     options?: SSRRenderOptions
   ): Promise<ReadableStream<Uint8Array>> {
-    const { nonce, formState, suspenseAbortTimeout = 200 } = options ?? {};
+    const { nonce, formState, suspenseAbortTimeout = 0 } = options ?? {};
 
     try {
       // Tee the stream:

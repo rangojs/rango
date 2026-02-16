@@ -195,7 +195,11 @@ export async function renderSegments(
         : "";
     const key = `${paramStr ? `${id}-${paramStr}` : id}`;
 
-    // Get loader entries for this node
+    // Get loader entries for this node.
+    // On the browser during SPA navigation, prepareClientLoaders() has already
+    // patched loaderData with Promises, so client loaders pass the filter naturally.
+    // During SSR and initial hydration, client loaders have loaderData === undefined
+    // and are filtered out — they're resolved post-hydration via RSCRouter's useEffect.
     const loaderEntries = node.loaders.filter(
       (loader) => loader.loaderId && loader.loaderData !== undefined,
     );

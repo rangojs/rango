@@ -1,28 +1,38 @@
 /**
- * Client-side loader resolution.
+ * Client-side loader preparation.
  *
- * After the server returns segments during SPA navigation, segments flagged
- * with clientLoaderIds need their loader data resolved in the browser.
- * This module finds those segments, executes the registered client functions,
- * and patches loaderData in-place before the tree is rendered.
+ * Before renderSegments() runs in the browser, segments flagged with
+ * clientLoaderIds need their loaderData populated with Promises from
+ * the client loader registry. The segment system's LoaderBoundary then
+ * handles the Suspense lifecycle (showing loading() fallback until
+ * the Promise resolves).
+ *
+ * This is synchronous — it starts execution but does NOT await results.
+ * The Promises flow through the segment system's loaderDataPromise path.
  */
 
 import type { ResolvedSegment, ClientLoaderContext } from "../types.js";
-import { getClientLoader } from "./client-loader-registry.js";
+import { getClientLoader, waitForClientLoader } from "./client-loader-registry.js";
 
 /**
- * Resolve client-side loaders for segments that have clientLoaderIds.
- * Mutates segments in-place by patching their loaderData.
+ * Prepare client-side loaders by putting pending Promises into segment.loaderData.
+ * Must be called before renderSegments() in the browser.
+ *
+ * For SPA navigation, client functions are already registered (modules loaded).
+ * For post-hydration resolution, modules may still be loading — waitForClientLoader
+ * creates a deferred Promise that resolves when the module registers.
  *
  * @param segments - All segments for the current navigation
  * @param url - The navigation target URL
  * @param signal - AbortSignal for cancellation
  */
-export async function resolveClientLoaders(
+export function prepareClientLoaders(
   segments: ResolvedSegment[],
   url: URL,
   signal?: AbortSignal,
-): Promise<void> {
+): void {
+  if (typeof window === "undefined") return;
+
   const pendingSegments = segments.filter(
     (s) => s.clientLoaderIds && s.clientLoaderIds.length > 0,
   );
@@ -38,41 +48,24 @@ export async function resolveClientLoaders(
     signal: signal ?? new AbortController().signal,
   };
 
-  const promises: Promise<void>[] = [];
-
   for (const segment of pendingSegments) {
     for (const loaderId of segment.clientLoaderIds!) {
       const clientFn = getClientLoader(loaderId);
-      if (!clientFn) {
-        console.warn(
-          `[client-loader] No client function registered for loader "${loaderId}". ` +
-          `Ensure the loader module is imported in the browser bundle.`,
-        );
-        continue;
-      }
 
-      promises.push(
-        Promise.resolve(clientFn(ctx)).then((data) => {
-          // Patch loaderData onto the segment. If multiple client loaders
-          // exist on the same segment, each one writes its own loaderId key.
-          if (!segment.loaderData || segment.loaderData === null) {
-            segment.loaderData = {};
-          }
-          // For wrapped loader results (from server), we need to match the
-          // LoaderDataResult shape so useLoader can read them consistently.
-          segment.loaderData = {
-            __loaderResult: true,
-            ok: true,
-            data,
-          };
-          // Remove from clientLoaderIds after resolution
-          segment.clientLoaderIds = segment.clientLoaderIds!.filter(
-            (id) => id !== loaderId,
-          );
-        }),
-      );
+      // Build the execution chain: use function directly if available,
+      // otherwise wait for module registration (post-hydration scenario).
+      const executionPromise = clientFn
+        ? Promise.resolve(clientFn(ctx))
+        : waitForClientLoader(loaderId).then((fn) => fn(ctx));
+
+      // Put a pending Promise in loaderData (LoaderDataResult shape).
+      // The segment system picks this up via the loaderEntries filter
+      // (loaderData !== undefined) and passes it through LoaderBoundary.
+      segment.loaderData = executionPromise.then((data) => ({
+        __loaderResult: true,
+        ok: true,
+        data,
+      }));
     }
   }
-
-  await Promise.all(promises);
 }
