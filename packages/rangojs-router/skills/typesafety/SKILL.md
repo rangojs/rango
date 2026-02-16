@@ -439,9 +439,10 @@ global type declarations (like `RSCRouter.Env`).
 }
 ```
 
-The `files` array ensures `router.tsx` (which contains `declare global { namespace RSCRouter { ... } }`)
-is always included in the compilation even if nothing directly imports it. Each app gets its own
-typed environment without interfering with other apps.
+The `files` array ensures `router.tsx` (which contains `declare global { namespace RSCRouter { interface Env } }`)
+is always included in the compilation even if nothing directly imports it. Route types come from the
+auto-generated `*.named-routes.gen.ts` file (via `rango generate`), not from manual declaration.
+Each app gets its own typed environment without interfering with other apps.
 
 ## Complete Type-Safe Setup
 
@@ -463,21 +464,26 @@ export const urlpatterns = urls(({ path, layout, loader }) => [
   ]),
 ]);
 
-// 3. router.tsx - Registration
+// 3. router.tsx - Create router and export reverse
 const router = createRouter<AppEnv>({
   document: Document,
-  urls: urlpatterns,
-});
+}).routes(urlpatterns);
 
+// Optional: register environment type globally for implicit typing
 declare global {
   namespace RSCRouter {
     interface Env extends AppEnv {}
   }
 }
 
+export const reverse = router.reverse;
 export default router;
 
-// 4. loaders/*.ts - Type-safe loaders
+// 4. Run `npx rango generate src/router.tsx` to generate
+//    router.named-routes.gen.ts (auto-registers GeneratedRouteMap globally).
+//    No manual RegisteredRoutes declaration needed.
+
+// 5. loaders/*.ts - Type-safe loaders
 export const ProductLoader = createLoader("product", async (ctx) => {
   // ctx.params: { slug: string }
   // ctx.env.Variables.user: User | undefined
@@ -485,12 +491,12 @@ export const ProductLoader = createLoader("product", async (ctx) => {
   return { product: await fetchProduct(ctx.params.slug) };
 });
 
-// 5. Server: ctx.reverse for named routes
+// 6. Server: ctx.reverse for named routes
 path("/product/:slug", (ctx) => {
   return <Link to={ctx.reverse("shop")}>Back to Shop</Link>;
 }, { name: "product" })
 
-// 6. Client: useHref for mounted paths, href for absolute
+// 7. Client: useHref for mounted paths, href for absolute
 "use client";
 import { useHref, href, Link } from "@rangojs/router/client";
 <Link to={href("/shop/product/widget")}>Widget</Link>
