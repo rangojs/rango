@@ -41,6 +41,12 @@ import { SearchPage } from "./pages/search.js";
 import { transformCasesPatterns } from "./pages/transform-cases.js";
 import { createDocsPatterns } from "@shared/docs";
 import { docsArticles } from "./docs-content.js";
+import {
+  LocaleInfoPage,
+  ItemDetailPage,
+  ProductReviewsPage,
+  CatchAllPage,
+} from "./pages/trie-routing-test.js";
 
 const docsPatterns = createDocsPatterns({ articles: docsArticles });
 
@@ -159,6 +165,14 @@ export const urlpatterns = urls(
       },
       { name: "testMimeAny" },
     ),
+    // Trie routing bug test routes (constraint fallback + param name collision)
+    path("/:locale(en|fr)/info", LocaleInfoPage, { name: "localeInfo" }),
+    path("/item/:itemId/detail", ItemDetailPage, { name: "itemDetail" }),
+    path("/item/:productId/reviews", ProductReviewsPage, {
+      name: "productReviews",
+    }),
+    path("/*", CatchAllPage, { name: "catchAll" }),
+
     layout(<RootLayout />, () => [
       // Global navigation layout
       layout(<NavLayout />, () => [
