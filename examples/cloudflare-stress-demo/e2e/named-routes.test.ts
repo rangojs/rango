@@ -38,14 +38,16 @@ test.describe("named-routes", () => {
     // Count route entries — the stress demo generates 14k+ routes via
     // Array.from loops that the static parser cannot see. Runtime discovery
     // resolves all of them.
-    const routeLines = content.match(/^\s+["a-zA-Z_$][^:]*: "[^"]+",$/gm);
+    // Match both plain string entries and object entries (with params/search)
+    const routeLines = content.match(/^\s+["a-zA-Z_$][^:]*:\s*(?:"|{)/gm);
     expect(routeLines).not.toBeNull();
     expect(routeLines!.length).toBeGreaterThanOrEqual(10000);
   });
 
   test("should not have double-slash patterns", async () => {
     const content = await fs.readFile(genFilePath, "utf-8");
-    const doubleSlashLines = content.match(/: "\/\//gm);
+    // Check for double-slash in both plain string and object path entries
+    const doubleSlashLines = content.match(/"\/\//gm);
     expect(doubleSlashLines).toBeNull();
   });
 });
