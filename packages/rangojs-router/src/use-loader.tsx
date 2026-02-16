@@ -2,7 +2,14 @@
 
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { OutletContext, type OutletContextValue } from "./outlet-context.js";
-import type { LoaderDefinition, AnyLoaderDefinition, LoadOptions, ClientLoaderContext } from "./types.js";
+import type {
+  LoaderDefinition,
+  AnyLoaderDefinition,
+  ClientLoaderDefinition,
+  IsomorphicLoaderDefinition,
+  LoadOptions,
+  ClientLoaderContext,
+} from "./types.js";
 import { getClientLoader } from "./browser/client-loader-registry.js";
 
 /**
@@ -70,7 +77,7 @@ export interface UseLoaderOptions {
  */
 function useLoaderInternal<T>(
   loader: AnyLoaderDefinition<T>,
-  options?: UseLoaderOptions
+  options?: UseLoaderOptions,
 ): UseFetchLoaderResult<T> {
   const context = useContext(OutletContext);
 
@@ -92,6 +99,14 @@ function useLoaderInternal<T>(
   const [fetchedData, setFetchedData] = useState<T | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const clientLoaderAbortRef = useRef<AbortController | null>(null);
+
+  // Abort in-flight client loader requests on unmount
+  useEffect(() => {
+    return () => {
+      clientLoaderAbortRef.current?.abort();
+    };
+  }, []);
 
   // Track context data changes to reset fetched data on navigation
   const prevContextDataRef = useRef(contextData);
@@ -115,7 +130,7 @@ function useLoaderInternal<T>(
       // Verify the loader has $$id
       if (!loader.$$id) {
         throw new Error(
-          `Loader is missing $$id. Make sure the exposeLoaderId Vite plugin is enabled.`
+          `Loader is missing $$id. Make sure the exposeLoaderId Vite plugin is enabled.`,
         );
       }
 
@@ -131,7 +146,12 @@ function useLoaderInternal<T>(
           loader.__brand === "isomorphicLoader";
 
         if (isClientBrand && typeof window !== "undefined") {
-          const clientFn = getClientLoader(loader.$$id) ?? (loader as any).clientFn;
+          clientLoaderAbortRef.current?.abort();
+          const controller = new AbortController();
+          clientLoaderAbortRef.current = controller;
+
+          const clientFn =
+            getClientLoader(loader.$$id) ?? (loader as any).clientFn;
           if (!clientFn) {
             throw new Error(
               `Client loader "${loader.$$id}" has no registered client function. ` +
@@ -145,7 +165,7 @@ function useLoaderInternal<T>(
             searchParams: currentUrl.searchParams,
             pathname: currentUrl.pathname,
             url: currentUrl,
-            signal: new AbortController().signal,
+            signal: controller.signal,
           };
 
           const result = await clientFn(ctx);
@@ -164,11 +184,20 @@ function useLoaderInternal<T>(
 
         if (isBodyMethod) {
           // POST/PUT/PATCH/DELETE - send params and body as JSON
-          const bodyPayload: { params?: Record<string, string>; body?: unknown } = {};
-          if (loadOptions?.params && Object.keys(loadOptions.params).length > 0) {
+          const bodyPayload: {
+            params?: Record<string, string>;
+            body?: unknown;
+          } = {};
+          if (
+            loadOptions?.params &&
+            Object.keys(loadOptions.params).length > 0
+          ) {
             bodyPayload.params = loadOptions.params;
           }
-          if ("body" in (loadOptions ?? {}) && (loadOptions as any).body !== undefined) {
+          if (
+            "body" in (loadOptions ?? {}) &&
+            (loadOptions as any).body !== undefined
+          ) {
             bodyPayload.body = (loadOptions as any).body;
           }
 
@@ -182,10 +211,13 @@ function useLoaderInternal<T>(
           };
         } else {
           // GET - send params in query string
-          if (loadOptions?.params && Object.keys(loadOptions.params).length > 0) {
+          if (
+            loadOptions?.params &&
+            Object.keys(loadOptions.params).length > 0
+          ) {
             url.searchParams.set(
               "_rsc_loader_params",
-              JSON.stringify(loadOptions.params)
+              JSON.stringify(loadOptions.params),
             );
           }
 
@@ -222,7 +254,7 @@ function useLoaderInternal<T>(
         setIsLoading(false);
       }
     },
-    [throwOnError]
+    [throwOnError],
   );
 
   // Form action for progressive enhancement
@@ -235,7 +267,7 @@ function useLoaderInternal<T>(
       if (!loaderAction) {
         throw new Error(
           `Loader "${loader.$$id}" does not have an action. ` +
-            `Make sure the loader is created with fetchable: true.`
+            `Make sure the loader is created with fetchable: true.`,
         );
       }
 
@@ -256,7 +288,7 @@ function useLoaderInternal<T>(
         setIsLoading(false);
       }
     },
-    [throwOnError]
+    [throwOnError],
   );
 
   // Attach action to load function
@@ -308,27 +340,40 @@ function useLoaderInternal<T>(
  * ```
  */
 export function useLoader<T>(
+  loader: ClientLoaderDefinition<T>,
+  options?: UseLoaderOptions,
+): UseFetchLoaderResult<T>;
+export function useLoader<T>(
+  loader: IsomorphicLoaderDefinition<T>,
+  options?: UseLoaderOptions,
+): UseFetchLoaderResult<T>;
+export function useLoader<T>(
+  loader: LoaderDefinition<T>,
+  options?: UseLoaderOptions,
+): UseLoaderResult<T>;
+export function useLoader<T>(
   loader: AnyLoaderDefinition<T>,
-  options?: UseLoaderOptions
-): UseLoaderResult<T> {
+  options?: UseLoaderOptions,
+): UseLoaderResult<T> | UseFetchLoaderResult<T> {
   const result = useLoaderInternal(loader, options);
 
   // Strict mode: throw if data is not in context
   if (result.data === undefined) {
-    // Client/isomorphic loaders don't have data during SSR or initial hydration.
-    // The data arrives post-hydration via a segment-system re-render
-    // triggered by RSCRouter's useEffect.
+    // Client/isomorphic loaders may not have data during SSR or initial
+    // hydration. Data arrives post-hydration via segment-system re-render.
+    // The overloads return UseFetchLoaderResult (data: T | undefined)
+    // so callers are forced to handle the undefined case.
     const isClientBrand =
       loader.__brand === "clientLoader" ||
       loader.__brand === "isomorphicLoader";
     if (isClientBrand) {
-      return result as unknown as UseLoaderResult<T>;
+      return result;
     }
 
     throw new Error(
       `useLoader: Loader "${loader.$$id}" data not found in context. ` +
         `Make sure the loader is registered on the route with loader(). ` +
-        `If you need on-demand fetching, use useFetchLoader() instead.`
+        `If you need on-demand fetching, use useFetchLoader() instead.`,
     );
   }
 
@@ -383,7 +428,7 @@ export function useLoader<T>(
  */
 export function useFetchLoader<T>(
   loader: AnyLoaderDefinition<T>,
-  options?: UseLoaderOptions
+  options?: UseLoaderOptions,
 ): UseFetchLoaderResult<T> {
   return useLoaderInternal(loader, options);
 }

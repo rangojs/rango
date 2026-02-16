@@ -617,7 +617,9 @@ export async function resolveLoadersWithRevalidation<TEnv>(
     ({ loader, segmentId, index }) => {
       const brand = loader.__brand;
 
-      // Client/isomorphic loaders during navigation: flag for client resolution
+      // Client/isomorphic loaders during navigation: flag for client resolution.
+      // This function is only called during SPA navigation revalidation (never
+      // during SSR), so skipping the server fn is always correct here.
       if (brand === "clientLoader" || brand === "isomorphicLoader") {
         return {
           id: segmentId,

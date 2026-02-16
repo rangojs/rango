@@ -39,16 +39,17 @@ export function prepareClientLoaders(
 
   if (pendingSegments.length === 0) return;
 
-  const params = pendingSegments[0]?.params ?? {};
-  const ctx: ClientLoaderContext = {
-    params,
-    searchParams: url.searchParams,
-    pathname: url.pathname,
-    url,
-    signal: signal ?? new AbortController().signal,
-  };
+  const effectiveSignal = signal ?? new AbortController().signal;
 
   for (const segment of pendingSegments) {
+    const ctx: ClientLoaderContext = {
+      params: segment.params ?? {},
+      searchParams: url.searchParams,
+      pathname: url.pathname,
+      url,
+      signal: effectiveSignal,
+    };
+
     for (const loaderId of segment.clientLoaderIds!) {
       const clientFn = getClientLoader(loaderId);
 
@@ -56,7 +57,7 @@ export function prepareClientLoaders(
       // otherwise wait for module registration (post-hydration scenario).
       const executionPromise = clientFn
         ? Promise.resolve(clientFn(ctx))
-        : waitForClientLoader(loaderId).then((fn) => fn(ctx));
+        : waitForClientLoader(loaderId, effectiveSignal).then((fn) => fn(ctx));
 
       // Put a pending Promise in loaderData (LoaderDataResult shape).
       // The segment system picks this up via the loaderEntries filter

@@ -419,10 +419,7 @@ export function createPartialUpdater(
 
       // Prepare client loaders: put pending Promises in loaderData.
       // The segment system's LoaderBoundary handles Suspense lifecycle.
-      const parsedUrl = typeof window !== "undefined"
-        ? new URL(url, window.location.origin)
-        : new URL(url, "http://localhost");
-      prepareClientLoaders(allSegments, parsedUrl, signal);
+      prepareClientLoaders(allSegments, new URL(url, window.location.origin), signal);
 
       // Rebuild tree on client (await for loader data resolution)
       // Race against abort signal to allow cancellation during loader awaiting
@@ -559,10 +556,7 @@ export function createPartialUpdater(
       const segmentIds = segments.map((s: ResolvedSegment) => s.id);
 
       // Prepare client loaders before rendering
-      const parsedUrlFull = typeof window !== "undefined"
-        ? new URL(url, window.location.origin)
-        : new URL(url, "http://localhost");
-      prepareClientLoaders(segments, parsedUrlFull, signal);
+      prepareClientLoaders(segments, new URL(url, window.location.origin), signal);
 
       // Render on client for consistent component references
       const newTree = await renderSegments(segments);

@@ -55,9 +55,7 @@ export const IsomorphicSsrHandler: Handler<"isomorphicSsr"> = async (ctx) => {
       <h1 data-testid="isomorphic-ssr-title">Isomorphic SSR Test</h1>
       <p data-testid="isomorphic-ssr-source">Source: {data.source}</p>
       <p data-testid="isomorphic-ssr-total">Total: {data.total}</p>
-      <p data-testid="isomorphic-ssr-items">
-        Items: {data.items.join(", ")}
-      </p>
+      <p data-testid="isomorphic-ssr-items">Items: {data.items.join(", ")}</p>
     </div>
   );
 };

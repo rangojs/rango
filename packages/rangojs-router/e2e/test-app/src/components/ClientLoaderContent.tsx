@@ -101,9 +101,7 @@ export function MixedLoaderContent() {
         <p data-testid="mixed-client-source">
           Client source: {clientData.source}
         </p>
-        <p data-testid="mixed-client-theme">
-          Client theme: {clientData.theme}
-        </p>
+        <p data-testid="mixed-client-theme">Client theme: {clientData.theme}</p>
       </div>
     </div>
   );
