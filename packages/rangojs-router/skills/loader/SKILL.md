@@ -210,6 +210,116 @@ function ProductPage() {
 }
 ```
 
+## Client Loaders
+
+Client loaders run only in the browser during SPA navigation. They access
+browser-only APIs (localStorage, cookies, IndexedDB) without server round-trips.
+During SSR, the `loading()` skeleton shows instead.
+
+### createClientLoader
+
+```typescript
+import { createClientLoader } from "@rangojs/router";
+
+export const ThemeLoader = createClientLoader(async (ctx) => {
+  // ctx has: params, searchParams, pathname, url, signal, segments, state
+  const saved = localStorage.getItem("theme");
+  return { theme: saved ?? "light", source: "client" as const };
+});
+```
+
+### ClientLoaderContext
+
+Client loaders receive a `ClientLoaderContext`:
+
+```typescript
+type ClientLoaderContext = {
+  params: Record<string, string | undefined>;
+  searchParams: URLSearchParams;
+  pathname: string;
+  url: URL;
+  signal: AbortSignal;
+  segments: readonly string[];        // e.g., ["shop", "products", "123"]
+  state: Record<string, unknown> | null; // resolved navigation state from history.state
+};
+```
+
+Use `state` to access data passed via `<Link state={[...]}>`  or `navigate(url, { state })`:
+
+```typescript
+import { createClientLoader, createLocationState } from "@rangojs/router";
+
+const ProductState = createLocationState<{ name: string; price: number }>();
+
+export const ProductPreviewLoader = createClientLoader(async (ctx) => {
+  // Access navigation state passed via Link or navigate()
+  if (ctx.state) {
+    const preview = ctx.state.__rsc_ls_ProductState;
+    if (preview) return { product: preview, source: "state" as const };
+  }
+  // Fallback: fetch from API
+  const slug = ctx.params.slug;
+  const res = await fetch(`/api/product/${slug}`);
+  return { product: await res.json(), source: "fetch" as const };
+});
+```
+
+Use `segments` for conditional logic based on URL structure:
+
+```typescript
+export const BreadcrumbLoader = createClientLoader(async (ctx) => {
+  // ctx.segments for /shop/products/123 is ["shop", "products", "123"]
+  return { depth: ctx.segments.length, parts: ctx.segments };
+});
+```
+
+### createIsomorphicLoader
+
+Isomorphic loaders have both a server function (SSR) and a client function (SPA):
+
+```typescript
+import { createIsomorphicLoader } from "@rangojs/router";
+
+export const CartLoader = createIsomorphicLoader(
+  // Server fn: runs during SSR
+  async (ctx) => {
+    const cart = await ctx.env.Bindings.KV.get(`cart:${ctx.env.Variables.user?.id}`, "json");
+    return { items: cart?.items ?? [], source: "server" as const };
+  },
+  // Client fn: runs during SPA navigation
+  async (ctx) => {
+    const res = await fetch("/api/cart");
+    const cart = await res.json();
+    return { items: cart.items, source: "client" as const };
+  },
+);
+```
+
+### Using Client/Isomorphic Loaders in Routes
+
+Register them the same way as server loaders with `loader()`. Always add a
+`loading()` fallback since client loaders don't run during SSR:
+
+```typescript
+path("/dashboard", DashboardPage, { name: "dashboard" }, () => [
+  loader(ThemeLoader),
+  loader(CartLoader),
+  loading(<DashboardSkeleton />),
+])
+```
+
+### Mixing Server and Client Loaders
+
+A single route can use both server and client loaders:
+
+```typescript
+path("/product/:slug", ProductPage, { name: "product" }, () => [
+  loader(ProductDetailsLoader),  // server loader
+  loader(UserPrefsLoader),       // client loader
+  loading(<ProductSkeleton />),
+])
+```
+
 ## Complete Example
 
 ```typescript

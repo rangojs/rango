@@ -262,7 +262,7 @@ export async function initBrowserApp(
 
           // Re-run client loaders for refreshed segments (server segments
           // don't include client loader data, so it must be re-fetched).
-          prepareClientLoaders(segments, new URL(window.location.href));
+          prepareClientLoaders(segments, new URL(window.location.href), undefined, window.history.state);
 
           store.emitUpdate({
             root: renderSegments(segments),
@@ -362,7 +362,7 @@ export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
     );
     if (!hasClientLoaders) return;
 
-    prepareClientLoaders(segments, new URL(window.location.href));
+    prepareClientLoaders(segments, new URL(window.location.href), undefined, window.history.state);
 
     store.emitUpdate({
       root: renderSegments(segments),

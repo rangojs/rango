@@ -699,7 +699,7 @@ export function createServerActionBridge(
 
       // No concurrent actions - normal flow with single action
       // Prepare client loaders: put pending Promises in loaderData
-      prepareClientLoaders(fullSegments, new URL(window.location.href));
+      prepareClientLoaders(fullSegments, new URL(window.location.href), undefined, window.history.state);
 
       // INTERCEPT HANDLING: Separate intercept segments for explicit injection
       const isInterceptSegment = (s: ResolvedSegment) =>

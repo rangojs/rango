@@ -584,10 +584,12 @@ export function createNavigationBridge(
           // Also pass cached handle data for restoring breadcrumbs when server returns empty diff.
           // When leaving intercept, pass the flag so fetchPartialUpdate knows to filter segments.
           hasUsableCache
-            ? { targetCacheSegments: cachedSegments, targetCacheHandleData: cachedHandleData }
+            ? { targetCacheSegments: cachedSegments, targetCacheHandleData: cachedHandleData, state: resolvedState as Record<string, unknown> | null }
             : isLeavingIntercept
-              ? { leavingIntercept: true }
-              : undefined
+              ? { leavingIntercept: true, state: resolvedState as Record<string, unknown> | null }
+              : resolvedState !== undefined
+                ? { state: resolvedState as Record<string, unknown> | null }
+                : undefined
         );
       } catch (error) {
         // Ignore AbortError - navigation was cancelled by a newer navigation

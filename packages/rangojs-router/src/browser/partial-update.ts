@@ -74,6 +74,8 @@ export type PartialUpdater = (
     /** When true, we're leaving an intercept state - don't use current segment IDs
      * as fallback and force a fresh render from server */
     leavingIntercept?: boolean;
+    /** Navigation state to pass to client loaders */
+    state?: Record<string, unknown> | null;
   },
 ) => Promise<Promise<void>>;
 
@@ -135,6 +137,7 @@ export function createPartialUpdater(
       targetCacheSegments?: ResolvedSegment[];
       targetCacheHandleData?: Record<string, Record<string, unknown[]>>;
       leavingIntercept?: boolean;
+      state?: Record<string, unknown> | null;
     },
   ): Promise<Promise<void>> {
     const {
@@ -144,6 +147,7 @@ export function createPartialUpdater(
       targetCacheSegments,
       targetCacheHandleData,
       leavingIntercept = false,
+      state: navigationState,
     } = options || {};
     const segmentState = store.getSegmentState();
     const url = targetUrl || window.location.href;
@@ -419,7 +423,7 @@ export function createPartialUpdater(
 
       // Prepare client loaders: put pending Promises in loaderData.
       // The segment system's LoaderBoundary handles Suspense lifecycle.
-      prepareClientLoaders(allSegments, new URL(url, window.location.origin), signal);
+      prepareClientLoaders(allSegments, new URL(url, window.location.origin), signal, navigationState);
 
       // Rebuild tree on client (await for loader data resolution)
       // Race against abort signal to allow cancellation during loader awaiting
@@ -556,7 +560,7 @@ export function createPartialUpdater(
       const segmentIds = segments.map((s: ResolvedSegment) => s.id);
 
       // Prepare client loaders before rendering
-      prepareClientLoaders(segments, new URL(url, window.location.origin), signal);
+      prepareClientLoaders(segments, new URL(url, window.location.origin), signal, navigationState);
 
       // Render on client for consistent component references
       const newTree = await renderSegments(segments);

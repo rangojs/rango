@@ -1621,6 +1621,10 @@ export type ClientLoaderContext = {
   pathname: string;
   url: URL;
   signal: AbortSignal;
+  /** URL path segments (e.g., /shop/products/123 -> ["shop", "products", "123"]) */
+  segments: readonly string[];
+  /** Resolved navigation state from history.state, or null if none */
+  state: Record<string, unknown> | null;
 };
 
 /**

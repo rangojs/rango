@@ -30,6 +30,7 @@ export function prepareClientLoaders(
   segments: ResolvedSegment[],
   url: URL,
   signal?: AbortSignal,
+  state?: Record<string, unknown> | null,
 ): void {
   if (typeof window === "undefined") return;
 
@@ -48,6 +49,8 @@ export function prepareClientLoaders(
       pathname: url.pathname,
       url,
       signal: effectiveSignal,
+      segments: url.pathname.split("/").filter(Boolean),
+      state: state ?? null,
     };
 
     for (const loaderId of segment.clientLoaderIds!) {
