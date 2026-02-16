@@ -93,7 +93,7 @@ describe("generate-cli e2e fixtures", () => {
       expect(content).not.toContain("about");
     });
 
-    it("extracts params from parameterized routes", () => {
+    it("keeps parameterized patterns as plain strings (params extracted at type level)", () => {
       const apiUrls = join(fixtureDir, "api", "urls.tsx");
       writePerModuleRouteTypesForFile(apiUrls);
 
@@ -101,8 +101,8 @@ describe("generate-cli e2e fixtures", () => {
       generatedFiles.push(genFile);
       const content = readFileSync(genFile, "utf-8");
 
-      // /:id should produce params: { id: "string" }
-      expect(content).toContain('params: { id: "string" }');
+      // /:id stays as plain string — ExtractParams resolves params at the type level
+      expect(content).toContain('detail: "/:id",');
     });
 
     it("extracts search schemas", () => {
@@ -134,7 +134,7 @@ describe("generate-cli e2e fixtures", () => {
       expect(content).toContain("/docs/guides/:guideId");
     });
 
-    it("includes params from deeply nested parameterized routes", () => {
+    it("preserves param patterns in deeply nested routes", () => {
       const mainUrls = join(fixtureDir, "urls.tsx");
       writePerModuleRouteTypesForFile(mainUrls);
 
@@ -142,14 +142,11 @@ describe("generate-cli e2e fixtures", () => {
       generatedFiles.push(genFile);
       const content = readFileSync(genFile, "utf-8");
 
-      // docs.page has /:slug -> params
-      expect(content).toContain('"docs.page"');
-      expect(content).toContain("/docs/:slug");
-      expect(content).toContain('slug: "string"');
+      // docs.page has /:slug in the pattern string
+      expect(content).toContain('"docs.page": "/docs/:slug",');
 
-      // docs.guides.detail has /:guideId -> params
-      expect(content).toContain('"docs.guides.detail"');
-      expect(content).toContain('guideId: "string"');
+      // docs.guides.detail has /:guideId in the pattern string
+      expect(content).toContain('"docs.guides.detail": "/docs/guides/:guideId",');
     });
 
     it("propagates search schemas through includes", () => {
@@ -199,9 +196,7 @@ describe("generate-cli e2e fixtures", () => {
 
       // Leaf module routes without any prefix
       expect(content).toContain('index: "/",');
-      expect(content).toContain("detail:");
-      expect(content).toContain("/:guideId");
-      expect(content).toContain('guideId: "string"');
+      expect(content).toContain('detail: "/:guideId",');
 
       // Should not contain parent prefixes
       expect(content).not.toContain("docs.");
@@ -244,7 +239,7 @@ describe("generate-cli e2e fixtures", () => {
       expect(content).toContain("/docs/guides/:guideId");
     });
 
-    it("includes params and search in named-routes output", () => {
+    it("includes search schemas and param patterns in named-routes output", () => {
       const routerFile = join(fixtureDir, "router.tsx");
       writeCombinedRouteTypes(fixtureDir, [routerFile]);
 
@@ -252,18 +247,14 @@ describe("generate-cli e2e fixtures", () => {
       generatedFiles.push(genFile);
       const content = readFileSync(genFile, "utf-8");
 
-      // api.detail has params
-      expect(content).toContain('id: "string"');
+      // Parameterized routes are plain strings (params extracted at type level)
+      expect(content).toContain('"api.detail": "/api/:id",');
+      expect(content).toContain('"docs.page": "/docs/:slug",');
+      expect(content).toContain('"docs.guides.detail": "/docs/guides/:guideId",');
 
-      // api.search has search schema
+      // api.search has search schema (object format)
       expect(content).toContain('q: "string"');
       expect(content).toContain('page: "number?"');
-
-      // docs.page has params
-      expect(content).toContain('slug: "string"');
-
-      // docs.guides.detail has params
-      expect(content).toContain('guideId: "string"');
     });
 
     it("sorts routes alphabetically by name", () => {

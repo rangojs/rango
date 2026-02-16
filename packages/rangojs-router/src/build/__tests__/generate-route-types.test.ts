@@ -461,9 +461,9 @@ describe("formatRouteEntry", () => {
     expect(formatRouteEntry("about", "/about")).toBe('  about: "/about",');
   });
 
-  it("formats routes with params as objects", () => {
+  it("formats routes with params as plain strings (params extracted at type level)", () => {
     expect(formatRouteEntry("detail", "/:slug", { slug: "string" })).toBe(
-      '  detail: { path: "/:slug", params: { slug: "string" } },'
+      '  detail: "/:slug",'
     );
   });
 
@@ -473,11 +473,11 @@ describe("formatRouteEntry", () => {
     ).toBe('  search: { path: "/search", search: { q: "string" } },');
   });
 
-  it("formats routes with both params and search", () => {
+  it("formats routes with params and search as objects with search only", () => {
     expect(
       formatRouteEntry("items", "/:id/items", { id: "string" }, { page: "number?" })
     ).toBe(
-      '  items: { path: "/:id/items", params: { id: "string" }, search: { page: "number?" } },'
+      '  items: { path: "/:id/items", search: { page: "number?" } },'
     );
   });
 });
@@ -525,12 +525,12 @@ describe("per-module vs named-routes consistency", () => {
     }
     const namedRoutes = generateRouteTypesSource(manifest, searchSchemas);
 
-    // Both should format parameterized routes identically
-    const detailEntry = 'detail: { path: "/:slug", params: { slug: "string" } }';
-    expect(perModule).toContain(detailEntry);
-    expect(namedRoutes).toContain(detailEntry);
+    // Parameterized routes without search stay as plain strings
+    expect(perModule).toContain('detail: "/:slug"');
+    expect(namedRoutes).toContain('detail: "/:slug"');
 
-    const itemsEntry = 'items: { path: "/:id/items", params: { id: "string" }, search: { page: "number?" } }';
+    // Routes with search use object format (params excluded, extracted at type level)
+    const itemsEntry = 'items: { path: "/:id/items", search: { page: "number?" } }';
     expect(perModule).toContain(itemsEntry);
     expect(namedRoutes).toContain(itemsEntry);
   });
@@ -703,10 +703,8 @@ export const patterns = urls(({ path, include }) => [
     const genPath = mainPath.replace(/\.ts$/, ".gen.ts");
     const content = readFileSync(genPath, "utf-8");
 
-    // The included route should have the combined prefix + params
-    expect(content).toContain("docs.detail");
-    expect(content).toContain("/docs/:slug");
-    expect(content).toContain('params: { slug: "string" }');
+    // The included route should have the combined prefix + pattern with param
+    expect(content).toContain('"docs.detail": "/docs/:slug",');
   });
 
   it("falls back to direct extraction when no urls() variable exists", () => {

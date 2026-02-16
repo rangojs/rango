@@ -53,39 +53,26 @@ export function extractParamsFromPattern(pattern: string): Record<string, string
 
 /**
  * Format a single route entry for codegen output.
- * Routes without params or search remain plain strings.
- * Routes with either become objects with path, params?, search? fields.
+ * Routes without search remain plain strings (params are extracted from
+ * the pattern at the type level by ExtractParams).
+ * Routes with search become objects with path and search fields.
  */
 export function formatRouteEntry(
   key: string,
   pattern: string,
-  params?: Record<string, string>,
+  _params?: Record<string, string>,
   search?: Record<string, string>,
 ): string {
-  const hasParams = params && Object.keys(params).length > 0;
   const hasSearch = search && Object.keys(search).length > 0;
 
-  if (!hasParams && !hasSearch) {
+  if (!hasSearch) {
     return `  ${key}: "${pattern}",`;
   }
 
-  const parts: string[] = [`path: "${pattern}"`];
-
-  if (hasParams) {
-    const paramsBody = Object.entries(params)
-      .map(([k, v]) => `${k}: "${v}"`)
-      .join(", ");
-    parts.push(`params: { ${paramsBody} }`);
-  }
-
-  if (hasSearch) {
-    const searchBody = Object.entries(search!)
-      .map(([k, v]) => `${k}: "${v}"`)
-      .join(", ");
-    parts.push(`search: { ${searchBody} }`);
-  }
-
-  return `  ${key}: { ${parts.join(", ")} },`;
+  const searchBody = Object.entries(search!)
+    .map(([k, v]) => `${k}: "${v}"`)
+    .join(", ");
+  return `  ${key}: { path: "${pattern}", search: { ${searchBody} } },`;
 }
 
 // ---------------------------------------------------------------------------
