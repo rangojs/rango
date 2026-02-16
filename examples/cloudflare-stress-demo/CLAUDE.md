@@ -41,13 +41,22 @@ curl -s https://cloudflare-stress-demo.devcorner.workers.dev/site/en/bench/last 
 
 ## Debug Utilities
 
-Enable debug logging in `src/urls.tsx`:
+### Structured debug logging
+
+Enable router debug logs with the `INTERNAL_RANGO_DEBUG` env var:
+```bash
+INTERNAL_RANGO_DEBUG=1 pnpm dev
+```
+
+### Match debug stats
+
+Enable match statistics (entriesChecked, routesChecked) in `src/urls.tsx`:
 ```typescript
-import { enableMatchDebug } from "@rangojs/router/server";
+import { enableMatchDebug } from "@rangojs/router";
 enableMatchDebug(true);
 ```
 
-View logs:
+View Cloudflare logs:
 ```bash
 pnpm wrangler tail --format json
 ```

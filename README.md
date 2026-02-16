@@ -65,7 +65,22 @@ export default map<typeof shopRoutes>(({ route, layout }) => [
 
 ## Documentation
 
-See [docs/README.md](./docs/README.md) for API reference and [NEXT.md](./NEXT.md) for roadmap.
+See [docs/README.md](./docs/README.md) for API reference.
+
+## Debug Logging
+
+The router has structured debug logging that is off by default. Enable it with the `INTERNAL_RANGO_DEBUG` environment variable:
+
+```bash
+INTERNAL_RANGO_DEBUG=1 pnpm dev
+```
+
+This produces structured output for server-side and client-side router operations:
+
+```
+[Router][req:req-1][tx:document-tx-1] [matchRoute] matching started { pathname: "/shop/products" }
+[Browser][req:creq-1][tx:navigate-ctx-1] navigation started { url: "/shop/products" }
+```
 
 ## Scripts
 

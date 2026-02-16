@@ -26,3 +26,13 @@ export {
   type TrieNode,
   type TrieLeaf,
 } from "./route-trie.js";
+
+export {
+  writePerModuleRouteTypes,
+  extractRoutesFromSource,
+  generatePerModuleTypesSource,
+  createScanFilter,
+  type ScanFilter,
+} from "./generate-route-types.js";
+
+export { hashParams } from "../prerender/param-hash.js";

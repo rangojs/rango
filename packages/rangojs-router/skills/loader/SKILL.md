@@ -23,6 +23,30 @@ export const ProductLoader = createLoader("product", async (ctx) => {
 });
 ```
 
+### Supported export patterns
+
+All of the following are equivalent and fully supported by the Vite transform:
+
+```typescript
+// Direct export (most common)
+export const ProductLoader = createLoader("product", handler);
+
+// Separate declaration + named export
+const ProductLoader = createLoader("product", handler);
+export { ProductLoader };
+
+// Aliased export
+const InternalLoader = createLoader("product", handler);
+export { InternalLoader as ProductLoader };
+
+// Aliased import
+import { createLoader as cl } from "@rangojs/router";
+export const ProductLoader = cl("product", handler);
+```
+
+The `export const` form and the `const + export { }` form both work for
+client stubs, ID injection, and loader manifest tracking.
+
 ## Using Loaders in Routes
 
 ```typescript

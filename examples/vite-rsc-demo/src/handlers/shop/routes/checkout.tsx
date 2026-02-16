@@ -2,7 +2,7 @@ import type { Handler } from "@rangojs/router";
 import type { AppEnv } from "@/router.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 
-export const CheckoutIndexRoute: Handler<{}, AppEnv> = (ctx) => (
+export const CheckoutIndexRoute: Handler<"/checkout", AppEnv> = (ctx) => (
   <div style={{ display: "flex", gap: "2rem" }}>
     <div style={{ flex: 1 }}>
       <h2>Checkout</h2>
@@ -108,7 +108,7 @@ export const CheckoutIndexRoute: Handler<{}, AppEnv> = (ctx) => (
   </div>
 );
 
-export const CheckoutPaymentRoute: Handler = () => (
+export const CheckoutPaymentRoute: Handler<"/checkout/payment"> = () => (
   <div style={{ display: "flex", gap: "2rem" }}>
     <div style={{ flex: 1 }}>
       <h2>Payment</h2>
@@ -201,7 +201,7 @@ export const CheckoutPaymentRoute: Handler = () => (
   </div>
 );
 
-export const CheckoutConfirmRoute: Handler = () => (
+export const CheckoutConfirmRoute: Handler<"/checkout/confirm"> = () => (
   <div>
     <div
       style={{

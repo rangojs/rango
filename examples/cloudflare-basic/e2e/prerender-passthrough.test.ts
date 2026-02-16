@@ -24,21 +24,13 @@ function concatBundleContents(dir: string): string {
     .join("\n");
 }
 
-function findVersionDir(): string {
-  const staticDir = path.join(DIST, "static");
-  const entries = fs.readdirSync(staticDir);
-  const versionDir = entries.find((e) => e.startsWith("__"));
-  expect(versionDir).toBeTruthy();
-  return path.join(staticDir, versionDir!);
-}
-
 test.describe.configure({ mode: "serial" });
 
 // =============================================================================
 // Build mode: runtime behavior tests
 // =============================================================================
 
-test.describe("prerender passthrough (build)", () => {
+test.describe("prerender passthrough (production)", () => {
   const f = useFixture({
     root: ".",
     mode: "build",
@@ -265,7 +257,7 @@ test.describe("prerender passthrough (build)", () => {
 // Build mode: bundle output validation tests
 // =============================================================================
 
-test.describe("prerender passthrough bundle output", () => {
+test.describe("prerender passthrough bundle output (production)", () => {
   let prerenderHandlersBundle: string;
   let clientBundle: string;
   let ssrBundle: string;
@@ -286,10 +278,10 @@ test.describe("prerender passthrough bundle output", () => {
 
   test("passthrough handler code stays in RSC prerender-handlers chunk", () => {
     // GuidesDetail (passthrough: true) should NOT be replaced with a stub
-    // It should contain the full createPrerenderHandler call
+    // It should contain the full Prerender call
     expect(prerenderHandlersBundle).toContain("GuidesDetail");
     expect(prerenderHandlersBundle).toMatch(
-      /const\s+GuidesDetail\s*=\s*createPrerenderHandler/,
+      /const\s+GuidesDetail\s*=\s*Prerender/,
     );
   });
 
@@ -330,40 +322,46 @@ test.describe("prerender passthrough bundle output", () => {
 });
 
 // =============================================================================
-// Build mode: flight file structure tests
+// Build mode: prerender asset structure tests
 // =============================================================================
 
-test.describe("prerender passthrough flight files", () => {
-  let versionDir: string;
-  let prerenderDir: string;
+test.describe("prerender passthrough assets (production)", () => {
+  const RSC_DIR = path.join(DIST, "rsc");
+  const RSC_ASSETS_DIR = path.join(RSC_DIR, "assets");
 
-  test.beforeAll(() => {
-    versionDir = findVersionDir();
-    prerenderDir = path.join(versionDir, "prerender");
+  test("guides.detail routes exist in prerender manifest", () => {
+    const manifestCode = fs.readFileSync(
+      path.join(RSC_DIR, "__prerender-manifest.js"),
+      "utf-8",
+    );
+    // 2 known slugs: routing, caching — each has a param hash key
+    expect(manifestCode).toMatch(/"guides\.detail\/[a-f0-9]+"/);
+    // Count the number of guides.detail entries
+    const matches = manifestCode.match(/"guides\.detail\/[a-f0-9]+"/g);
+    expect(matches).toHaveLength(2);
   });
 
-  test("guides.detail route folder exists in prerender output", () => {
-    const folders = fs.readdirSync(prerenderDir);
-    expect(folders).toContain("guides.detail");
-  });
+  test("prerender asset files for guides have valid segments and handles", () => {
+    const manifestCode = fs.readFileSync(
+      path.join(RSC_DIR, "__prerender-manifest.js"),
+      "utf-8",
+    );
+    // Extract __pr-*.js filenames referenced by guides.detail entries
+    const guidesImports = manifestCode.match(
+      /"guides\.detail\/[a-f0-9]+":\(\)=>import\("\.\/assets\/(__pr-[a-f0-9]+\.js)"\)/g,
+    );
+    expect(guidesImports).toHaveLength(2);
 
-  test("pre-rendered param combinations have flight files", () => {
-    const guidesDir = path.join(prerenderDir, "guides.detail");
-    const files = fs.readdirSync(guidesDir).sort();
-    // 2 known slugs: routing, caching
-    expect(files).toHaveLength(2);
-    for (const file of files) {
-      expect(file).toMatch(/^[a-f0-9]{8}\.flight$/);
-    }
-  });
-
-  test("flight files have valid segments and handles", () => {
-    const guidesDir = path.join(prerenderDir, "guides.detail");
-    const files = fs.readdirSync(guidesDir);
-    for (const file of files) {
-      const data = JSON.parse(
-        fs.readFileSync(path.join(guidesDir, file), "utf-8"),
+    for (const imp of guidesImports!) {
+      const fileMatch = imp.match(/__pr-[a-f0-9]+\.js/);
+      expect(fileMatch).toBeTruthy();
+      const content = fs.readFileSync(
+        path.join(RSC_ASSETS_DIR, fileMatch![0]),
+        "utf-8",
       );
+      const dataMatch = content.match(/export default\s+({[\s\S]*});\s*$/);
+      expect(dataMatch).toBeTruthy();
+      const data = JSON.parse(dataMatch![1]);
       expect(data).toHaveProperty("segments");
       expect(data).toHaveProperty("handles");
       expect(Array.isArray(data.segments)).toBe(true);
@@ -371,21 +369,6 @@ test.describe("prerender passthrough flight files", () => {
     }
   });
 
-  test("prefixes.json includes /guides prefix", () => {
-    const data = JSON.parse(
-      fs.readFileSync(path.join(versionDir, "prefixes.json"), "utf-8"),
-    );
-    expect(data).toHaveProperty("/guides");
-    expect(data["/guides"]).toHaveProperty("routes");
-    expect(data["/guides"].routes).toContain("guides.detail");
-  });
-
-  test("routes.json maps guides.detail to pattern", () => {
-    const data = JSON.parse(
-      fs.readFileSync(path.join(versionDir, "routes.json"), "utf-8"),
-    );
-    expect(data["guides.detail"]).toBe("/guides/:slug");
-  });
 });
 
 // =============================================================================

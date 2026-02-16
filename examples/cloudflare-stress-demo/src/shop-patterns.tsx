@@ -7,11 +7,11 @@
  *
  * Requests to /shop/product/* skip the /shop/category entry (and vice versa)
  */
-import { urls } from "@rangojs/router";
-import { getMatchDebugStats, type HandlerContext } from "@rangojs/router/server";
+import { urls, type Handler } from "@rangojs/router";
+import { getMatchDebugStats } from "@rangojs/router";
 
 // Benchmark handler - returns JSON with matchStats
-const ShopBenchmarkHandler = async (ctx: HandlerContext) => {
+const ShopBenchmarkHandler: Handler<"home"> = async (ctx) => {
   const matchStats = getMatchDebugStats();
   throw new Response(
     JSON.stringify({
@@ -23,8 +23,8 @@ const ShopBenchmarkHandler = async (ctx: HandlerContext) => {
   );
 };
 
-// Product page handler
-const ProductPage = async (ctx: HandlerContext) => {
+// Product page handler (no URL params, just static paths like /1, /2, ...)
+const ProductPage: Handler<"home"> = async (ctx) => {
   return (
     <div>
       <h1>Product {ctx.pathname}</h1>
@@ -34,8 +34,8 @@ const ProductPage = async (ctx: HandlerContext) => {
   );
 };
 
-// Category page handler
-const CategoryPage = async (ctx: HandlerContext) => {
+// Category page handler (no URL params, just static paths like /1, /2, ...)
+const CategoryPage: Handler<"home"> = async (ctx) => {
   return (
     <div>
       <h1>Category {ctx.pathname}</h1>

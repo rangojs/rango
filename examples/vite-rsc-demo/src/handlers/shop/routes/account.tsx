@@ -3,7 +3,7 @@ import type { AppEnv } from "@/router.js";
 import { orders } from "@/handlers/shop/data.js";
 import { SegmentTimer } from "@/components/SegmentTimer.js";
 
-export const AccountIndexRoute: Handler<{}, AppEnv> = (ctx) => {
+export const AccountIndexRoute: Handler<"/account", AppEnv> = (ctx) => {
   // Type-safe context access!
   const user = ctx.get("user") || {
     id: "guest",
@@ -85,7 +85,7 @@ export const AccountIndexRoute: Handler<{}, AppEnv> = (ctx) => {
   );
 };
 
-export const AccountOrdersRoute: Handler = () => (
+export const AccountOrdersRoute: Handler<"/account/orders"> = () => (
   <div>
     <h2>Order History</h2>
     <p className="segment-id">Segment: Account Orders</p>
@@ -145,7 +145,7 @@ export const AccountOrdersRoute: Handler = () => (
   </div>
 );
 
-export const AccountOrderDetailRoute: Handler<{ id: string }> = (ctx) => {
+export const AccountOrderDetailRoute: Handler<"/account/orders/:id"> = (ctx) => {
   const order = orders.find((o) => o.id === ctx.params.id);
 
   if (!order) {

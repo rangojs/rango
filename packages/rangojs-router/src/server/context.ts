@@ -130,14 +130,14 @@ export type InterceptWhenFn<TEnv = any> = (ctx: InterceptSelectorContext<TEnv>) 
 export type InterceptEntry = {
   slotName: `@${string}`;  // e.g., "@modal"
   routeName: string;        // e.g., "card"
-  handler: ReactNode | Handler<any, any>;
+  handler: ReactNode | Handler<any, any, any>;
   middleware: MiddlewareFn<any, any>[];
   revalidate: ShouldRevalidateFn<any, any>[];
   errorBoundary: (ReactNode | ErrorBoundaryHandler)[];
   notFoundBoundary: (ReactNode | NotFoundBoundaryHandler)[];
   loader: LoaderEntry[];
   loading?: ReactNode | false;
-  layout?: ReactNode | Handler<any, any>;  // Wrapper layout with <Outlet /> for content
+  layout?: ReactNode | Handler<any, any, any>;  // Wrapper layout with <Outlet /> for content
   when: InterceptWhenFn[];  // Selector conditions - all must return true to intercept
 };
 
@@ -151,35 +151,43 @@ export type EntryPropSegments = {
 export type EntryData =
   | ({
       type: "route";
-      handler: Handler<any, any>;
+      handler: Handler<any, any, any>;
       loading?: ReactNode | false;
       /** URL pattern for this route (used by path() in urls()) */
       pattern?: string;
-      /** Set when handler is a createPrerenderHandler definition */
+      /** Set when handler is a Prerender definition */
       isPrerender?: true;
       /** Original PrerenderHandlerDefinition (for build-time getParams access) */
       prerenderDef?: { getParams?: () => Promise<any[]> | any[]; options?: { passthrough?: boolean } };
+      /** Set when handler is a Static definition (build-time only) */
+      isStaticPrerender?: true;
+      /** Response type for non-RSC routes (json, text, image, any) */
+      responseType?: string;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments)
   | ({
       type: "layout";
-      handler: ReactNode | Handler<any, any>;
+      handler: ReactNode | Handler<any, any, any>;
       loading?: ReactNode | false;
+      /** Set when handler is a Static definition (build-time only) */
+      isStaticPrerender?: true;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments)
   | ({
       type: "parallel";
-      handler: Record<`@${string}`, Handler<any, any> | ReactNode>;
+      handler: Record<`@${string}`, Handler<any, any, any> | ReactNode>;
       loading?: ReactNode | false;
+      /** Set when any parallel slot is a Static definition */
+      isStaticPrerender?: true;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments)
   | ({
       type: "cache";
       /** Cache entries create cache boundaries and render like layouts (with Outlet) */
-      handler: ReactNode | Handler<any, any>;
+      handler: ReactNode | Handler<any, any, any>;
       loading?: ReactNode | false;
     } & EntryPropCommon &
       EntryPropDatas &
@@ -215,6 +223,8 @@ interface HelperContext {
   patternsByPrefix?: Map<string, Map<string, string>>;
   /** Trailing slash config per route name */
   trailingSlash?: Map<string, "never" | "always" | "ignore">;
+  /** Search param schemas per route name */
+  searchSchemas?: Map<string, Record<string, string>>;
   /** URL prefix from include() - applied to all path() patterns */
   urlPrefix?: string;
   /** Name prefix from include() - applied to all named routes */
@@ -266,6 +276,7 @@ export const getContext = (): {
           patterns: new Map<string, string>(),
           patternsByPrefix: new Map<string, Map<string, string>>(),
           trailingSlash: new Map<string, "never" | "always" | "ignore">(),
+          searchSchemas: new Map<string, Record<string, string>>(),
         } satisfies HelperContext;
       }
       return store;
@@ -339,6 +350,7 @@ export const getContext = (): {
           isSSR: store.isSSR,
           patterns: store.patterns,
           trailingSlash: store.trailingSlash,
+          searchSchemas: store.searchSchemas,
           urlPrefix: store.urlPrefix,
           namePrefix: store.namePrefix,
           trackedIncludes: store.trackedIncludes,
@@ -357,6 +369,7 @@ export const getContext = (): {
       const manifest = store ? store.manifest : new Map<string, EntryData>();
       const patterns = store?.patterns || new Map<string, string>();
       const trailingSlash = store?.trailingSlash || new Map<string, "never" | "always" | "ignore">();
+      const searchSchemas = store?.searchSchemas || new Map<string, Record<string, string>>();
       return context.run(
         {
           manifest,
@@ -369,6 +382,7 @@ export const getContext = (): {
           isSSR: store?.isSSR,
           patterns,
           trailingSlash,
+          searchSchemas,
           urlPrefix: store?.urlPrefix,
           namePrefix: store?.namePrefix,
           trackedIncludes: store?.trackedIncludes,
@@ -393,10 +407,17 @@ export function runWithPrefixes<T>(
     throw new Error("runWithPrefixes must be called within router context");
   }
 
-  // Combine prefixes if there are existing ones
-  const combinedUrlPrefix = store.urlPrefix
-    ? `${store.urlPrefix}${urlPrefix}`
-    : urlPrefix;
+  // Combine prefixes if there are existing ones, avoiding double slashes
+  let combinedUrlPrefix: string;
+  if (store.urlPrefix) {
+    if (store.urlPrefix.endsWith("/") && urlPrefix.startsWith("/")) {
+      combinedUrlPrefix = store.urlPrefix + urlPrefix.slice(1);
+    } else {
+      combinedUrlPrefix = store.urlPrefix + urlPrefix;
+    }
+  } else {
+    combinedUrlPrefix = urlPrefix;
+  }
   const combinedNamePrefix = namePrefix
     ? store.namePrefix
       ? `${store.namePrefix}.${namePrefix}`

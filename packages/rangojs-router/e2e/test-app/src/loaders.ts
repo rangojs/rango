@@ -1,5 +1,10 @@
 import { createLoader } from "@rangojs/router";
 
+// Simple loader for prerender client component tests
+export const PrerenderTestLoader = createLoader(async () => {
+  return { test: true, message: "prerender-loader-data" };
+});
+
 // Product data
 const products = [
   {
@@ -363,6 +368,12 @@ export const ComposingFetchableUsesNonFetchable = createLoader(
 // Cache Testing Loaders
 // These loaders are used to test loader caching behavior
 // ============================================================================
+
+// Loader that returns a fresh timestamp on every request.
+// Used to verify loaders on pre-rendered routes run at request time.
+export const FreshTimestampLoader = createLoader(async () => ({
+  timestamp: Date.now(),
+}));
 
 // Counter for non-cached loader
 let nonCachedLoaderCount = 0;

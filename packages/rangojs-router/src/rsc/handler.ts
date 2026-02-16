@@ -9,7 +9,8 @@
 
 import { createElement } from "react";
 import { renderSegments } from "../segment-system.js";
-import { RouteNotFoundError } from "../errors.js";
+import { RouteNotFoundError, RouterError } from "../errors.js";
+import type { ResponseError } from "../urls.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
 import {
   matchMiddleware,
@@ -43,7 +44,36 @@ import {
   setRouteTrie,
   getPrecomputedEntries,
   waitForManifestReady,
+  getRouterManifest,
+  getRouterTrie,
+  setRouterManifest,
+  setRouterTrie,
 } from "../route-map-builder.js";
+
+/**
+ * Build a ResponseError payload from a caught error.
+ * RouterError messages are always exposed (developer-crafted).
+ * Standard Error messages are hidden in production.
+ */
+function createResponseErrorPayload(error: unknown, isDev: boolean): ResponseError {
+  if (error instanceof RouterError) {
+    return {
+      message: error.message,
+      code: error.code,
+      ...(error.type ? { type: error.type } : {}),
+      ...(isDev && error.stack ? { stack: error.stack } : {}),
+    };
+  }
+  if (error instanceof Error) {
+    return {
+      message: isDev ? error.message : "Internal Server Error",
+      ...(isDev && error.stack ? { stack: error.stack } : {}),
+    };
+  }
+  return {
+    message: isDev ? String(error) : "Internal Server Error",
+  };
+}
 
 /**
  * Create an RSC request handler.
@@ -175,18 +205,27 @@ export function createRSCHandler<
     // via setManifestReadyPromise(). In dev mode (Cloudflare), Miniflare runs
     // in a separate isolate where module-level state doesn't carry over, so
     // we generate inline from the router's urlpatterns.
+    //
+    // In multi-router setups (e.g. createHostRouter), each router must have
+    // its own per-router manifest. We check per-router data first: even if
+    // the global manifest was set by a different router, this router still
+    // needs its own trie and manifest for correct matching.
     const manifestCacheStart = performance.now();
-    if (!hasCachedManifest()) {
-      const readyPromise = waitForManifestReady();
-      if (readyPromise) {
-        await readyPromise;
+    const hasRouterData = getRouterManifest(router.id) !== undefined;
+    if (!hasRouterData) {
+      if (!hasCachedManifest()) {
+        const readyPromise = waitForManifestReady();
+        if (readyPromise) {
+          await readyPromise;
+        }
       }
-      if (!hasCachedManifest() && router.urlpatterns) {
-        // Cloudflare dev: generate manifest inline (no caching needed)
+      if (!getRouterManifest(router.id) && router.urlpatterns) {
+        // Cloudflare dev: generate manifest inline for this router.
+        // Each router generates its own manifest independently so
+        // multi-router setups (host routing) work correctly.
         const { generateManifest } =
           await import("../build/generate-manifest.js");
         const generated = generateManifest(router.urlpatterns);
-        setCachedManifest(generated.routeManifest);
         if (
           generated._routeAncestry &&
           Object.keys(generated._routeAncestry).length > 0
@@ -200,11 +239,19 @@ export function createRSCHandler<
           }
           // Override with prefix from include() entries so the trie
           // returns the correct sp for lazy entry lookup in findMatch.
+          // Walk recursively to include routes in nested includes.
           if (generated.prefixTree) {
-            for (const [prefix, node] of Object.entries(generated.prefixTree)) {
-              for (const route of (node as { routes: string[] }).routes) {
-                routeToStaticPrefix[route] = prefix;
+            const visitPrefixNode = (node: any): void => {
+              const sp = node.staticPrefix || "";
+              for (const route of (node.routes || [])) {
+                routeToStaticPrefix[route] = sp;
               }
+              for (const child of Object.values(node.children || {})) {
+                visitPrefixNode(child);
+              }
+            };
+            for (const node of Object.values(generated.prefixTree)) {
+              visitPrefixNode(node);
             }
           }
           const trie = buildRouteTrie(
@@ -212,11 +259,22 @@ export function createRSCHandler<
             generated._routeAncestry,
             routeToStaticPrefix,
             generated.routeTrailingSlash,
+            generated.prerenderRoutes ? new Set(generated.prerenderRoutes) : undefined,
+            generated.passthroughRoutes ? new Set(generated.passthroughRoutes) : undefined,
+            generated.responseTypeRoutes,
           );
-          setRouteTrie(trie);
+          setRouterTrie(router.id, trie);
+          // Set global trie only if not already set by another router
+          if (!getRouteTrie()) {
+            setRouteTrie(trie);
+          }
         }
+        setRouterManifest(router.id, generated.routeManifest);
+        // Merge into global manifest (needed for reverse/href across routers)
+        const existing = hasCachedManifest() ? getGlobalRouteMap() : {};
+        setCachedManifest({ ...existing, ...generated.routeManifest });
       }
-      if (!hasCachedManifest()) {
+      if (!getRouterManifest(router.id) && !hasCachedManifest()) {
         throw new Error(
           'Route manifest not available. Ensure "virtual:rsc-router/routes-manifest" is imported in your entry file.',
         );
@@ -296,6 +354,184 @@ export function createRSCHandler<
     const previewDur = performance.now() - previewStart;
     const handlerTiming: string[] = variables.__handlerTiming || [];
     handlerTiming.push(`handler-preview-match;dur=${previewDur.toFixed(2)}`);
+    // Response route short-circuit: skip entire RSC pipeline
+    if (preview?.responseType && preview.handler) {
+      const isPartial = url.searchParams.has("_rsc_partial");
+
+      // Partial requests (client-side navigation) to response routes
+      // get X-RSC-Reload to trigger hard navigation in the browser
+      if (isPartial) {
+        const cleanUrl = new URL(url);
+        cleanUrl.searchParams.delete("_rsc_partial");
+        cleanUrl.searchParams.delete("_rsc_segments");
+        cleanUrl.searchParams.delete("_rsc_v");
+        cleanUrl.searchParams.delete("_rsc_stale");
+        cleanUrl.searchParams.delete("_rsc_action");
+        cleanUrl.searchParams.delete("_rsc_prev");
+
+        return createResponseWithMergedHeaders(null, {
+          status: 200,
+          headers: {
+            "X-RSC-Reload": cleanUrl.toString(),
+            "content-type": "text/x-component;charset=utf-8",
+          },
+        });
+      }
+
+      // Build lightweight context for response handler
+      const bindings = (env as any)?.Bindings ?? env;
+      const reqCtx = requireRequestContext();
+      const responseHandlerCtx = {
+        request,
+        params: preview.params || {},
+        env: bindings,
+        searchParams: url.searchParams,
+        url,
+        pathname: url.pathname,
+        href: (name: string, hrefParams?: Record<string, string>) => {
+          if (name.startsWith("/")) {
+            if (!hrefParams) return name;
+            return name.replace(/:([^/]+)/g, (_, key) => {
+              const value = hrefParams[key];
+              if (value === undefined) throw new Error(`Missing param "${key}" for path "${name}"`);
+              return encodeURIComponent(value);
+            });
+          }
+          return name;
+        },
+        get: (key: string) => variables[key],
+        header: (name: string, value: string) => reqCtx.header(name, value),
+        setCookie: (name: string, value: string, options?: any) => reqCtx.setCookie(name, value, options),
+      };
+
+      // Call handler directly, wrapped by route middleware if present
+      const callHandler = async () => {
+        // JSON response routes: wrap in { data } / { error } envelope
+        if (preview.responseType === "json") {
+          const errorCtx = { request, url, env };
+          try {
+            const result = await (preview.handler as Function)(responseHandlerCtx);
+            if (result instanceof Response) {
+              const mergedHeaders: Record<string, string> = {};
+              result.headers.forEach((value, key) => {
+                mergedHeaders[key] = value;
+              });
+              return createResponseWithMergedHeaders(result.body, {
+                status: result.status,
+                headers: mergedHeaders,
+              });
+            }
+            return createResponseWithMergedHeaders(
+              JSON.stringify({ data: result }),
+              { status: 200, headers: { "content-type": "application/json;charset=utf-8" } },
+            );
+          } catch (error) {
+            callOnError(error, "handler", errorCtx);
+            const isDev = process.env.NODE_ENV !== "production";
+            const status = error instanceof RouterError ? error.status : 500;
+            return createResponseWithMergedHeaders(
+              JSON.stringify({ error: createResponseErrorPayload(error, isDev) }),
+              { status, headers: { "content-type": "application/json;charset=utf-8" } },
+            );
+          }
+        }
+
+        // Non-JSON response routes: catch errors and return plain Response
+        const errorCtx = { request, url, env };
+        try {
+          const result = await (preview.handler as Function)(responseHandlerCtx);
+
+          if (result instanceof Response) {
+            // Handler returned a Response directly -- pass through
+            const mergedHeaders: Record<string, string> = {};
+            result.headers.forEach((value, key) => {
+              mergedHeaders[key] = value;
+            });
+            return createResponseWithMergedHeaders(result.body, {
+              status: result.status,
+              headers: mergedHeaders,
+            });
+          }
+
+          // Auto-wrap based on response type tag
+          switch (preview.responseType) {
+            case "text":
+              return createResponseWithMergedHeaders(
+                String(result),
+                { status: 200, headers: { "content-type": "text/plain;charset=utf-8" } },
+              );
+            case "html":
+              return createResponseWithMergedHeaders(
+                String(result),
+                { status: 200, headers: { "content-type": "text/html;charset=utf-8" } },
+              );
+            case "xml":
+              return createResponseWithMergedHeaders(
+                String(result),
+                { status: 200, headers: { "content-type": "application/xml;charset=utf-8" } },
+              );
+            case "md":
+              return createResponseWithMergedHeaders(
+                String(result),
+                { status: 200, headers: { "content-type": "text/markdown;charset=utf-8" } },
+              );
+            default:
+              // image, stream, any -- must return Response
+              throw new Error(
+                `Response route handler for "${preview.responseType}" must return a Response object, got ${typeof result}`
+              );
+          }
+        } catch (error) {
+          callOnError(error, "handler", errorCtx);
+          const isDev = process.env.NODE_ENV !== "production";
+          const status = error instanceof RouterError ? error.status : 500;
+          const message = error instanceof RouterError
+            ? error.message
+            : isDev && error instanceof Error
+              ? error.message
+              : "Internal Server Error";
+          return createResponseWithMergedHeaders(message, {
+            status,
+            headers: { "content-type": "text/plain;charset=utf-8" },
+          });
+        }
+      };
+
+      // Wrap callHandler to append Vary: Accept on content-negotiated responses
+      const callHandlerWithVary = async () => {
+        const response = await callHandler();
+        if (preview.negotiated) {
+          response.headers.append("Vary", "Accept");
+        }
+        return response;
+      };
+
+      if (preview.routeMiddleware && preview.routeMiddleware.length > 0) {
+        const middlewareEntries = preview.routeMiddleware.map((mw) => ({
+          entry: {
+            pattern: null,
+            regex: null,
+            paramNames: [],
+            handler: mw.handler,
+            mountPrefix: null,
+          },
+          params: mw.params,
+        }));
+        return executeMiddleware(middlewareEntries, request, env, variables, callHandlerWithVary);
+      }
+
+      return callHandlerWithVary();
+    }
+
+    // Wrap RSC handler to append Vary: Accept on content-negotiated routes
+    const rscHandler = async () => {
+      const response = await coreRequestHandlerInner(request, env, url, variables, nonce);
+      if (preview?.negotiated) {
+        response.headers.append("Vary", "Accept");
+      }
+      return response;
+    };
+
     if (preview?.routeMiddleware && preview.routeMiddleware.length > 0) {
       // Convert route middleware to app middleware format for execution
       const middlewareEntries = preview.routeMiddleware.map((mw) => ({
@@ -310,13 +546,11 @@ export function createRSCHandler<
       }));
 
       // Execute route middleware wrapping the actual request handling
-      return executeMiddleware(middlewareEntries, request, env, variables, () =>
-        coreRequestHandlerInner(request, env, url, variables, nonce),
-      );
+      return executeMiddleware(middlewareEntries, request, env, variables, rscHandler);
     }
 
     // No route middleware, proceed directly
-    return coreRequestHandlerInner(request, env, url, variables, nonce);
+    return rscHandler();
   }
 
   // Inner request handler (actual RSC logic, wrapped by route middleware if any)
@@ -372,12 +606,14 @@ export function createRSCHandler<
       url.searchParams.has("__debug_manifest") &&
       (isDev || router.allowDebugManifest)
     ) {
-      const trie = getRouteTrie();
+      const trie = getRouterTrie(router.id) ?? getRouteTrie();
+      const routeManifest = getRouterManifest(router.id) ?? getGlobalRouteMap();
       const { extractAncestryFromTrie } = await import("../build/route-trie.js");
       return new Response(
         JSON.stringify(
           {
-            routeManifest: getGlobalRouteMap(),
+            routerId: router.id,
+            routeManifest,
             routeAncestry: trie ? extractAncestryFromTrie(trie) : {},
             routeTrie: trie,
             precomputedEntries: getPrecomputedEntries(),
@@ -1135,7 +1371,10 @@ export function createRSCHandler<
         const serializedSegments = await serializeSegments(nonLoaderSegments);
         const handles: Record<string, Record<string, unknown[]>> = {};
         for (const seg of nonLoaderSegments) {
-          handles[seg.id] = handleStore.getDataForSegment(seg.id);
+          const segHandles = handleStore.getDataForSegment(seg.id);
+          if (Object.keys(segHandles).length > 0) {
+            handles[seg.id] = segHandles;
+          }
         }
         return new Response(
           JSON.stringify({

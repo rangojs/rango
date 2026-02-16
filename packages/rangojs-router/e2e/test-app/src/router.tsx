@@ -1,4 +1,9 @@
-import { createRouter, type RouterEnv, redirect, type Middleware } from "@rangojs/router";
+import {
+  createRouter,
+  type RouterEnv,
+  redirect,
+  type Middleware,
+} from "@rangojs/router";
 import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 import { urlpatterns } from "./urls.js";
 
@@ -24,16 +29,19 @@ export interface AppVariables {
   routeMiddlewareApplied?: string;
   middlewareRouteId?: string;
   paramsAvailableInMiddleware?: string;
+  // Response route middleware test variables
+  outerMw?: string;
+  innerMw?: string;
+  role?: string;
+  // Include + layout middleware test variable
+  includeLayoutMw?: string;
 }
 
 export type AppEnv = RouterEnv<AppBindings, AppVariables>;
 
-type AppRoutes = typeof router.routeMap;
-
 declare global {
   namespace RSCRouter {
     interface Env extends AppEnv {}
-    interface RegisteredRoutes extends AppRoutes {}
   }
 }
 
@@ -132,7 +140,7 @@ const headerShorthandMiddleware: Middleware = async (ctx, next) => {
 export const router = createRouter<AppEnv>({
   cache: { store: cacheStore },
   theme: {
-    defaultTheme: "system",
+    defaultTheme: "light",
     themes: ["light", "dark", "system"],
     attribute: "class",
     storageKey: "theme",
@@ -154,4 +162,13 @@ export const router = createRouter<AppEnv>({
   .use("/middleware-test/params/:id", paramsMiddleware)
   .routes(urlpatterns);
 
-export const href = router.href;
+export const reverse = router.reverse;
+
+// Module-level reverse() calls — these run before lazy includes resolve,
+// so they rely on the static NamedRoutes fallback from the generated file.
+export const moduleLevelReverseResults: Record<string, string> = {
+  "blog.index": router.reverse("blog.index"),
+  "blog.post": router.reverse("blog.post", { postId: "test-post" }),
+  "search.index": router.reverse("search.index"),
+  "middlewareTest.index": router.reverse("middlewareTest.index"),
+};

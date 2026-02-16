@@ -1,4 +1,4 @@
-import { createHandle } from "@rangojs/router/client";
+import { createHandle } from "@rangojs/router";
 import type { ReactNode } from "react";
 
 export interface BreadcrumbItem {

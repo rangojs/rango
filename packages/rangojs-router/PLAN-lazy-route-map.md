@@ -9,7 +9,7 @@ Every RSC response sends the **full** `getGlobalRouteMap()` to the client. For 1
 
 ## Solution: Remove client route map entirely
 
-**Server** keeps `ctx.href("post", { slug })` - named route resolution with full map.
+**Server** keeps `ctx.reverse("post", { slug })` - named route resolution with full map.
 **Client** uses `href('/post/my-slug', mount)` - typed paths with mount-point awareness. Zero route map.
 
 ```tsx
@@ -52,9 +52,9 @@ No type safety needed:
 
 ### Server (unchanged)
 ```tsx
-// ctx.href() still uses named routes with full map
+// ctx.reverse() still uses named routes with full map
 path("/:slug", (ctx) => {
-  const url = ctx.href("shop.cart"); // named resolution, server-only
+  const url = ctx.reverse("shop.cart"); // named resolution, server-only
   return <BlogPost cartUrl={url} />;
 }, { name: "post" });
 ```
@@ -226,14 +226,14 @@ Remove if no longer used anywhere.
 
 **File:** `packages/rangojs-router/src/__tests__/href-types.test.ts`
 
-- Remove or update type tests that reference `HrefFunction`, `ScopedHrefFunction` if those types are removed
+- Remove or update type tests that reference `ReverseFunction`, `ScopedReverseFunction` if those types are removed
 - Add type tests for the new client `href()` signature if typed paths are added
 
 #### 3d. Update E2E `href.test.ts`
 
 **File:** `packages/rangojs-router/e2e/href.test.ts`
 
-- Keep server-side `ctx.href` tests (unchanged)
+- Keep server-side `ctx.reverse` tests (unchanged)
 - Replace client-side `useHref` tests with equivalent `href()` + `useMount()` tests
 - Update test-app components that use `useHref` to use the new API
 
@@ -267,7 +267,7 @@ Remove if no longer used anywhere.
 #### 4a. `examples/vite-rsc-demo/` (2 files)
 
 - `src/layouts/RootLayout.tsx` — already uses path-based `href("/")`, `href("/blog")` etc. Verify import source, may already be compatible or needs import switch.
-- `src/handlers/kanban/CardDetail.tsx` — uses `useHref()` → `href("kanban.index")`. Migrate to `ctx.href("kanban.index")` on server, or path-based `href("/kanban", mount)` on client.
+- `src/handlers/kanban/CardDetail.tsx` — uses `useHref()` → `href("kanban.index")`. Migrate to `ctx.reverse("kanban.index")` on server, or path-based `href("/kanban", mount)` on client.
 
 #### 4b. `examples/cloudflare-basic/` (3 files)
 
@@ -278,13 +278,13 @@ Remove if no longer used anywhere.
 #### 4c. `examples/cloudflare-basic-nonce/` (2 files)
 
 - `src/components/Document.tsx` — uses `useHref()` → `href("home")`, `href("about")`. Migrate to path-based `href()` + `useMount()`.
-- `src/router.tsx` — uses `type AppRoutes = typeof router.routeMap` + `export const href = router.href`. Remove `routeMap` type, keep server `href` export.
+- `src/router.tsx` — uses `type AppRoutes = typeof router.routeMap` + `export const href = router.reverse`. Remove `routeMap` type, keep server `href` export.
 
 #### 4d. `e2e/test-app/` (4 files)
 
 - `src/router.tsx` — uses `type AppRoutes = typeof router.routeMap`. Update type registration.
 - `src/components/HrefTestClient.tsx` — uses `useHref()` for client-side resolution (`href("index")`, `href("detail", { id })`, `href("blog.index")`, `href("/about")`). Migrate to new client `href()` + `useMount()`. This is the primary test component — migrate carefully.
-- `src/urls/href.tsx` — server-side `ctx.href()` calls. Unchanged.
+- `src/urls/href.tsx` — server-side `ctx.reverse()` calls. Unchanged.
 - `src/types/href-types.check.ts` — type checking file. Update to match new types.
 
 #### 4e. `e2e/e2e-basic/` (2 files)
@@ -296,7 +296,7 @@ Remove if no longer used anywhere.
 
 For each app above:
 1. Replace `useHref()` imports with `href, useMount` from `@rangojs/router/client`
-2. Replace `href("routeName")` calls with path-based `href("/path", mount)` or keep as server-side `ctx.href("routeName")`
+2. Replace `href("routeName")` calls with path-based `href("/path", mount)` or keep as server-side `ctx.reverse("routeName")`
 3. Remove `type AppRoutes = typeof router.routeMap` + `RegisteredRoutes` augmentation
 4. Remove any `HrefProvider` / `HrefContext` imports
 5. Verify the app builds and runs
@@ -307,11 +307,11 @@ Search for and remove any remaining references.
 
 ---
 
-## Server-side `ctx.href()` - NO CHANGES
+## Server-side `ctx.reverse()` - NO CHANGES
 
 These files are **unchanged** - server keeps full route map:
 - `packages/rangojs-router/src/route-map-builder.ts` - `getGlobalRouteMap()` still used server-side
-- `packages/rangojs-router/src/router/handler-context.ts` - `ctx.href()` still resolves named routes
+- `packages/rangojs-router/src/router/handler-context.ts` - `ctx.reverse()` still resolves named routes
 - `packages/rangojs-router/src/router.ts` - still passes routeMap to handler context
 
 ---
@@ -327,7 +327,7 @@ The include's URL prefix needs to be available when rendering layout segments. N
 
 ### Type system for client `href()`
 
-**Current system:** Server `HrefFunction<TRoutes>` validates route *names* (`"blog.post"`) and params (`{ slug: string }`) at compile time. The route map type `{ "blog.post": "/blog/:slug" }` is built via phantom types on `UrlPatterns._routes` and `TypedIncludeItem.__routes/__urlPrefix/__namePrefix`, composed through `PrefixPatterns` and `PrefixRoutes` type transforms.
+**Current system:** Server `ReverseFunction<TRoutes>` validates route *names* (`"blog.post"`) and params (`{ slug: string }`) at compile time. The route map type `{ "blog.post": "/blog/:slug" }` is built via phantom types on `UrlPatterns._routes` and `TypedIncludeItem.__routes/__urlPrefix/__namePrefix`, composed through `PrefixPatterns` and `PrefixRoutes` type transforms.
 
 **New client `href()` needs path-based types, not name-based.** The question is: how do we type `href("/blog/:slug", mount)` when the paths come from `include()`?
 
@@ -348,7 +348,7 @@ That implementation validated *absolute* paths against all routes. The new versi
 // Given: include("/articles", blogPatterns) where blogPatterns has { index: "/", post: "/:slug" }
 // The composed routes are: { "blog.index": "/articles", "blog.post": "/articles/:slug" }
 
-// Server (unchanged): ctx.href("blog.post", { slug: "hello" })
+// Server (unchanged): ctx.reverse("blog.post", { slug: "hello" })
 
 // Client (new, untyped initially):
 const mount = useMount(); // "/articles"

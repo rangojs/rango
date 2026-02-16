@@ -1,13 +1,30 @@
 import { type SpawnOptions, spawn } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { stripVTControlCharacters, styleText } from "node:util";
 import test from "@playwright/test";
 import { x } from "tinyexec";
 
+function sanitizeNodeOptions(value?: string): string | undefined {
+  if (!value) return value;
+  const tokens = value.split(/\s+/).filter(Boolean);
+  const filtered = tokens.filter(
+    (token) => !token.startsWith("--inspect")
+  );
+  return filtered.length > 0 ? filtered.join(" ") : undefined;
+}
+
 function runCli(options: { command: string; label?: string } & SpawnOptions) {
   const [name, ...args] = options.command.split(" ");
+  const env = { ...process.env, ...options.env };
+  const sanitizedNodeOptions = sanitizeNodeOptions(env.NODE_OPTIONS);
+  if (sanitizedNodeOptions) {
+    env.NODE_OPTIONS = sanitizedNodeOptions;
+  } else {
+    delete env.NODE_OPTIONS;
+  }
   const child = x(name!, args, {
-    nodeOptions: { ...options, detached: true },
+    nodeOptions: { ...options, env, detached: true },
   }).process!;
   const label = `[${options.label ?? "cli"}]`;
   let stdout = "";
@@ -38,7 +55,11 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
     let stdout = "";
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        reject(new Error("Timeout waiting for dev server to start"));
+        reject(
+          new Error(
+            `Timeout waiting for server to start after 60s. Stdout: ${stdout}`
+          )
+        );
       }, 60000);
 
       child.stdout!.on("data", (data) => {
@@ -49,6 +70,15 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
           clearTimeout(timeout);
           resolve(Number(match[1]));
         }
+      });
+
+      child.on("exit", (code) => {
+        clearTimeout(timeout);
+        reject(
+          new Error(
+            `Server exited with code ${code}.\nStdout: ${stdout}\nStderr: ${stderr}`
+          )
+        );
       });
     });
   }
@@ -89,6 +119,18 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
   };
 }
 
+async function waitForReady(url: string, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) return;
+    } catch {}
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(`Server not ready after ${timeoutMs}ms: ${url}`);
+}
+
 export type Fixture = ReturnType<typeof useFixture>;
 
 export function useFixture(options: {
@@ -97,6 +139,7 @@ export function useFixture(options: {
   command?: string;
   buildCommand?: string;
   cliOptions?: SpawnOptions;
+  isolatedServer?: boolean;
 }) {
   let cleanup: (() => Promise<void>) | undefined;
   let baseURL!: string;
@@ -104,43 +147,59 @@ export function useFixture(options: {
   const cwd = path.resolve(options.root);
   let proc!: ReturnType<typeof runCli>;
 
-  test.beforeAll(async () => {
+  test.beforeAll(async ({}, testInfo) => {
     if (options.mode === "dev") {
-      proc = runCli({
-        command: options.command ?? `pnpm dev`,
-        label: `${options.root}:dev`,
-        cwd,
-        ...options.cliOptions,
-      });
-      const port = await proc.findPort();
-      baseURL = `http://localhost:${port}`;
-      cleanup = async () => {
-        proc.kill();
-        await proc.done;
-      };
-    }
-    if (options.mode === "build") {
-      if (!process.env.TEST_SKIP_BUILD) {
-        const buildProc = runCli({
-          command: options.buildCommand ?? `pnpm build`,
-          label: `${options.root}:build`,
+      const sharedURL =
+        !options.isolatedServer && testInfo.project.use.baseURL;
+      if (sharedURL) {
+        baseURL = sharedURL;
+      } else {
+        proc = runCli({
+          command: options.command ?? `pnpm dev`,
+          label: `${options.root}:dev`,
           cwd,
           ...options.cliOptions,
         });
-        await buildProc.done;
+        const port = await proc.findPort();
+        baseURL = `http://localhost:${port}`;
+        await waitForReady(baseURL);
+        cleanup = async () => {
+          proc.kill();
+          await proc.done;
+        };
       }
-      proc = runCli({
-        command: options.command ?? `pnpm preview`,
-        label: `${options.root}:preview`,
-        cwd,
-        ...options.cliOptions,
-      });
-      const port = await proc.findPort();
-      baseURL = `http://localhost:${port}`;
-      cleanup = async () => {
-        proc.kill();
-        await proc.done;
-      };
+    }
+    if (options.mode === "build") {
+      const sharedURL =
+        !options.isolatedServer && testInfo.project.use.baseURL;
+      if (sharedURL) {
+        baseURL = sharedURL;
+      } else {
+        const hasBuildDep =
+          testInfo.project.dependencies.includes("build");
+        const distExists = fs.existsSync(path.join(cwd, "dist"));
+        if (!process.env.TEST_SKIP_BUILD && !hasBuildDep && !distExists) {
+          const buildProc = runCli({
+            command: options.buildCommand ?? `pnpm build`,
+            label: `${options.root}:build`,
+            cwd,
+            ...options.cliOptions,
+          });
+          await buildProc.done;
+        }
+        proc = runCli({
+          command: options.command ?? `pnpm preview`,
+          label: `${options.root}:preview`,
+          cwd,
+          ...options.cliOptions,
+        });
+        const port = await proc.findPort();
+        baseURL = `http://localhost:${port}`;
+        cleanup = async () => {
+          proc.kill();
+          await proc.done;
+        };
+      }
     }
   });
 

@@ -301,14 +301,14 @@ function BlogNav() {
 }
 ```
 
-**Server components use `ctx.href()`:**
+**Server components use `ctx.reverse()`:**
 
 ```typescript
 async function BlogPost({ ctx }) {
   return (
     <>
-      <Link href={ctx.href("index")}>Back</Link>
-      <Link href={ctx.href("post", { slug: "next" })}>Next</Link>
+      <Link href={ctx.reverse("index")}>Back</Link>
+      <Link href={ctx.reverse("post", { slug: "next" })}>Next</Link>
     </>
   );
 }
@@ -323,7 +323,7 @@ async function BlogPost({ ctx }) {
 
 | Method | Environment | Usage |
 |--------|-------------|-------|
-| `ctx.href()` | Server components | Auto-prefixes: `ctx.href("index")` → "blog.index" |
+| `ctx.reverse()` | Server components | Auto-prefixes: `ctx.reverse("index")` → "blog.index" |
 | `useHref()` | Client components | Auto-prefixes: `href("index")` → "blog.index" |
 
 Both support absolute names (`href("shop.cart")`) and path-based (`href("/about")`) as fallbacks.
@@ -360,7 +360,7 @@ path("/:locale(en|de)/shop", (ctx) => {
 })
 ```
 
-`useHref()` and `ctx.href()` are typed from route definitions:
+`useHref()` and `ctx.reverse()` are typed from route definitions:
 
 ```typescript
 const href = useHref();
@@ -428,7 +428,7 @@ path("/", Dashboard, { name: "index" }, () => [
 ## Router Setup
 
 ```typescript
-import { createRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router";
 import { urlpatterns } from "./urls";
 
 export const router = createRouter<AppEnv>({
@@ -498,8 +498,8 @@ export const urlpatterns = urls(({ path, layout, include }) => [
 | `route({ "name": "/pattern" })` | `path("/pattern", Component, { name })` inside `urls()` |
 | `.routes(prefix, routes).map(handler)` | `.routes(urlpatterns)` with `include()` for composition |
 | Chained `.routes()` calls | Single `.routes()`, use `include()` for multiple groups |
-| `import { href } from ".../client"` | `useHref()` hook (client) or `ctx.href()` (server) |
-| `router.href` export | Removed - use `ctx.href()` or `useHref()` |
+| `import { href } from ".../client"` | `useHref()` hook (client) or `ctx.reverse()` (server) |
+| `router.reverse` export | Removed - use `ctx.reverse()` or `useHref()` |
 
 **No backwards compatibility** - this is a clean break from rsc-router's API.
 
@@ -532,7 +532,7 @@ export const urlpatterns = urls(({ path, layout, include }) => [
 
 - Add `routeMap` and `routeName` to RSC payload
 - Implement `useHref()` with name prefix context
-- Server `ctx.href()` uses same resolution logic
+- Server `ctx.reverse()` uses same resolution logic
 
 ### Phase 4: Single `.routes()` Enforcement
 

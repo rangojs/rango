@@ -1,7 +1,7 @@
 import type { Handler } from "@rangojs/router";
 import { DebugSegmentWrapper } from "@/components/DebugSegmentWrapper.js";
 
-export const IndexRoute: Handler = () => (
+export const IndexRoute: Handler<"/"> = () => (
   <DebugSegmentWrapper type="route" name="Admin Index">
     <div>
       <h2>Admin Dashboard</h2>
@@ -46,7 +46,7 @@ export const IndexRoute: Handler = () => (
   </DebugSegmentWrapper>
 );
 
-export const UsersRoute: Handler = () => (
+export const UsersRoute: Handler<"/users"> = () => (
   <DebugSegmentWrapper type="route" name="Users List">
     <div>
       <h2>Users List</h2>
@@ -75,7 +75,7 @@ export const UsersRoute: Handler = () => (
   </DebugSegmentWrapper>
 );
 
-export const UserRoute: Handler<{ id: string }> = (ctx) => (
+export const UserRoute: Handler<"/users/:id"> = (ctx) => (
   <DebugSegmentWrapper type="route" name="User Detail">
     <div>
       <h2>User {ctx.params.id}</h2>
@@ -120,7 +120,7 @@ export const UserRoute: Handler<{ id: string }> = (ctx) => (
   </DebugSegmentWrapper>
 );
 
-export const SettingsRoute: Handler = () => (
+export const SettingsRoute: Handler<"/settings"> = () => (
   <DebugSegmentWrapper type="route" name="Admin Settings">
     <div>
       <h2>Admin Settings</h2>

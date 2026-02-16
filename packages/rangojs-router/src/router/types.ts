@@ -119,6 +119,7 @@ export interface MatchApiDeps<TEnv = any> {
   ) => { intercept: InterceptEntry; entry: EntryData } | null;
   callOnError: SegmentResolutionDeps<TEnv>["callOnError"];
   findNearestErrorBoundary: SegmentResolutionDeps<TEnv>["findNearestErrorBoundary"];
+  getRouteMap: () => Record<string, string>;
 }
 
 /**

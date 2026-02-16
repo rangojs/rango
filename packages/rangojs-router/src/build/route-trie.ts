@@ -21,12 +21,20 @@ export interface TrieLeaf {
   op?: string[];
   /** Constraint validation: paramName -> allowed values */
   cv?: Record<string, string[]>;
+  /** Ordered param names for this route (positional) */
+  pa?: string[];
   /** Trailing slash mode */
   ts?: string;
   /** Route has pre-rendered data available */
   pr?: true;
   /** Passthrough: handler kept in bundle for live fallback on unknown params */
   pt?: true;
+  /** Response type for non-RSC routes (json, text, image, any) */
+  rt?: string;
+  /** Negotiate variants: response-type routes sharing this path */
+  nv?: Array<{ routeKey: string; responseType: string }>;
+  /** RSC-first: RSC route was defined before response-type variants */
+  rf?: true;
 }
 
 export interface TrieNode {
@@ -55,6 +63,7 @@ export function buildRouteTrie(
   routeTrailingSlash?: Record<string, string>,
   prerenderRouteNames?: Set<string>,
   passthroughRouteNames?: Set<string>,
+  responseTypeRoutes?: Record<string, string>,
 ): TrieNode {
   const root: TrieNode = {};
 
@@ -62,6 +71,7 @@ export function buildRouteTrie(
     const ancestry = routeAncestry[routeName] || [];
     const staticPrefix = routeToStaticPrefix[routeName] || "";
     const trailingSlash = routeTrailingSlash?.[routeName];
+    const responseType = responseTypeRoutes?.[routeName];
 
     // Detect and strip trailing slash from pattern for parsing
     const hasTrailingSlash = pattern.length > 1 && pattern.endsWith("/");
@@ -75,6 +85,7 @@ export function buildRouteTrie(
       ...(trailingSlash ? { ts: trailingSlash } : {}),
       ...(prerenderRouteNames?.has(routeName) ? { pr: true } : {}),
       ...(passthroughRouteNames?.has(routeName) ? { pt: true } : {}),
+      ...(responseType ? { rt: responseType } : {}),
     });
   }
 
@@ -89,23 +100,28 @@ function insertRoute(
   node: TrieNode,
   segments: ParsedSegment[],
   index: number,
-  leaf: Omit<TrieLeaf, "op" | "cv">,
+  leaf: Omit<TrieLeaf, "op" | "cv" | "pa">,
 ): void {
-  // Collect optional param names and constraints across all segments
+  // Collect param names, optional param names, and constraints across all segments
+  const paramNames: string[] = [];
   const optionalParams: string[] = [];
   const constraints: Record<string, string[]> = {};
 
   for (const seg of segments) {
-    if (seg.type === "param" && seg.optional) {
-      optionalParams.push(seg.value);
-    }
-    if (seg.type === "param" && seg.constraint) {
-      constraints[seg.value] = seg.constraint;
+    if (seg.type === "param") {
+      paramNames.push(seg.value);
+      if (seg.optional) {
+        optionalParams.push(seg.value);
+      }
+      if (seg.constraint) {
+        constraints[seg.value] = seg.constraint;
+      }
     }
   }
 
   const fullLeaf: TrieLeaf = {
     ...leaf,
+    ...(paramNames.length > 0 ? { pa: paramNames } : {}),
     ...(optionalParams.length > 0 ? { op: optionalParams } : {}),
     ...(Object.keys(constraints).length > 0 ? { cv: constraints } : {}),
   };
@@ -148,6 +164,50 @@ export function extractAncestryFromTrie(
   return result;
 }
 
+/**
+ * Merge a new leaf with an existing leaf, handling content negotiation.
+ * When an RSC route and response-type routes share the same URL pattern,
+ * the RSC route becomes the primary leaf and response-type routes are
+ * appended to the nv (negotiate variants) array.
+ * Multiple response types on the same path are supported (json + text + xml).
+ */
+function mergeLeaves(existing: TrieLeaf | undefined, leaf: TrieLeaf): TrieLeaf {
+  if (!existing) return leaf;
+
+  if (existing.rt && leaf.rt) {
+    // Both are response-type: preserve old as variant
+    const merged = leaf;
+    merged.nv = existing.nv || [];
+    merged.nv.push({ routeKey: existing.n, responseType: existing.rt });
+    return merged;
+  }
+  if (leaf.rt && !existing.rt) {
+    // RSC primary exists, new leaf is response-type: append variant
+    // RSC was defined first (it was already the existing leaf)
+    if (!existing.nv) {
+      existing.nv = [];
+      existing.rf = true;
+    }
+    existing.nv.push({ routeKey: leaf.n, responseType: leaf.rt });
+    return existing;
+  }
+  if (!leaf.rt && existing.rt) {
+    // Response-type was primary, new leaf is RSC: swap and move old to variants
+    // RSC was defined second (response-type was already the existing leaf)
+    if (!leaf.nv) leaf.nv = [];
+    if (existing.nv) leaf.nv.push(...existing.nv);
+    leaf.nv.push({ routeKey: existing.n, responseType: existing.rt });
+    // rf intentionally not set — RSC came after response-type variants
+    return leaf;
+  }
+  // Both RSC (last wins): overwrite
+  return leaf;
+}
+
+function mergeLeaf(node: TrieNode, leaf: TrieLeaf): void {
+  node.r = mergeLeaves(node.r, leaf);
+}
+
 function insertSegments(
   node: TrieNode,
   segments: ParsedSegment[],
@@ -156,7 +216,7 @@ function insertSegments(
 ): void {
   // Base case: all segments consumed, add terminal
   if (index >= segments.length) {
-    node.r = leaf;
+    mergeLeaf(node, leaf);
     return;
   }
 
@@ -169,7 +229,7 @@ function insertSegments(
   } else if (segment.type === "param") {
     if (segment.optional) {
       // Optional param: add terminal at current node (param absent)
-      node.r = leaf;
+      mergeLeaf(node, leaf);
       // AND continue with param child (param present)
     }
     if (!node.p) {
@@ -178,6 +238,9 @@ function insertSegments(
     insertSegments(node.p.c, segments, index + 1, leaf);
   } else if (segment.type === "wildcard") {
     // Wildcard consumes all remaining segments
-    node.w = { ...leaf, pn: "*" };
+    const wildLeaf = { ...leaf, pn: "*" };
+    const existing = node.w ? { ...node.w } as TrieLeaf : undefined;
+    const merged = mergeLeaves(existing, wildLeaf);
+    node.w = merged as TrieLeaf & { pn: string };
   }
 }

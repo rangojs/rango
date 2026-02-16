@@ -1,7 +1,7 @@
-import { Meta, createPrerenderHandler } from "@rangojs/router";
+import { Meta, Prerender } from "@rangojs/router";
 import { Link, ParallelOutlet } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
-import { href } from "../router.js";
+import { reverse } from "../router.js";
 
 interface Article {
   slug: string;
@@ -51,7 +51,7 @@ const articles: Article[] = Object.entries(mdFiles).map(([filePath, mod]) => {
 });
 
 // Article list
-export const ArticlesIndex = createPrerenderHandler(async (ctx) => {
+export const ArticlesIndex = Prerender(async (ctx) => {
   const meta = ctx.use(Meta);
   meta({ title: "Articles - RSC Router Cloudflare" });
   meta({
@@ -60,8 +60,8 @@ export const ArticlesIndex = createPrerenderHandler(async (ctx) => {
   });
 
   const breadcrumb = ctx.use(Breadcrumbs);
-  breadcrumb({ label: "Home", href: href("home") });
-  breadcrumb({ label: "Articles", href: href("articles.index") });
+  breadcrumb({ label: "Home", href: reverse("home") });
+  breadcrumb({ label: "Articles", href: reverse("articles.index") });
 
   return (
     <div data-testid="articles-index" style={{ display: "flex", gap: "2rem" }}>
@@ -83,7 +83,7 @@ export const ArticlesIndex = createPrerenderHandler(async (ctx) => {
             >
               <h2 style={{ marginBottom: "0.5rem" }}>
                 <Link
-                  to={href("articles.detail", { slug: article.slug })}
+                  to={reverse("articles.detail", { slug: article.slug })}
                   style={{ color: "#0070f3", textDecoration: "none" }}
                   data-testid={`article-link-${article.slug}`}
                 >
@@ -118,7 +118,7 @@ export const ArticlesIndex = createPrerenderHandler(async (ctx) => {
 });
 
 // Article detail -- derives params from discovered .md files
-export const ArticleDetail = createPrerenderHandler(
+export const ArticleDetail = Prerender(
   async () => articles.map((a) => ({ slug: a.slug })),
   async (ctx) => {
     const article = articles.find((a) => a.slug === ctx.params.slug);
@@ -137,11 +137,11 @@ export const ArticleDetail = createPrerenderHandler(
     meta({ name: "description", content: article.excerpt });
 
     const breadcrumb = ctx.use(Breadcrumbs);
-    breadcrumb({ label: "Home", href: href("home") });
-    breadcrumb({ label: "Articles", href: href("articles.index") });
+    breadcrumb({ label: "Home", href: reverse("home") });
+    breadcrumb({ label: "Articles", href: reverse("articles.index") });
     breadcrumb({
       label: article.title,
-      href: href("articles.detail", { slug: article.slug }),
+      href: reverse("articles.detail", { slug: article.slug }),
     });
 
     return (
@@ -154,7 +154,7 @@ export const ArticleDetail = createPrerenderHandler(
           }}
         >
           <Link
-            to={href("articles.index")}
+            to={reverse("articles.index")}
             style={{ color: "#0070f3", textDecoration: "none" }}
           >
             &larr; Back to Articles

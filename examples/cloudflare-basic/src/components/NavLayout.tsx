@@ -10,17 +10,26 @@ export function NavLayout() {
         <Link to={href("/")} data-testid="nav-home">
           Home
         </Link>
+        <Link {...href.json("/api/health")} data-testid="nav-api">
+          API Health
+        </Link>
         <Link to={href("/about")} data-testid="nav-about">
           About
         </Link>
         <Link to={href("/counter")} data-testid="nav-counter">
           Counter
         </Link>
+        <Link to={href("/api-demo")} data-testid="nav-api-demo">
+          API Demo
+        </Link>
         <Link to={href("/blog")} data-testid="nav-blog">
           Blog
         </Link>
         <Link to={href("/articles")} data-testid="nav-articles">
           Articles
+        </Link>
+        <Link to={href("/releases")} data-testid="nav-releases">
+          Releases
         </Link>
         <Link to={href("/guides/routing")} data-testid="nav-guides">
           Guides
@@ -39,6 +48,12 @@ export function NavLayout() {
         </Link>
         <Link to={href("/api/health")} data-testid="nav-api-health">
           API Health
+        </Link>
+        <Link to={href("/static-content")} data-testid="nav-static-content">
+          Static Content
+        </Link>
+        <Link to={href("/docs")} data-testid="nav-docs">
+          Docs
         </Link>
       </nav>
       <BreadcrumbNav />

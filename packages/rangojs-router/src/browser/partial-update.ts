@@ -157,9 +157,8 @@ export function createPartialUpdater(
       // When leaving intercept, only send segments that aren't intercept-specific
       // The server will return the non-intercept version of the route
       const currentSegments = segmentIds ?? segmentState.currentSegmentIds;
-      // Filter out modal/intercept segments - keep only the base route segments
-
-      // TODO: why this?
+      // Filter out intercept-specific parallel slots (containing ".@") so the
+      // server resolves the base route instead of the modal overlay.
       segments = currentSegments.filter((id) => !id.includes(".@"));
       console.log(
         `[Browser] Leaving intercept - filtered segments: ${segments.join(", ")}`,

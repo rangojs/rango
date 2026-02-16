@@ -6,6 +6,7 @@
 
 import type { ResolvedSegment, HandlerContext } from "../types";
 import type { ActionContext } from "./types";
+import { debugLog } from "./logging.js";
 
 /**
  * Options for revalidation evaluation
@@ -90,34 +91,34 @@ export async function evaluateRevalidation<TEnv>(
       // Routes are the primary param-dependent content and always need updates
       defaultShouldRevalidate = paramsChanged;
       if (paramsChanged) {
-        console.log(
-          `[Router.evaluateRevalidation] ${segment.id}: ROUTE - params changed, revalidating`
-        );
+        debugLog("revalidation", "route params changed, revalidating", {
+          segmentId: segment.id,
+        });
       }
     } else {
       // Layouts and parallels default to no revalidation
       // Cannot assume these segments depend on params without explicit declaration
       // Use custom revalidation functions to opt-in when needed
       defaultShouldRevalidate = false;
-      console.log(
-        `[Router.evaluateRevalidation] ${
-          segment.id
-        }: ${segment.type.toUpperCase()} segment - skipping (override with custom revalidation if needed)`
-      );
+      debugLog("revalidation", "non-route segment skipped by default", {
+        segmentId: segment.id,
+        segmentType: segment.type,
+      });
     }
   }
 
   // No custom revalidations defined - return default behavior without prev segment
   if (revalidations.length === 0) {
     if (defaultShouldRevalidate) {
-      console.log(
-        `[Router.evaluateRevalidation] ${segment.id}: PARAMS CHANGED (default) - revalidating`,
-        { prev: prevParams, next: nextParams }
-      );
+      debugLog("revalidation", "default revalidate=true", {
+        segmentId: segment.id,
+        prevParams,
+        nextParams,
+      });
     } else {
-      console.log(
-        `[Router.evaluateRevalidation] ${segment.id}: UNCHANGED (default) - skipping`
-      );
+      debugLog("revalidation", "default revalidate=false", {
+        segmentId: segment.id,
+      });
     }
     return defaultShouldRevalidate;
   }
@@ -158,9 +159,11 @@ export async function evaluateRevalidation<TEnv>(
     // - null/undefined: use default behavior (equivalent to returning { defaultShouldRevalidate })
     if (typeof result === "boolean") {
       // Hard decision - short-circuit
-      console.log(
-        `[Router.evaluateRevalidation] ${segment.id}: REVALIDATE (${name}) HARD: ${result}`
-      );
+      debugLog("revalidation", "hard decision", {
+        segmentId: segment.id,
+        revalidator: name,
+        revalidate: result,
+      });
       return result;
     } else if (
       result &&
@@ -169,22 +172,27 @@ export async function evaluateRevalidation<TEnv>(
     ) {
       // Soft decision - update suggestion and continue
       currentSuggestion = result.defaultShouldRevalidate;
-      console.log(
-        `[Router.evaluateRevalidation] ${segment.id}: REVALIDATE (${name}) SOFT: ${currentSuggestion}`
-      );
+      debugLog("revalidation", "soft decision", {
+        segmentId: segment.id,
+        revalidator: name,
+        revalidate: currentSuggestion,
+      });
     } else if (result === null || result === undefined) {
       // Defer to default - equivalent to { defaultShouldRevalidate: currentSuggestion }
       // This means "I don't care, use whatever the default is"
-      console.log(
-        `[Router.evaluateRevalidation] ${segment.id}: REVALIDATE (${name}) DEFER to default: ${currentSuggestion}`
-      );
+      debugLog("revalidation", "deferred to current default", {
+        segmentId: segment.id,
+        revalidator: name,
+        revalidate: currentSuggestion,
+      });
       // currentSuggestion stays the same, continue to next function
     }
   }
 
   // All revalidators completed - use final suggestion
-  console.log(
-    `[Router.evaluateRevalidation] ${segment.id}: Final decision: ${currentSuggestion}`
-  );
+  debugLog("revalidation", "final decision", {
+    segmentId: segment.id,
+    revalidate: currentSuggestion,
+  });
   return currentSuggestion;
 }

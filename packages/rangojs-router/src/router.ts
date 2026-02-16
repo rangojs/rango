@@ -9,14 +9,19 @@ import {
 } from "./errors";
 import { serializeManifest, type SerializedManifest } from "./debug.js";
 import {
-  createHref,
-  type HrefFunction,
+  createReverse,
+  type ReverseFunction,
   type PrefixRoutePatterns,
-} from "./href.js";
+} from "./reverse.js";
 import {
   registerRouteMap,
+  getGlobalRouteMap,
   getPrecomputedEntries,
   getRouteTrie,
+  getRouterManifest,
+  getRouterTrie,
+  getRouterPrecomputedEntries,
+  ensureRouterManifest,
 } from "./route-map-builder.js";
 import { tryTrieMatch } from "./router/trie-matching.js";
 import {
@@ -54,7 +59,12 @@ import type {
 import type {
   NonceProvider,
 } from "./rsc/types.js";
-import type { ExecutionContext } from "./server/request-context.js";
+import {
+  runWithRequestContext,
+  type RequestContext,
+  type ExecutionContext,
+} from "./server/request-context.js";
+import type { SerializedSegmentData, SegmentHandleData } from "./cache/types.js";
 
 // Extracted router utilities
 import {
@@ -92,6 +102,7 @@ import { createHandlerContext } from "./router/handler-context.js";
 import {
   setupLoaderAccess,
   setupLoaderAccessSilent,
+  setupBuildUse,
   wrapLoaderWithErrorHandling,
 } from "./router/loader-resolution.js";
 import { loadManifest } from "./router/manifest.js";
@@ -123,7 +134,99 @@ import {
 } from "./router/match-context.js";
 import { createMatchPartialPipeline } from "./router/match-pipelines.js";
 import { collectMatchResult } from "./router/match-result.js";
+import {
+  runWithRouterLogContext,
+  withRouterLogScope,
+} from "./router/logging.js";
 import { resolveThemeConfig } from "./theme/constants.js";
+
+// Response type -> MIME type used for Accept header matching
+const RESPONSE_TYPE_MIME: Record<string, string> = {
+  json: "application/json",
+  text: "text/plain",
+  xml: "application/xml",
+  html: "text/html",
+  md: "text/markdown",
+};
+
+// Reverse lookup: MIME type -> response type tag (e.g. "text/html" -> "html")
+const MIME_RESPONSE_TYPE: Record<string, string> = Object.fromEntries(
+  Object.entries(RESPONSE_TYPE_MIME).map(([tag, mime]) => [mime, tag]),
+);
+
+interface AcceptEntry {
+  mime: string;
+  q: number;
+  order: number;
+}
+
+/**
+ * Parse an Accept header into a sorted array of MIME entries.
+ * Respects q-values (default 1.0) and uses client order as tiebreaker
+ * when q-values are equal (matching Express/Hono behavior).
+ */
+function parseAcceptTypes(accept: string): AcceptEntry[] {
+  const entries: AcceptEntry[] = [];
+  const parts = accept.split(",");
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]!;
+    const segments = part.split(";");
+    const mime = segments[0]!.trim();
+    if (!mime) continue;
+    let q = 1.0;
+    for (let j = 1; j < segments.length; j++) {
+      const param = segments[j]!.trim();
+      if (param.startsWith("q=")) {
+        q = Math.max(0, Math.min(1, Number(param.slice(2)) || 0));
+      }
+    }
+    entries.push({ mime, q, order: i });
+  }
+  // Sort: highest q first, then lowest client order first (stable)
+  entries.sort((a, b) => b.q - a.q || a.order - b.order);
+  return entries;
+}
+
+// Sentinel response type for RSC routes in negotiation candidates
+const RSC_RESPONSE_TYPE = "__rsc__";
+
+/**
+ * Pick the best negotiate variant by walking the client's sorted Accept list.
+ * For each accepted MIME type (in q-value/order priority), check if any
+ * candidate serves that type. Wildcards (*\/*) match the first candidate.
+ * Falls back to the first candidate if nothing matches.
+ */
+function pickNegotiateVariant(
+  acceptEntries: AcceptEntry[],
+  candidates: Array<{ routeKey: string; responseType: string }>,
+): { routeKey: string; responseType: string } {
+  // Build a MIME -> candidate lookup for O(1) matching
+  const byCandidateMime = new Map<string, { routeKey: string; responseType: string }>();
+  for (const c of candidates) {
+    const mime = c.responseType === RSC_RESPONSE_TYPE ? "text/html" : RESPONSE_TYPE_MIME[c.responseType];
+    if (mime && !byCandidateMime.has(mime)) {
+      byCandidateMime.set(mime, c);
+    }
+  }
+
+  for (const entry of acceptEntries) {
+    if (entry.q === 0) continue;
+    // Wildcard matches first candidate
+    if (entry.mime === "*/*") return candidates[0]!;
+    // Type wildcard (e.g. "text/*") — match first candidate with that type
+    if (entry.mime.endsWith("/*")) {
+      const typePrefix = entry.mime.slice(0, entry.mime.indexOf("/"));
+      for (const [mime, candidate] of byCandidateMime) {
+        if (mime.startsWith(typePrefix + "/")) return candidate;
+      }
+      continue;
+    }
+    const match = byCandidateMime.get(entry.mime);
+    if (match) return match;
+  }
+  // No match — use first candidate as default
+  return candidates[0]!;
+}
 
 /**
  * Props passed to the root layout component
@@ -158,6 +261,13 @@ export interface RSCRouterOptions<TEnv = any> {
    * Auto-generated if not provided.
    */
   id?: string;
+
+  /**
+   * Injected by the Vite transform at compile time.
+   * Hash of filename + line number for stable cross-environment ID.
+   * @internal
+   */
+  $$id?: string;
 
   /**
    * Enable performance metrics collection
@@ -395,6 +505,14 @@ export interface RSCRouterOptions<TEnv = any> {
   urls?: UrlPatterns<TEnv, any>;
 
   /**
+   * Injected by the Vite transform at compile time.
+   * Static import of NamedRoutes from the generated named-routes file.
+   * Provides O(1) reverse() fallback when lazy includes haven't resolved.
+   * @internal
+   */
+  $$routeNames?: Record<string, string>;
+
+  /**
    * Nonce provider for Content Security Policy (CSP).
    *
    * Can be:
@@ -445,9 +563,36 @@ export interface RSCRouterOptions<TEnv = any> {
 }
 
 /**
+ * Merge route patterns with response types into a single route map.
+ * Routes with response types get { path, response } objects; others stay as strings.
+ * Handles both plain string routes and { path, search } object routes.
+ */
+type MergeRoutesWithResponses<
+  TRoutes extends Record<string, unknown>,
+  TResponses,
+> = {
+  [K in keyof TRoutes]: K extends keyof NonNullable<TResponses>
+    ? unknown extends NonNullable<TResponses>[K]
+      ? TRoutes[K] // RSC route — TData defaults to unknown, keep as-is
+      : TRoutes[K] extends { readonly path: infer P extends string }
+        ? TRoutes[K] & { readonly response: NonNullable<TResponses>[K] }
+        : { readonly path: TRoutes[K] & string; readonly response: NonNullable<TResponses>[K] }
+    : TRoutes[K]
+};
+
+/**
+ * Extract the URL pattern from a route entry (string or { path, response } object)
+ */
+type PatternOfEntry<V> =
+  V extends string ? V
+  : V extends { readonly path: infer P extends string } ? P
+  : never;
+
+/**
  * Type-level detection of conflicting route keys.
  * Extracts keys that exist in both TExisting and TNew but with different URL patterns.
  * Returns `never` if no conflicts exist.
+ * Compares patterns (not full entries) to handle both string and { path, response } values.
  *
  * @example
  * ```typescript
@@ -457,14 +602,14 @@ export interface RSCRouterOptions<TEnv = any> {
  * ```
  */
 type ConflictingKeys<
-  TExisting extends Record<string, string>,
-  TNew extends Record<string, string>,
+  TExisting extends Record<string, unknown>,
+  TNew extends Record<string, unknown>,
 > = {
-  [K in keyof TExisting & keyof TNew]: TExisting[K] extends TNew[K]
-    ? TNew[K] extends TExisting[K]
-      ? never // Same value, no conflict
-      : K // Different values, conflict
-    : K; // Different values, conflict
+  [K in keyof TExisting & keyof TNew]: PatternOfEntry<TExisting[K]> extends PatternOfEntry<TNew[K]>
+    ? PatternOfEntry<TNew[K]> extends PatternOfEntry<TExisting[K]>
+      ? never // Same pattern, no conflict
+      : K // Different patterns, conflict
+    : K; // Different patterns, conflict
 }[keyof TExisting & keyof TNew];
 
 /**
@@ -594,7 +739,7 @@ type InlineRouteHelpers<TRoutes extends Record<string, string>, TEnv> = {
 interface RouteBuilder<
   T extends RouteDefinition,
   TEnv,
-  TRoutes extends Record<string, string>,
+  TRoutes extends Record<string, unknown>,
   TLocalRoutes extends Record<string, string> = Record<string, string>,
 > {
   /**
@@ -664,7 +809,7 @@ interface RouteBuilder<
  */
 export interface RSCRouter<
   TEnv = any,
-  TRoutes extends Record<string, string> = Record<string, string>,
+  TRoutes extends Record<string, unknown> = Record<string, string>,
 > {
   /**
    * Brand marker for build-time discovery.
@@ -726,8 +871,8 @@ export interface RSCRouter<
   ): RSCRouter<
     TEnv,
     TRoutes &
-      (NonNullable<T["_routes"]> extends Record<string, string>
-        ? NonNullable<T["_routes"]>
+      (NonNullable<T["_routes"]> extends Record<string, unknown>
+        ? MergeRoutesWithResponses<NonNullable<T["_routes"]>, T["_responses"]>
         : Record<string, string>)
   >;
 
@@ -757,11 +902,11 @@ export interface RSCRouter<
    * @example
    * ```typescript
    * // Given: .routes("/shop", { cart: "/cart", detail: "/product/:slug" })
-   * router.href("cart"); // "/shop/cart"
-   * router.href("detail", { slug: "widget" }); // "/shop/product/widget"
+   * router.reverse("cart"); // "/shop/cart"
+   * router.reverse("detail", { slug: "widget" }); // "/shop/product/widget"
    * ```
    */
-  href: HrefFunction<TRoutes>;
+  reverse: ReverseFunction<TRoutes>;
 
   /**
    * Accumulated route map for typeof extraction
@@ -848,11 +993,35 @@ export interface RSCRouter<
    */
   readonly urlpatterns?: UrlPatterns<TEnv, any>;
 
+  /**
+   * Source file path where createRouter() was called.
+   * Set via Error.stack parsing at construction time.
+   * Used by the Vite plugin to write per-router named-routes.gen.ts files.
+   * @internal
+   */
+  readonly __sourceFile?: string;
+
   match(request: Request, context: TEnv): Promise<MatchResult>;
 
   /**
-   * Preview match - returns route middleware without segment resolution
-   * Used by RSC handler to execute route middleware before full matching
+   * Build-time pre-render match. Resolves segments with a BuildContext
+   * (no request/env/headers/cookies), skipping middleware and loaders.
+   * Used by the Vite plugin to collect pre-render data at build time.
+   * @internal
+   */
+  matchForPrerender(
+    pathname: string,
+    params: Record<string, string>,
+  ): Promise<{
+    segments: SerializedSegmentData[];
+    handles: Record<string, SegmentHandleData>;
+    routeName: string;
+    params: Record<string, string>;
+  } | null>;
+
+  /**
+   * Preview match - returns route middleware without segment resolution.
+   * Also returns responseType and handler for response routes (non-RSC short-circuit).
    */
   previewMatch(
     request: Request,
@@ -862,6 +1031,10 @@ export interface RSCRouter<
       handler: import("./router/middleware.js").MiddlewareFn;
       params: Record<string, string>;
     }>;
+    responseType?: string;
+    handler?: Function;
+    params?: Record<string, string>;
+    negotiated?: boolean;
   } | null>;
 
   matchPartial(
@@ -955,9 +1128,9 @@ export interface RSCRouter<
  *   .routes('/shop', shopRoutes) // accumulates shopRoutes with prefixed URLs
  *   .map(() => import('./shop'));
  *
- * // router.href now has type-safe autocomplete for all registered routes
- * // Given shopRoutes = { cart: "/cart" }, href uses original key:
- * router.href("cart"); // "/shop/cart"
+ * // router.reverse now has type-safe autocomplete for all registered routes
+ * // Given shopRoutes = { cart: "/cart" }, reverse uses original key:
+ * router.reverse("cart"); // "/shop/cart"
  * ```
  */
 
@@ -966,6 +1139,7 @@ export function createRouter<TEnv = any>(
 ): RSCRouter<TEnv, {}> {
   const {
     id: userProvidedId,
+    $$id: injectedId,
     debugPerformance = false,
     document: documentOption,
     defaultErrorBoundary,
@@ -975,13 +1149,36 @@ export function createRouter<TEnv = any>(
     cache,
     theme: themeOption,
     urls: urlsOption,
+    $$routeNames: staticRouteNames,
     nonce,
     version,
     warmup: warmupOption,
     allowDebugManifest: allowDebugManifestOption = true,
   } = options;
 
-  const routerId = userProvidedId ?? `router_${routerAutoId++}`;
+  // Capture the source file that called createRouter() via stack trace parsing.
+  // Used by the Vite plugin to write per-router named-routes.gen.ts files.
+  let __sourceFile: string | undefined;
+  try {
+    const stack = new Error().stack;
+    if (stack) {
+      const lines = stack.split("\n");
+      for (const line of lines) {
+        const match = line.match(/\((.+?\.(ts|tsx|js|jsx)):\d+:\d+\)/);
+        if (match && !match[1].endsWith("/router.ts") && !match[1].includes("@rangojs/router") && !match[1].includes("node_modules")) {
+          // Strip file: URL protocol prefix from Vite module runner stack traces
+          __sourceFile = match[1].startsWith("file:") ? match[1].slice(5) : match[1];
+          break;
+        }
+      }
+    }
+  } catch {}
+
+  // Router ID priority: explicit id > Vite-injected $$id > counter fallback.
+  // $$id is a hash of filename+line injected by the Vite transform at compile
+  // time, so it's stable across build/runtime regardless of module evaluation
+  // order (unlike the counter which depends on import order).
+  const routerId = userProvidedId ?? injectedId ?? `router_${routerAutoId++}`;
 
   // Resolve warmup enabled flag (default: true)
   const warmupEnabled = warmupOption !== false;
@@ -1071,16 +1268,27 @@ export function createRouter<TEnv = any>(
     });
   }
 
-  // Track all registered routes with their prefixes for href()
+  // Track all registered routes with their prefixes for reverse()
   const mergedRouteMap: Record<string, string> = {};
 
-  // Build a Map from precomputed entries for O(1) lookup by staticPrefix.
-  // The array is set at import time (from the virtual module) before createRouter runs.
-  const precomputedEntriesRaw = getPrecomputedEntries();
-  const precomputedByPrefix: Map<string, Record<string, string>> | null =
-    precomputedEntriesRaw
-      ? new Map(precomputedEntriesRaw.map((e) => [e.staticPrefix, e.routes]))
-      : null;
+  // Lazy precomputed entries lookup: rebuilt when per-router data arrives.
+  // In production multi-router setups, per-router data is loaded lazily via
+  // ensureRouterManifest(). At createRouter() time the data isn't available yet,
+  // so we defer building the Map until first use and invalidate when the
+  // per-router source changes.
+  let precomputedByPrefix: Map<string, Record<string, string>> | null = null;
+  let precomputedSource: Array<{ staticPrefix: string; routes: Record<string, string> }> | null | undefined;
+
+  function getPrecomputedByPrefix(): Map<string, Record<string, string>> | null {
+    const current = getRouterPrecomputedEntries(routerId) ?? getPrecomputedEntries();
+    if (current !== precomputedSource) {
+      precomputedSource = current;
+      precomputedByPrefix = current
+        ? new Map(current.map((e) => [e.staticPrefix, e.routes]))
+        : null;
+    }
+    return precomputedByPrefix;
+  }
 
 
   // Wrapper to pass debugPerformance to external createMetricsStore
@@ -1167,6 +1375,7 @@ export function createRouter<TEnv = any>(
       findInterceptForRoute(routeKey, parentEntry, selectorContext, isAction),
     callOnError,
     findNearestErrorBoundary,
+    getRouteMap: () => getRouterManifest(routerId) ?? getGlobalRouteMap(),
   };
 
   // Thin wrappers that bind the deps to extracted functions.
@@ -1179,8 +1388,9 @@ export function createRouter<TEnv = any>(
     params: Record<string, string>,
     context: HandlerContext<any, TEnv>,
     loaderPromises: Map<string, Promise<any>>,
+    options?: { skipLoaders?: boolean },
   ) {
-    return _resolveAllSegments(entries, routeKey, params, context, loaderPromises, segmentDeps);
+    return _resolveAllSegments(entries, routeKey, params, context, loaderPromises, segmentDeps, options);
   }
 
   function resolveLoadersOnly(
@@ -1327,16 +1537,27 @@ export function createRouter<TEnv = any>(
     // Check for pre-computed routes from build-time data.
     // Only leaf nodes (no nested includes) are precomputed, so entries with
     // nested lazy includes fall through to the handler below.
-    if (precomputedByPrefix) {
-      const routes = precomputedByPrefix.get(entry.staticPrefix);
+    // When multiple entries share the same staticPrefix (e.g., several
+    // include("/", ...) calls), the precomputed data merges all their routes
+    // into one entry. Assigning that merged set to the first matching entry
+    // causes findMatch to pick the wrong handler for routes belonging to a
+    // different include. Skip the shortcut when the prefix is shared.
+    const currentPrecomputed = getPrecomputedByPrefix();
+    if (currentPrecomputed) {
+      const routes = currentPrecomputed.get(entry.staticPrefix);
       if (routes) {
-        entry.lazyEvaluated = true;
-        entry.routes = routes as ResolvedRouteMap<any>;
-        for (const [name, pattern] of Object.entries(routes)) {
-          mergedRouteMap[name] = pattern;
+        const prefixIsShared = routesEntries.filter(
+          (e) => e.staticPrefix === entry.staticPrefix,
+        ).length > 1;
+        if (!prefixIsShared) {
+          entry.lazyEvaluated = true;
+          entry.routes = routes as ResolvedRouteMap<any>;
+          for (const [name, pattern] of Object.entries(routes)) {
+            mergedRouteMap[name] = pattern;
+          }
+          registerRouteMap(mergedRouteMap);
+          return;
         }
-        registerRouteMap(mergedRouteMap);
-        return;
       }
     }
 
@@ -1357,6 +1578,16 @@ export function createRouter<TEnv = any>(
     // Capture the handler result to detect nested lazy includes
     let handlerResult: AllUseItems[] = [];
 
+    // Merge captured counters from include() to maintain consistent
+    // shortCode indices with sibling entries from pattern extraction
+    const lazyCounters: Record<string, number> = {};
+    if (lazyContext && (lazyContext as any).counters) {
+      const captured = (lazyContext as any).counters as Record<string, number>;
+      for (const [key, value] of Object.entries(captured)) {
+        lazyCounters[key] = value;
+      }
+    }
+
     RSCRouterContext.run(
       {
         manifest,
@@ -1365,7 +1596,7 @@ export function createRouter<TEnv = any>(
         trailingSlash: trailingSlashMap,
         namespace: "lazy",
         parent: (lazyContext?.parent as EntryData | null) ?? null,
-        counters: {},
+        counters: lazyCounters,
       },
       () => {
         // Run the lazy patterns handler with the original context prefixes
@@ -1387,7 +1618,7 @@ export function createRouter<TEnv = any>(
     const routesObject: Record<string, string> = {};
     for (const [name, pattern] of patterns.entries()) {
       routesObject[name] = pattern;
-      // Also add to merged route map for href() support
+      // Also add to merged route map for reverse() support
       const existingPattern = mergedRouteMap[name];
       if (existingPattern !== undefined && existingPattern !== pattern) {
         console.warn(
@@ -1424,7 +1655,7 @@ export function createRouter<TEnv = any>(
         routes: {} as ResolvedRouteMap<any>, // Empty until first match
         trailingSlash: entry.trailingSlash,
         handler: (lazyInclude.patterns as UrlPatterns<TEnv>).handler,
-        mountIndex: entry.mountIndex,
+        mountIndex: mountIndex++,
         // Lazy evaluation fields
         lazy: true,
         lazyPatterns: lazyInclude.patterns,
@@ -1454,7 +1685,7 @@ export function createRouter<TEnv = any>(
       routesEntries.splice(insertIndex, 0, nestedEntry);
     }
 
-    // Re-register route map for runtime href() usage
+    // Re-register route map for runtime reverse() usage
     registerRouteMap(mergedRouteMap);
   }
 
@@ -1489,7 +1720,8 @@ export function createRouter<TEnv = any>(
       : undefined;
 
     // Phase 1: Try trie match (O(path_length))
-    const routeTrie = getRouteTrie();
+    // Prefer per-router trie (isolated) over global trie (merged).
+    const routeTrie = getRouterTrie(routerId) ?? getRouteTrie();
     if (routeTrie) {
       const trieStart = performance.now();
       const trieResult = tryTrieMatch(routeTrie, pathname);
@@ -1549,6 +1781,9 @@ export function createRouter<TEnv = any>(
             ancestry: trieResult.ancestry,
             ...(trieResult.pr ? { pr: true } : {}),
             ...(trieResult.pt ? { pt: true } : {}),
+            ...(trieResult.responseType ? { responseType: trieResult.responseType } : {}),
+            ...(trieResult.negotiateVariants ? { negotiateVariants: trieResult.negotiateVariants } : {}),
+            ...(trieResult.rscFirst ? { rscFirst: true } : {}),
           };
           return lastFindMatchResult;
         }
@@ -1585,6 +1820,158 @@ export function createRouter<TEnv = any>(
 
 
   /**
+   * Build-time pre-render match. Resolves segments with a BuildContext
+   * (no request/env/headers/cookies), skipping middleware and loaders.
+   */
+  async function matchForPrerender(
+    pathname: string,
+    params: Record<string, string>,
+  ): Promise<{
+    segments: SerializedSegmentData[];
+    handles: Record<string, SegmentHandleData>;
+    routeName: string;
+    params: Record<string, string>;
+  } | null> {
+    // 1. Find the matching route entry
+    const matched = findMatch(pathname);
+    if (!matched) return null;
+
+    // Use params from trie match if available, fall back to provided params
+    const matchedParams = matched.params ?? params;
+
+    // Build a minimal RouterContext for loadManifest/traverseBack
+    const routerCtx: RouterContext<TEnv> = {
+      findMatch,
+      loadManifest,
+      traverseBack,
+      createHandlerContext,
+      setupLoaderAccess,
+      setupLoaderAccessSilent,
+      getContext,
+      getMetricsStore,
+      createCacheScope,
+      findInterceptForRoute,
+      resolveAllSegmentsWithRevalidation,
+      resolveInterceptEntry,
+      evaluateRevalidation,
+      getRequestContext,
+      resolveAllSegments,
+      createHandleStore,
+      buildEntryRevalidateMap,
+      resolveLoadersOnlyWithRevalidation,
+      resolveInterceptLoadersOnly,
+      resolveLoadersOnly,
+    };
+
+    return runWithRouterContext(routerCtx, async () => {
+      // 2. Load the manifest entry tree
+      const manifestEntry = await loadManifest(
+        matched.entry,
+        matched.routeKey,
+        pathname,
+        undefined,
+        false,
+      );
+
+      // 3. Build ancestor chain [root, ..., route]
+      const entries: EntryData[] = [];
+      for (const entry of traverseBack(manifestEntry)) {
+        entries.push(entry);
+      }
+
+      // 4. Create handle store for collecting handle data
+      const handleStore = createHandleStore();
+
+      // 5. Create a minimal request context with the handle store
+      const stubRes = new Response(null, { status: 200 });
+      const minimalRequestContext: RequestContext<TEnv> = {
+        env: {} as TEnv,
+        request: new Request("http://prerender" + pathname),
+        url: new URL("http://prerender" + pathname),
+        pathname,
+        searchParams: new URLSearchParams(),
+        var: {},
+        get: () => undefined as any,
+        set: () => {},
+        params: matchedParams,
+        res: stubRes,
+        cookie: () => undefined,
+        cookies: () => ({}),
+        setCookie: () => {},
+        deleteCookie: () => {},
+        header: () => {},
+        use: (() => {
+          throw new Error("use() not available during pre-rendering");
+        }) as any,
+        method: "GET",
+        _handleStore: handleStore,
+        waitUntil: () => {},
+        onResponse: () => {},
+        _onResponseCallbacks: [],
+      };
+
+      return runWithRequestContext(minimalRequestContext, async () => {
+        // 6. Create handler context with synthetic request for pre-rendering.
+        // The synthetic request and route map are available at build time,
+        // so reverse() and other context properties work normally.
+        const buildCtx = createHandlerContext<TEnv>(
+          matchedParams,
+          minimalRequestContext.request,
+          minimalRequestContext.url.searchParams,
+          pathname,
+          minimalRequestContext.url,
+          {},
+          mergedRouteMap,
+          matched.routeKey,
+        );
+
+        // 7. Wire use() for handles only (loaders throw)
+        setupBuildUse(buildCtx);
+
+        // 8. Resolve all segments with skipLoaders
+        const loaderPromises = new Map<string, Promise<any>>();
+        const allSegments = await resolveAllSegments(
+          entries,
+          matched.routeKey,
+          matchedParams,
+          buildCtx,
+          loaderPromises,
+          { skipLoaders: true },
+        );
+
+        // 9. Filter out any loader segments (belt-and-suspenders)
+        const nonLoaderSegments = allSegments.filter((s) => s.type !== "loader");
+
+        // 10. Wait for handles to settle
+        await handleStore.settled;
+
+        // 11. Serialize segments using the cache serializer
+        const { serializeSegments } = await import("./cache/cache-scope.js");
+        const serializedSegments = await serializeSegments(nonLoaderSegments);
+
+        // 12. Collect handle data per segment (skip segments with no handle data)
+        const handles: Record<string, SegmentHandleData> = {};
+        for (const seg of nonLoaderSegments) {
+          const segHandles = handleStore.getDataForSegment(seg.id);
+          if (Object.keys(segHandles).length > 0) {
+            handles[seg.id] = segHandles;
+          }
+        }
+
+        // Use the trie-level route key (e.g., "docs", "docs.article")
+        const routeName = matched.routeKey;
+
+        return {
+          segments: serializedSegments,
+          handles,
+          routeName,
+          params: matchedParams,
+        };
+      });
+    });
+  }
+
+  /**
    * Match request and return segments (document/SSR requests)
    *
    * Uses generator middleware pipeline for clean separation of concerns:
@@ -1618,39 +2005,45 @@ export function createRouter<TEnv = any>(
       resolveLoadersOnly,
     };
 
-    return runWithRouterContext(routerCtx, async () => {
-      const result = await createMatchContextForFull(request, env);
+    return runWithRouterLogContext(
+      { request, transaction: "match" },
+      () =>
+        runWithRouterContext(routerCtx, async () =>
+          withRouterLogScope("match", async () => {
+            const result = await createMatchContextForFull(request, env);
 
-      // Handle redirect case
-      if ("type" in result && result.type === "redirect") {
-        return {
-          segments: [],
-          matched: [],
-          diff: [],
-          params: {},
-          redirect: result.redirectUrl,
-        };
-      }
+          // Handle redirect case
+          if ("type" in result && result.type === "redirect") {
+            return {
+              segments: [],
+              matched: [],
+              diff: [],
+              params: {},
+              redirect: result.redirectUrl,
+            };
+          }
 
-      const ctx = result as MatchContext<TEnv>;
+            const ctx = result as MatchContext<TEnv>;
 
-      try {
-        const state = createPipelineState();
-        const pipeline = createMatchPartialPipeline(ctx, state);
-        return await collectMatchResult(pipeline, ctx, state);
-      } catch (error) {
-        if (error instanceof Response) throw error;
-        // Report unhandled errors during full match pipeline
-        callOnError(error, "routing", {
-          request,
-          url: ctx.url,
-          env,
-          isPartial: false,
-          handledByBoundary: false,
-        });
-        throw sanitizeError(error);
-      }
-    });
+            try {
+              const state = createPipelineState();
+              const pipeline = createMatchPartialPipeline(ctx, state);
+              return await collectMatchResult(pipeline, ctx, state);
+            } catch (error) {
+              if (error instanceof Response) throw error;
+              // Report unhandled errors during full match pipeline
+              callOnError(error, "routing", {
+                request,
+                url: ctx.url,
+                env,
+                isPartial: false,
+                handledByBoundary: false,
+              });
+              throw sanitizeError(error);
+            }
+          }),
+        ),
+    );
   }
 
   async function matchError(
@@ -1659,7 +2052,20 @@ export function createRouter<TEnv = any>(
     error: unknown,
     segmentType: ErrorInfo["segmentType"] = "route",
   ): Promise<MatchResult | null> {
-    return _matchError(request, _context, error, matchApiDeps, defaultErrorBoundary, segmentType);
+    return runWithRouterLogContext(
+      { request, transaction: "matchError" },
+      () =>
+        withRouterLogScope("matchError", () =>
+          _matchError(
+            request,
+            _context,
+            error,
+            matchApiDeps,
+            defaultErrorBoundary,
+            segmentType,
+          ),
+        ),
+    );
   }
 
 
@@ -1716,37 +2122,43 @@ export function createRouter<TEnv = any>(
       resolveInterceptLoadersOnly,
     };
 
-    return runWithRouterContext(routerCtx, async () => {
-      const ctx = await createMatchContextForPartial(
-        request,
-        context,
-        actionContext,
-      );
-      if (!ctx) return null;
+    return runWithRouterLogContext(
+      { request, transaction: "matchPartial" },
+      () =>
+        runWithRouterContext(routerCtx, async () =>
+          withRouterLogScope("matchPartial", async () => {
+            const ctx = await createMatchContextForPartial(
+              request,
+              context,
+              actionContext,
+            );
+            if (!ctx) return null;
 
-      try {
-        const state = createPipelineState();
-        const pipeline = createMatchPartialPipeline(ctx, state);
-        return await collectMatchResult(pipeline, ctx, state);
-      } catch (error) {
-        if (error instanceof Response) throw error;
-        // Report unhandled errors during partial match pipeline
-        callOnError(error, actionContext ? "action" : "revalidation", {
-          request,
-          url: ctx.url,
-          env: context,
-          actionId: actionContext?.actionId,
-          isPartial: true,
-          handledByBoundary: false,
-        });
-        throw sanitizeError(error);
-      }
-    });
+            try {
+              const state = createPipelineState();
+              const pipeline = createMatchPartialPipeline(ctx, state);
+              return await collectMatchResult(pipeline, ctx, state);
+            } catch (error) {
+              if (error instanceof Response) throw error;
+              // Report unhandled errors during partial match pipeline
+              callOnError(error, actionContext ? "action" : "revalidation", {
+                request,
+                url: ctx.url,
+                env: context,
+                actionId: actionContext?.actionId,
+                isPartial: true,
+                handledByBoundary: false,
+              });
+              throw sanitizeError(error);
+            }
+          }),
+        ),
+    );
   }
 
   /**
-   * Preview match - returns route middleware without segment resolution
-   * Used by RSC handler to execute route middleware before full matching
+   * Preview match - returns route middleware without segment resolution.
+   * Also returns responseType and handler for response routes (non-RSC short-circuit).
    */
   async function previewMatch(
     request: Request,
@@ -1756,15 +2168,23 @@ export function createRouter<TEnv = any>(
       handler: import("./router/middleware.js").MiddlewareFn;
       params: Record<string, string>;
     }>;
+    responseType?: string;
+    handler?: Function;
+    params?: Record<string, string>;
+    negotiated?: boolean;
   } | null> {
-    const url = new URL(request.url);
-    const pathname = url.pathname;
+    return runWithRouterLogContext(
+      { request, transaction: "previewMatch" },
+      async () =>
+        withRouterLogScope("previewMatch", async () => {
+          const url = new URL(request.url);
+          const pathname = url.pathname;
 
-    // Quick route matching
-    const matched = findMatch(pathname);
-    if (!matched) {
-      return null;
-    }
+          // Quick route matching
+          const matched = findMatch(pathname);
+          if (!matched) {
+            return null;
+          }
 
     // Skip redirect check - will be handled in full match
     if (matched.redirectTo) {
@@ -1787,9 +2207,72 @@ export function createRouter<TEnv = any>(
       matched.params,
     );
 
-    return {
-      routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
-    };
+    // Check for response type (from trie match or manifest entry)
+    const responseType = matched.responseType ||
+      (manifestEntry.type === "route" ? manifestEntry.responseType : undefined);
+
+    // Content negotiation: when negotiate variants exist, pick the best
+    // handler based on the Accept header. Uses q-values and client order
+    // as tiebreaker (matching Express/Hono behavior). RSC routes participate
+    // as text/html candidates so browsers naturally get HTML without
+    // special-casing.
+    if (matched.negotiateVariants && matched.negotiateVariants.length > 0) {
+      const acceptEntries = parseAcceptTypes(request.headers.get("accept") || "");
+
+      // Build candidate list preserving definition order.
+      // For wildcard (*/*) and no-Accept fallback, the first candidate wins.
+      const variants = matched.negotiateVariants;
+      let candidates: Array<{ routeKey: string; responseType: string }>;
+      if (responseType) {
+        // Primary is response-type — include it as a candidate
+        candidates = [...variants, { routeKey: matched.routeKey, responseType }];
+      } else {
+        // Primary is RSC — insert as text/html candidate in definition order
+        const rscCandidate = { routeKey: matched.routeKey, responseType: RSC_RESPONSE_TYPE };
+        candidates = matched.rscFirst
+          ? [rscCandidate, ...variants]
+          : [...variants, rscCandidate];
+      }
+
+      const variant = pickNegotiateVariant(acceptEntries, candidates);
+
+      // If the winner is RSC, fall through to default RSC handling
+      if (variant.responseType === RSC_RESPONSE_TYPE) {
+        // Fall through — RSC won negotiation
+      } else if (responseType && variant.routeKey === matched.routeKey) {
+        // Fall through — response-type primary won, already set
+      } else {
+        const negotiateEntry = await loadManifest(
+          matched.entry,
+          variant.routeKey,
+          pathname,
+          undefined,
+          false,
+        );
+        return {
+          routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
+          responseType: variant.responseType,
+          handler: negotiateEntry.type === "route" ? negotiateEntry.handler : undefined,
+          params: matched.params,
+          negotiated: true,
+        };
+      }
+    }
+
+    // If we passed through the negotiation block (variants exist), mark as
+    // negotiated so the handler sets Vary: Accept on the response.
+          const hasVariants = matched.negotiateVariants && matched.negotiateVariants.length > 0;
+          return {
+            routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
+            ...(responseType ? {
+              responseType,
+              handler: manifestEntry.type === "route" ? manifestEntry.handler : undefined,
+              params: matched.params,
+            } : {}),
+            ...(hasVariants ? { negotiated: true } : {}),
+          };
+        }),
+    );
   }
 
   /**
@@ -1802,16 +2285,18 @@ export function createRouter<TEnv = any>(
   ): RouteBuilder<RouteDefinition, TEnv, any, TNewRoutes> {
     const currentMountIndex = mountIndex++;
 
-    // Merge routes into the href map
+    // Merge routes into the reverse map
     // Keys stay unchanged for composability - only URL patterns get prefixed
     const routeEntries = routes as Record<string, string>;
     for (const [key, pattern] of Object.entries(routeEntries)) {
       // Build prefixed pattern: "/shop" + "/cart" -> "/shop/cart"
+      // Root prefix "/" is a no-op — don't double the leading slash.
+      const effectivePrefix = prefix === "/" ? "" : prefix;
       const prefixedPattern =
-        prefix && pattern !== "/"
-          ? `${prefix}${pattern}`
-          : prefix && pattern === "/"
-            ? prefix
+        effectivePrefix && pattern !== "/"
+          ? `${effectivePrefix}${pattern}`
+          : effectivePrefix && pattern === "/"
+            ? effectivePrefix
             : pattern;
 
       // Runtime validation: warn if key already exists with different pattern
@@ -1830,7 +2315,7 @@ export function createRouter<TEnv = any>(
       mergedRouteMap[key] = prefixedPattern;
     }
 
-    // Auto-register route map for runtime href() usage
+    // Auto-register route map for runtime reverse() usage
     registerRouteMap(mergedRouteMap);
 
     // Extract trailing slash config if present (attached by route())
@@ -1921,9 +2406,31 @@ export function createRouter<TEnv = any>(
         const patternsByPrefix = new Map<string, Map<string, string>>();
         const trailingSlashMap = new Map<string, TrailingSlashMode>();
 
-        // Run the handler once to extract patterns for route matching
-        // Note: loadManifest will re-run the handler to register entries in its context
-        // Lazy includes are detected in the return value and handled separately
+        // Run the handler once to extract patterns for route matching.
+        // Note: loadManifest will re-run the handler to register entries in its context.
+        // Lazy includes are detected in the return value and handled separately.
+        //
+        // Pattern extraction must use the same mountIndex and MapRootLayout root
+        // parent as loadManifest so that shortCodes produced here match those at
+        // runtime.  include() captures the current parent and counters; if those
+        // shortCodes diverge from the runtime tree the segment reconciliation on
+        // the client will see a full mismatch and remount the entire page.
+        const syntheticMapRoot: EntryData = {
+          type: "layout",
+          id: `#synthetic-maproot-M${currentMountIndex}`,
+          shortCode: `M${currentMountIndex}L0`,
+          parent: null,
+          handler: MapRootLayout,
+          middleware: [],
+          revalidate: [],
+          errorBoundary: [],
+          notFoundBoundary: [],
+          layout: [],
+          parallel: [],
+          intercept: [],
+          loader: [],
+        };
+
         let handlerResult: AllUseItems[] = [];
         RSCRouterContext.run(
           {
@@ -1932,11 +2439,11 @@ export function createRouter<TEnv = any>(
             patternsByPrefix,
             trailingSlash: trailingSlashMap,
             namespace: "root",
-            parent: null,
+            parent: syntheticMapRoot,
             counters: {},
+            mountIndex: currentMountIndex,
           },
           () => {
-            // Execute the handler to collect patterns
             handlerResult = urlPatterns.handler() as AllUseItems[];
           },
         );
@@ -1947,6 +2454,15 @@ export function createRouter<TEnv = any>(
           trailingSlashMap.size > 0
             ? Object.fromEntries(trailingSlashMap)
             : undefined;
+
+        // Collect route keys that have prerender handlers (for non-trie match path)
+        let prerenderRouteKeys: Set<string> | undefined;
+        for (const [name, entry] of manifest.entries()) {
+          if (entry.type === "route" && entry.isPrerender) {
+            if (!prerenderRouteKeys) prerenderRouteKeys = new Set();
+            prerenderRouteKeys.add(name);
+          }
+        }
 
         // Create separate RouteEntry for each URL prefix group
         // This enables prefix-based short-circuit optimization
@@ -1967,6 +2483,7 @@ export function createRouter<TEnv = any>(
               trailingSlash: trailingSlashConfig,
               handler: urlPatterns.handler,
               mountIndex: currentMountIndex,
+              ...(prerenderRouteKeys ? { prerenderRouteKeys } : {}),
             });
           }
         } else {
@@ -1983,6 +2500,7 @@ export function createRouter<TEnv = any>(
             trailingSlash: trailingSlashConfig,
             handler: urlPatterns.handler,
             mountIndex: currentMountIndex,
+            ...(prerenderRouteKeys ? { prerenderRouteKeys } : {}),
           });
         }
 
@@ -2016,7 +2534,7 @@ export function createRouter<TEnv = any>(
             routes: {} as ResolvedRouteMap<any>, // Empty until first match
             trailingSlash: trailingSlashConfig,
             handler: urlPatterns.handler,
-            mountIndex: currentMountIndex,
+            mountIndex: mountIndex++,
             // Lazy evaluation fields
             lazy: true,
             lazyPatterns: lazyInclude.patterns,
@@ -2046,7 +2564,7 @@ export function createRouter<TEnv = any>(
           routesEntries.splice(insertIndex, 0, lazyEntry);
         }
 
-        // Auto-register route map for runtime href() usage
+        // Auto-register route map for runtime reverse() usage
         registerRouteMap(mergedRouteMap);
 
         // Return the router (no .map() needed for UrlPatterns)
@@ -2073,7 +2591,8 @@ export function createRouter<TEnv = any>(
 
     // Type-safe URL builder using merged route map
     // Types are tracked through the builder chain via TRoutes parameter
-    href: createHref(mergedRouteMap),
+    // Falls back to static route names from the generated file (injected by Vite)
+    reverse: createReverse(mergedRouteMap, () => staticRouteNames),
 
     // Expose accumulated route map for typeof extraction
     // Returns {} initially, but builder chain accumulates specific route types
@@ -2106,6 +2625,7 @@ export function createRouter<TEnv = any>(
     middleware: globalMiddleware,
 
     match,
+    matchForPrerender,
     matchPartial,
     matchError,
     previewMatch,
@@ -2121,6 +2641,9 @@ export function createRouter<TEnv = any>(
       return storedUrlPatterns ?? undefined;
     },
 
+    // Expose source file for per-router type generation
+    __sourceFile,
+
     // RSC request handler (lazily created on first call)
     fetch: (() => {
       // Handler is created on first call and reused
@@ -2135,6 +2658,9 @@ export function createRouter<TEnv = any>(
         request: Request,
         env: TEnv & { ctx?: ExecutionContext },
       ) => {
+        // Trigger lazy import of per-router manifest data before route matching.
+        // No-op if data is already loaded or no loader is registered.
+        await ensureRouterManifest(routerId);
         if (!handler) {
           // Lazy import deferred to first request to avoid dev mode issues
           const { createRSCHandler } = await import("./rsc/handler.js");

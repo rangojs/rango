@@ -23,12 +23,12 @@
  * ```
  */
 
-import type { PrefixRoutePatterns } from "./href.js";
+import type { PrefixRoutePatterns } from "./reverse.js";
 
 /**
  * Route map builder interface
  *
- * Accumulates route types through the builder chain for type-safe href.
+ * Accumulates route types through the builder chain for type-safe reverse.
  */
 export interface RouteMapBuilder<TRoutes extends Record<string, string> = {}> {
   /**
@@ -126,9 +126,9 @@ let cachedPrecomputedEntries: Array<{
 }> | null = null;
 
 /**
- * Register the route map globally for href to use at runtime
+ * Register the route map globally for reverse to use at runtime
  *
- * Call this after building your route map to make it available to href.
+ * Call this after building your route map to make it available to reverse.
  * Routes are merged with any existing registered routes.
  *
  * @param map - The route map to register
@@ -150,7 +150,7 @@ export function registerRouteMap(map: Record<string, string>): void {
 /**
  * Get the globally registered route map
  *
- * Used internally by href to resolve route names to URLs at runtime.
+ * Used internally by reverse to resolve route names to URLs at runtime.
  * Returns the cached manifest if available (complete with lazy includes),
  * otherwise returns the runtime-accumulated route map.
  *
@@ -227,6 +227,68 @@ export function getRouteTrie(): typeof cachedRouteTrie {
   return cachedRouteTrie;
 }
 
+// Per-router isolated data: each router gets its own manifest, trie, and
+// precomputed entries so multi-router setups (e.g. site + admin via
+// createHostRouter()) don't see each other's routes.
+const perRouterManifestMap: Map<string, Record<string, string>> = new Map();
+const perRouterTrieMap: Map<string, import("./build/route-trie.js").TrieNode> = new Map();
+const perRouterPrecomputedEntriesMap: Map<
+  string,
+  Array<{ staticPrefix: string; routes: Record<string, string> }>
+> = new Map();
+
+export function setRouterManifest(routerId: string, manifest: Record<string, string>): void {
+  perRouterManifestMap.set(routerId, manifest);
+}
+
+export function getRouterManifest(routerId: string): Record<string, string> | undefined {
+  return perRouterManifestMap.get(routerId);
+}
+
+export function setRouterTrie(routerId: string, trie: import("./build/route-trie.js").TrieNode): void {
+  perRouterTrieMap.set(routerId, trie);
+}
+
+export function getRouterTrie(routerId: string): import("./build/route-trie.js").TrieNode | undefined {
+  return perRouterTrieMap.get(routerId);
+}
+
+export function setRouterPrecomputedEntries(
+  routerId: string,
+  entries: Array<{ staticPrefix: string; routes: Record<string, string> }>,
+): void {
+  perRouterPrecomputedEntriesMap.set(routerId, entries);
+}
+
+export function getRouterPrecomputedEntries(
+  routerId: string,
+): Array<{ staticPrefix: string; routes: Record<string, string> }> | undefined {
+  return perRouterPrecomputedEntriesMap.get(routerId);
+}
+
+// Lazy loader registry: per-router manifest modules are loaded on first request
+// via import() to keep startup fast and allow Rollup to code-split per router.
+const routerManifestLoaders: Map<string, () => Promise<any>> = new Map();
+
+export function registerRouterManifestLoader(
+  routerId: string,
+  loader: () => Promise<any>,
+): void {
+  routerManifestLoaders.set(routerId, loader);
+}
+
+export async function ensureRouterManifest(routerId: string): Promise<void> {
+  if (perRouterManifestMap.has(routerId)) return;
+  const loader = routerManifestLoaders.get(routerId);
+  if (loader) {
+    const mod = await loader();
+    if (mod.manifest) perRouterManifestMap.set(routerId, mod.manifest);
+    if (mod.trie) perRouterTrieMap.set(routerId, mod.trie);
+    if (mod.precomputedEntries) perRouterPrecomputedEntriesMap.set(routerId, mod.precomputedEntries);
+    routerManifestLoaders.delete(routerId);
+  }
+}
+
 // Dev-mode manifest readiness gate.
 // The Vite discovery plugin calls setManifestReadyPromise() before starting
 // discovery, and resolves it when discovery completes. The handler awaits
@@ -239,4 +301,27 @@ export function setManifestReadyPromise(promise: Promise<void>): void {
 
 export function waitForManifestReady(): Promise<void> | null {
   return manifestReadyPromise;
+}
+
+// ============================================================================
+// Search Schema Registry
+// ============================================================================
+
+import type { SearchSchema } from "./search-params.js";
+
+// Global search schema map: route name -> search schema descriptor.
+// Populated by path() when a search option is provided.
+const globalSearchSchemas: Map<string, SearchSchema> = new Map();
+
+export function registerSearchSchema(
+  routeName: string,
+  schema: SearchSchema,
+): void {
+  globalSearchSchemas.set(routeName, schema);
+}
+
+export function getSearchSchema(
+  routeName: string,
+): SearchSchema | undefined {
+  return globalSearchSchemas.get(routeName);
 }

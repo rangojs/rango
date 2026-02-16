@@ -27,9 +27,6 @@ import {
   InterceptSelectorContext,
   type MetricsStore,
 } from "../server/context";
-import {
-  getGlobalRouteMap,
-} from "../route-map-builder.js";
 import type {
   ErrorBoundaryHandler,
   ErrorInfo,
@@ -43,6 +40,7 @@ import type { MatchApiDeps, ActionContext } from "./types.js";
 import type { InterceptEntry } from "../server/context";
 import type { RouteMatchResult } from "./pattern-matching.js";
 import { getRequestContext } from "../server/request-context.js";
+import { debugLog, debugWarn } from "./logging.js";
 
 /**
  * Create match context for full requests (document/SSR).
@@ -111,7 +109,7 @@ export async function createMatchContextForFull<TEnv>(
     pathname,
     url,
     bindings,
-    getGlobalRouteMap(),
+    deps.getRouteMap(),
     matched.routeKey,
   );
 
@@ -159,7 +157,7 @@ export async function createMatchContextForFull<TEnv>(
       : matched.routeKey,
     handlerContext,
     loaderPromises,
-    routeMap: getGlobalRouteMap(),
+    routeMap: deps.getRouteMap(),
     metricsStore,
     Store,
     interceptContextMatch: null,
@@ -250,9 +248,10 @@ export async function createMatchContextForPartial<TEnv>(
   }
 
   if (prevMatch && prevMatch.entry !== matched.entry && !matched.pr) {
-    console.log(
-      `[Router.matchPartial] Route group changed: ${prevMatch.routeKey} → ${matched.routeKey}`,
-    );
+    debugLog("matchPartial", "route group changed", {
+      from: prevMatch.routeKey,
+      to: matched.routeKey,
+    });
   }
 
   const manifestStart = metricsStore ? performance.now() : 0;
@@ -284,15 +283,14 @@ export async function createMatchContextForPartial<TEnv>(
     pathname,
     url,
     bindings,
-    getGlobalRouteMap(),
+    deps.getRouteMap(),
     matched.routeKey,
   );
 
   const clientSegmentSet = new Set(clientSegmentIds);
-  console.log(
-    `[Router.matchPartial] Client segments:`,
-    Array.from(clientSegmentSet),
-  );
+  debugLog("matchPartial", "client segments", {
+    segments: Array.from(clientSegmentSet),
+  });
 
   const loaderPromises = new Map<string, Promise<any>>();
   setupLoaderAccess(handlerContext, loaderPromises);
@@ -315,12 +313,13 @@ export async function createMatchContextForPartial<TEnv>(
   );
 
   if (interceptSourceUrl) {
-    console.log(`[Router.matchPartial] Intercept context detected:`);
-    console.log(`  - Current URL: ${pathname}`);
-    console.log(`  - Intercept source: ${interceptSourceUrl}`);
-    console.log(`  - Context match: ${interceptContextMatch?.routeKey}`);
-    console.log(`  - Current route: ${matched.routeKey}`);
-    console.log(`  - Same route navigation: ${isSameRouteNavigation}`);
+    debugLog("matchPartial.intercept", "intercept context detected", {
+      currentUrl: pathname,
+      interceptSource: interceptSourceUrl,
+      contextRoute: interceptContextMatch?.routeKey,
+      currentRoute: matched.routeKey,
+      sameRouteNavigation: isSameRouteNavigation,
+    });
   }
 
   const localRouteName = matched.routeKey.includes(".")
@@ -372,9 +371,9 @@ export async function createMatchContextForPartial<TEnv>(
     manifestEntry.type === "route" &&
     interceptSourceUrl
   ) {
-    console.log(
-      `[Router.matchPartial] Leaving intercept - forcing route segment render: ${manifestEntry.shortCode}`,
-    );
+    debugLog("matchPartial.intercept", "forcing route segment render", {
+      segmentId: manifestEntry.shortCode,
+    });
     clientSegmentSet.delete(manifestEntry.shortCode);
   }
 
@@ -407,7 +406,7 @@ export async function createMatchContextForPartial<TEnv>(
     localRouteName,
     handlerContext,
     loaderPromises,
-    routeMap: getGlobalRouteMap(),
+    routeMap: deps.getRouteMap(),
     metricsStore,
     Store,
     interceptContextMatch,
@@ -437,11 +436,11 @@ export async function matchError<TEnv>(
   const url = new URL(request.url);
   const pathname = url.pathname;
 
-  console.log(`[Router.matchError] Matching error for ${pathname}`);
+  debugLog("matchError", "matching error", { pathname });
 
   const matched = deps.findMatch(pathname);
   if (!matched) {
-    console.warn(`[Router.matchError] No route matched for ${pathname}`);
+    debugWarn("matchError", "no route matched", { pathname });
     return null;
   }
 
@@ -560,14 +559,13 @@ export async function matchError<TEnv>(
   );
 
   if (useDefaultFallback) {
-    console.log(
-      `[Router.matchError] Using default error boundary (no user-defined boundary found)`,
-    );
+    debugLog("matchError", "using default error boundary");
   }
 
-  console.log(
-    `[Router.matchError] Boundary: ${boundaryEntry.shortCode}, outlet replaced: ${outletEntry.shortCode}`,
-  );
+  debugLog("matchError", "resolved boundary", {
+    boundarySegmentId: boundaryEntry.shortCode,
+    outletSegmentId: outletEntry.shortCode,
+  });
 
   return {
     segments: [errorSegment],

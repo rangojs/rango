@@ -17,6 +17,7 @@ import { getRequestContext } from "../server/request-context.js";
 import { executeInterceptMiddleware } from "./middleware.js";
 import { handleHandlerResult } from "./segment-resolution.js";
 import type { SegmentResolutionDeps } from "./types.js";
+import { debugLog } from "./logging.js";
 
 /**
  * Check if an intercept's when conditions are satisfied.
@@ -187,14 +188,15 @@ export async function resolveInterceptEntry<TEnv>(
         });
 
         if (!shouldRevalidate) {
-          console.log(
-            `[Router] Intercept loader ${loader.$$id} skipped (revalidation=false)`,
-          );
+          debugLog("intercept.loader", "skipped revalidation", {
+            loaderId: loader.$$id,
+          });
           continue;
         }
-        console.log(
-          `[Router] Intercept loader ${loader.$$id} revalidating (stale=${stale})`,
-        );
+        debugLog("intercept.loader", "revalidating", {
+          loaderId: loader.$$id,
+          stale,
+        });
       }
     }
 
@@ -353,14 +355,15 @@ export async function resolveInterceptLoadersOnly<TEnv>(
       });
 
       if (!shouldRevalidate) {
-        console.log(
-          `[Router] Intercept loader ${loader.$$id} skipped (cache hit, revalidation=false)`,
-        );
+        debugLog("intercept.loader", "skipped on cache hit", {
+          loaderId: loader.$$id,
+        });
         continue;
       }
-      console.log(
-        `[Router] Intercept loader ${loader.$$id} revalidating on cache hit (stale=${stale})`,
-      );
+      debugLog("intercept.loader", "revalidating on cache hit", {
+        loaderId: loader.$$id,
+        stale,
+      });
     }
 
     loaderIds.push(loader.$$id);

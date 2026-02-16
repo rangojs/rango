@@ -11,9 +11,7 @@ const DIST = path.resolve("dist");
  * They verify:
  *   1. Handler code is evicted from client and SSR bundles
  *   2. Handler code is isolated in the __prerender-handlers chunk
- *   3. Flight files follow the correct folder structure
- *   4. Flight file JSON has the expected shape
- *   5. Metadata files (prefixes.json, routes.json) are well-formed
+ *   3. Prerender assets (__prerender-manifest.js, __pr-*.js) have correct structure
  */
 
 // -- Helpers --
@@ -29,18 +27,9 @@ function concatBundleContents(dir: string): string {
     .join("\n");
 }
 
-/** Find the version-hash directory under dist/static/ */
-function findVersionDir(): string {
-  const staticDir = path.join(DIST, "static");
-  const entries = fs.readdirSync(staticDir);
-  const versionDir = entries.find((e) => e.startsWith("__"));
-  expect(versionDir).toBeTruthy();
-  return path.join(staticDir, versionDir!);
-}
-
 // -- Handler eviction tests --
 
-test.describe("handler eviction", () => {
+test.describe("handler eviction (production)", () => {
   let clientBundle: string;
   let ssrBundle: string;
   let prerenderHandlersBundle: string;
@@ -194,70 +183,75 @@ test.describe("handler eviction", () => {
   });
 });
 
-// -- Flight file structure tests --
+// -- Prerender asset structure tests --
 
-test.describe("flight file structure", () => {
-  let versionDir: string;
-  let prerenderDir: string;
+test.describe("prerender asset structure (production)", () => {
+  const RSC_DIR = path.join(DIST, "rsc");
+  const RSC_ASSETS_DIR = path.join(RSC_DIR, "assets");
 
-  test.beforeAll(() => {
-    versionDir = findVersionDir();
-    prerenderDir = path.join(versionDir, "prerender");
+  test("__prerender-manifest.js exists", () => {
+    const manifestPath = path.join(RSC_DIR, "__prerender-manifest.js");
+    expect(fs.existsSync(manifestPath)).toBe(true);
   });
 
-  test("version-hash directory exists under dist/static/", () => {
-    const staticDir = path.join(DIST, "static");
-    const entries = fs.readdirSync(staticDir);
-    const versionDirs = entries.filter((e) => e.startsWith("__"));
-    expect(versionDirs).toHaveLength(1);
-    // Version hash is a hex string prefixed with __
-    expect(versionDirs[0]).toMatch(/^__[a-f0-9]+$/);
+  test("__prerender-manifest.js references articles routes", () => {
+    const manifestCode = fs.readFileSync(
+      path.join(RSC_DIR, "__prerender-manifest.js"),
+      "utf-8",
+    );
+
+    // Static route uses "_" param hash
+    expect(manifestCode).toContain('"articles.index/_"');
+
+    // Dynamic route uses hex param hashes
+    expect(manifestCode).toMatch(/"articles\.detail\/[a-f0-9]+"/);
+
+    // References __pr-*.js asset imports
+    expect(manifestCode).toMatch(/import\("\.\/assets\/__pr-[a-f0-9]+\.js"\)/);
   });
 
-  test("prerender directory contains expected route folders", () => {
-    const folders = fs.readdirSync(prerenderDir);
-    expect(folders).toContain("articles.index");
-    expect(folders).toContain("articles.detail");
-  });
-
-  test("static route (articles.index) has _.flight file", () => {
-    const indexDir = path.join(prerenderDir, "articles.index");
-    const files = fs.readdirSync(indexDir);
-    expect(files).toEqual(["_.flight"]);
-  });
-
-  test("dynamic route (articles.detail) has one .flight per param combination", () => {
-    const detailDir = path.join(prerenderDir, "articles.detail");
-    const files = fs.readdirSync(detailDir).sort();
-    // 3 articles: what-is-prerendering, static-params, prerender-vs-cache
-    expect(files).toHaveLength(3);
-    // Each file is an 8-char hex hash + .flight
-    for (const file of files) {
-      expect(file).toMatch(/^[a-f0-9]{8}\.flight$/);
+  test("__pr-*.js asset files exist and have correct count", () => {
+    const prFiles = fs.readdirSync(RSC_ASSETS_DIR).filter(
+      (f) => f.startsWith("__pr-") && f.endsWith(".js"),
+    );
+    // At least articles.index (1) + articles.detail (3 articles) = 4 entries
+    expect(prFiles.length).toBeGreaterThanOrEqual(4);
+    // Each file follows __pr-<8hexchars>.js naming
+    for (const file of prFiles) {
+      expect(file).toMatch(/^__pr-[a-f0-9]{8}\.js$/);
     }
   });
 
-  test("flight file JSON has segments and handles", () => {
-    const flightPath = path.join(
-      prerenderDir,
-      "articles.index",
-      "_.flight",
+  test("__pr-*.js asset files export correct shape", () => {
+    const prFiles = fs.readdirSync(RSC_ASSETS_DIR).filter(
+      (f) => f.startsWith("__pr-") && f.endsWith(".js"),
     );
-    const data = JSON.parse(fs.readFileSync(flightPath, "utf-8"));
 
-    expect(data).toHaveProperty("segments");
-    expect(data).toHaveProperty("handles");
-    expect(Array.isArray(data.segments)).toBe(true);
-    expect(data.segments.length).toBeGreaterThan(0);
+    for (const file of prFiles) {
+      const content = fs.readFileSync(path.join(RSC_ASSETS_DIR, file), "utf-8");
+      expect(content).toContain("export default");
+
+      const match = content.match(/export default\s+({[\s\S]*});\s*$/);
+      expect(match).toBeTruthy();
+      const data = JSON.parse(match![1]);
+
+      expect(Array.isArray(data.segments)).toBe(true);
+      expect(data.segments.length).toBeGreaterThan(0);
+      expect(typeof data.handles).toBe("object");
+    }
   });
 
-  test("each segment has encoded string and metadata", () => {
-    const flightPath = path.join(
-      prerenderDir,
-      "articles.index",
-      "_.flight",
+  test("asset segments have encoded string and metadata", () => {
+    const prFiles = fs.readdirSync(RSC_ASSETS_DIR).filter(
+      (f) => f.startsWith("__pr-") && f.endsWith(".js"),
     );
-    const data = JSON.parse(fs.readFileSync(flightPath, "utf-8"));
+    // Check first asset file
+    const content = fs.readFileSync(
+      path.join(RSC_ASSETS_DIR, prFiles[0]),
+      "utf-8",
+    );
+    const match = content.match(/export default\s+({[\s\S]*});\s*$/);
+    const data = JSON.parse(match![1]);
 
     for (const segment of data.segments) {
       expect(segment).toHaveProperty("encoded");
@@ -271,99 +265,10 @@ test.describe("flight file structure", () => {
     }
   });
 
-  test("articles.index flight has layout, parallel, and route segments", () => {
-    const flightPath = path.join(
-      prerenderDir,
-      "articles.index",
-      "_.flight",
-    );
-    const data = JSON.parse(fs.readFileSync(flightPath, "utf-8"));
-    const types = data.segments.map((s: any) => s.metadata.type);
-
-    expect(types).toContain("layout");
-    expect(types).toContain("route");
-    expect(types).toContain("parallel");
-  });
-
-  test("articles.detail flight has layout and route segments but no parallel", () => {
-    const detailDir = path.join(prerenderDir, "articles.detail");
-    const files = fs.readdirSync(detailDir);
-    const data = JSON.parse(
-      fs.readFileSync(path.join(detailDir, files[0]), "utf-8"),
-    );
-    const types = data.segments.map((s: any) => s.metadata.type);
-
-    expect(types).toContain("layout");
-    expect(types).toContain("route");
-    // @stats parallel is scoped to index only
-    expect(types).not.toContain("parallel");
-  });
-
-  test("handles object has entries matching segment IDs", () => {
-    const flightPath = path.join(
-      prerenderDir,
-      "articles.index",
-      "_.flight",
-    );
-    const data = JSON.parse(fs.readFileSync(flightPath, "utf-8"));
-    const segmentIds = data.segments.map((s: any) => s.metadata.id);
-    const handleKeys = Object.keys(data.handles);
-
-    // Every segment ID should have a corresponding handles entry
-    for (const id of segmentIds) {
-      expect(handleKeys).toContain(id);
-    }
+  test("RSC entry imports __prerender-manifest.js", () => {
+    const rscIndex = fs.readFileSync(path.join(RSC_DIR, "index.js"), "utf-8");
+    expect(rscIndex).toContain("__prerender-manifest.js");
+    expect(rscIndex).toContain("__PRERENDER_MANIFEST");
   });
 });
 
-// -- Metadata file tests --
-
-test.describe("prerender metadata files", () => {
-  let versionDir: string;
-
-  test.beforeAll(() => {
-    versionDir = findVersionDir();
-  });
-
-  test("prefixes.json exists and maps /articles prefix", () => {
-    const data = JSON.parse(
-      fs.readFileSync(path.join(versionDir, "prefixes.json"), "utf-8"),
-    );
-
-    expect(data).toHaveProperty("/articles");
-    expect(data["/articles"]).toHaveProperty("routes");
-    expect(data["/articles"].routes).toContain("articles.index");
-    expect(data["/articles"].routes).toContain("articles.detail");
-  });
-
-  test("prefixes.json has correct prefix properties", () => {
-    const data = JSON.parse(
-      fs.readFileSync(path.join(versionDir, "prefixes.json"), "utf-8"),
-    );
-
-    const articlesPrefix = data["/articles"];
-    expect(articlesPrefix.staticPrefix).toBe("/articles");
-    expect(articlesPrefix.fullPrefix).toBe("/articles");
-    expect(articlesPrefix.namePrefix).toBe("articles");
-  });
-
-  test("routes.json maps all prerendered route names to URL patterns", () => {
-    const data = JSON.parse(
-      fs.readFileSync(path.join(versionDir, "routes.json"), "utf-8"),
-    );
-
-    expect(data["articles.index"]).toBe("/articles");
-    expect(data["articles.detail"]).toBe("/articles/:slug");
-  });
-
-  test("routes.json contains non-prerendered routes too", () => {
-    const data = JSON.parse(
-      fs.readFileSync(path.join(versionDir, "routes.json"), "utf-8"),
-    );
-
-    // routes.json is the full route manifest, not just prerendered routes
-    expect(data).toHaveProperty("home");
-    expect(data).toHaveProperty("counter");
-    expect(data).toHaveProperty("about");
-  });
-});

@@ -6,6 +6,7 @@
 
 import type { RouteEntry, TrailingSlashMode } from "../types";
 import type { EntryData } from "../server/context";
+import { debugLog, isRouterDebugEnabled } from "./logging.js";
 
 /**
  * Parsed segment info
@@ -220,6 +221,12 @@ export interface RouteMatchResult<TEnv = any> {
   pr?: true;
   /** Passthrough: handler kept for live fallback on unknown params (from trie) */
   pt?: true;
+  /** Response type for non-RSC routes (json, text, image, any) */
+  responseType?: string;
+  /** Negotiate variants: response-type routes sharing this path */
+  negotiateVariants?: Array<{ routeKey: string; responseType: string }>;
+  /** RSC-first: RSC route was defined before response-type variants */
+  rscFirst?: true;
 }
 
 /**
@@ -261,11 +268,17 @@ export function findMatch<TEnv>(
   pathname: string,
   routesEntries: RouteEntry<TEnv>[]
 ): RouteMatchResult<TEnv> | LazyEvaluationNeeded<TEnv> | null {
-  if (debugEnabled) {
+  const effectiveDebug = debugEnabled || isRouterDebugEnabled();
+
+  if (effectiveDebug) {
     debugStats = { entriesChecked: 0, entriesSkipped: 0, routesChecked: 0 };
-    console.log(`[findMatch] pathname="${pathname}", entries=${routesEntries.length}`);
+    debugLog("findMatch", "start", { pathname, entries: routesEntries.length });
     for (const e of routesEntries) {
-      console.log(`  entry: prefix="${e.prefix}", staticPrefix="${e.staticPrefix}", routes=${Object.keys(e.routes).length}`);
+      debugLog("findMatch", "entry", {
+        prefix: e.prefix,
+        staticPrefix: e.staticPrefix,
+        routeCount: Object.keys(e.routes).length,
+      });
     }
   }
 
@@ -279,9 +292,12 @@ export function findMatch<TEnv>(
     // Short-circuit: skip entry if pathname doesn't start with static prefix
     // staticPrefix is pre-computed at registration time, so this is O(1)
     if (entry.staticPrefix && !pathname.startsWith(entry.staticPrefix)) {
-      if (debugEnabled) {
+      if (effectiveDebug) {
         debugStats.entriesSkipped++;
-        console.log(`  SKIP entry prefix="${entry.prefix}" (staticPrefix="${entry.staticPrefix}" doesn't match)`);
+        debugLog("findMatch", "skipped entry", {
+          prefix: entry.prefix,
+          staticPrefix: entry.staticPrefix,
+        });
       }
       continue;
     }
@@ -289,20 +305,22 @@ export function findMatch<TEnv>(
     // Check if this is a lazy entry that needs evaluation
     // When staticPrefix matches but routes are not yet populated, signal caller to evaluate
     if (entry.lazy && !entry.lazyEvaluated) {
-      if (debugEnabled) {
-        console.log(`  LAZY entry needs evaluation: staticPrefix="${entry.staticPrefix}"`);
+      if (effectiveDebug) {
+        debugLog("findMatch", "lazy entry requires evaluation", {
+          staticPrefix: entry.staticPrefix,
+        });
       }
       return { lazyEntry: entry };
     }
 
-    if (debugEnabled) {
+    if (effectiveDebug) {
       debugStats.entriesChecked++;
     }
 
     const routeEntries = Object.entries(entry.routes);
 
     for (const [routeKey, pattern] of routeEntries) {
-      if (debugEnabled) {
+      if (effectiveDebug) {
         debugStats.routesChecked++;
       }
 
@@ -322,6 +340,9 @@ export function findMatch<TEnv>(
       const trailingSlashMode: TrailingSlashMode | undefined = entry.trailingSlash?.[routeKey];
 
 
+      // Prerender flag from entry metadata (set by urls() for prerender handlers)
+      const prFlag = entry.prerenderRouteKeys?.has(routeKey) ? { pr: true as const } : {};
+
       // Try exact match first
       const match = regex.exec(pathname);
       if (match) {
@@ -330,21 +351,24 @@ export function findMatch<TEnv>(
           params[name] = match[index + 1] ?? "";
         });
 
-        if (debugEnabled) {
-          console.log(`  MATCH: routeKey="${routeKey}", pattern="${fullPattern}"`);
-          console.log(`  Stats: entriesChecked=${debugStats.entriesChecked}, entriesSkipped=${debugStats.entriesSkipped}, routesChecked=${debugStats.routesChecked}`);
+        if (effectiveDebug) {
+          debugLog("findMatch", "matched route", {
+            routeKey,
+            pattern: fullPattern,
+            stats: { ...debugStats },
+          });
         }
 
         // Check if trailing slash mode requires redirect even on exact match
         if (trailingSlashMode === "always" && !pathnameHasTrailingSlash && pathname !== "/") {
           // Mode says always have trailing slash, but pathname doesn't have it
-          return { entry, routeKey, params, optionalParams, redirectTo: pathname + "/" };
+          return { entry, routeKey, params, optionalParams, redirectTo: pathname + "/", ...prFlag };
         } else if (trailingSlashMode === "never" && pathnameHasTrailingSlash) {
           // Mode says never have trailing slash, but pathname has it
-          return { entry, routeKey, params, optionalParams, redirectTo: pathname.slice(0, -1) };
+          return { entry, routeKey, params, optionalParams, redirectTo: pathname.slice(0, -1), ...prFlag };
         }
 
-        return { entry, routeKey, params, optionalParams };
+        return { entry, routeKey, params, optionalParams, ...prFlag };
       }
 
       // Try alternate pathname (opposite trailing slash)
@@ -358,24 +382,24 @@ export function findMatch<TEnv>(
         // Determine redirect behavior based on mode
         if (trailingSlashMode === "ignore") {
           // Match without redirect
-          return { entry, routeKey, params, optionalParams };
+          return { entry, routeKey, params, optionalParams, ...prFlag };
         } else if (trailingSlashMode === "never") {
           // Redirect to no trailing slash
           if (pathnameHasTrailingSlash) {
-            return { entry, routeKey, params, optionalParams, redirectTo: alternatePathname };
+            return { entry, routeKey, params, optionalParams, redirectTo: alternatePathname, ...prFlag };
           }
-          return { entry, routeKey, params, optionalParams };
+          return { entry, routeKey, params, optionalParams, ...prFlag };
         } else if (trailingSlashMode === "always") {
           // Redirect to with trailing slash
           if (!pathnameHasTrailingSlash) {
-            return { entry, routeKey, params, optionalParams, redirectTo: alternatePathname };
+            return { entry, routeKey, params, optionalParams, redirectTo: alternatePathname, ...prFlag };
           }
-          return { entry, routeKey, params, optionalParams };
+          return { entry, routeKey, params, optionalParams, ...prFlag };
         } else {
           // No explicit mode - use pattern-based detection
           // Redirect to canonical form (what the pattern defines)
           const canonicalPath = hasTrailingSlash ? alternatePathname : pathname.slice(0, -1);
-          return { entry, routeKey, params, optionalParams, redirectTo: canonicalPath };
+          return { entry, routeKey, params, optionalParams, redirectTo: canonicalPath, ...prFlag };
         }
       }
     }

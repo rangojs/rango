@@ -1,6 +1,6 @@
 {
   "name": "@rangojs/router",
-  "version": "0.0.0-experimental.8",
+  "version": "0.0.0-experimental.15",
   "type": "module",
   "description": "Django-inspired RSC router with composable URL patterns",
   "author": "Ivo Todorov",
@@ -124,8 +124,11 @@
     "CLAUDE.md",
     "README.md"
   ],
+  "bin": {
+    "rango": "./dist/bin/rango.js"
+  },
   "scripts": {
-    "build": "pnpm dlx esbuild src/vite/index.ts --bundle --format=esm --outfile=dist/vite/index.js --platform=node --packages=external",
+    "build": "pnpm dlx esbuild src/vite/index.ts --bundle --format=esm --outfile=dist/vite/index.js --platform=node --packages=external && pnpm dlx esbuild src/bin/rango.ts --bundle --format=esm --outfile=dist/bin/rango.js --platform=node --packages=external --banner:js='#!/usr/bin/env node'",
     "prepublishOnly": "pnpm build",
     "typecheck": "tsc --noEmit",
     "test": "playwright test",
@@ -150,6 +153,7 @@
   "dependencies": {
     "@vitejs/plugin-rsc": "^0.5.14",
     "magic-string": "^0.30.17",
+    "picomatch": "^4.0.3",
     "rsc-html-stream": "^0.0.7"
   },
   "devDependencies": {

@@ -21,8 +21,9 @@ import type {
 import type { LoaderRevalidationResult, ActionContext } from "./types";
 import { isHandle, type Handle } from "../handle.js";
 import type { HandleStore } from "../server/handle-store.js";
-import { getFetchableLoader } from "../loader.rsc.js";
+import { getFetchableLoader } from "../server/fetchable-loader-store.js";
 import { getRequestContext } from "../server/request-context.js";
+import { debugLog } from "./logging.js";
 
 /**
  * Internal callback signature for loader error notifications.
@@ -111,10 +112,10 @@ export function wrapLoaderWithErrorHandling<T>(
         renderedFallback = fallback;
       }
 
-      console.log(
-        `[Router] Loader error wrapped with boundary fallback in ${segmentId}:`,
-        errorInfo.message
-      );
+      debugLog("loader", "loader error wrapped with boundary fallback", {
+        segmentId,
+        message: errorInfo.message,
+      });
 
       return {
         __loaderResult: true,
@@ -229,6 +230,52 @@ export function setupLoaderAccess<TEnv>(
     loaderPromises.set(loader.$$id, promise);
 
     return promise;
+  }) as typeof ctx.use;
+}
+
+/**
+ * Set up ctx.use() for pre-rendering (build-time).
+ * Handles push to HandleStore; loaders throw with a clear error.
+ */
+export function setupBuildUse<TEnv>(
+  ctx: HandlerContext<any, TEnv>,
+): void {
+  // Get HandleStore from request context
+  const getHandleStore = (): HandleStore | undefined => {
+    return getRequestContext()?._handleStore;
+  };
+
+  ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
+    // Handle case: return a push function bound to the current segment
+    if (isHandle(item)) {
+      const handle = item;
+      const store = getHandleStore();
+      const segmentId = (ctx as InternalHandlerContext)._currentSegmentId;
+
+      if (!segmentId) {
+        throw new Error(
+          `Handle "${handle.$$id}" used outside of handler context. ` +
+            `Handles must be used within route/layout handlers.`,
+        );
+      }
+
+      return (dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>)) => {
+        if (!store) return;
+
+        const valueOrPromise = typeof dataOrFn === "function"
+          ? (dataOrFn as () => Promise<unknown>)()
+          : dataOrFn;
+
+        store.push(handle.$$id, segmentId, valueOrPromise);
+      };
+    }
+
+    // Loader case: not available during pre-rendering
+    throw new Error(
+      "Loaders are not available during pre-rendering. " +
+        "Use them on parent layouts with cache() for request-time data, " +
+        "or use a passthrough prerender handler.",
+    );
   }) as typeof ctx.use;
 }
 

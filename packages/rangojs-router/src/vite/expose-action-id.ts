@@ -2,6 +2,7 @@ import type { Plugin, ResolvedConfig } from "vite";
 import MagicString from "magic-string";
 import path from "node:path";
 import fs from "node:fs";
+import { normalizePath } from "./expose-id-utils.ts";
 
 /**
  * Type for the RSC plugin's manager API
@@ -45,13 +46,6 @@ function getRscPluginApi(config: ResolvedConfig): RscPluginApi | undefined {
   }
 
   return plugin?.api as RscPluginApi | undefined;
-}
-
-/**
- * Normalize path to forward slashes
- */
-function normalizePath(p: string): string {
-  return p.split(path.sep).join("/");
 }
 
 /**

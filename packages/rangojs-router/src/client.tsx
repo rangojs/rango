@@ -605,7 +605,29 @@ export {
 } from "./browser/react/location-state.js";
 
 // Type-safe href for client-side path validation
-export { href, type ValidPaths, type PatternToPath } from "./href-client.js";
+export { href, type ValidPaths, type PatternToPath, type PathResponse } from "./href-client.js";
+
+// Response envelope types for consuming JSON response routes
+export type { ResponseEnvelope, ResponseError } from "./urls.js";
+
+/**
+ * Type guard for checking if a response envelope contains an error.
+ *
+ * @example
+ * ```typescript
+ * const result: ResponseEnvelope<Product> = await fetch(url).then(r => r.json());
+ * if (isResponseError(result)) {
+ *   console.log(result.error.message, result.error.code);
+ *   return;
+ * }
+ * result.data // fully typed as Product
+ * ```
+ */
+export function isResponseError<T>(
+  result: import("./urls.js").ResponseEnvelope<T>
+): result is import("./urls.js").ResponseEnvelope<T> & { error: import("./urls.js").ResponseError } {
+  return result.error !== undefined;
+}
 
 // Mount context for include() scoped components
 export { useMount } from "./browser/react/use-mount.js";
@@ -614,8 +636,8 @@ export { MountContext } from "./browser/react/mount-context.js";
 // Mount-aware href hook - auto-prefixes paths with include() mount
 export { useHref } from "./browser/react/use-href.js";
 
-// Type-safe scoped href function for scopedHref<typeof patterns>()
-export type { ScopedHrefFunction } from "./href.js";
+// Type-safe scoped reverse function for scopedReverse<typeof patterns>()
+export type { ScopedReverseFunction } from "./reverse.js";
 
 // Loader definition type - for typing loader props in client components
 export type { LoaderDefinition } from "./types.js";

@@ -109,6 +109,7 @@
 import type { MatchResult, ResolvedSegment } from "../types.js";
 import type { MatchContext, MatchPipelineState } from "./match-context.js";
 import { generateServerTiming, logMetrics } from "./metrics.js";
+import { debugLog } from "./logging.js";
 
 /**
  * Collect all segments from an async generator
@@ -158,18 +159,16 @@ export function buildMatchResult<TEnv>(
     );
   }
 
-  if (process.env.NODE_ENV === "development") {
-    console.log(
-      `${logPrefix} All segments:`,
-      allSegments
-        .map((s) => `${s.id}(${s.type}, component=${s.component !== null})`)
-        .join(", ")
-    );
-    console.log(
-      `${logPrefix} Segments to render:`,
-      segmentsToRender.map((s) => s.id).join(", ")
-    );
-  }
+  debugLog(logPrefix, "all segments", {
+    segments: allSegments.map((s) => ({
+      id: s.id,
+      type: s.type,
+      hasComponent: s.component !== null,
+    })),
+  });
+  debugLog(logPrefix, "segments to render", {
+    segmentIds: segmentsToRender.map((s) => s.id),
+  });
 
   // Output metrics if enabled
   let serverTiming: string | undefined;

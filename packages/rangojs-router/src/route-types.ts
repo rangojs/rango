@@ -34,9 +34,11 @@ export type LayoutItem = {
  * Used for type inference in urls() API
  */
 export type TypedLayoutItem<
-  TChildRoutes extends Record<string, string> = Record<string, string>
+  TChildRoutes extends Record<string, any> = Record<string, string>,
+  TChildResponses extends Record<string, unknown> = Record<string, unknown>,
 > = LayoutItem & {
   readonly __childRoutes?: TChildRoutes;
+  readonly __childResponses?: TChildResponses;
 };
 export type RouteItem = {
   name: string;
@@ -51,10 +53,14 @@ export type RouteItem = {
  */
 export type TypedRouteItem<
   TName extends string = string,
-  TPattern extends string = string
+  TPattern extends string = string,
+  TData = unknown,
+  TSearch = {},
 > = RouteItem & {
   readonly __name?: TName;
   readonly __pattern?: TPattern;
+  readonly __data?: TData;
+  readonly __search?: TSearch;
 };
 export type ParallelItem = {
   name: string;
@@ -120,9 +126,11 @@ export type CacheItem = {
  * Used for type inference in urls() API
  */
 export type TypedCacheItem<
-  TChildRoutes extends Record<string, string> = Record<string, string>
+  TChildRoutes extends Record<string, any> = Record<string, string>,
+  TChildResponses extends Record<string, unknown> = Record<string, unknown>,
 > = CacheItem & {
   readonly __childRoutes?: TChildRoutes;
+  readonly __childResponses?: TChildResponses;
 };
 
 /**
@@ -141,6 +149,8 @@ export type IncludeItem = {
     urlPrefix: string;
     namePrefix: string | undefined;
     parent: unknown; // EntryData - avoid circular import
+    /** Counter snapshot from pattern extraction for consistent shortCode indices */
+    counters?: Record<string, number>;
   };
   [IncludeBrand]: void;
 };
@@ -150,13 +160,15 @@ export type IncludeItem = {
  * Used for type inference in urls() API
  */
 export type TypedIncludeItem<
-  TRoutes extends Record<string, string> = Record<string, string>,
+  TRoutes extends Record<string, any> = Record<string, string>,
   TNamePrefix extends string = string,
-  TUrlPrefix extends string = string
+  TUrlPrefix extends string = string,
+  TResponses extends Record<string, unknown> = Record<string, unknown>,
 > = IncludeItem & {
   readonly __routes?: TRoutes;
   readonly __namePrefix?: TNamePrefix;
   readonly __urlPrefix?: TUrlPrefix;
+  readonly __responses?: TResponses;
 };
 
 /**
@@ -188,6 +200,10 @@ export type RouteUseItem =
   | LoadingItem
   | ErrorBoundaryItem
   | NotFoundBoundaryItem
+  | CacheItem;
+/** Items that can be used inside a response route (path.json(), etc.) */
+export type ResponseRouteUseItem =
+  | MiddlewareItem
   | CacheItem;
 export type ParallelUseItem =
   | RevalidateItem

@@ -13,7 +13,7 @@
  *
  * @example
  * ```typescript
- * import type { RouteHandler } from "@rangojs/router/server";
+ * import type { RouteHandler } from "@rangojs/router";
  * import type { shopRoutes } from "../../routes.js";
  *
  * // Create convenience alias (OPTIONAL)

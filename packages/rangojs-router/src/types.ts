@@ -3,7 +3,8 @@ import type { AllUseItems } from "./route-types.js";
 import type { Handle } from "./handle.js";
 import type { MiddlewareFn } from "./router/middleware.js";
 import type { Theme } from "./theme/types.js";
-import type { ScopedHrefFunction } from "./href.js";
+import type { ScopedReverseFunction } from "./reverse.js";
+import type { SearchSchema, ResolveSearchSchema } from "./search-params.js";
 
 // Re-export MiddlewareFn for internal/advanced use
 export type { MiddlewareFn } from "./router/middleware.js";
@@ -49,6 +50,13 @@ declare global {
     // eslint-disable-next-line @typescript-eslint/no-empty-interface
     interface RegisteredRoutes {
       // Empty by default - users augment with their merged route maps for type-safe href()
+      // Values are string (pattern) for RSC routes, or { path: string; response: T } for response routes
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-empty-interface
+    interface GeneratedRouteMap {
+      // Empty by default - populated by generated named-routes.gen.ts
+      // Maps route names to URL pattern strings for Handler<"routeName"> support
     }
   }
 }
@@ -63,9 +71,21 @@ export type GetRegisteredRoutes = keyof RSCRouter.RegisteredRoutes extends never
   : RSCRouter.RegisteredRoutes;
 
 /**
+ * Default route map for Handler type.
+ * Uses GeneratedRouteMap (from gen file) instead of RegisteredRoutes to avoid
+ * circular dependencies: router.tsx -> urls.tsx -> handler.tsx -> RegisteredRoutes -> router.tsx.
+ * GeneratedRouteMap is declared in a standalone gen file with no imports.
+ */
+type DefaultHandlerRouteMap = keyof RSCRouter.GeneratedRouteMap extends never
+  ? {}
+  : RSCRouter.GeneratedRouteMap;
+
+/**
  * Default environment type - uses global augmentation if available, any otherwise
  */
-export type DefaultEnv = keyof RSCRouter.Env extends never ? any : RSCRouter.Env;
+export type DefaultEnv = keyof RSCRouter.Env extends never
+  ? any
+  : RSCRouter.Env;
 
 /**
  * Router environment (Hono-inspired type-safe context)
@@ -100,9 +120,7 @@ export interface RouterEnv<TBindings = {}, TVariables = {}> {
  * "a|b|c" → "a" | "b" | "c"
  */
 type ParseConstraint<T extends string> =
-  T extends `${infer First}|${infer Rest}`
-    ? First | ParseConstraint<Rest>
-    : T;
+  T extends `${infer First}|${infer Rest}` ? First | ParseConstraint<Rest> : T;
 
 /**
  * Extract param info from a param segment
@@ -117,24 +135,31 @@ type ExtractParamInfo<T extends string> =
   // Optional + constrained: :param(a|b)?
   T extends `${infer Name}(${infer Constraint})?`
     ? { name: Name; optional: true; type: ParseConstraint<Constraint> }
-  // Constrained only: :param(a|b)
-  : T extends `${infer Name}(${infer Constraint})`
-    ? { name: Name; optional: false; type: ParseConstraint<Constraint> }
-  // Optional only: :param?
-  : T extends `${infer Name}?`
-    ? { name: Name; optional: true; type: string }
-  // Required: :param
-  : { name: T; optional: false; type: string };
+    : // Constrained only: :param(a|b)
+      T extends `${infer Name}(${infer Constraint})`
+      ? { name: Name; optional: false; type: ParseConstraint<Constraint> }
+      : // Optional only: :param?
+        T extends `${infer Name}?`
+        ? { name: Name; optional: true; type: string }
+        : // Required: :param
+          { name: T; optional: false; type: string };
 
 /**
  * Build param object from info
  */
-type ParamFromInfo<Info> =
-  Info extends { name: infer N extends string; optional: true; type: infer V }
-    ? { [K in N]?: V }
-    : Info extends { name: infer N extends string; optional: false; type: infer V }
-      ? { [K in N]: V }
-      : never;
+type ParamFromInfo<Info> = Info extends {
+  name: infer N extends string;
+  optional: true;
+  type: infer V;
+}
+  ? { [K in N]?: V }
+  : Info extends {
+        name: infer N extends string;
+        optional: false;
+        type: infer V;
+      }
+    ? { [K in N]: V }
+    : never;
 
 /**
  * Merge two param objects preserving optionality
@@ -161,19 +186,19 @@ type MergeParams<A, B> = Pick<A, keyof A> & Pick<B, keyof B> extends infer O
  */
 export type ExtractParams<
   T extends string,
-  Depth extends readonly unknown[] = []
-> = Depth['length'] extends 10
+  Depth extends readonly unknown[] = [],
+> = Depth["length"] extends 10
   ? { [key: string]: string | undefined } // Fallback to generic params if too deep
-  // Match param with remaining path: :param.../rest
-  : T extends `${infer _Start}:${infer Param}/${infer Rest}`
+  : // Match param with remaining path: :param.../rest
+    T extends `${infer _Start}:${infer Param}/${infer Rest}`
     ? MergeParams<
         ParamFromInfo<ExtractParamInfo<Param>>,
         ExtractParams<`/${Rest}`, readonly [...Depth, unknown]>
       >
-  // Match param at end: :param...
-  : T extends `${infer _Start}:${infer Param}`
-    ? ParamFromInfo<ExtractParamInfo<Param>>
-  : {};
+    : // Match param at end: :param...
+      T extends `${infer _Start}:${infer Param}`
+      ? ParamFromInfo<ExtractParamInfo<Param>>
+      : {};
 
 /**
  * Route definition - maps route names to patterns
@@ -213,16 +238,20 @@ export type RouteDefinition = {
 type FlattenRoutes<
   T extends RouteDefinition,
   Prefix extends string = "",
-  Depth extends readonly unknown[] = []
-> = Depth['length'] extends 5
+  Depth extends readonly unknown[] = [],
+> = Depth["length"] extends 5
   ? never
   : {
       [K in keyof T]: T[K] extends string
         ? Record<`${Prefix}${K & string}`, T[K]>
         : T[K] extends RouteConfig
-          ? Record<`${Prefix}${K & string}`, T[K]['path']>
+          ? Record<`${Prefix}${K & string}`, T[K]["path"]>
           : T[K] extends RouteDefinition
-            ? FlattenRoutes<T[K], `${Prefix}${K & string}.`, readonly [...Depth, unknown]>
+            ? FlattenRoutes<
+                T[K],
+                `${Prefix}${K & string}.`,
+                readonly [...Depth, unknown]
+              >
             : never;
     }[keyof T];
 
@@ -238,7 +267,9 @@ type UnionToIntersection<U> = (
 /**
  * Resolved route map - flattened route definitions with full paths
  */
-export type ResolvedRouteMap<T extends RouteDefinition> = UnionToIntersection<FlattenRoutes<T>>;
+export type ResolvedRouteMap<T extends RouteDefinition> = UnionToIntersection<
+  FlattenRoutes<T>
+>;
 
 /**
  * Handler function that receives context and returns React content or a Response
@@ -259,8 +290,66 @@ export type ResolvedRouteMap<T extends RouteDefinition> = UnionToIntersection<Fl
  * }
  * ```
  */
-export type Handler<T = {}, TEnv = DefaultEnv> = (
-  ctx: HandlerContext<T extends string ? ExtractParams<T> : T, TEnv>
+
+/**
+ * Create a scoped view of a route map by stripping a name prefix.
+ * Useful for handlers in modules mounted via include() — use the local
+ * route name instead of the fully qualified global name.
+ *
+ * @example
+ * ```typescript
+ * // Given GeneratedRouteMap: { "blog.index": "/blog"; "blog.post": "/blog/:postId"; ... }
+ * type BlogRoutes = ScopedRouteMap<"blog">;
+ * // Resolves to: { "index": "/blog"; "post": "/blog/:postId" }
+ *
+ * const handler: Handler<"post", BlogRoutes> = (ctx) => {
+ *   ctx.params.postId // string
+ * };
+ * ```
+ */
+export type ScopedRouteMap<
+  TPrefix extends string,
+  TMap = RSCRouter.GeneratedRouteMap,
+> = {
+  [K in keyof TMap as K extends `${TPrefix}.${infer Rest}`
+    ? Rest
+    : never]: TMap[K];
+};
+
+/**
+ * Extract the search schema from a route map entry.
+ * - string value (old format): no search schema -> {}
+ * - { path, search } value: extract search
+ * - { path, response } value (no search): -> {}
+ */
+type ExtractSearchFromRouteMap<TRouteMap, T> =
+  T extends keyof TRouteMap
+    ? TRouteMap[T] extends { readonly search: infer S extends SearchSchema }
+      ? S
+      : {}
+    : {};
+
+export type Handler<
+  T extends keyof TRouteMap | (string & {}) | Record<string, any> = {},
+  TRouteMap extends {} = DefaultHandlerRouteMap,
+  TEnv = DefaultEnv,
+> = (
+  ctx: HandlerContext<
+    T extends keyof TRouteMap
+      ? TRouteMap[T] extends string
+        ? ExtractParams<TRouteMap[T]>
+        : TRouteMap[T] extends { readonly path: infer P extends string }
+          ? ExtractParams<P>
+          : T extends string
+            ? ExtractParams<T>
+            : T
+      : T extends string
+        ? ExtractParams<T>
+        : T,
+    TEnv,
+    ExtractSearchFromRouteMap<TRouteMap, T>,
+    TRouteMap extends DefaultHandlerRouteMap ? never : TRouteMap
+  >,
 ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>;
 
 /**
@@ -289,12 +378,14 @@ export type Handler<T = {}, TEnv = DefaultEnv> = (
  * }
  * ```
  */
-export type HandlerContext<TParams = {}, TEnv = DefaultEnv> = {
+export type HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch extends SearchSchema = {}, TRouteMap = never> = {
   /**
    * Route parameters extracted from the URL pattern.
    * Type-safe when using Handler<"/path/:param"> or Handler<{ param: string }>.
    */
   params: TParams;
+  /** @internal Phantom property for params type invariance. Prevents mounting handlers on wrong routes. */
+  readonly _paramCheck?: (params: TParams) => TParams;
   /**
    * The incoming Request object.
    * System params (`_rsc*`) are filtered from the URL for cleaner access.
@@ -302,9 +393,11 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv> = {
   request: Request;
   /**
    * Query parameters from the URL (system params like `_rsc*` are filtered).
-   * Use for user-facing query strings only.
+   *
+   * When a route defines a `search` schema, this is a typed object with
+   * parsed values. Otherwise it is the standard URLSearchParams.
    */
-  searchParams: URLSearchParams;
+  searchParams: {} extends TSearch ? URLSearchParams : ResolveSearchSchema<TSearch>;
   /**
    * The pathname portion of the request URL.
    */
@@ -417,10 +510,12 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv> = {
    * ```
    */
   use: {
-    <T, TLoaderParams = any>(loader: LoaderDefinition<T, TLoaderParams>): Promise<T>;
-    <TData, TAccumulated = TData[]>(handle: Handle<TData, TAccumulated>): (
-      data: TData | Promise<TData> | (() => Promise<TData>)
-    ) => void;
+    <T, TLoaderParams = any>(
+      loader: LoaderDefinition<T, TLoaderParams>,
+    ): Promise<T>;
+    <TData, TAccumulated = TData[]>(
+      handle: Handle<TData, TAccumulated>,
+    ): (data: TData | Promise<TData> | (() => Promise<TData>)) => void;
   };
   /**
    * Current theme (from cookie or default).
@@ -453,7 +548,7 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv> = {
    */
   setTheme?: (theme: Theme) => void;
   /**
-   * Generate URLs from route names.
+   * Generate URLs from route names (Django-style URL reversal).
    *
    * **Recommended: Use route names for type safety.**
    * Route names validate both the route exists and params are correct.
@@ -462,14 +557,14 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv> = {
    * @example
    * ```typescript
    * // RECOMMENDED: Use route names for type safety
-   * ctx.href("shop.cart")                    // ✓ Validates route exists
-   * ctx.href("blog.post", { slug: "hello" }) // ✓ Validates route + params
+   * ctx.reverse("shop.cart")                    // ✓ Validates route exists
+   * ctx.reverse("blog.post", { slug: "hello" }) // ✓ Validates route + params
    *
    * // ESCAPE HATCH: Path-based URLs (no validation)
-   * ctx.href("/about")                       // ⚠ No type checking
+   * ctx.reverse("/about")                       // ⚠ No type checking
    * ```
    */
-  href: ScopedHrefFunction<GetRegisteredRoutes>;
+  reverse: [TRouteMap] extends [never] ? ScopedReverseFunction<GetRegisteredRoutes> : ScopedReverseFunction<TRouteMap & GetRegisteredRoutes>;
 };
 
 /**
@@ -477,7 +572,11 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv> = {
  * Use `HandlerContext` for user-facing code.
  * @internal
  */
-export type InternalHandlerContext<TParams = {}, TEnv = DefaultEnv> = HandlerContext<TParams, TEnv> & {
+export type InternalHandlerContext<
+  TParams = {},
+  TEnv = DefaultEnv,
+  TSearch extends SearchSchema = {},
+> = HandlerContext<TParams, TEnv, TSearch> & {
   /** Raw request with all system parameters intact. */
   _originalRequest: Request;
   /** Current segment ID for handle data attribution. */
@@ -510,7 +609,9 @@ export type GenericParams = { [key: string]: string | undefined };
  * }
  * ```
  */
-export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<ShouldRevalidateFn<TParams, TEnv>>[0];
+export type RevalidateParams<TParams = GenericParams, TEnv = any> = Parameters<
+  ShouldRevalidateFn<TParams, TEnv>
+>[0];
 
 /**
  * Should revalidate function signature (inspired by React Router)
@@ -567,18 +668,18 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
   defaultShouldRevalidate: boolean;
   context: HandlerContext<TParams, TEnv>;
   // Segment metadata (which segment is being evaluated):
-  segmentType: 'layout' | 'route' | 'parallel';
-  layoutName?: string;      // Layout name (e.g., "root", "shop", "auth") - only for layouts
-  slotName?: string;        // Slot name (e.g., "@sidebar", "@modal") - only for parallels
+  segmentType: "layout" | "route" | "parallel";
+  layoutName?: string; // Layout name (e.g., "root", "shop", "auth") - only for layouts
+  slotName?: string; // Slot name (e.g., "@sidebar", "@modal") - only for parallels
   // Action context (populated when revalidation triggered by server action):
-  actionId?: string;        // Action identifier (e.g., "src/actions.ts#addToCart")
-  actionUrl?: URL;          // URL where action was executed
-  actionResult?: any;       // Return value from action execution
-  formData?: FormData;      // FormData from action request
-  method?: string;          // Request method: 'GET' for navigation, 'POST' for actions
-  routeName?: string;       // Route name where action was executed (e.g., "products.detail")
+  actionId?: string; // Action identifier (e.g., "src/actions.ts#addToCart")
+  actionUrl?: URL; // URL where action was executed
+  actionResult?: any; // Return value from action execution
+  formData?: FormData; // FormData from action request
+  method?: string; // Request method: 'GET' for navigation, 'POST' for actions
+  routeName?: string; // Route name where action was executed (e.g., "products.detail")
   // Stale cache revalidation (SWR pattern):
-  stale?: boolean;          // True if this is a stale cache revalidation request
+  stale?: boolean; // True if this is a stale cache revalidation request
 }) => boolean | { defaultShouldRevalidate: boolean };
 
 /**
@@ -612,35 +713,36 @@ export type ShouldRevalidateFn<TParams = GenericParams, TEnv = any> = (args: {
 /**
  * Extract all route keys from a route definition (includes flattened nested routes)
  */
-export type RouteKeys<T extends RouteDefinition> = keyof ResolvedRouteMap<T> & string;
+export type RouteKeys<T extends RouteDefinition> = keyof ResolvedRouteMap<T> &
+  string;
 
 /**
  * Valid layout value - component or handler function
  * Note: Arrays are not supported. Use separate layout() declarations with unique names instead.
  */
-type LayoutValue<TEnv = any> =
-  | ReactNode
-  | Handler<any, TEnv>;
+type LayoutValue<TEnv = any> = ReactNode | Handler<any, any, TEnv>;
 
 /**
  * Helper to extract params from a route key using the resolved (flattened) route map
  */
-export type ExtractRouteParams<T extends RouteDefinition, K extends string> =
-  K extends keyof ResolvedRouteMap<T>
-    ? ResolvedRouteMap<T>[K] extends string
-      ? ExtractParams<ResolvedRouteMap<T>[K]>
-      : GenericParams
-    : GenericParams;
+export type ExtractRouteParams<
+  T extends RouteDefinition,
+  K extends string,
+> = K extends keyof ResolvedRouteMap<T>
+  ? ResolvedRouteMap<T>[K] extends string
+    ? ExtractParams<ResolvedRouteMap<T>[K]>
+    : GenericParams
+  : GenericParams;
 
 /**
  * Handlers object that maps route names to handler functions with type-safe string patterns
  */
 export type HandlersForRouteMap<T extends RouteDefinition, TEnv = any> = {
   // Route handlers - type-safe params extracted from route patterns
-  [K in RouteKeys<T>]?: Handler<ExtractRouteParams<T, K & string>, TEnv>;
+  [K in RouteKeys<T>]?: Handler<ExtractRouteParams<T, K & string>, any, TEnv>;
 } & {
   // Layout patterns: $layout.{routeName}.{layoutName}
-  [K in `$layout.${RouteKeys<T> | '*'}.${string}`]?: LayoutValue<TEnv>;
+  [K in `$layout.${RouteKeys<T> | "*"}.${string}`]?: LayoutValue<TEnv>;
 } & {
   // Parallel route patterns: $parallel.{routeName}.{parallelName}
   [K in `$parallel.${RouteKeys<T>}.${string}`]?: Record<
@@ -651,24 +753,40 @@ export type HandlersForRouteMap<T extends RouteDefinition, TEnv = any> = {
           ? ExtractRouteParams<T, RouteKey & string>
           : GenericParams
         : GenericParams,
+      any,
       TEnv
     >
   >;
 } & {
   // Global parallel routes (with '*') use GenericParams
-  [K in `$parallel.${"*"}.${string}`]?: Record<`@${string}`, Handler<GenericParams, TEnv>>;
+  [K in `$parallel.${"*"}.${string}`]?: Record<
+    `@${string}`,
+    Handler<GenericParams, any, TEnv>
+  >;
 } & {
   // Middleware patterns: $middleware.{routeName}.{middlewareName}
-  [K in `$middleware.${RouteKeys<T> | '*'}.${string}`]?: MiddlewareFn<TEnv, GenericParams>[];
+  [K in `$middleware.${RouteKeys<T> | "*"}.${string}`]?: MiddlewareFn<
+    TEnv,
+    GenericParams
+  >[];
 } & {
   // Route revalidate patterns: $revalidate.route.{routeName}.{revalidateName}
-  [K in `$revalidate.route.${RouteKeys<T> | '*'}.${string}`]?: ShouldRevalidateFn<GenericParams, TEnv>;
+  [K in `$revalidate.route.${RouteKeys<T> | "*"}.${string}`]?: ShouldRevalidateFn<
+    GenericParams,
+    TEnv
+  >;
 } & {
   // Layout revalidate patterns: $revalidate.layout.{routeName}.{layoutName}.{revalidateName}
-  [K in `$revalidate.layout.${RouteKeys<T> | '*'}.${string}.${string}`]?: ShouldRevalidateFn<GenericParams, TEnv>;
+  [K in `$revalidate.layout.${RouteKeys<T> | "*"}.${string}.${string}`]?: ShouldRevalidateFn<
+    GenericParams,
+    TEnv
+  >;
 } & {
   // Parallel revalidate patterns: $revalidate.parallel.{routeName}.{parallelName}.{slotName}.{revalidateName}
-  [K in `$revalidate.parallel.${RouteKeys<T> | '*'}.${string}.${string}.${string}`]?: ShouldRevalidateFn<GenericParams, TEnv>;
+  [K in `$revalidate.parallel.${RouteKeys<T> | "*"}.${string}.${string}.${string}`]?: ShouldRevalidateFn<
+    GenericParams,
+    TEnv
+  >;
 };
 
 /**
@@ -688,7 +806,13 @@ export interface ErrorInfo {
   /** Segment ID where the error occurred */
   segmentId: string;
   /** Segment type where the error occurred */
-  segmentType: "layout" | "route" | "parallel" | "loader" | "middleware" | "cache";
+  segmentType:
+    | "layout"
+    | "route"
+    | "parallel"
+    | "loader"
+    | "middleware"
+    | "cache";
 }
 
 /**
@@ -718,7 +842,9 @@ export interface ErrorBoundaryFallbackProps {
 /**
  * Error boundary handler - receives error info and returns fallback UI
  */
-export type ErrorBoundaryHandler = (props: ErrorBoundaryFallbackProps) => ReactNode;
+export type ErrorBoundaryHandler = (
+  props: ErrorBoundaryFallbackProps,
+) => ReactNode;
 
 /**
  * Props passed to client-side error boundary fallback components
@@ -753,7 +879,12 @@ export interface ClientErrorBoundaryFallbackProps {
  */
 export type LoaderDataResult<T = unknown> =
   | { __loaderResult: true; ok: true; data: T }
-  | { __loaderResult: true; ok: false; error: ErrorInfo; fallback: ReactNode | null };
+  | {
+      __loaderResult: true;
+      ok: false;
+      error: ErrorInfo;
+      fallback: ReactNode | null;
+    };
 
 /**
  * Type guard to check if a value is a wrapped loader result
@@ -776,7 +907,13 @@ export interface NotFoundInfo {
   /** Segment ID where notFound was thrown */
   segmentId: string;
   /** Segment type where notFound was thrown */
-  segmentType: "layout" | "route" | "parallel" | "loader" | "middleware" | "cache";
+  segmentType:
+    | "layout"
+    | "route"
+    | "parallel"
+    | "loader"
+    | "middleware"
+    | "cache";
   /** The pathname that triggered the not found */
   pathname?: string;
 }
@@ -805,7 +942,9 @@ export interface NotFoundBoundaryFallbackProps {
 /**
  * NotFound boundary handler - receives not found info and returns fallback UI
  */
-export type NotFoundBoundaryHandler = (props: NotFoundBoundaryFallbackProps) => ReactNode;
+export type NotFoundBoundaryHandler = (
+  props: NotFoundBoundaryFallbackProps,
+) => ReactNode;
 
 /**
  * Resolved segment with component
@@ -906,7 +1045,7 @@ export interface MatchResult {
   params: Record<string, string>;
   /**
    * The matched route name (includes name prefix from include()).
-   * Used by ctx.href() for local name resolution.
+   * Used by ctx.reverse() for local name resolution.
    */
   routeName?: string;
   /**
@@ -974,10 +1113,16 @@ export interface RouteEntry<TEnv = any> {
    */
   trailingSlash?: Record<string, TrailingSlashMode>;
   handler: () =>
-      | Array<AllUseItems>
-      | Promise<{ default: () => Array<AllUseItems> }>
-      | Promise<() => Array<AllUseItems>>;
+    | Array<AllUseItems>
+    | Promise<{ default: () => Array<AllUseItems> }>
+    | Promise<() => Array<AllUseItems>>;
   mountIndex: number;
+
+  /**
+   * Route keys in this entry that have pre-render handlers.
+   * Used by the non-trie match path to set the `pr` flag.
+   */
+  prerenderRouteKeys?: Set<string>;
 
   // === Lazy evaluation fields ===
 
@@ -1003,7 +1148,6 @@ export interface RouteEntry<TEnv = any> {
   lazyEvaluated?: boolean;
 }
 
-
 /**
  * Revalidation function with typed params
  *
@@ -1017,7 +1161,10 @@ export interface RouteEntry<TEnv = any> {
  * }
  * ```
  */
-export type Revalidate<T = GenericParams, TEnv = DefaultEnv> = ShouldRevalidateFn<T, TEnv>;
+export type Revalidate<
+  T = GenericParams,
+  TEnv = DefaultEnv,
+> = ShouldRevalidateFn<T, TEnv>;
 
 /**
  * Middleware function with typed params and environment
@@ -1056,8 +1203,10 @@ export type Revalidate<T = GenericParams, TEnv = DefaultEnv> = ShouldRevalidateF
  * }
  * ```
  */
-export type Middleware<TParams = GenericParams, TEnv = DefaultEnv> = MiddlewareFn<TEnv, TParams>;
-
+export type Middleware<
+  TParams = GenericParams,
+  TEnv = DefaultEnv,
+> = MiddlewareFn<TEnv, TParams>;
 
 // ============================================================================
 // Cache Types
@@ -1179,7 +1328,9 @@ export interface CacheOptions<TEnv = unknown> {
    * }
    * ```
    */
-  condition?: (ctx: import("./server/request-context.js").RequestContext<TEnv>) => boolean;
+  condition?: (
+    ctx: import("./server/request-context.js").RequestContext<TEnv>,
+  ) => boolean;
 
   /**
    * Custom cache key function - FULL OVERRIDE.
@@ -1200,7 +1351,9 @@ export interface CacheOptions<TEnv = unknown> {
    * key: (ctx) => `${ctx.cookie('locale')}:${ctx.pathname}`
    * ```
    */
-  key?: (ctx: import("./server/request-context.js").RequestContext<TEnv>) => string | Promise<string>;
+  key?: (
+    ctx: import("./server/request-context.js").RequestContext<TEnv>,
+  ) => string | Promise<string>;
 
   /**
    * Tags for cache invalidation.
@@ -1215,7 +1368,11 @@ export interface CacheOptions<TEnv = unknown> {
    * tags: (ctx) => [`product:${ctx.params.id}`, 'products']
    * ```
    */
-  tags?: string[] | ((ctx: import("./server/request-context.js").RequestContext<TEnv>) => string[]);
+  tags?:
+    | string[]
+    | ((
+        ctx: import("./server/request-context.js").RequestContext<TEnv>,
+      ) => string[]);
 }
 
 /**
@@ -1278,10 +1435,15 @@ export interface EntryCacheConfig {
  * });
  * ```
  */
-export type LoaderContext<TParams = Record<string, string | undefined>, TEnv = DefaultEnv, TBody = unknown> = {
+export type LoaderContext<
+  TParams = Record<string, string | undefined>,
+  TEnv = DefaultEnv,
+  TBody = unknown,
+  TSearch extends SearchSchema = {},
+> = {
   params: TParams;
   request: Request;
-  searchParams: URLSearchParams;
+  searchParams: {} extends TSearch ? URLSearchParams : ResolveSearchSchema<TSearch>;
   pathname: string;
   url: URL;
   env: TEnv extends RouterEnv<infer B, any> ? B : {};
@@ -1292,7 +1454,9 @@ export type LoaderContext<TParams = Record<string, string | undefined>, TEnv = D
   /**
    * Access another loader's data (returns promise since loaders run in parallel)
    */
-  use: <T, TLoaderParams = any>(loader: LoaderDefinition<T, TLoaderParams>) => Promise<T>;
+  use: <T, TLoaderParams = any>(
+    loader: LoaderDefinition<T, TLoaderParams>,
+  ) => Promise<T>;
   /**
    * HTTP method (GET, POST, PUT, PATCH, DELETE)
    * Available when loader is called via load({ method: "POST", ... })
@@ -1332,9 +1496,11 @@ export type LoaderContext<TParams = Record<string, string | undefined>, TEnv = D
  * };
  * ```
  */
-export type LoaderFn<T, TParams = Record<string, string | undefined>, TEnv = DefaultEnv> = (
-  ctx: LoaderContext<TParams, TEnv>
-) => Promise<T> | T;
+export type LoaderFn<
+  T,
+  TParams = Record<string, string | undefined>,
+  TEnv = DefaultEnv,
+> = (ctx: LoaderContext<TParams, TEnv>) => Promise<T> | T;
 
 /**
  * Loader definition object
@@ -1411,7 +1577,7 @@ export type LoaderActionContext = {
  */
 export type LoaderMiddlewareFn = (
   ctx: LoaderActionContext,
-  next: () => Promise<void>
+  next: () => Promise<void>,
 ) => Response | Promise<Response> | void | Promise<void>;
 
 /**
@@ -1421,13 +1587,19 @@ export type LoaderMiddlewareFn = (
  * The signature (prevState, formData) is required for useActionState compatibility.
  * When used with useActionState, React passes the previous state as the first argument.
  */
-export type LoaderAction<T> = (prevState: T | null, formData: FormData) => Promise<T>;
+export type LoaderAction<T> = (
+  prevState: T | null,
+  formData: FormData,
+) => Promise<T>;
 
-export type LoaderDefinition<T = any, TParams = Record<string, string | undefined>> = {
+export type LoaderDefinition<
+  T = any,
+  TParams = Record<string, string | undefined>,
+> = {
   __brand: "loader";
-  $$id: string;  // Injected by Vite plugin (exposeLoaderId) - unique identifier
-  fn?: LoaderFn<T, TParams, any>;  // Optional - server-side only, stored in registry for RSC
-  action?: LoaderAction<T>;  // Optional - for fetchable loaders
+  $$id: string; // Injected by Vite plugin (exposeInternalIds) - unique identifier
+  fn?: LoaderFn<T, TParams, any>; // Optional - server-side only, stored in registry for RSC
+  action?: LoaderAction<T>; // Optional - for fetchable loaders
 };
 
 // ============================================================================
@@ -1449,15 +1621,15 @@ export type LoaderDefinition<T = any, TParams = Record<string, string | undefine
  * - "unknown": Fallback for unclassified errors (not currently invoked)
  */
 export type ErrorPhase =
-  | "routing"      // During route matching
-  | "manifest"     // During manifest loading (reserved, not currently invoked)
-  | "middleware"   // During middleware execution (errors propagate to handler phase)
-  | "loader"       // During loader execution
-  | "handler"      // During route/layout handler execution
-  | "rendering"    // During RSC/SSR rendering (SSR handler uses separate callback)
-  | "action"       // During server action execution
+  | "routing" // During route matching
+  | "manifest" // During manifest loading (reserved, not currently invoked)
+  | "middleware" // During middleware execution (errors propagate to handler phase)
+  | "loader" // During loader execution
+  | "handler" // During route/layout handler execution
+  | "rendering" // During RSC/SSR rendering (SSR handler uses separate callback)
+  | "action" // During server action execution
   | "revalidation" // During revalidation evaluation
-  | "unknown";     // Fallback for unclassified errors
+  | "unknown"; // Fallback for unclassified errors
 
 /**
  * Comprehensive context passed to onError callback
@@ -1618,5 +1790,6 @@ export interface OnErrorContext<TEnv = any> {
  * };
  * ```
  */
-export type OnErrorCallback<TEnv = any> = (context: OnErrorContext<TEnv>) => void | Promise<void>;
-
+export type OnErrorCallback<TEnv = any> = (
+  context: OnErrorContext<TEnv>,
+) => void | Promise<void>;

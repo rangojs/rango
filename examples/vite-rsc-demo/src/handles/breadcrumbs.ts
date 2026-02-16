@@ -1,4 +1,4 @@
-import { createHandle } from "@rangojs/router/client";
+import { createHandle } from "@rangojs/router";
 
 export interface BreadcrumbItem {
   label: string;

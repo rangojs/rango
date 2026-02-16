@@ -1,4 +1,4 @@
-import { createRouter } from "@rangojs/router/server";
+import { createRouter } from "@rangojs/router";
 import { CFCacheStore } from "@rangojs/router/cache";
 import { urlpatterns } from "./urls.js";
 import { Document } from "./document.js";
@@ -17,6 +17,10 @@ export const router = createRouter<AppEnv>({
   },
 }).routes(urlpatterns);
 
+// Module-level reverse() calls — resolved via static NamedRoutes fallback
+console.log("reverse shop.product.item42:", router.reverse("shop.product.item42"));
+console.log("reverse shop.category.cat42:", router.reverse("shop.category.cat42"));
+
 type AppRoutes = typeof router.routeMap;
 
 declare global {
@@ -24,3 +28,43 @@ declare global {
     interface RegisteredRoutes extends AppRoutes {}
   }
 }
+
+// ---------- Type-level verification ----------
+// These assertions verify PathResponse works with response routes in a large route map (10k+ routes).
+// Compile errors here mean the type system regressed — do not remove.
+import type { PathResponse, ValidPaths } from "@rangojs/router/client";
+
+// Response routes resolve their typed response data (wrapped in ResponseEnvelope)
+type _HealthResponse = PathResponse<"/json-api/health">;
+type _AssertHealth = _HealthResponse extends
+  | { data: { status: "ok"; timestamp: number; uptime: number } }
+  | { error: unknown }
+  ? true
+  : never;
+const _checkHealth: _AssertHealth = true;
+
+type _StatsResponse = PathResponse<"/json-api/stats">;
+type _AssertStats = _StatsResponse extends
+  | { data: { routes: number; prefixes: number; lazy: boolean } }
+  | { error: unknown }
+  ? true
+  : never;
+const _checkStats: _AssertStats = true;
+
+type _ItemResponse = PathResponse<"/json-api/items/:id">;
+type _AssertItem = _ItemResponse extends
+  | { data: { id: string; name: string; price: number; inStock: boolean } }
+  | { error: unknown }
+  ? true
+  : never;
+const _checkItem: _AssertItem = true;
+
+// Response routes are also valid paths for href()
+type _AssertHealthPath = "/json-api/health" extends ValidPaths ? true : never;
+const _checkHealthPath: _AssertHealthPath = true;
+
+// Shop routes with template literal params remain valid (conservative filter keeps `${number}`)
+type _AssertShopProduct = `/shop/product/${number}` extends ValidPaths
+  ? true
+  : never;
+const _checkShopProduct: _AssertShopProduct = true;

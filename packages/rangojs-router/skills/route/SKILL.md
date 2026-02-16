@@ -78,6 +78,42 @@ path("/product/:slug", ProductPage, {
 })
 ```
 
+### Typed Search Params
+
+Add a `search` schema to get typed `ctx.searchParams` instead of `URLSearchParams`:
+
+```typescript
+path("/search", SearchPage, {
+  name: "search",
+  search: { q: "string", page: "number?", sort: "string?" },
+})
+```
+
+Use `Handler<"name">` for typed search params (resolves from the generated route map automatically):
+
+```typescript
+import type { Handler } from "@rangojs/router";
+
+export const SearchPage: Handler<"search"> = (ctx) => {
+  // ctx.searchParams is typed: { q: string; page?: number; sort?: string }
+  const { q, page, sort } = ctx.searchParams;
+  return <SearchResults q={q} page={page} sort={sort} />;
+};
+```
+
+Supported types: `"string"`, `"number"`, `"boolean"`, with `?` suffix for optional.
+Required params default to zero values when missing (`""`, `0`, `false`).
+Optional params are omitted from the result when not in the query string.
+
+Use `RouteSearchParams<"name">` and `RouteParams<"name">` to extract types for props:
+
+```typescript
+import type { RouteSearchParams, RouteParams } from "@rangojs/router";
+
+type SP = RouteSearchParams<"search">;   // { q: string; page?: number; sort?: string }
+type P = RouteParams<"blogPost">;        // { slug: string }
+```
+
 ## Route Children
 
 Add loaders, loading states, and other features as children:
@@ -95,12 +131,14 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 Every handler receives a context object:
 
 ```typescript
-interface HandlerContext<TParams = Record<string, string>> {
+interface HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch = {}> {
   params: TParams;           // URL parameters
   request: Request;          // Original request
+  searchParams: URLSearchParams | ResolveSearchSchema<TSearch>;  // Query params (typed when search schema is set)
   url: URL;                  // Parsed URL
   env: TEnv;                 // Environment (bindings + variables)
   use<T>(handle: Handle<T>): T;  // Access handles
+  reverse(name: string, params?: Record<string, string>, search?: Record<string, unknown>): string;  // URL generation
 }
 ```
 
@@ -111,8 +149,8 @@ path("/product/:slug", (ctx) => {
   // Access URL params
   const { slug } = ctx.params;
 
-  // Access query params
-  const tab = ctx.url.searchParams.get("tab");
+  // Access query params (untyped - use search schema for typed access)
+  const tab = ctx.searchParams.get("tab");
 
   // Access environment
   const db = ctx.env.Bindings.DB;

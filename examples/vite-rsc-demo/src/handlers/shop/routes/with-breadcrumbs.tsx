@@ -17,7 +17,7 @@ function slugToTitle(slug: string): string {
  * Category route with breadcrumb support
  * Adds category breadcrumb then renders ProductsCategoryRoute
  */
-export const CategoryRouteWithBreadcrumbs: Handler<{ category: string }> = (
+export const CategoryRouteWithBreadcrumbs: Handler<"/products/:category"> = (
   ctx
 ) => {
   const push = ctx.use(Breadcrumbs);
@@ -33,7 +33,7 @@ export const CategoryRouteWithBreadcrumbs: Handler<{ category: string }> = (
  * Product detail route with breadcrumb support
  * Adds product breadcrumb then renders ProductsDetailRoute
  */
-export const ProductDetailRouteWithBreadcrumbs: Handler<{ slug: string }> = (
+export const ProductDetailRouteWithBreadcrumbs: Handler<"/product/:slug"> = (
   ctx
 ) => {
   const push = ctx.use(Breadcrumbs);

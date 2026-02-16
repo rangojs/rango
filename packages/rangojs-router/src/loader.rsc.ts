@@ -7,7 +7,7 @@
  * For non-fetchable loaders: returns a loader definition with fn included
  * For fetchable loaders: stores fn in registry and returns a serializable loader with action
  *
- * The $$id is injected by the Vite exposeLoaderId plugin as a hidden parameter.
+ * The $$id is injected by the Vite exposeInternalIds plugin as a hidden parameter.
  * Users don't need to pass any name - IDs are auto-generated from file path.
  */
 
@@ -18,55 +18,12 @@ import type {
 } from "./types.js";
 import type { MiddlewareFn } from "./router/middleware.js";
 import { getRequestContext } from "./server/request-context.js";
+import {
+  registerFetchableLoader,
+  getFetchableLoader,
+} from "./server/fetchable-loader-store.js";
 
-// Internal registry for fetchable loaders (server-side only)
-// Maps loader $$id to its function and middleware
-//
-// WHY TWO REGISTRIES?
-// This registry (fetchableLoaderRegistry) is populated immediately when createLoader() runs.
-// The other registry in loader-registry.ts (loaderRegistry) is a cache used by the RSC handler
-// for GET-based fetching. The RSC handler calls getFetchableLoader() from here to populate
-// its cache. This separation allows:
-// 1. Server actions to look up loaders directly without going through lazy loading
-// 2. The RSC handler to use lazy loading for production builds
-// 3. Both to share the same source of truth (this registry)
-const fetchableLoaderRegistry = new Map<
-  string,
-  { fn: LoaderFn<any, any, any>; middleware: MiddlewareFn[] }
->();
-
-/**
- * Register a fetchable loader's function internally
- * Called during module initialization with the $$id
- */
-function registerFetchableLoader(
-  id: string,
-  fn: LoaderFn<any, any, any>,
-  middleware: MiddlewareFn[]
-): void {
-  fetchableLoaderRegistry.set(id, { fn, middleware });
-}
-
-/**
- * Get a fetchable loader's function from the internal registry by $$id
- *
- * This is used internally by:
- * - Server actions (loaderAction) to execute loader functions
- * - loader-registry.ts to populate the main registry for GET-based fetching
- *
- * Loaders are registered here when createLoader() is called with fetchable: true.
- * The $$id is injected by the Vite exposeLoaderId plugin.
- *
- * @param id - The loader's $$id (auto-generated from file path + export name)
- * @returns The loader function and middleware, or undefined if not found
- *
- * @internal This is primarily for internal use by the router infrastructure
- */
-export function getFetchableLoader(
-  id: string
-): { fn: LoaderFn<any, any, any>; middleware: MiddlewareFn[] } | undefined {
-  return fetchableLoaderRegistry.get(id);
-}
+export { getFetchableLoader };
 
 // Overload 1: With function only (not fetchable)
 export function createLoader<T>(
@@ -89,7 +46,7 @@ export function createLoader<T>(
 export function createLoader<T>(
   fn: LoaderFn<T, Record<string, string | undefined>, any>,
   fetchable?: true | FetchableLoaderOptions,
-  // Hidden parameter injected by Vite exposeLoaderId plugin
+  // Hidden parameter injected by Vite exposeInternalIds plugin
   __injectedId?: string
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>> {
   // The $$id will be set on the returned object by Vite plugin
@@ -132,7 +89,7 @@ export function createLoader<T>(
     "use server";
 
     // Look up the loader from registry by $$id
-    const registered = fetchableLoaderRegistry.get(loaderId);
+    const registered = getFetchableLoader(loaderId);
     if (!registered) {
       throw new Error(`Loader "${loaderId}" not found in registry`);
     }

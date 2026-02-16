@@ -17,8 +17,15 @@ import { middlewarePatterns } from "./urls/middleware.js";
 import { cachePatterns } from "./urls/cache.js";
 import { themePatterns } from "./urls/theme.js";
 import { hrefPatterns } from "./urls/href.js";
+import { searchPatterns } from "./urls/search.js";
 import { refTestPatterns } from "./urls/ref-test.js";
 import { prerenderPatterns } from "./urls/prerender.js";
+import { prerenderComplexPatterns } from "./urls/prerender-complex.js";
+import { transformCasesPatterns } from "./urls/transform-cases.js";
+import { apiShopPatterns } from "./urls/api-shop.js";
+import { includeMiddlewarePatterns } from "./urls/include-middleware.js";
+import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
+import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
   ProductsLoader,
   ProductDetailLoader,
@@ -406,10 +413,155 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
     // Href test patterns
     include("/href", hrefPatterns, { name: "href" }),
 
+    // Search params test patterns
+    include("/search", searchPatterns, { name: "search" }),
+
     // Ref serialization test patterns
     include("/ref-test", refTestPatterns, { name: "refTest" }),
 
     // Pre-render handler test patterns
     include("/", prerenderPatterns),
+
+    // Pre-render complex test patterns (layout + parallel + fresh loader)
+    include("/prerender-complex", prerenderComplexPatterns, { name: "prerenderComplex" }),
+
+    // Transform coverage patterns (alias imports + export specifiers)
+    include("/transform-cases", transformCasesPatterns, { name: "transformCases" }),
+
+    // Shop API patterns (JSON response routes)
+    include("/api/shop", apiShopPatterns, { name: "apiShop" }),
+
+    // Include under layout with middleware — tests that layout middleware
+    // is applied to routes inside include() even when include() is the
+    // only child of the layout (the hasRoutesInItem fix).
+    layout(IncludeMwLayout, () => [
+      middleware(async (ctx, next) => {
+        ctx.set("includeLayoutMw", "applied");
+        await next();
+        ctx.header("X-Include-Layout-Middleware", "applied");
+      }),
+      include("/include-mw-test", includeMiddlewarePatterns, {
+        name: "includeMw",
+      }),
+    ]),
+
+    // Shop playground page
+    path(
+      "/shop-playground",
+      () => (
+        <div data-testid="shop-playground-page">
+          <h1>Shop API Playground</h1>
+          <ShopPlayground baseUrl="/api/shop" />
+        </div>
+      ),
+      { name: "shopPlayground" },
+    ),
+
+    // Module-level reverse() test endpoint — returns results computed at
+    // module load time (before lazy includes resolve) via NamedRoutes fallback
+    path.json("/reverse-fallback-test", async (): Promise<Record<string, string>> => {
+      const { moduleLevelReverseResults } = await import("./router.js");
+      return moduleLevelReverseResults;
+    }, { name: "reverseFallbackTest" }),
+
+    // Content negotiation test: RSC + JSON + MD on same URL
+    path(
+      "/negotiate-test",
+      () => (
+        <div data-testid="negotiate-rsc-page">
+          <h1>Negotiate Test RSC</h1>
+        </div>
+      ),
+      { name: "negotiateTest" },
+    ),
+    path.json("/negotiate-test", () => ({
+      source: "json",
+    }), { name: "negotiateTestJson" }),
+    path.md("/negotiate-test", () => "# Negotiate Test MD\n\nMarkdown content.", { name: "negotiateTestMd" }),
+
+    // Response handler auto-wrap + ctx.header()/ctx.setCookie() tests
+    path.md("/response-wrap/auto", (ctx) => {
+      return `# Auto-wrapped\n\nParam: ${ctx.searchParams.get("q") ?? "none"}`;
+    }, { name: "responseWrapAuto" }),
+    path.md("/response-wrap/with-headers", (ctx) => {
+      ctx.header("X-Custom", "from-md-handler");
+      ctx.header("Cache-Control", "public, max-age=3600");
+      ctx.setCookie("md-visited", "true", { path: "/", maxAge: 86400 });
+      return `# With Headers\n\nHeaders set via ctx.header().`;
+    }, { name: "responseWrapWithHeaders" }),
+    path.json("/response-wrap/json-headers", (ctx) => {
+      ctx.header("X-Api-Version", "v2");
+      ctx.setCookie("api-session", "abc123", { httpOnly: true, path: "/" });
+      return { source: "json", version: 2 };
+    }, { name: "responseWrapJsonHeaders" }),
+    path.text("/response-wrap/text", (ctx) => {
+      ctx.header("X-Text-Custom", "hello");
+      return "plain text response";
+    }, { name: "responseWrapText" }),
+    path.html("/response-wrap/html", () => "<h1>html response</h1>", { name: "responseWrapHtml" }),
+    path.xml("/response-wrap/xml", () => "<root>xml</root>", { name: "responseWrapXml" }),
+    path.md("/response-wrap/custom-response", (ctx) => {
+      return new Response(`# Custom\n\nWith custom headers.`, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/markdown;charset=utf-8",
+          "Cache-Control": "public, max-age=3600",
+          "X-Custom": "hello",
+        },
+      });
+    }, { name: "responseWrapCustom" }),
+
+    // Middleware + response routes: nested middleware passing variables
+    path.json("/response-mw/nested", (ctx) => {
+      const outer = ctx.get("outerMw") as string;
+      const inner = ctx.get("innerMw") as string;
+      return { outer, inner };
+    }, { name: "responseMwNested" }, () => [
+      middleware(async (ctx, next) => {
+        ctx.set("outerMw", "outer-value");
+        ctx.header("X-Outer-Mw", "applied");
+        await next();
+        ctx.header("X-Outer-After", "after-handler");
+      }),
+      middleware(async (ctx, next) => {
+        const fromOuter = ctx.get("outerMw");
+        ctx.set("innerMw", `inner-saw-${fromOuter}`);
+        ctx.header("X-Inner-Mw", "applied");
+        await next();
+      }),
+    ]),
+    path.md("/response-mw/md-with-mw", (ctx) => {
+      const role = ctx.get("role") as string;
+      return `# Middleware MD\n\nRole: ${role}`;
+    }, { name: "responseMwMd" }, () => [
+      middleware(async (ctx, next) => {
+        ctx.set("role", "admin");
+        ctx.setCookie("mw-role", "admin", { path: "/" });
+        await next();
+      }),
+    ]),
+
+    // Layout wrapping response routes: layout should be ignored, response route works
+    layout(() => <div data-testid="layout-wrap">LAYOUT</div>, () => [
+      path.json("/response-in-layout", () => ({
+        source: "json-in-layout",
+      }), { name: "responseInLayout" }),
+      path.md("/response-in-layout-md", () => "# MD in Layout", { name: "responseInLayoutMd" }),
+    ]),
+
+    // Content negotiation test: JSON defined first, then RSC
+    // For */* fallback, JSON should win (definition order)
+    path.json("/negotiate-test-json-first", () => ({
+      source: "json",
+    }), { name: "negotiateJsonFirst" }),
+    path(
+      "/negotiate-test-json-first",
+      () => (
+        <div data-testid="negotiate-json-first-rsc-page">
+          <h1>Negotiate JSON-First RSC</h1>
+        </div>
+      ),
+      { name: "negotiateJsonFirstRsc" },
+    ),
   ]),
 ]);

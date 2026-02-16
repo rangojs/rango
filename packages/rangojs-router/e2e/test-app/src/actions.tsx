@@ -1,20 +1,41 @@
 "use server";
 
 import { ReactNode } from "react";
+import { requireRequestContext } from "@rangojs/router";
 
 // Simulated delay helper
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Simple cart state (in-memory for testing)
-let cartItems: Map<string, number> = new Map();
+// Cart state keyed by cart ID (cookie-based isolation for parallel tests)
+const carts: Map<string, Map<string, number>> = new Map();
+
+function getCartId(): string {
+  const ctx = requireRequestContext();
+  let cartId = ctx.cookie("cart-id");
+  if (!cartId) {
+    cartId = Math.random().toString(36).slice(2);
+    ctx.setCookie("cart-id", cartId, { path: "/" });
+  }
+  return cartId;
+}
+
+function getCart(cartId: string): Map<string, number> {
+  let cart = carts.get(cartId);
+  if (!cart) {
+    cart = new Map();
+    carts.set(cartId, cart);
+  }
+  return cart;
+}
 
 /**
  * Add item to cart - fire and forget pattern
  */
 export async function addToCart(productId: string): Promise<void> {
   await delay(100);
-  const current = cartItems.get(productId) || 0;
-  cartItems.set(productId, current + 1);
+  const cart = getCart(getCartId());
+  const current = cart.get(productId) || 0;
+  cart.set(productId, current + 1);
 }
 
 /**
@@ -24,9 +45,10 @@ export async function addToCartWithResult(
   productId: string
 ): Promise<{ success: boolean; quantity: number; message: string }> {
   await delay(100);
-  const current = cartItems.get(productId) || 0;
+  const cart = getCart(getCartId());
+  const current = cart.get(productId) || 0;
   const newQuantity = current + 1;
-  cartItems.set(productId, newQuantity);
+  cart.set(productId, newQuantity);
   return {
     success: true,
     quantity: newQuantity,
@@ -42,12 +64,13 @@ export async function updateQuantity(
   delta: number
 ): Promise<{ quantity: number }> {
   await delay(50);
-  const current = cartItems.get(productId) || 0;
+  const cart = getCart(getCartId());
+  const current = cart.get(productId) || 0;
   const newQuantity = Math.max(0, current + delta);
   if (newQuantity === 0) {
-    cartItems.delete(productId);
+    cart.delete(productId);
   } else {
-    cartItems.set(productId, newQuantity);
+    cart.set(productId, newQuantity);
   }
   return { quantity: newQuantity };
 }
@@ -56,7 +79,8 @@ export async function updateQuantity(
  * Get cart quantity for a product
  */
 export async function getCartQuantity(productId: string): Promise<number> {
-  return cartItems.get(productId) || 0;
+  const cart = getCart(getCartId());
+  return cart.get(productId) || 0;
 }
 
 /**
@@ -76,7 +100,13 @@ export async function streamingAction(
  * Reset cart - for test cleanup
  */
 export async function resetCart(): Promise<void> {
-  cartItems = new Map();
+  const cartId = getCartId();
+  carts.delete(cartId);
+}
+
+// Dummy action for prerender client component tests
+export async function prerenderTestAction(): Promise<{ ok: true }> {
+  return { ok: true };
 }
 
 /**

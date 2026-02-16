@@ -1,11 +1,11 @@
 /**
  * 500 routes for include() testing with various param patterns
  */
-import { urls } from "@rangojs/router";
-import { getMatchDebugStats, type HandlerContext } from "@rangojs/router/server";
+import { urls, type Handler } from "@rangojs/router";
+import { getMatchDebugStats } from "@rangojs/router";
 
 // Benchmark handler for API routes - returns debug stats
-const ApiBenchmarkHandler = async (ctx: HandlerContext) => {
+const ApiBenchmarkHandler: Handler<"benchFirst"> = async (ctx) => {
   const matchStats = getMatchDebugStats();
   throw new Response(
     JSON.stringify({
@@ -20,7 +20,10 @@ const ApiBenchmarkHandler = async (ctx: HandlerContext) => {
   );
 };
 
-const ParamPage = async (ctx: HandlerContext) => {
+// Shared handler for 5000+ API routes with varying param shapes.
+// Handler<Record<string, any>> bypasses PathFn's biconditional via the
+// index-signature guard (string extends keyof TParams).
+const ParamPage: Handler<Record<string, any>> = async (ctx) => {
   await new Promise((r) => setTimeout(r, 1));
 
   const renderTime = Date.now();

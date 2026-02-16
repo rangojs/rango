@@ -24,6 +24,12 @@ export interface TrieMatchResult {
   pr?: true;
   /** Passthrough: handler kept for live fallback on unknown params */
   pt?: true;
+  /** Response type for non-RSC routes (json, text, image, any) */
+  responseType?: string;
+  /** Negotiate variants: response-type routes sharing this path */
+  negotiateVariants?: Array<{ routeKey: string; responseType: string }>;
+  /** RSC-first: RSC route was defined before response-type variants */
+  rscFirst?: true;
 }
 
 /**
@@ -43,7 +49,7 @@ export function tryTrieMatch(
   // Handle root path
   if (normalizedPath === "" || normalizedPath === "/") {
     if (trie.r) {
-      return validateAndBuild(trie.r, {}, pathname, pathnameHasTrailingSlash);
+      return validateAndBuild(trie.r, [], undefined, pathname, pathnameHasTrailingSlash);
     }
     return null;
   }
@@ -52,9 +58,9 @@ export function tryTrieMatch(
   const segments = normalizedPath.slice(1).split("/");
 
   // Try exact match with normalized path (no trailing slash)
-  const result = walkTrie(trie, segments, 0, {});
+  const result = walkTrie(trie, segments, 0, []);
   if (result) {
-    return validateAndBuild(result.leaf, result.params, pathname, pathnameHasTrailingSlash);
+    return validateAndBuild(result.leaf, result.paramValues, result.wildcardValue, pathname, pathnameHasTrailingSlash);
   }
 
   return null;
@@ -62,7 +68,8 @@ export function tryTrieMatch(
 
 interface WalkResult {
   leaf: TrieLeaf;
-  params: Record<string, string>;
+  paramValues: string[];
+  wildcardValue?: string;
 }
 
 /**
@@ -73,12 +80,12 @@ function walkTrie(
   node: TrieNode,
   segments: string[],
   index: number,
-  params: Record<string, string>,
+  paramValues: string[],
 ): WalkResult | null {
   // All segments consumed: check for terminal
   if (index === segments.length) {
     if (node.r) {
-      return { leaf: node.r, params };
+      return { leaf: node.r, paramValues };
     }
     return null;
   }
@@ -87,16 +94,16 @@ function walkTrie(
 
   // Priority 1: Static match
   if (node.s?.[segment]) {
-    const result = walkTrie(node.s[segment], segments, index + 1, params);
+    const result = walkTrie(node.s[segment], segments, index + 1, paramValues);
     if (result) return result;
   }
 
   // Priority 2: Param match
   if (node.p) {
-    const result = walkTrie(node.p.c, segments, index + 1, {
-      ...params,
-      [node.p.n]: segment,
-    });
+    const result = walkTrie(node.p.c, segments, index + 1, [
+      ...paramValues,
+      segment,
+    ]);
     if (result) return result;
   }
 
@@ -105,7 +112,8 @@ function walkTrie(
     const rest = segments.slice(index).join("/");
     return {
       leaf: node.w,
-      params: { ...params, [node.w.pn]: rest },
+      paramValues,
+      wildcardValue: rest,
     };
   }
 
@@ -117,10 +125,24 @@ function walkTrie(
  */
 function validateAndBuild(
   leaf: TrieLeaf,
-  params: Record<string, string>,
+  paramValues: string[],
+  wildcardValue: string | undefined,
   originalPathname: string,
   pathnameHasTrailingSlash: boolean,
 ): TrieMatchResult | null {
+  // Build named params by zipping leaf.pa with positional paramValues
+  const params: Record<string, string> = {};
+  if (leaf.pa) {
+    for (let i = 0; i < leaf.pa.length && i < paramValues.length; i++) {
+      params[leaf.pa[i]] = paramValues[i];
+    }
+  }
+
+  // Add wildcard param (wildcard leaves have pn from TrieNode.w type)
+  if (wildcardValue !== undefined && "pn" in leaf) {
+    params[(leaf as TrieLeaf & { pn: string }).pn] = wildcardValue;
+  }
+
   // Validate constraints
   if (leaf.cv) {
     for (const [paramName, allowed] of Object.entries(leaf.cv)) {
@@ -159,5 +181,8 @@ function validateAndBuild(
     ...(redirectTo ? { redirectTo } : {}),
     ...(leaf.pr ? { pr: true } : {}),
     ...(leaf.pt ? { pt: true } : {}),
+    ...(leaf.rt ? { responseType: leaf.rt } : {}),
+    ...(leaf.nv ? { negotiateVariants: leaf.nv } : {}),
+    ...(leaf.rf ? { rscFirst: true } : {}),
   };
 }

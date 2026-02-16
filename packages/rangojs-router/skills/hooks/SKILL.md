@@ -278,11 +278,15 @@ Read type-safe state from history:
 "use client";
 import { useLocationState, createLocationState } from "@rangojs/router";
 
-// Define typed state
+// Define typed state (all export patterns supported)
 export const ProductState = createLocationState<{
   name: string;
   price: number;
 }>();
+
+// Also valid: const ProductState = createLocationState<...>();
+//             export { ProductState };
+// Also valid: export { ProductState as MyState };
 
 function ProductHeader() {
   const state = useLocationState(ProductState);
@@ -422,7 +426,7 @@ function MountInfo() {
 }
 ```
 
-See `/links` for full URL generation guide including server-side `ctx.href`.
+See `/links` for full URL generation guide including server-side `ctx.reverse`.
 
 ## Hook Summary
 
