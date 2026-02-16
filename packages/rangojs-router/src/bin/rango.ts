@@ -1,47 +1,75 @@
-import { resolve, dirname } from "node:path";
-import { readFileSync } from "node:fs";
+import { resolve, dirname, extname } from "node:path";
+import { readFileSync, statSync } from "node:fs";
 import { findTsFiles, writePerModuleRouteTypesForFile, writeCombinedRouteTypes } from "../build/generate-route-types.ts";
 
 const [command, ...args] = process.argv.slice(2);
 
 if (command === "generate") {
-  const file = args[0];
-  if (!file) {
-    console.error("[rango] Usage: rango generate <file>");
+  if (args.length === 0) {
+    console.error("[rango] Usage: rango generate <file|dir> [file2 ...]");
     process.exit(1);
   }
-  const resolvedPath = resolve(file);
-  console.log(`[rango] Generating route types for ${resolvedPath}`);
 
-  // Generate per-module types (follows includes recursively)
-  writePerModuleRouteTypesForFile(resolvedPath);
-
-  // If this is a router file, also generate named-routes types
-  try {
-    const source = readFileSync(resolvedPath, "utf-8");
-    if (/\bcreateRouter\s*[<(]/.test(source)) {
-      writeCombinedRouteTypes(dirname(resolvedPath), [resolvedPath]);
+  // Expand args: files are used directly, directories are scanned
+  const files: string[] = [];
+  for (const arg of args) {
+    const resolved = resolve(arg);
+    try {
+      if (statSync(resolved).isDirectory()) {
+        files.push(...findTsFiles(resolved));
+      } else {
+        files.push(resolved);
+      }
+    } catch {
+      console.warn(`[rango] Skipping ${arg}: not found`);
     }
-  } catch {}
-
-  process.exit(0);
-} else if (command === "extract-names") {
-  const dir = args[0] ?? "./src";
-  const resolvedDir = resolve(dir);
-  console.log(`[rango] Scanning ${resolvedDir} for url modules...`);
-
-  const files = findTsFiles(resolvedDir);
-  for (const filePath of files) {
-    writePerModuleRouteTypesForFile(filePath);
   }
 
-  console.log(`[rango] Scanned ${files.length} file(s)`);
+  if (files.length === 0) {
+    console.log("[rango] No files to process");
+    process.exit(0);
+  }
+
+  const routerFiles: string[] = [];
+
+  for (const filePath of files) {
+    try {
+      const source = readFileSync(filePath, "utf-8");
+
+      // Detect file type and generate accordingly
+      const isRouter = /\bcreateRouter\s*[<(]/.test(source);
+      const isUrls = source.includes("urls(");
+
+      if (isRouter) {
+        routerFiles.push(filePath);
+      }
+
+      if (isUrls) {
+        writePerModuleRouteTypesForFile(filePath);
+      }
+    } catch (err) {
+      console.warn(`[rango] Failed to process ${filePath}: ${(err as Error).message}`);
+    }
+  }
+
+  // Generate named-routes for any detected router files
+  for (const routerFile of routerFiles) {
+    writeCombinedRouteTypes(dirname(routerFile), [routerFile]);
+  }
+
+  console.log(`[rango] Processed ${files.length} file(s)${routerFiles.length ? ` (${routerFiles.length} router)` : ""}`);
   process.exit(0);
 } else {
-  console.log(`Usage: rango <command>
+  console.log(`Usage: rango generate <file|dir> [file2 ...]
 
-Commands:
-  generate <file>      Generate .gen.ts route types for a single file
-  extract-names [dir]  Extract route names from url modules (default: ./src)`);
+  Auto-detects file type (createRouter, urls) and generates
+  the appropriate .gen.ts route type files.
+
+  Pass files, directories, or a mix of both.
+
+Examples:
+  rango generate src/urls.tsx
+  rango generate src/router.tsx src/urls.tsx
+  rango generate src/`);
   process.exit(command ? 1 : 0);
 }

@@ -178,9 +178,13 @@ export function generatePerModuleTypesSource(
     return true;
   });
 
-  // Deduplicate by name (last definition wins for same name)
+  // Deduplicate by name (first definition wins — primary route before variants)
   const deduped = new Map<string, { pattern: string; params?: Record<string, string>; search?: Record<string, string> }>();
   for (const { name, pattern, params, search } of valid) {
+    if (deduped.has(name)) {
+      console.warn(`[rsc-router] Duplicate route name "${name}" — keeping first definition`);
+      continue;
+    }
     deduped.set(name, { pattern, params, search });
   }
   const sorted = [...deduped.entries()]
