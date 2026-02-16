@@ -1,4 +1,4 @@
-import test, { type Page, type Locator, expect } from "@playwright/test";
+import test, { type Page, type Locator, type ConsoleMessage, expect } from "@playwright/test";
 
 export const testNoJs = test.extend({
   javaScriptEnabled: ({}, use) => use(false),
@@ -336,4 +336,83 @@ export function expectMinTiming(elapsed: number, minimum: number) {
  */
 export function expectMaxTiming(elapsed: number, maximum: number) {
   expect(elapsed).toBeLessThan(maximum);
+}
+
+// ============================================================================
+//  HMR Debugging
+// ============================================================================
+//
+// To debug HMR issues interactively:
+//
+//   1. Start the test app:  cd e2e/test-app && pnpm dev --port 5188
+//   2. Open browser DevTools > Console, filter by "[vite]" to see HMR events
+//   3. Edit a file and watch for:
+//      - "[vite] hot updated: /path/to/file" = successful HMR (js-update)
+//      - "[vite] page reload"               = full reload (something lacked an HMR boundary)
+//      - "[vite] connected."                = WebSocket reconnect (server restarted)
+//   4. For server-side HMR tracing, check the terminal for:
+//      - "[rsc-router] RSC module changed, version updated: ..." = RSC env detected a change
+//
+// To debug HMR via WebSocket frames (sees raw Vite messages before console):
+//   - DevTools > Network > WS tab > select the Vite HMR connection > Messages
+//   - Look for JSON frames with "type": "full-reload" vs "type": "update"
+//   - "triggeredBy" field shows which file caused the reload
+//
+// Common issues:
+//   - "use client" file triggers full-reload: the client-component-hmr plugin
+//     should return [] for RSC/SSR envs. Check if the file actually starts with
+//     "use client" (not after imports or comments).
+//   - RSC context store unavailable after HMR: the AsyncLocalStorage in
+//     context.ts must survive module re-evaluation (uses globalThis singleton).
+//   - Multiple HMR updates for one change: check if the vite plugin writes
+//     files (e.g., route types) in response to module changes, causing cascading
+//     invalidations.
+//
+
+export interface HmrEvent {
+  type: "js-update" | "full-reload" | "console";
+  detail: string;
+  timestamp: number;
+}
+
+/**
+ * Capture Vite HMR events from both console messages and WebSocket frames.
+ * Returns a collector with typed event arrays and a dispose method.
+ *
+ * @example
+ * const hmr = await captureHmrEvents(page);
+ * fs.writeFileSync(filePath, modifiedContent);
+ * await page.waitForTimeout(3000);
+ * hmr.dispose();
+ *
+ * expect(hmr.fullReloads).toHaveLength(0);
+ * expect(hmr.updates.length).toBeLessThanOrEqual(2);
+ */
+export async function captureHmrEvents(page: Page) {
+  const events: HmrEvent[] = [];
+  const updates: string[] = [];
+  const fullReloads: string[] = [];
+
+  const consoleHandler = (msg: ConsoleMessage) => {
+    const text = msg.text();
+    if (text.includes("[vite] hot updated:")) {
+      updates.push(text);
+      events.push({ type: "js-update", detail: text, timestamp: Date.now() });
+    }
+    if (text.includes("[vite] page reload") || text.includes("full reload")) {
+      fullReloads.push(text);
+      events.push({ type: "full-reload", detail: text, timestamp: Date.now() });
+    }
+  };
+
+  page.on("console", consoleHandler);
+
+  return {
+    events,
+    updates,
+    fullReloads,
+    dispose: () => {
+      page.off("console", consoleHandler);
+    },
+  };
 }

@@ -1,10 +1,11 @@
-import { expect, test, type ConsoleMessage } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import {
   waitForHydration,
   expectNoPageError,
   testId,
   expectNoReload,
+  captureHmrEvents,
 } from "./helper";
 import fs from "node:fs";
 import path from "node:path";
@@ -91,22 +92,7 @@ test.describe.serial("client-component-hmr", () => {
 
     await using __ = await expectNoReload(page);
 
-    // Track Vite HMR update events
-    const viteUpdates: string[] = [];
-    const fullReloadAttempts: string[] = [];
-    const consoleHandler = (msg: ConsoleMessage) => {
-      const text = msg.text();
-      if (text.includes("[vite] hot updated:")) {
-        viteUpdates.push(text);
-      }
-      if (
-        text.includes("[vite] page reload") ||
-        text.includes("full reload")
-      ) {
-        fullReloadAttempts.push(text);
-      }
-    };
-    page.on("console", consoleHandler);
+    const hmr = await captureHmrEvents(page);
 
     // Touch the file with a trivial change (add a comment)
     const modified =
@@ -116,15 +102,15 @@ test.describe.serial("client-component-hmr", () => {
     // Wait for HMR to complete
     await page.waitForTimeout(5000);
 
-    page.off("console", consoleHandler);
+    hmr.dispose();
 
     // A single client component change should NOT trigger a full reload
     expect(
-      fullReloadAttempts.length,
+      hmr.fullReloads.length,
       "Client component change should not trigger a full reload",
     ).toBe(0);
 
-    // Should produce exactly 1 HMR update (not cascading writes)
-    expect(viteUpdates.length).toBeLessThanOrEqual(2);
+    // Should produce at most 2 HMR updates (not cascading writes)
+    expect(hmr.updates.length).toBeLessThanOrEqual(2);
   });
 });
