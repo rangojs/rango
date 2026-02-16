@@ -15,6 +15,7 @@ export default defineConfig({
     cloudflare({
       configPath: "./wrangler.json",
       viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
+      inspectorPort: false,
     }),
   ],
 });
