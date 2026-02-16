@@ -253,9 +253,11 @@ function createVirtualEntriesPlugin(
  * - sourcemap errors: caused by "use client" directive at line 1:0 confusing sourcemap resolution
  * - sourcemap incomplete: plugins that transform without generating sourcemaps (router + RSC plugin)
  * - dynamic/static mixed imports: expected for router internals (e.g. request-context, cache-scope)
+ * - empty bundle: @vitejs/plugin-rsc scan build (step 1/5) produces an empty "index" chunk
+ *   because the RSC entry is fully externalized during client-reference analysis
  */
 function onwarn(warning: Vite.Rollup.RollupLog, defaultHandler: (warning: Vite.Rollup.RollupLog) => void): void {
-  if (warning.code === "MODULE_LEVEL_DIRECTIVE" || warning.code === "SOURCEMAP_ERROR") {
+  if (warning.code === "MODULE_LEVEL_DIRECTIVE" || warning.code === "SOURCEMAP_ERROR" || warning.code === "EMPTY_BUNDLE") {
     return;
   }
   // @vitejs/plugin-rsc@0.5.14: rsc:virtual:vite-rsc/assets-manifest renderChunk
