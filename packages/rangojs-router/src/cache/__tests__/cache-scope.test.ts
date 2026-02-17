@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ResolvedSegment } from "../../types.js";
 import type { SerializedSegmentData } from "../types.js";
@@ -106,7 +107,7 @@ describe("serializeSegments / deserializeSegments", () => {
     });
 
     it("should encode a truthy loading value via RSC serialization", async () => {
-      const loadingNode = { type: "div", props: { children: "Loading..." } };
+      const loadingNode = { type: "div", props: { children: "Loading..." } } as ReactNode;
       const segments = [makeSegment({ loading: loadingNode })];
       const serialized = await serializeSegments(segments);
 
@@ -171,7 +172,7 @@ describe("serializeSegments / deserializeSegments", () => {
     });
 
     it("round-trip: truthy loading should survive serialize -> deserialize", async () => {
-      const loadingNode = { type: "div", props: { children: "Loading..." } };
+      const loadingNode = { type: "div", props: { children: "Loading..." } } as ReactNode;
       const original = [makeSegment({ loading: loadingNode })];
       const serialized = await serializeSegments(original);
       const deserialized = await deserializeSegments(serialized);
