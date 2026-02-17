@@ -509,7 +509,7 @@ export function createServerActionBridge(
               `[Browser] History key changed, triggering background revalidation`
             );
             store.markCacheAsStaleAndBroadcast();
-            using navTx = createNavigationTransaction(
+            const navTx = createNavigationTransaction(
               store,
               eventController,
               window.location.href,
@@ -529,6 +529,24 @@ export function createServerActionBridge(
               }
             ).then(() => {
               console.log(`[Browser] Background revalidation complete`);
+            }).catch((error) => {
+              if (
+                error instanceof DOMException &&
+                error.name === "AbortError"
+              ) {
+                console.log("[Browser] Background revalidation aborted");
+                return;
+              }
+              if (error instanceof NetworkError || isNetworkError(error)) {
+                console.warn(
+                  "[Browser] Background revalidation network error (action):",
+                  error.message
+                );
+                return;
+              }
+              console.error("[Browser] Background revalidation failed:", error);
+            }).finally(() => {
+              navTx[Symbol.dispose]();
             });
           }
 

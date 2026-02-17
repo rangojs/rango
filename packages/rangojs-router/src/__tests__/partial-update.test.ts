@@ -265,6 +265,65 @@ describe("partial-update", () => {
       const rendered = (renderSegments.mock.calls as any[][])[0][0];
       expect(rendered[0].loading).toBeUndefined();
     });
+
+    // BUG P0-1: cached segment loading cleared from false to undefined
+    //
+    // When a cached segment has loading=false (suppressed), navigating to a route
+    // where the server doesn't re-render that segment (matched but not in diff)
+    // should preserve loading=false. Instead, the current code unconditionally
+    // sets it to undefined, which changes the React tree structure:
+    //   loading: false     -> LoaderBoundary + OutletProvider (structural boundary)
+    //   loading: undefined -> OutletProvider directly (no boundary)
+    // This causes React to remount components, destroying client state.
+    //
+    // The correct behavior (see server-action-bridge.ts lines 439-445) preserves
+    // the cached loading value instead of clearing it.
+    it("preserves loading=false for cached segment (does not clear to undefined)", async () => {
+      // Layout cached with loading=false (suppressed via { ssr: false } in loading())
+      const cachedLayout = seg("L0", {
+        type: "layout",
+        component: "cached-layout",
+        loading: false as any,
+      });
+      const cachedRoute = seg("L0R0", { component: "cached-route" });
+
+      const store = createMockStore({
+        cachedSegments: [cachedLayout, cachedRoute],
+      });
+
+      // Server returns a new route segment but NOT the layout.
+      // The layout is in matched (server expects client to have it) but NOT in diff
+      // (server decided it doesn't need re-rendering). This triggers the cache
+      // fallback path where the bug exists.
+      const newRoute = seg("L0R0", { component: "new-route" });
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: true,
+          segments: [newRoute],
+          matched: ["L0", "L0R0"],
+          diff: ["L0R0"],
+        },
+      });
+
+      const renderSegments = vi.fn(async (segs: any) => `tree-${segs.length}`);
+      const tx = createMockTx();
+
+      const updater = createPartialUpdater({
+        store: store as any,
+        client: client as any,
+        onUpdate: vi.fn(),
+        renderSegments,
+      });
+
+      await updater("http://localhost/page", ["L0", "L0R0"], false, undefined, tx);
+
+      const rendered = renderSegments.mock.calls[0][0];
+      const layout = rendered.find((s: any) => s.id === "L0");
+
+      // The layout should preserve loading=false (suppressed boundary).
+      // BUG: current code clears it to undefined, changing the tree structure.
+      expect(layout.loading).toBe(false);
+    });
   });
 
   describe("empty diff handling", () => {
@@ -368,6 +427,67 @@ describe("partial-update", () => {
       // Should render and update UI to remove modal
       expect(renderSegments).toHaveBeenCalled();
       expect(onUpdate).toHaveBeenCalled();
+    });
+  });
+
+  describe("intercept with target cache segments", () => {
+    // Regression test for REVIEW #29: The deleted dead-code block attempted to
+    // rebuild currentSegmentMap from getCurrentSegmentMap() when an intercept
+    // response arrived with targetCacheSegments. Because the reassignment came
+    // AFTER all currentSegmentMap reads, it was dead and was removed.
+    //
+    // This test confirms: unmodified segments come from targetCacheSegments
+    // (not the source page's cache) even when the server returns an intercept response.
+    it("uses targetCacheSegments for unmodified layout when server returns intercept response", async () => {
+      const sourceLayout = seg("L0", { type: "layout", component: "source-layout" });
+      const sourceRoute = seg("L0R0", { component: "source-route" });
+      const targetLayout = seg("L0", { type: "layout", component: "target-layout" });
+      const targetRoute = seg("L0R0", { component: "target-route" });
+      const modalSegment = seg("L0.@modal", { type: "parallel", namespace: "intercept:modal" });
+
+      // Source page is cached at the current history key
+      const store = createMockStore({
+        cachedSegments: [sourceLayout, sourceRoute],
+        segmentIds: ["L0", "L0R0"],
+      });
+
+      // Server returns an intercept response: only the modal is in diff.
+      // The layout is in matched but not re-rendered (should come from cache).
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: true,
+          segments: [modalSegment],
+          matched: ["L0", "L0.@modal"],
+          diff: ["L0.@modal"],
+          slots: { "@modal": { active: true } },
+        },
+      });
+
+      const renderSegments = vi.fn(async () => "tree");
+      const tx = createMockTx();
+
+      const updater = createPartialUpdater({
+        store: store as any,
+        client: client as any,
+        onUpdate: vi.fn(),
+        renderSegments,
+      });
+
+      await updater(
+        "http://localhost/target",
+        ["L0", "L0R0"],
+        false,
+        undefined,
+        tx,
+        { targetCacheSegments: [targetLayout, targetRoute] }
+      );
+
+      const mainSegs = (renderSegments.mock.calls as any[][])[0][0] as ResolvedSegment[];
+      const layout = mainSegs.find((s) => s.id === "L0");
+
+      // Layout must come from targetCacheSegments ("target-layout"),
+      // not the source page's store cache ("source-layout").
+      expect(layout?.component).toBe("target-layout");
     });
   });
 
@@ -898,6 +1018,40 @@ describe("partial-update", () => {
       await resultPromise;
 
       // end called after stream completes
+      expect(endFn).toHaveBeenCalled();
+    });
+
+    it("ends streaming token when fetchPartial throws", async () => {
+      const store = createMockStore({ cachedSegments: [seg("R0")] });
+      const endFn = vi.fn();
+
+      const fetchError = new Error("network failure");
+      const client = {
+        fetchPartial: vi.fn(async () => {
+          throw fetchError;
+        }),
+      };
+
+      const tx = createMockTx();
+      tx.startStreaming.mockReturnValue({ end: endFn });
+
+      const updater = createPartialUpdater({
+        store: store as any,
+        client: client as any,
+        onUpdate: vi.fn(),
+        renderSegments: vi.fn(async () => "tree"),
+      });
+
+      // fetchPartial throws, so the updater should re-throw
+      await expect(
+        updater("http://localhost/", ["R0"], false, undefined, tx),
+      ).rejects.toThrow("network failure");
+
+      // startStreaming was called before the fetch
+      expect(tx.startStreaming).toHaveBeenCalled();
+
+      // streamingToken.end() must be called even though fetchPartial threw,
+      // otherwise isStreaming is permanently stuck as true
       expect(endFn).toHaveBeenCalled();
     });
   });

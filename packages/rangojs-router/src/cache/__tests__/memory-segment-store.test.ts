@@ -44,45 +44,71 @@ describe("MemorySegmentCacheStore", () => {
       expect(store.defaults).toEqual({ ttl: 120, swr: 300 });
     });
 
-    it("should use globalThis for HMR survival", () => {
-      const store1 = new MemorySegmentCacheStore();
+    it("should use globalThis for HMR survival with named stores", () => {
+      const store1 = new MemorySegmentCacheStore({ name: "hmr-test" });
       store1.set("key", createTestData(), 60);
 
-      // Create new instance - should share the same cache
-      const store2 = new MemorySegmentCacheStore();
+      // Create new instance with same name - should share the same cache
+      const store2 = new MemorySegmentCacheStore({ name: "hmr-test" });
       const stats = store2.getStats();
 
       expect(stats.size).toBe(1);
       expect(stats.keys).toContain("key");
     });
+
+    it("should isolate unnamed store instances", () => {
+      const store1 = new MemorySegmentCacheStore();
+      store1.set("key", createTestData(), 60);
+
+      // Create new unnamed instance - should NOT share the same cache
+      const store2 = new MemorySegmentCacheStore();
+      const stats = store2.getStats();
+
+      expect(stats.size).toBe(0);
+    });
+
+    it("should isolate named stores with different names", () => {
+      const store1 = new MemorySegmentCacheStore({ name: "store-a" });
+      store1.set("key", createTestData(), 60);
+
+      const store2 = new MemorySegmentCacheStore({ name: "store-b" });
+      expect(store2.getStats().size).toBe(0);
+
+      // Each store only sees its own data
+      store2.set("other-key", createTestData(), 60);
+      expect(store1.getStats().size).toBe(1);
+      expect(store1.getStats().keys).toContain("key");
+      expect(store2.getStats().size).toBe(1);
+      expect(store2.getStats().keys).toContain("other-key");
+    });
   });
 
   describe("resetGlobalCache", () => {
-    it("should clear global cache state", async () => {
-      const store1 = new MemorySegmentCacheStore();
+    it("should clear global cache registry for named stores", async () => {
+      const store1 = new MemorySegmentCacheStore({ name: "reset-test" });
       await store1.set("key", createTestData(), 60);
       expect(store1.getStats().size).toBe(1);
 
-      // Reset global cache
+      // Reset global cache registry
       MemorySegmentCacheStore.resetGlobalCache();
 
-      // New store should have empty cache
-      const store2 = new MemorySegmentCacheStore();
+      // New named store should have empty cache
+      const store2 = new MemorySegmentCacheStore({ name: "reset-test" });
       expect(store2.getStats().size).toBe(0);
     });
 
     it("should not affect existing store instance cache reference", async () => {
-      const store = new MemorySegmentCacheStore();
+      const store = new MemorySegmentCacheStore({ name: "stale-ref-test" });
       await store.set("key", createTestData(), 60);
 
-      // Reset creates new global Map, but existing store still has old reference
+      // Reset destroys the registry, but existing store still holds its Map reference
       MemorySegmentCacheStore.resetGlobalCache();
 
       // Old store still sees its data (stale reference)
       expect(store.getStats().size).toBe(1);
 
-      // But new store has fresh empty cache
-      const newStore = new MemorySegmentCacheStore();
+      // But new named store has fresh empty cache
+      const newStore = new MemorySegmentCacheStore({ name: "stale-ref-test" });
       expect(newStore.getStats().size).toBe(0);
     });
   });
@@ -438,19 +464,34 @@ describe("MemorySegmentCacheStore", () => {
       expect(seg.encodedLoading).toBe("loading-data");
     });
 
-    it("should handle concurrent access from multiple stores", async () => {
+    it("should handle concurrent access from named stores with same name", async () => {
+      const store1 = new MemorySegmentCacheStore({ name: "shared" });
+      const store2 = new MemorySegmentCacheStore({ name: "shared" });
+
+      await store1.set("key1", createTestData("seg1"), 60);
+      await store2.set("key2", createTestData("seg2"), 60);
+
+      // Both named stores share the same underlying Map via globalThis
+      const result1 = await store1.get("key2");
+      const result2 = await store2.get("key1");
+
+      expect(result1).not.toBeNull();
+      expect(result2).not.toBeNull();
+    });
+
+    it("should isolate concurrent access from unnamed stores", async () => {
       const store1 = new MemorySegmentCacheStore();
       const store2 = new MemorySegmentCacheStore();
 
       await store1.set("key1", createTestData("seg1"), 60);
       await store2.set("key2", createTestData("seg2"), 60);
 
-      // Both stores share the same underlying Map via globalThis
+      // Unnamed stores are isolated; each only sees its own data
       const result1 = await store1.get("key2");
       const result2 = await store2.get("key1");
 
-      expect(result1).not.toBeNull();
-      expect(result2).not.toBeNull();
+      expect(result1).toBeNull();
+      expect(result2).toBeNull();
     });
 
     it("should handle rapid successive operations", async () => {

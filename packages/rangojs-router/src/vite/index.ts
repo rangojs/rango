@@ -1091,6 +1091,14 @@ function createRouterDiscoveryPlugin(
       // Cloudflare preset: lazily creates a Node.js temp server because the main
       // RSC environment uses workerd where node:fs can't access the host filesystem.
       let prerenderTempServer: any = null;
+
+      // Clean up the temporary prerender server when the dev server shuts down
+      server.httpServer?.on("close", () => {
+        if (prerenderTempServer) {
+          prerenderTempServer.close().catch(() => {});
+          prerenderTempServer = null;
+        }
+      });
       let prerenderNodeRegistry: Map<string, any> | null = null;
       // Registry from the main server's RSC environment (populated by discoverRouters)
       let mainRegistry: Map<string, any> | null = null;
@@ -1601,6 +1609,69 @@ function createRouterDiscoveryPlugin(
   };
 }
 
+/**
+ * Strip JSONC comments (single-line // and block comments) from a string
+ * without corrupting URLs or other values inside quoted strings.
+ * Uses a simple state machine to track whether we are inside a JSON string.
+ */
+function stripJsonComments(input: string): string {
+  let result = "";
+  let i = 0;
+  const len = input.length;
+
+  while (i < len) {
+    const ch = input[i];
+
+    // Quoted string: copy verbatim, respecting backslash escapes
+    if (ch === '"') {
+      result += ch;
+      i++;
+      while (i < len) {
+        const sc = input[i];
+        result += sc;
+        i++;
+        if (sc === "\\") {
+          // Copy the escaped character as-is
+          if (i < len) {
+            result += input[i];
+            i++;
+          }
+        } else if (sc === '"') {
+          break;
+        }
+      }
+      continue;
+    }
+
+    // Single-line comment: skip to end of line
+    if (ch === "/" && i + 1 < len && input[i + 1] === "/") {
+      i += 2;
+      while (i < len && input[i] !== "\n") {
+        i++;
+      }
+      continue;
+    }
+
+    // Block comment: skip to closing */
+    if (ch === "/" && i + 1 < len && input[i + 1] === "*") {
+      i += 2;
+      while (i < len) {
+        if (input[i] === "*" && i + 1 < len && input[i + 1] === "/") {
+          i += 2;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+
+    result += ch;
+    i++;
+  }
+
+  return result;
+}
+
 const VIRTUAL_ROUTES_MANIFEST_ID = "virtual:rsc-router/routes-manifest";
 // VIRTUAL_PRERENDER_PATHS_ID removed: prerender data is served through the worker
 
@@ -1617,8 +1688,8 @@ function resolveDiscoveryEntryPath(options: RangoOptions, routerPath?: string): 
       if (existsSync(filename)) {
         try {
           const raw = readFileSync(filename, "utf-8");
-          // Strip JSON comments for .jsonc
-          const cleaned = raw.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+          // Strip JSONC comments (// and /* */) without corrupting URLs in strings
+          const cleaned = stripJsonComments(raw);
           const config = JSON.parse(cleaned);
           if (config.main) {
             return config.main;

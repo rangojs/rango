@@ -751,7 +751,7 @@ export function createNavigationBridge(
 
         // Render from cache - force await to skip loading fallbacks
         try {
-          const root = renderSegments(cachedSegments, {
+          const root = await renderSegments(cachedSegments, {
             forceAwait: true,
           });
           onUpdate({
@@ -775,7 +775,7 @@ export function createNavigationBridge(
             // Background revalidation - don't await, just fire and forget
             const segmentIds = cachedSegments.map((s) => s.id);
 
-            using tx = createNavigationTransaction(
+            const tx = createNavigationTransaction(
               store,
               eventController,
               url,
@@ -804,8 +804,6 @@ export function createNavigationBridge(
                 console.log("[Browser] Background revalidation aborted");
                 return;
               }
-              // For background revalidation, network errors are logged but don't trigger error boundary
-              // since the user is already seeing cached content
               if (error instanceof NetworkError || isNetworkError(error)) {
                 console.warn(
                   "[Browser] Background revalidation network error (cached content preserved):",
@@ -814,6 +812,8 @@ export function createNavigationBridge(
                 return;
               }
               console.error("[Browser] Background revalidation failed:", error);
+            }).finally(() => {
+              tx[Symbol.dispose]();
             });
           }
           return;

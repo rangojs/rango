@@ -195,15 +195,22 @@ export function createPartialUpdater(
     // The token is ended when the stream completes
     const streamingToken = tx.startStreaming();
     // Fetch partial payload (no abort signal - RSC doesn't support it well)
-    const { payload, streamComplete: rawStreamComplete } =
-      await client.fetchPartial({
+    // Wrapped in try/catch to ensure streamingToken.end() is called if fetch throws,
+    // preventing isStreaming from being permanently stuck as true.
+    let fetchResult: Awaited<ReturnType<NavigationClient["fetchPartial"]>>;
+    try {
+      fetchResult = await client.fetchPartial({
         targetUrl: url,
         segmentIds: segments,
         previousUrl,
         staleRevalidation,
         version,
       });
-    console.log("payload.metadata", payload.metadata);
+    } catch (err) {
+      streamingToken.end();
+      throw err;
+    }
+    const { payload, streamComplete: rawStreamComplete } = fetchResult;
 
     const streamComplete = rawStreamComplete.then(() => {
       streamingToken.end();
@@ -354,9 +361,10 @@ export function createPartialUpdater(
             console.warn(`[Browser] Missing segment: ${id}`);
             return fromCache;
           }
-          // Clear loading for cached segments to prevent suspense - server decided
-          // this segment doesn't need re-rendering, so show content as-is
-          if (fromCache.loading !== undefined) {
+          // For cached segments the server decided not to re-render:
+          // - Preserve loading=false (suppressed boundary) to maintain tree structure
+          // - Clear truthy loading (active skeleton) to prevent suspense on cached content
+          if (fromCache.loading !== undefined && fromCache.loading !== false) {
             return { ...fromCache, loading: undefined };
           }
           return fromCache;
@@ -453,22 +461,6 @@ export function createPartialUpdater(
       const hasActiveIntercept = payload.metadata?.slots
         ? Object.values(payload.metadata.slots).some((slot) => slot.active)
         : false;
-
-      // BUG FIX: When navigating with cached target segments but receiving an intercept response,
-      // the background segments should come from the SOURCE page (where we navigated from),
-      // not the TARGET cache. This happens when:
-      // 1. User visits /product/xxx (detail page) - cached under key "/product/xxx"
-      // 2. User navigates back to /
-      // 3. User clicks product link → cache hit for "/product/xxx" (detail page)
-      // 4. But server returns intercept response (modal with index background)
-      // 5. Without this fix: background uses detail page segments (wrong!)
-      // 6. With this fix: rebuild currentSegmentMap from source page
-      if (hasActiveIntercept && targetCacheSegments) {
-        console.log(
-          `[Browser] Intercept response with target cache - rebuilding segment map from source page`,
-        );
-        currentSegmentMap = getCurrentSegmentMap();
-      }
 
       // Track intercept context for action revalidation (only on navigation, not actions or stale revalidation)
       if (!isAction && !staleRevalidation) {

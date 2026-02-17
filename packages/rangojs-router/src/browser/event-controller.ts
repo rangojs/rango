@@ -40,7 +40,7 @@ export interface NavigationEntry {
   abort: AbortController;
   phase: NavigationPhase;
   startedAt: number;
-  options?: NavigateOptions;
+  options?: NavigateOptions & { skipLoadingState?: boolean };
 }
 
 /**
@@ -176,7 +176,7 @@ export interface ActionHandle extends Disposable {
  */
 export interface EventController {
   // Navigation operations
-  startNavigation(url: string, options?: NavigateOptions): NavigationHandle;
+  startNavigation(url: string, options?: NavigateOptions & { skipLoadingState?: boolean }): NavigationHandle;
   abortNavigation(): void;
 
   // Action operations
@@ -367,9 +367,13 @@ export function createEventController(
       }));
 
     // State: loading if navigation OR actions are in progress
+    // Background revalidations (skipLoadingState) don't affect visible state
     const hasActiveActions = inflightActionsList.length > 0;
+    const isVisibleNavigation =
+      currentNavigation !== null &&
+      !currentNavigation.options?.skipLoadingState;
     const state =
-      currentNavigation !== null || hasActiveActions ? "loading" : "idle";
+      isVisibleNavigation || hasActiveActions ? "loading" : "idle";
 
     // Streaming: true if any active streams (navigation or action) or loading
     const isStreaming = activeStreamCount > 0 || state === "loading";
@@ -379,7 +383,12 @@ export function createEventController(
       isStreaming,
       location,
       // pendingUrl only during fetching phase - once streaming starts (URL changed), not pending
-      pendingUrl: currentNavigation?.phase === "fetching" ? currentNavigation.url : null,
+      // Background revalidations don't expose a pending URL
+      pendingUrl:
+        currentNavigation?.phase === "fetching" &&
+        !currentNavigation.options?.skipLoadingState
+          ? currentNavigation.url
+          : null,
       inflightActions: inflightActionsList,
     };
   }
@@ -431,7 +440,7 @@ export function createEventController(
 
   function startNavigation(
     url: string,
-    options?: NavigateOptions
+    options?: NavigateOptions & { skipLoadingState?: boolean }
   ): NavigationHandle {
     // Cancel existing navigation (switchMap semantics)
     if (currentNavigation) {

@@ -8,12 +8,44 @@
 import type { SegmentCacheStore, CachedEntryData, CacheDefaults, CacheGetResult } from "./types.js";
 import type { RequestContext } from "../server/request-context.js";
 
-const CACHE_GLOBAL_KEY = "__rsc_router_segment_cache_store__";
+const CACHE_REGISTRY_KEY = "__rsc_router_segment_cache_registry__";
+
+/**
+ * Returns the globalThis-backed registry of named cache Maps.
+ * The registry itself survives HMR; individual stores are keyed by name.
+ */
+function getGlobalRegistry(): Map<string, Map<string, CachedEntryData>> {
+  let registry = (globalThis as any)[CACHE_REGISTRY_KEY] as
+    | Map<string, Map<string, CachedEntryData>>
+    | undefined;
+  if (!registry) {
+    registry = new Map();
+    (globalThis as any)[CACHE_REGISTRY_KEY] = registry;
+  }
+  return registry;
+}
 
 /**
  * Options for MemorySegmentCacheStore
  */
 export interface MemorySegmentCacheStoreOptions<TEnv = unknown> {
+  /**
+   * Optional name for this store instance. Named stores persist their
+   * backing Map on globalThis so data survives Vite HMR module reloads.
+   * Stores with different names get separate Maps.
+   *
+   * When omitted, the store uses a plain instance-level Map with no
+   * globalThis sharing, which is the safest default for isolation.
+   *
+   * @example
+   * ```typescript
+   * // Two named stores are isolated from each other
+   * const fast = new MemorySegmentCacheStore({ name: "fast", defaults: { ttl: 10 } });
+   * const slow = new MemorySegmentCacheStore({ name: "slow", defaults: { ttl: 300 } });
+   * ```
+   */
+  name?: string;
+
   /**
    * Default cache options for cache() boundaries.
    * When cache() is called without explicit ttl/swr,
@@ -78,10 +110,20 @@ export class MemorySegmentCacheStore<TEnv = unknown> implements SegmentCacheStor
   ) => string | Promise<string>;
 
   constructor(options?: MemorySegmentCacheStoreOptions<TEnv>) {
-    // Use globalThis to survive HMR in development
-    this.cache =
-      (globalThis as any)[CACHE_GLOBAL_KEY] ??
-      ((globalThis as any)[CACHE_GLOBAL_KEY] = new Map<string, CachedEntryData>());
+    if (options?.name != null) {
+      // Named stores use the globalThis registry so data survives HMR.
+      // Each name gets its own isolated Map.
+      const registry = getGlobalRegistry();
+      let map = registry.get(options.name);
+      if (!map) {
+        map = new Map<string, CachedEntryData>();
+        registry.set(options.name, map);
+      }
+      this.cache = map;
+    } else {
+      // Unnamed stores get a plain instance-level Map (no globalThis sharing).
+      this.cache = new Map<string, CachedEntryData>();
+    }
     this.defaults = options?.defaults;
     this.keyGenerator = options?.keyGenerator;
   }
@@ -133,7 +175,7 @@ export class MemorySegmentCacheStore<TEnv = unknown> implements SegmentCacheStor
   }
 
   /**
-   * Reset the global cache state.
+   * Reset the global cache registry.
    * Useful for test isolation - call this in beforeEach to ensure
    * tests don't share cache state via globalThis.
    *
@@ -145,6 +187,6 @@ export class MemorySegmentCacheStore<TEnv = unknown> implements SegmentCacheStor
    * ```
    */
   static resetGlobalCache(): void {
-    delete (globalThis as any)[CACHE_GLOBAL_KEY];
+    delete (globalThis as any)[CACHE_REGISTRY_KEY];
   }
 }

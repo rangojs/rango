@@ -151,7 +151,10 @@ export function createNavigationClient(
             }
             resolveStreamComplete();
           }
-        })();
+        })().catch((error) => {
+          console.error("[Browser] Error reading tracking stream:", error);
+          resolveStreamComplete();
+        });
 
         // Return response with the RSC stream
         return new Response(rscStream, {

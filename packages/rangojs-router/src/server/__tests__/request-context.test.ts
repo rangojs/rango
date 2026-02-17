@@ -9,6 +9,76 @@ import {
 } from "../request-context.js";
 
 describe("RequestContext", () => {
+  describe("cookie parsing", () => {
+    it("should parse normal cookies correctly", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com", {
+          headers: { Cookie: "session=abc123; lang=en" },
+        }),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      expect(ctx.cookie("session")).toBe("abc123");
+      expect(ctx.cookie("lang")).toBe("en");
+    });
+
+    it("should decode percent-encoded cookie values", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com", {
+          headers: { Cookie: "name=hello%20world" },
+        }),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      expect(ctx.cookie("name")).toBe("hello world");
+    });
+
+    it("should fall back to raw value for malformed percent encoding (%zz)", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com", {
+          headers: { Cookie: "bad=%zz" },
+        }),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      expect(ctx.cookie("bad")).toBe("%zz");
+    });
+
+    it("should fall back to raw value for truncated percent encoding (%2)", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com", {
+          headers: { Cookie: "trunc=%2" },
+        }),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      expect(ctx.cookie("trunc")).toBe("%2");
+    });
+
+    it("should parse valid cookies alongside malformed ones", () => {
+      const ctx = createRequestContext({
+        env: {},
+        request: new Request("https://example.com", {
+          headers: { Cookie: "good=hello%20world; bad=%zz; also_good=ok" },
+        }),
+        url: new URL("https://example.com"),
+        variables: {},
+      });
+
+      expect(ctx.cookie("good")).toBe("hello world");
+      expect(ctx.cookie("bad")).toBe("%zz");
+      expect(ctx.cookie("also_good")).toBe("ok");
+    });
+  });
+
   describe("onResponse", () => {
     it("should register callbacks", () => {
       const ctx = createRequestContext({

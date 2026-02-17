@@ -127,61 +127,97 @@ export function wrapLoaderWithErrorHandling<T>(
 }
 
 /**
- * Set up the use() method on handler context to access loaders and handles.
- *
- * For loaders: Lazily runs loaders, memoizes results per request.
- * For handles: Returns a push function bound to the current segment.
+ * Detect cycles in the loader dependency graph using DFS from a given node.
+ * Returns the cycle path (array of loader IDs forming the cycle) if one exists,
+ * or null if no cycle is found.
  */
-export function setupLoaderAccess<TEnv>(
+function detectLoaderCycle(
+  from: string,
+  to: string,
+  dependsOn: Map<string, Set<string>>
+): string[] | null {
+  // If `to` can reach `from` via the dependency graph, adding the edge
+  // from -> to creates a cycle. We search from `to` looking for `from`.
+  const visited = new Set<string>();
+  const path: string[] = [from, to];
+
+  function dfs(current: string): string[] | null {
+    if (current === from) {
+      // Found a cycle: return the path leading back to `from`
+      return path;
+    }
+    if (visited.has(current)) return null;
+    visited.add(current);
+
+    const deps = dependsOn.get(current);
+    if (!deps) return null;
+
+    for (const dep of deps) {
+      path.push(dep);
+      const cycle = dfs(dep);
+      if (cycle) return cycle;
+      path.pop();
+    }
+    return null;
+  }
+
+  return dfs(to);
+}
+
+/**
+ * Creates a memoizing loader executor with cycle detection.
+ * Shared by setupLoaderAccess and setupLoaderAccessSilent; only the handle
+ * branch differs between the two, so only the loader logic is extracted here.
+ *
+ * Returns a useLoader(loader, callerLoaderId) function that:
+ * - Tracks dependency edges between loaders for cycle detection
+ * - Throws immediately (synchronously inside an async fn) on circular deps
+ * - Memoizes each loader's promise so it runs at most once per request
+ */
+function createLoaderExecutor<TEnv>(
   ctx: HandlerContext<any, TEnv>,
   loaderPromises: Map<string, Promise<any>>
-): void {
-  // Get HandleStore from request context
-  const getHandleStore = (): HandleStore | undefined => {
-    return getRequestContext()?._handleStore;
-  };
+): (loader: LoaderDefinition<any, any>, callerLoaderId: string | null) => Promise<any> {
+  // Dependency graph: loaderId -> set of loader IDs it directly depends on.
+  const dependsOn = new Map<string, Set<string>>();
 
-  // The use() function handles both loaders and handles
-  ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
-    // Handle case: return a push function
-    if (isHandle(item)) {
-      const handle = item;
-      const store = getHandleStore();
-      const segmentId = (ctx as InternalHandlerContext)._currentSegmentId;
+  // Loaders whose promises have not yet settled.
+  // A dependency on a pending loader that closes a cycle means deadlock.
+  const pendingLoaders = new Set<string>();
 
-      if (!segmentId) {
-        throw new Error(
-          `Handle "${handle.$$id}" used outside of handler context. ` +
-            `Handles must be used within route/layout handlers.`
-        );
+  function useLoader(
+    loader: LoaderDefinition<any, any>,
+    callerLoaderId: string | null
+  ): Promise<any> {
+    // Record the dependency edge and check for cycles before running
+    if (callerLoaderId !== null) {
+      let deps = dependsOn.get(callerLoaderId);
+      if (!deps) {
+        deps = new Set();
+        dependsOn.set(callerLoaderId, deps);
       }
 
-      // Return a push function bound to this handle and segment
-      // Accepts: value, Promise, or async callback (executed immediately)
-      // Promises are pushed directly - RSC will serialize and stream them
-      return (dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>)) => {
-        if (!store) return;
+      // Only relevant when the target is still pending (would deadlock)
+      if (pendingLoaders.has(loader.$$id)) {
+        const cycle = detectLoaderCycle(callerLoaderId, loader.$$id, dependsOn);
+        if (cycle) {
+          throw new Error(
+            `Circular loader dependency detected: ${cycle.join(" -> ")}. ` +
+              `Loaders cannot depend on each other in a cycle. ` +
+              `Refactor to break the circular dependency.`
+          );
+        }
+      }
 
-        // If it's a function, call it immediately to get the promise
-        const valueOrPromise = typeof dataOrFn === "function"
-          ? (dataOrFn as () => Promise<unknown>)()
-          : dataOrFn;
-
-        // Push directly - promises will be serialized by RSC and streamed
-        store.push(handle.$$id, segmentId, valueOrPromise);
-      };
+      deps.add(loader.$$id);
     }
-
-    // Loader case: existing behavior
-    const loader = item as LoaderDefinition<any, any>;
 
     // Return cached promise if already started
     if (loaderPromises.has(loader.$$id)) {
-      return loaderPromises.get(loader.$$id);
+      return loaderPromises.get(loader.$$id)!;
     }
 
     // Get loader function - either from loader object or fetchable registry
-    // Fetchable loaders store fn in registry (not on object) to avoid client bundling issues
     let loaderFn = loader.fn;
     if (!loaderFn) {
       const fetchable = getFetchableLoader(loader.$$id);
@@ -190,14 +226,15 @@ export function setupLoaderAccess<TEnv>(
       }
     }
 
-    // Ensure loader has a function
     if (!loaderFn) {
       throw new Error(
         `Loader "${loader.$$id}" has no function. This usually means the loader was defined without "use server" and the function was not included in the build.`
       );
     }
 
-    // Create loader context with recursive use() support
+    pendingLoaders.add(loader.$$id);
+
+    const currentLoaderId = loader.$$id;
     const loaderCtx: LoaderContext<Record<string, string | undefined>, TEnv> = {
       params: ctx.params,
       request: ctx.request,
@@ -210,26 +247,71 @@ export function setupLoaderAccess<TEnv>(
       use: <TDep, TDepParams = any>(
         dep: LoaderDefinition<TDep, TDepParams>
       ): Promise<TDep> => {
-        // Recursive call - will start dep loader if not already started
-        return ctx.use(dep);
+        return useLoader(dep, currentLoaderId);
       },
-      // Default to GET for loaders called through route handlers
       method: "GET",
       body: undefined,
     };
 
-    // Start loader execution with tracking
     const doneLoader = track(`loader:${loader.$$id}`);
     const promise = Promise.resolve(
       loaderFn(loaderCtx as LoaderContext<any, TEnv>)
     ).finally(() => {
+      pendingLoaders.delete(loader.$$id);
       doneLoader();
     });
 
-    // Memoize for subsequent calls
     loaderPromises.set(loader.$$id, promise);
-
     return promise;
+  }
+
+  return useLoader;
+}
+
+/**
+ * Set up the use() method on handler context to access loaders and handles.
+ *
+ * For loaders: Lazily runs loaders, memoizes results per request.
+ * For handles: Returns a push function bound to the current segment.
+ *
+ * Includes cycle detection: tracks dependency edges between loaders and
+ * throws on circular dependencies to prevent deadlocks.
+ */
+export function setupLoaderAccess<TEnv>(
+  ctx: HandlerContext<any, TEnv>,
+  loaderPromises: Map<string, Promise<any>>
+): void {
+  const getHandleStore = (): HandleStore | undefined => {
+    return getRequestContext()?._handleStore;
+  };
+
+  const useLoader = createLoaderExecutor(ctx, loaderPromises);
+
+  ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
+    if (isHandle(item)) {
+      const handle = item;
+      const store = getHandleStore();
+      const segmentId = (ctx as InternalHandlerContext)._currentSegmentId;
+
+      if (!segmentId) {
+        throw new Error(
+          `Handle "${handle.$$id}" used outside of handler context. ` +
+            `Handles must be used within route/layout handlers.`
+        );
+      }
+
+      return (dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>)) => {
+        if (!store) return;
+
+        const valueOrPromise = typeof dataOrFn === "function"
+          ? (dataOrFn as () => Promise<unknown>)()
+          : dataOrFn;
+
+        store.push(handle.$$id, segmentId, valueOrPromise);
+      };
+    }
+
+    return useLoader(item as LoaderDefinition<any, any>, null);
   }) as typeof ctx.use;
 }
 
@@ -282,7 +364,7 @@ export function setupBuildUse<TEnv>(
 /**
  * Set up ctx.use() for proactive caching (silent mode).
  * Handles are silently ignored (no push to HandleStore).
- * Loaders work normally but with fresh memoization.
+ * Loaders work normally but with fresh memoization and cycle detection.
  *
  * This prevents duplicate handle data (breadcrumbs, meta) from being
  * pushed to the response stream during background proactive caching.
@@ -291,67 +373,15 @@ export function setupLoaderAccessSilent<TEnv>(
   ctx: HandlerContext<any, TEnv>,
   loaderPromises: Map<string, Promise<any>>
 ): void {
+  const useLoader = createLoaderExecutor(ctx, loaderPromises);
+
   ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
-    // Handle case: return a no-op push function
     if (isHandle(item)) {
-      // Silent mode - return a function that does nothing
-      return (_dataOrFn: unknown) => {
-        // Intentionally empty - don't push handle data during proactive caching
-      };
+      // Silent mode - return a no-op so handle data is not pushed during caching
+      return (_dataOrFn: unknown) => {};
     }
 
-    // Loader case: same as setupLoaderAccess
-    const loader = item as LoaderDefinition<any, any>;
-
-    // Return cached promise if already started
-    if (loaderPromises.has(loader.$$id)) {
-      return loaderPromises.get(loader.$$id);
-    }
-
-    // Get loader function
-    let loaderFn = loader.fn;
-    if (!loaderFn) {
-      const fetchable = getFetchableLoader(loader.$$id);
-      if (fetchable) {
-        loaderFn = fetchable.fn;
-      }
-    }
-
-    if (!loaderFn) {
-      throw new Error(
-        `Loader "${loader.$$id}" has no function. This usually means the loader was defined without "use server" and the function was not included in the build.`
-      );
-    }
-
-    // Create loader context with recursive use() support
-    const loaderCtx: LoaderContext<Record<string, string | undefined>, TEnv> = {
-      params: ctx.params,
-      request: ctx.request,
-      searchParams: ctx.searchParams,
-      pathname: ctx.pathname,
-      url: ctx.url,
-      env: ctx.env,
-      var: ctx.var,
-      get: ctx.get,
-      use: <TDep, TDepParams = any>(
-        dep: LoaderDefinition<TDep, TDepParams>
-      ): Promise<TDep> => {
-        return ctx.use(dep);
-      },
-      method: "GET",
-      body: undefined,
-    };
-
-    // Start loader execution with tracking
-    const doneLoader = track(`loader:${loader.$$id}`);
-    const promise = Promise.resolve(
-      loaderFn(loaderCtx as LoaderContext<any, TEnv>)
-    ).finally(() => {
-      doneLoader();
-    });
-
-    loaderPromises.set(loader.$$id, promise);
-    return promise;
+    return useLoader(item as LoaderDefinition<any, any>, null);
   }) as typeof ctx.use;
 }
 
