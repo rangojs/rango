@@ -41,6 +41,7 @@ export default defineConfig({
           testIgnore: [
             "**/loader-hmr.test.ts",
             "**/route-types-hmr.test.ts",
+            "**/client-component-hmr.test.ts",
             "**/*.setup.ts",
           ],
           use: {
@@ -51,6 +52,12 @@ export default defineConfig({
         {
           name: "production",
           grep: /\(production/,
+          use: browserConfig,
+          fullyParallel: false,
+        },
+        {
+          name: "hmr-client",
+          testMatch: "**/client-component-hmr.test.ts",
           use: browserConfig,
           fullyParallel: false,
         },
@@ -84,6 +91,7 @@ export default defineConfig({
           testIgnore: [
             "**/loader-hmr.test.ts",
             "**/route-types-hmr.test.ts",
+            "**/client-component-hmr.test.ts",
             "**/*.setup.ts",
           ],
           use: {
@@ -102,14 +110,21 @@ export default defineConfig({
           dependencies: ["build"],
         },
         {
+          name: "hmr-client",
+          testMatch: "**/client-component-hmr.test.ts",
+          use: browserConfig,
+          fullyParallel: false,
+          dependencies: process.env.CI ? [] : ["dev", "production"],
+        },
+        {
           name: "hmr",
-          // Only run HMR test files
+          // Only run HMR test files (loader-hmr and route-types-hmr modify server modules
+          // that can corrupt RSC module state, so they run after hmr-client)
           testMatch: ["**/loader-hmr.test.ts", "**/route-types-hmr.test.ts"],
           use: browserConfig,
           // HMR tests modify files, run serially to avoid conflicts
           fullyParallel: false,
-          // Run after dev and production tests complete (only locally, not in CI where projects run in separate jobs)
-          dependencies: process.env.CI ? [] : ["dev", "production"],
+          dependencies: process.env.CI ? [] : ["dev", "production", "hmr-client"],
         },
       ],
   workers: process.env.CI ? 3 : 6,

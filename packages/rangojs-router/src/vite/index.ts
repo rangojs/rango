@@ -2118,6 +2118,45 @@ export async function rango(
     }
   }
 
+  // Fix HMR for "use client" components.
+  //
+  // @vitejs/plugin-rsc's hotUpdate returns undefined for "use client" files
+  // in the RSC environment. Vite then tries to propagate through the RSC
+  // module graph, but the proxy module has no import.meta.hot.accept()
+  // boundary, causing a full page reload. The client env would handle it
+  // fine via React Refresh, but the RSC env's full-reload arrives first.
+  //
+  // Fix: in the RSC env, return [] for "use client" files to signal
+  // "handled, nothing to propagate". The client env is left alone so
+  // React Refresh processes the update normally.
+  plugins.push({
+    name: "@rangojs/router:client-component-hmr",
+    hotUpdate(ctx) {
+      const envName = this.environment?.name;
+      if (envName !== "rsc" && envName !== "ssr") return;
+
+      // Check if the changed file is a "use client" module
+      const file = ctx.file;
+      if (!file.endsWith(".tsx") && !file.endsWith(".ts") && !file.endsWith(".jsx") && !file.endsWith(".js")) return;
+
+      try {
+        const source = readFileSync(file, "utf-8");
+        const trimmed = source.trimStart();
+        if (trimmed.startsWith('"use client"') || trimmed.startsWith("'use client'")) {
+          // Consume the update in RSC/SSR envs. The proxy module was already
+          // re-transformed by the RSC plugin's hotUpdate. Without this, Vite
+          // tries to propagate through the RSC/SSR module graph where the proxy
+          // has no import.meta.hot.accept() boundary, triggering a full reload.
+          // The actual component update is handled by React Refresh in the
+          // client environment.
+          return [];
+        }
+      } catch {
+        // File deleted/moved during HMR, let default handling proceed
+      }
+    },
+  });
+
   plugins.push(exposeActionId());
 
   // Consolidated plugin for create* ID injection (enforce: "post"):
