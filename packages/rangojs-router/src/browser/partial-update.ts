@@ -211,6 +211,7 @@ export function createPartialUpdater(
       throw err;
     }
     const { payload, streamComplete: rawStreamComplete } = fetchResult;
+    console.log("payload.metadata", payload.metadata);
 
     const streamComplete = rawStreamComplete.then(() => {
       streamingToken.end();
