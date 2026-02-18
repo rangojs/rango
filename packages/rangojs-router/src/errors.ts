@@ -215,6 +215,21 @@ export class RouterError extends Error {
 }
 
 /**
+ * Thrown by the partial updater when the server responds with a redirect payload
+ * that carries location state. Caught by navigate() to re-navigate to the
+ * redirect target with the server-set state merged into history.pushState.
+ *
+ * Not an Error subclass -- this is a control flow signal, not a failure.
+ */
+export class ServerRedirect {
+  readonly name = "ServerRedirect";
+  constructor(
+    public readonly url: string,
+    public readonly state: Record<string, unknown> | undefined,
+  ) {}
+}
+
+/**
  * Thrown when route handler returns invalid type
  */
 export class InvalidHandlerError extends Error {

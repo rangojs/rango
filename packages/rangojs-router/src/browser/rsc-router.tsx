@@ -195,6 +195,10 @@ export async function initBrowserApp(
     options?: RenderSegmentsOptions
   ) => baseRenderSegments(segments, { ...options, rootLayout });
 
+  // Lazy reference for navigation bridge — the action bridge is created first
+  // but may need to trigger SPA navigation for action redirects.
+  let navigateFn: ((url: string, options?: any) => Promise<void>) | null = null;
+
   // Setup server action bridge
   const actionBridge = createServerActionBridge({
     store,
@@ -204,6 +208,13 @@ export async function initBrowserApp(
     onUpdate: (update) => store.emitUpdate(update),
     renderSegments,
     version,
+    onNavigate: (url, options) => {
+      if (!navigateFn) {
+        window.location.href = url;
+        return Promise.resolve();
+      }
+      return navigateFn(url, options);
+    },
   });
   actionBridge.register();
 
@@ -216,6 +227,9 @@ export async function initBrowserApp(
     renderSegments,
     version,
   });
+
+  // Connect action redirect → navigation bridge (now that both are initialized)
+  navigateFn = (url, options) => navigationBridge.navigate(url, options);
 
   // Optionally enable global link interception
   if (linkInterception) {

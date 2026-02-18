@@ -223,6 +223,7 @@ export {
   createLocationState,
   type LocationStateDefinition,
   type LocationStateEntry,
+  type LocationStateOptions,
 } from "./browser/react/location-state-shared.js";
 
 // Path-based response type lookup from RegisteredRoutes

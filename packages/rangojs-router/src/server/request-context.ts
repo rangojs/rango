@@ -21,6 +21,7 @@ import { getFetchableLoader } from "./fetchable-loader-store.js";
 import type { SegmentCacheStore } from "../cache/types.js";
 import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
 import { THEME_COOKIE } from "../theme/constants.js";
+import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
 
 /**
  * Unified request context available via getRequestContext()
@@ -178,6 +179,26 @@ export interface RequestContext<
 
   /** @internal Theme configuration (null if theme not enabled) */
   _themeConfig?: ResolvedThemeConfig | null;
+
+  /**
+   * Attach location state entries to the current response.
+   *
+   * For partial (SPA) requests, the state is included in the RSC payload
+   * metadata and merged into history.pushState on the client. For redirect
+   * responses, the state travels through the redirect payload so the target
+   * page can read it via useLocationState.
+   *
+   * Multiple calls accumulate entries.
+   *
+   * @example
+   * ```typescript
+   * ctx.setLocationState([Flash({ text: "Item saved!" })]);
+   * ```
+   */
+  setLocationState(entries: LocationStateEntry[]): void;
+
+  /** @internal Accumulated location state entries */
+  _locationState?: LocationStateEntry[];
 }
 
 // AsyncLocalStorage instance for request context
@@ -213,6 +234,17 @@ export function setRequestContextParams(params: Record<string, string>): void {
   if (ctx) {
     ctx.params = params;
   }
+}
+
+/**
+ * Get accumulated location state entries from the current request context.
+ * Returns undefined if no state has been set.
+ *
+ * @internal Used by the RSC handler to include state in payload metadata.
+ */
+export function getLocationState(): LocationStateEntry[] | undefined {
+  const ctx = getRequestContext();
+  return ctx?._locationState;
 }
 
 /**
@@ -393,6 +425,13 @@ export function createRequestContext<TEnv>(
     theme: themeConfig ? getTheme() : undefined,
     setTheme: themeConfig ? setTheme : undefined,
     _themeConfig: themeConfig,
+
+    setLocationState(entries: LocationStateEntry[]): void {
+      this._locationState = this._locationState
+        ? [...this._locationState, ...entries]
+        : entries;
+    },
+    _locationState: undefined,
   };
 
   // Now create use() with access to ctx

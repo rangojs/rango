@@ -124,6 +124,13 @@ export function createHandlerContext<TEnv>(
     // Theme support (when enabled via router config)
     theme: requestContext?.theme,
     setTheme: requestContext?.setTheme,
+    // Location state support (delegates to request context)
+    setLocationState(entries) {
+      if (!requestContext) {
+        throw new Error("setLocationState() is not available outside a request context");
+      }
+      requestContext.setLocationState(entries);
+    },
     // Scoped reverse for URL generation
     reverse: (name: string, hrefParams?: Record<string, string>, search?: Record<string, unknown>) => {
       // Path-based - return directly (optionally with param substitution)
@@ -236,6 +243,9 @@ export function createBuildContext<TEnv>(
     },
     theme: undefined,
     setTheme: undefined,
+    setLocationState: () => {
+      throwUnavailable("setLocationState");
+    },
     reverse: () => {
       throwUnavailable("reverse");
     },

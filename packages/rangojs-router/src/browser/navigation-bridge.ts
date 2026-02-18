@@ -2,6 +2,7 @@ import type {
   NavigationBridge,
   NavigationBridgeConfig,
   NavigateOptions,
+  NavigateOptionsInternal,
   NavigationStore,
   ResolvedSegment,
 } from "./types.js";
@@ -43,7 +44,8 @@ function resolveNavigationState(state: unknown): unknown {
  */
 function buildHistoryState(
   userState: unknown,
-  routerState?: { intercept?: boolean; sourceUrl?: string }
+  routerState?: { intercept?: boolean; sourceUrl?: string },
+  serverState?: Record<string, unknown>,
 ): Record<string, unknown> | null {
   const result: Record<string, unknown> = {};
 
@@ -66,6 +68,11 @@ function buildHistoryState(
     }
   }
 
+  // Merge server-set location state (from ctx.setLocationState on non-redirect responses)
+  if (serverState) {
+    Object.assign(result, serverState);
+  }
+
   return Object.keys(result).length > 0 ? result : null;
 }
 import { setupLinkInterception } from "./link-interceptor.js";
@@ -84,6 +91,7 @@ import {
   isBackgroundSuppressible,
 } from "./network-error-handler.js";
 import { debugLog } from "./logging.js";
+import { ServerRedirect } from "../errors.js";
 
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
@@ -109,6 +117,8 @@ interface CommitOptions {
   interceptSourceUrl?: string;
   /** If true, only update cache without touching store or history (for background stale revalidation) */
   cacheOnly?: boolean;
+  /** Server-set location state to merge into history.pushState */
+  serverState?: Record<string, unknown>;
 }
 
 /**
@@ -127,6 +137,8 @@ interface BoundCommitOverrides {
   interceptSourceUrl?: string;
   /** If true, only update cache (for stale revalidation) */
   cacheOnly?: boolean;
+  /** Server-set location state to merge into history.pushState */
+  serverState?: Record<string, unknown>;
 }
 
 /**
@@ -261,6 +273,7 @@ function createNavigationTransaction(
       intercept,
       interceptSourceUrl,
       cacheOnly,
+      serverState,
     } = opts;
     // For reconciliation: always replace (URL already pushed), no scroll
     const replace = isReconciliation ? true : opts.replace;
@@ -304,11 +317,12 @@ function createNavigationTransaction(
       return;
     }
 
-    // Build history state - include user state and intercept info for popstate handling
-    const historyState = buildHistoryState(opts.state, {
-      intercept,
-      sourceUrl: interceptSourceUrl,
-    });
+    // Build history state - include user state, intercept info, and server-set state
+    const historyState = buildHistoryState(
+      opts.state,
+      { intercept, sourceUrl: interceptSourceUrl },
+      serverState,
+    );
 
     // Update browser URL (skip if reconciliation - already done in optimisticCommit)
     if (!isReconciliation) {
@@ -320,6 +334,13 @@ function createNavigationTransaction(
       }
       // Ensure new history entry has a scroll restoration key
       ensureHistoryKey();
+
+      // Notify location state hooks when history state includes typed entries.
+      // Needed for same-page redirects where components don't remount and
+      // useState initializers don't re-run, even though history.state was updated.
+      if (historyState && Object.keys(historyState).some(k => k.startsWith("__rsc_ls_"))) {
+        window.dispatchEvent(new Event("__rsc_locationstate"));
+      }
     }
 
     // Complete the navigation in event controller (sets idle state, updates location)
@@ -388,6 +409,8 @@ function createNavigationTransaction(
           // User state: overrides take precedence, fallback to opts
           const state =
             overrides?.state !== undefined ? overrides.state : opts.state;
+          // Server-set location state: only from overrides (set by partial-update)
+          const serverState = overrides?.serverState;
           commit({
             ...opts,
             segmentIds,
@@ -398,6 +421,7 @@ function createNavigationTransaction(
             intercept,
             interceptSourceUrl,
             cacheOnly,
+            serverState,
           });
         },
       };
@@ -461,7 +485,7 @@ export function createNavigationBridge(
      * Navigate to a URL
      * Uses optimistic rendering from cache when available (SWR pattern)
      */
-    async navigate(url: string, options?: NavigateOptions): Promise<void> {
+    async navigate(url: string, options?: NavigateOptionsInternal): Promise<void> {
       // Resolve LocationStateEntry[] to flat object if needed
       const resolvedState =
         options?.state !== undefined
@@ -532,12 +556,14 @@ export function createNavigationBridge(
       // 1. intercept caches - interception depends on source page context
       // 2. routes that CAN be intercepted - we don't know if this navigation will intercept
       // 3. when leaving intercept - we need fresh non-intercept segments from server
+      // 4. redirect-with-state - force re-render so hooks read fresh state
       const hasUsableCache =
         cachedSegments &&
         cachedSegments.length > 0 &&
         !isInterceptOnlyCache(cachedSegments) &&
         !hasInterceptCache &&
-        !isLeavingIntercept;
+        !isLeavingIntercept &&
+        !options?._skipCache;
 
       using tx = createNavigationTransaction(store, eventController, url, {
         ...options,
@@ -571,6 +597,17 @@ export function createNavigationBridge(
               : undefined
         );
       } catch (error) {
+        // Server-side redirect with location state: the current transaction's
+        // `using` cleanup resets loading state. Re-navigate to the redirect
+        // target carrying the server-set state into history.pushState.
+        if (error instanceof ServerRedirect) {
+          return this.navigate(error.url, {
+            state: error.state,
+            replace: options?.replace,
+            _skipCache: true,
+          } as NavigateOptionsInternal);
+        }
+
         if (error instanceof DOMException && error.name === "AbortError") {
           debugLog("[Browser] Navigation aborted by newer navigation");
           return;

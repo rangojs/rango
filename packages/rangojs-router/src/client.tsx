@@ -602,6 +602,7 @@ export {
   useLocationState,
   type LocationStateDefinition,
   type LocationStateEntry,
+  type LocationStateOptions,
 } from "./browser/react/location-state.js";
 
 // Type-safe href for client-side path validation

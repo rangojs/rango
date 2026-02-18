@@ -1,7 +1,8 @@
 "use server";
 
 import { ReactNode } from "react";
-import { requireRequestContext } from "@rangojs/router";
+import { requireRequestContext, redirect } from "@rangojs/router";
+import { FlashMessage } from "./location-states.js";
 
 // Simulated delay helper
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -167,3 +168,20 @@ export const StreamingAction = async (_data: FormData) => {
     }),
   };
 };
+
+/**
+ * Action that redirects with a flash message.
+ * Tests that server actions can use redirect() with location state.
+ */
+export async function saveAndRedirect(): Promise<void> {
+  return redirect("/location-state", {
+    state: [FlashMessage({ text: "Action saved successfully!" })],
+  }) as any;
+}
+
+/**
+ * Action that redirects without state (pure redirect from action).
+ */
+export async function actionSimpleRedirect(): Promise<void> {
+  return redirect("/location-state/target") as any;
+}

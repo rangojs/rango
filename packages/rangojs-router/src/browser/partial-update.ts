@@ -11,6 +11,7 @@ import { reconcileSegments } from "./segment-reconciler.js";
 import type { ReconcileActor } from "./segment-reconciler.js";
 import { hasActiveIntercept as hasActiveInterceptSlots } from "./intercept-utils.js";
 import type { BoundTransaction } from "./navigation-bridge.js";
+import { ServerRedirect } from "../errors.js";
 import { debugLog } from "./logging.js";
 
 /**
@@ -40,6 +41,8 @@ export interface CommitOverrides {
   intercept?: boolean;
   /** Source URL where intercept was triggered from */
   interceptSourceUrl?: string;
+  /** Server-set location state to merge into history.pushState */
+  serverState?: Record<string, unknown>;
 }
 
 /**
@@ -208,6 +211,21 @@ export function createPartialUpdater(
     const streamComplete = rawStreamComplete.then(() => {
       streamingToken.end();
     });
+
+    // Handle server-side redirect with state: the server returned a 200 with
+    // a redirect payload instead of a 3xx so that location state is preserved.
+    // Throw ServerRedirect to let navigate() catch it and re-navigate with state.
+    // Check signal.aborted first — a newer navigation may have started, and we
+    // must not redirect from a stale response.
+    if (payload.metadata?.redirect) {
+      if (signal?.aborted) {
+        console.log(`[Browser] Ignoring stale redirect (aborted)`);
+        return streamComplete;
+      }
+      const { url: redirectUrl } = payload.metadata.redirect;
+      const serverState = payload.metadata.locationState;
+      throw new ServerRedirect(redirectUrl, serverState);
+    }
 
     if (payload.metadata?.isPartial) {
       const { segments: newSegments, matched, diff } = payload.metadata;
@@ -396,17 +414,18 @@ export function createPartialUpdater(
       // For intercept responses: disable scroll, mark as intercept, include source URL
       // Use reconciled.segments (which includes inserted diff segments) instead of matchedIds
       const allSegmentIds = reconciled.segments.map((s) => s.id);
-      tx.commit(
-        allSegmentIds,
-        reconciled.segments,
-        isInterceptResponse
-          ? {
-              scroll: false,
-              intercept: true,
-              interceptSourceUrl: segmentState.currentUrl,
-            }
-          : undefined,
-      );
+      const serverLocationState = payload.metadata?.locationState;
+      const overrides: CommitOverrides | undefined = isInterceptResponse
+        ? {
+            scroll: false,
+            intercept: true,
+            interceptSourceUrl: segmentState.currentUrl,
+            ...(serverLocationState && { serverState: serverLocationState }),
+          }
+        : serverLocationState
+          ? { serverState: serverLocationState }
+          : undefined;
+      tx.commit(allSegmentIds, reconciled.segments, overrides);
 
       // For stale revalidation: verify history key hasn't changed before updating UI
       // If user navigated away, skip UI update to avoid corrupting current view
@@ -470,7 +489,12 @@ export function createPartialUpdater(
       }
 
       // Commit navigation - transaction handles all store mutations atomically
-      tx.commit(segmentIds, segments);
+      const fullUpdateServerState = payload.metadata?.locationState;
+      if (fullUpdateServerState) {
+        tx.commit(segmentIds, segments, { serverState: fullUpdateServerState });
+      } else {
+        tx.commit(segmentIds, segments);
+      }
 
       // Emit update to trigger React render
       // For stale revalidation: wait for stream to complete, then update

@@ -23,6 +23,7 @@ import { prerenderPatterns } from "./urls/prerender.js";
 import { prerenderComplexPatterns } from "./urls/prerender-complex.js";
 import { transformCasesPatterns } from "./urls/transform-cases.js";
 import { apiShopPatterns } from "./urls/api-shop.js";
+import { locationStatePatterns } from "./urls/location-state.js";
 import { includeMiddlewarePatterns } from "./urls/include-middleware.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
@@ -430,6 +431,9 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
 
     // Shop API patterns (JSON response routes)
     include("/api/shop", apiShopPatterns, { name: "apiShop" }),
+
+    // Location state test patterns (redirect with state, flash messages)
+    include("/location-state", locationStatePatterns, { name: "locationState" }),
 
     // Include under layout with middleware — tests that layout middleware
     // is applied to routes inside include() even when include() is the
