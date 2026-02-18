@@ -561,6 +561,52 @@ test.describe("shop-actions", () => {
     await expect(page.locator("text=Success")).toBeVisible({ timeout: 15000 });
   });
 
+  test("should show action result on cached second visit via intercept", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    // First visit: /shop -> intercept -> details (fresh, loading skeleton shows)
+    await page.goto(f.url("/shop"));
+    await waitForHydration(page);
+    await expect(page.locator("text=All Products")).toBeVisible();
+
+    await page.locator('a[href="/shop/product/wireless-headphones"]').first().click();
+    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 5000 });
+
+    await page.locator("text=View Full Details").click();
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 5000 });
+    await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({ timeout: 10000 });
+
+    // Navigate back to /shop
+    await page.locator('a[href="/shop"]').first().click();
+    await expect(page).toHaveURL(/\/shop$/);
+    await expect(page.locator("text=All Products")).toBeVisible({ timeout: 5000 });
+
+    // Second visit: same flow, but details page is now cached on server
+    await page.locator('a[href="/shop/product/wireless-headphones"]').first().click();
+    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 5000 });
+
+    await page.locator("text=View Full Details").click();
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 5000 });
+    await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({ timeout: 10000 });
+
+    // Action should work on cached page without skeleton flicker or remount
+    const withResultButton = page.locator("button").filter({ hasText: "Add to Cart (With Result)" }).first();
+    await expect(withResultButton).toBeVisible({ timeout: 5000 });
+
+    const pendingButton = page.locator("button").filter({ hasText: "Adding..." }).first();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await withResultButton.click();
+      try {
+        await expect(pendingButton).toBeVisible({ timeout: 3000 });
+        break;
+      } catch {
+        if (attempt === 2) throw new Error("Action never fired after 3 click attempts");
+      }
+    }
+
+    await expect(page.locator("text=Success")).toBeVisible({ timeout: 20000 });
+  });
+
   test("should correctly handle rapid increment clicks after add to cart", async ({ page }) => {
     using _ = expectNoPageError(page);
 
