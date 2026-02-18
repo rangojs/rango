@@ -424,7 +424,7 @@ describe("sequence: popstate stale revalidation", () => {
     // Renders immediately
     const renderCmd = findCmd(r1.commands, "RENDER");
     expect(renderCmd).toBeDefined();
-    expect(renderCmd!.payload.forceAwait).toBe(true);
+    expect((renderCmd as any).payload.forceAwait).toBe(true);
 
     // Background revalidation fetch
     const fetchCmd = findCmd(r1.commands, "FETCH");

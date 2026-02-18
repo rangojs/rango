@@ -679,7 +679,7 @@ describe("reduce: HANDLES_UPDATE", () => {
     });
 
     const tx = [...s1.transactions.values()][0];
-    const handles = { title: "Test Page" };
+    const handles = { title: { "root": ["Test Page"] } } as any;
     const { state: s2 } = reduce(s1, {
       type: "HANDLES_UPDATE",
       txId: tx.txId,
