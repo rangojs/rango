@@ -354,6 +354,18 @@ export function createPartialUpdater(
               );
               return { ...fromServer, component: fromCache.component };
             }
+            // During actions: preserve cached loading value to maintain tree structure.
+            // The server may return a different loading value (e.g., skeleton vs false)
+            // because isSSR differs between SSR and action contexts. Swapping loading
+            // changes the React tree depth, causing remounts that destroy client state.
+            if (
+              isAction &&
+              fromCache &&
+              fromCache.loading !== undefined &&
+              fromServer.loading !== fromCache.loading
+            ) {
+              return { ...fromServer, loading: fromCache.loading };
+            }
             return fromServer;
           }
           // Fall back to current page's cached segments
@@ -363,8 +375,15 @@ export function createPartialUpdater(
             return fromCache;
           }
           // For cached segments the server decided not to re-render:
-          // - Preserve loading=false (suppressed boundary) to maintain tree structure
-          // - Clear truthy loading (active skeleton) to prevent suspense on cached content
+          // - During actions: preserve loading exactly as-is to maintain tree structure.
+          //   Changing loading between renders alters the React tree
+          //   (with/without RouteContentWrapper), causing remounts that destroy
+          //   useActionState and other client state.
+          // - During navigation: preserve loading=false (suppressed boundary) but
+          //   clear truthy loading (active skeleton) to prevent suspense on cached content.
+          if (isAction) {
+            return fromCache;
+          }
           if (fromCache.loading !== undefined && fromCache.loading !== false) {
             return { ...fromCache, loading: undefined };
           }

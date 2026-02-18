@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { Link, ScrollRestoration, href } from "@rangojs/router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { BreadcrumbNav } from "../components/BreadcrumbNav.js";
+import { LinkStatusIndicator } from "../components/LinkStatusIndicator.js";
 
 export function RootLayout({ children }: { children: ReactNode }) {
   return (
@@ -60,6 +61,7 @@ export function RootLayout({ children }: { children: ReactNode }) {
           </Link>
           <Link to={href("/blog")} prefetch="hover">
             Blog
+            <LinkStatusIndicator />
           </Link>
           <Link to={href("/dashboard")} prefetch="hover">
             Dashboard
