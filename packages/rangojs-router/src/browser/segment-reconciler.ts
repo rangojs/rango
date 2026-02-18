@@ -17,8 +17,8 @@ import { splitInterceptSegments } from "./intercept-utils.js";
  *   loaders, preserves cached loading only when defined, clears truthy loading
  *   on cached segments not in server diff.
  * - 'stale-revalidation': From partial-update during stale revalidation or
- *   action-triggered refetch. Merges loaders, preserves cached loading only
- *   when defined, clears truthy loading on cached segments not in server diff.
+ *   action-triggered refetch. Merges loaders, always preserves cached loading
+ *   (same as action), clears truthy loading on cached segments not in server diff.
  */
 export type ReconcileActor = "navigation" | "action" | "stale-revalidation";
 
@@ -55,12 +55,13 @@ export interface ReconcileResult {
  * differences between action and navigation merging:
  *
  * Loading preservation:
- * - action: Always preserves cached loading value when it differs from server.
- *   This prevents tree structure changes that would remount components and
- *   destroy useActionState during action revalidation.
- * - navigation/stale-revalidation: Preserves cached loading only when the
- *   cached value is defined (not undefined). When cached is undefined, lets
- *   server value through because we're building a new tree.
+ * - action/stale-revalidation: Always preserves cached loading value when it
+ *   differs from server (even when cached is undefined). This prevents tree
+ *   structure changes that would remount components and destroy useActionState
+ *   during action revalidation or action-triggered refetch.
+ * - navigation: Preserves cached loading only when the cached value is defined
+ *   (not undefined). When cached is undefined, lets server value through
+ *   because we're building a new tree.
  *
  * Loader merging:
  * - action/stale-revalidation: Merges partial loader data when server returns
@@ -119,9 +120,11 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
           }
 
           // Loading preservation is actor-aware:
-          // - action: always preserve cached value to prevent tree remount
-          // - navigation/stale-revalidation: only when cached is defined
-          if (actor === "action") {
+          // - action/stale-revalidation: always preserve cached value to prevent
+          //   tree remount (even when cached is undefined, to avoid adding a
+          //   Suspense boundary that wasn't there before)
+          // - navigation: only when cached is defined (building a new tree)
+          if (actor !== "navigation") {
             if (fromServer.loading !== fromCache.loading) {
               merged = { ...merged, loading: fromCache.loading };
             }

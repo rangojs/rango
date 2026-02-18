@@ -200,8 +200,10 @@ describe("segment-reconciler", () => {
       });
     });
 
-    describe("actor: stale-revalidation - same loading behavior as navigation", () => {
-      it("does NOT preserve when cached loading is undefined", () => {
+    describe("actor: stale-revalidation - same loading behavior as action", () => {
+      it("preserves cached loading=undefined when server returns skeleton", () => {
+        // After intercept -> leave-intercept, cached loading is undefined.
+        // stale-revalidation must preserve it to prevent tree remount.
         const cached = seg("L0", {
           type: "layout",
           loading: undefined,
@@ -219,7 +221,28 @@ describe("segment-reconciler", () => {
           cachedSegments: [cached],
         });
 
-        expect(result.segments[0].loading).toBe("skeleton");
+        expect(result.segments[0].loading).toBeUndefined();
+      });
+
+      it("preserves cached loading=false when server returns skeleton", () => {
+        const cached = seg("L0", {
+          type: "layout",
+          loading: false as any,
+        });
+        const server = seg("L0", {
+          type: "layout",
+          loading: "skeleton" as any,
+        });
+
+        const result = reconcileSegments({
+          actor: "stale-revalidation",
+          matched: ["L0"],
+          diff: ["L0"],
+          serverSegments: [server],
+          cachedSegments: [cached],
+        });
+
+        expect(result.segments[0].loading).toBe(false);
       });
 
       it("clears truthy loading on cached segments not in server response", () => {
