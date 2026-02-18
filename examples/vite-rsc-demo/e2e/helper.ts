@@ -172,7 +172,7 @@ export async function getHistoryState(page: Page) {
  */
 export async function goBack(page: Page) {
   await Promise.all([
-    page.waitForURL(/.*/, { waitUntil: "networkidle" }),
+    page.waitForURL(/.*/, { waitUntil: "commit" }),
     page.goBack(),
   ]);
 }
@@ -182,7 +182,7 @@ export async function goBack(page: Page) {
  */
 export async function goForward(page: Page) {
   await Promise.all([
-    page.waitForURL(/.*/, { waitUntil: "networkidle" }),
+    page.waitForURL(/.*/, { waitUntil: "commit" }),
     page.goForward(),
   ]);
 }

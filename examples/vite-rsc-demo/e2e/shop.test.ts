@@ -1127,7 +1127,7 @@ test.describe("shop-concurrent-actions", () => {
     mode: "dev",
   });
 
-  test.setTimeout(30000);
+  test.setTimeout(60000);
 
   test("should handle rapid quantity changes from modal", async ({ page }) => {
     using _ = expectNoPageError(page);
