@@ -7,12 +7,9 @@ import type {
 import type { ReactNode } from "react";
 import { startTransition } from "react";
 import type { RenderSegmentsOptions } from "../segment-system.js";
-import {
-  mergeSegmentLoaders,
-  needsLoaderMerge,
-  insertMissingDiffSegments,
-} from "./merge-segment-loaders.js";
-import { assertSegmentStructure } from "./segment-structure-assert.js";
+import { reconcileSegments } from "./segment-reconciler.js";
+import type { ReconcileActor } from "./segment-reconciler.js";
+import { hasActiveIntercept as hasActiveInterceptSlots } from "./intercept-utils.js";
 import type { BoundTransaction } from "./navigation-bridge.js";
 
 /**
@@ -103,15 +100,12 @@ export function createPartialUpdater(
   const { store, client, onUpdate, renderSegments, version } = config;
 
   /**
-   * Build a lookup map from current page's cached segments
+   * Get current page's cached segments as an array
    */
-  function getCurrentSegmentMap(): Map<string, ResolvedSegment> {
+  function getCurrentCachedSegments(): ResolvedSegment[] {
     const currentKey = store.getHistoryKey();
     const cached = store.getCachedSegments(currentKey);
-    const cachedSegments = cached?.segments || [];
-    const map = new Map<string, ResolvedSegment>();
-    cachedSegments.forEach((s) => map.set(s.id, s));
-    return map;
+    return cached?.segments || [];
   }
 
   /**
@@ -180,17 +174,14 @@ export function createPartialUpdater(
       console.log(`[Browser] Intercept context from: ${interceptSourceUrl}`);
     }
 
-    // Build segment map for merging with server diff.
+    // Get cached segments for merging with server diff.
     // When targetCacheSegments is provided (navigating to a cached route), use those
     // to ensure consistency - we use the same segments we told the server we have.
     // Otherwise fall back to current page's segments (for same-route revalidation).
-    let currentSegmentMap: Map<string, ResolvedSegment>;
-    if (targetCacheSegments && targetCacheSegments.length > 0) {
-      currentSegmentMap = new Map();
-      targetCacheSegments.forEach((s) => currentSegmentMap.set(s.id, s));
-    } else {
-      currentSegmentMap = getCurrentSegmentMap();
-    }
+    const cachedSegs =
+      targetCacheSegments && targetCacheSegments.length > 0
+        ? targetCacheSegments
+        : getCurrentCachedSegments();
     // Mark navigation as streaming (response received, now parsing RSC)
     // The token is ended when the stream completes
     const streamingToken = tx.startStreaming();
@@ -229,19 +220,14 @@ export function createPartialUpdater(
       console.log(`[Browser] Partial update - matched: ${matched?.join(", ")}`);
       console.log(`[Browser] Diff: ${diff?.join(", ")}`);
 
-      // Create lookup for new segments from server
-      const newSegmentMap = new Map<string, ResolvedSegment>();
-      (newSegments || []).forEach((s: ResolvedSegment) =>
-        newSegmentMap.set(s.id, s),
-      );
-
       // If diff is empty, nothing changed on server side.
       // However, if we're navigating with targetCacheSegments (to a different route),
       // we still need to render those segments since the UI is showing the old route.
       if (!diff || diff.length === 0) {
         const matchedIds = matched || [];
+        const cacheMap = new Map(cachedSegs.map((s) => [s.id, s]));
         const existingSegments = matchedIds
-          .map((id: string) => currentSegmentMap.get(id))
+          .map((id: string) => cacheMap.get(id))
           .filter(Boolean) as ResolvedSegment[];
 
         // When navigating with cached segments to a different route, render them.
@@ -308,96 +294,23 @@ export function createPartialUpdater(
         return streamComplete;
       }
 
-      // Build full segment list by merging:
-      // - New/changed segments from server response (diff)
-      // - Unchanged segments from current page's cache
+      // Reconcile server segments with cached segments (single source of truth)
       const matchedIds = matched || [];
-      console.log(`[Browser] matchedIds: ${matchedIds.join(", ")}`);
-      console.log(
-        `[Browser] currentSegmentMap keys: ${[...currentSegmentMap.keys()].join(", ")}`,
-      );
-      console.log(
-        `[Browser] newSegmentMap keys: ${[...newSegmentMap.keys()].join(", ")}`,
-        newSegmentMap,
-      );
-
-      // First pass: build segments from matched IDs
-      const matchedIdSet = new Set(matchedIds);
-      const allSegments = matchedIds
-        .map((id: string) => {
-          // First check server response (new/updated segments)
-          const fromServer = newSegmentMap.get(id);
-          if (fromServer) {
-            // For partial revalidation (stale or action), merge server's new loader data
-            // with cached loader data when server returns fewer loaders than cached
-            const fromCache = currentSegmentMap.get(id);
-            // Dev-mode assertion: warn if tree structure would change
-            if (fromCache) {
-              assertSegmentStructure(fromCache, fromServer, "partial-update");
-            }
-            if (
-              (staleRevalidation || isAction) &&
-              needsLoaderMerge(fromServer, fromCache)
-            ) {
-              return mergeSegmentLoaders(fromServer, fromCache);
-            }
-            // Preserve cached structural properties to maintain consistent React tree.
-            // The server may return different values for loading (isSSR context) and
-            // mountPath (include scope), which change the element nesting depth
-            // (with/without RouteContentWrapper, MountContextProvider).
-            if (fromCache) {
-              let merged = fromServer;
-
-              // When server returns component: null for a layout segment, it means
-              // "this segment doesn't need re-rendering" - preserve the cached component
-              // to maintain the outlet chain and prevent React tree changes
-              if (
-                fromServer.component === null &&
-                fromServer.type === "layout" &&
-                fromCache.component != null
-              ) {
-                merged = { ...merged, component: fromCache.component };
-              }
-
-              if (
-                fromCache.loading !== undefined &&
-                fromServer.loading !== fromCache.loading
-              ) {
-                merged = { ...merged, loading: fromCache.loading };
-              }
-
-              if (fromServer.mountPath !== fromCache.mountPath) {
-                merged = { ...merged, mountPath: fromCache.mountPath };
-              }
-
-              return merged;
-            }
-            return fromServer;
-          }
-          // Fall back to current page's cached segments
-          const fromCache = currentSegmentMap.get(id);
-          if (!fromCache) {
-            console.warn(`[Browser] Missing segment: ${id}`);
-            return fromCache;
-          }
-          // For cached segments the server decided not to re-render:
-          // - Preserve loading=false (suppressed boundary) to maintain tree structure
-          // - Clear truthy loading (active skeleton) to prevent suspense on cached content
-          if (fromCache.loading !== undefined && fromCache.loading !== false) {
-            return { ...fromCache, loading: undefined };
-          }
-          return fromCache;
-        })
-        .filter(Boolean) as ResolvedSegment[];
-
-      // Insert diff segments not in matchedIds (e.g., loader segments from consolidation fetch)
-      insertMissingDiffSegments(allSegments, diff, matchedIdSet, newSegmentMap);
+      const actor: ReconcileActor =
+        staleRevalidation || isAction ? "stale-revalidation" : "navigation";
+      const reconciled = reconcileSegments({
+        actor,
+        matched: matchedIds,
+        diff: diff || [],
+        serverSegments: newSegments || [],
+        cachedSegments: cachedSegs,
+        insertMissingDiff: true,
+      });
 
       // HMR RESILIENCE: Check if we're missing any matched segments
-      // Note: allSegments may include additional diff segments, so we check matchedIds specifically
-      const allSegmentIdSet = new Set(allSegments.map((s) => s.id));
+      const reconciledIdSet = new Set(reconciled.segments.map((s) => s.id));
       const missingIds = matchedIds.filter(
-        (id: string) => !allSegmentIdSet.has(id),
+        (id: string) => !reconciledIdSet.has(id),
       );
 
       if (missingIds.length > 0) {
@@ -426,16 +339,6 @@ export function createPartialUpdater(
         return fetchPartialUpdate(url, [], true, signal, tx, { isAction });
       }
 
-      // INTERCEPT HANDLING: Separate intercept segments for explicit injection
-      // Intercept segments have namespace starting with "intercept:" or ID containing .@
-      // This makes the flow clearer and easier to debug
-      const isInterceptSegment = (s: ResolvedSegment) =>
-        s.namespace?.startsWith("intercept:") ||
-        (s.type === "parallel" && s.id.includes(".@"));
-
-      const interceptSegments = allSegments.filter(isInterceptSegment);
-      const mainSegments = allSegments.filter((s) => !isInterceptSegment(s));
-
       if (signal?.aborted) {
         console.log(
           `[Browser] Ignoring stale navigation (aborted before render)`,
@@ -451,11 +354,13 @@ export function createPartialUpdater(
         isAction,
         forceAwait: staleRevalidation,
         interceptSegments:
-          interceptSegments.length > 0 ? interceptSegments : undefined,
+          reconciled.interceptSegments.length > 0
+            ? reconciled.interceptSegments
+            : undefined,
       };
       const newTree = await (signal
         ? Promise.race([
-            renderSegments(mainSegments, renderOptions),
+            renderSegments(reconciled.mainSegments, renderOptions),
             new Promise<never>((_, reject) => {
               if (signal.aborted) {
                 reject(new DOMException("Navigation aborted", "AbortError"));
@@ -465,7 +370,7 @@ export function createPartialUpdater(
               });
             }),
           ])
-        : renderSegments(mainSegments, renderOptions));
+        : renderSegments(reconciled.mainSegments, renderOptions));
 
       // Final abort check before committing - another navigation may have started
       if (signal?.aborted) {
@@ -477,13 +382,13 @@ export function createPartialUpdater(
 
       // Check if this is an intercept response (any slot is active)
       // If so, disable scroll to keep the current scroll position
-      const hasActiveIntercept = payload.metadata?.slots
-        ? Object.values(payload.metadata.slots).some((slot) => slot.active)
-        : false;
+      const isInterceptResponse = hasActiveInterceptSlots(
+        payload.metadata?.slots,
+      );
 
       // Track intercept context for action revalidation (only on navigation, not actions or stale revalidation)
       if (!isAction && !staleRevalidation) {
-        if (hasActiveIntercept) {
+        if (isInterceptResponse) {
           // Save the source URL for action revalidation to maintain intercept context
           store.setInterceptSourceUrl(segmentState.currentUrl);
         } else {
@@ -494,13 +399,12 @@ export function createPartialUpdater(
 
       // Commit navigation - transaction handles all store mutations atomically
       // For intercept responses: disable scroll, mark as intercept, include source URL
-      // Use allSegmentIds (derived from allSegments) instead of matchedIds because
-      // we may have added diff segments (like loader segments) not in the matched array
-      const allSegmentIds = allSegments.map((s) => s.id);
+      // Use reconciled.segments (which includes inserted diff segments) instead of matchedIds
+      const allSegmentIds = reconciled.segments.map((s) => s.id);
       tx.commit(
         allSegmentIds,
-        allSegments,
-        hasActiveIntercept
+        reconciled.segments,
+        isInterceptResponse
           ? {
               scroll: false,
               intercept: true,

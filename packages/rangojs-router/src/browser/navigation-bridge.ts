@@ -77,6 +77,7 @@ import {
   ensureHistoryKey,
 } from "./scroll-restoration.js";
 import type { EventController, NavigationHandle } from "./event-controller.js";
+import { isInterceptOnlyCache } from "./intercept-utils.js";
 import { NetworkError, isNetworkError } from "../errors.js";
 import { NetworkErrorThrower } from "../network-error-thrower.js";
 import { createElement, startTransition } from "react";
@@ -84,26 +85,6 @@ import { createElement, startTransition } from "react";
 // Polyfill Symbol.dispose for Safari and older browsers
 if (typeof Symbol.dispose === "undefined") {
   (Symbol as any).dispose = Symbol("Symbol.dispose");
-}
-
-/**
- * Check if a segment is an intercept segment
- * Intercept segments have namespace starting with "intercept:" or ID containing .@
- */
-function isInterceptSegment(s: ResolvedSegment): boolean {
-  return (
-    s.namespace?.startsWith("intercept:") ||
-    (s.type === "parallel" && s.id.includes(".@"))
-  );
-}
-
-/**
- * Check if cached segments are intercept-only (no main route segments)
- * Intercept responses shouldn't be used for optimistic rendering since
- * whether interception happens depends on the current page context
- */
-function isInterceptOnlyCache(segments: ResolvedSegment[]): boolean {
-  return segments.some(isInterceptSegment);
 }
 
 /**
