@@ -1908,6 +1908,8 @@ export function createRouter<TEnv = any>(
         waitUntil: () => {},
         onResponse: () => {},
         _onResponseCallbacks: [],
+        setLocationState() {},
+        _locationState: undefined,
       };
 
       return runWithRequestContext(minimalRequestContext, async () => {

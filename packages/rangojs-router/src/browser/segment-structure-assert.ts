@@ -57,6 +57,22 @@ export function assertSegmentStructure(
         `The merge code should preserve the cached loading value.`,
     );
   }
+
+  // Check mountPath consistency. MountContextProvider is conditionally added
+  // in renderSegments() when mountPath is truthy, changing tree depth.
+  const cachedHasMount = !!cached.mountPath;
+  const incomingHasMount = !!incoming.mountPath;
+  if (cachedHasMount !== incomingHasMount) {
+    console.warn(
+      `[RSC Router] MountContextProvider mismatch detected in ${context} ` +
+        `for segment "${cached.id}": mountPath changed from ` +
+        `${cachedHasMount ? `"${cached.mountPath}"` : "undefined"} to ` +
+        `${incomingHasMount ? `"${incoming.mountPath}"` : "undefined"}. ` +
+        `This will cause React to remount the component, destroying ` +
+        `useActionState and other client state. ` +
+        `The merge code should preserve the cached mountPath value.`,
+    );
+  }
 }
 
 function describeLoading(loading: unknown): string {

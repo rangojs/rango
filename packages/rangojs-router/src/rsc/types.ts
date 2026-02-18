@@ -35,6 +35,10 @@ export interface RscPayload {
     initialTheme?: Theme;
     /** Whether connection warmup is enabled */
     warmupEnabled?: boolean;
+    /** Server-side redirect with optional state (for partial requests) */
+    redirect?: { url: string };
+    /** Server-set location state to include in history.pushState */
+    locationState?: Record<string, unknown>;
   };
   returnValue?: { ok: boolean; data: unknown };
   formState?: unknown;

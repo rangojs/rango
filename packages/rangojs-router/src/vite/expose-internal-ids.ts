@@ -330,6 +330,14 @@ function collectCreateExportBindings(
     }
   }
 
+  // When the JS parser misidentifies TypeScript generics (e.g.,
+  // createLocationState<{ text: string }>({...})) as binary expressions,
+  // the AST path finds 0 bindings even though calls exist. Fall back to
+  // regex-based detection which handles generics via <[^>]*> matching.
+  if (bindings.length === 0) {
+    return collectCreateExportBindingsFallback(code, fnNames);
+  }
+
   return bindings;
 }
 
@@ -607,15 +615,15 @@ function transformLocationState(
 ): boolean {
   let hasChanges = false;
   for (const binding of bindings) {
-    if (binding.argCount > 0) continue; // Already has a key, skip
     const exportName = binding.exportNames[0];
 
     const stateKey = isBuild
       ? hashId(filePath, exportName)
       : `${filePath}#${exportName}`;
 
-    s.appendLeft(binding.callCloseParenPos, `"${stateKey}"`);
-
+    // Key is injected as a property assignment (not as a function argument).
+    // This allows createLocationState to accept options like { flash: true }
+    // without conflicting with key injection.
     const propInjection =
       `\n${binding.localName}.__rsc_ls_key = "__rsc_ls_${stateKey}";`;
     s.appendRight(binding.statementEnd, propInjection);

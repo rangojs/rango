@@ -23,6 +23,7 @@ import { prerenderPatterns } from "./urls/prerender.js";
 import { prerenderComplexPatterns } from "./urls/prerender-complex.js";
 import { transformCasesPatterns } from "./urls/transform-cases.js";
 import { apiShopPatterns } from "./urls/api-shop.js";
+import { locationStatePatterns } from "./urls/location-state.js";
 import { includeMiddlewarePatterns } from "./urls/include-middleware.js";
 import { clientLoaderPatterns } from "./urls/client-loader.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
@@ -454,6 +455,9 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
 
     // Client and isomorphic loader patterns
     include("/", clientLoaderPatterns),
+
+    // Location state test patterns (redirect with state, flash messages)
+    include("/location-state", locationStatePatterns, { name: "locationState" }),
 
     // Include under layout with middleware — tests that layout middleware
     // is applied to routes inside include() even when include() is the

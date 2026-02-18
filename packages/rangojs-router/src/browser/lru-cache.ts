@@ -40,15 +40,7 @@ export class LRUCache<K, V> {
   }
 
   has(key: K): boolean {
-    if (!this.cache.has(key)) {
-      return false;
-    }
-
-    // Move to end (most recently used) - same as get()
-    const value = this.cache.get(key)!;
-    this.cache.delete(key);
-    this.cache.set(key, value);
-    return true;
+    return this.cache.has(key);
   }
 
   delete(key: K): boolean {

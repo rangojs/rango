@@ -126,6 +126,65 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
 ])
 ```
 
+## Redirects
+
+### Basic redirect
+
+```typescript
+import { redirect } from "@rangojs/router";
+
+path("/old-page", () => redirect("/new-page"), { name: "oldPage" })
+```
+
+### Redirect with custom status
+
+```typescript
+path("/moved", () => redirect("/new-location", 301), { name: "moved" })
+```
+
+### Redirect with location state
+
+Carry typed state through redirects (e.g. flash messages):
+
+```typescript
+import { redirect, createLocationState } from "@rangojs/router";
+
+export const FlashMessage = createLocationState<{ text: string }>({ flash: true });
+
+path("/save", (ctx) => {
+  // ... save logic
+  return redirect("/dashboard", {
+    state: [FlashMessage({ text: "Item saved!" })],
+  });
+}, { name: "save" })
+
+// With custom status + state
+path("/action", (ctx) => {
+  return redirect("/target", {
+    status: 303,
+    state: [FlashMessage({ text: "Action complete" })],
+  });
+}, { name: "action" })
+```
+
+Read the state on the target page with `useLocationState(FlashMessage)`. The
+`{ flash: true }` option makes it auto-clear. Without `{ flash: true }`,
+state persists on back/forward. See `/hooks` for details.
+
+### ctx.setLocationState()
+
+Attach location state to any server response (not just redirects):
+
+```typescript
+path("/dashboard", (ctx) => {
+  ctx.setLocationState([ServerInfo({ data: "welcome" })]);
+  return <Dashboard />;
+}, { name: "dashboard" })
+```
+
+State flows to the browser via the RSC payload and is merged into
+`history.pushState()`. Only works for SPA (partial) navigations.
+
 ## Handler Context
 
 Every handler receives a context object:
@@ -139,6 +198,7 @@ interface HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch = {}> {
   env: TEnv;                 // Environment (bindings + variables)
   use<T>(handle: Handle<T>): T;  // Access handles
   reverse(name: string, params?: Record<string, string>, search?: Record<string, unknown>): string;  // URL generation
+  setLocationState(entries: LocationStateEntry[]): void;  // Attach state to response
 }
 ```
 

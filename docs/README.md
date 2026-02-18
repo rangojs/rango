@@ -566,13 +566,13 @@ Define state with `createLocationState` for type safety:
 // location-states.ts
 import { createLocationState } from "rsc-router/client";
 
-// Define typed state with a stable key
+// Define typed state (keys auto-injected by Vite plugin)
 export const ProductState = createLocationState<{
   name: string;
   price: number;
-}>("product");
+}>();
 
-export const ScrollState = createLocationState<{ scrollY: number }>("scroll");
+export const ScrollState = createLocationState<{ scrollY: number }>();
 ```
 
 Use in navigation:

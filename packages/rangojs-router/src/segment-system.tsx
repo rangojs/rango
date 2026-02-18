@@ -214,7 +214,7 @@ export async function renderSegments(
     }
 
     let nodeContent: ReactNode =
-      loading !== null && loading
+      loading !== null && loading !== undefined && loading !== false
         ? createElement(RouteContentWrapper, {
             key: `suspense-loading-${id}`,
             content:

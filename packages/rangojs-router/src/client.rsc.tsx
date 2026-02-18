@@ -71,6 +71,7 @@ export {
   createLocationState,
   type LocationStateDefinition,
   type LocationStateEntry,
+  type LocationStateOptions,
 } from "./browser/react/location-state-shared.js";
 
 // Re-export useHref - it's a "use client" hook

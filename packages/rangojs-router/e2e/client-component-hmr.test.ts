@@ -29,7 +29,7 @@ test.describe.serial("client-component-hmr", () => {
   test.setTimeout(30000);
 
   const componentPath = path.resolve(
-    "./e2e/test-app/src/components/ClientLoaderContent.tsx",
+    "./e2e/test-app/src/components/NavigationStatus.tsx",
   );
   let originalContent: string;
 
@@ -48,30 +48,25 @@ test.describe.serial("client-component-hmr", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/client-loader"));
+    await page.goto(f.url("/"));
     await waitForHydration(page);
 
-    // Wait for the client loader to resolve (it loads async after hydration)
-    await expect(testId(page, "client-loader-content")).toBeVisible({
-      timeout: 10000,
-    });
-    await expect(testId(page, "client-loader-title")).toHaveText(
-      "Client Loader Test",
-    );
+    // Verify the component renders with original text
+    await expect(testId(page, "nav-status-state")).toHaveText(/state:/);
 
     // Inject reload detection
     await using __ = await expectNoReload(page);
 
     // Make a visible change to the client component
     const modified = originalContent.replace(
-      "Theme: {data.theme}",
-      "Theme (HMR): {data.theme}",
+      "state:{nav.state}",
+      "state(HMR):{nav.state}",
     );
     fs.writeFileSync(componentPath, modified);
 
     // The change should appear via HMR without reload
-    await expect(testId(page, "client-loader-theme")).toHaveText(
-      /Theme \(HMR\):/,
+    await expect(testId(page, "nav-status-state")).toHaveText(
+      /state\(HMR\):/,
       { timeout: 15000 },
     );
 
@@ -83,12 +78,10 @@ test.describe.serial("client-component-hmr", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/client-loader"));
+    await page.goto(f.url("/"));
     await waitForHydration(page);
 
-    await expect(testId(page, "client-loader-content")).toBeVisible({
-      timeout: 10000,
-    });
+    await expect(testId(page, "nav-status-state")).toHaveText(/state:/);
 
     await using __ = await expectNoReload(page);
 

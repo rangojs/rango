@@ -279,6 +279,7 @@ Read type-safe state from history:
 import { useLocationState, createLocationState } from "@rangojs/router";
 
 // Define typed state (all export patterns supported)
+// Keys are auto-injected by the Vite plugin -- no manual key needed.
 export const ProductState = createLocationState<{
   name: string;
   price: number;
@@ -311,6 +312,78 @@ import { ProductState } from "./state";
 >
   View Product
 </Link>
+```
+
+### Flash State (read-once)
+
+Create a location state with `{ flash: true }` for read-once state that
+auto-clears after first render. Ideal for flash messages (success/error
+notifications after redirect):
+
+```tsx
+// location-states.ts
+import { createLocationState } from "@rangojs/router";
+
+export const FlashMessage = createLocationState<{ text: string }>({ flash: true });
+```
+
+Read flash state with `useLocationState` (same hook as persistent state):
+
+```tsx
+"use client";
+import { useLocationState } from "@rangojs/router/client";
+import { FlashMessage } from "../location-states";
+
+function FlashBanner() {
+  const flash = useLocationState(FlashMessage);
+  // { text: string } | undefined
+
+  if (!flash) return null;
+  return <div className="flash">{flash.text}</div>;
+}
+```
+
+Flash behavior is determined by the definition (`{ flash: true }`), not by which
+hook reads it. `useLocationState` reads the value synchronously during render,
+then clears it from `history.state` via `replaceState` in a `useEffect`.
+Multiple components reading the same flash definition all see the value.
+Pressing back/forward will not re-show the flash since it was cleared.
+
+Set flash state from the server via `redirect()` with state:
+
+```tsx
+// In a route handler
+import { redirect, createLocationState } from "@rangojs/router";
+
+export const FlashMessage = createLocationState<{ text: string }>({ flash: true });
+
+// Handler
+(ctx) => {
+  return redirect("/dashboard", {
+    state: [FlashMessage({ text: "Item saved!" })],
+  });
+}
+```
+
+Or via `ctx.setLocationState()` on any response:
+
+```tsx
+(ctx) => {
+  ctx.setLocationState([FlashMessage({ text: "Welcome back!" })]);
+  return <Dashboard />;
+}
+```
+
+### .read() (non-hook access)
+
+Read current location state outside React components (client-side only):
+
+```tsx
+import { FlashMessage, ProductState } from "../location-states";
+
+// Returns TState | undefined. Returns undefined during SSR.
+const flash = FlashMessage.read();
+const product = ProductState.read();
 ```
 
 ## Cache Hooks
@@ -442,5 +515,5 @@ See `/links` for full URL generation guide including server-side `ctx.reverse`.
 | `useLoaderData()` | All loader data | Record<string, any> |
 | `useHandle()` | Accumulated handle data | T (handle type) |
 | `useAction()` | Server action state | state, error, result |
-| `useLocationState()` | History state | T \| undefined |
+| `useLocationState()` | History state (persists or flash) | T \| undefined |
 | `useClientCache()` | Cache control | { clear } |

@@ -1,0 +1,47 @@
+"use client";
+
+import { useLocationState } from "@rangojs/router/client";
+import { FlashMessage, ServerInfo } from "../location-states.js";
+import { saveAndRedirect, actionSimpleRedirect } from "../actions.js";
+
+export function FlashBanner() {
+  const flash = useLocationState(FlashMessage);
+  return (
+    <div data-testid="flash-banner">
+      {flash ? (
+        <p data-testid="flash-text">{flash.text}</p>
+      ) : (
+        <p data-testid="flash-empty">No flash message</p>
+      )}
+    </div>
+  );
+}
+
+export function ActionRedirectButton() {
+  return (
+    <button data-testid="action-redirect-btn" onClick={() => saveAndRedirect()}>
+      Save and redirect
+    </button>
+  );
+}
+
+export function ActionSimpleRedirectButton() {
+  return (
+    <button data-testid="action-simple-redirect-btn" onClick={() => actionSimpleRedirect()}>
+      Simple redirect
+    </button>
+  );
+}
+
+export function ServerInfoDisplay() {
+  const info = useLocationState(ServerInfo);
+  return (
+    <div data-testid="server-info">
+      {info ? (
+        <p data-testid="server-info-data">{info.data}</p>
+      ) : (
+        <p data-testid="server-info-empty">No server info</p>
+      )}
+    </div>
+  );
+}
