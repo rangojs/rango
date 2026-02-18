@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
-import { waitForHydration, expectNoPageError, goBack, testId } from "./helper";
+import {
+  waitForHydration,
+  expectNoPageError,
+  expectNoReload,
+  goBack,
+  testId,
+} from "./helper";
 
 /**
  * Blog tests - parallel routes with loading states
@@ -346,6 +352,78 @@ test.describe("blog-navigation (production)", () => {
     await expect(
       page.locator('a[href="/blog/hello-world"]').first()
     ).toBeVisible();
+  });
+
+  test("should perform client-side SPA navigation between blog posts", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog/hello-world"));
+    await waitForHydration(page);
+
+    await expect(page.locator("text=Recent Posts")).toBeVisible({
+      timeout: 10000,
+    });
+
+    // Inject reload detector after hydration
+    await using _noReload = await expectNoReload(page);
+
+    // Click sidebar link to navigate to a different post
+    await page.locator('a[href="/blog/rsc-routing"]').click();
+
+    // New post content should appear via RSC partial update
+    await expect(page.locator("h2:has-text('Rsc Routing')")).toBeVisible({
+      timeout: 5000,
+    });
+
+    // URL should update
+    await expect(page).toHaveURL(/\/blog\/rsc-routing/);
+
+    // Sidebar should remain (parallel route cached)
+    await expect(page.locator("text=Recent Posts")).toBeVisible();
+
+    // No full page reload occurred (expectNoReload checks on dispose)
+  });
+
+  test("should handle multi-hop SPA navigation with back", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    // Start at blog index
+    await page.goto(f.url("/blog"));
+    await waitForHydration(page);
+
+    await expect(page.locator("text=Recent Posts")).toBeVisible({
+      timeout: 10000,
+    });
+
+    // Hop 1: blog index -> hello-world
+    await page.locator('a[href="/blog/hello-world"]').first().click();
+    await expect(page.locator("h2:has-text('Hello World')")).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Hop 2: hello-world -> rsc-routing via sidebar
+    await page.locator('a[href="/blog/rsc-routing"]').click();
+    await expect(page.locator("h2:has-text('Rsc Routing')")).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Back to hello-world (should restore from cache)
+    await goBack(page);
+    await expect(page.locator("h2:has-text('Hello World')")).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(page).toHaveURL(/\/blog\/hello-world/);
+
+    // Back to blog index (should restore from cache)
+    await goBack(page);
+    await expect(page.locator("text=Blog Posts")).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(page).toHaveURL(/\/blog$/);
   });
 });
 
