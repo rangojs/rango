@@ -924,7 +924,7 @@ describe("partial-update", () => {
         isAction: true,
       });
 
-      const rendered = renderSegments.mock.calls[0][0];
+      const rendered = (renderSegments.mock.calls as any[][])[0][0];
       const layout = rendered.find((s: any) => s.id === "L0");
 
       // loading must be preserved from cache (false), not server (skeleton)
@@ -976,7 +976,7 @@ describe("partial-update", () => {
 
       await updater("http://localhost/page", ["L0", "L0R0"], false, undefined, tx);
 
-      const rendered = renderSegments.mock.calls[0][0];
+      const rendered = (renderSegments.mock.calls as any[][])[0][0];
       const layout = rendered.find((s: any) => s.id === "L0");
 
       // mountPath must be preserved from cache (undefined), not server ("/shop")
@@ -1028,7 +1028,7 @@ describe("partial-update", () => {
         isAction: true,
       });
 
-      const rendered = renderSegments.mock.calls[0][0];
+      const rendered = (renderSegments.mock.calls as any[][])[0][0];
       const layout = rendered.find((s: any) => s.id === "L0");
 
       // All structural properties preserved from cache
@@ -1073,7 +1073,7 @@ describe("partial-update", () => {
 
       await updater("http://localhost/", ["R0"], false, undefined, tx);
 
-      const rendered = renderSegments.mock.calls[0][0];
+      const rendered = (renderSegments.mock.calls as any[][])[0][0];
       expect(rendered[0].loading).toBe("skeleton");
       expect(rendered[0].component).toBe("updated");
     });

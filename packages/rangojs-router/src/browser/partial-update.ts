@@ -372,18 +372,6 @@ export function createPartialUpdater(
 
               return merged;
             }
-            // During actions: preserve cached loading value to maintain tree structure.
-            // The server may return a different loading value (e.g., skeleton vs false)
-            // because isSSR differs between SSR and action contexts. Swapping loading
-            // changes the React tree depth, causing remounts that destroy client state.
-            if (
-              isAction &&
-              fromCache &&
-              fromCache.loading !== undefined &&
-              fromServer.loading !== fromCache.loading
-            ) {
-              return { ...fromServer, loading: fromCache.loading };
-            }
             return fromServer;
           }
           // Fall back to current page's cached segments
