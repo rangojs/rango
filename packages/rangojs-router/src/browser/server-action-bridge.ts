@@ -10,10 +10,13 @@ import {
   reconcileErrorSegments,
 } from "./segment-reconciler.js";
 import { classifyActionResponse } from "./action-response-classifier.js";
-import { startTransition, createElement } from "react";
+import { startTransition } from "react";
 import type { EventController } from "./event-controller.js";
-import { NetworkError, isNetworkError } from "../errors.js";
-import { NetworkErrorThrower } from "../network-error-thrower.js";
+import {
+  toNetworkError,
+  emitNetworkError,
+  isBackgroundSuppressible,
+} from "./network-error-handler.js";
 import {
   browserDebugLog,
   isBrowserDebugEnabled,
@@ -26,18 +29,6 @@ if (typeof Symbol.dispose === "undefined") {
 }
 if (typeof Symbol.asyncDispose === "undefined") {
   (Symbol as any).asyncDispose = Symbol("Symbol.asyncDispose");
-}
-
-/**
- * Normalize action ID - returns the ID as-is
- *
- * Server actions have IDs like "hash#actionName" or "src/actions.ts#actionName".
- * The full ID is used for tracking in the event controller. When subscribing
- * via useAction, both exact matching (full ID) and suffix matching (action name
- * only) are supported by the event controller.
- */
-function normalizeActionId(actionId: string): string {
-  return actionId;
 }
 
 /**
@@ -123,13 +114,11 @@ export function createServerActionBridge(
       if (tx) browserDebugLog(tx, msg, details);
     };
 
-    // Normalize action ID to just the function name for store tracking
     const locationKey = window.history.state?.key;
-    const actionId = normalizeActionId(id);
-    log("action start", { id, actionId, argsCount: args.length });
+    log("action start", { id, argsCount: args.length });
 
     // Start action in event controller - handles lifecycle tracking
-    using handle = eventController.startAction(actionId, args);
+    using handle = eventController.startAction(id, args);
 
     const segmentState = store.getSegmentState();
 
@@ -259,32 +248,13 @@ export function createServerActionBridge(
       resolveStreamComplete!();
 
       // Convert network-level errors to NetworkError for proper handling
-      if (isNetworkError(error)) {
-        const networkError = new NetworkError(
-          "Unable to connect to server. Please check your connection.",
-          {
-            cause: error,
-            url: url.toString(),
-            operation: "action",
-          }
-        );
-
-        // Mark action as failed
+      const networkError = toNetworkError(error, {
+        url: url.toString(),
+        operation: "action",
+      });
+      if (networkError) {
         handle.fail(networkError);
-
-        // Emit the network error so the root error boundary can catch it
-        // NetworkErrorThrower throws during render to trigger the error boundary
-        startTransition(() => {
-          onUpdate({
-            root: createElement(NetworkErrorThrower, { error: networkError }),
-            metadata: {
-              pathname: segmentState.currentUrl,
-              segments: [],
-              isError: true,
-            },
-          });
-        });
-
+        emitNetworkError(onUpdate, networkError, segmentState.currentUrl);
         throw networkError;
       }
       throw error;
@@ -441,11 +411,7 @@ export function createServerActionBridge(
           if (!scenario.onInterceptRoute) {
             store.markCacheAsStaleAndBroadcast();
             refetchRoute().catch((error) => {
-              if (error instanceof DOMException && error.name === "AbortError") return;
-              if (error instanceof NetworkError || isNetworkError(error)) {
-                console.warn("[Browser] Background revalidation network error:", error.message);
-                return;
-              }
+              if (isBackgroundSuppressible(error)) return;
               console.error("[Browser] Background revalidation failed:", error);
             });
           }

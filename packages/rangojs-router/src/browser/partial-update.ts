@@ -11,6 +11,7 @@ import { reconcileSegments } from "./segment-reconciler.js";
 import type { ReconcileActor } from "./segment-reconciler.js";
 import { hasActiveIntercept as hasActiveInterceptSlots } from "./intercept-utils.js";
 import type { BoundTransaction } from "./navigation-bridge.js";
+import { debugLog } from "./logging.js";
 
 /**
  * Configuration for creating a partial updater
@@ -154,7 +155,7 @@ export function createPartialUpdater(
       // Filter out intercept-specific parallel slots (containing ".@") so the
       // server resolves the base route instead of the modal overlay.
       segments = currentSegments.filter((id) => !id.includes(".@"));
-      console.log(
+      debugLog(
         `[Browser] Leaving intercept - filtered segments: ${segments.join(", ")}`,
       );
     } else {
@@ -166,12 +167,12 @@ export function createPartialUpdater(
     const previousUrl =
       interceptSourceUrl || tx.currentUrl || segmentState.currentUrl;
 
-    console.log(`\n[Browser] >>> NAVIGATION`);
-    console.log(`[Browser] From: ${previousUrl}`);
-    console.log(`[Browser] To: ${url}`);
-    console.log(`[Browser] Segments to send: ${segments.join(", ")}`);
+    debugLog(`\n[Browser] >>> NAVIGATION`);
+    debugLog(`[Browser] From: ${previousUrl}`);
+    debugLog(`[Browser] To: ${url}`);
+    debugLog(`[Browser] Segments to send: ${segments.join(", ")}`);
     if (interceptSourceUrl) {
-      console.log(`[Browser] Intercept context from: ${interceptSourceUrl}`);
+      debugLog(`[Browser] Intercept context from: ${interceptSourceUrl}`);
     }
 
     // Get cached segments for merging with server diff.
@@ -202,7 +203,7 @@ export function createPartialUpdater(
       throw err;
     }
     const { payload, streamComplete: rawStreamComplete } = fetchResult;
-    console.log("payload.metadata", payload.metadata);
+    debugLog("payload.metadata", payload.metadata);
 
     const streamComplete = rawStreamComplete.then(() => {
       streamingToken.end();
@@ -213,12 +214,12 @@ export function createPartialUpdater(
 
       // Check if this navigation is stale (a newer one started)
       if (signal?.aborted) {
-        console.log(`[Browser] Ignoring stale navigation (aborted)`);
+        debugLog("[Browser] Ignoring stale navigation (aborted)");
         return streamComplete;
       }
 
-      console.log(`[Browser] Partial update - matched: ${matched?.join(", ")}`);
-      console.log(`[Browser] Diff: ${diff?.join(", ")}`);
+      debugLog(`[Browser] Partial update - matched: ${matched?.join(", ")}`);
+      debugLog(`[Browser] Diff: ${diff?.join(", ")}`);
 
       // If diff is empty, nothing changed on server side.
       // However, if we're navigating with targetCacheSegments (to a different route),
@@ -233,8 +234,8 @@ export function createPartialUpdater(
         // When navigating with cached segments to a different route, render them.
         // targetCacheSegments being provided means we're navigating to a cached route.
         if (targetCacheSegments && targetCacheSegments.length > 0) {
-          console.log(
-            `[Browser] No diff but navigating with cached segments - rendering target route`,
+          debugLog(
+            "[Browser] No diff but navigating with cached segments - rendering target route",
           );
 
           const newTree = await renderSegments(existingSegments, {
@@ -258,7 +259,7 @@ export function createPartialUpdater(
             },
           });
 
-          console.log(`[Browser] Navigation complete (rendered from cache)\n`);
+          debugLog("[Browser] Navigation complete (rendered from cache)");
           return streamComplete;
         }
 
@@ -266,8 +267,8 @@ export function createPartialUpdater(
         // The matched segments are the non-intercept segments, which we need to render
         // to remove the modal from the UI
         if (leavingIntercept) {
-          console.log(
-            `[Browser] Leaving intercept - forcing re-render to remove modal`,
+          debugLog(
+            "[Browser] Leaving intercept - forcing re-render to remove modal",
           );
 
           const newTree = await renderSegments(existingSegments, {
@@ -281,16 +282,16 @@ export function createPartialUpdater(
             metadata: payload.metadata,
           });
 
-          console.log(`[Browser] Navigation complete (left intercept)\n`);
+          debugLog("[Browser] Navigation complete (left intercept)");
           return streamComplete;
         }
 
         // Same route revalidation with no changes - skip UI update
-        console.log(
-          `[Browser] No changes - all revalidations returned false, keeping existing UI`,
+        debugLog(
+          "[Browser] No changes - all revalidations returned false, keeping existing UI",
         );
         tx.commit(matchedIds, existingSegments);
-        console.log(`[Browser] Navigation complete (no re-render)\n`);
+        debugLog("[Browser] Navigation complete (no re-render)");
         return streamComplete;
       }
 
@@ -323,9 +324,7 @@ export function createPartialUpdater(
           );
         }
         if (signal?.aborted) {
-          console.log(
-            `[Browser] Ignoring stale navigation (aborted during HMR retry)`,
-          );
+          debugLog("[Browser] Ignoring stale navigation (aborted during HMR retry)");
           return streamComplete;
         }
         if (isAction) {
@@ -340,9 +339,7 @@ export function createPartialUpdater(
       }
 
       if (signal?.aborted) {
-        console.log(
-          `[Browser] Ignoring stale navigation (aborted before render)`,
-        );
+        debugLog("[Browser] Ignoring stale navigation (aborted before render)");
         return streamComplete;
       }
 
@@ -374,9 +371,7 @@ export function createPartialUpdater(
 
       // Final abort check before committing - another navigation may have started
       if (signal?.aborted) {
-        console.log(
-          `[Browser] Ignoring stale navigation (aborted before commit)`,
-        );
+        debugLog("[Browser] Ignoring stale navigation (aborted before commit)");
         return streamComplete;
       }
 
@@ -418,14 +413,14 @@ export function createPartialUpdater(
       if (staleRevalidation) {
         const historyKeyNow = store.getHistoryKey();
         if (historyKeyNow !== historyKeyAtStart) {
-          console.log(
+          debugLog(
             `[Browser] Stale revalidation: history key changed (${historyKeyAtStart} -> ${historyKeyNow}), skipping UI update`,
           );
           return streamComplete;
         }
       }
 
-      console.log("[partial-update] updating document");
+      debugLog("[partial-update] updating document");
 
       // Emit update to trigger React render
       // For stale revalidation: wait for stream to complete (loaders resolved), then update
@@ -444,7 +439,7 @@ export function createPartialUpdater(
         });
       }
 
-      console.log(`[Browser] Navigation complete\n`);
+      debugLog("[Browser] Navigation complete");
       return streamComplete;
     } else {
       // Full update (fallback)
@@ -459,7 +454,7 @@ export function createPartialUpdater(
 
       // Check if this navigation is stale (a newer one started)
       if (signal?.aborted) {
-        console.log(`[Browser] Ignoring stale navigation (aborted)`);
+        debugLog("[Browser] Ignoring stale navigation (aborted)");
         return streamComplete;
       }
 
@@ -470,9 +465,7 @@ export function createPartialUpdater(
 
       // Final abort check before committing - another navigation may have started
       if (signal?.aborted) {
-        console.log(
-          `[Browser] Ignoring stale navigation (aborted before commit)`,
-        );
+        debugLog("[Browser] Ignoring stale navigation (aborted before commit)");
         return streamComplete;
       }
 

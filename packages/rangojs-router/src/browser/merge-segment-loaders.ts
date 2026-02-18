@@ -1,4 +1,5 @@
 import type { ResolvedSegment } from "./types.js";
+import { debugLog } from "./logging.js";
 
 /**
  * Merge partial loader data from server with cached loader data.
@@ -18,8 +19,8 @@ export function mergeSegmentLoaders(
   const serverLoaderIds = fromServer.loaderIds || [];
   const cachedLoaderIds = fromCache.loaderIds || [];
 
-  console.log(
-    `[Browser] Merging partial loaders: server has ${serverLoaderIds.join(", ")}, cache has ${cachedLoaderIds.join(", ")}`
+  debugLog(
+    `[Browser] Merging partial loaders: server has ${serverLoaderIds.join(", ")}, cache has ${cachedLoaderIds.join(", ")}`,
   );
 
   return {
@@ -105,8 +106,8 @@ export function insertMissingDiffSegments(
           if (parentIndex !== -1) {
             // Insert loader segment right after its parent layout
             allSegments.splice(parentIndex + 1, 0, fromServer);
-            console.log(
-              `[Browser] Inserted diff segment ${diffId} after ${parentLayoutId}`
+            debugLog(
+              `[Browser] Inserted diff segment ${diffId} after ${parentLayoutId}`,
             );
           } else {
             // Fallback: append to end if parent not found
@@ -118,7 +119,7 @@ export function insertMissingDiffSegments(
         } else {
           // Non-loader diff segment not in matched - append to end
           allSegments.push(fromServer);
-          console.log(`[Browser] Appended diff segment ${diffId}`);
+          debugLog(`[Browser] Appended diff segment ${diffId}`);
         }
       }
     }

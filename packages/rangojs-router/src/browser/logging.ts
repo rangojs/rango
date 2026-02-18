@@ -42,3 +42,14 @@ export function browserDebugLog(
 
   console.log(`${prefix} ${message}`);
 }
+
+/**
+ * Simple gated console.log for browser-side debug output.
+ * Unlike browserDebugLog, this doesn't require a transaction context -
+ * use it for standalone debug messages in partial-update, navigation-bridge, etc.
+ */
+export function debugLog(msg: string, ...args: unknown[]): void {
+  if (INTERNAL_RANGO_DEBUG) {
+    console.log(msg, ...args);
+  }
+}
