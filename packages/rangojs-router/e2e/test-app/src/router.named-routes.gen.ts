@@ -41,7 +41,6 @@ export const NamedRoutes = {
   "includeMw.index": "/include-mw-test",
   index: "/",
   inlineAction: "/inline-action",
-  layoutLoading: "/layout-loading",
   loaderComposition: "/loader-composition",
   "locationState.index": "/location-state",
   "locationState.mwRedirect": "/location-state/mw-redirect",

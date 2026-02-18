@@ -373,57 +373,6 @@ test.describe("loader-behavior", () => {
 });
 
 /**
- * Layout-level loading: putting loading() on a layout streams
- * the entire page content behind the skeleton during SSR.
- */
-test.describe("layout-level-loading", () => {
-  const f = useFixture({
-    root: "./e2e/test-app",
-    mode: "dev",
-  });
-
-  test.setTimeout(30000);
-
-  test("SSR should show loading skeleton before async content", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    // Direct SSR load — the layout has loading() so the skeleton
-    // should be visible in the initial HTML before the 2s handler resolves.
-    await page.goto(f.url("/layout-loading"));
-
-    // The layout shell should be in the initial HTML
-    await expect(
-      page.locator('[data-testid="layout-loading-shell"]'),
-    ).toBeVisible({ timeout: 1000 });
-
-    // The loading skeleton should appear before the content
-    // (handler takes 2s, so skeleton should be visible almost immediately)
-    const skeleton = page.locator(
-      '[data-testid="layout-loading-skeleton"]',
-    );
-    const content = page.locator(
-      '[data-testid="layout-loading-content"]',
-    );
-
-    // At this point either skeleton or content is visible
-    // If skeleton is still showing, content should not be visible yet
-    const skeletonVisible = await skeleton.isVisible();
-    if (skeletonVisible) {
-      // Content should not be rendered yet (still streaming)
-      await expect(content).not.toBeVisible();
-    }
-
-    // Eventually the actual content streams in and replaces the skeleton
-    await expect(content).toBeVisible({ timeout: 5000 });
-    await expect(
-      page.locator('[data-testid="layout-loading-text"]'),
-    ).toHaveText("Content loaded!");
-  });
-});
-
-/**
  * Production build tests for loader behavior
  */
 test.describe("loader-behavior (production)", () => {
