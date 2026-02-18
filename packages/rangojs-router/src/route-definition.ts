@@ -1461,7 +1461,7 @@ export { createLoader } from "./loader.rsc.js";
  *
  * Supports an optional state parameter to carry location state through the
  * redirect. On the target page, state can be read via useLocationState()
- * or useFlashState() (for read-once flash messages).
+ * (use { flash: true } in createLocationState for read-once flash messages).
  *
  * @param url - The URL to redirect to
  * @param statusOrOptions - HTTP status code (default: 302) or options object

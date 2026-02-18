@@ -149,7 +149,7 @@ Carry typed state through redirects (e.g. flash messages):
 ```typescript
 import { redirect, createLocationState } from "@rangojs/router";
 
-export const FlashMessage = createLocationState<{ text: string }>();
+export const FlashMessage = createLocationState<{ text: string }>({ flash: true });
 
 path("/save", (ctx) => {
   // ... save logic
@@ -167,8 +167,9 @@ path("/action", (ctx) => {
 }, { name: "action" })
 ```
 
-Read the state on the target page with `useFlashState()` (auto-clears) or
-`useLocationState()` (persists). See `/hooks` for details.
+Read the state on the target page with `useLocationState(FlashMessage)`. The
+`{ flash: true }` option makes it auto-clear. Without `{ flash: true }`,
+state persists on back/forward. See `/hooks` for details.
 
 ### ctx.setLocationState()
 

@@ -5,7 +5,7 @@ import { FlashBanner, ServerInfoDisplay, ActionRedirectButton, ActionSimpleRedir
 
 /**
  * Location state test routes - tests for redirect() with state,
- * ctx.setLocationState(), useFlashState(), and useLocationState()
+ * ctx.setLocationState(), useLocationState(), and useLocationState()
  */
 export const locationStatePatterns = urls(({ path, middleware }) => [
   // Index page with links to trigger different scenarios

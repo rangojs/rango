@@ -94,7 +94,7 @@ export const myMiddleware = createMiddleware(async (ctx, next) => {
 ```typescript
 import { createMiddleware, redirect, createLocationState } from "@rangojs/router";
 
-export const FlashMessage = createLocationState<{ text: string }>();
+export const FlashMessage = createLocationState<{ text: string }>({ flash: true });
 
 export const requireAuthMiddleware = createMiddleware(async (ctx, next) => {
   const token = ctx.request.headers.get("Authorization");
@@ -107,7 +107,7 @@ export const requireAuthMiddleware = createMiddleware(async (ctx, next) => {
 });
 ```
 
-Read the flash on the target page with `useFlashState(FlashMessage)`. See `/hooks`.
+Read the flash on the target page with `useLocationState(FlashMessage)`. The `{ flash: true }` option makes it auto-clear after first render. See `/hooks`.
 
 ## Authentication Middleware
 

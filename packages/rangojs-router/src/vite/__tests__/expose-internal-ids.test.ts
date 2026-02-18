@@ -665,6 +665,18 @@ export { ProductStateDef as ProductState };
     expect(result).toBeDefined();
     expect(result.code).toContain("ProductStateDef.__rsc_ls_key");
   });
+
+  it("injects __rsc_ls_key for createLocationState with options arg", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLocationState } from "@rangojs/router";
+export const FlashMsg = createLocationState<{ text: string }>({ flash: true });
+`;
+    const result = plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain("FlashMsg.__rsc_ls_key");
+  });
 });
 
 describe("exposeInternalIds - handler export specifiers", () => {

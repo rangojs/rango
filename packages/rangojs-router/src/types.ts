@@ -551,7 +551,7 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch extends Sear
   /**
    * Attach location state entries to this response.
    * State is delivered to the client via history.pushState and accessible
-   * through useLocationState() or useFlashState() hooks.
+   * through the useLocationState() hook.
    *
    * @example
    * ```typescript

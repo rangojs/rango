@@ -186,7 +186,7 @@ export interface RequestContext<
    * For partial (SPA) requests, the state is included in the RSC payload
    * metadata and merged into history.pushState on the client. For redirect
    * responses, the state travels through the redirect payload so the target
-   * page can read it via useLocationState / useFlashState.
+   * page can read it via useLocationState.
    *
    * Multiple calls accumulate entries.
    *

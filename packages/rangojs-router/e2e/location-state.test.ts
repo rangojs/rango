@@ -10,7 +10,7 @@ import {
 
 /**
  * Location state tests: redirect() with state, ctx.setLocationState(),
- * useFlashState(), and useLocationState()
+ * useLocationState(), and useLocationState()
  */
 test.describe("location-state", () => {
   const f = useFixture({
@@ -251,13 +251,13 @@ test.describe("location-state", () => {
       "Item saved successfully!"
     );
 
-    // Check that history.state contains the flash key (before useFlashState clears it)
-    // Note: useFlashState clears via replaceState in useEffect, but the read happens
+    // Check that history.state contains the flash key (before useLocationState clears it)
+    // Note: useLocationState clears via replaceState in useEffect, but the read happens
     // synchronously during render. After render + effect, the key is cleaned up.
     // So we just verify the flash was read correctly (tested above) and that
     // the state was cleaned from history after the effect.
     const state = await getHistoryState(page);
-    // The flash key should have been cleared by useFlashState's useEffect
+    // The flash key should have been cleared by useLocationState's useEffect
     const flashKeys = Object.keys(state || {}).filter((k) =>
       k.startsWith("__rsc_ls_")
     );

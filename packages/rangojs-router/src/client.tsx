@@ -600,9 +600,9 @@ export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 export {
   createLocationState,
   useLocationState,
-  useFlashState,
   type LocationStateDefinition,
   type LocationStateEntry,
+  type LocationStateOptions,
 } from "./browser/react/location-state.js";
 
 // Type-safe href for client-side path validation

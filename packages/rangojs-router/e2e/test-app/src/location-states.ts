@@ -17,7 +17,7 @@ export interface FlashMessageState {
   text: string;
 }
 
-export const FlashMessage = createLocationState<FlashMessageState>();
+export const FlashMessage = createLocationState<FlashMessageState>({ flash: true });
 
 export interface ServerInfoState {
   data: string;

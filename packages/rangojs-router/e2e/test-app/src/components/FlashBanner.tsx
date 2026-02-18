@@ -1,11 +1,11 @@
 "use client";
 
-import { useFlashState, useLocationState } from "@rangojs/router/client";
+import { useLocationState } from "@rangojs/router/client";
 import { FlashMessage, ServerInfo } from "../location-states.js";
 import { saveAndRedirect, actionSimpleRedirect } from "../actions.js";
 
 export function FlashBanner() {
-  const flash = useFlashState(FlashMessage);
+  const flash = useLocationState(FlashMessage);
   return (
     <div data-testid="flash-banner">
       {flash ? (
