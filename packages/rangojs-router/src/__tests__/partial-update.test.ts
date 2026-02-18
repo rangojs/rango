@@ -871,6 +871,214 @@ describe("partial-update", () => {
     });
   });
 
+  describe("structural preservation on server-returned segments", () => {
+    // These tests verify the fromServer path in partial-update preserves
+    // cached loading/mountPath values when the server returns different ones.
+    // Without this preservation, the React tree depth changes between SSR
+    // and action revalidation, causing component remounts that destroy
+    // useActionState results.
+
+    it("preserves cached loading value when server returns different loading", async () => {
+      // SSR set loading=false (skipSSR route). Server action revalidation
+      // returns loading=<skeleton> because isSSR=false. Without preservation,
+      // tree changes from LoaderBoundary+Outlet to LoaderBoundary+Outlet+RouteContentWrapper.
+      const cachedLayout = seg("L0", {
+        type: "layout",
+        component: "my-layout",
+        loading: false as any,
+      });
+      const cachedRoute = seg("L0R0", { component: "my-route" });
+
+      // Server returns the SAME layout but with loading=<skeleton> instead of false
+      const serverLayout = seg("L0", {
+        type: "layout",
+        component: "my-layout",
+        loading: "skeleton" as any,
+      });
+      const serverRoute = seg("L0R0", { component: "updated-route" });
+
+      const store = createMockStore({
+        cachedSegments: [cachedLayout, cachedRoute],
+      });
+
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: true,
+          segments: [serverLayout, serverRoute],
+          matched: ["L0", "L0R0"],
+          diff: ["L0", "L0R0"],
+        },
+      });
+
+      const renderSegments = vi.fn(async () => "tree");
+      const tx = createMockTx();
+
+      const updater = createPartialUpdater({
+        store: store as any,
+        client: client as any,
+        onUpdate: vi.fn(),
+        renderSegments,
+      });
+
+      await updater("http://localhost/page", ["L0", "L0R0"], false, undefined, tx, {
+        isAction: true,
+      });
+
+      const rendered = renderSegments.mock.calls[0][0];
+      const layout = rendered.find((s: any) => s.id === "L0");
+
+      // loading must be preserved from cache (false), not server (skeleton)
+      expect(layout.loading).toBe(false);
+      // Component should come from server (updated)
+      const route = rendered.find((s: any) => s.id === "L0R0");
+      expect(route.component).toBe("updated-route");
+    });
+
+    it("preserves cached mountPath when server returns different mountPath", async () => {
+      // SSR may not include mountPath, but action revalidation may include it
+      // (from include() scope). The conditional MountContextProvider wrapper
+      // in renderSegments changes tree depth.
+      const cachedLayout = seg("L0", {
+        type: "layout",
+        component: "my-layout",
+        mountPath: undefined,
+      });
+      const cachedRoute = seg("L0R0", { component: "my-route" });
+
+      const serverLayout = seg("L0", {
+        type: "layout",
+        component: "my-layout",
+        mountPath: "/shop",
+      });
+
+      const store = createMockStore({
+        cachedSegments: [cachedLayout, cachedRoute],
+      });
+
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: true,
+          segments: [serverLayout],
+          matched: ["L0", "L0R0"],
+          diff: ["L0"],
+        },
+      });
+
+      const renderSegments = vi.fn(async () => "tree");
+      const tx = createMockTx();
+
+      const updater = createPartialUpdater({
+        store: store as any,
+        client: client as any,
+        onUpdate: vi.fn(),
+        renderSegments,
+      });
+
+      await updater("http://localhost/page", ["L0", "L0R0"], false, undefined, tx);
+
+      const rendered = renderSegments.mock.calls[0][0];
+      const layout = rendered.find((s: any) => s.id === "L0");
+
+      // mountPath must be preserved from cache (undefined), not server ("/shop")
+      expect(layout.mountPath).toBeUndefined();
+    });
+
+    it("preserves loading + mountPath + null component together during action", async () => {
+      // Combined scenario: layout has all three structural properties differing
+      const cachedLayout = seg("L0", {
+        type: "layout",
+        component: "my-layout",
+        loading: false as any,
+        mountPath: undefined,
+      });
+      const cachedRoute = seg("L0R0", { component: "my-route" });
+
+      const serverLayout = seg("L0", {
+        type: "layout",
+        component: null as any,      // null = don't re-render
+        loading: "skeleton" as any,   // different from cached
+        mountPath: "/shop",           // different from cached
+      });
+      const serverRoute = seg("L0R0", { component: "updated" });
+
+      const store = createMockStore({
+        cachedSegments: [cachedLayout, cachedRoute],
+      });
+
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: true,
+          segments: [serverLayout, serverRoute],
+          matched: ["L0", "L0R0"],
+          diff: ["L0", "L0R0"],
+        },
+      });
+
+      const renderSegments = vi.fn(async () => "tree");
+      const tx = createMockTx();
+
+      const updater = createPartialUpdater({
+        store: store as any,
+        client: client as any,
+        onUpdate: vi.fn(),
+        renderSegments,
+      });
+
+      await updater("http://localhost/page", ["L0", "L0R0"], false, undefined, tx, {
+        isAction: true,
+      });
+
+      const rendered = renderSegments.mock.calls[0][0];
+      const layout = rendered.find((s: any) => s.id === "L0");
+
+      // All structural properties preserved from cache
+      expect(layout.component).toBe("my-layout");  // preserved (server sent null)
+      expect(layout.loading).toBe(false);           // preserved (server sent skeleton)
+      expect(layout.mountPath).toBeUndefined();     // preserved (server sent /shop)
+    });
+
+    it("does not alter loading when cached and server values match", async () => {
+      const cachedRoute = seg("R0", {
+        component: "my-route",
+        loading: "skeleton" as any,
+      });
+
+      const serverRoute = seg("R0", {
+        component: "updated",
+        loading: "skeleton" as any,
+      });
+
+      const store = createMockStore({
+        cachedSegments: [cachedRoute],
+      });
+
+      const { client } = createMockClient({
+        metadata: {
+          isPartial: true,
+          segments: [serverRoute],
+          matched: ["R0"],
+          diff: ["R0"],
+        },
+      });
+
+      const renderSegments = vi.fn(async () => "tree");
+      const tx = createMockTx();
+
+      const updater = createPartialUpdater({
+        store: store as any,
+        client: client as any,
+        onUpdate: vi.fn(),
+        renderSegments,
+      });
+
+      await updater("http://localhost/", ["R0"], false, undefined, tx);
+
+      const rendered = renderSegments.mock.calls[0][0];
+      expect(rendered[0].loading).toBe("skeleton");
+      expect(rendered[0].component).toBe("updated");
+    });
+  });
+
   describe("intercept context tracking", () => {
     it("sets intercept source URL when slots are active", async () => {
       const store = createMockStore({
