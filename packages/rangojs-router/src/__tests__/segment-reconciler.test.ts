@@ -565,6 +565,36 @@ describe("segment-reconciler", () => {
           "partial-update",
         );
       });
+
+      it("asserts on the merged result (not raw server segment)", () => {
+        // When loading differs, the assertion should see the merged result
+        // with cached loading preserved, not the raw server segment
+        const cached = seg("L0", {
+          type: "layout",
+          loading: undefined,
+          mountPath: undefined,
+        });
+        const server = seg("L0", {
+          type: "layout",
+          loading: "skeleton" as any,
+          mountPath: "/shop",
+        });
+
+        reconcileSegments({
+          actor: "action",
+          matched: ["L0"],
+          diff: ["L0"],
+          serverSegments: [server],
+          cachedSegments: [cached],
+        });
+
+        // The second arg should be the merged segment, not the raw server segment
+        const assertCall = (assertSegmentStructure as any).mock.calls.at(-1);
+        expect(assertCall[0]).toBe(cached);
+        expect(assertCall[1].loading).toBeUndefined(); // cached value preserved
+        expect(assertCall[1].mountPath).toBeUndefined(); // cached value preserved
+        expect(assertCall[2]).toBe("action-bridge");
+      });
     });
 
     describe("full merge scenario", () => {

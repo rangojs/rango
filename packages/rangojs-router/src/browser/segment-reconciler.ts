@@ -96,11 +96,6 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
           return mergeSegmentLoaders(fromServer, fromCache);
         }
 
-        // Dev-mode assertion: warn if tree structure would change
-        if (fromCache) {
-          assertSegmentStructure(fromCache, fromServer, context);
-        }
-
         // Preserve cached structural properties to maintain consistent React tree.
         // Changing these between renders alters the element nesting
         // (with/without RouteContentWrapper, MountContextProvider, etc.),
@@ -142,6 +137,11 @@ export function reconcileSegments(input: ReconcileInput): ReconcileResult {
           if (fromServer.mountPath !== fromCache.mountPath) {
             merged = { ...merged, mountPath: fromCache.mountPath };
           }
+
+          // Dev-mode assertion: warn if the merged result still differs from cache
+          // in tree-structural properties. This catches bugs where the merge code
+          // above fails to preserve a value it should have.
+          assertSegmentStructure(fromCache, merged, context);
 
           return merged;
         }
