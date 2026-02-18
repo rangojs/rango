@@ -40,8 +40,6 @@ export function AddToCartForm({
     },
     null // initial state
   );
-  console.log("state", state);
-
   return (
     <div>
       <form action={(data) => startTransition(() => formAction(data))}>
