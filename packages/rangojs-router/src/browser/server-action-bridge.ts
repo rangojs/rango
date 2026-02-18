@@ -432,12 +432,12 @@ export function createServerActionBridge(
                 merged = { ...merged, component: cached.component };
               }
 
-              // loading: SSR may set loading=false for skipSSR routes, but actions
-              // resolve loading=<skeleton> (isSSR=false). Preserve cached value.
-              if (
-                cached.loading !== undefined &&
-                fromServer.loading !== cached.loading
-              ) {
+              // loading: The server may return a different loading value than what
+              // the current page was rendered with (e.g., SSR sets loading=false for
+              // skipSSR routes, actions resolve loading=<skeleton>; or cached pages
+              // have loading=undefined while actions return loading=<skeleton>).
+              // Always preserve the cached value to maintain consistent tree structure.
+              if (fromServer.loading !== cached.loading) {
                 merged = { ...merged, loading: cached.loading };
               }
 
