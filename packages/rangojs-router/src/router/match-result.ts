@@ -139,8 +139,19 @@ export function buildMatchResult<TEnv>(
 
   if (ctx.isFullMatch) {
     // Full match (document request) - all segments are rendered
-    allIds = allSegments.map((s) => s.id);
-    segmentsToRender = allSegments;
+    // Deduplicate by segment ID (defense-in-depth). The primary dedup is in
+    // resolveAllSegments, but this guards against any path that bypasses it.
+    // include() scopes can produce entries that resolve the same shared layout,
+    // and duplicate IDs change the client's React tree depth causing remounts.
+    const seen = new Set<string>();
+    segmentsToRender = [];
+    for (const s of allSegments) {
+      if (!seen.has(s.id)) {
+        seen.add(s.id);
+        segmentsToRender.push(s);
+      }
+    }
+    allIds = segmentsToRender.map((s) => s.id);
   } else {
     // Partial match (navigation) - filter and handle intercepts
     // When intercepting, tell browser to keep its current segments + add modal
@@ -151,6 +162,9 @@ export function buildMatchResult<TEnv>(
         ? [...ctx.clientSegmentIds, ...state.interceptSegments.map((s) => s.id)]
         : allSegments.map((s) => s.id) // Use actual segments, not matchedIds
       : [...state.matchedIds, ...state.interceptSegments.map((s) => s.id)];
+
+    // Deduplicate allIds (defense-in-depth for partial match path)
+    allIds = [...new Set(allIds)];
 
     // Filter out segments with null components (client already has them)
     // BUT always include loader segments - they carry data even with null component
