@@ -46,10 +46,8 @@ export function registerLoader(
   fn: LoaderFn<any, any, any>,
   middleware: MiddlewareFn[] = []
 ): void {
-  if (loaderRegistry.has(id)) {
-    // Already registered (can happen during HMR)
-    return;
-  }
+  // Always update the registry entry. During HMR, the module is re-executed
+  // with the new loader function, so we must replace the stale reference.
   loaderRegistry.set(id, { fn, middleware });
 }
 
@@ -155,12 +153,8 @@ export function registerLoaderById(loader: {
   if (!loader.$$id) {
     return;
   }
-  if (loaderRegistry.has(loader.$$id)) {
-    // Already registered (can happen during HMR)
-    return;
-  }
-
-  // For fetchable loaders, fn is stored in the fetchable registry by $$id
+  // For fetchable loaders, fn is stored in the fetchable registry by $$id.
+  // Always re-check the fetchable registry so HMR picks up the new function.
   const fetchable = getFetchableLoader(loader.$$id);
   if (fetchable) {
     loaderRegistry.set(loader.$$id, fetchable);

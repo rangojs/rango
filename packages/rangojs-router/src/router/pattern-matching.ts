@@ -62,6 +62,48 @@ export function parsePattern(pattern: string): ParsedSegment[] {
 }
 
 /**
+ * Compiled pattern result containing regex, param metadata, and trailing slash info.
+ */
+export interface CompiledPattern {
+  regex: RegExp;
+  paramNames: string[];
+  optionalParams: Set<string>;
+  hasTrailingSlash: boolean;
+}
+
+// Module-level cache for compiled patterns. Route patterns are a finite set
+// defined at build time, so this map is bounded by the number of routes.
+const compiledPatternCache = new Map<string, CompiledPattern>();
+
+/**
+ * Get a compiled pattern from cache or compile and cache it.
+ * Avoids O(routes) regex compilations per request in the fallback path.
+ */
+export function getCompiledPattern(pattern: string): CompiledPattern {
+  let compiled = compiledPatternCache.get(pattern);
+  if (compiled) return compiled;
+  compiled = compilePattern(pattern);
+  compiledPatternCache.set(pattern, compiled);
+  return compiled;
+}
+
+/**
+ * Return the current size of the compiled pattern cache.
+ * Exposed for testing.
+ */
+export function getPatternCacheSize(): number {
+  return compiledPatternCache.size;
+}
+
+/**
+ * Clear the compiled pattern cache.
+ * Exposed for testing.
+ */
+export function clearPatternCache(): void {
+  compiledPatternCache.clear();
+}
+
+/**
  * Compile a route pattern to regex
  *
  * Supports:
@@ -78,12 +120,7 @@ export function parsePattern(pattern: string): ParsedSegment[] {
  * compilePattern("/:locale(en|gb)/blog")  // matches /en/blog or /gb/blog
  * compilePattern("/:locale(en|gb)?/blog") // matches /blog, /en/blog, or /gb/blog
  */
-export function compilePattern(pattern: string): {
-  regex: RegExp;
-  paramNames: string[];
-  optionalParams: Set<string>;
-  hasTrailingSlash: boolean;
-} {
+export function compilePattern(pattern: string): CompiledPattern {
   // Detect if pattern has trailing slash (but not just "/")
   const hasTrailingSlash = pattern.length > 1 && pattern.endsWith("/");
   // Remove trailing slash for parsing (we'll add it back to regex if needed)
@@ -334,7 +371,7 @@ export function findMatch<TEnv>(
         fullPattern = entry.prefix + pattern;
       }
 
-      const { regex, paramNames, optionalParams, hasTrailingSlash } = compilePattern(fullPattern);
+      const { regex, paramNames, optionalParams, hasTrailingSlash } = getCompiledPattern(fullPattern);
 
       // Get trailing slash mode for this route (per-route config or pattern-based)
       const trailingSlashMode: TrailingSlashMode | undefined = entry.trailingSlash?.[routeKey];

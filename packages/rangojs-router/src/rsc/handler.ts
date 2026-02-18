@@ -902,7 +902,7 @@ export function createRSCHandler<
     const match = await router.match(renderRequest, env);
 
     if (match.redirect) {
-      return new Response(null, {
+      return createResponseWithMergedHeaders(null, {
         status: 308,
         headers: { Location: match.redirect },
       });
@@ -937,7 +937,7 @@ export function createRSCHandler<
       nonce,
     });
 
-    return new Response(htmlStream, {
+    return createResponseWithMergedHeaders(htmlStream, {
       headers: { "content-type": "text/html;charset=utf-8" },
     });
   }

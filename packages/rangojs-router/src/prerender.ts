@@ -29,6 +29,7 @@ import type { ReactNode } from "react";
 import type { Handler, HandlerContext } from "./types.js";
 import type { Handle } from "./handle.js";
 
+
 // -- Types ------------------------------------------------------------------
 
 export interface PrerenderOptions {
@@ -123,13 +124,10 @@ export function Prerender<TParams extends Record<string, any>>(
   }
 
   if (!id) {
-    if (process.env.NODE_ENV !== "production") {
-      throw new Error(
-        "[rsc-router] Prerender: missing $$id. " +
-        "Ensure the exposeInternalIds Vite plugin is configured.",
-      );
-    }
-    id = "";
+    throw new Error(
+      "[rsc-router] Prerender: missing $$id. " +
+      "Ensure the exposeInternalIds Vite plugin is configured.",
+    );
   }
 
   return {

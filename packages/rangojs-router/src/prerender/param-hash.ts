@@ -17,8 +17,10 @@ export function hashParams(params: Record<string, string>): string {
   const entries = Object.entries(params);
   if (entries.length === 0) return "_";
 
-  const sorted = entries.sort(([a], [b]) => a.localeCompare(b));
-  const str = sorted.map(([k, v]) => `${k}=${v}`).join("&");
+  const sorted = entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const str = sorted
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join("&");
   return djb2Hex(str);
 }
 

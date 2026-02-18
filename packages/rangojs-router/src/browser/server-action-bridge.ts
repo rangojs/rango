@@ -386,11 +386,6 @@ export function createServerActionBridge(
       const currentSegmentMap = new Map<string, ResolvedSegment>();
       cachedSegments.forEach((s) => currentSegmentMap.set(s.id, s));
 
-      console.log(
-        `[Browser] Client cache has ${currentSegmentMap.size} entries:`,
-        Array.from(currentSegmentMap.keys())
-      );
-
       // Create lookup for new segments from server
       const newSegmentMap = new Map<string, ResolvedSegment>();
       (segments || []).forEach((s: ResolvedSegment) =>
@@ -398,7 +393,6 @@ export function createServerActionBridge(
       );
 
       if (!matched) {
-        console.log(`[Browser] Matched segments: ${matched}`);
         throw new Error("No matched segments in response");
       }
 
@@ -413,35 +407,48 @@ export function createServerActionBridge(
             if (needsLoaderMerge(fromServer, fromCache)) {
               return mergeSegmentLoaders(fromServer, fromCache);
             }
-            // When server returns component: null for a layout segment, it means
-            // "this segment doesn't need re-rendering" - preserve the cached component
-            // to maintain the outlet chain and prevent React tree changes
             const cached = currentSegmentMap.get(segId); // Re-fetch to avoid type narrowing issues
-            if (
-              fromServer.component === null &&
-              fromServer.type === "layout" &&
-              cached?.component != null
-            ) {
-              console.log(
-                `[Browser] Preserving cached component for layout ${segId} (server returned null)`
-              );
-              return { ...fromServer, component: cached.component };
-            }
+
             // Dev-mode assertion: warn if tree structure would change
             if (cached) {
               assertSegmentStructure(cached, fromServer, "action-bridge");
             }
-            // Preserve cached loading value to maintain consistent tree structure.
-            // SSR may set loading=false for skipSSR routes, but actions set
-            // loading=<skeleton> (isSSR=false). Changing loading between renders
-            // alters the React tree (with/without RouteContentWrapper), causing
-            // remounts that destroy useActionState.
-            if (
-              cached &&
-              cached.loading !== undefined &&
-              fromServer.loading !== cached.loading
-            ) {
-              return { ...fromServer, loading: cached.loading };
+
+            // Preserve cached structural properties to maintain consistent React tree.
+            // Changing these between renders alters the element nesting
+            // (with/without RouteContentWrapper, MountContextProvider, etc.),
+            // causing React to remount components and destroy useActionState.
+            if (cached) {
+              let merged = fromServer;
+
+              // When server returns component: null for a layout segment, it means
+              // "this segment doesn't need re-rendering" - preserve the cached component
+              // to maintain the outlet chain and prevent React tree changes
+              if (
+                fromServer.component === null &&
+                fromServer.type === "layout" &&
+                cached.component != null
+              ) {
+                merged = { ...merged, component: cached.component };
+              }
+
+              // loading: The server may return a different loading value than what
+              // the current page was rendered with (e.g., SSR sets loading=false for
+              // skipSSR routes, actions resolve loading=<skeleton>; or cached pages
+              // have loading=undefined while actions return loading=<skeleton>).
+              // Always preserve the cached value to maintain consistent tree structure.
+              if (fromServer.loading !== cached.loading) {
+                merged = { ...merged, loading: cached.loading };
+              }
+
+              // mountPath: SSR segments may lack mountPath while action-revalidated
+              // segments include it (from include() scope). The conditional
+              // MountContextProvider wrapper in renderSegments changes tree depth.
+              if (fromServer.mountPath !== cached.mountPath) {
+                merged = { ...merged, mountPath: cached.mountPath };
+              }
+
+              return merged;
             }
             return fromServer;
           }
@@ -453,10 +460,6 @@ export function createServerActionBridge(
           return fromCache;
         })
         .filter(Boolean) as ResolvedSegment[];
-
-      console.log(
-        `[Browser] Rebuilt ${fullSegments.length} segments from matched array`
-      );
 
       const returnData = returnValue?.data;
 
@@ -509,7 +512,7 @@ export function createServerActionBridge(
               `[Browser] History key changed, triggering background revalidation`
             );
             store.markCacheAsStaleAndBroadcast();
-            using navTx = createNavigationTransaction(
+            const navTx = createNavigationTransaction(
               store,
               eventController,
               window.location.href,
@@ -529,6 +532,24 @@ export function createServerActionBridge(
               }
             ).then(() => {
               console.log(`[Browser] Background revalidation complete`);
+            }).catch((error) => {
+              if (
+                error instanceof DOMException &&
+                error.name === "AbortError"
+              ) {
+                console.log("[Browser] Background revalidation aborted");
+                return;
+              }
+              if (error instanceof NetworkError || isNetworkError(error)) {
+                console.warn(
+                  "[Browser] Background revalidation network error (action):",
+                  error.message
+                );
+                return;
+              }
+              console.error("[Browser] Background revalidation failed:", error);
+            }).finally(() => {
+              navTx[Symbol.dispose]();
             });
           }
 
