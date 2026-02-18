@@ -168,7 +168,7 @@ describe("partial-update", () => {
 
       // renderSegments should be called with merged segments
       expect(renderSegments).toHaveBeenCalledTimes(1);
-      const renderedSegments = renderSegments.mock.calls[0][0];
+      const renderedSegments = (renderSegments.mock.calls as any[][])[0][0];
       expect(renderedSegments).toHaveLength(2);
       // L0 should come from cache (not in diff)
       expect(renderedSegments.find((s: any) => s.id === "L0").component).toBe(
@@ -317,7 +317,7 @@ describe("partial-update", () => {
 
       await updater("http://localhost/page", ["L0", "L0R0"], false, undefined, tx);
 
-      const rendered = renderSegments.mock.calls[0][0];
+      const rendered = (renderSegments.mock.calls as any[][])[0][0];
       const layout = rendered.find((s: any) => s.id === "L0");
 
       // The layout should preserve loading=false (suppressed boundary).
@@ -512,7 +512,7 @@ describe("partial-update", () => {
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
-        renderSegments: vi.fn(async () => "tree"),
+        renderSegments: vi.fn(async () => "tree") as any,
       });
 
       await updater("http://localhost/", undefined, false, undefined, tx, {
@@ -625,7 +625,7 @@ describe("partial-update", () => {
         store: store as any,
         client: client as any,
         onUpdate,
-        renderSegments: vi.fn(async () => "tree"),
+        renderSegments: vi.fn(async () => "tree") as any,
       });
 
       await updater("http://localhost/page1", [], false, undefined, tx, {
@@ -793,7 +793,7 @@ describe("partial-update", () => {
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
-        renderSegments: vi.fn(async () => "tree"),
+        renderSegments: vi.fn(async () => "tree") as any,
       });
 
       // isRetry=true, missing segments → should throw
@@ -825,7 +825,7 @@ describe("partial-update", () => {
         store: store as any,
         client: client as any,
         onUpdate,
-        renderSegments: vi.fn(async () => "tree"),
+        renderSegments: vi.fn(async () => "tree") as any,
       });
 
       await updater("http://localhost/", ["R0"], false, undefined, tx, {
@@ -897,7 +897,7 @@ describe("partial-update", () => {
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
-        renderSegments: vi.fn(async () => "tree"),
+        renderSegments: vi.fn(async () => "tree") as any,
       });
 
       await updater("http://localhost/modal", ["L0", "L0R0"], false, undefined, tx);
@@ -928,7 +928,7 @@ describe("partial-update", () => {
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
-        renderSegments: vi.fn(async () => "tree"),
+        renderSegments: vi.fn(async () => "tree") as any,
       });
 
       await updater("http://localhost/page", ["R0"], false, undefined, tx);
@@ -956,7 +956,7 @@ describe("partial-update", () => {
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
-        renderSegments: vi.fn(async () => "tree"),
+        renderSegments: vi.fn(async () => "tree") as any,
       });
 
       await updater("http://localhost/", ["R0"], false, undefined, tx, {
@@ -991,7 +991,7 @@ describe("partial-update", () => {
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
-        renderSegments: vi.fn(async () => "tree"),
+        renderSegments: vi.fn(async () => "tree") as any,
       });
 
       // Don't await directly since stream hangs (promise flattening blocks it).
@@ -1039,7 +1039,7 @@ describe("partial-update", () => {
         store: store as any,
         client: client as any,
         onUpdate: vi.fn(),
-        renderSegments: vi.fn(async () => "tree"),
+        renderSegments: vi.fn(async () => "tree") as any,
       });
 
       // fetchPartial throws, so the updater should re-throw
