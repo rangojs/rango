@@ -21,6 +21,8 @@ export interface TrieLeaf {
   op?: string[];
   /** Constraint validation: paramName -> allowed values */
   cv?: Record<string, string[]>;
+  /** Ordered param names for this route (positional) */
+  pa?: string[];
   /** Trailing slash mode */
   ts?: string;
   /** Route has pre-rendered data available */
@@ -98,23 +100,28 @@ function insertRoute(
   node: TrieNode,
   segments: ParsedSegment[],
   index: number,
-  leaf: Omit<TrieLeaf, "op" | "cv">,
+  leaf: Omit<TrieLeaf, "op" | "cv" | "pa">,
 ): void {
-  // Collect optional param names and constraints across all segments
+  // Collect param names, optional param names, and constraints across all segments
+  const paramNames: string[] = [];
   const optionalParams: string[] = [];
   const constraints: Record<string, string[]> = {};
 
   for (const seg of segments) {
-    if (seg.type === "param" && seg.optional) {
-      optionalParams.push(seg.value);
-    }
-    if (seg.type === "param" && seg.constraint) {
-      constraints[seg.value] = seg.constraint;
+    if (seg.type === "param") {
+      paramNames.push(seg.value);
+      if (seg.optional) {
+        optionalParams.push(seg.value);
+      }
+      if (seg.constraint) {
+        constraints[seg.value] = seg.constraint;
+      }
     }
   }
 
   const fullLeaf: TrieLeaf = {
     ...leaf,
+    ...(paramNames.length > 0 ? { pa: paramNames } : {}),
     ...(optionalParams.length > 0 ? { op: optionalParams } : {}),
     ...(Object.keys(constraints).length > 0 ? { cv: constraints } : {}),
   };

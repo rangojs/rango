@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { compilePattern, extractStaticPrefix, findMatch as rawFindMatch, isLazyEvaluationNeeded, type RouteMatchResult } from "../pattern-matching";
+import { describe, it, expect, beforeEach } from "vitest";
+import { compilePattern, extractStaticPrefix, findMatch as rawFindMatch, isLazyEvaluationNeeded, getPatternCacheSize, clearPatternCache, type RouteMatchResult } from "../pattern-matching";
 import type { RouteEntry, TrailingSlashMode } from "../../types";
 
 // Wrapper for findMatch that asserts it's not a lazy evaluation result
@@ -649,5 +649,78 @@ describe("trailing slash handling", () => {
       expect(result).not.toBeNull();
       expect(result!.routeKey).toBe("users");
     });
+  });
+});
+
+describe("compilePattern cache", () => {
+  beforeEach(() => {
+    clearPatternCache();
+  });
+
+  it("should cache compiled patterns across findMatch calls", () => {
+    const entries = [
+      createRouteEntry("", {
+        index: "/",
+        about: "/about",
+        "blog.detail": "/blog/:slug",
+      }),
+    ];
+
+    // First call: match a path that forces iteration through all routes
+    // (no-match path causes findMatch to compile every pattern)
+    findMatch("/no-match", entries);
+    const sizeAfterFirst = getPatternCacheSize();
+    // All three patterns should be compiled: /, /about, /blog/:slug
+    expect(sizeAfterFirst).toBe(3);
+
+    // Second call with same routes should not increase cache size
+    findMatch("/about", entries);
+    expect(getPatternCacheSize()).toBe(sizeAfterFirst);
+
+    // Matching a different path against the same routes should not grow cache
+    findMatch("/blog/hello", entries);
+    expect(getPatternCacheSize()).toBe(sizeAfterFirst);
+  });
+
+  it("should return correct matches after being served from cache", () => {
+    const entries = [
+      createRouteEntry("", {
+        about: "/about",
+        "blog.detail": "/blog/:slug",
+      }),
+    ];
+
+    // First call compiles and caches
+    const first = findMatch("/blog/post-1", entries);
+    expect(first).not.toBeNull();
+    expect(first!.params).toEqual({ slug: "post-1" });
+
+    // Second call uses cached pattern, should still produce correct params
+    const second = findMatch("/blog/post-2", entries);
+    expect(second).not.toBeNull();
+    expect(second!.params).toEqual({ slug: "post-2" });
+  });
+
+  it("should cache patterns with prefixes correctly", () => {
+    const entries = [
+      createRouteEntry("/api", { users: "/users", health: "/health" }),
+      createRouteEntry("", { index: "/" }),
+    ];
+
+    findMatch("/api/users", entries);
+    const size = getPatternCacheSize();
+
+    // Repeat the same match; cache should not grow
+    findMatch("/api/users", entries);
+    expect(getPatternCacheSize()).toBe(size);
+  });
+
+  it("clearPatternCache should reset the cache", () => {
+    const entries = [createRouteEntry("", { about: "/about" })];
+    findMatch("/about", entries);
+    expect(getPatternCacheSize()).toBeGreaterThan(0);
+
+    clearPatternCache();
+    expect(getPatternCacheSize()).toBe(0);
   });
 });

@@ -44,8 +44,10 @@ function getCacheKeyBase(
 ): string {
   const paramStr = params
     ? Object.entries(params)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, v]) => `${k}=${v}`)
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(
+          ([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`,
+        )
         .join("&")
     : "";
 
@@ -240,17 +242,26 @@ export async function deserializeSegments(
     });
 
     // RSC-deserialize layout, loaderData, loaderDataPromise in parallel
+    // Handle the "null" sentinel for loading before RSC deserialization.
+    // During serialization, loading: null is stored as the string "null" to
+    // distinguish it from undefined. This sentinel must be intercepted here
+    // rather than passed to rscDeserialize, which would try to decode it as
+    // an RSC Flight payload.
+    const loadingIsNullSentinel = item.encodedLoading === "null";
+
     const [layout, loaderData, loaderDataPromise, loadingData] =
       await Promise.all([
         rscDeserialize(item.encodedLayout),
         rscDeserialize(item.encodedLoaderData),
         rscDeserialize(item.encodedLoaderDataPromise),
-        rscDeserialize(item.encodedLoading),
+        loadingIsNullSentinel
+          ? (null as any)
+          : rscDeserialize(item.encodedLoading),
       ]);
 
     segments.push({
       ...item.metadata,
-      component: await component,
+      component,
       layout,
       loading: loadingData,
       loaderData,

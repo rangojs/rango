@@ -98,13 +98,20 @@ export function useNavigation<T>(
   // useOptimistic allows immediate updates during transitions/actions
   const [value, setOptimisticValue] = useOptimistic(baseValue);
 
+  // Store selector in a ref to avoid re-subscribing when an inline
+  // function is passed (its identity changes every render).
+  const selectorRef = useRef(selector);
+  selectorRef.current = selector;
+
   // Subscribe to event controller state changes (only runs on client)
   useEffect(() => {
     // Subscribe to updates from event controller
     return ctx.eventController.subscribe(() => {
       const currentState = ctx.eventController.getState();
       const publicState = toPublicState(currentState);
-      const nextSelected = selector ? selector(publicState) : publicState;
+      const nextSelected = selectorRef.current
+        ? selectorRef.current(publicState)
+        : publicState;
 
       // Check if selected value has changed
       if (!shallowEqual(nextSelected, prevState.current)) {
@@ -125,7 +132,7 @@ export function useNavigation<T>(
         setBaseValue(nextSelected);
       }
     });
-  }, [selector]);
+  }, []);
 
   // If no selector, include navigation methods
   if (!selector) {

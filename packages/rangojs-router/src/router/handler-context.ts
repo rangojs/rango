@@ -82,7 +82,7 @@ export function createHandlerContext<TEnv>(
   const cleanSearchParams = new URLSearchParams();
   searchParams.forEach((value, key) => {
     if (!key.startsWith("_rsc")) {
-      cleanSearchParams.set(key, value);
+      cleanSearchParams.append(key, value);
     }
   });
 

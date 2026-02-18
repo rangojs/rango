@@ -22,6 +22,7 @@ export class RouteNotFoundError extends Error {
 
   constructor(message: string, options?: ErrorOptions) {
     super(message);
+    Object.setPrototypeOf(this, RouteNotFoundError.prototype);
     this.cause = options?.cause;
   }
 }
@@ -45,6 +46,7 @@ export class DataNotFoundError extends Error {
 
   constructor(message: string = "Not found", options?: ErrorOptions) {
     super(message);
+    Object.setPrototypeOf(this, DataNotFoundError.prototype);
     this.cause = options?.cause;
   }
 }
@@ -74,6 +76,7 @@ export class MiddlewareError extends Error {
 
   constructor(message: string, options?: ErrorOptions) {
     super(message);
+    Object.setPrototypeOf(this, MiddlewareError.prototype);
     this.cause = options?.cause;
   }
 }
@@ -87,6 +90,7 @@ export class HandlerError extends Error {
 
   constructor(message: string, options?: ErrorOptions) {
     super(message);
+    Object.setPrototypeOf(this, HandlerError.prototype);
     this.cause = options?.cause;
   }
 }
@@ -100,6 +104,7 @@ export class BuildError extends Error {
 
   constructor(message: string, options?: ErrorOptions) {
     super(message);
+    Object.setPrototypeOf(this, BuildError.prototype);
     this.cause = options?.cause;
   }
 }
@@ -136,6 +141,7 @@ export class NetworkError extends Error {
     }
   ) {
     super(message);
+    Object.setPrototypeOf(this, NetworkError.prototype);
     this.cause = options?.cause;
     this.url = options?.url;
     this.operation = options?.operation;
@@ -200,6 +206,7 @@ export class RouterError extends Error {
     cause?: unknown;
   }) {
     super(message);
+    Object.setPrototypeOf(this, RouterError.prototype);
     this.code = code;
     this.status = options?.status ?? 500;
     this.type = options?.type;
@@ -231,6 +238,7 @@ export class InvalidHandlerError extends Error {
 
   constructor(message: string, options?: ErrorOptions) {
     super(message);
+    Object.setPrototypeOf(this, InvalidHandlerError.prototype);
     this.cause = options?.cause;
   }
 }
