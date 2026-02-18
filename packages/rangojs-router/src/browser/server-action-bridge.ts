@@ -2,20 +2,21 @@ import type {
   ServerActionBridge,
   ServerActionBridgeConfig,
   RscPayload,
-  ResolvedSegment,
-  NavigationStore,
 } from "./types.js";
 import { createPartialUpdater } from "./partial-update.js";
 import { createNavigationTransaction } from "./navigation-bridge.js";
 import {
-  mergeSegmentLoaders,
-  needsLoaderMerge,
-} from "./merge-segment-loaders.js";
-import { assertSegmentStructure } from "./segment-structure-assert.js";
-import { startTransition, createElement } from "react";
-import type { EventController, ActionHandle } from "./event-controller.js";
-import { NetworkError, isNetworkError } from "../errors.js";
-import { NetworkErrorThrower } from "../network-error-thrower.js";
+  reconcileSegments,
+  reconcileErrorSegments,
+} from "./segment-reconciler.js";
+import { classifyActionResponse } from "./action-response-classifier.js";
+import { startTransition } from "react";
+import type { EventController } from "./event-controller.js";
+import {
+  toNetworkError,
+  emitNetworkError,
+  isBackgroundSuppressible,
+} from "./network-error-handler.js";
 import {
   browserDebugLog,
   isBrowserDebugEnabled,
@@ -28,18 +29,6 @@ if (typeof Symbol.dispose === "undefined") {
 }
 if (typeof Symbol.asyncDispose === "undefined") {
   (Symbol as any).asyncDispose = Symbol("Symbol.asyncDispose");
-}
-
-/**
- * Normalize action ID - returns the ID as-is
- *
- * Server actions have IDs like "hash#actionName" or "src/actions.ts#actionName".
- * The full ID is used for tracking in the event controller. When subscribing
- * via useAction, both exact matching (full ID) and suffix matching (action name
- * only) are supported by the event controller.
- */
-function normalizeActionId(actionId: string): string {
-  return actionId;
 }
 
 /**
@@ -82,26 +71,56 @@ export function createServerActionBridge(
   });
 
   /**
+   * Refetch current route via a navigation transaction.
+   * Encapsulates the repeated pattern of creating a navTx + fetchPartialUpdate
+   * used by navigated-away, hmr-missing, and consolidation-needed scenarios.
+   */
+  async function refetchRoute(opts?: {
+    segments?: string[];
+    interceptSourceUrl?: string | null;
+  }): Promise<void> {
+    const src = opts?.interceptSourceUrl ?? null;
+    using navTx = createNavigationTransaction(
+      store,
+      eventController,
+      window.location.href,
+      { replace: true, skipLoadingState: true },
+    );
+    await fetchPartialUpdate(
+      window.location.href,
+      opts?.segments ?? [],
+      false,
+      navTx.handle.signal,
+      navTx.with({
+        url: window.location.href,
+        storeOnly: true,
+        ...(src ? { intercept: true, interceptSourceUrl: src } : {}),
+      }),
+      {
+        isAction: true,
+        ...(src ? { interceptSourceUrl: src } : {}),
+      },
+    );
+  }
+
+  /**
    * Server action callback handler
    */
   async function handleServerAction(id: string, args: any[]): Promise<unknown> {
     const tx = isBrowserDebugEnabled()
       ? startBrowserTransaction("action")
       : null;
-    // Normalize action ID to just the function name for store tracking
+    const log = (msg: string, details?: Record<string, unknown>) => {
+      if (tx) browserDebugLog(tx, msg, details);
+    };
+
     const locationKey = window.history.state?.key;
-    const actionId = normalizeActionId(id);
-    if (tx) {
-      browserDebugLog(tx, "action start", { id, actionId, argsCount: args.length });
-    }
+    log("action start", { id, argsCount: args.length });
 
     // Start action in event controller - handles lifecycle tracking
-    using handle = eventController.startAction(actionId, args);
+    using handle = eventController.startAction(id, args);
 
     const segmentState = store.getSegmentState();
-    if (tx) {
-      browserDebugLog(tx, "action args prepared");
-    }
 
     // Mark cache as stale immediately when action starts
     // This ensures SWR pattern kicks in if user navigates away during action
@@ -130,14 +149,12 @@ export function createServerActionBridge(
     // Encode arguments
     const encodedBody = await deps.encodeReply(args, { temporaryReferences });
 
-    if (tx) {
-      browserDebugLog(tx, "sending action request", {
-        url: url.href,
-        bodyType: typeof encodedBody,
-        isFormData: encodedBody instanceof FormData,
-        segmentCount: segmentState.currentSegmentIds.length,
-      });
-    }
+    log("sending action request", {
+      url: url.href,
+      bodyType: typeof encodedBody,
+      isFormData: encodedBody instanceof FormData,
+      segmentCount: segmentState.currentSegmentIds.length,
+    });
 
     // Track when the stream completes
     let resolveStreamComplete: () => void;
@@ -168,9 +185,7 @@ export function createServerActionBridge(
       // Check for version mismatch - server wants us to reload
       const reloadUrl = response.headers.get("X-RSC-Reload");
       if (reloadUrl) {
-        if (tx) {
-          browserDebugLog(tx, "version mismatch on action, reloading", { reloadUrl });
-        }
+        log("version mismatch on action, reloading", { reloadUrl });
         window.location.href = reloadUrl;
         // Return a never-resolving promise to prevent further processing
         return new Promise<Response>(() => {});
@@ -201,9 +216,7 @@ export function createServerActionBridge(
           }
         } finally {
           reader.releaseLock();
-          if (tx) {
-            browserDebugLog(tx, "stream complete");
-          }
+          log("stream complete");
           streamingToken?.end();
           resolveStreamComplete();
         }
@@ -235,61 +248,37 @@ export function createServerActionBridge(
       resolveStreamComplete!();
 
       // Convert network-level errors to NetworkError for proper handling
-      if (isNetworkError(error)) {
-        const networkError = new NetworkError(
-          "Unable to connect to server. Please check your connection.",
-          {
-            cause: error,
-            url: url.toString(),
-            operation: "action",
-          }
-        );
-
-        // Mark action as failed
+      const networkError = toNetworkError(error, {
+        url: url.toString(),
+        operation: "action",
+      });
+      if (networkError) {
         handle.fail(networkError);
-
-        // Emit the network error so the root error boundary can catch it
-        // NetworkErrorThrower throws during render to trigger the error boundary
-        startTransition(() => {
-          onUpdate({
-            root: createElement(NetworkErrorThrower, { error: networkError }),
-            metadata: {
-              pathname: segmentState.currentUrl,
-              segments: [],
-              isError: true,
-            },
-          });
-        });
-
+        emitNetworkError(onUpdate, networkError, segmentState.currentUrl);
         throw networkError;
       }
       throw error;
     }
 
-    if (tx) {
-      browserDebugLog(tx, "action response received", {
-        isPartial: payload.metadata?.isPartial,
-        isError: payload.metadata?.isError,
-        matchedCount: payload.metadata?.matched?.length ?? 0,
-        diffCount: payload.metadata?.diff?.length ?? 0,
-      });
-    }
+    log("action response received", {
+      isPartial: payload.metadata?.isPartial,
+      isError: payload.metadata?.isError,
+      matchedCount: payload.metadata?.matched?.length ?? 0,
+      diffCount: payload.metadata?.diff?.length ?? 0,
+    });
 
     // Process response
     const { metadata, returnValue } = payload;
     const { matched, diff, segments, isPartial, isError } = metadata || {};
 
     // Log action result
-    if (returnValue) {
-      console.log(`[Browser] Action result:`, returnValue);
-      if (!returnValue.ok) {
-        console.error(`[Browser] Action failed:`, returnValue.data);
-      }
+    if (returnValue && !returnValue.ok) {
+      console.error(`[Browser] Action failed:`, returnValue.data);
     }
 
     // Handle error responses with error boundary UI
     if (isError && isPartial && segments && diff) {
-      console.log(`[Browser] Processing error boundary response`);
+      log("processing error boundary response");
 
       // Abort all other pending action requests - error takes precedence
       // This prevents other actions from completing and overwriting the error UI
@@ -303,41 +292,22 @@ export function createServerActionBridge(
       const cached = store.getCachedSegments(currentKey);
       const cachedSegments = cached?.segments || [];
 
-      // Create lookup for error segment from server
-      const errorSegmentMap = new Map<string, ResolvedSegment>();
-      segments.forEach((s: ResolvedSegment) => errorSegmentMap.set(s.id, s));
-
-      // For error responses, use ALL cached segments but replace the errored one
-      // This preserves sibling layouts that aren't in the parent chain
-      const fullSegments = cachedSegments.map((cached) => {
-        // Replace the error segment with the one from server
-        const fromServer = errorSegmentMap.get(cached.id);
-        if (fromServer) return fromServer;
-        return cached;
-      });
-
-      // INTERCEPT HANDLING: Separate intercept segments for explicit injection
-      const isInterceptSegment = (s: ResolvedSegment) =>
-        s.namespace?.startsWith("intercept:") ||
-        (s.type === "parallel" && s.id.includes(".@"));
-
-      const interceptSegments = fullSegments.filter(isInterceptSegment);
-      const mainSegments = fullSegments.filter((s) => !isInterceptSegment(s));
+      // Reconcile error segments with cached tree
+      const errorResult = reconcileErrorSegments(cachedSegments, segments);
 
       // Render the full tree with error segment merged with parent layouts
-      const errorRenderOptions = {
+      const errorTree = await renderSegments(errorResult.mainSegments, {
         isAction: true,
         interceptSegments:
-          interceptSegments.length > 0 ? interceptSegments : undefined,
-      };
-      const errorTree = await renderSegments(mainSegments, errorRenderOptions);
+          errorResult.interceptSegments.length > 0
+            ? errorResult.interceptSegments
+            : undefined,
+      });
 
       // Update UI with error boundary
       startTransition(() => {
         onUpdate({ root: errorTree, metadata: metadata! });
       });
-
-      console.log(`[Browser] Error boundary UI rendered`);
 
       // Update segment tracking to exclude error segment IDs
       const errorSegmentIds = new Set(diff);
@@ -348,11 +318,10 @@ export function createServerActionBridge(
       // Update store state
       store.setSegmentIds(segmentIdsAfterError);
       const currentHandleData = eventController.getHandleState().data;
-      store.cacheSegmentsForHistory(currentKey, fullSegments, currentHandleData);
-
-      console.log(
-        `[Browser] Segment IDs updated (excluding error segments):`,
-        segmentIdsAfterError
+      store.cacheSegmentsForHistory(
+        currentKey,
+        errorResult.segments,
+        currentHandleData,
       );
 
       // Throw the error so the action promise rejects
@@ -366,414 +335,184 @@ export function createServerActionBridge(
       return undefined;
     }
 
-    if (isPartial) {
-      console.log(`[Browser] Processing partial update`);
-      console.log(
-        `[Browser] Server sent ${segments?.length || 0} segments in diff:`,
-        diff
-      );
-      console.log(`[Browser] Server expects client to have:`, matched);
-
-      // Record revalidated segments for concurrent action tracking
-      if (diff) {
-        handle.recordRevalidatedSegments(diff);
-      }
-
-      // Get current page's cached segments for merging
-      const currentKey = store.getHistoryKey();
-      const cached = store.getCachedSegments(currentKey);
-      const cachedSegments = cached?.segments || [];
-      const currentSegmentMap = new Map<string, ResolvedSegment>();
-      cachedSegments.forEach((s) => currentSegmentMap.set(s.id, s));
-
-      // Create lookup for new segments from server
-      const newSegmentMap = new Map<string, ResolvedSegment>();
-      (segments || []).forEach((s: ResolvedSegment) =>
-        newSegmentMap.set(s.id, s)
-      );
-
-      if (!matched) {
-        throw new Error("No matched segments in response");
-      }
-
-      // Rebuild from matched: merge server segments with cached, or use cached as fallback
-      const fullSegments = matched
-        .map((segId: string) => {
-          const fromServer = newSegmentMap.get(segId);
-          const fromCache = currentSegmentMap.get(segId);
-
-          if (fromServer) {
-            // Server returned this segment - check if we need to merge partial loaders
-            if (needsLoaderMerge(fromServer, fromCache)) {
-              return mergeSegmentLoaders(fromServer, fromCache);
-            }
-            const cached = currentSegmentMap.get(segId); // Re-fetch to avoid type narrowing issues
-
-            // Dev-mode assertion: warn if tree structure would change
-            if (cached) {
-              assertSegmentStructure(cached, fromServer, "action-bridge");
-            }
-
-            // Preserve cached structural properties to maintain consistent React tree.
-            // Changing these between renders alters the element nesting
-            // (with/without RouteContentWrapper, MountContextProvider, etc.),
-            // causing React to remount components and destroy useActionState.
-            if (cached) {
-              let merged = fromServer;
-
-              // When server returns component: null for a layout segment, it means
-              // "this segment doesn't need re-rendering" - preserve the cached component
-              // to maintain the outlet chain and prevent React tree changes
-              if (
-                fromServer.component === null &&
-                fromServer.type === "layout" &&
-                cached.component != null
-              ) {
-                merged = { ...merged, component: cached.component };
-              }
-
-              // loading: The server may return a different loading value than what
-              // the current page was rendered with (e.g., SSR sets loading=false for
-              // skipSSR routes, actions resolve loading=<skeleton>; or cached pages
-              // have loading=undefined while actions return loading=<skeleton>).
-              // Always preserve the cached value to maintain consistent tree structure.
-              if (fromServer.loading !== cached.loading) {
-                merged = { ...merged, loading: cached.loading };
-              }
-
-              // mountPath: SSR segments may lack mountPath while action-revalidated
-              // segments include it (from include() scope). The conditional
-              // MountContextProvider wrapper in renderSegments changes tree depth.
-              if (fromServer.mountPath !== cached.mountPath) {
-                merged = { ...merged, mountPath: cached.mountPath };
-              }
-
-              return merged;
-            }
-            return fromServer;
-          }
-
-          // Fall back to current page's cached segments
-          if (!fromCache) {
-            console.error(`[Browser] MISSING SEGMENT: ${segId} not in cache!`);
-          }
-          return fromCache;
-        })
-        .filter(Boolean) as ResolvedSegment[];
-
-      const returnData = returnValue?.data;
-
-      console.log(
-        `[Browser] Action complete - UI updated (after action state committed)`
-      );
-
-      if (returnValue && !returnValue.ok) {
-        handle.fail(returnValue.data);
-        throw returnValue.data;
-      }
-
-      // Check if user navigated away during the action
-      const currentPathname = window.location.pathname;
-      const currentLocationKey = window.history.state?.key;
-      const userNavigatedAway =
-        currentPathname !== actionStartPathname ||
-        currentLocationKey !== locationKey;
-
-      if (userNavigatedAway) {
-        console.log(
-          `[Browser] User navigated away during action (${actionStartPathname} -> ${currentPathname})`
-        );
-        // Clear concurrent action tracking - don't consolidate for old route's segments
-        handle.clearConsolidation();
-
-        // Check if the history key changed (different cache entry)
-        // This happens when navigating between intercept and non-intercept routes
-        if (currentLocationKey !== locationKey) {
-          console.log(
-            `[Browser] History key changed (${locationKey} -> ${currentLocationKey}), triggering background revalidation`
-          );
-
-          // The action completed on the server, but the user navigated to a different route.
-          // The navigation fetch may have gotten stale data (before action committed).
-          // Trigger a background revalidation of the CURRENT route to get fresh data.
-          // User navigated to a different history entry.
-          // Check if we should do background revalidation:
-          // - YES if user is on a non-intercept route (safe to revalidate)
-          // - NO if user is on an intercept route (would lose background segments)
-          const currentInterceptSource = store.getInterceptSourceUrl();
-          if (currentInterceptSource) {
-            // User is on an intercept route - skip revalidation to preserve background
-            console.log(
-              `[Browser] Skipping background revalidation - user on intercept route`
-            );
-          } else {
-            // User is on a non-intercept route - safe to revalidate
-            console.log(
-              `[Browser] History key changed, triggering background revalidation`
-            );
-            store.markCacheAsStaleAndBroadcast();
-            const navTx = createNavigationTransaction(
-              store,
-              eventController,
-              window.location.href,
-              { replace: true, skipLoadingState: true }
-            );
-            fetchPartialUpdate(
-              window.location.href,
-              [],
-              false,
-              navTx.handle.signal,
-              navTx.with({
-                url: window.location.href,
-                storeOnly: true,
-              }),
-              {
-                isAction: true,
-              }
-            ).then(() => {
-              console.log(`[Browser] Background revalidation complete`);
-            }).catch((error) => {
-              if (
-                error instanceof DOMException &&
-                error.name === "AbortError"
-              ) {
-                console.log("[Browser] Background revalidation aborted");
-                return;
-              }
-              if (error instanceof NetworkError || isNetworkError(error)) {
-                console.warn(
-                  "[Browser] Background revalidation network error (action):",
-                  error.message
-                );
-                return;
-              }
-              console.error("[Browser] Background revalidation failed:", error);
-            }).finally(() => {
-              navTx[Symbol.dispose]();
-            });
-          }
-
-          handle.complete(returnData);
-          return returnData;
-        }
-
-        // Same history key but different pathname (e.g., same-page navigation)
-        // Safe to refetch current route
-        console.log(`[Browser] Same history key, refetching current route`);
-        store.markCacheAsStaleAndBroadcast();
-        using navTx = createNavigationTransaction(
-          store,
-          eventController,
-          window.location.href,
-          { replace: true, skipLoadingState: true }
-        );
-        // Preserve intercept context
-        const currentInterceptSource = store.getInterceptSourceUrl();
-        await fetchPartialUpdate(
-          window.location.href,
-          [], // Empty array = refetch all segments for current route
-          false,
-          navTx.handle.signal,
-          navTx.with({
-            url: window.location.href,
-            storeOnly: true,
-            intercept: !!currentInterceptSource,
-            interceptSourceUrl: currentInterceptSource ?? undefined,
-          }),
-          {
-            isAction: true,
-            interceptSourceUrl: currentInterceptSource ?? undefined,
-          }
-        );
-        console.log(`[Browser] Refetch after navigation complete`);
-        handle.complete(returnData);
-        return returnData;
-      }
-
-      // HMR resilience check - only runs if user DIDN'T navigate away
-      if (fullSegments.length < matched.length) {
-        console.warn(
-          `[Browser] Missing segments after action (HMR detected), refetching...`
-        );
-
-        using navTx = createNavigationTransaction(
-          store,
-          eventController,
-          window.location.href,
-          { replace: true, skipLoadingState: true }
-        );
-        await fetchPartialUpdate(
-          window.location.href,
-          [],
-          false,
-          navTx.handle.signal,
-          navTx.with({
-            url: window.location.href,
-            storeOnly: true,
-            intercept: !!interceptSourceUrl,
-            interceptSourceUrl: interceptSourceUrl ?? undefined,
-          }),
-          {
-            isAction: true,
-            interceptSourceUrl: interceptSourceUrl ?? undefined,
-          }
-        );
-        console.log(
-          `[Browser] Refetch complete (HMR), now returning action result`
-        );
-
-        // Broadcast to other tabs
-        store.broadcastCacheInvalidation();
-        handle.complete(returnData);
-        return returnData;
-      }
-
-      // Check if we need a consolidation fetch due to concurrent actions
-      const consolidationSegments = handle.getConsolidationSegments();
-
-      if (consolidationSegments && consolidationSegments.length > 0) {
-        // This is the last concurrent action - do consolidation fetch
-        console.log(
-          `[Browser] Concurrent actions detected - consolidation fetch needed for:`,
-          consolidationSegments
-        );
-        // Calculate segments to send (exclude the ones we want fresh)
-        const currentSegmentIds = store.getSegmentState().currentSegmentIds;
-        const segmentsToSend = currentSegmentIds.filter(
-          (id) => !consolidationSegments.includes(id)
-        );
-
-        console.log(
-          `[Browser] Sending segments (excluding revalidated):`,
-          segmentsToSend
-        );
-
-        // Clear consolidation tracking before fetch
-        handle.clearConsolidation();
-
-        using navTx = createNavigationTransaction(
-          store,
-          eventController,
-          window.location.href,
-          { replace: true, skipLoadingState: true }
-        );
-
-        console.warn("Fetch partial", id);
-        await fetchPartialUpdate(
-          window.location.href,
-          segmentsToSend,
-          false,
-          navTx.handle.signal,
-          navTx.with({
-            url: window.location.href,
-            storeOnly: true,
-            intercept: !!interceptSourceUrl,
-            interceptSourceUrl: interceptSourceUrl ?? undefined,
-          }),
-          {
-            isAction: true,
-            interceptSourceUrl: interceptSourceUrl ?? undefined,
-          }
-        );
-
-        console.log(`[Browser] Consolidation fetch complete`);
-        // Broadcast to other tabs
-        store.broadcastCacheInvalidation();
-        console.log(
-          `[Browser] Consolidate/Reconcile - Returning to React:`,
-          returnData
-        );
-
-        handle.complete(returnData);
-        return returnData;
-      }
-
-      // Check if there are OTHER actions still fetching (waiting for server response)
-      // Exclude the current action since we already have our response
-      // We don't need to wait for streaming to complete - just for the response to arrive
-      const otherFetchingActions = [...eventController.getInflightActions().values()].filter(
-        (a) => a.phase === "fetching" && a.id !== handle.id
-      );
-      if (otherFetchingActions.length > 0) {
-        console.log(
-          `[Browser] Skipping UI update - ${otherFetchingActions.length} other action(s) still fetching`
-        );
-        console.log(
-          `[Browser] Multi actions - Returning to React (no cache clear):`,
-          returnData
-        );
-        // Only update store if history key hasn't changed (user didn't navigate away)
-        const currentKeyNow = store.getHistoryKey();
-        if (currentKeyNow === currentKey) {
-          store.setSegmentIds(matched);
-          const currentHandleData = eventController.getHandleState().data;
-          store.cacheSegmentsForHistory(currentKey, fullSegments, currentHandleData);
-        } else {
-          console.log(
-            `[Browser] History key changed during multi-action (${currentKey} -> ${currentKeyNow}), skipping cache update`
-          );
-        }
-        handle.complete(returnData);
-        return returnData;
-      }
-
-      // No concurrent actions - normal flow with single action
-      // INTERCEPT HANDLING: Separate intercept segments for explicit injection
-      const isInterceptSegment = (s: ResolvedSegment) =>
-        s.namespace?.startsWith("intercept:") ||
-        (s.type === "parallel" && s.id.includes(".@"));
-
-      const interceptSegments = fullSegments.filter(isInterceptSegment);
-      const mainSegments = fullSegments.filter((s) => !isInterceptSegment(s));
-
-      // Prepare new tree (await loader data resolution)
-      const renderOptions = {
-        isAction: true,
-        interceptSegments:
-          interceptSegments.length > 0 ? interceptSegments : undefined,
-      };
-      const newTree = await renderSegments(mainSegments, renderOptions);
-
-      // Re-check if user navigated away (could happen during async wait)
-      const currentPathnameNow = window.location.pathname;
-      if (currentPathnameNow !== actionStartPathname) {
-        console.log(
-          `[Browser] User navigated during UI update scheduling, skipping`
-        );
-        handle.complete(returnData);
-        return returnData;
-      }
-
-      // Verify the store's current key still matches what we captured at action start
-      // If they differ, user navigated away and we should NOT cache under the old key
-      const currentKeyNow = store.getHistoryKey();
-      if (currentKeyNow !== currentKey) {
-        console.log(
-          `[Browser] History key changed during action (${currentKey} -> ${currentKeyNow}), skipping cache update`
-        );
-        handle.complete(returnData);
-        return returnData;
-      }
-
-      startTransition(() => {
-        onUpdate({ root: newTree, metadata: metadata! });
-      });
-
-      // Update store state
-      store.setSegmentIds(matched);
-      const currentHandleData = eventController.getHandleState().data;
-      store.cacheSegmentsForHistory(currentKey, fullSegments, currentHandleData);
-      store.markCacheAsStaleAndBroadcast();
-
-      console.log(`[Browser] Normal - Returning to React:`, returnData);
-      handle.complete(returnData);
-      return returnData;
-    } else {
+    if (!isPartial) {
       // Full update not supported for actions
       throw new Error(
         `[Browser] Full update after action is not supported yet`
       );
     }
+
+    log("processing partial update", {
+      serverSegments: segments?.length ?? 0,
+      diff: diff?.join(", ") ?? "",
+      matched: matched?.join(", ") ?? "",
+    });
+
+    // Record revalidated segments for concurrent action tracking
+    if (diff) {
+      handle.recordRevalidatedSegments(diff);
+    }
+
+    // Get current page's cached segments for merging
+    const currentKey = store.getHistoryKey();
+    const cached = store.getCachedSegments(currentKey);
+    const cachedSegments = cached?.segments || [];
+
+    if (!matched) {
+      throw new Error("No matched segments in response");
+    }
+
+    // Reconcile server segments with cached segments (single source of truth)
+    const reconciled = reconcileSegments({
+      actor: "action",
+      matched,
+      diff: diff || [],
+      serverSegments: segments || [],
+      cachedSegments,
+    });
+    const fullSegments = reconciled.segments;
+
+    const returnData = returnValue?.data;
+
+    if (returnValue && !returnValue.ok) {
+      handle.fail(returnValue.data);
+      throw returnValue.data;
+    }
+
+    // Classify the post-reconciliation scenario
+    const consolidationSegments = handle.getConsolidationSegments();
+    const otherFetchingActions = [
+      ...eventController.getInflightActions().values(),
+    ].filter((a) => a.phase === "fetching" && a.id !== handle.id);
+
+    const scenario = classifyActionResponse({
+      actionStartPathname,
+      currentPathname: window.location.pathname,
+      actionStartLocationKey: locationKey,
+      currentLocationKey: window.history.state?.key,
+      reconciledSegmentCount: fullSegments.length,
+      matchedCount: matched.length,
+      consolidationSegments: consolidationSegments || null,
+      otherFetchingActionCount: otherFetchingActions.length,
+      currentInterceptSource: store.getInterceptSourceUrl(),
+    });
+
+    switch (scenario.type) {
+      case "navigated-away": {
+        log("user navigated away during action", {
+          from: actionStartPathname,
+          to: window.location.pathname,
+          historyKeyChanged: scenario.historyKeyChanged,
+        });
+        // Clear concurrent action tracking - don't consolidate for old route's segments
+        handle.clearConsolidation();
+
+        if (scenario.historyKeyChanged) {
+          if (!scenario.onInterceptRoute) {
+            store.markCacheAsStaleAndBroadcast();
+            refetchRoute().catch((error) => {
+              if (isBackgroundSuppressible(error)) return;
+              console.error("[Browser] Background revalidation failed:", error);
+            });
+          }
+          break;
+        }
+
+        // Same history key but different pathname - safe to refetch current route
+        store.markCacheAsStaleAndBroadcast();
+        await refetchRoute({
+          interceptSourceUrl: store.getInterceptSourceUrl(),
+        });
+        break;
+      }
+
+      case "hmr-missing": {
+        console.warn(`[Browser] Missing segments after action (HMR detected), refetching...`);
+        await refetchRoute({ interceptSourceUrl });
+        store.broadcastCacheInvalidation();
+        break;
+      }
+
+      case "consolidation-needed": {
+        log("consolidation fetch needed", { segmentIds: scenario.segmentIds });
+        // Calculate segments to send (exclude the ones we want fresh)
+        const currentSegmentIds = store.getSegmentState().currentSegmentIds;
+        const segmentsToSend = currentSegmentIds.filter(
+          (sid) => !scenario.segmentIds.includes(sid)
+        );
+
+        // Clear consolidation tracking before fetch
+        handle.clearConsolidation();
+
+        await refetchRoute({
+          segments: segmentsToSend,
+          interceptSourceUrl,
+        });
+        store.broadcastCacheInvalidation();
+        break;
+      }
+
+      case "concurrent-skip": {
+        log("skipping UI update, other actions fetching", {
+          otherCount: scenario.otherFetchingCount,
+        });
+        // Only update store if history key hasn't changed (user didn't navigate away)
+        const currentKeyNow = store.getHistoryKey();
+        if (currentKeyNow === currentKey) {
+          store.setSegmentIds(matched);
+          const currentHandleData = eventController.getHandleState().data;
+          store.cacheSegmentsForHistory(
+            currentKey,
+            fullSegments,
+            currentHandleData,
+          );
+        }
+        break;
+      }
+
+      case "normal": {
+        // Prepare new tree (await loader data resolution)
+        const newTree = await renderSegments(reconciled.mainSegments, {
+          isAction: true,
+          interceptSegments:
+            reconciled.interceptSegments.length > 0
+              ? reconciled.interceptSegments
+              : undefined,
+        });
+
+        // Re-check if user navigated away (could happen during async renderSegments)
+        if (window.location.pathname !== actionStartPathname) {
+          log("user navigated during render, skipping");
+          break;
+        }
+
+        // Verify the store's current key still matches what we captured at action start
+        // If they differ, user navigated away and we should NOT cache under the old key
+        const currentKeyNow = store.getHistoryKey();
+        if (currentKeyNow !== currentKey) {
+          log("history key changed during action, skipping cache update");
+          break;
+        }
+
+        startTransition(() => {
+          onUpdate({ root: newTree, metadata: metadata! });
+        });
+
+        // Update store state
+        store.setSegmentIds(matched);
+        const currentHandleData = eventController.getHandleState().data;
+        store.cacheSegmentsForHistory(
+          currentKey,
+          fullSegments,
+          currentHandleData,
+        );
+        store.markCacheAsStaleAndBroadcast();
+        break;
+      }
+    }
+
+    handle.complete(returnData);
+    return returnData;
   }
 
   return {
@@ -787,7 +526,6 @@ export function createServerActionBridge(
       }
       deps.setServerCallback(handleServerAction);
       isRegistered = true;
-      console.log("[Browser] Server action callback registered");
     },
 
     /**
@@ -798,7 +536,6 @@ export function createServerActionBridge(
         return;
       }
       isRegistered = false;
-      console.log("[Browser] Server action bridge unregistered");
     },
   };
 }

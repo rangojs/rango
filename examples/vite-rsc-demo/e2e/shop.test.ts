@@ -607,6 +607,41 @@ test.describe("shop-actions", () => {
     await expect(page.locator("text=Success")).toBeVisible({ timeout: 20000 });
   });
 
+  test("should show action result after intercept then leave-intercept navigation", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    // Navigate: /shop -> intercept modal -> "View Full Details" -> product detail page
+    await page.goto(f.url("/shop"));
+    await waitForHydration(page);
+    await expect(page.locator("text=All Products")).toBeVisible();
+
+    await page.locator('a[href="/shop/product/wireless-headphones"]').first().click();
+    await expect(page.locator("text=Intercepted")).toBeVisible({ timeout: 5000 });
+
+    await page.locator("text=View Full Details").click();
+    await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 5000 });
+    await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({ timeout: 10000 });
+
+    // Fire the "Add to Cart (With Result)" action on the detail page
+    const withResultButton = page.locator("button").filter({ hasText: "Add to Cart (With Result)" }).first();
+    await expect(withResultButton).toBeVisible({ timeout: 5000 });
+
+    const pendingButton = page.locator("button").filter({ hasText: "Adding..." }).first();
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await withResultButton.click();
+      try {
+        await expect(pendingButton).toBeVisible({ timeout: 3000 });
+        break;
+      } catch {
+        if (attempt === 2) throw new Error("Action never fired after 3 click attempts");
+      }
+    }
+
+    // Action result must be visible - this fails when loading preservation is broken
+    // because the tree remounts and useActionState is destroyed
+    await expect(page.locator("text=Success")).toBeVisible({ timeout: 20000 });
+  });
+
   test("should correctly handle rapid increment clicks after add to cart", async ({ page }) => {
     using _ = expectNoPageError(page);
 
