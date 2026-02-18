@@ -445,6 +445,7 @@ export async function resolveAllSegments<TEnv>(
   options?: ResolveSegmentOptions,
 ): Promise<ResolvedSegment[]> {
   const allSegments: ResolvedSegment[] = [];
+  const seenIds = new Set<string>();
 
   for (const entry of entries) {
     const resolvedSegments = await resolveWithErrorHandling(
@@ -452,7 +453,15 @@ export async function resolveAllSegments<TEnv>(
       () => resolveSegment(entry, routeKey, params, context, loaderPromises, deps, false, options),
       deps,
     );
-    allSegments.push(...resolvedSegments);
+    // Deduplicate by segment ID. include() scopes can produce entries that
+    // resolve the same shared layout/loader segment. Duplicates in the segment
+    // array propagate to the client's matched[] and change the React tree depth.
+    for (const seg of resolvedSegments) {
+      if (!seenIds.has(seg.id)) {
+        seenIds.add(seg.id);
+        allSegments.push(seg);
+      }
+    }
   }
 
   return allSegments;
@@ -1048,7 +1057,10 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     >;
 
     for (const [slot, handler] of Object.entries(slots)) {
-      const parallelId = `${parallelEntry.shortCode}.${slot}`;
+      // Use orphan.shortCode (the parent layout) to match the SSR path
+      // (resolveParallelEntry receives parentShortCode = orphan.shortCode).
+      // Using parallelEntry.shortCode would generate IDs the client doesn't know about.
+      const parallelId = `${orphan.shortCode}.${slot}`;
       matchedIds.push(parallelId);
 
       const shouldResolve = await (async () => {
@@ -1321,6 +1333,8 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
 ): Promise<{ segments: ResolvedSegment[]; matchedIds: string[] }> {
   const allSegments: ResolvedSegment[] = [];
   const matchedIds: string[] = [];
+  const seenSegIds = new Set<string>();
+  const seenMatchIds = new Set<string>();
 
   for (const entry of entries) {
     if (entry.type === "route" && interceptResult) {
@@ -1328,7 +1342,10 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
         localRouteName,
         segmentId: entry.shortCode,
       });
-      matchedIds.push(entry.shortCode);
+      if (!seenMatchIds.has(entry.shortCode)) {
+        seenMatchIds.add(entry.shortCode);
+        matchedIds.push(entry.shortCode);
+      }
       continue;
     }
 
@@ -1346,8 +1363,21 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
       pathname,
     );
 
-    allSegments.push(...resolved.segments);
-    matchedIds.push(...resolved.matchedIds);
+    // Deduplicate segments and matchedIds by ID, matching resolveAllSegments.
+    // include() scopes can produce entries that resolve the same shared
+    // layout/loader segment. Duplicates cause React tree depth changes.
+    for (const seg of resolved.segments) {
+      if (!seenSegIds.has(seg.id)) {
+        seenSegIds.add(seg.id);
+        allSegments.push(seg);
+      }
+    }
+    for (const id of resolved.matchedIds) {
+      if (!seenMatchIds.has(id)) {
+        seenMatchIds.add(id);
+        matchedIds.push(id);
+      }
+    }
   }
 
   return { segments: allSegments, matchedIds };

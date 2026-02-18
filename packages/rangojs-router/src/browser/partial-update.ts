@@ -341,18 +341,36 @@ export function createPartialUpdater(
             ) {
               return mergeSegmentLoaders(fromServer, fromCache);
             }
-            // When server returns component: null for a layout segment, it means
-            // "this segment doesn't need re-rendering" - preserve the cached component
-            // to maintain the outlet chain and prevent React tree changes
-            if (
-              fromServer.component === null &&
-              fromServer.type === "layout" &&
-              fromCache?.component != null
-            ) {
-              console.log(
-                `[Browser] Preserving cached component for layout ${id} (server returned null)`,
-              );
-              return { ...fromServer, component: fromCache.component };
+            // Preserve cached structural properties to maintain consistent React tree.
+            // The server may return different values for loading (isSSR context) and
+            // mountPath (include scope), which change the element nesting depth
+            // (with/without RouteContentWrapper, MountContextProvider).
+            if (fromCache) {
+              let merged = fromServer;
+
+              // When server returns component: null for a layout segment, it means
+              // "this segment doesn't need re-rendering" - preserve the cached component
+              // to maintain the outlet chain and prevent React tree changes
+              if (
+                fromServer.component === null &&
+                fromServer.type === "layout" &&
+                fromCache.component != null
+              ) {
+                merged = { ...merged, component: fromCache.component };
+              }
+
+              if (
+                fromCache.loading !== undefined &&
+                fromServer.loading !== fromCache.loading
+              ) {
+                merged = { ...merged, loading: fromCache.loading };
+              }
+
+              if (fromServer.mountPath !== fromCache.mountPath) {
+                merged = { ...merged, mountPath: fromCache.mountPath };
+              }
+
+              return merged;
             }
             return fromServer;
           }
