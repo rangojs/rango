@@ -45,20 +45,27 @@ export const urlpatterns = urls(({ path, layout }) => [
 
 ## Type-Safe href()
 
-### Server: ctx.reverse with global route names
+### Server: ctx.reverse with route names
 
-In route handlers, use `ctx.reverse()` with the global dotted route names
-from `router.named-routes.gen.ts`:
+In route handlers, `ctx.reverse()` resolves names in this order:
+1. **Absolute** (dotted names matching a global route) — `blog.post` resolves globally
+2. **Local** (relative to current route's namespace) — `cart` from `shop.product` resolves to `shop.cart`
+3. **Local dotted** — dotted names that don't match globally fall through to local resolution, so `author.posts` from `magazine.author` resolves to `magazine.author.posts`
 
 ```typescript
 import type { Handler } from "@rangojs/router";
 
 export const ProductHandler: Handler<"shop.product"> = (ctx) => {
-  ctx.reverse("shop.cart");                       // Global name
-  ctx.reverse("shop.product", { slug: "widget" }); // With params
-  ctx.reverse("blog.post", { postId: "1" });       // Cross-module
+  ctx.reverse("cart");                                   // Local: shop.cart
+  ctx.reverse("product", { slug: "widget" });            // Local: shop.product
+  ctx.reverse("blog.post", { postId: "1" });             // Absolute: blog.post
+};
 
-  return <ProductPage slug={ctx.params.slug} />;
+// Dotted local names work within include() scopes:
+export const MagazineAuthorHandler: Handler<"magazine.author"> = (ctx) => {
+  ctx.reverse("article", { slug: "design" });            // Local: magazine.article
+  ctx.reverse("author.posts", { authorSlug: "alice" });  // Local dotted: magazine.author.posts
+  ctx.reverse("blog.index");                             // Absolute: blog.index (exists globally)
 };
 ```
 

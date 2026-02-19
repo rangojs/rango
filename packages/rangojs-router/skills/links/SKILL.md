@@ -26,9 +26,11 @@ export const shopPatterns = urls(({ path, layout }) => [
 
 ### Resolution priority
 
-1. **Path-based** (`/...`) - returned as-is
-2. **Absolute name** (contains dot: `blog.post`) - global lookup
-3. **Local name** (`cart`) - resolved relative to current route's namespace
+1. **Path-based** (`/...`) — returned as-is
+2. **Absolute name** (contains dot: `blog.post`) — global lookup, falls through to local if not found
+3. **Local name** (`cart`, `author.posts`) — resolved relative to current route's namespace
+
+Dotted names try absolute lookup first, then fall through to local resolution. This means `author.posts` inside a `magazine.*` handler resolves to `magazine.author.posts` if no absolute `author.posts` exists.
 
 ```typescript
 // Inside a handler within shopPatterns (mounted at /shop)
@@ -40,6 +42,27 @@ path("/product/:slug", (ctx) => {
 
   return <ProductPage slug={ctx.params.slug} />;
 }, { name: "product" })
+```
+
+Local dotted names work within `include()` scopes:
+
+```typescript
+// urls/magazine.tsx
+export const magazinePatterns = urls(({ path, layout }) => [
+  layout(<MagazineLayout />, () => [
+    path("/", MagazineIndex, { name: "index" }),
+    path("/:slug", MagazineArticle, { name: "article" }),
+    path("/author/:authorSlug", MagazineAuthor, { name: "author" }),
+    path("/author/:authorSlug/posts", MagazineAuthorPosts, { name: "author.posts" }),
+  ]),
+]);
+
+// Inside MagazineAuthor handler (current route: magazine.author)
+(ctx) => {
+  ctx.reverse("article", { slug: "design" });            // "/magazine/design" (local)
+  ctx.reverse("author.posts", { authorSlug: "alice" });   // "/magazine/author/alice/posts" (local dotted)
+  ctx.reverse("blog.index");                              // "/blog" (absolute — exists globally)
+}
 ```
 
 ### reverse with search params
