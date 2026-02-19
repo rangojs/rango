@@ -166,6 +166,8 @@ function useLoaderInternal<T>(
             pathname: currentUrl.pathname,
             url: currentUrl,
             signal: controller.signal,
+            segments: currentUrl.pathname.split("/").filter(Boolean),
+            state: window.history.state ?? null,
           };
 
           const result = await clientFn(ctx);
