@@ -299,6 +299,7 @@ export function createPartialUpdater(
       const matchedIds = matched || [];
       const actor: ReconcileActor =
         staleRevalidation || isAction ? "stale-revalidation" : "navigation";
+
       const reconciled = reconcileSegments({
         actor,
         matched: matchedIds,
