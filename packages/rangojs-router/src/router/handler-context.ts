@@ -24,39 +24,45 @@ function resolveRouteName(
     return name;
   }
 
-  // 2. Absolute name - already has a dot (e.g., "shop.cart")
-  if (name.includes(".")) {
-    return routeMap[name];
-  }
+  // 2. Dot-prefixed (".author.posts") - strictly local, no global fallback.
+  //    Like "./" in file paths — guarantees resolution stays within the
+  //    current include() scope. Errors if not found locally.
+  const strictlyLocal = name.startsWith(".");
+  const lookupName = strictlyLocal ? name.slice(1) : name;
 
-  // 3. Local name - try with current prefix first, then fall back to direct lookup
+  // 3. Local resolution - try current namespace prefix, then walk up parents
   if (currentRoutePrefix) {
     // Extract the prefix from current route name
-    // e.g., "blog.posts.detail" → prefix is "blog.posts"
+    // e.g., "blog.posts.detail" -> prefix is "blog.posts"
     const lastDot = currentRoutePrefix.lastIndexOf(".");
     const prefix = lastDot > 0 ? currentRoutePrefix.substring(0, lastDot) : currentRoutePrefix;
 
     // Try prefixed name
-    const prefixedName = `${prefix}.${name}`;
+    const prefixedName = `${prefix}.${lookupName}`;
     if (routeMap[prefixedName] !== undefined) {
       return routeMap[prefixedName];
     }
 
-    // If current route is a nested include, try parent prefixes
+    // Walk up parent prefixes
     // e.g., for "blog.posts.detail", try "blog.posts.index", then "blog.index"
     let currentPrefix = prefix;
     while (currentPrefix.includes(".")) {
       const parentDot = currentPrefix.lastIndexOf(".");
       currentPrefix = currentPrefix.substring(0, parentDot);
-      const parentPrefixedName = `${currentPrefix}.${name}`;
+      const parentPrefixedName = `${currentPrefix}.${lookupName}`;
       if (routeMap[parentPrefixedName] !== undefined) {
         return routeMap[parentPrefixedName];
       }
     }
   }
 
-  // Fall back to direct lookup (route without prefix)
-  return routeMap[name];
+  // 4. Strictly local names never fall through to global
+  if (strictlyLocal) {
+    return undefined;
+  }
+
+  // 5. Global fallback - direct lookup in the full route map
+  return routeMap[lookupName];
 }
 
 /**

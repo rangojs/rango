@@ -45,20 +45,31 @@ export const urlpatterns = urls(({ path, layout }) => [
 
 ## Type-Safe href()
 
-### Server: ctx.reverse with global route names
+### Server: ctx.reverse with route names
 
-In route handlers, use `ctx.reverse()` with the global dotted route names
-from `router.named-routes.gen.ts`:
+In route handlers, `ctx.reverse()` resolves names in this order:
+1. **Path-based** (`/...`) — returned as-is
+2. **Dot-prefixed** (`.author.posts`) — strictly local, no global fallback
+3. **Unprefixed** (`cart`, `author.posts`) — local first, then global fallback
 
 ```typescript
 import type { Handler } from "@rangojs/router";
 
 export const ProductHandler: Handler<"shop.product"> = (ctx) => {
-  ctx.reverse("shop.cart");                       // Global name
-  ctx.reverse("shop.product", { slug: "widget" }); // With params
-  ctx.reverse("blog.post", { postId: "1" });       // Cross-module
+  ctx.reverse("cart");                                   // Local: shop.cart
+  ctx.reverse("product", { slug: "widget" });            // Local: shop.product
+  ctx.reverse("blog.post", { postId: "1" });             // Global fallback: blog.post
+};
 
-  return <ProductPage slug={ctx.params.slug} />;
+// Dot-prefixed names guarantee local resolution (like "./" in file paths):
+export const MagazineAuthorHandler: Handler<"magazine.author"> = (ctx) => {
+  ctx.reverse(".article", { slug: "design" });           // Strictly local: magazine.article
+  ctx.reverse(".author.posts", { authorSlug: "alice" }); // Strictly local: magazine.author.posts
+  ctx.reverse(".blog.index");                            // THROWS — no magazine.blog.index
+
+  // Without dot prefix — local first, global fallback:
+  ctx.reverse("author.posts", { authorSlug: "alice" });  // Local: magazine.author.posts
+  ctx.reverse("blog.index");                             // Global: blog.index
 };
 ```
 

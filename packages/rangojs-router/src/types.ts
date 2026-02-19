@@ -565,18 +565,17 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch extends Sear
   /**
    * Generate URLs from route names (Django-style URL reversal).
    *
-   * **Recommended: Use route names for type safety.**
-   * Route names validate both the route exists and params are correct.
-   * Path-based URLs (`/...`) are an escape hatch with no validation.
+   * Resolution order:
+   * - `/path` — path literal, returned as-is (no validation)
+   * - `.name` — strictly local, resolved within current include() scope (no global fallback)
+   * - `name` — local first, then global fallback
    *
    * @example
    * ```typescript
-   * // RECOMMENDED: Use route names for type safety
-   * ctx.reverse("shop.cart")                    // ✓ Validates route exists
-   * ctx.reverse("blog.post", { slug: "hello" }) // ✓ Validates route + params
-   *
-   * // ESCAPE HATCH: Path-based URLs (no validation)
-   * ctx.reverse("/about")                       // ⚠ No type checking
+   * ctx.reverse("cart")                              // Local: shop.cart
+   * ctx.reverse("blog.post", { slug: "hello" })      // Global fallback: blog.post
+   * ctx.reverse(".author.posts", { authorSlug: "a" }) // Strictly local: magazine.author.posts
+   * ctx.reverse("/about")                             // Path literal (no validation)
    * ```
    */
   reverse: [TRouteMap] extends [never] ? ScopedReverseFunction<GetRegisteredRoutes> : ScopedReverseFunction<TRouteMap & GetRegisteredRoutes>;

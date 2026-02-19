@@ -154,10 +154,10 @@ describe("ReverseFunction type structure", () => {
 
   it("should accept valid route names", () => {
     type Href = ReverseFunction<TestRoutes>;
-    // These are valid route keys in TestRoutes
-    expectTypeOf<"about">().toMatchTypeOf<Parameters<Href>[0]>();
-    expectTypeOf<"index">().toMatchTypeOf<Parameters<Href>[0]>();
-    expectTypeOf<"blog.index">().toMatchTypeOf<Parameters<Href>[0]>();
+    // These are valid route keys in TestRoutes (test via callable, not Parameters)
+    expectTypeOf<Href>().toBeCallableWith("about");
+    expectTypeOf<Href>().toBeCallableWith("index");
+    expectTypeOf<Href>().toBeCallableWith("blog.index");
   });
 });
 
@@ -181,6 +181,29 @@ describe("ScopedReverseFunction type structure", () => {
     // @ts-expect-error - unknown path
     expectTypeOf<ScopedHref>().toBeCallableWith("/about");
   });
+
+  it("should accept dot-prefixed local names", () => {
+    type ScopedHref = ScopedReverseFunction<BlogRoutes>;
+    // Dot-prefixed names are an escape hatch for strictly-local resolution
+    // They accept any string after the dot, with optional params
+    expectTypeOf<ScopedHref>().toBeCallableWith(".post", { slug: "hello" });
+    expectTypeOf<ScopedHref>().toBeCallableWith(".index");
+    expectTypeOf<ScopedHref>().toBeCallableWith(".author.posts", { authorSlug: "alice" });
+  });
+});
+
+describe("ReverseFunction dot-prefix overload", () => {
+  it("should accept dot-prefixed local names", () => {
+    type Href = ReverseFunction<TestRoutes>;
+    expectTypeOf<Href>().toBeCallableWith(".index");
+    expectTypeOf<Href>().toBeCallableWith(".post", { slug: "hello" });
+    expectTypeOf<Href>().toBeCallableWith(".nested.route", { id: "1" });
+  });
+
+  it("should return string for dot-prefixed names", () => {
+    type Href = ReverseFunction<TestRoutes>;
+    expectTypeOf<Href>().returns.toBeString();
+  });
 });
 
 describe("HandlerContext.reverse", () => {
@@ -196,14 +219,9 @@ describe("HandlerContext.reverse", () => {
 
   it("should accept string as first argument", () => {
     type Ctx = HandlerContext<GenericParams, DefaultEnv>;
-    type FirstArg = Parameters<Ctx["reverse"]>[0];
-    expectTypeOf<FirstArg>().toBeString();
-  });
-
-  it("should accept params as second argument", () => {
-    type Ctx = HandlerContext<GenericParams, DefaultEnv>;
-    type SecondArg = Parameters<Ctx["reverse"]>[1];
-    expectTypeOf<SecondArg>().toBeObject();
+    // Verify reverse accepts a string name and optional params
+    expectTypeOf<Ctx["reverse"]>().toBeCallableWith("any-route");
+    expectTypeOf<Ctx["reverse"]>().toBeCallableWith("any-route", { id: "1" });
   });
 });
 
