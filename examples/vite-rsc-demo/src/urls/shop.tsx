@@ -148,7 +148,7 @@ export const shopPatterns = urls(
           // Note: Use local route name (without "shop." prefix) since include() adds it
           intercept(
             "@modal",
-            "products.detail.view",
+            ".products.detail.view",
             <ProductModalContent />,
             () => [
               when(shouldInterceptProductModal),

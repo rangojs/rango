@@ -14,7 +14,7 @@ import type {
   PrefixRoutePatterns,
   PrefixRouteKeys,
 } from "../reverse.js";
-import type { ExtractParams } from "../types.js";
+import type { ExtractParams, Handler } from "../types.js";
 import type { HandlerContext, GenericParams, DefaultEnv, RouterEnv } from "../types.js";
 
 // Test route definitions
@@ -162,8 +162,9 @@ describe("ReverseFunction type structure", () => {
 });
 
 describe("ScopedReverseFunction type structure", () => {
-  it("should be a callable function type", () => {
+  it("should accept unprefixed global names", () => {
     type ScopedHref = ScopedReverseFunction<BlogRoutes>;
+    // Without second param, TGlobalRoutes defaults to TLocalRoutes
     expectTypeOf<ScopedHref>().toBeCallableWith("index");
     expectTypeOf<ScopedHref>().toBeCallableWith("post", { slug: "hello" });
   });
@@ -173,31 +174,57 @@ describe("ScopedReverseFunction type structure", () => {
     expectTypeOf<ScopedHref>().returns.toBeString();
   });
 
-  it("should reject unknown names", () => {
-    type ScopedHref = ScopedReverseFunction<BlogRoutes>;
-    // No escape hatches: dotted names and paths must be in the route map
-    // @ts-expect-error - unknown dotted name
-    expectTypeOf<ScopedHref>().toBeCallableWith("shop.cart");
-    // @ts-expect-error - unknown path
-    expectTypeOf<ScopedHref>().toBeCallableWith("/about");
-  });
-
   it("should accept dot-prefixed local names", () => {
     type ScopedHref = ScopedReverseFunction<BlogRoutes>;
-    // Dot-prefixed names are an escape hatch for strictly-local resolution
-    // They accept any string after the dot, with optional params
     expectTypeOf<ScopedHref>().toBeCallableWith(".post", { slug: "hello" });
     expectTypeOf<ScopedHref>().toBeCallableWith(".index");
-    expectTypeOf<ScopedHref>().toBeCallableWith(".author.posts", { authorSlug: "alice" });
+    expectTypeOf<ScopedHref>().toBeCallableWith(".category", { categoryId: "tech" });
+  });
+
+  it("should reject invalid dot-prefixed names", () => {
+    type ScopedHref = ScopedReverseFunction<BlogRoutes>;
+    // @ts-expect-error - ".typo" is not a valid local route name
+    expectTypeOf<ScopedHref>().toBeCallableWith(".typo");
+    // @ts-expect-error - ".nonexistent" is not a valid local route name
+    expectTypeOf<ScopedHref>().toBeCallableWith(".nonexistent", { slug: "x" });
+  });
+
+  it("should separate local and global namespaces", () => {
+    // Local routes (from gen file) vs global routes (from named-routes)
+    type LocalRoutes = { article: "/:slug"; index: "/" };
+    type GlobalRoutes = { "magazine.article": "/magazine/:slug"; "blog.post": "/blog/:slug" };
+    type Href = ScopedReverseFunction<LocalRoutes, GlobalRoutes>;
+
+    // Dot-prefixed = local names
+    expectTypeOf<Href>().toBeCallableWith(".article", { slug: "design" });
+    expectTypeOf<Href>().toBeCallableWith(".index");
+
+    // Unprefixed = global names
+    expectTypeOf<Href>().toBeCallableWith("magazine.article", { slug: "design" });
+    expectTypeOf<Href>().toBeCallableWith("blog.post", { slug: "hello" });
+
+    // @ts-expect-error - "article" is local, must use ".article"
+    expectTypeOf<Href>().toBeCallableWith("article", { slug: "design" });
+    // @ts-expect-error - ".blog.post" is global, must use "blog.post"
+    expectTypeOf<Href>().toBeCallableWith(".blog.post", { slug: "hello" });
   });
 });
 
 describe("ReverseFunction dot-prefix overload", () => {
-  it("should accept dot-prefixed local names", () => {
+  it("should accept dot-prefixed names with type safety", () => {
     type Href = ReverseFunction<TestRoutes>;
     expectTypeOf<Href>().toBeCallableWith(".index");
-    expectTypeOf<Href>().toBeCallableWith(".post", { slug: "hello" });
-    expectTypeOf<Href>().toBeCallableWith(".nested.route", { id: "1" });
+    expectTypeOf<Href>().toBeCallableWith(".about");
+    expectTypeOf<Href>().toBeCallableWith(".blog.post", { slug: "hello" });
+    expectTypeOf<Href>().toBeCallableWith(".shop.product", { id: "1" });
+  });
+
+  it("should reject invalid dot-prefixed names", () => {
+    type Href = ReverseFunction<TestRoutes>;
+    // @ts-expect-error - ".typo" is not a valid route name
+    expectTypeOf<Href>().toBeCallableWith(".typo");
+    // @ts-expect-error - ".nonexistent" is not a valid route name
+    expectTypeOf<Href>().toBeCallableWith(".nonexistent", { id: "1" });
   });
 
   it("should return string for dot-prefixed names", () => {
@@ -222,6 +249,76 @@ describe("HandlerContext.reverse", () => {
     // Verify reverse accepts a string name and optional params
     expectTypeOf<Ctx["reverse"]>().toBeCallableWith("any-route");
     expectTypeOf<Ctx["reverse"]>().toBeCallableWith("any-route", { id: "1" });
+  });
+});
+
+describe("Handler with local route map separates local/global", () => {
+  // Simulates: Handler<"post", LocalRoutes>
+  type LocalRoutes = { post: "/:slug"; index: "/" };
+  type GlobalRoutes = { "blog.post": "/blog/:slug"; "shop.cart": "/shop/cart" };
+
+  it("should accept dot-prefixed local names from route map", () => {
+    type Ctx = HandlerContext<{ slug: string }, DefaultEnv, {}, LocalRoutes>;
+    // Dot-prefixed = local (from LocalRoutes)
+    expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".post", { slug: "hello" });
+    expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".index");
+  });
+
+  it("should accept unprefixed global names", () => {
+    // When GetRegisteredRoutes is not augmented, it falls back to Record<string, string>
+    // which accepts any string for global names
+    type Ctx = HandlerContext<{ slug: string }, DefaultEnv, {}, LocalRoutes>;
+    expectTypeOf<Ctx["reverse"]>().toBeCallableWith("blog.post", { slug: "hi" });
+  });
+
+  it("should separate namespaces with explicit types", () => {
+    // Direct ScopedReverseFunction with both type params
+    type Reverse = ScopedReverseFunction<LocalRoutes, GlobalRoutes>;
+
+    // Local: dot-prefixed
+    expectTypeOf<Reverse>().toBeCallableWith(".post", { slug: "hello" });
+    expectTypeOf<Reverse>().toBeCallableWith(".index");
+
+    // Global: unprefixed
+    expectTypeOf<Reverse>().toBeCallableWith("blog.post", { slug: "hello" });
+    expectTypeOf<Reverse>().toBeCallableWith("shop.cart");
+
+    // @ts-expect-error - "post" is local, must use ".post"
+    expectTypeOf<Reverse>().toBeCallableWith("post", { slug: "hello" });
+    // @ts-expect-error - ".shop.cart" is global, must use "shop.cart"
+    expectTypeOf<Reverse>().toBeCallableWith(".shop.cart");
+  });
+});
+
+describe("Handler type with dot-prefix route name", () => {
+  type LocalRoutes = { article: "/:slug"; index: "/"; author: "/author/:authorSlug" };
+
+  it("should infer params from dot-prefixed local name", () => {
+    type H = Handler<".article", LocalRoutes>;
+    // Handler<".article", LocalRoutes> should infer { slug: string } from local routes
+    type Ctx = Parameters<H>[0];
+    expectTypeOf<Ctx["params"]>().toEqualTypeOf<{ slug: string }>();
+  });
+
+  it("should infer empty params from paramless dot-prefixed name", () => {
+    type H = Handler<".index", LocalRoutes>;
+    type Ctx = Parameters<H>[0];
+    expectTypeOf<Ctx["params"]>().toEqualTypeOf<{}>();
+  });
+
+  it("should infer multi-segment params from dot-prefixed name", () => {
+    type H = Handler<".author", LocalRoutes>;
+    type Ctx = Parameters<H>[0];
+    expectTypeOf<Ctx["params"]>().toEqualTypeOf<{ authorSlug: string }>();
+  });
+
+  it("should still provide ctx.reverse with local/global separation", () => {
+    type H = Handler<".article", LocalRoutes>;
+    type Ctx = Parameters<H>[0];
+    // Dot-prefixed = local
+    expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".article", { slug: "hello" });
+    expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".index");
+    expectTypeOf<Ctx["reverse"]>().toBeCallableWith(".author", { authorSlug: "jane" });
   });
 });
 

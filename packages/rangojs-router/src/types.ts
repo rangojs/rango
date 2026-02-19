@@ -322,32 +322,41 @@ export type ScopedRouteMap<
  * - { path, search } value: extract search
  * - { path, response } value (no search): -> {}
  */
-type ExtractSearchFromRouteMap<TRouteMap, T> =
-  T extends keyof TRouteMap
-    ? TRouteMap[T] extends { readonly search: infer S extends SearchSchema }
+/** Extract params from a route map entry (string pattern or { path } object). */
+type ExtractParamsFromEntry<TEntry, TFallback> =
+  TEntry extends string
+    ? ExtractParams<TEntry>
+    : TEntry extends { readonly path: infer P extends string }
+      ? ExtractParams<P>
+      : TFallback;
+
+/** Extract search schema from a route map entry. */
+type ExtractSearchFromEntry<TMap, TKey> =
+  TKey extends keyof TMap
+    ? TMap[TKey] extends { readonly search: infer S extends SearchSchema }
       ? S
       : {}
     : {};
 
 export type Handler<
-  T extends keyof TRouteMap | (string & {}) | Record<string, any> = {},
+  T extends keyof DefaultHandlerRouteMap | `.${keyof TRouteMap & string}` | `/${string}` | Record<string, any> = {},
   TRouteMap extends {} = DefaultHandlerRouteMap,
   TEnv = DefaultEnv,
 > = (
   ctx: HandlerContext<
-    T extends keyof TRouteMap
-      ? TRouteMap[T] extends string
-        ? ExtractParams<TRouteMap[T]>
-        : TRouteMap[T] extends { readonly path: infer P extends string }
-          ? ExtractParams<P>
-          : T extends string
-            ? ExtractParams<T>
-            : T
-      : T extends string
-        ? ExtractParams<T>
-        : T,
+    T extends `.${infer Local}`
+      ? Local extends keyof TRouteMap
+        ? ExtractParamsFromEntry<TRouteMap[Local], T extends string ? ExtractParams<T> : T>
+        : T extends string ? ExtractParams<T> : T
+      : T extends keyof DefaultHandlerRouteMap
+        ? ExtractParamsFromEntry<DefaultHandlerRouteMap[T], T extends string ? ExtractParams<T> : T>
+        : T extends string
+          ? ExtractParams<T>
+          : T,
     TEnv,
-    ExtractSearchFromRouteMap<TRouteMap, T>,
+    T extends `.${infer Local}`
+      ? ExtractSearchFromEntry<TRouteMap, Local>
+      : ExtractSearchFromEntry<DefaultHandlerRouteMap, T>,
     TRouteMap extends DefaultHandlerRouteMap ? never : TRouteMap
   >,
 ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>;
@@ -548,22 +557,22 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch extends Sear
    */
   setTheme?: (theme: Theme) => void;
   /**
-   * Generate URLs from route names (Django-style URL reversal).
+   * Generate URLs from route names.
    *
-   * Resolution order:
-   * - `/path` — path literal, returned as-is (no validation)
-   * - `.name` — strictly local, resolved within current include() scope (no global fallback)
-   * - `name` — local first, then global fallback
+   * - `.name` — local route, resolved within current include() scope
+   * - `name` — global route, from the named-routes definition
    *
    * @example
    * ```typescript
-   * ctx.reverse("cart")                              // Local: shop.cart
-   * ctx.reverse("blog.post", { slug: "hello" })      // Global fallback: blog.post
-   * ctx.reverse(".author.posts", { authorSlug: "a" }) // Strictly local: magazine.author.posts
-   * ctx.reverse("/about")                             // Path literal (no validation)
+   * ctx.reverse(".article", { slug: "hello" })       // Local: magazine.article
+   * ctx.reverse(".index")                             // Local: magazine.index
+   * ctx.reverse("magazine.index")                     // Global: magazine.index
+   * ctx.reverse("blog.post", { slug: "hello" })       // Global: blog.post
    * ```
    */
-  reverse: [TRouteMap] extends [never] ? ScopedReverseFunction<GetRegisteredRoutes> : ScopedReverseFunction<TRouteMap & GetRegisteredRoutes>;
+  reverse: [TRouteMap] extends [never]
+    ? ScopedReverseFunction<GetRegisteredRoutes>
+    : ScopedReverseFunction<TRouteMap, GetRegisteredRoutes>;
 };
 
 /**

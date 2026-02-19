@@ -20,9 +20,6 @@ const testHandlerReverse: Handler<"/"> = (ctx) => {
   // Should work - absolute route with dot notation (global lookup)
   const _absoluteUrl = ctx.reverse("some.nested.route");
 
-  // Should work - path-based URL
-  const _pathUrl = ctx.reverse("/api/data");
-
   return null;
 };
 

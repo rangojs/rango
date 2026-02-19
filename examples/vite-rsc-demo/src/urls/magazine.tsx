@@ -12,89 +12,107 @@ import { MagazineIndexPage } from "../handlers/magazine/components/MagazineIndex
 import { MagazineArticlePage } from "../handlers/magazine/components/MagazineArticlePage.js";
 import { MagazineAuthorDetail } from "../handlers/magazine/components/MagazineAuthorDetail.js";
 import { MagazineAuthorPostsPage } from "../handlers/magazine/components/MagazineAuthorPostsPage.js";
+import type { routes } from "./magazine.gen.js";
 
 // Static index -- pre-rendered at build time
-export const MagazineIndex = Prerender(async (ctx) => {
+export const MagazineIndex = Prerender<{}, routes>(async (ctx) => {
   const articlesWithUrls = magazineArticles.map((article) => {
     const author = magazineAuthors.find((a) => a.slug === article.authorSlug);
     return {
       ...article,
-      url: ctx.reverse("article", { slug: article.slug }),
-      authorUrl: author ? ctx.reverse("author", { authorSlug: author.slug }) : undefined,
+      url: ctx.reverse(".article", { slug: article.slug }),
+      authorUrl: author
+        ? ctx.reverse(".author", { authorSlug: author.slug })
+        : undefined,
       authorName: author?.name,
     };
   });
   const authorsWithUrls = magazineAuthors.map((author) => ({
     ...author,
-    url: ctx.reverse("author", { authorSlug: author.slug }),
+    url: ctx.reverse(".author", { authorSlug: author.slug }),
   }));
-  return <MagazineIndexPage articles={articlesWithUrls} authors={authorsWithUrls} />;
+  return (
+    <MagazineIndexPage articles={articlesWithUrls} authors={authorsWithUrls} />
+  );
 });
 
 // Dynamic article detail -- pre-rendered for each article slug
-export const MagazineArticle = Prerender(
+export const MagazineArticle = Prerender<{ slug: string }, routes>(
   async () => magazineArticles.map((a) => ({ slug: a.slug })),
   async (ctx) => {
     const push = ctx.use(Breadcrumbs);
     const article = getArticle(ctx.params.slug)!;
     const author = getMagazineAuthor(article.authorSlug);
-    const articleUrl = ctx.reverse("article", { slug: ctx.params.slug });
+    const articleUrl = ctx.reverse(".article", { slug: ctx.params.slug });
     push({ label: article.title, href: articleUrl });
     return (
       <MagazineArticlePage
         article={article}
         author={author}
-        authorUrl={author ? ctx.reverse("author", { authorSlug: author.slug }) : undefined}
-        indexUrl={ctx.reverse("index")}
+        authorUrl={
+          author
+            ? ctx.reverse(".author", { authorSlug: author.slug })
+            : undefined
+        }
+        indexUrl={ctx.reverse(".index")}
       />
     );
   },
 );
 
 // Dynamic author page -- pre-rendered for each author
-export const MagazineAuthor = Prerender(
+export const MagazineAuthor = Prerender<{ authorSlug: string }, routes>(
   async () => magazineAuthors.map((a) => ({ authorSlug: a.slug })),
   async (ctx) => {
     const push = ctx.use(Breadcrumbs);
     const author = getMagazineAuthor(ctx.params.authorSlug)!;
     const articles = getAuthorArticles(ctx.params.authorSlug);
-    const authorUrl = ctx.reverse("author", { authorSlug: ctx.params.authorSlug });
+    const authorUrl = ctx.reverse(".author", {
+      authorSlug: ctx.params.authorSlug,
+    });
     push({ label: author.name, href: authorUrl });
     const articlesWithUrls = articles.map((a) => ({
       ...a,
-      url: ctx.reverse("article", { slug: a.slug }),
+      url: ctx.reverse(".article", { slug: a.slug }),
     }));
     return (
       <MagazineAuthorDetail
         author={author}
         articles={articlesWithUrls}
-        authorPostsUrl={ctx.reverse(".author.posts", { authorSlug: ctx.params.authorSlug })}
-        indexUrl={ctx.reverse("index")}
+        authorPostsUrl={ctx.reverse(".author.posts", {
+          authorSlug: ctx.params.authorSlug,
+        })}
+        indexUrl={ctx.reverse(".index")}
       />
     );
   },
 );
 
 // Dynamic author posts -- pre-rendered for each author
-export const MagazineAuthorPosts = Prerender(
+export const MagazineAuthorPosts = Prerender<{ authorSlug: string }, routes>(
   async () => magazineAuthors.map((a) => ({ authorSlug: a.slug })),
   async (ctx) => {
     const push = ctx.use(Breadcrumbs);
     const author = getMagazineAuthor(ctx.params.authorSlug)!;
     const articles = getAuthorArticles(ctx.params.authorSlug);
-    const authorUrl = ctx.reverse("author", { authorSlug: ctx.params.authorSlug });
+    const authorUrl = ctx.reverse(".author", {
+      authorSlug: ctx.params.authorSlug,
+    });
     push({ label: author.name, href: authorUrl });
-    push({ label: "Articles", href: ctx.reverse(".author.posts", { authorSlug: ctx.params.authorSlug }) });
+    push({
+      label: "Articles",
+      href: ctx.reverse(".author.posts", { authorSlug: ctx.params.authorSlug }),
+    });
     const articlesWithUrls = articles.map((a) => ({
       ...a,
-      url: ctx.reverse("article", { slug: a.slug }),
+      url: ctx.reverse(".article", { slug: a.slug }),
     }));
     return (
       <MagazineAuthorPostsPage
         author={author}
         articles={articlesWithUrls}
         authorUrl={authorUrl}
-        indexUrl={ctx.reverse("index")}
+        indexUrl={ctx.reverse(".index")}
       />
     );
   },
@@ -111,7 +129,9 @@ export const magazinePatterns = urls(({ path, layout }) => [
       path("/", MagazineIndex, { name: "index" }),
       path("/:slug", MagazineArticle, { name: "article" }),
       path("/author/:authorSlug", MagazineAuthor, { name: "author" }),
-      path("/author/:authorSlug/posts", MagazineAuthorPosts, { name: "author.posts" }),
+      path("/author/:authorSlug/posts", MagazineAuthorPosts, {
+        name: "author.posts",
+      }),
     ],
   ),
 ]);

@@ -497,56 +497,52 @@ describe("resolveRouteName (via createHandlerContext.reverse)", () => {
     "magazine.author.posts": "/magazine/author/:authorSlug/posts",
   };
 
-  it("should resolve simple local names within an include() scope", async () => {
+  // Dot-prefixed = local resolution (within include() scope)
+  it("should resolve dot-prefixed names locally", async () => {
     const reverse = await makeReverse(routeMap, "magazine.author");
-    expect(reverse("article" as any, { slug: "design" })).toBe("/magazine/design");
+    expect(reverse(".article" as any, { slug: "design" })).toBe("/magazine/design");
   });
 
-  it("should resolve local dotted names within an include() scope", async () => {
+  it("should resolve dot-prefixed dotted names locally", async () => {
     const reverse = await makeReverse(routeMap, "magazine.author");
-    // "author.posts" tries local first: magazine + author.posts = magazine.author.posts
-    expect(reverse("author.posts" as any, { authorSlug: "alice" })).toBe("/magazine/author/alice/posts");
+    expect(reverse(".author.posts" as any, { authorSlug: "alice" })).toBe("/magazine/author/alice/posts");
   });
 
-  it("should fall through to global for unresolvable local dotted names", async () => {
+  it("should walk up parent prefixes for dot-prefixed names", async () => {
     const reverse = await makeReverse(routeMap, "magazine.author");
-    // "blog.author.posts" doesn't exist locally, falls through to global
-    expect(reverse("blog.author.posts" as any, { authorSlug: "jane" })).toBe("/blog/author/jane/posts");
-  });
-
-  it("should prefer local over global for unprefixed names", async () => {
-    // Add a conflicting route: both "index" globally and "magazine.index" locally
-    const mapWithConflict = { ...routeMap, "index": "/global-index" };
-    const reverse = await makeReverse(mapWithConflict, "magazine.author");
-    // Local "magazine.index" should win over global "index"
-    expect(reverse("index" as any)).toBe("/magazine");
-  });
-
-  it("should throw for unknown names with no local or global match", async () => {
-    const reverse = await makeReverse(routeMap, "magazine.author");
-    expect(() => reverse("nonexistent.route" as any)).toThrow("Unknown route");
-  });
-
-  // Dot-prefixed strictly-local names
-  it("should resolve dot-prefixed names as strictly local", async () => {
-    const reverse = await makeReverse(routeMap, "magazine.author");
-    expect(reverse(".author.posts", { authorSlug: "alice" })).toBe("/magazine/author/alice/posts");
-  });
-
-  it("should resolve dot-prefixed simple names as strictly local", async () => {
-    const reverse = await makeReverse(routeMap, "magazine.author");
-    expect(reverse(".article", { slug: "design" })).toBe("/magazine/design");
+    expect(reverse(".index" as any)).toBe("/magazine");
   });
 
   it("should throw for dot-prefixed names that don't exist locally", async () => {
     const reverse = await makeReverse(routeMap, "magazine.author");
-    // ".blog.index" looks for magazine.blog.index — doesn't exist, and no global fallback
-    expect(() => reverse(".blog.index")).toThrow("Unknown route");
+    expect(() => reverse(".blog.index" as any)).toThrow("Unknown route");
   });
 
   it("should throw for dot-prefixed names without a route context", async () => {
     const reverse = await makeReverse(routeMap);
-    // No currentRoutePrefix — can't resolve locally
-    expect(() => reverse(".index")).toThrow("Unknown route");
+    expect(() => reverse(".index" as any)).toThrow("Unknown route");
+  });
+
+  // Unprefixed = global resolution (named-routes definition)
+  it("should resolve unprefixed names globally", async () => {
+    const reverse = await makeReverse(routeMap, "magazine.author");
+    expect(reverse("blog.author.posts" as any, { authorSlug: "jane" })).toBe("/blog/author/jane/posts");
+  });
+
+  it("should resolve fully-qualified global names", async () => {
+    const reverse = await makeReverse(routeMap, "magazine.author");
+    expect(reverse("magazine.index" as any)).toBe("/magazine");
+  });
+
+  it("should NOT resolve unprefixed local names (global only)", async () => {
+    const reverse = await makeReverse(routeMap, "magazine.author");
+    // "article" is a local name — without dot prefix, it's treated as global
+    // and there's no global "article" key
+    expect(() => reverse("article" as any, { slug: "design" })).toThrow("Unknown route");
+  });
+
+  it("should throw for unknown global names", async () => {
+    const reverse = await makeReverse(routeMap, "magazine.author");
+    expect(() => reverse("nonexistent.route" as any)).toThrow("Unknown route");
   });
 });

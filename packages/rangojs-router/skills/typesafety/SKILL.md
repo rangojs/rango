@@ -47,43 +47,32 @@ export const urlpatterns = urls(({ path, layout }) => [
 
 ### Server: ctx.reverse with route names
 
-In route handlers, `ctx.reverse()` resolves names in this order:
-1. **Path-based** (`/...`) — returned as-is
-2. **Dot-prefixed** (`.author.posts`) — strictly local, no global fallback
-3. **Unprefixed** (`cart`, `author.posts`) — local first, then global fallback
+In route handlers, `ctx.reverse()` uses two namespaces:
+
+- **`.name`** — local route, resolved within the current `include()` scope
+- **`name`** — global route, from the named-routes definition
 
 ```typescript
 import type { Handler } from "@rangojs/router";
 
 export const ProductHandler: Handler<"shop.product"> = (ctx) => {
-  ctx.reverse("cart");                                   // Local: shop.cart
-  ctx.reverse("product", { slug: "widget" });            // Local: shop.product
-  ctx.reverse("blog.post", { postId: "1" });             // Global fallback: blog.post
-};
-
-// Dot-prefixed names guarantee local resolution (like "./" in file paths):
-export const MagazineAuthorHandler: Handler<"magazine.author"> = (ctx) => {
-  ctx.reverse(".article", { slug: "design" });           // Strictly local: magazine.article
-  ctx.reverse(".author.posts", { authorSlug: "alice" }); // Strictly local: magazine.author.posts
-  ctx.reverse(".blog.index");                            // THROWS — no magazine.blog.index
-
-  // Without dot prefix — local first, global fallback:
-  ctx.reverse("author.posts", { authorSlug: "alice" });  // Local: magazine.author.posts
-  ctx.reverse("blog.index");                             // Global: blog.index
+  ctx.reverse(".cart");                                   // Local: /shop/cart
+  ctx.reverse(".product", { slug: "widget" });            // Local: /shop/product/widget
+  ctx.reverse("blog.post", { slug: "1" });                // Global: /blog/1
 };
 ```
 
-For opt-in per-module isolation (after running `npx rango generate urls/shop.tsx`),
-use `scopedReverse()` with a local route map:
+For type-safe local names, generate a route types file with `npx rango generate urls/shop.tsx`
+and pass it as the second generic to `Handler` or `Prerender`:
 
 ```typescript
-import { scopedReverse } from "@rangojs/router";
+import type { Handler } from "@rangojs/router";
 import type { routes } from "./shop.gen.js";
 
-export const ProductHandler: Handler<"product", routes> = (ctx) => {
-  const reverse = scopedReverse<routes>(ctx.reverse);
-  reverse("cart");                        // Local name
-  reverse("product", { slug: "widget" }); // Local with params
+export const ProductHandler: Handler<"shop.product", routes> = (ctx) => {
+  ctx.reverse(".cart");                        // Type-safe local name
+  ctx.reverse(".product", { slug: "widget" }); // Type-safe local with params
+  ctx.reverse("blog.post", { slug: "hi" });    // Type-safe global name
 };
 ```
 

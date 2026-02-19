@@ -26,7 +26,7 @@
  * ```
  */
 import type { ReactNode } from "react";
-import type { Handler, HandlerContext } from "./types.js";
+import type { Handler, HandlerContext, DefaultEnv } from "./types.js";
 import type { Handle } from "./handle.js";
 
 
@@ -70,16 +70,16 @@ export interface PrerenderHandlerDefinition<TParams extends Record<string, any> 
 // -- Overloads --------------------------------------------------------------
 
 // Overload 1: Static handler (no params)
-export function Prerender<TParams extends Record<string, any> = {}>(
-  handler: (ctx: HandlerContext<TParams>) => ReactNode | Promise<ReactNode>,
+export function Prerender<TParams extends Record<string, any> = {}, TRouteMap = never>(
+  handler: (ctx: HandlerContext<TParams, DefaultEnv, {}, TRouteMap>) => ReactNode | Promise<ReactNode>,
   options?: PrerenderOptions,
   __injectedId?: string,
 ): PrerenderHandlerDefinition<TParams>;
 
 // Overload 2: Dynamic handler (getParams + handler)
-export function Prerender<TParams extends Record<string, any>>(
+export function Prerender<TParams extends Record<string, any>, TRouteMap = never>(
   getParams: () => Promise<TParams[]> | TParams[],
-  handler: (ctx: HandlerContext<TParams>) => ReactNode | Promise<ReactNode>,
+  handler: (ctx: HandlerContext<TParams, DefaultEnv, {}, TRouteMap>) => ReactNode | Promise<ReactNode>,
   options?: PrerenderOptions,
   __injectedId?: string,
 ): PrerenderHandlerDefinition<TParams>;

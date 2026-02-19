@@ -36,6 +36,7 @@ import { generateNonce } from "./nonce.js";
 import { VERSION } from "@rangojs/router:version";
 import type { ErrorPhase } from "../types.js";
 import { invokeOnError } from "../router/error-handling.js";
+import { createReverseFunction } from "../router/handler-context.js";
 import {
   getGlobalRouteMap,
   hasCachedManifest,
@@ -333,6 +334,7 @@ export function createRSCHandler<
           env,
           variables,
           coreHandler,
+          createReverseFunction(getGlobalRouteMap()),
         );
       }
 
@@ -517,7 +519,7 @@ export function createRSCHandler<
           },
           params: mw.params,
         }));
-        return executeMiddleware(middlewareEntries, request, env, variables, callHandlerWithVary);
+        return executeMiddleware(middlewareEntries, request, env, variables, callHandlerWithVary, createReverseFunction(getGlobalRouteMap()));
       }
 
       return callHandlerWithVary();
@@ -546,7 +548,7 @@ export function createRSCHandler<
       }));
 
       // Execute route middleware wrapping the actual request handling
-      return executeMiddleware(middlewareEntries, request, env, variables, rscHandler);
+      return executeMiddleware(middlewareEntries, request, env, variables, rscHandler, createReverseFunction(getGlobalRouteMap()));
     }
 
     // No route middleware, proceed directly
@@ -1239,6 +1241,7 @@ export function createRSCHandler<
             headers: { "content-type": "text/x-component;charset=utf-8" },
           });
         },
+        createReverseFunction(getGlobalRouteMap()),
       );
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));

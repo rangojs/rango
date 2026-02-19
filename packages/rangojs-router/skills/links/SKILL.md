@@ -24,48 +24,44 @@ export const shopPatterns = urls(({ path, layout }) => [
 ]);
 ```
 
-### Resolution priority
+### Resolution rules
 
-1. **Path-based** (`/...`) — returned as-is
-2. **Dot-prefixed** (`.author.posts`) — strictly local, never falls through to global
-3. **Unprefixed** (`cart`, `author.posts`) — local first, then global fallback
+- **`.name`** — local route, resolved within the current `include()` scope
+- **`name`** — global route, from the named-routes definition
 
 ```typescript
 // Inside a handler within shopPatterns (mounted at /shop)
 path("/product/:slug", (ctx) => {
-  ctx.reverse("cart");                        // "/shop/cart" (local)
-  ctx.reverse("product", { slug: "widget" }); // "/shop/product/widget" (local + params)
-  ctx.reverse("blog.post", { slug: "hi" });   // "/blog/hi" (global fallback)
-  ctx.reverse("/about");                      // "/about" (path-based)
+  ctx.reverse(".cart");                        // "/shop/cart" (local)
+  ctx.reverse(".product", { slug: "widget" }); // "/shop/product/widget" (local + params)
+  ctx.reverse("blog.post", { slug: "hi" });    // "/blog/hi" (global)
 
   return <ProductPage slug={ctx.params.slug} />;
 }, { name: "product" })
 ```
 
-### Dot-prefixed local names
+### Local names (dot-prefixed)
 
-Prefix a name with `.` to guarantee it resolves within the current `include()` scope. Like `./` in file paths — if the name doesn't exist locally, it throws instead of falling back to global.
+Prefix a name with `.` to resolve it within the current `include()` scope. The route is looked up using the include's mount namespace.
 
 ```typescript
-// urls/magazine.tsx
-export const magazinePatterns = urls(({ path, layout }) => [
-  layout(<MagazineLayout />, () => [
-    path("/", MagazineIndex, { name: "index" }),
-    path("/:slug", MagazineArticle, { name: "article" }),
-    path("/author/:authorSlug", MagazineAuthor, { name: "author" }),
-    path("/author/:authorSlug/posts", MagazineAuthorPosts, { name: "author.posts" }),
-  ]),
-]);
-
-// Inside MagazineAuthor handler (current route: magazine.author)
+// urls/magazine.tsx — mounted at include("/magazine", magazinePatterns, { name: "magazine" })
 (ctx) => {
-  ctx.reverse(".article", { slug: "design" });            // "/magazine/design" (strictly local)
-  ctx.reverse(".author.posts", { authorSlug: "alice" });   // "/magazine/author/alice/posts" (strictly local)
+  ctx.reverse(".article", { slug: "design" });            // "/magazine/design"
+  ctx.reverse(".author.posts", { authorSlug: "alice" });   // "/magazine/author/alice/posts"
+  ctx.reverse(".index");                                   // "/magazine"
   ctx.reverse(".blog.index");                              // THROWS — no magazine.blog.index
+}
+```
 
-  // Without dot prefix — local first, then global fallback:
-  ctx.reverse("author.posts", { authorSlug: "alice" });   // "/magazine/author/alice/posts" (local match)
-  ctx.reverse("blog.index");                              // "/blog" (global fallback)
+### Global names (unprefixed)
+
+Unprefixed names resolve against the full named-routes map (the generated `router.named-routes.gen.ts`).
+
+```typescript
+(ctx) => {
+  ctx.reverse("magazine.index");                           // "/magazine"
+  ctx.reverse("blog.post", { slug: "hello" });             // "/blog/hello"
 }
 ```
 

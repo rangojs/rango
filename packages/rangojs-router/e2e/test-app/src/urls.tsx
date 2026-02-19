@@ -276,7 +276,7 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
     // Product detail intercept - only when navigating from index page
     intercept(
       "@modal",
-      "product.detail",
+      ".product.detail",
       async (ctx) => {
         const { product } = await ctx.use(ProductDetailLoader);
         const { quantity } = await ctx.use(CartQuantityLoader);
@@ -325,7 +325,7 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
     // Slow product intercept - with loading state
     intercept(
       "@modal",
-      "slowProduct.detail",
+      ".slowProduct.detail",
       async (ctx) => {
         const { product } = await ctx.use(SlowProductDetailLoader);
         return (
