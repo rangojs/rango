@@ -147,6 +147,13 @@ export type ReverseFunction<TRoutes> = {
     params: ExtractParams<RoutePatternFor<TRoutes, TName>>,
     search: ResolveSearchSchema<ExtractSearchSchema<TRoutes, TName>>
   ): string;
+
+  /**
+   * Dot-prefixed local name - resolved relative to current include() scope.
+   * Like "./" in file paths, guarantees the name stays within the local namespace.
+   * Params are validated at runtime (not at compile time).
+   */
+  (name: `.${string}`, params?: Record<string, string>, search?: Record<string, unknown>): string;
 };
 
 /**
@@ -155,11 +162,16 @@ export type ReverseFunction<TRoutes> = {
  * When used via HandlerContext or scopedReverse(), local routes are merged with
  * global RegisteredRoutes so all names are fully type-checked.
  *
+ * Dot-prefixed names (`.author.posts`) are strictly local — they resolve within
+ * the current include() scope and never fall through to global. Params are
+ * validated at runtime for dot-prefixed names.
+ *
  * @example
  * ```typescript
- * reverse("cart")                           // ✓ Validates local route
- * reverse("blog.post", { slug: "hello" })   // ✓ Validates global route + params
- * reverse("typo")                           // ✗ Compile error
+ * reverse("cart")                              // ✓ Validates local route
+ * reverse("blog.post", { slug: "hello" })      // ✓ Validates global route + params
+ * reverse(".author.posts", { authorSlug: "a" }) // ✓ Strictly local (runtime params)
+ * reverse("typo")                              // ✗ Compile error
  * ```
  */
 export type ScopedReverseFunction<TLocalRoutes> = {
@@ -188,6 +200,13 @@ export type ScopedReverseFunction<TLocalRoutes> = {
     params: ExtractParams<RoutePatternFor<TLocalRoutes, TName>>,
     search: ResolveSearchSchema<ExtractSearchSchema<TLocalRoutes, TName>>
   ): string;
+
+  /**
+   * Dot-prefixed local name - resolved relative to current include() scope.
+   * Like "./" in file paths, guarantees the name stays within the local namespace.
+   * Params are validated at runtime (not at compile time).
+   */
+  (name: `.${string}`, params?: Record<string, string>, search?: Record<string, unknown>): string;
 };
 
 /**

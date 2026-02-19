@@ -27,24 +27,24 @@ export const shopPatterns = urls(({ path, layout }) => [
 ### Resolution priority
 
 1. **Path-based** (`/...`) — returned as-is
-2. **Absolute name** (contains dot: `blog.post`) — global lookup, falls through to local if not found
-3. **Local name** (`cart`, `author.posts`) — resolved relative to current route's namespace
-
-Dotted names try absolute lookup first, then fall through to local resolution. This means `author.posts` inside a `magazine.*` handler resolves to `magazine.author.posts` if no absolute `author.posts` exists.
+2. **Dot-prefixed** (`.author.posts`) — strictly local, never falls through to global
+3. **Unprefixed** (`cart`, `author.posts`) — local first, then global fallback
 
 ```typescript
 // Inside a handler within shopPatterns (mounted at /shop)
 path("/product/:slug", (ctx) => {
   ctx.reverse("cart");                        // "/shop/cart" (local)
   ctx.reverse("product", { slug: "widget" }); // "/shop/product/widget" (local + params)
-  ctx.reverse("blog.post", { slug: "hi" });   // "/blog/hi" (absolute)
+  ctx.reverse("blog.post", { slug: "hi" });   // "/blog/hi" (global fallback)
   ctx.reverse("/about");                      // "/about" (path-based)
 
   return <ProductPage slug={ctx.params.slug} />;
 }, { name: "product" })
 ```
 
-Local dotted names work within `include()` scopes:
+### Dot-prefixed local names
+
+Prefix a name with `.` to guarantee it resolves within the current `include()` scope. Like `./` in file paths — if the name doesn't exist locally, it throws instead of falling back to global.
 
 ```typescript
 // urls/magazine.tsx
@@ -59,9 +59,13 @@ export const magazinePatterns = urls(({ path, layout }) => [
 
 // Inside MagazineAuthor handler (current route: magazine.author)
 (ctx) => {
-  ctx.reverse("article", { slug: "design" });            // "/magazine/design" (local)
-  ctx.reverse("author.posts", { authorSlug: "alice" });   // "/magazine/author/alice/posts" (local dotted)
-  ctx.reverse("blog.index");                              // "/blog" (absolute — exists globally)
+  ctx.reverse(".article", { slug: "design" });            // "/magazine/design" (strictly local)
+  ctx.reverse(".author.posts", { authorSlug: "alice" });   // "/magazine/author/alice/posts" (strictly local)
+  ctx.reverse(".blog.index");                              // THROWS — no magazine.blog.index
+
+  // Without dot prefix — local first, then global fallback:
+  ctx.reverse("author.posts", { authorSlug: "alice" });   // "/magazine/author/alice/posts" (local match)
+  ctx.reverse("blog.index");                              // "/blog" (global fallback)
 }
 ```
 

@@ -48,9 +48,9 @@ export const urlpatterns = urls(({ path, layout }) => [
 ### Server: ctx.reverse with route names
 
 In route handlers, `ctx.reverse()` resolves names in this order:
-1. **Absolute** (dotted names matching a global route) — `blog.post` resolves globally
-2. **Local** (relative to current route's namespace) — `cart` from `shop.product` resolves to `shop.cart`
-3. **Local dotted** — dotted names that don't match globally fall through to local resolution, so `author.posts` from `magazine.author` resolves to `magazine.author.posts`
+1. **Path-based** (`/...`) — returned as-is
+2. **Dot-prefixed** (`.author.posts`) — strictly local, no global fallback
+3. **Unprefixed** (`cart`, `author.posts`) — local first, then global fallback
 
 ```typescript
 import type { Handler } from "@rangojs/router";
@@ -58,14 +58,18 @@ import type { Handler } from "@rangojs/router";
 export const ProductHandler: Handler<"shop.product"> = (ctx) => {
   ctx.reverse("cart");                                   // Local: shop.cart
   ctx.reverse("product", { slug: "widget" });            // Local: shop.product
-  ctx.reverse("blog.post", { postId: "1" });             // Absolute: blog.post
+  ctx.reverse("blog.post", { postId: "1" });             // Global fallback: blog.post
 };
 
-// Dotted local names work within include() scopes:
+// Dot-prefixed names guarantee local resolution (like "./" in file paths):
 export const MagazineAuthorHandler: Handler<"magazine.author"> = (ctx) => {
-  ctx.reverse("article", { slug: "design" });            // Local: magazine.article
-  ctx.reverse("author.posts", { authorSlug: "alice" });  // Local dotted: magazine.author.posts
-  ctx.reverse("blog.index");                             // Absolute: blog.index (exists globally)
+  ctx.reverse(".article", { slug: "design" });           // Strictly local: magazine.article
+  ctx.reverse(".author.posts", { authorSlug: "alice" }); // Strictly local: magazine.author.posts
+  ctx.reverse(".blog.index");                            // THROWS — no magazine.blog.index
+
+  // Without dot prefix — local first, global fallback:
+  ctx.reverse("author.posts", { authorSlug: "alice" });  // Local: magazine.author.posts
+  ctx.reverse("blog.index");                             // Global: blog.index
 };
 ```
 
