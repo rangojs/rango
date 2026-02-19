@@ -465,10 +465,62 @@ describe("createReverse", () => {
 });
 
 // ========================================================================
-// resolveRouteName (tested indirectly through description since not exported)
-// The logic is: path-based (/...) returns as-is, absolute (has dot) uses
-// direct map lookup, local names try prefix → parent prefix → direct.
-//
-// Since resolveRouteName is not exported, we describe its expected behavior
-// for documentation. It's exercised by createHandlerContext's reverse() at runtime.
+// resolveRouteName — tested through createHandlerContext's reverse()
 // ========================================================================
+describe("resolveRouteName (via createHandlerContext.reverse)", () => {
+  // Import createHandlerContext to test resolveRouteName indirectly
+  // We use a dynamic import since the module isn't imported at the top
+  async function makeReverse(routeMap: Record<string, string>, currentRoute?: string) {
+    const { createHandlerContext } = await import("../router/handler-context.js");
+    const ctx = createHandlerContext(
+      {},
+      new Request("http://localhost/"),
+      new URLSearchParams(),
+      "/",
+      new URL("http://localhost/"),
+      {},
+      routeMap,
+      currentRoute,
+    );
+    return ctx.reverse;
+  }
+
+  const routeMap: Record<string, string> = {
+    "home.index": "/",
+    "blog.index": "/blog",
+    "blog.post": "/blog/:slug",
+    "blog.author": "/blog/author/:authorSlug",
+    "blog.author.posts": "/blog/author/:authorSlug/posts",
+    "magazine.index": "/magazine",
+    "magazine.article": "/magazine/:slug",
+    "magazine.author": "/magazine/author/:authorSlug",
+    "magazine.author.posts": "/magazine/author/:authorSlug/posts",
+  };
+
+  it("should resolve absolute dotted names directly", async () => {
+    const reverse = await makeReverse(routeMap, "magazine.author");
+    expect(reverse("blog.author.posts" as any, { authorSlug: "jane" })).toBe("/blog/author/jane/posts");
+  });
+
+  it("should resolve local dotted names within an include() scope", async () => {
+    const reverse = await makeReverse(routeMap, "magazine.author");
+    // "author.posts" is not an absolute route, but magazine + author.posts = magazine.author.posts
+    expect(reverse("author.posts" as any, { authorSlug: "alice" })).toBe("/magazine/author/alice/posts");
+  });
+
+  it("should resolve simple local names within an include() scope", async () => {
+    const reverse = await makeReverse(routeMap, "magazine.author");
+    expect(reverse("article" as any, { slug: "design" })).toBe("/magazine/design");
+  });
+
+  it("should prefer absolute match over local for dotted names", async () => {
+    const reverse = await makeReverse(routeMap, "magazine.author");
+    // "blog.index" exists as absolute — should resolve to /blog, not try magazine.blog.index
+    expect(reverse("blog.index" as any)).toBe("/blog");
+  });
+
+  it("should throw for unknown dotted names that don't resolve locally either", async () => {
+    const reverse = await makeReverse(routeMap, "magazine.author");
+    expect(() => reverse("nonexistent.route" as any)).toThrow("Unknown route");
+  });
+});

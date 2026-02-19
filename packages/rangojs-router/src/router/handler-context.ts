@@ -25,8 +25,13 @@ function resolveRouteName(
   }
 
   // 2. Absolute name - already has a dot (e.g., "shop.cart")
+  //    If found, return immediately. If not, fall through to local resolution
+  //    so dotted names like "author.posts" work within an include() scope.
   if (name.includes(".")) {
-    return routeMap[name];
+    if (routeMap[name] !== undefined) {
+      return routeMap[name];
+    }
+    // Fall through to local resolution
   }
 
   // 3. Local name - try with current prefix first, then fall back to direct lookup

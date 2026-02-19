@@ -68,7 +68,7 @@ export const MagazineAuthor = Prerender(
       <MagazineAuthorDetail
         author={author}
         articles={articlesWithUrls}
-        authorPostsUrl={ctx.reverse("magazine.author.posts", { authorSlug: ctx.params.authorSlug })}
+        authorPostsUrl={ctx.reverse("author.posts", { authorSlug: ctx.params.authorSlug })}
         indexUrl={ctx.reverse("index")}
       />
     );
@@ -84,7 +84,7 @@ export const MagazineAuthorPosts = Prerender(
     const articles = getAuthorArticles(ctx.params.authorSlug);
     const authorUrl = ctx.reverse("author", { authorSlug: ctx.params.authorSlug });
     push({ label: author.name, href: authorUrl });
-    push({ label: "Articles", href: ctx.reverse("magazine.author.posts", { authorSlug: ctx.params.authorSlug }) });
+    push({ label: "Articles", href: ctx.reverse("author.posts", { authorSlug: ctx.params.authorSlug }) });
     const articlesWithUrls = articles.map((a) => ({
       ...a,
       url: ctx.reverse("article", { slug: a.slug }),
