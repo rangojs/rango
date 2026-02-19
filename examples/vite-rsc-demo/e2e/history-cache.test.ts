@@ -1,5 +1,4 @@
-import { expect, test } from "@playwright/test";
-import { useFixture } from "./fixture";
+import { test, expect, devURL } from "./dev-fixture";
 import {
   waitForHydration,
   expectNoPageError,
@@ -12,21 +11,17 @@ import {
  * Source: packages/rangojs-router/src/browser/navigation-store.ts
  */
 test.describe("history-cache-eviction", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
   // This test navigates through many pages so it needs extra time
   test.setTimeout(120000);
 
   test("should re-fetch evicted entries on back navigation", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
     // Start at the blog index (this will be the first history entry)
-    await page.goto(f.url("/blog"));
+    await page.goto(devURL(devServerURL, "/blog"));
     await waitForHydration(page);
     await expect(page.locator("text=Blog Posts")).toBeVisible();
 
@@ -58,7 +53,7 @@ test.describe("history-cache-eviction", () => {
     // Navigate to each product page, accumulating >20 history entries.
     // (Entry 0 = /blog, entries 1-20 = product pages)
     for (const slug of productSlugs) {
-      await page.goto(f.url(`/shop/product/${slug}`));
+      await page.goto(devURL(devServerURL, `/shop/product/${slug}`));
       // Wait for product title to confirm content loaded.
       // Product names are title-cased versions of the slug.
       await page.waitForTimeout(500);

@@ -1,5 +1,4 @@
-import { expect, test } from "@playwright/test";
-import { useFixture } from "./fixture";
+import { test, expect, devURL } from "./dev-fixture";
 import {
   waitForHydration,
   expectNoPageError,
@@ -13,19 +12,15 @@ import {
  *         packages/rangojs-router/src/browser/navigation-bridge.ts (abortNavigation)
  */
 test.describe("concurrent-navigation", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
   test("should cancel intermediate navigations on rapid link clicks", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
     // Use the nav bar links which are always visible regardless of page content.
     // Navigate to home first.
-    await page.goto(f.url("/"));
+    await page.goto(devURL(devServerURL, "/"));
     await waitForHydration(page);
 
     // Rapidly click multiple nav links without waiting for navigation to complete.
@@ -47,11 +42,12 @@ test.describe("concurrent-navigation", () => {
 
   test("should handle back navigation during pending forward navigation", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
     // Build up a history stack: / -> /about
-    await page.goto(f.url("/"));
+    await page.goto(devURL(devServerURL, "/"));
     await waitForHydration(page);
 
     await page.locator('nav a:has-text("About")').click();
@@ -78,10 +74,11 @@ test.describe("concurrent-navigation", () => {
 
   test("should settle to correct page after interleaved forward navigations", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/"));
+    await page.goto(devURL(devServerURL, "/"));
     await waitForHydration(page);
 
     // Start navigating to blog, then immediately redirect to shop

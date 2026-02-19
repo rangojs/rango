@@ -1,5 +1,4 @@
-import { expect, test } from "@playwright/test";
-import { useFixture } from "./fixture";
+import { test, expect, devURL } from "./dev-fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
 
 /**
@@ -8,15 +7,10 @@ import { waitForHydration, expectNoPageError } from "./helper";
  * Source: packages/rangojs-router/src/browser/react/Link.tsx (prefetchUrl, handleMouseEnter)
  */
 test.describe("prefetch-on-hover", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
-  test("should inject prefetch link on hover", async ({ page }) => {
+  test("should inject prefetch link on hover", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/"));
+    await page.goto(devURL(devServerURL, "/"));
     await waitForHydration(page);
 
     // Verify no prefetch links exist initially for /blog
@@ -56,10 +50,11 @@ test.describe("prefetch-on-hover", () => {
 
   test("should not create duplicate prefetch links on repeated hover", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/"));
+    await page.goto(devURL(devServerURL, "/"));
     await waitForHydration(page);
 
     const blogLink = page.locator('nav a:has-text("Blog")');
@@ -84,10 +79,10 @@ test.describe("prefetch-on-hover", () => {
     expect(prefetchCount).toBe(1);
   });
 
-  test("should prefetch multiple links independently", async ({ page }) => {
+  test("should prefetch multiple links independently", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/"));
+    await page.goto(devURL(devServerURL, "/"));
     await waitForHydration(page);
 
     // Hover over Blog link

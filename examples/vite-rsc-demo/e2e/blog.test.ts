@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { test as devTest, devURL } from "./dev-fixture";
 import { useFixture } from "./fixture";
 import {
   waitForHydration,
@@ -11,16 +12,11 @@ import {
 /**
  * Blog tests - parallel routes with loading states
  */
-test.describe("blog-navigation", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
-  test("should display blog index with post links", async ({ page }) => {
+devTest.describe("blog-navigation", () => {
+  devTest("should display blog index with post links", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/blog"));
+    await page.goto(devURL(devServerURL, "/blog"));
     await waitForHydration(page);
 
     // Wait for sidebar to load (it has a 5.5s delay)
@@ -42,12 +38,13 @@ test.describe("blog-navigation", () => {
     ).toBeVisible();
   });
 
-  test("should show loading sidebar skeleton during navigation", async ({
+  devTest("should show loading sidebar skeleton during navigation", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/blog"));
+    await page.goto(devURL(devServerURL, "/blog"));
     await waitForHydration(page);
 
     // Wait for initial sidebar to load first
@@ -71,11 +68,11 @@ test.describe("blog-navigation", () => {
     await expect(page.locator("text=Recent Posts")).toBeVisible();
   });
 
-  test("should display blog post with sidebar content", async ({ page }) => {
+  devTest("should display blog post with sidebar content", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
     // Direct navigation to blog post
-    await page.goto(f.url("/blog/hello-world"));
+    await page.goto(devURL(devServerURL, "/blog/hello-world"));
     await waitForHydration(page);
 
     // Wait for sidebar to load
@@ -91,12 +88,13 @@ test.describe("blog-navigation", () => {
     await expect(page.locator("text=Tags")).toBeVisible();
   });
 
-  test("should preserve sidebar when navigating between posts", async ({
+  devTest("should preserve sidebar when navigating between posts", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/blog/hello-world"));
+    await page.goto(devURL(devServerURL, "/blog/hello-world"));
     await waitForHydration(page);
 
     // Wait for sidebar to load
@@ -116,10 +114,10 @@ test.describe("blog-navigation", () => {
     });
   });
 
-  test("should preserve state on back navigation", async ({ page }) => {
+  devTest("should preserve state on back navigation", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/blog"));
+    await page.goto(devURL(devServerURL, "/blog"));
     await waitForHydration(page);
 
     // Wait for sidebar to load first
@@ -149,16 +147,11 @@ test.describe("blog-navigation", () => {
 /**
  * Breadcrumb tests - accumulated handle data across route segments
  */
-test.describe("blog-breadcrumbs", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
-  test("should display breadcrumbs on blog index", async ({ page }) => {
+devTest.describe("blog-breadcrumbs", () => {
+  devTest("should display breadcrumbs on blog index", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/blog"));
+    await page.goto(devURL(devServerURL, "/blog"));
     await waitForHydration(page);
 
     // Breadcrumb nav should be visible
@@ -169,10 +162,10 @@ test.describe("blog-breadcrumbs", () => {
     await expect(breadcrumbNav.locator("text=Blog")).toBeVisible();
   });
 
-  test("should display nested breadcrumbs on blog post", async ({ page }) => {
+  devTest("should display nested breadcrumbs on blog post", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/blog/hello-world"));
+    await page.goto(devURL(devServerURL, "/blog/hello-world"));
     await waitForHydration(page);
 
     const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
@@ -183,10 +176,10 @@ test.describe("blog-breadcrumbs", () => {
     await expect(breadcrumbNav.locator("text=Hello World")).toBeVisible();
   });
 
-  test("should update breadcrumbs on navigation", async ({ page }) => {
+  devTest("should update breadcrumbs on navigation", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/blog"));
+    await page.goto(devURL(devServerURL, "/blog"));
     await waitForHydration(page);
 
     const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
@@ -208,10 +201,10 @@ test.describe("blog-breadcrumbs", () => {
     await expect(breadcrumbNav.locator("text=Hello World")).toBeVisible();
   });
 
-  test("should update breadcrumbs on back navigation", async ({ page }) => {
+  devTest("should update breadcrumbs on back navigation", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/blog/hello-world"));
+    await page.goto(devURL(devServerURL, "/blog/hello-world"));
     await waitForHydration(page);
 
     const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
@@ -231,10 +224,10 @@ test.describe("blog-breadcrumbs", () => {
     await expect(breadcrumbNav.locator("text=Hello World")).not.toBeVisible();
   });
 
-  test("should show skeleton for async breadcrumb content", async ({ page }) => {
+  devTest("should show skeleton for async breadcrumb content", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/blog/hello-world"));
+    await page.goto(devURL(devServerURL, "/blog/hello-world"));
     await waitForHydration(page);
 
     const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
@@ -252,10 +245,10 @@ test.describe("blog-breadcrumbs", () => {
     });
   });
 
-  test("should stream async breadcrumb content", async ({ page }) => {
+  devTest("should stream async breadcrumb content", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/blog/hello-world"));
+    await page.goto(devURL(devServerURL, "/blog/hello-world"));
     await waitForHydration(page);
 
     const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');

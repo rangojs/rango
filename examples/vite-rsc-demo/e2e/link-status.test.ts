@@ -1,5 +1,4 @@
-import { expect, test } from "@playwright/test";
-import { useFixture } from "./fixture";
+import { test, expect, devURL } from "./dev-fixture";
 import {
   waitForHydration,
   expectNoPageError,
@@ -12,17 +11,13 @@ import {
  * Source: packages/rangojs-router/src/browser/react/use-link-status.ts
  */
 test.describe("link-status", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
   test("should show pending indicator during navigation to blog", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/"));
+    await page.goto(devURL(devServerURL, "/"));
     await waitForHydration(page);
 
     // Pending indicator should not be visible before navigation
@@ -69,10 +64,11 @@ test.describe("link-status", () => {
 
   test("should not show pending indicator when navigating to other links", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/"));
+    await page.goto(devURL(devServerURL, "/"));
     await waitForHydration(page);
 
     // Set up the same observer

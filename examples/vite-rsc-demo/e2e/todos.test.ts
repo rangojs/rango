@@ -1,20 +1,16 @@
 import { expect, test } from "@playwright/test";
+import { test as devTest, devURL } from "./dev-fixture";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError, goBack } from "./helper";
 
 /**
  * Todos tests - server actions and revalidation
  */
-test.describe("todos-navigation", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
-  test("should display todos index page", async ({ page }) => {
+devTest.describe("todos-navigation", () => {
+  devTest("should display todos index page", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/todos"));
+    await page.goto(devURL(devServerURL, "/todos"));
     await waitForHydration(page);
 
     // Todos page should show header
@@ -30,10 +26,10 @@ test.describe("todos-navigation", () => {
     await expect(page.locator("text=Server Actions Demo")).toBeVisible();
   });
 
-  test("should show todos list with existing items", async ({ page }) => {
+  devTest("should show todos list with existing items", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/todos"));
+    await page.goto(devURL(devServerURL, "/todos"));
     await waitForHydration(page);
 
     // Wait for page to fully load
@@ -46,10 +42,10 @@ test.describe("todos-navigation", () => {
     });
   });
 
-  test("should preserve todos list on back navigation", async ({ page }) => {
+  devTest("should preserve todos list on back navigation", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/todos"));
+    await page.goto(devURL(devServerURL, "/todos"));
     await waitForHydration(page);
 
     // Verify initial page loads
@@ -59,7 +55,7 @@ test.describe("todos-navigation", () => {
     });
 
     // Navigate away
-    await page.goto(f.url("/"));
+    await page.goto(devURL(devServerURL, "/"));
     await waitForHydration(page);
 
     // Navigate back
@@ -76,16 +72,11 @@ test.describe("todos-navigation", () => {
 /**
  * Todos action tests
  */
-test.describe("todos-actions", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
-  test("should add a new todo", async ({ page }) => {
+devTest.describe("todos-actions", () => {
+  devTest("should add a new todo", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/todos"));
+    await page.goto(devURL(devServerURL, "/todos"));
     await waitForHydration(page);
 
     // Wait for initial page load
@@ -113,10 +104,10 @@ test.describe("todos-actions", () => {
     });
   });
 
-  test("should toggle existing todo completion", async ({ page }) => {
+  devTest("should toggle existing todo completion", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/todos"));
+    await page.goto(devURL(devServerURL, "/todos"));
     await waitForHydration(page);
 
     // Wait for page to load with existing todos
@@ -138,10 +129,10 @@ test.describe("todos-actions", () => {
     await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
   });
 
-  test("should enter and exit edit mode", async ({ page }) => {
+  devTest("should enter and exit edit mode", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/todos"));
+    await page.goto(devURL(devServerURL, "/todos"));
     await waitForHydration(page);
 
     // Wait for page to load
@@ -176,10 +167,10 @@ test.describe("todos-actions", () => {
     await expect(page.locator("h1:has-text('Todos')")).toBeVisible();
   });
 
-  test("should show pending state during add action", async ({ page }) => {
+  devTest("should show pending state during add action", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/todos"));
+    await page.goto(devURL(devServerURL, "/todos"));
     await waitForHydration(page);
 
     // Wait for page to load
@@ -201,10 +192,10 @@ test.describe("todos-actions", () => {
     });
   });
 
-  test("should update stats in header", async ({ page }) => {
+  devTest("should update stats in header", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/todos"));
+    await page.goto(devURL(devServerURL, "/todos"));
     await waitForHydration(page);
 
     // Check initial stats in header badge
@@ -232,18 +223,13 @@ test.describe("todos-actions", () => {
 /**
  * Todos concurrent actions tests
  */
-test.describe("todos-concurrent-actions", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
+devTest.describe("todos-concurrent-actions", () => {
+  devTest.setTimeout(60000);
 
-  test.setTimeout(60000);
-
-  test("should handle rapid todo additions", async ({ page }) => {
+  devTest("should handle rapid todo additions", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/todos"));
+    await page.goto(devURL(devServerURL, "/todos"));
     await waitForHydration(page);
 
     // Wait for page to load
@@ -282,10 +268,10 @@ test.describe("todos-concurrent-actions", () => {
     });
   });
 
-  test("should handle rapid checkbox toggles", async ({ page }) => {
+  devTest("should handle rapid checkbox toggles", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/todos"));
+    await page.goto(devURL(devServerURL, "/todos"));
     await waitForHydration(page);
 
     // Wait for page to load
@@ -308,10 +294,10 @@ test.describe("todos-concurrent-actions", () => {
     }
   });
 
-  test("should handle add and toggle concurrently", async ({ page }) => {
+  devTest("should handle add and toggle concurrently", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/todos"));
+    await page.goto(devURL(devServerURL, "/todos"));
     await waitForHydration(page);
 
     // Wait for page to load
@@ -346,16 +332,11 @@ test.describe("todos-concurrent-actions", () => {
 /**
  * Todos revalidation tests
  */
-test.describe("todos-revalidation", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
-  test("should revalidate loader after action", async ({ page }) => {
+devTest.describe("todos-revalidation", () => {
+  devTest("should revalidate loader after action", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/todos"));
+    await page.goto(devURL(devServerURL, "/todos"));
     await waitForHydration(page);
 
     // Wait for page to load

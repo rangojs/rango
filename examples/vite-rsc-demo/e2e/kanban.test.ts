@@ -1,20 +1,16 @@
 import { expect, test } from "@playwright/test";
+import { test as devTest, devURL } from "./dev-fixture";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError, goBack, testId } from "./helper";
 
 /**
  * Kanban board tests - intercepting routes and action revalidation
  */
-test.describe("kanban-intercept-routes", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
-  test("should show modal when clicking card from board", async ({ page }) => {
+devTest.describe("kanban-intercept-routes", () => {
+  devTest("should show modal when clicking card from board", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/kanban"));
+    await page.goto(devURL(devServerURL, "/kanban"));
     await waitForHydration(page);
 
     // Board should be visible
@@ -34,12 +30,13 @@ test.describe("kanban-intercept-routes", () => {
     await expect(testId(page, "kanban-board")).toBeVisible();
   });
 
-  test("should close modal and return to board on back navigation", async ({
+  devTest("should close modal and return to board on back navigation", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/kanban"));
+    await page.goto(devURL(devServerURL, "/kanban"));
     await waitForHydration(page);
 
     // Click card to open modal
@@ -60,13 +57,14 @@ test.describe("kanban-intercept-routes", () => {
     await expect(testId(page, "kanban-board")).toBeVisible();
   });
 
-  test("should show full card page on direct URL navigation", async ({
+  devTest("should show full card page on direct URL navigation", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
     // Navigate directly to card URL
-    await page.goto(f.url("/kanban/card/card-1"));
+    await page.goto(devURL(devServerURL, "/kanban/card/card-1"));
     await waitForHydration(page);
 
     // Card detail should be visible (rendered in main outlet on direct navigation)
@@ -79,10 +77,10 @@ test.describe("kanban-intercept-routes", () => {
     await expect(testId(page, "kanban-board")).toBeVisible();
   });
 
-  test("should close modal when clicking close button", async ({ page }) => {
+  devTest("should close modal when clicking close button", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/kanban"));
+    await page.goto(devURL(devServerURL, "/kanban"));
     await waitForHydration(page);
 
     // Click card to open modal
@@ -98,12 +96,13 @@ test.describe("kanban-intercept-routes", () => {
     await expect(testId(page, "card-modal")).not.toBeVisible();
   });
 
-  test("should close modal when clicking Back to Board button", async ({
+  devTest("should close modal when clicking Back to Board button", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/kanban"));
+    await page.goto(devURL(devServerURL, "/kanban"));
     await waitForHydration(page);
 
     // Click card to open modal
@@ -119,10 +118,10 @@ test.describe("kanban-intercept-routes", () => {
     await expect(testId(page, "card-modal")).not.toBeVisible();
   });
 
-  test("should display card title in modal", async ({ page }) => {
+  devTest("should display card title in modal", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/kanban"));
+    await page.goto(devURL(devServerURL, "/kanban"));
     await waitForHydration(page);
 
     // Click card-1 to open modal
@@ -136,12 +135,13 @@ test.describe("kanban-intercept-routes", () => {
     );
   });
 
-  test("should preserve board state when opening and closing modal", async ({
+  devTest("should preserve board state when opening and closing modal", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/kanban"));
+    await page.goto(devURL(devServerURL, "/kanban"));
     await waitForHydration(page);
 
     // Verify initial board state - check multiple columns exist
@@ -164,26 +164,21 @@ test.describe("kanban-intercept-routes", () => {
   });
 });
 
-test.describe("kanban-action-counter-revalidation", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
-  test("should display action counter on kanban page", async ({ page }) => {
+devTest.describe("kanban-action-counter-revalidation", () => {
+  devTest("should display action counter on kanban page", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/kanban"));
+    await page.goto(devURL(devServerURL, "/kanban"));
     await waitForHydration(page);
 
     // Action counter should be visible
     await expect(testId(page, "action-counter")).toBeVisible();
   });
 
-  test("should delete card when clicking delete button", async ({ page }) => {
+  devTest("should delete card when clicking delete button", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/kanban"));
+    await page.goto(devURL(devServerURL, "/kanban"));
     await waitForHydration(page);
 
     // Verify card-6 exists on the board
@@ -206,18 +201,14 @@ test.describe("kanban-action-counter-revalidation", () => {
   });
 });
 
-test.describe("kanban-action-navigation-race", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
-  test("should revalidate and show fresh data after action completes during navigation", async ({
+devTest.describe("kanban-action-navigation-race", () => {
+  devTest("should revalidate and show fresh data after action completes during navigation", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/kanban"));
+    await page.goto(devURL(devServerURL, "/kanban"));
     await waitForHydration(page);
 
     // Get initial action counter
@@ -258,12 +249,13 @@ test.describe("kanban-action-navigation-race", () => {
     await expect(page.locator("text=kanbanUpdateCard:")).toBeVisible({ timeout: 2000 });
   });
 
-  test("should show correct action count when using back button (working case)", async ({
+  devTest("should show correct action count when using back button (working case)", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/kanban"));
+    await page.goto(devURL(devServerURL, "/kanban"));
     await waitForHydration(page);
 
     // Get initial action counter total
@@ -294,16 +286,11 @@ test.describe("kanban-action-navigation-race", () => {
 /**
  * Concurrent actions tests - multiple actions triggered rapidly
  */
-test.describe("kanban-concurrent-actions", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
-  test("should handle multiple label toggles concurrently", async ({ page }) => {
+devTest.describe("kanban-concurrent-actions", () => {
+  devTest("should handle multiple label toggles concurrently", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/kanban"));
+    await page.goto(devURL(devServerURL, "/kanban"));
     await waitForHydration(page);
 
     // Open card modal
@@ -332,10 +319,10 @@ test.describe("kanban-concurrent-actions", () => {
     await expect(testId(page, "kanban-board")).toBeVisible();
   });
 
-  test("should handle rapid card additions", async ({ page }) => {
+  devTest("should handle rapid card additions", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/kanban"));
+    await page.goto(devURL(devServerURL, "/kanban"));
     await waitForHydration(page);
 
     // Find the TODO column and click "+ Add a card"
@@ -365,10 +352,10 @@ test.describe("kanban-concurrent-actions", () => {
     await expect(page.locator("text=Concurrent Card 3")).toBeVisible({ timeout: 5000 });
   });
 
-  test("should update action counter correctly with concurrent actions", async ({ page }) => {
+  devTest("should update action counter correctly with concurrent actions", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/kanban"));
+    await page.goto(devURL(devServerURL, "/kanban"));
     await waitForHydration(page);
 
     // Open card modal
@@ -392,18 +379,14 @@ test.describe("kanban-concurrent-actions", () => {
   });
 });
 
-test.describe("kanban-navigation-history", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
-  test("should maintain history when navigating through multiple cards", async ({
+devTest.describe("kanban-navigation-history", () => {
+  devTest("should maintain history when navigating through multiple cards", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/kanban"));
+    await page.goto(devURL(devServerURL, "/kanban"));
     await waitForHydration(page);
 
     // Open first card
@@ -429,12 +412,13 @@ test.describe("kanban-navigation-history", () => {
     await expect(page).toHaveURL(/\/kanban\/card\/card-1/);
   });
 
-  test("should restore board from cache on back navigation", async ({
+  devTest("should restore board from cache on back navigation", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/kanban"));
+    await page.goto(devURL(devServerURL, "/kanban"));
     await waitForHydration(page);
 
     // Verify board is visible

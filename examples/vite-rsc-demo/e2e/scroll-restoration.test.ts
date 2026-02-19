@@ -1,5 +1,4 @@
-import { expect, test } from "@playwright/test";
-import { useFixture } from "./fixture";
+import { test, expect, devURL } from "./dev-fixture";
 import {
   waitForHydration,
   expectNoPageError,
@@ -11,15 +10,10 @@ import {
  * Source: packages/rangojs-router/src/browser/scroll-restoration.ts
  */
 test.describe("scroll-restoration", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
-  test("should scroll to top on forward navigation", async ({ page }) => {
+  test("should scroll to top on forward navigation", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/blog"));
+    await page.goto(devURL(devServerURL, "/blog"));
     await waitForHydration(page);
 
     // Wait for sidebar to load so the page has full content height
@@ -49,10 +43,11 @@ test.describe("scroll-restoration", () => {
 
   test("should restore scroll position on back navigation", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/blog"));
+    await page.goto(devURL(devServerURL, "/blog"));
     await waitForHydration(page);
 
     // Wait for sidebar so the page is fully rendered and scrollable
@@ -93,10 +88,11 @@ test.describe("scroll-restoration", () => {
 
   test("should handle scroll restoration across multiple navigations", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/blog"));
+    await page.goto(devURL(devServerURL, "/blog"));
     await waitForHydration(page);
 
     await expect(page.locator("text=Recent Posts")).toBeVisible({
