@@ -208,5 +208,24 @@ describe("intercept-utils", () => {
     it("returns false for empty array", () => {
       expect(isInterceptOnlyCache([])).toBe(false);
     });
+
+    it("returns false for non-intercept parallel segment (@sidebar)", () => {
+      const segments = [
+        seg("L0", { type: "layout" }),
+        seg("L0.@sidebar", { type: "parallel" }),
+        seg("L0R0"),
+      ];
+      expect(isInterceptOnlyCache(segments)).toBe(false);
+    });
+
+    it("returns true for mixed intercept and non-intercept parallel segments", () => {
+      const segments = [
+        seg("L0", { type: "layout" }),
+        seg("L0.@sidebar", { type: "parallel" }),
+        seg("L0.@modal", { type: "parallel", namespace: "intercept:modal" }),
+        seg("L0R0"),
+      ];
+      expect(isInterceptOnlyCache(segments)).toBe(true);
+    });
   });
 });
