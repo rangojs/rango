@@ -1017,6 +1017,8 @@ export interface RSCRouter<
     handles: Record<string, SegmentHandleData>;
     routeName: string;
     params: Record<string, string>;
+    interceptSegments?: SerializedSegmentData[];
+    interceptHandles?: Record<string, SegmentHandleData>;
   } | null>;
 
   /**
@@ -1831,6 +1833,8 @@ export function createRouter<TEnv = any>(
     handles: Record<string, SegmentHandleData>;
     routeName: string;
     params: Record<string, string>;
+    interceptSegments?: SerializedSegmentData[];
+    interceptHandles?: Record<string, SegmentHandleData>;
   } | null> {
     // 1. Find the matching route entry
     const matched = findMatch(pathname);
@@ -1963,11 +1967,102 @@ export function createRouter<TEnv = any>(
         // Use the trie-level route key (e.g., "docs", "docs.article")
         const routeName = matched.routeKey;
 
+        // 13. Resolve intercept segments for this route (if any ancestor defines
+        //     an intercept targeting this route). At build time we skip when()
+        //     evaluation -- we pre-render all intercepts unconditionally and let
+        //     runtime matching decide which to serve.
+        let interceptSegments: SerializedSegmentData[] | undefined;
+        let interceptHandles: Record<string, SegmentHandleData> | undefined;
+
+        const foundIntercepts: { intercept: InterceptEntry; entry: EntryData }[] = [];
+        let current: EntryData | null = manifestEntry;
+        while (current) {
+          if (current.intercept && current.intercept.length > 0) {
+            for (const ic of current.intercept) {
+              if (ic.routeName === matched.routeKey) {
+                foundIntercepts.push({ intercept: ic, entry: current });
+              }
+            }
+          }
+          if (current.layout && current.layout.length > 0) {
+            for (const siblingLayout of current.layout) {
+              if (siblingLayout.intercept && siblingLayout.intercept.length > 0) {
+                for (const ic of siblingLayout.intercept) {
+                  if (ic.routeName === matched.routeKey) {
+                    foundIntercepts.push({ intercept: ic, entry: siblingLayout });
+                  }
+                }
+              }
+            }
+          }
+          current = current.parent;
+        }
+
+        if (foundIntercepts.length > 0) {
+          const interceptResolvedSegments: typeof nonLoaderSegments = [];
+
+          for (const { intercept, entry: parentEntry } of foundIntercepts) {
+            // Resolve handler
+            const handlerRaw =
+              typeof intercept.handler === "function"
+                ? intercept.handler(buildCtx)
+                : intercept.handler;
+            const handlerResolved =
+              handlerRaw instanceof Promise ? await handlerRaw : handlerRaw;
+            if (handlerResolved instanceof Response) {
+              // Handler returned a redirect/response -- skip this intercept
+              continue;
+            }
+            const component: ReactNode = handlerResolved;
+
+            // Resolve layout (if any)
+            let layoutElement: ReactNode | undefined;
+            if (intercept.layout) {
+              if (typeof intercept.layout === "function") {
+                const layoutResult = await intercept.layout(buildCtx);
+                if (layoutResult instanceof Response) continue;
+                layoutElement = layoutResult;
+              } else {
+                layoutElement = intercept.layout;
+              }
+            }
+
+            interceptResolvedSegments.push({
+              id: `${parentEntry.shortCode}.${intercept.slotName}`,
+              namespace: `intercept:${intercept.routeName}`,
+              type: "parallel" as const,
+              index: 0,
+              component,
+              loading: intercept.loading === false ? null : intercept.loading,
+              layout: layoutElement,
+              params: matchedParams,
+              slot: intercept.slotName,
+              belongsToRoute: true,
+              parallelName: `intercept:${intercept.routeName}.${intercept.slotName}`,
+            });
+          }
+
+          if (interceptResolvedSegments.length > 0) {
+            // Wait for handles again (intercept handlers may have called use())
+            await handleStore.settled;
+            interceptSegments = await serializeSegments(interceptResolvedSegments);
+            interceptHandles = {};
+            for (const seg of interceptResolvedSegments) {
+              const segHandles = handleStore.getDataForSegment(seg.id);
+              if (Object.keys(segHandles).length > 0) {
+                interceptHandles[seg.id] = segHandles;
+              }
+            }
+          }
+        }
+
         return {
           segments: serializedSegments,
           handles,
           routeName,
           params: matchedParams,
+          interceptSegments,
+          interceptHandles,
         };
       });
     });

@@ -35,9 +35,11 @@ declare global {
  */
 export function createDevPrerenderStore(devUrl: string): PrerenderStore {
   return {
-    async get(_routeName, _paramHash, meta) {
+    async get(_routeName, paramHash, meta) {
       if (!meta?.pathname) return null;
-      const url = `${devUrl}/__rsc_prerender?pathname=${encodeURIComponent(meta.pathname)}`;
+      const isIntercept = paramHash.endsWith("/i");
+      let url = `${devUrl}/__rsc_prerender?pathname=${encodeURIComponent(meta.pathname)}`;
+      if (isIntercept) url += "&intercept=1";
       try {
         const res = await fetch(url);
         if (!res.ok) return null;

@@ -21,6 +21,7 @@ import { searchPatterns } from "./urls/search.js";
 import { refTestPatterns } from "./urls/ref-test.js";
 import { prerenderPatterns } from "./urls/prerender.js";
 import { prerenderComplexPatterns } from "./urls/prerender-complex.js";
+import { prerenderInterceptPatterns } from "./urls/prerender-intercept.js";
 import { transformCasesPatterns } from "./urls/transform-cases.js";
 import { apiShopPatterns } from "./urls/api-shop.js";
 import { locationStatePatterns } from "./urls/location-state.js";
@@ -436,6 +437,9 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
 
     // Pre-render complex test patterns (layout + parallel + fresh loader)
     include("/prerender-complex", prerenderComplexPatterns, { name: "prerenderComplex" }),
+
+    // Pre-render + intercept test patterns
+    include("/prerender-intercept", prerenderInterceptPatterns, { name: "prerenderIntercept" }),
 
     // Transform coverage patterns (alias imports + export specifiers)
     include("/transform-cases", transformCasesPatterns, { name: "transformCases" }),

@@ -77,6 +77,8 @@ export const NamedRoutes = {
   negotiateTestMd: "/negotiate-test",
   "prerenderComplex.detail": "/prerender-complex/:slug",
   "prerenderComplex.index": "/prerender-complex",
+  "prerenderIntercept.detail": "/prerender-intercept/:slug",
+  "prerenderIntercept.index": "/prerender-intercept",
   "proactiveCache.index": "/proactive-cache",
   "proactiveCache.itemA": "/proactive-cache/item-a",
   "proactiveCache.itemB": "/proactive-cache/item-b",
