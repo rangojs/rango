@@ -28,14 +28,14 @@ export default defineConfig({
       // not recover from ERR_OUTDATED_OPTIMIZED_DEP if the build runs later).
       command: `pnpm build && rm -rf node_modules/.vite && pnpm dev --port ${DEV_PORT}`,
       port: DEV_PORT,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: true,
     },
     {
       // Shared preview server for all production tests. Started after the dev
       // server (which includes the build step) so dist/ is guaranteed to exist.
       command: `pnpm preview --port ${PREVIEW_PORT}`,
       port: PREVIEW_PORT,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: true,
     },
   ],
   // In UI mode, flatten projects to avoid the dependency chain that breaks
