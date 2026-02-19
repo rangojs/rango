@@ -258,12 +258,27 @@ export function withCacheLookup<TEnv>(
       await ensurePrerenderDeps();
       if (prerenderStoreInstance) {
         const paramHash = _hashParams!(ctx.matched.params);
-        const entry = await prerenderStoreInstance.get(
-          ctx.matched.routeKey, paramHash, { pathname: ctx.pathname }
-        );
-        if (entry) {
-          yield* yieldFromStore(entry, ctx, state, pipelineStart);
-          return;
+
+        if (ctx.isIntercept) {
+          // Intercept navigation: try intercept-specific prerender entry
+          const entry = await prerenderStoreInstance.get(
+            ctx.matched.routeKey, paramHash + "/i", { pathname: ctx.pathname }
+          );
+          if (entry) {
+            yield* yieldFromStore(entry, ctx, state, pipelineStart);
+            return;
+          }
+          // No intercept prerender -- fall through to normal pipeline
+          // (skip non-intercept prerender to let intercept-resolution run)
+        } else {
+          // Normal navigation: existing behavior
+          const entry = await prerenderStoreInstance.get(
+            ctx.matched.routeKey, paramHash, { pathname: ctx.pathname }
+          );
+          if (entry) {
+            yield* yieldFromStore(entry, ctx, state, pipelineStart);
+            return;
+          }
         }
       }
     }
@@ -284,12 +299,24 @@ export function withCacheLookup<TEnv>(
         await ensurePrerenderDeps();
         if (prerenderStoreInstance) {
           const paramHash = _hashParams!(ctx.matched.params);
-          const entry = await prerenderStoreInstance.get(
-            ctx.matched.routeKey, paramHash, { pathname: ctx.pathname }
-          );
-          if (entry) {
-            yield* yieldFromStore(entry, ctx, state, pipelineStart);
-            return;
+
+          if (ctx.isIntercept) {
+            const entry = await prerenderStoreInstance.get(
+              ctx.matched.routeKey, paramHash + "/i", { pathname: ctx.pathname }
+            );
+            if (entry) {
+              yield* yieldFromStore(entry, ctx, state, pipelineStart);
+              return;
+            }
+            // No intercept prerender -- fall through to normal pipeline
+          } else {
+            const entry = await prerenderStoreInstance.get(
+              ctx.matched.routeKey, paramHash, { pathname: ctx.pathname }
+            );
+            if (entry) {
+              yield* yieldFromStore(entry, ctx, state, pipelineStart);
+              return;
+            }
           }
         }
       }
