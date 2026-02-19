@@ -49,7 +49,7 @@ export const DocsLayout = Static(async (ctx) => {
               style={{ marginBottom: "0.5rem" }}
             >
               <a
-                href={reverse("refDetail", { slug: doc.slug })}
+                href={reverse(".refDetail", { slug: doc.slug })}
                 style={{ color: "#0070f3", textDecoration: "none" }}
                 data-testid={`sidebar-link-${doc.slug}`}
               >
@@ -85,7 +85,7 @@ export const RefIndex = Prerender(async (ctx) => {
           <li key={doc.slug} data-testid={`ref-item-${doc.slug}`} style={{ marginBottom: "1rem" }}>
             <h2 style={{ marginBottom: "0.25rem" }}>
               <a
-                href={reverse("refDetail", { slug: doc.slug })}
+                href={reverse(".refDetail", { slug: doc.slug })}
                 style={{ color: "#0070f3", textDecoration: "none" }}
                 data-testid={`ref-link-${doc.slug}`}
               >
@@ -127,7 +127,7 @@ export const RefDetail = Prerender(
       <article data-testid="ref-detail">
         <nav style={{ marginBottom: "1rem" }}>
           <a
-            href={reverse("refIndex")}
+            href={reverse(".refIndex")}
             style={{ color: "#0070f3", textDecoration: "none" }}
             data-testid="ref-back-link"
           >

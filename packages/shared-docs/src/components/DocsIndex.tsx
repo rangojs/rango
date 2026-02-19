@@ -27,7 +27,7 @@ export function DocsIndex({
           >
             <h2 style={{ marginBottom: "0.25rem" }}>
               <Link
-                to={reverse("detail", { slug: article.slug })}
+                to={reverse(".detail", { slug: article.slug })}
                 style={{ color: "#0070f3", textDecoration: "none" }}
                 data-testid={`docs-link-${article.slug}`}
               >
