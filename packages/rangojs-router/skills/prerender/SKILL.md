@@ -190,7 +190,7 @@ path("/blog/:slug", BlogPost, { name: "blog.post" }, () => [
 | `parallel()`   | Parallel slots inside path are pre-rendered. |
 | `middleware()`  | Skipped during pre-render (no request). Runs at request time for loaders. |
 | `loading()`    | Ignored without passthrough. Works for live fallback with passthrough. |
-| `intercept()`  | Not pre-rendered (intercepts are navigation-triggered). |
+| `intercept()`  | Pre-rendered at build time. Intercept variant stored under `/i` key alongside main segments. At runtime, the correct variant is served based on `ctx.isIntercept`. `when()` conditions are skipped at build time (all intercepts are pre-rendered unconditionally). |
 
 ## Dev Mode
 
@@ -291,6 +291,58 @@ export const urlpatterns = urls(({ path }) => [
   include("/guides", guidesPatterns, { name: "guides" }),
 ]);
 ```
+
+## Interaction with intercept()
+
+When a pre-rendered route is also the target of an `intercept()`, the build system
+resolves the intercept handler at build time and stores a combined entry (main
+segments + intercept segments) under an `/i`-suffixed key alongside the main entry:
+
+```
+prerender store keys:
+  "blog.post/a1b2c3"      -> main segments (full page)
+  "blog.post/a1b2c3/i"    -> main segments + intercept segments (modal variant)
+```
+
+At runtime, the cache-lookup middleware checks `ctx.isIntercept`:
+- **Intercept navigation**: looks up `paramHash/i` first. If found, yields
+  the combined entry. `handleCacheHitIntercept()` extracts intercept segments
+  (filtered by `namespace?.startsWith("intercept:")`) and sets up slots.
+- **Direct navigation**: looks up `paramHash` (no suffix). Standard prerender path.
+- **Intercept miss (no `/i` entry)**: falls through to the normal pipeline so
+  intercept-resolution middleware runs live. This handles `when()` conditions
+  that prevented pre-rendering.
+
+The `when()` callback receives an `InterceptSelectorContext` with `from.pathname`
+which is unknown at build time. All intercepts are pre-rendered unconditionally;
+`when()` is evaluated at runtime by the intercept-resolution middleware.
+
+### Example: Pre-rendered route with intercept
+
+```typescript
+// Route handler is pre-rendered at build time
+export const ProductDetail = Prerender(
+  async () => [{ slug: "shoes" }, { slug: "jacket" }],
+  async (ctx) => <ProductPage slug={ctx.params.slug} />,
+);
+
+// urls.tsx
+layout(ShopLayout, () => [
+  path("/:slug", ProductDetail, { name: "detail" }, () => [
+    loader(ProductLoader),
+  ]),
+
+  // Intercept detail from shop index into a modal.
+  // At build time, this is resolved and stored under the /i key.
+  intercept("@modal", ".detail", <ProductModal />, () => [
+    when(({ from }) => from.pathname === "/shop"),
+    loader(ProductLoader),
+  ]),
+])
+```
+
+Both `ProductPage` (main) and `ProductModal` (intercept) are frozen at build time.
+Loaders run fresh at request time for both variants.
 
 ## Trie Flags
 

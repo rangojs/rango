@@ -122,6 +122,48 @@ function ModalWrapper({ children }) {
 }
 ```
 
+## Interaction with Prerender
+
+When the target route of an intercept uses `Prerender`, the intercept handler is
+also resolved at build time and stored alongside the main pre-rendered segments.
+This means intercept navigations to pre-rendered routes are served from the
+prerender store without executing handler code at runtime.
+
+```typescript
+// The detail route is pre-rendered
+export const ProductDetail = Prerender(
+  async () => [{ slug: "shoes" }, { slug: "jacket" }],
+  async (ctx) => <ProductPage slug={ctx.params.slug} />,
+);
+
+// urls.tsx
+layout(ShopLayout, () => [
+  path("/:slug", ProductDetail, { name: "detail" }, () => [
+    loader(ProductLoader),
+  ]),
+
+  // This intercept is also pre-rendered at build time
+  intercept("@modal", ".detail", <ProductModal />, () => [
+    when(({ from }) => from.pathname.startsWith("/shop")),
+    loader(ProductLoader),
+  ]),
+])
+```
+
+Build-time behavior:
+- The intercept handler (`<ProductModal />`) is resolved with BuildContext
+- Result is stored under the key `"detail/paramHash/i"` (intercept variant)
+- `when()` conditions are skipped at build time (all intercepts pre-rendered unconditionally)
+- `when()` is still evaluated at runtime by the intercept-resolution middleware
+
+Runtime behavior:
+- Intercept navigation: prerender store serves the `/i` variant (frozen handler + fresh loaders)
+- Direct navigation: prerender store serves the main variant (full page)
+- If no intercept prerender entry exists, falls through to live intercept resolution
+
+Loaders inside the intercept always run fresh at request time, same as regular
+pre-rendered routes.
+
 ## Complete Example
 
 ```typescript
