@@ -40,9 +40,9 @@ describe("intercept-utils", () => {
       expect(isInterceptSegment(s)).toBe(true);
     });
 
-    it("returns true for parallel segment with .@ in ID", () => {
+    it("returns false for parallel segment with .@ in ID but no intercept namespace", () => {
       const s = seg("L0.@sidebar", { type: "parallel" });
-      expect(isInterceptSegment(s)).toBe(true);
+      expect(isInterceptSegment(s)).toBe(false);
     });
 
     it("returns false for .@ in ID but non-parallel type", () => {
@@ -104,12 +104,28 @@ describe("intercept-utils", () => {
         type: "parallel",
         namespace: "intercept:modal",
       });
+      const dialog = seg("L0.@dialog", {
+        type: "parallel",
+        namespace: "intercept:dialog",
+      });
+
+      const result = splitInterceptSegments([modal, dialog]);
+
+      expect(result.main).toEqual([]);
+      expect(result.intercept).toEqual([modal, dialog]);
+    });
+
+    it("keeps regular parallel segments in main group", () => {
+      const modal = seg("L0.@modal", {
+        type: "parallel",
+        namespace: "intercept:modal",
+      });
       const sidebar = seg("L0.@sidebar", { type: "parallel" });
 
       const result = splitInterceptSegments([modal, sidebar]);
 
-      expect(result.main).toEqual([]);
-      expect(result.intercept).toEqual([modal, sidebar]);
+      expect(result.main).toEqual([sidebar]);
+      expect(result.intercept).toEqual([modal]);
     });
 
     it("handles empty array", () => {
@@ -121,9 +137,9 @@ describe("intercept-utils", () => {
 
     it("preserves order within each group", () => {
       const s1 = seg("L0", { type: "layout" });
-      const s2 = seg("L0.@a", { type: "parallel" });
+      const s2 = seg("L0.@a", { type: "parallel", namespace: "intercept:a" });
       const s3 = seg("L0R0");
-      const s4 = seg("L0.@b", { type: "parallel" });
+      const s4 = seg("L0.@b", { type: "parallel", namespace: "intercept:b" });
 
       const result = splitInterceptSegments([s1, s2, s3, s4]);
 
@@ -191,6 +207,25 @@ describe("intercept-utils", () => {
 
     it("returns false for empty array", () => {
       expect(isInterceptOnlyCache([])).toBe(false);
+    });
+
+    it("returns false for non-intercept parallel segment (@sidebar)", () => {
+      const segments = [
+        seg("L0", { type: "layout" }),
+        seg("L0.@sidebar", { type: "parallel" }),
+        seg("L0R0"),
+      ];
+      expect(isInterceptOnlyCache(segments)).toBe(false);
+    });
+
+    it("returns true for mixed intercept and non-intercept parallel segments", () => {
+      const segments = [
+        seg("L0", { type: "layout" }),
+        seg("L0.@sidebar", { type: "parallel" }),
+        seg("L0.@modal", { type: "parallel", namespace: "intercept:modal" }),
+        seg("L0R0"),
+      ];
+      expect(isInterceptOnlyCache(segments)).toBe(true);
     });
   });
 });

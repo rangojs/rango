@@ -3,14 +3,12 @@ import type { SlotState } from "../types.js";
 
 /**
  * Check if a segment is an intercept segment.
- * Intercept segments have namespace starting with "intercept:" or are parallel
- * segments with ".@" in their ID (e.g., "L0.@modal").
+ * Intercept segments have namespace starting with "intercept:" — both the
+ * parallel container (@modal) and its content children receive this namespace
+ * from intercept-resolution.ts. Regular parallel segments like @sidebar do not.
  */
 export function isInterceptSegment(s: ResolvedSegment): boolean {
-  return (
-    s.namespace?.startsWith("intercept:") ||
-    (s.type === "parallel" && s.id.includes(".@"))
-  );
+  return s.namespace?.startsWith("intercept:") === true;
 }
 
 /**
