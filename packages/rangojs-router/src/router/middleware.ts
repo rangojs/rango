@@ -128,6 +128,12 @@ export interface MiddlewareContext<
    * Shorthand for `ctx.res.headers.set()`.
    */
   header(name: string, value: string): void;
+
+  /**
+   * Generate URLs from route names.
+   * - `name` — global route, from the named-routes definition
+   */
+  reverse(name: string, params?: Record<string, string>, search?: Record<string, unknown>): string;
 }
 
 /**
@@ -304,7 +310,8 @@ export function createMiddlewareContext<TEnv>(
   env: TEnv,
   params: Record<string, string>,
   variables: Record<string, unknown>,
-  responseHolder: ResponseHolder
+  responseHolder: ResponseHolder,
+  reverse?: (name: string, params?: Record<string, string>, search?: Record<string, unknown>) => string
 ): MiddlewareContext<TEnv> {
   const url = new URL(request.url);
   const cookieHeader = request.headers.get("Cookie");
@@ -389,6 +396,12 @@ export function createMiddlewareContext<TEnv>(
       }
       responseHolder.response.headers.set(name, value);
     },
+
+    reverse: reverse ?? ((name: string) => {
+      throw new Error(
+        `ctx.reverse() is not available - route map was not provided to middleware context`
+      );
+    }),
   };
 }
 
@@ -441,7 +454,8 @@ export async function executeMiddleware<TEnv>(
   request: Request,
   env: TEnv,
   variables: Record<string, any>,
-  finalHandler: () => Promise<Response>
+  finalHandler: () => Promise<Response>,
+  reverse?: (name: string, params?: Record<string, string>, search?: Record<string, unknown>) => string
 ): Promise<Response> {
   let index = 0;
 
@@ -482,7 +496,8 @@ export async function executeMiddleware<TEnv>(
       env,
       params,
       variables,
-      responseHolder
+      responseHolder,
+      reverse
     );
 
     // Track if next() was called and capture its Promise
@@ -554,7 +569,8 @@ export async function executeServerActionMiddleware<TEnv>(
   env: TEnv,
   params: Record<string, string>,
   variables: Record<string, any>,
-  stubResponse: Response
+  stubResponse: Response,
+  reverse?: (name: string, params?: Record<string, string>, search?: Record<string, unknown>) => string
 ): Promise<void> {
   if (middlewares.length === 0) {
     return;
@@ -574,7 +590,8 @@ export async function executeServerActionMiddleware<TEnv>(
       env,
       params,
       variables,
-      responseHolder
+      responseHolder,
+      reverse
     );
 
     const result = await middleware(ctx, next);
@@ -617,7 +634,8 @@ export async function executeInterceptMiddleware<TEnv>(
   env: TEnv,
   params: Record<string, string>,
   variables: Record<string, any>,
-  stubResponse: Response
+  stubResponse: Response,
+  reverse?: (name: string, params?: Record<string, string>, search?: Record<string, unknown>) => string
 ): Promise<Response | null> {
   if (middlewares.length === 0) {
     return null;
@@ -640,7 +658,8 @@ export async function executeInterceptMiddleware<TEnv>(
       env,
       params,
       variables,
-      responseHolder
+      responseHolder,
+      reverse
     );
 
     const result = await middleware(ctx, next);
@@ -708,7 +727,8 @@ export async function executeLoaderMiddleware<TEnv>(
   env: TEnv,
   params: Record<string, string>,
   variables: Record<string, any>,
-  finalHandler: () => Promise<Response>
+  finalHandler: () => Promise<Response>,
+  reverse?: (name: string, params?: Record<string, string>, search?: Record<string, unknown>) => string
 ): Promise<Response> {
   if (middlewares.length === 0) {
     return finalHandler();
@@ -731,7 +751,8 @@ export async function executeLoaderMiddleware<TEnv>(
     request,
     env,
     variables,
-    finalHandler
+    finalHandler,
+    reverse
   );
 }
 

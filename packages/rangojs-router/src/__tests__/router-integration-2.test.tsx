@@ -253,7 +253,7 @@ describe("route definition edge cases", () => {
           layout(RootLayout, () => [
             path("/", HomePage, { name: "home" }),
             path("/detail", ProductDetail, { name: "detail" }),
-            intercept("@modal", "detail", ProductModal),
+            intercept("@modal", ".detail", ProductModal),
           ]),
         ]),
       );

@@ -15,6 +15,8 @@ import type { HandlerContext, ResolvedSegment } from "../types";
 import { evaluateRevalidation } from "./revalidation.js";
 import { getRequestContext } from "../server/request-context.js";
 import { executeInterceptMiddleware } from "./middleware.js";
+import { createReverseFunction } from "./handler-context.js";
+import { getGlobalRouteMap } from "../route-map-builder.js";
 import { handleHandlerResult } from "./segment-resolution.js";
 import type { SegmentResolutionDeps } from "./types.js";
 import { debugLog } from "./logging.js";
@@ -133,6 +135,7 @@ export async function resolveInterceptEntry<TEnv>(
       params,
       context.var as Record<string, any>,
       requestCtx.res,
+      createReverseFunction(getGlobalRouteMap()),
     );
     if (middlewareResponse) throw middlewareResponse;
   }

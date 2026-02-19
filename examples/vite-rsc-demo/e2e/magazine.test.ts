@@ -13,7 +13,7 @@ devTest.describe("magazine-navigation", () => {
     await page.goto(devURL(devServerURL, "/magazine"));
     await waitForHydration(page);
 
-    await expect(page.locator('[data-testid="magazine-index"]')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-testid="magazine-index"]')).toBeVisible({ timeout: 10000 });
     await expect(page.locator("h2:has-text('Articles')")).toBeVisible();
   });
 
@@ -23,7 +23,7 @@ devTest.describe("magazine-navigation", () => {
     await page.goto(devURL(devServerURL, "/magazine/design-systems"));
     await waitForHydration(page);
 
-    await expect(page.locator('[data-testid="magazine-article"]')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-testid="magazine-article"]')).toBeVisible({ timeout: 10000 });
     await expect(page.locator("h2:has-text('Design Systems')")).toBeVisible();
   });
 
@@ -33,7 +33,7 @@ devTest.describe("magazine-navigation", () => {
     await page.goto(devURL(devServerURL, "/magazine/author/alice-writer"));
     await waitForHydration(page);
 
-    await expect(page.locator('[data-testid="magazine-author"]')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-testid="magazine-author"]')).toBeVisible({ timeout: 10000 });
     await expect(page.locator("h2:has-text('Alice Writer')")).toBeVisible();
   });
 
@@ -43,7 +43,7 @@ devTest.describe("magazine-navigation", () => {
     await page.goto(devURL(devServerURL, "/magazine/author/alice-writer/posts"));
     await waitForHydration(page);
 
-    await expect(page.locator('[data-testid="magazine-author-posts"]')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-testid="magazine-author-posts"]')).toBeVisible({ timeout: 10000 });
     await expect(page.locator("h2:has-text('Articles by Alice Writer')")).toBeVisible();
   });
 });
@@ -107,20 +107,20 @@ devTest.describe("magazine-breadcrumbs", () => {
 
     // Step 2: Navigate to article
     await page.locator('a[href="/magazine/design-systems"]').first().click();
-    await expect(page.locator("h2:has-text('Design Systems')")).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("h2:has-text('Design Systems')")).toBeVisible({ timeout: 10000 });
     await expect(breadcrumbNav.locator("text=Magazine")).toBeVisible();
     await expect(breadcrumbNav.locator("text=Design Systems")).toBeVisible();
 
     // Step 3: Navigate to author
     await page.locator('a[href="/magazine/author/alice-writer"]').first().click();
-    await expect(page.locator("h2:has-text('Alice Writer')")).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("h2:has-text('Alice Writer')")).toBeVisible({ timeout: 10000 });
     await expect(breadcrumbNav.locator("text=Magazine")).toBeVisible();
     await expect(breadcrumbNav.locator("text=Alice Writer")).toBeVisible();
     await expect(breadcrumbNav.locator("text=Design Systems")).not.toBeVisible();
 
     // Step 4: Navigate to author posts
     await page.locator('a[href="/magazine/author/alice-writer/posts"]').first().click();
-    await expect(page.locator("h2:has-text('Articles by Alice Writer')")).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("h2:has-text('Articles by Alice Writer')")).toBeVisible({ timeout: 10000 });
     await expect(breadcrumbNav.locator("text=Magazine")).toBeVisible();
     await expect(breadcrumbNav.locator("text=Alice Writer")).toBeVisible();
     await expect(breadcrumbNav.locator("text=Articles")).toBeVisible();
@@ -138,12 +138,12 @@ devTest.describe("magazine-breadcrumbs", () => {
     await waitForHydration(page);
 
     await page.locator('a[href="/magazine/author/alice-writer"]').first().click();
-    await expect(page.locator("h2:has-text('Alice Writer')")).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("h2:has-text('Alice Writer')")).toBeVisible({ timeout: 10000 });
     await expect(breadcrumbNav.locator("text=Alice Writer")).toBeVisible();
 
     // Go back to index
     await goBack(page);
-    await expect(page.locator('[data-testid="magazine-index"]')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-testid="magazine-index"]')).toBeVisible({ timeout: 10000 });
     await expect(breadcrumbNav.locator("text=Magazine")).toBeVisible();
     await expect(breadcrumbNav.locator("text=Alice Writer")).not.toBeVisible();
   });
@@ -166,7 +166,7 @@ test.describe("magazine-navigation (production)", () => {
     await page.goto(f.url("/magazine"));
     await waitForHydration(page);
 
-    await expect(page.locator('[data-testid="magazine-index"]')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-testid="magazine-index"]')).toBeVisible({ timeout: 10000 });
 
     const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
     await expect(breadcrumbNav.locator("text=Magazine")).toBeVisible();

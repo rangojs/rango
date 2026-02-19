@@ -1,4 +1,5 @@
 import type { Handler } from "@rangojs/router";
+import type { routes } from "./href.gen.js";
 import { Link } from "@rangojs/router/client";
 import { HrefTestClient } from "../components/HrefTestClient.js";
 
@@ -8,7 +9,6 @@ export const HrefIndexHandler: Handler<"href.index"> = (ctx) => {
   const localIndexHref = ctx.reverse("href.index"); // Absolute name for /href
   const localDetailHref = ctx.reverse("href.detail", { id: "123" }); // Absolute name for /href/123
   const absoluteBlogHref = ctx.reverse("blog.index"); // Absolute name for /blog
-  const pathBasedHref = ctx.reverse("/about"); // Path-based (always allowed)
 
   return (
     <div data-testid="href-index-page">
@@ -25,9 +25,6 @@ export const HrefIndexHandler: Handler<"href.index"> = (ctx) => {
           </li>
           <li data-testid="server-absolute-blog">
             Absolute blog.index: <code>{absoluteBlogHref}</code>
-          </li>
-          <li data-testid="server-path-based">
-            Path-based /about: <code>{pathBasedHref}</code>
           </li>
         </ul>
 
@@ -68,6 +65,37 @@ export const HrefIndexHandler: Handler<"href.index"> = (ctx) => {
           </Link>
         </div>
       </section>
+    </div>
+  );
+};
+
+/**
+ * Filtered handler using Handler<".filtered", routes> to test that
+ * dot-prefixed local names extract both params and search from the generated route map.
+ */
+export const HrefFilteredHandler: Handler<".filtered", routes> = (ctx) => {
+  // ctx.params.category comes from "/:category" in the route pattern
+  const category: string = ctx.params.category;
+  // ctx.searchParams is typed from the search schema: { q: string; page?: number; active?: boolean }
+  const { q, page, active } = ctx.searchParams;
+
+  return (
+    <div data-testid="href-filtered-page">
+      <h1 data-testid="filtered-title">Filtered: {category}</h1>
+      <section data-testid="filtered-params">
+        <p data-testid="filtered-category">category: {category}</p>
+        <p data-testid="filtered-q">q: {q}</p>
+        <p data-testid="filtered-page">page: {page !== undefined ? String(page) : "undefined"}</p>
+        <p data-testid="filtered-active">active: {active !== undefined ? String(active) : "undefined"}</p>
+        <p data-testid="filtered-q-type">q-type: {typeof q}</p>
+        <p data-testid="filtered-page-type">page-type: {page !== undefined ? typeof page : "undefined"}</p>
+        <p data-testid="filtered-active-type">active-type: {active !== undefined ? typeof active : "undefined"}</p>
+      </section>
+      <nav>
+        <Link to="/href" data-testid="filtered-back-link">
+          Back to Index
+        </Link>
+      </nav>
     </div>
   );
 };

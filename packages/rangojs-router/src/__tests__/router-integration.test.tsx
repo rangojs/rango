@@ -297,7 +297,7 @@ describe("route tree inspection", () => {
         layout(ShopLayout, () => [
           path("/products", ProductList, { name: "products" }),
           path("/products/:id", ProductDetail, { name: "product.detail" }),
-          intercept("@modal", "product.detail", ProductModal),
+          intercept("@modal", ".product.detail", ProductModal),
         ]),
       ]),
     );
@@ -318,7 +318,7 @@ describe("route tree inspection", () => {
         layout(ShopLayout, () => [
           path("/products", ProductList, { name: "products" }),
           path("/products/:id", ProductDetail, { name: "product.detail" }),
-          intercept("@modal", "product.detail", ProductModal, () => [
+          intercept("@modal", ".product.detail", ProductModal, () => [
             when(whenFn),
           ]),
         ]),
@@ -339,7 +339,7 @@ describe("route tree inspection", () => {
         layout(ShopLayout, () => [
           path("/products", ProductList, { name: "products" }),
           path("/products/:id", ProductDetail, { name: "product.detail" }),
-          intercept("@modal", "product.detail", ProductModal, () => [
+          intercept("@modal", ".product.detail", ProductModal, () => [
             when(() => true),
             loader(PostLoader),
           ]),
@@ -1002,7 +1002,7 @@ describe("route tree inspection", () => {
             path("/detail", AboutPage, { name: "detail" }),
             // @ts-expect-error intercept is not a valid parallel use item
             parallel({ "@sidebar": Sidebar }, () => [
-              intercept("@modal", "detail", ProductModal),
+              intercept("@modal", ".detail", ProductModal),
             ]),
           ]),
         ]),
@@ -1251,7 +1251,7 @@ describe("route tree inspection", () => {
                 loader(DetailLoader),
                 loading(LoadingSpinner),
               ]),
-              intercept("@drawer", "item.detail", ModalView, () => [
+              intercept("@drawer", ".item.detail", ModalView, () => [
                 when((ctx: any) => ctx.from.pathname.startsWith("/items")),
                 loader(DetailLoader),
               ]),

@@ -34,6 +34,7 @@ export const NamedRoutes = {
   "hookTests.routeA": "/hook-tests/route-a",
   "hookTests.routeB": "/hook-tests/route-b",
   "href.detail": "/href/:id",
+  "href.filtered": { path: "/href/filtered/:category", search: { q: "string", page: "number?", active: "boolean?" } },
   "href.index": "/href",
   "href.nested.index": "/href/nested",
   hydrationTest: "/hydration-test",

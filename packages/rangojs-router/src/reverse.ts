@@ -149,64 +149,94 @@ export type ReverseFunction<TRoutes> = {
   ): string;
 
   /**
-   * Dot-prefixed local name - resolved relative to current include() scope.
-   * Like "./" in file paths, guarantees the name stays within the local namespace.
-   * Params are validated at runtime (not at compile time).
+   * Dot-prefixed route without params - strictly local resolution
    */
-  (name: `.${string}`, params?: Record<string, string>, search?: Record<string, unknown>): string;
-};
-
-/**
- * Type-safe scoped reverse function that validates all route names and params.
- *
- * When used via HandlerContext or scopedReverse(), local routes are merged with
- * global RegisteredRoutes so all names are fully type-checked.
- *
- * Dot-prefixed names (`.author.posts`) are strictly local — they resolve within
- * the current include() scope and never fall through to global. Params are
- * validated at runtime for dot-prefixed names.
- *
- * @example
- * ```typescript
- * reverse("cart")                              // ✓ Validates local route
- * reverse("blog.post", { slug: "hello" })      // ✓ Validates global route + params
- * reverse(".author.posts", { authorSlug: "a" }) // ✓ Strictly local (runtime params)
- * reverse("typo")                              // ✗ Compile error
- * ```
- */
-export type ScopedReverseFunction<TLocalRoutes> = {
-  /**
-   * Route without params - validates route name exists
-   * @recommended Use this for type-safe URL generation
-   */
-  <TName extends keyof TLocalRoutes & string>(
-    name: IsEmptyObject<ExtractParams<RoutePatternFor<TLocalRoutes, TName>>> extends true ? TName : never
+  <TName extends keyof TRoutes & string>(
+    name: IsEmptyObject<ExtractParams<RoutePatternFor<TRoutes, TName>>> extends true ? `.${TName}` : never
   ): string;
 
   /**
-   * Route with params - validates both route name and params
-   * @recommended Use this for type-safe URL generation with parameters
+   * Dot-prefixed route with params - strictly local resolution
+   */
+  <TName extends keyof TRoutes & string>(
+    name: `.${TName}`,
+    params: ExtractParams<RoutePatternFor<TRoutes, TName>>
+  ): string;
+
+  /**
+   * Dot-prefixed route with params and search - strictly local resolution
+   */
+  <TName extends keyof TRoutes & string>(
+    name: `.${TName}`,
+    params: ExtractParams<RoutePatternFor<TRoutes, TName>>,
+    search: ResolveSearchSchema<ExtractSearchSchema<TRoutes, TName>>
+  ): string;
+};
+
+/**
+ * Type-safe scoped reverse function with separate local and global namespaces.
+ *
+ * - `.name` — local resolution within the current include() scope
+ * - `name` — global resolution against the named-routes definition
+ *
+ * @example
+ * ```typescript
+ * reverse(".article", { slug: "hello" })     // ✓ Local route (resolves with mount prefix)
+ * reverse(".index")                           // ✓ Local route (no params)
+ * reverse("magazine.index")                   // ✓ Global route (fully qualified)
+ * reverse("blog.post", { slug: "hello" })     // ✓ Global route + params
+ * reverse(".typo")                            // ✗ Compile error (not in local routes)
+ * reverse("typo")                             // ✗ Compile error (not in global routes)
+ * ```
+ */
+export type ScopedReverseFunction<TLocalRoutes, TGlobalRoutes = TLocalRoutes> = {
+  /**
+   * Global route without params
+   */
+  <TName extends keyof TGlobalRoutes & string>(
+    name: IsEmptyObject<ExtractParams<RoutePatternFor<TGlobalRoutes, TName>>> extends true ? TName : never
+  ): string;
+
+  /**
+   * Global route with params
+   */
+  <TName extends keyof TGlobalRoutes & string>(
+    name: TName,
+    params: ExtractParams<RoutePatternFor<TGlobalRoutes, TName>>
+  ): string;
+
+  /**
+   * Global route with params and search
+   */
+  <TName extends keyof TGlobalRoutes & string>(
+    name: TName,
+    params: ExtractParams<RoutePatternFor<TGlobalRoutes, TName>>,
+    search: ResolveSearchSchema<ExtractSearchSchema<TGlobalRoutes, TName>>
+  ): string;
+
+  /**
+   * Dot-prefixed local route without params
    */
   <TName extends keyof TLocalRoutes & string>(
-    name: TName,
+    name: IsEmptyObject<ExtractParams<RoutePatternFor<TLocalRoutes, TName>>> extends true ? `.${TName}` : never
+  ): string;
+
+  /**
+   * Dot-prefixed local route with params
+   */
+  <TName extends keyof TLocalRoutes & string>(
+    name: `.${TName}`,
     params: ExtractParams<RoutePatternFor<TLocalRoutes, TName>>
   ): string;
 
   /**
-   * Route with params and search - validates route name, params, and search
+   * Dot-prefixed local route with params and search
    */
   <TName extends keyof TLocalRoutes & string>(
-    name: TName,
+    name: `.${TName}`,
     params: ExtractParams<RoutePatternFor<TLocalRoutes, TName>>,
     search: ResolveSearchSchema<ExtractSearchSchema<TLocalRoutes, TName>>
   ): string;
-
-  /**
-   * Dot-prefixed local name - resolved relative to current include() scope.
-   * Like "./" in file paths, guarantees the name stays within the local namespace.
-   * Params are validated at runtime (not at compile time).
-   */
-  (name: `.${string}`, params?: Record<string, string>, search?: Record<string, unknown>): string;
 };
 
 /**
@@ -229,24 +259,23 @@ export type { RouteResponse } from "./urls.js";
 /**
  * Get a locally-typed reverse function from ctx.reverse for composable modules.
  *
- * This is a type-only cast - ctx.reverse already resolves local names at runtime
- * based on the current route prefix. This helper just provides type safety
- * for local route names within a url module.
+ * This is a type-only cast - ctx.reverse already resolves names at runtime.
+ * Provides type safety: `.name` validates against local routes,
+ * `name` validates against global named-routes.
  *
  * @param reverse - The ctx.reverse function from HandlerContext
- * @returns The same reverse function, but typed for local routes
+ * @returns The same reverse function, typed with local + global routes
  *
  * @example
  * ```typescript
  * // urls/blog.tsx
  * export const blogPatterns = urls(({ path }) => [
  *   path("/", (ctx) => {
- *     // Get locally-typed reverse for this module's routes
  *     const reverse = scopedReverse<typeof blogPatterns>(ctx.reverse);
  *
- *     reverse("index");              // ✓ Type-safe local route
- *     reverse("post", { slug: "x" }); // ✓ Type-safe with params
- *     reverse("shop.cart");          // ✓ Type-safe global route
+ *     reverse(".index");              // ✓ Local route
+ *     reverse(".post", { slug: "x" }); // ✓ Local with params
+ *     reverse("shop.cart");           // ✓ Global route
  *
  *     return <BlogIndex />;
  *   }, { name: "index" }),

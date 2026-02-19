@@ -139,7 +139,7 @@ export async function resolveSegment<TEnv>(
 
     for (const parallelEntry of entry.parallel) {
       const parallelSegments = await resolveParallelEntry(
-        parallelEntry, params, context, false, entry.shortCode, deps,
+        parallelEntry, params, context, false, entry.shortCode, deps, options,
       );
       segments.push(...parallelSegments);
     }
@@ -165,7 +165,7 @@ export async function resolveSegment<TEnv>(
 
     for (const orphan of entry.layout) {
       const orphanSegments = await resolveOrphanLayout(
-        orphan, params, context, loaderPromises, false, deps,
+        orphan, params, context, loaderPromises, false, deps, options,
       );
       segments.push(...orphanSegments);
     }
@@ -177,14 +177,14 @@ export async function resolveSegment<TEnv>(
 
     for (const orphan of entry.layout) {
       const orphanSegments = await resolveOrphanLayout(
-        orphan, params, context, loaderPromises, true, deps,
+        orphan, params, context, loaderPromises, true, deps, options,
       );
       segments.push(...orphanSegments);
     }
 
     for (const parallelEntry of entry.parallel) {
       const parallelSegments = await resolveParallelEntry(
-        parallelEntry, params, context, true, entry.shortCode, deps,
+        parallelEntry, params, context, true, entry.shortCode, deps, options,
       );
       segments.push(...parallelSegments);
     }
@@ -226,18 +226,22 @@ export async function resolveOrphanLayout<TEnv>(
   loaderPromises: Map<string, Promise<any>>,
   belongsToRoute: boolean,
   deps: SegmentResolutionDeps<TEnv>,
+  options?: ResolveSegmentOptions,
 ): Promise<ResolvedSegment[]> {
   invariant(
     orphan.type === "layout" || orphan.type === "cache",
     `Expected orphan to be a layout or cache, got: ${orphan.type}`,
   );
 
-  const loaderSegments = await resolveLoaders(orphan, context, belongsToRoute, deps);
-  const segments: ResolvedSegment[] = [...loaderSegments];
+  const segments: ResolvedSegment[] = [];
+  if (!options?.skipLoaders) {
+    const loaderSegments = await resolveLoaders(orphan, context, belongsToRoute, deps);
+    segments.push(...loaderSegments);
+  }
 
   for (const parallelEntry of orphan.parallel) {
     const parallelSegments = await resolveParallelEntry(
-      parallelEntry, params, context, belongsToRoute, orphan.shortCode, deps,
+      parallelEntry, params, context, belongsToRoute, orphan.shortCode, deps, options,
     );
     segments.push(...parallelSegments);
   }
@@ -273,6 +277,7 @@ export async function resolveParallelEntry<TEnv>(
   belongsToRoute: boolean,
   parentShortCode: string,
   deps: SegmentResolutionDeps<TEnv>,
+  options?: ResolveSegmentOptions,
 ): Promise<ResolvedSegment[]> {
   invariant(
     parallelEntry.type === "parallel",
@@ -317,7 +322,7 @@ export async function resolveParallelEntry<TEnv>(
     });
   }
 
-  if (!parallelEntry.loading) {
+  if (!parallelEntry.loading && !options?.skipLoaders) {
     const loaderSegments = await resolveLoaders(
       parallelEntry, context, belongsToRoute, deps, parentShortCode,
     );

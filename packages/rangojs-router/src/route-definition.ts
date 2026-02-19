@@ -295,12 +295,22 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    * @param handler - Component or handler for intercepted render
    * @param use - Optional callback for loaders, middleware, revalidate, etc.
    */
-  intercept: <K extends keyof ResolvedRouteMap<T> & string>(
-    slotName: `@${string}`,
-    routeName: K,
-    handler: ReactNode | Handler<ExtractRouteParams<T, K>, {}, TEnv>,
-    use?: () => InterceptUseItem[]
-  ) => InterceptItem;
+  intercept: {
+    // Local: dot-prefixed, params inferred from local route definition
+    <K extends keyof ResolvedRouteMap<T> & string>(
+      slotName: `@${string}`,
+      routeName: `.${K}`,
+      handler: ReactNode | Handler<ExtractRouteParams<T, K>, {}, TEnv>,
+      use?: () => InterceptUseItem[]
+    ): InterceptItem;
+    // Global: unprefixed, params inferred from global route map
+    <K extends keyof RSCRouter.GeneratedRouteMap & string>(
+      slotName: `@${string}`,
+      routeName: K,
+      handler: ReactNode | Handler<K, RSCRouter.GeneratedRouteMap, TEnv>,
+      use?: () => InterceptUseItem[]
+    ): InterceptItem;
+  };
   /**
    * Attach middleware to the current route/layout
    * ```typescript
@@ -885,11 +895,11 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
 /**
  * Intercept helper - defines an intercepting route for soft navigation
  */
-const intercept: RouteHelpers<any, any>["intercept"] = (
-  slotName,
-  routeName,
-  handler,
-  use
+const intercept = (
+  slotName: `@${string}`,
+  routeName: string,
+  handler: any,
+  use?: () => any[]
 ) => {
   const store = getContext();
   const ctx = store.getStore();
@@ -906,10 +916,11 @@ const intercept: RouteHelpers<any, any>["intercept"] = (
 
   const namespace = `${ctx.namespace}.$${store.getNextIndex("intercept")}.${slotName}`;
 
-  // Apply name prefix to routeName (from include())
-  // This ensures intercepts match prefixed route keys
+  // Dot-prefixed = local (add include prefix), unprefixed = global (use as-is)
+  const isLocal = typeof routeName === "string" && routeName.startsWith(".");
+  const bareRouteName = isLocal ? routeName.slice(1) : routeName;
   const namePrefix = getNamePrefix();
-  const prefixedRouteName = namePrefix ? `${namePrefix}.${routeName}` : routeName;
+  const prefixedRouteName = isLocal && namePrefix ? `${namePrefix}.${bareRouteName}` : bareRouteName;
 
   // Create intercept entry with its own loaders/revalidate/middleware/when
   const entry: InterceptEntry = {

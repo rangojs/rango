@@ -12,39 +12,31 @@ import { parseSearchParams, serializeSearchParams } from "../search-params.js";
 
 /**
  * Resolve route name with namespace prefix support.
- * Supports local names, absolute names (dot notation), and path-based URLs.
+ * Supports local names (dot-prefixed) and absolute names (global lookup).
  */
 function resolveRouteName(
   name: string,
   routeMap: Record<string, string>,
   currentRoutePrefix?: string
 ): string | undefined {
-  // 1. Path-based - starts with /
-  if (name.startsWith("/")) {
-    return name;
-  }
+  // 1. Dot-prefixed (".article", ".author.posts") — local resolution only.
+  //    Resolves within the current include() scope using the mount prefix.
+  if (name.startsWith(".")) {
+    const lookupName = name.slice(1);
+    if (!currentRoutePrefix) return undefined;
 
-  // 2. Dot-prefixed (".author.posts") - strictly local, no global fallback.
-  //    Like "./" in file paths — guarantees resolution stays within the
-  //    current include() scope. Errors if not found locally.
-  const strictlyLocal = name.startsWith(".");
-  const lookupName = strictlyLocal ? name.slice(1) : name;
-
-  // 3. Local resolution - try current namespace prefix, then walk up parents
-  if (currentRoutePrefix) {
-    // Extract the prefix from current route name
-    // e.g., "blog.posts.detail" -> prefix is "blog.posts"
+    // Extract the include prefix from current route name
+    // e.g., "magazine.author" -> prefix is "magazine"
     const lastDot = currentRoutePrefix.lastIndexOf(".");
     const prefix = lastDot > 0 ? currentRoutePrefix.substring(0, lastDot) : currentRoutePrefix;
 
-    // Try prefixed name
+    // Try prefixed name at current level
     const prefixedName = `${prefix}.${lookupName}`;
     if (routeMap[prefixedName] !== undefined) {
       return routeMap[prefixedName];
     }
 
-    // Walk up parent prefixes
-    // e.g., for "blog.posts.detail", try "blog.posts.index", then "blog.index"
+    // Walk up parent prefixes for nested includes
     let currentPrefix = prefix;
     while (currentPrefix.includes(".")) {
       const parentDot = currentPrefix.lastIndexOf(".");
@@ -54,15 +46,54 @@ function resolveRouteName(
         return routeMap[parentPrefixedName];
       }
     }
-  }
 
-  // 4. Strictly local names never fall through to global
-  if (strictlyLocal) {
     return undefined;
   }
 
-  // 5. Global fallback - direct lookup in the full route map
-  return routeMap[lookupName];
+  // 2. Unprefixed ("magazine.index", "blog.post") — global resolution only.
+  //    Direct lookup in the full named-routes map.
+  return routeMap[name];
+}
+
+/**
+ * Create a reverse function for URL generation from route names.
+ * Used by both HandlerContext and MiddlewareContext.
+ */
+export function createReverseFunction(
+  routeMap: Record<string, string>,
+  currentRoutePrefix?: string
+): (name: string, hrefParams?: Record<string, string>, search?: Record<string, unknown>) => string {
+  return (name, hrefParams, search) => {
+    // Resolve route name with namespace support
+    const pattern = resolveRouteName(name, routeMap, currentRoutePrefix);
+
+    if (pattern === undefined) {
+      throw new Error(
+        `Unknown route: "${name}"${currentRoutePrefix ? ` (current route: ${currentRoutePrefix})` : ""}`
+      );
+    }
+
+    let result = pattern;
+
+    // Substitute params
+    if (hrefParams) {
+      result = result.replace(/:([^/]+)/g, (_, key) => {
+        const value = hrefParams[key];
+        if (value === undefined) {
+          throw new Error(`Missing param "${key}" for route "${name}"`);
+        }
+        return encodeURIComponent(value);
+      });
+    }
+
+    // Append search params as query string
+    if (search) {
+      const qs = serializeSearchParams(search);
+      if (qs) result += `?${qs}`;
+    }
+
+    return result;
+  };
 }
 
 /**
@@ -138,56 +169,7 @@ export function createHandlerContext<TEnv>(
       requestContext.setLocationState(entries);
     },
     // Scoped reverse for URL generation
-    reverse: (name: string, hrefParams?: Record<string, string>, search?: Record<string, unknown>) => {
-      // Path-based - return directly (optionally with param substitution)
-      if (name.startsWith("/")) {
-        let result = name;
-        if (hrefParams) {
-          result = result.replace(/:([^/]+)/g, (_, key) => {
-            const value = hrefParams[key];
-            if (value === undefined) {
-              throw new Error(`Missing param "${key}" for path "${name}"`);
-            }
-            return encodeURIComponent(value);
-          });
-        }
-        if (search) {
-          const qs = serializeSearchParams(search);
-          if (qs) result += `?${qs}`;
-        }
-        return result;
-      }
-
-      // Resolve route name with namespace support
-      const pattern = resolveRouteName(name, routeMap, routeName);
-
-      if (pattern === undefined) {
-        throw new Error(
-          `Unknown route: "${name}"${routeName ? ` (current route: ${routeName})` : ""}`
-        );
-      }
-
-      let result = pattern;
-
-      // Substitute params
-      if (hrefParams) {
-        result = result.replace(/:([^/]+)/g, (_, key) => {
-          const value = hrefParams[key];
-          if (value === undefined) {
-            throw new Error(`Missing param "${key}" for route "${name}"`);
-          }
-          return encodeURIComponent(value);
-        });
-      }
-
-      // Append search params as query string
-      if (search) {
-        const qs = serializeSearchParams(search);
-        if (qs) result += `?${qs}`;
-      }
-
-      return result;
-    },
+    reverse: createReverseFunction(routeMap, routeName),
   };
 }
 

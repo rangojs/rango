@@ -54,7 +54,7 @@ export const blogPatterns = urls(
         // Intercept author page -- modal from index/list, direct from post pages
         intercept(
           "@modal",
-          "author",
+          ".author",
           <AuthorModalContent />,
           () => [
             when(shouldInterceptBlogAuthor),

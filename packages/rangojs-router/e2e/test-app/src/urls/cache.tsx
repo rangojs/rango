@@ -70,7 +70,7 @@ export const cachePatterns = urls(({ path, layout, intercept, loader, when, cach
     // Intercept for modal - renders in @cacheModal slot
     intercept(
       "@cacheModal",
-      "cacheTest.interceptDetail",
+      ".cacheTest.interceptDetail",
       async (ctx) => {
         const data = await ctx.use(InterceptCacheTestLoader);
         return (
@@ -101,7 +101,7 @@ export const cachePatterns = urls(({ path, layout, intercept, loader, when, cach
     // Intercept for modal - client component uses useLoader directly
     intercept(
       "@useLoaderModal",
-      "cacheTest.useLoaderDetail",
+      ".cacheTest.useLoaderDetail",
       () => (
         <UseLoaderModal
           loader={InterceptCacheTestLoader}

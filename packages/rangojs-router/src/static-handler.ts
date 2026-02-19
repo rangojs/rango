@@ -31,7 +31,7 @@
  * ```
  */
 import type { ReactNode } from "react";
-import type { Handler, HandlerContext } from "./types.js";
+import type { Handler, HandlerContext, DefaultEnv } from "./types.js";
 import type { PrerenderOptions } from "./prerender.js";
 
 // -- Types ------------------------------------------------------------------
@@ -48,8 +48,8 @@ export interface StaticHandlerDefinition<TParams extends Record<string, any> = a
 
 // -- Function ---------------------------------------------------------------
 
-export function Static<TParams extends Record<string, any> = {}>(
-  handler: (ctx: HandlerContext<TParams>) => ReactNode | Promise<ReactNode>,
+export function Static<TParams extends Record<string, any> = {}, TRouteMap = never>(
+  handler: (ctx: HandlerContext<TParams, DefaultEnv, {}, TRouteMap>) => ReactNode | Promise<ReactNode>,
   options?: PrerenderOptions,
   __injectedId?: string,
 ): StaticHandlerDefinition<TParams>;
