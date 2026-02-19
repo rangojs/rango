@@ -57,7 +57,7 @@ const ParamPage: Handler<Record<string, any>> = async (ctx) => {
 };
 
 // Simple page component for stress routes (no params)
-const StressPage: Handler<"localeHome"> = async (ctx) => {
+const StressPage: Handler = async (ctx) => {
   await new Promise((r) => setTimeout(r, 1));
 
   const renderTime = Date.now();
