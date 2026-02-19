@@ -10,8 +10,15 @@ import {
   BlogSidebar,
   BlogSidebarSkeleton,
 } from "../handlers/blog/components/sidebar.js";
+import { BlogAuthorLoader } from "../handlers/blog/loaders/author.js";
+import {
+  AuthorModalWrapper,
+  AuthorModalContent,
+  AuthorModalContentSkeleton,
+} from "../handlers/blog/components/AuthorModal.js";
+import { shouldInterceptBlogAuthor } from "../handlers/blog/conditions/index.js";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
-import { BlogPostHandler } from "./blog.handlers.js";
+import { BlogPostHandler, BlogAuthorHandler, BlogAuthorPostsHandler } from "./blog.handlers.js";
 
 export const blogPatterns = urls(
   ({
@@ -23,6 +30,8 @@ export const blogPatterns = urls(
     parallel,
     loader,
     loading,
+    intercept,
+    when,
   }) => [
     layout(
       (ctx) => {
@@ -41,12 +50,30 @@ export const blogPatterns = urls(
           },
           () => [loader(BlogSidebarLoader), loading(<BlogSidebarSkeleton />)],
         ),
+
+        // Intercept author page -- modal from index/list, direct from post pages
+        intercept(
+          "@modal",
+          ".author",
+          <AuthorModalContent />,
+          () => [
+            when(shouldInterceptBlogAuthor),
+            layout(<AuthorModalWrapper />),
+            loading(<AuthorModalContentSkeleton />),
+            loader(BlogAuthorLoader),
+          ],
+        ),
+
         cache({ ttl: 600000000 }, () => [
           path("/", BlogIndexPage, { name: "index" }),
           path("/:slug", BlogPostHandler, { name: "post" }, () => [
             revalidate(postRevalidation),
           ]),
         ]),
+
+        // Author routes
+        path("/author/:authorSlug", BlogAuthorHandler, { name: "author" }),
+        path("/author/:authorSlug/posts", BlogAuthorPostsHandler, { name: "author.posts" }),
       ],
     ),
   ],

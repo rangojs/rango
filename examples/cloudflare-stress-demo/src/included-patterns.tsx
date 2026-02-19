@@ -3,9 +3,10 @@
  */
 import { urls, type Handler } from "@rangojs/router";
 import { getMatchDebugStats } from "@rangojs/router";
+import type { routes } from "./included-patterns.gen.js";
 
 // Benchmark handler for API routes - returns debug stats
-const ApiBenchmarkHandler: Handler<"benchFirst"> = async (ctx) => {
+const ApiBenchmarkHandler: Handler<".benchFirst", routes> = async (ctx) => {
   const matchStats = getMatchDebugStats();
   throw new Response(
     JSON.stringify({

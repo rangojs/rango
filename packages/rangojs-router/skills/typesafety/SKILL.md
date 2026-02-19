@@ -45,34 +45,34 @@ export const urlpatterns = urls(({ path, layout }) => [
 
 ## Type-Safe href()
 
-### Server: ctx.reverse with global route names
+### Server: ctx.reverse with route names
 
-In route handlers, use `ctx.reverse()` with the global dotted route names
-from `router.named-routes.gen.ts`:
+In route handlers, `ctx.reverse()` uses two namespaces:
+
+- **`.name`** — local route, resolved within the current `include()` scope
+- **`name`** — global route, from the named-routes definition
 
 ```typescript
 import type { Handler } from "@rangojs/router";
 
 export const ProductHandler: Handler<"shop.product"> = (ctx) => {
-  ctx.reverse("shop.cart");                       // Global name
-  ctx.reverse("shop.product", { slug: "widget" }); // With params
-  ctx.reverse("blog.post", { postId: "1" });       // Cross-module
-
-  return <ProductPage slug={ctx.params.slug} />;
+  ctx.reverse(".cart");                                   // Local: /shop/cart
+  ctx.reverse(".product", { slug: "widget" });            // Local: /shop/product/widget
+  ctx.reverse("blog.post", { slug: "1" });                // Global: /blog/1
 };
 ```
 
-For opt-in per-module isolation (after running `npx rango generate urls/shop.tsx`),
-use `scopedReverse()` with a local route map:
+For type-safe local names, generate a route types file with `npx rango generate urls/shop.tsx`
+and pass it as the second generic to `Handler` or `Prerender`:
 
 ```typescript
-import { scopedReverse } from "@rangojs/router";
+import type { Handler } from "@rangojs/router";
 import type { routes } from "./shop.gen.js";
 
-export const ProductHandler: Handler<"product", routes> = (ctx) => {
-  const reverse = scopedReverse<routes>(ctx.reverse);
-  reverse("cart");                        // Local name
-  reverse("product", { slug: "widget" }); // Local with params
+export const ProductHandler: Handler<"shop.product", routes> = (ctx) => {
+  ctx.reverse(".cart");                        // Type-safe local name
+  ctx.reverse(".product", { slug: "widget" }); // Type-safe local with params
+  ctx.reverse("blog.post", { slug: "hi" });    // Type-safe global name
 };
 ```
 

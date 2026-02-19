@@ -21,6 +21,7 @@ import { searchPatterns } from "./urls/search.js";
 import { refTestPatterns } from "./urls/ref-test.js";
 import { prerenderPatterns } from "./urls/prerender.js";
 import { prerenderComplexPatterns } from "./urls/prerender-complex.js";
+import { prerenderInterceptPatterns } from "./urls/prerender-intercept.js";
 import { transformCasesPatterns } from "./urls/transform-cases.js";
 import { apiShopPatterns } from "./urls/api-shop.js";
 import { locationStatePatterns } from "./urls/location-state.js";
@@ -54,7 +55,7 @@ import { RevalidateButton } from "./components/RevalidateButton.js";
  * because they have intercepts that need to share the same parent context.
  * Other routes are included from separate modules.
  */
-export const urlpatterns = urls(({ layout, path, include, intercept, loader, loading, when, middleware }) => [
+export const urlpatterns = urls(({ layout, path, include, intercept, loader, loading, when, middleware, parallel }) => [
   layout(RootLayout, () => [
     // === CORE ROUTES (inline for intercept support) ===
 
@@ -292,13 +293,24 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
       () => [loader(SlowProductDetailLoader)]
     ),
 
+    // === PARALLEL SEGMENTS ===
+    // Sidebar persists across all routes in this layout
+    parallel({
+      "@sidebar": () => (
+        <aside data-testid="sidebar">
+          <h3 data-testid="sidebar-title">Sidebar</h3>
+          <p>Navigation links and filters</p>
+        </aside>
+      ),
+    }),
+
     // === INTERCEPTS ===
     // Defined after routes but in same layout callback for shared parent context
 
     // Product detail intercept - only when navigating from index page
     intercept(
       "@modal",
-      "product.detail",
+      ".product.detail",
       async (ctx) => {
         const { product } = await ctx.use(ProductDetailLoader);
         const { quantity } = await ctx.use(CartQuantityLoader);
@@ -347,7 +359,7 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
     // Slow product intercept - with loading state
     intercept(
       "@modal",
-      "slowProduct.detail",
+      ".slowProduct.detail",
       async (ctx) => {
         const { product } = await ctx.use(SlowProductDetailLoader);
         return (
@@ -446,6 +458,9 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
 
     // Pre-render complex test patterns (layout + parallel + fresh loader)
     include("/prerender-complex", prerenderComplexPatterns, { name: "prerenderComplex" }),
+
+    // Pre-render + intercept test patterns
+    include("/prerender-intercept", prerenderInterceptPatterns, { name: "prerenderIntercept" }),
 
     // Transform coverage patterns (alias imports + export specifiers)
     include("/transform-cases", transformCasesPatterns, { name: "transformCases" }),

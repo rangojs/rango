@@ -3,6 +3,8 @@ import { Outlet, ParallelOutlet, Link } from "@rangojs/router/client";
 import { DebugSegmentWrapper } from "../components/DebugSegmentWrapper.js";
 import { SegmentTimer } from "../components/SegmentTimer.js";
 import { CurrentURL } from "../components/CurrentURL.js";
+import { blogPostsMeta, getAuthor, getPostAuthor } from "../handlers/blog/data/mock-data.js";
+import { href } from "@rangojs/router/client";
 
 export function BlogLayout() {
   return (
@@ -15,6 +17,7 @@ export function BlogLayout() {
         </main>
         <ParallelOutlet name="@sidebar" />
       </div>
+      <Outlet name="@modal" />
     </div>
   );
 }
@@ -77,15 +80,26 @@ export function BlogIndexPage() {
         <h2>Blog Posts</h2>
         <p className="segment-id">Segment: Blog Index Route</p>
         <ul>
-          <li>
-            <a href="/blog/hello-world">Hello World</a>
-          </li>
-          <li>
-            <a href="/blog/react-server-components">React Server Components</a>
-          </li>
-          <li>
-            <a href="/blog/router-design">Router Design</a>
-          </li>
+          {blogPostsMeta.map((post) => {
+            const author = getAuthor(post.authorSlug);
+            return (
+              <li key={post.slug} style={{ marginBottom: "0.5rem" }}>
+                <Link to={`/blog/${post.slug}`}>{post.title}</Link>
+                {author && (
+                  <span style={{ color: "#666", fontSize: "0.85rem" }}>
+                    {" "}
+                    by{" "}
+                    <Link
+                      to={`/blog/author/${author.slug}`}
+                      style={{ color: "#3b82f6", textDecoration: "none" }}
+                    >
+                      {author.name}
+                    </Link>
+                  </span>
+                )}
+              </li>
+            );
+          })}
         </ul>
       </div>
     </DebugSegmentWrapper>
@@ -189,6 +203,22 @@ export function BlogPostPage(ctx: HandlerContext<{ slug: string }>) {
             </li>
           </ul>
         </div>
+
+        {(() => {
+          const author = getPostAuthor(ctx.params.slug);
+          if (!author) return null;
+          return (
+            <p style={{ marginTop: "1rem", color: "#475569" }}>
+              Written by{" "}
+              <Link
+                to={`/blog/author/${author.slug}`}
+                style={{ color: "#3b82f6", textDecoration: "none" }}
+              >
+                {author.name}
+              </Link>
+            </p>
+          );
+        })()}
 
         <p style={{ marginTop: "1rem" }}>
           <a href="/blog">Back to blog</a>

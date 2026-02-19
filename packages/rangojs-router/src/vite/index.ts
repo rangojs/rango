@@ -838,6 +838,12 @@ function createRouterDiscoveryPlugin(
                 segments: result.segments,
                 handles: result.handles,
               };
+              if (result.interceptSegments?.length) {
+                collectedData[`${result.routeName}/${paramHash}/i`] = {
+                  segments: [...result.segments, ...result.interceptSegments],
+                  handles: { ...result.handles, ...(result.interceptHandles || {}) },
+                };
+              }
               rendered++;
               break;
             } catch (err: any) {
@@ -1161,13 +1167,24 @@ function createRouterDiscoveryPlugin(
           return;
         }
 
+        const wantIntercept = url.searchParams.get("intercept") === "1";
+
         for (const [, routerInstance] of registry) {
           if (!routerInstance.matchForPrerender) continue;
           try {
             const result = await routerInstance.matchForPrerender(pathname, {});
             if (!result) continue;
             res.setHeader("content-type", "application/json");
-            res.end(JSON.stringify({ segments: result.segments, handles: result.handles }));
+            let payload: Record<string, unknown>;
+            if (wantIntercept && result.interceptSegments?.length) {
+              payload = {
+                segments: [...result.segments, ...result.interceptSegments],
+                handles: { ...result.handles, ...(result.interceptHandles || {}) },
+              };
+            } else {
+              payload = { segments: result.segments, handles: result.handles };
+            }
+            res.end(JSON.stringify(payload));
             return;
           } catch (err: any) {
             console.warn(`[rsc-router] Dev prerender failed for ${pathname}: ${err.message}`);

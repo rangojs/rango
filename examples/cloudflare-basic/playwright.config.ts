@@ -3,6 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 const isUIMode = process.argv.includes("--ui");
 
 const DEV_PORT = 5199;
+const PREVIEW_PORT = 5198;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -20,14 +21,23 @@ export default defineConfig({
     trace: "on-first-retry",
     actionTimeout: process.env.CI ? 30000 : 15000,
   },
-  webServer: {
-    // Build first so dist/ is ready for production tests and deps_ssr is
-    // populated before the dev server starts (wrangler's module runner does
-    // not recover from ERR_OUTDATED_OPTIMIZED_DEP if the build runs later).
-    command: `pnpm build && rm -rf node_modules/.vite && pnpm dev --port ${DEV_PORT}`,
-    port: DEV_PORT,
-    reuseExistingServer: !process.env.CI,
-  },
+  webServer: [
+    {
+      // Build first so dist/ is ready for production tests and deps_ssr is
+      // populated before the dev server starts (wrangler's module runner does
+      // not recover from ERR_OUTDATED_OPTIMIZED_DEP if the build runs later).
+      command: `pnpm build && rm -rf node_modules/.vite && pnpm dev --port ${DEV_PORT}`,
+      port: DEV_PORT,
+      reuseExistingServer: true,
+    },
+    {
+      // Shared preview server for all production tests. Started after the dev
+      // server (which includes the build step) so dist/ is guaranteed to exist.
+      command: `pnpm preview --port ${PREVIEW_PORT}`,
+      port: PREVIEW_PORT,
+      reuseExistingServer: true,
+    },
+  ],
   // In UI mode, flatten projects to avoid the dependency chain that breaks
   // Playwright's --ui filtering (--grep, --project, file args).
   projects: isUIMode
@@ -45,7 +55,10 @@ export default defineConfig({
           name: "production",
           grep: /\(production\)/,
           testIgnore: ["**/*.setup.ts"],
-          use: { ...devices["Desktop Chrome"] },
+          use: {
+            ...devices["Desktop Chrome"],
+            baseURL: `http://localhost:${PREVIEW_PORT}`,
+          },
         },
         {
           name: "hmr",
@@ -77,10 +90,10 @@ export default defineConfig({
           name: "production",
           grep: /\(production\)/,
           testIgnore: ["**/*.setup.ts"],
-          use: { ...devices["Desktop Chrome"] },
-          // Each production describe block starts its own wrangler preview server.
-          // Run serially within files to avoid multiple simultaneous servers.
-          // Run after dev tests to reduce concurrent wrangler processes.
+          use: {
+            ...devices["Desktop Chrome"],
+            baseURL: `http://localhost:${PREVIEW_PORT}`,
+          },
           fullyParallel: false,
           timeout: 60000,
           dependencies: ["dev"],

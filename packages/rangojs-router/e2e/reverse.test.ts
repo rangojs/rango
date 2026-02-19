@@ -6,7 +6,7 @@ import { waitForHydration, expectNoPageError, testId } from "./helper";
  * Tests for scoped reverse resolution
  * - Server-side ctx.reverse in route handlers
  * - Client-side href() + useMount()
- * - Local, absolute, and path-based resolution
+ * - Local and absolute resolution
  */
 test.describe("Scoped Reverse Resolution", () => {
   const f = useFixture({
@@ -46,17 +46,6 @@ test.describe("Scoped Reverse Resolution", () => {
       // Absolute "blog.index" should resolve to /blog
       const absoluteBlog = testId(page, "server-absolute-blog");
       await expect(absoluteBlog).toContainText("/blog");
-    });
-
-    test("should pass through path-based URLs unchanged", async ({ page }) => {
-      using _ = expectNoPageError(page);
-
-      await page.goto(f.url("/href"));
-      await waitForHydration(page);
-
-      // Path-based "/about" should remain /about
-      const pathBased = testId(page, "server-path-based");
-      await expect(pathBased).toContainText("/about");
     });
 
     test("should resolve local names correctly from detail route", async ({
@@ -130,17 +119,6 @@ test.describe("Scoped Reverse Resolution", () => {
       // Client-side href("/blog") -> "/blog" (no mount prefix)
       const clientAbsoluteBlog = testId(page, "client-absolute-blog");
       await expect(clientAbsoluteBlog).toContainText("/blog");
-    });
-
-    test("should pass through path-based URLs unchanged", async ({ page }) => {
-      using _ = expectNoPageError(page);
-
-      await page.goto(f.url("/href"));
-      await waitForHydration(page);
-
-      // Client-side href("/about") -> "/about"
-      const clientPathBased = testId(page, "client-path-based");
-      await expect(clientPathBased).toContainText("/about");
     });
 
     test("should maintain mount context after navigation", async ({ page }) => {
@@ -223,6 +201,41 @@ test.describe("Scoped Reverse Resolution", () => {
       );
     });
   });
+
+  test.describe("Handler<'.filtered', routes> with params + search", () => {
+    test("should render filtered page with typed params and search", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      await page.goto(f.url("/href/filtered/books?q=typescript&page=2&active=true"));
+      await waitForHydration(page);
+
+      // Params from route pattern
+      await expect(testId(page, "filtered-category")).toContainText("category: books");
+
+      // Search params from typed schema
+      await expect(testId(page, "filtered-q")).toContainText("q: typescript");
+      await expect(testId(page, "filtered-page")).toContainText("page: 2");
+      await expect(testId(page, "filtered-active")).toContainText("active: true");
+
+      // Types should be parsed (number, boolean — not strings)
+      await expect(testId(page, "filtered-q-type")).toContainText("q-type: string");
+      await expect(testId(page, "filtered-page-type")).toContainText("page-type: number");
+      await expect(testId(page, "filtered-active-type")).toContainText("active-type: boolean");
+    });
+
+    test("should handle optional search params as undefined", async ({ page }) => {
+      using _ = expectNoPageError(page);
+
+      // Only required q param, optional page and active omitted
+      await page.goto(f.url("/href/filtered/shoes?q=nike"));
+      await waitForHydration(page);
+
+      await expect(testId(page, "filtered-category")).toContainText("category: shoes");
+      await expect(testId(page, "filtered-q")).toContainText("q: nike");
+      await expect(testId(page, "filtered-page")).toContainText("page: undefined");
+      await expect(testId(page, "filtered-active")).toContainText("active: undefined");
+    });
+  });
 });
 
 test.describe("Scoped Reverse Resolution (production)", () => {
@@ -243,13 +256,11 @@ test.describe("Scoped Reverse Resolution (production)", () => {
     await expect(testId(page, "server-local-index")).toContainText("/href");
     await expect(testId(page, "server-local-detail")).toContainText("/href/123");
     await expect(testId(page, "server-absolute-blog")).toContainText("/blog");
-    await expect(testId(page, "server-path-based")).toContainText("/about");
 
     // Client-side hrefs (href + useMount)
     await expect(testId(page, "client-local-index")).toContainText("/href/");
     await expect(testId(page, "client-local-detail")).toContainText("/href/from-client");
     await expect(testId(page, "client-absolute-blog")).toContainText("/blog");
-    await expect(testId(page, "client-path-based")).toContainText("/about");
   });
 
   test("should navigate correctly in production build", async ({ page }) => {

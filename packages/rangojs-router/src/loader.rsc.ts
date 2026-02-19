@@ -121,13 +121,18 @@ export function createLoader<T>(
       const { executeServerActionMiddleware } = await import(
         "./router/middleware.js"
       );
+      const { createReverseFunction } = await import(
+        "./router/handler-context.js"
+      );
+      const { getGlobalRouteMap } = await import("./route-map-builder.js");
       await executeServerActionMiddleware(
         registered.middleware,
         actionRequest,
         env,
         params,
         variables,
-        requestCtx.res
+        requestCtx.res,
+        createReverseFunction(getGlobalRouteMap()),
       );
     }
 

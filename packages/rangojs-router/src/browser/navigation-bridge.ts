@@ -575,7 +575,9 @@ export function createNavigationBridge(
       try {
         await fetchPartialUpdate(
           url,
-          hasUsableCache ? cachedSegments!.map((s) => s.id) : undefined,
+          hasUsableCache
+            ? cachedSegments!.filter((s) => s.type !== "loader").map((s) => s.id)
+            : undefined,
           false,
           tx.handle.signal,
           tx.with({
@@ -748,7 +750,9 @@ export function createNavigationBridge(
           if (isStale) {
             debugLog("[Browser] Cache is stale, background revalidating...");
             // Background revalidation - don't await, just fire and forget
-            const segmentIds = cachedSegments.map((s) => s.id);
+            const segmentIds = cachedSegments
+              .filter((s) => s.type !== "loader")
+              .map((s) => s.id);
 
             const tx = createNavigationTransaction(
               store,

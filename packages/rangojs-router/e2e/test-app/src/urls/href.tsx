@@ -1,6 +1,6 @@
 import { urls } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
-import { HrefIndexHandler, HrefDetailHandler } from "./href.handlers.js";
+import { HrefIndexHandler, HrefDetailHandler, HrefFilteredHandler } from "./href.handlers.js";
 
 /**
  * Href URL patterns for testing scoped href resolution
@@ -12,6 +12,12 @@ export const hrefPatterns = urls(({ path, include }) => [
   // Nested module to test nested include resolution
   // IMPORTANT: Must come BEFORE /:id route, otherwise "nested" matches as an :id
   include("/nested", nestedHrefPatterns, { name: "nested" }),
+
+  // Filtered route with params + search schema (for Handler<".name", routes> type test)
+  path("/filtered/:category", HrefFilteredHandler, {
+    name: "filtered",
+    search: { q: "string", page: "number?", active: "boolean?" },
+  }),
 
   // Detail route with param (must be last since /:id matches anything)
   path("/:id", HrefDetailHandler, { name: "detail" }),

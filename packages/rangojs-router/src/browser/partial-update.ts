@@ -160,9 +160,16 @@ export function createPartialUpdater(
       // When leaving intercept, only send segments that aren't intercept-specific
       // The server will return the non-intercept version of the route
       const currentSegments = segmentIds ?? segmentState.currentSegmentIds;
-      // Filter out intercept-specific parallel slots (containing ".@") so the
-      // server resolves the base route instead of the modal overlay.
-      segments = currentSegments.filter((id) => !id.includes(".@"));
+      // Use cached segment metadata (namespace) to identify intercept segments.
+      // Only intercept segments have namespace starting with "intercept:" —
+      // regular parallel segments like @sidebar are preserved.
+      const currentCached = getCurrentCachedSegments();
+      const interceptIds = new Set(
+        currentCached
+          .filter((s) => s.namespace?.startsWith("intercept:"))
+          .map((s) => s.id),
+      );
+      segments = currentSegments.filter((id) => !interceptIds.has(id));
       debugLog(
         `[Browser] Leaving intercept - filtered segments: ${segments.join(", ")}`,
       );
@@ -322,6 +329,7 @@ export function createPartialUpdater(
       const matchedIds = matched || [];
       const actor: ReconcileActor =
         staleRevalidation || isAction ? "stale-revalidation" : "navigation";
+
       const reconciled = reconcileSegments({
         actor,
         matched: matchedIds,

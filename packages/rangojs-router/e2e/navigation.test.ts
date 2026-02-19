@@ -85,6 +85,36 @@ test.describe("intercept-navigation", () => {
     await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
   });
 
+  test("should preserve parallel segments when leaving intercept via View Full Details", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    // Sidebar parallel should be visible on index
+    await expect(page.locator('[data-testid="sidebar"]')).toBeVisible();
+
+    // Open product modal (intercept)
+    const productLink = page.locator('[data-testid="product-link-product-a"]');
+    await productLink.click();
+    await expect(page.locator('[data-testid="product-modal"]')).toBeVisible();
+
+    // Sidebar should still be visible behind modal
+    await expect(page.locator('[data-testid="sidebar"]')).toBeVisible();
+
+    // Click View Full Details to leave intercept
+    await page.locator('[data-testid="view-full-details"]').click();
+
+    // Should navigate to full product detail page
+    await expect(page.locator('[data-testid="product-modal"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+
+    // Sidebar parallel segment must be preserved after leaving intercept
+    await expect(page.locator('[data-testid="sidebar"]')).toBeVisible();
+  });
+
   test("should show full product page on direct navigation", async ({
     page,
   }) => {
@@ -99,6 +129,9 @@ test.describe("intercept-navigation", () => {
 
     // Should show full product detail page with segment metadata
     await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+
+    // Sidebar should be visible on direct navigation too
+    await expect(page.locator('[data-testid="sidebar"]')).toBeVisible();
   });
 
   test("should maintain intercept state in history", async ({ page }) => {

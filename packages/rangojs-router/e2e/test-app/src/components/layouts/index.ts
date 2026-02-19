@@ -7,3 +7,4 @@ export { UseLoaderInterceptLayout } from "./UseLoaderInterceptLayout.js";
 export { ProactiveCacheLayout } from "./ProactiveCacheLayout.js";
 export { PrerenderComplexLayout } from "./PrerenderComplexLayout.js";
 export { PrerenderInnerLayout } from "./PrerenderInnerLayout.js";
+export { PrerenderInterceptLayout } from "./PrerenderInterceptLayout.js";

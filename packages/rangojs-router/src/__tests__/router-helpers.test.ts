@@ -465,10 +465,84 @@ describe("createReverse", () => {
 });
 
 // ========================================================================
-// resolveRouteName (tested indirectly through description since not exported)
-// The logic is: path-based (/...) returns as-is, absolute (has dot) uses
-// direct map lookup, local names try prefix → parent prefix → direct.
-//
-// Since resolveRouteName is not exported, we describe its expected behavior
-// for documentation. It's exercised by createHandlerContext's reverse() at runtime.
+// resolveRouteName — tested through createHandlerContext's reverse()
 // ========================================================================
+describe("resolveRouteName (via createHandlerContext.reverse)", () => {
+  // Import createHandlerContext to test resolveRouteName indirectly
+  // We use a dynamic import since the module isn't imported at the top
+  async function makeReverse(routeMap: Record<string, string>, currentRoute?: string) {
+    const { createHandlerContext } = await import("../router/handler-context.js");
+    const ctx = createHandlerContext(
+      {},
+      new Request("http://localhost/"),
+      new URLSearchParams(),
+      "/",
+      new URL("http://localhost/"),
+      {},
+      routeMap,
+      currentRoute,
+    );
+    return ctx.reverse;
+  }
+
+  const routeMap: Record<string, string> = {
+    "home.index": "/",
+    "blog.index": "/blog",
+    "blog.post": "/blog/:slug",
+    "blog.author": "/blog/author/:authorSlug",
+    "blog.author.posts": "/blog/author/:authorSlug/posts",
+    "magazine.index": "/magazine",
+    "magazine.article": "/magazine/:slug",
+    "magazine.author": "/magazine/author/:authorSlug",
+    "magazine.author.posts": "/magazine/author/:authorSlug/posts",
+  };
+
+  // Dot-prefixed = local resolution (within include() scope)
+  it("should resolve dot-prefixed names locally", async () => {
+    const reverse = await makeReverse(routeMap, "magazine.author");
+    expect(reverse(".article" as any, { slug: "design" })).toBe("/magazine/design");
+  });
+
+  it("should resolve dot-prefixed dotted names locally", async () => {
+    const reverse = await makeReverse(routeMap, "magazine.author");
+    expect(reverse(".author.posts" as any, { authorSlug: "alice" })).toBe("/magazine/author/alice/posts");
+  });
+
+  it("should walk up parent prefixes for dot-prefixed names", async () => {
+    const reverse = await makeReverse(routeMap, "magazine.author");
+    expect(reverse(".index" as any)).toBe("/magazine");
+  });
+
+  it("should throw for dot-prefixed names that don't exist locally", async () => {
+    const reverse = await makeReverse(routeMap, "magazine.author");
+    expect(() => reverse(".blog.index" as any)).toThrow("Unknown route");
+  });
+
+  it("should throw for dot-prefixed names without a route context", async () => {
+    const reverse = await makeReverse(routeMap);
+    expect(() => reverse(".index" as any)).toThrow("Unknown route");
+  });
+
+  // Unprefixed = global resolution (named-routes definition)
+  it("should resolve unprefixed names globally", async () => {
+    const reverse = await makeReverse(routeMap, "magazine.author");
+    expect(reverse("blog.author.posts" as any, { authorSlug: "jane" })).toBe("/blog/author/jane/posts");
+  });
+
+  it("should resolve fully-qualified global names", async () => {
+    const reverse = await makeReverse(routeMap, "magazine.author");
+    expect(reverse("magazine.index" as any)).toBe("/magazine");
+  });
+
+  it("should NOT resolve unprefixed local names (global only)", async () => {
+    const reverse = await makeReverse(routeMap, "magazine.author");
+    // "article" is a local name — without dot prefix, it's treated as global
+    // and there's no global "article" key
+    expect(() => reverse("article" as any, { slug: "design" })).toThrow("Unknown route");
+  });
+
+  it("should throw for unknown global names", async () => {
+    const reverse = await makeReverse(routeMap, "magazine.author");
+    expect(() => reverse("nonexistent.route" as any)).toThrow("Unknown route");
+  });
+});

@@ -149,9 +149,10 @@ export function withCacheStore<TEnv>(
 
     const {
       createHandlerContext,
-      setupLoaderAccessSilent,
+      setupLoaderAccess,
       resolveAllSegments,
       resolveInterceptEntry,
+      createHandleStore,
     } = getRouterContext<TEnv>();
 
     // Combine main segments with intercept segments
@@ -187,9 +188,15 @@ export function withCacheStore<TEnv>(
           debugLog("cacheStore", "proactive caching started", {
             pathname: ctx.pathname,
           });
+          // Swap to a fresh HandleStore so handle.push() calls from
+          // proactive resolution are captured (not silenced). The original
+          // store's stream is already sent by waitUntil time.
+          // cacheRoute reads from requestCtx._handleStore, so this ensures
+          // complete handle data (e.g. breadcrumbs) is cached.
+          const originalHandleStore = requestCtx._handleStore;
+          requestCtx._handleStore = createHandleStore();
           try {
             // Create fresh context for proactive caching
-            // This prevents handle data from polluting the response stream
             const proactiveHandlerContext = createHandlerContext(
               ctx.matched.params,
               ctx.request,
@@ -202,8 +209,8 @@ export function withCacheStore<TEnv>(
             );
             const proactiveLoaderPromises = new Map<string, Promise<any>>();
 
-            // Set up loader access that ignores handle pushes
-            setupLoaderAccessSilent(
+            // Use normal loader access so handle data is captured
+            setupLoaderAccess(
               proactiveHandlerContext,
               proactiveLoaderPromises,
             );
@@ -253,6 +260,8 @@ export function withCacheStore<TEnv>(
               pathname: ctx.pathname,
               error: String(error),
             });
+          } finally {
+            requestCtx._handleStore = originalHandleStore;
           }
         });
       } else {

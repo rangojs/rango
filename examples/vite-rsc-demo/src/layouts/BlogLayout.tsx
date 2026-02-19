@@ -11,6 +11,7 @@ export function BlogLayout() {
         </main>
         <ParallelOutlet name="@sidebar" />
       </div>
+      <Outlet name="@modal" />
     </div>
   );
 }

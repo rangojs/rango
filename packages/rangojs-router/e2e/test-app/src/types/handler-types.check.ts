@@ -8,20 +8,18 @@
 
 import type { Handler } from "@rangojs/router";
 
-// -- Per-module route map (from blog.gen.ts) --
-type BlogRoutes = {
-  index: "/";
-  post: "/:postId";
+// -- Per-module route map (names chosen to NOT collide with global GeneratedRouteMap) --
+type LocalRoutes = {
+  list: "/";
+  detail: "/:itemId";
+  filtered: { path: "/:itemId"; search: { q: "string"; page: "number?" } };
 };
 
-// Handler with per-module route name resolution
-const blogPost: Handler<"post", BlogRoutes> = (ctx) => {
-  const _postId: string = ctx.params.postId;
-  return null;
-};
+// Dot-prefixed local names — should be VALID
+const localList: Handler<".list", LocalRoutes> = (ctx) => null;
 
-const blogIndex: Handler<"index", BlogRoutes> = (ctx) => {
-  // Index route has no params
+const localDetail: Handler<".detail", LocalRoutes> = (ctx) => {
+  const _itemId: string = ctx.params.itemId;
   return null;
 };
 
@@ -31,7 +29,32 @@ const pathPattern: Handler<"/product/:id"> = (ctx) => {
   return null;
 };
 
+// Bare local names (without dot-prefix) must be rejected — use ".name" for local routes
+// @ts-expect-error — "list" exists in LocalRoutes but must use ".list"
+const bareList: Handler<"list", LocalRoutes> = (ctx) => null;
+// @ts-expect-error — "detail" exists in LocalRoutes but must use ".detail"
+const bareDetail: Handler<"detail", LocalRoutes> = (ctx) => null;
+// @ts-expect-error — "unknown" is neither global nor local
+const bareUnknown: Handler<"unknown", LocalRoutes> = (ctx) => null;
+
+// Dot-prefixed local with search schema — params AND search should be typed
+const localFiltered: Handler<".filtered", LocalRoutes> = (ctx) => {
+  const _itemId: string = ctx.params.itemId;
+  const _q: string = ctx.searchParams.q;
+  const _page: number | undefined = ctx.searchParams.page;
+  return null;
+};
+
+// Dot-prefixed names that don't exist in routes must be rejected
+// @ts-expect-error — "nonexistent" is not in LocalRoutes
+const dotNonexistent: Handler<".nonexistent", LocalRoutes> = (ctx) => null;
+
 // Suppress unused variable warnings
-void blogPost;
-void blogIndex;
+void localList;
+void localDetail;
 void pathPattern;
+void bareList;
+void bareDetail;
+void bareUnknown;
+void localFiltered;
+void dotNonexistent;

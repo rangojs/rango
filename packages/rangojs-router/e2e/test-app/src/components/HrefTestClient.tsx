@@ -18,7 +18,6 @@ export function HrefTestClient({ isDetailPage }: HrefTestClientProps) {
   // useHref() auto-prefixes with mount from include("/href", ...)
   const localIndex = localHref("/");
   const absoluteBlog = href("/blog");
-  const pathBased = href("/about");
   const localDetail = isDetailPage
     ? localHref(`/client-item`)
     : localHref(`/from-client`);
@@ -35,9 +34,6 @@ export function HrefTestClient({ isDetailPage }: HrefTestClientProps) {
         </li>
         <li data-testid="client-absolute-blog">
           Absolute blog.index: <code>{absoluteBlog}</code>
-        </li>
-        <li data-testid="client-path-based">
-          Path-based /about: <code>{pathBased}</code>
         </li>
       </ul>
 

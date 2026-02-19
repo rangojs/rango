@@ -15,7 +15,7 @@ export function DocsArticle({
       <div data-testid="docs-not-found">
         <h1>Not Found</h1>
         <p>No article with slug &ldquo;{slug}&rdquo;.</p>
-        <Link to={reverse("index")} style={{ color: "#0070f3" }}>
+        <Link to={reverse(".index")} style={{ color: "#0070f3" }}>
           &larr; Back to Docs
         </Link>
       </div>
@@ -34,14 +34,14 @@ export function DocsArticle({
         }}
       >
         <Link
-          to={reverse("index")}
+          to={reverse(".index")}
           style={{ color: "#0070f3", textDecoration: "none" }}
           data-testid="docs-back-link"
         >
           &larr; Back to Docs
         </Link>
         <a
-          href={reverse("raw", { slug: article.slug })}
+          href={reverse(".raw", { slug: article.slug })}
           style={{ color: "#666", textDecoration: "none", fontSize: "0.875rem" }}
           data-testid="docs-raw-link"
         >

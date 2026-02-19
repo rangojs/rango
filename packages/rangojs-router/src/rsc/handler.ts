@@ -38,6 +38,7 @@ import { generateNonce } from "./nonce.js";
 import { VERSION } from "@rangojs/router:version";
 import type { ErrorPhase } from "../types.js";
 import { invokeOnError } from "../router/error-handling.js";
+import { createReverseFunction } from "../router/handler-context.js";
 import {
   getGlobalRouteMap,
   hasCachedManifest,
@@ -360,6 +361,7 @@ export function createRSCHandler<
           env,
           variables,
           coreHandler,
+          createReverseFunction(getGlobalRouteMap()),
         );
 
         // If global middleware returned a redirect with location state during
@@ -562,7 +564,7 @@ export function createRSCHandler<
           },
           params: mw.params,
         }));
-        return executeMiddleware(middlewareEntries, request, env, variables, callHandlerWithVary);
+        return executeMiddleware(middlewareEntries, request, env, variables, callHandlerWithVary, createReverseFunction(getGlobalRouteMap()));
       }
 
       return callHandlerWithVary();
@@ -591,7 +593,7 @@ export function createRSCHandler<
       }));
 
       // Execute route middleware wrapping the actual request handling
-      const mwResponse = await executeMiddleware(middlewareEntries, request, env, variables, rscHandler);
+      const mwResponse = await executeMiddleware(middlewareEntries, request, env, variables, rscHandler, createReverseFunction(getGlobalRouteMap()));
 
       // If route middleware returned a redirect with location state during
       // a partial (SPA) request, convert to a 200 Flight payload so the
@@ -1344,6 +1346,7 @@ export function createRSCHandler<
             headers: { "content-type": "text/x-component;charset=utf-8" },
           });
         },
+        createReverseFunction(getGlobalRouteMap()),
       );
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
