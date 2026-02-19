@@ -1,23 +1,20 @@
 import { expect, test } from "@playwright/test";
+import { test as devTest, devURL } from "./dev-fixture";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError, goBack, testId, clearCart } from "./helper";
 
 /**
  * Shop intercept route tests - background preservation during action revalidation
  */
-test.describe("shop-intercept-background-preservation", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
-  test("should preserve background data when action completes after navigating back to intercept", async ({
+devTest.describe("shop-intercept-background-preservation", () => {
+  devTest("should preserve background data when action completes after navigating back to intercept", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
     // Step 1: Navigate to shop page
-    await page.goto(f.url("/shop"));
+    await page.goto(devURL(devServerURL, "/shop"));
     await waitForHydration(page);
 
     // Verify shop page shows product grid
@@ -83,16 +80,11 @@ test.describe("shop-intercept-background-preservation", () => {
 /**
  * Shop navigation tests
  */
-test.describe("shop-navigation", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
-  test("should display shop index with products", async ({ page }) => {
+devTest.describe("shop-navigation", () => {
+  devTest("should display shop index with products", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop"));
+    await page.goto(devURL(devServerURL, "/shop"));
     await waitForHydration(page);
 
     // Shop index should show products
@@ -105,12 +97,13 @@ test.describe("shop-navigation", () => {
     ).toBeVisible();
   });
 
-  test("should show intercept modal with loading skeleton when clicking product", async ({
+  devTest("should show intercept modal with loading skeleton when clicking product", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop"));
+    await page.goto(devURL(devServerURL, "/shop"));
     await waitForHydration(page);
 
     // Click on a product
@@ -127,13 +120,14 @@ test.describe("shop-navigation", () => {
     await expect(page.locator("text=Featured Products")).toBeVisible();
   });
 
-  test("should NOT show loading skeleton on direct navigation (SSR)", async ({
+  devTest("should NOT show loading skeleton on direct navigation (SSR)", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
     // Direct navigation to product page (hard navigation / SSR)
-    await page.goto(f.url("/shop/product/wireless-headphones"));
+    await page.goto(devURL(devServerURL, "/shop/product/wireless-headphones"));
     await waitForHydration(page);
 
     // Should show product content directly (no skeleton for SSR)
@@ -147,10 +141,10 @@ test.describe("shop-navigation", () => {
     await expect(page.locator("text=Intercepted")).not.toBeVisible();
   });
 
-  test("should close intercept modal on back navigation", async ({ page }) => {
+  devTest("should close intercept modal on back navigation", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop"));
+    await page.goto(devURL(devServerURL, "/shop"));
     await waitForHydration(page);
 
     // Open modal
@@ -171,12 +165,13 @@ test.describe("shop-navigation", () => {
     await expect(page.locator("text=Featured Products")).toBeVisible();
   });
 
-  test("should navigate from intercept modal to full product page", async ({
+  devTest("should navigate from intercept modal to full product page", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop"));
+    await page.goto(devURL(devServerURL, "/shop"));
     await waitForHydration(page);
 
     // Open modal
@@ -203,12 +198,13 @@ test.describe("shop-navigation", () => {
     });
   });
 
-  test("should navigate from intercept modal to full product page multiple times", async ({
+  devTest("should navigate from intercept modal to full product page multiple times", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop"));
+    await page.goto(devURL(devServerURL, "/shop"));
     await waitForHydration(page);
 
     // First attempt: Open modal and navigate to full details
@@ -271,18 +267,14 @@ test.describe("shop-navigation", () => {
 /**
  * Shop actions tests
  */
-test.describe("shop-actions", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
-  test("should add product to cart from product detail page", async ({
+devTest.describe("shop-actions", () => {
+  devTest("should add product to cart from product detail page", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop/product/wireless-headphones"));
+    await page.goto(devURL(devServerURL, "/shop/product/wireless-headphones"));
     await waitForHydration(page);
 
     // Wait for product to load (has 1s artificial delay + loading time)
@@ -314,10 +306,10 @@ test.describe("shop-actions", () => {
     await expect(page.locator("text=Total items in cart:")).toBeVisible();
   });
 
-  test("should show streaming action updates", async ({ page }) => {
+  devTest("should show streaming action updates", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop/product/wireless-headphones"));
+    await page.goto(devURL(devServerURL, "/shop/product/wireless-headphones"));
     await waitForHydration(page);
 
     // Wait for product to load
@@ -348,10 +340,10 @@ test.describe("shop-actions", () => {
     ).toBeVisible();
   });
 
-  test("should update cart quantity from intercept modal", async ({ page }) => {
+  devTest("should update cart quantity from intercept modal", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop"));
+    await page.goto(devURL(devServerURL, "/shop"));
     await waitForHydration(page);
 
     // Open modal
@@ -388,7 +380,7 @@ test.describe("shop-actions", () => {
     await expect(page.locator("text=Featured Products")).toBeVisible();
   });
 
-  test("should show quantity controls when re-opening intercept modal for item in cart", async ({ page }) => {
+  devTest("should show quantity controls when re-opening intercept modal for item in cart", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
     // Use a different product to avoid state collision with other parallel tests
@@ -396,7 +388,7 @@ test.describe("shop-actions", () => {
     const productLink = `a[href="/shop/product/${productSlug}"]`;
 
     // Clear cart first to ensure test isolation
-    await clearCart(page, f.url("/shop"));
+    await clearCart(page, devURL(devServerURL, "/shop"));
 
     // Step 1: Open modal and add to cart
     await page.locator(productLink).first().click();
@@ -466,10 +458,10 @@ test.describe("shop-actions", () => {
   // MountContextProvider tree mismatch caused useActionState to lose results
   // because components were remounted during action revalidation.
 
-  test("should show action result on direct visit (baseline)", async ({ page }) => {
+  devTest("should show action result on direct visit (baseline)", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop/product/wireless-headphones"));
+    await page.goto(devURL(devServerURL, "/shop/product/wireless-headphones"));
     await waitForHydration(page);
     await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({ timeout: 10000 });
 
@@ -492,10 +484,10 @@ test.describe("shop-actions", () => {
     await expect(page.locator("text=Success")).toBeVisible({ timeout: 20000 });
   });
 
-  test("should show action result after popstate back navigation", async ({ page }) => {
+  devTest("should show action result after popstate back navigation", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop/product/wireless-headphones"));
+    await page.goto(devURL(devServerURL, "/shop/product/wireless-headphones"));
     await waitForHydration(page);
     await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({ timeout: 10000 });
 
@@ -524,10 +516,10 @@ test.describe("shop-actions", () => {
     await expect(page.locator("text=Success")).toBeVisible({ timeout: 20000 });
   });
 
-  test("should show action result after multiple back/forward cycles", async ({ page }) => {
+  devTest("should show action result after multiple back/forward cycles", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop/product/wireless-headphones"));
+    await page.goto(devURL(devServerURL, "/shop/product/wireless-headphones"));
     await waitForHydration(page);
     await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({ timeout: 10000 });
 
@@ -561,11 +553,11 @@ test.describe("shop-actions", () => {
     await expect(page.locator("text=Success")).toBeVisible({ timeout: 15000 });
   });
 
-  test("should show action result on cached second visit via intercept", async ({ page }) => {
+  devTest("should show action result on cached second visit via intercept", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
     // First visit: /shop -> intercept -> details (fresh, loading skeleton shows)
-    await page.goto(f.url("/shop"));
+    await page.goto(devURL(devServerURL, "/shop"));
     await waitForHydration(page);
     await expect(page.locator("text=All Products")).toBeVisible();
 
@@ -607,11 +599,11 @@ test.describe("shop-actions", () => {
     await expect(page.locator("text=Success")).toBeVisible({ timeout: 20000 });
   });
 
-  test("should show action result after intercept then leave-intercept navigation", async ({ page }) => {
+  devTest("should show action result after intercept then leave-intercept navigation", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
     // Navigate: /shop -> intercept modal -> "View Full Details" -> product detail page
-    await page.goto(f.url("/shop"));
+    await page.goto(devURL(devServerURL, "/shop"));
     await waitForHydration(page);
     await expect(page.locator("text=All Products")).toBeVisible();
 
@@ -642,11 +634,11 @@ test.describe("shop-actions", () => {
     await expect(page.locator("text=Success")).toBeVisible({ timeout: 20000 });
   });
 
-  test("should correctly handle rapid increment clicks after add to cart", async ({ page }) => {
+  devTest("should correctly handle rapid increment clicks after add to cart", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
     // Clear cart first to ensure test isolation
-    await clearCart(page, f.url("/shop"));
+    await clearCart(page, devURL(devServerURL, "/shop"));
 
     // Open modal - use a different product to avoid state collision
     await page
@@ -692,14 +684,10 @@ test.describe("shop-actions", () => {
 /**
  * Shop breadcrumb tests - handle data caching through intercept navigation
  */
-test.describe("shop-breadcrumbs", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
-  test("should preserve category breadcrumbs after navigating to product detail and back (no intercept from category)", async ({
+devTest.describe("shop-breadcrumbs", () => {
+  devTest("should preserve category breadcrumbs after navigating to product detail and back (no intercept from category)", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
@@ -714,7 +702,7 @@ test.describe("shop-breadcrumbs", () => {
     const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
 
     // Step 1: Navigate to shop page
-    await page.goto(f.url("/shop"));
+    await page.goto(devURL(devServerURL, "/shop"));
     await waitForHydration(page);
 
     // Verify shop breadcrumb
@@ -751,20 +739,20 @@ test.describe("shop-breadcrumbs", () => {
     await expect(breadcrumbNav.locator("text=Electronics")).toBeVisible({ timeout: 3000 });
   });
 
-  test("should display correct breadcrumbs on shop index", async ({ page }) => {
+  devTest("should display correct breadcrumbs on shop index", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop"));
+    await page.goto(devURL(devServerURL, "/shop"));
     await waitForHydration(page);
 
     const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
     await expect(breadcrumbNav.locator("text=Shop")).toBeVisible();
   });
 
-  test("should display category breadcrumbs", async ({ page }) => {
+  devTest("should display category breadcrumbs", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop/products/electronics"));
+    await page.goto(devURL(devServerURL, "/shop/products/electronics"));
     await waitForHydration(page);
 
     const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
@@ -772,10 +760,10 @@ test.describe("shop-breadcrumbs", () => {
     await expect(breadcrumbNav.locator("text=Electronics")).toBeVisible();
   });
 
-  test("should display product breadcrumbs on direct navigation", async ({ page }) => {
+  devTest("should display product breadcrumbs on direct navigation", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop/product/wireless-headphones"));
+    await page.goto(devURL(devServerURL, "/shop/product/wireless-headphones"));
     await waitForHydration(page);
 
     // Wait for product to load
@@ -786,10 +774,10 @@ test.describe("shop-breadcrumbs", () => {
     await expect(breadcrumbNav.locator("text=Wireless Headphones")).toBeVisible();
   });
 
-  test("should update breadcrumbs when navigating from shop to product detail", async ({ page }) => {
+  devTest("should update breadcrumbs when navigating from shop to product detail", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop"));
+    await page.goto(devURL(devServerURL, "/shop"));
     await waitForHydration(page);
 
     const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
@@ -813,10 +801,10 @@ test.describe("shop-breadcrumbs", () => {
     await expect(breadcrumbNav.locator("text=Wireless Headphones")).toBeVisible();
   });
 
-  test("should restore breadcrumbs on simple back navigation from product to shop", async ({ page }) => {
+  devTest("should restore breadcrumbs on simple back navigation from product to shop", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop"));
+    await page.goto(devURL(devServerURL, "/shop"));
     await waitForHydration(page);
 
     const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
@@ -840,17 +828,12 @@ test.describe("shop-breadcrumbs", () => {
  * The shop intercept has: when(({ from }) => !from.pathname.startsWith("/shop/products/"))
  * This means modal shows from /shop index, but NOT from category pages
  */
-test.describe("shop-conditional-intercept", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
-  test("should show modal when navigating from shop index", async ({ page }) => {
+devTest.describe("shop-conditional-intercept", () => {
+  devTest("should show modal when navigating from shop index", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
     // Start on shop index
-    await page.goto(f.url("/shop"));
+    await page.goto(devURL(devServerURL, "/shop"));
     await waitForHydration(page);
 
     // Click on a product from index
@@ -863,11 +846,11 @@ test.describe("shop-conditional-intercept", () => {
     await expect(page.locator("text=Featured Products")).toBeVisible();
   });
 
-  test("should NOT show modal when navigating from category page", async ({ page }) => {
+  devTest("should NOT show modal when navigating from category page", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
     // Start on category page
-    await page.goto(f.url("/shop/products/electronics"));
+    await page.goto(devURL(devServerURL, "/shop/products/electronics"));
     await waitForHydration(page);
 
     // Verify we're on category page
@@ -884,11 +867,11 @@ test.describe("shop-conditional-intercept", () => {
     await expect(page.locator("text=Test Revalidation Behavior")).toBeVisible({ timeout: 5000 });
   });
 
-  test("should preserve modal during action revalidation", async ({ page }) => {
+  devTest("should preserve modal during action revalidation", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
     // Start on shop index
-    await page.goto(f.url("/shop"));
+    await page.goto(devURL(devServerURL, "/shop"));
     await waitForHydration(page);
 
     // Open modal from index
@@ -919,11 +902,11 @@ test.describe("shop-conditional-intercept", () => {
     await expect(page.locator("text=Featured Products")).toBeVisible();
   });
 
-  test("should show modal from index after navigating from category to product to index", async ({ page }) => {
+  devTest("should show modal from index after navigating from category to product to index", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
     // Start on category page
-    await page.goto(f.url("/shop/products/electronics"));
+    await page.goto(devURL(devServerURL, "/shop/products/electronics"));
     await waitForHydration(page);
 
     // Navigate to product (no modal from category)
@@ -931,10 +914,9 @@ test.describe("shop-conditional-intercept", () => {
     await expect(page.locator("text=Intercepted")).not.toBeVisible({ timeout: 3000 });
     await expect(page.locator("h2:has-text('Wireless Headphones')")).toBeVisible({ timeout: 10000 });
 
-    // Navigate to shop index
-    const breadcrumbNav = page.locator('nav[aria-label="Breadcrumb"]');
-    await breadcrumbNav.locator("text=Shop").click();
-    await expect(page.locator("text=All Products")).toBeVisible({ timeout: 5000 });
+    // Navigate to shop index via Products link in shop header
+    await page.locator('a:has-text("Products")').click();
+    await expect(page.locator("text=All Products")).toBeVisible({ timeout: 10000 });
 
     // Now navigate to product from index (should show modal)
     await page.locator('a[href="/shop/product/wireless-headphones"]').first().click();
@@ -947,14 +929,10 @@ test.describe("shop-conditional-intercept", () => {
  * Tests that after an action revalidates shared loaders on page A,
  * navigating to page B that shares those loaders shows fresh data.
  */
-test.describe("shop-shared-loader-freshness", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
-  test("should use fresh segments when navigating after action revalidates shared loader", async ({
+devTest.describe("shop-shared-loader-freshness", () => {
+  devTest("should use fresh segments when navigating after action revalidates shared loader", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
@@ -972,7 +950,7 @@ test.describe("shop-shared-loader-freshness", () => {
     });
 
     // Step 1: Navigate to shop index
-    await page.goto(f.url("/shop"));
+    await page.goto(devURL(devServerURL, "/shop"));
     await waitForHydration(page);
     await expect(page.locator("text=All Products")).toBeVisible();
 
@@ -1027,13 +1005,14 @@ test.describe("shop-shared-loader-freshness", () => {
     await expect(page.locator("text=Test Revalidation Behavior")).toBeVisible();
   });
 
-  test("should show fresh cart data when navigating from product to cart after action", async ({
+  devTest("should show fresh cart data when navigating from product to cart after action", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
     // Step 1: Navigate to product detail page directly
-    await page.goto(f.url("/shop/product/wireless-headphones"));
+    await page.goto(devURL(devServerURL, "/shop/product/wireless-headphones"));
     await waitForHydration(page);
 
     // Wait for product to load
@@ -1066,13 +1045,14 @@ test.describe("shop-shared-loader-freshness", () => {
     await expect(page.locator("text=Proceed to Checkout")).toBeVisible();
   });
 
-  test("should preserve loader freshness across multiple navigations after action", async ({
+  devTest("should preserve loader freshness across multiple navigations after action", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
     // Step 1: Start on shop index
-    await page.goto(f.url("/shop"));
+    await page.goto(devURL(devServerURL, "/shop"));
     await waitForHydration(page);
 
     // Step 2: Open product modal and add to cart
@@ -1121,18 +1101,13 @@ test.describe("shop-shared-loader-freshness", () => {
 /**
  * Shop concurrent actions tests
  */
-test.describe("shop-concurrent-actions", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
+devTest.describe("shop-concurrent-actions", () => {
+  devTest.setTimeout(60000);
 
-  test.setTimeout(30000);
-
-  test("should handle rapid quantity changes from modal", async ({ page }) => {
+  devTest("should handle rapid quantity changes from modal", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop"));
+    await page.goto(devURL(devServerURL, "/shop"));
     await waitForHydration(page);
 
     // Open product modal
@@ -1169,12 +1144,13 @@ test.describe("shop-concurrent-actions", () => {
     await expect(page.locator("text=Featured Products")).toBeVisible();
   });
 
-  test("should handle concurrent add to cart actions from detail page", async ({
+  devTest("should handle concurrent add to cart actions from detail page", async ({
     page,
+    devServerURL,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop/product/wireless-headphones"));
+    await page.goto(devURL(devServerURL, "/shop/product/wireless-headphones"));
     await waitForHydration(page);
 
     // Wait for product to load
@@ -1219,10 +1195,10 @@ test.describe("shop-concurrent-actions", () => {
     ).toBeVisible();
   });
 
-  test("should handle action during modal navigation", async ({ page }) => {
+  devTest("should handle action during modal navigation", async ({ page, devServerURL }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/shop"));
+    await page.goto(devURL(devServerURL, "/shop"));
     await waitForHydration(page);
 
     // Open product modal

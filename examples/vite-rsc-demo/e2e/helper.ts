@@ -168,23 +168,18 @@ export async function getHistoryState(page: Page) {
 }
 
 /**
- * Navigate back and wait for navigation to complete
+ * Navigate back. Uses evaluate to avoid hanging on SPA popstate navigations
+ * where Playwright's goBack() waits for a page-level load event that never fires.
  */
 export async function goBack(page: Page) {
-  await Promise.all([
-    page.waitForURL(/.*/, { waitUntil: "networkidle" }),
-    page.goBack(),
-  ]);
+  await page.evaluate(() => window.history.back());
 }
 
 /**
- * Navigate forward and wait for navigation to complete
+ * Navigate forward. Uses evaluate to avoid hanging on SPA popstate navigations.
  */
 export async function goForward(page: Page) {
-  await Promise.all([
-    page.waitForURL(/.*/, { waitUntil: "networkidle" }),
-    page.goForward(),
-  ]);
+  await page.evaluate(() => window.history.forward());
 }
 
 /**

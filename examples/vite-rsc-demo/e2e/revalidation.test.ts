@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { test as devTest, devURL } from "./dev-fixture";
 import { useFixture } from "./fixture";
 import { waitForHydration, expectNoPageError } from "./helper";
 
@@ -26,20 +27,16 @@ function extractServerRendered(text: string | null): string {
  * was incorrectly removing route segments on all same-route navigations,
  * bypassing the revalidation logic.
  */
-test.describe("revalidation-query-param-navigation", () => {
-  const f = useFixture({
-    root: ".",
-    mode: "dev",
-  });
-
-  test.describe("product-detail-page", () => {
-    test("should keep timer running when navigating between query params (tab=details to tab=reviews)", async ({
+devTest.describe("revalidation-query-param-navigation", () => {
+  devTest.describe("product-detail-page", () => {
+    devTest("should keep timer running when navigating between query params (tab=details to tab=reviews)", async ({
       page,
+      devServerURL,
     }) => {
       using _ = expectNoPageError(page);
 
       // Navigate to product detail page with initial tab
-      await page.goto(f.url("/shop/product/wireless-headphones?tab=details"));
+      await page.goto(devURL(devServerURL, "/shop/product/wireless-headphones?tab=details"));
       await waitForHydration(page);
 
       // Wait for product to load
@@ -82,13 +79,14 @@ test.describe("revalidation-query-param-navigation", () => {
       expect(newClientAge).toBeGreaterThan(initialClientAge + 1);
     });
 
-    test("should keep timer running when adding query param (no tab to tab=details)", async ({
+    devTest("should keep timer running when adding query param (no tab to tab=details)", async ({
       page,
+      devServerURL,
     }) => {
       using _ = expectNoPageError(page);
 
       // Navigate to product detail page WITHOUT query params
-      await page.goto(f.url("/shop/product/wireless-headphones"));
+      await page.goto(devURL(devServerURL, "/shop/product/wireless-headphones"));
       await waitForHydration(page);
 
       // Wait for product to load
@@ -123,13 +121,14 @@ test.describe("revalidation-query-param-navigation", () => {
       expect(newClientAge).toBeGreaterThan(initialClientAge + 1);
     });
 
-    test("should reset timer when slug changes (different product)", async ({
+    devTest("should reset timer when slug changes (different product)", async ({
       page,
+      devServerURL,
     }) => {
       using _ = expectNoPageError(page);
 
       // Navigate to product detail page
-      await page.goto(f.url("/shop/product/wireless-headphones"));
+      await page.goto(devURL(devServerURL, "/shop/product/wireless-headphones"));
       await waitForHydration(page);
 
       // Wait for product to load
@@ -165,14 +164,15 @@ test.describe("revalidation-query-param-navigation", () => {
     });
   });
 
-  test.describe("blog-post-page", () => {
-    test("should keep timer running when navigating between query params (?tab=1 to ?tab=2)", async ({
+  devTest.describe("blog-post-page", () => {
+    devTest("should keep timer running when navigating between query params (?tab=1 to ?tab=2)", async ({
       page,
+      devServerURL,
     }) => {
       using _ = expectNoPageError(page);
 
       // Navigate to blog post page
-      await page.goto(f.url("/blog/hello-world"));
+      await page.goto(devURL(devServerURL, "/blog/hello-world"));
       await waitForHydration(page);
 
       // Wait for page to load - check for the heading
