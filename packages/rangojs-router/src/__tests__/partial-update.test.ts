@@ -395,8 +395,9 @@ describe("partial-update", () => {
 
     it("forces re-render when leavingIntercept even with empty diff", async () => {
       const cached = seg("L0", { type: "layout" });
+      const modal = seg("L0.@modal", { type: "parallel", namespace: "intercept:modal" });
       const store = createMockStore({
-        cachedSegments: [cached],
+        cachedSegments: [cached, modal],
         segmentIds: ["L0", "L0.@modal"],
       });
 
@@ -492,9 +493,14 @@ describe("partial-update", () => {
   });
 
   describe("intercept segment filtering", () => {
-    it("filters .@ segments from segmentIds when leavingIntercept", async () => {
+    it("filters intercept segments from segmentIds when leavingIntercept", async () => {
+      const layout = seg("L0", { type: "layout" });
+      const route = seg("L0R0");
+      const modal = seg("L0.@modal", { type: "parallel", namespace: "intercept:modal" });
+
       const store = createMockStore({
         segmentIds: ["L0", "L0R0", "L0.@modal"],
+        cachedSegments: [layout, route, modal],
       });
 
       const { client } = createMockClient({
@@ -519,7 +525,7 @@ describe("partial-update", () => {
         leavingIntercept: true,
       });
 
-      // fetchPartial should be called with filtered segments (no .@)
+      // fetchPartial should be called with filtered segments (no intercept namespace segments)
       const fetchCall = (client.fetchPartial as any).mock.calls[0][0];
       expect(fetchCall.segmentIds).toEqual(["L0", "L0R0"]);
       expect(fetchCall.segmentIds).not.toContain("L0.@modal");

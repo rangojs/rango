@@ -53,7 +53,7 @@ import { RevalidateButton } from "./components/RevalidateButton.js";
  * because they have intercepts that need to share the same parent context.
  * Other routes are included from separate modules.
  */
-export const urlpatterns = urls(({ layout, path, include, intercept, loader, loading, when, middleware }) => [
+export const urlpatterns = urls(({ layout, path, include, intercept, loader, loading, when, middleware, parallel }) => [
   layout(RootLayout, () => [
     // === CORE ROUTES (inline for intercept support) ===
 
@@ -270,6 +270,17 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
       { name: "slowProduct.detail" },
       () => [loader(SlowProductDetailLoader)]
     ),
+
+    // === PARALLEL SEGMENTS ===
+    // Sidebar persists across all routes in this layout
+    parallel({
+      "@sidebar": () => (
+        <aside data-testid="sidebar">
+          <h3 data-testid="sidebar-title">Sidebar</h3>
+          <p>Navigation links and filters</p>
+        </aside>
+      ),
+    }),
 
     // === INTERCEPTS ===
     // Defined after routes but in same layout callback for shared parent context

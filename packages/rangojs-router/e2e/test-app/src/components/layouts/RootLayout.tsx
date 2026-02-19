@@ -28,9 +28,12 @@ export function RootLayout(ctx: any) {
       </nav>
       <BreadcrumbNav testId="breadcrumbs" />
       <SegmentsDisplay />
-      <main data-testid="main-content">
-        <Outlet />
-      </main>
+      <div style={{ display: "flex" }}>
+        <main data-testid="main-content" style={{ flex: 1 }}>
+          <Outlet />
+        </main>
+        <Outlet name="@sidebar" />
+      </div>
       <Outlet name="@modal" />
     </div>
   );
