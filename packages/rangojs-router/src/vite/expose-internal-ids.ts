@@ -11,6 +11,7 @@ import {
   countArgs,
   findStatementEnd,
   buildExportMap,
+  escapeRegExp,
 } from "./expose-id-utils.ts";
 import {
   transformInlineHandlers,
@@ -69,9 +70,6 @@ const STRICT_CREATE_CONFIGS: StrictCreateTransformConfig[] = [
   { fnName: "createLocationState" },
 ];
 
-function escapeRegExp(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 /**
  * Check whether every non-type export in `code` is accounted for by the given
@@ -656,10 +654,13 @@ function transformRouter(
     const callStart = match.index;
     const parenPos = match.index + match[0].length - 1;
 
-    const afterParen = code.slice(parenPos + 1).trimStart();
+    // Scope the $$id check to within this call's arguments only,
+    // not the entire remaining file.
+    const closeParen = findMatchingParen(code, parenPos + 1);
+    const callArgs = code.slice(parenPos + 1, closeParen);
 
-    // Skip if $$id is already present
-    if (afterParen.includes("$$id")) continue;
+    // Skip if $$id is already present in this call
+    if (callArgs.includes("$$id")) continue;
 
     // Compute line number for this call
     const lineNumber = code.slice(0, callStart).split("\n").length;
@@ -671,6 +672,7 @@ function transformRouter(
     changed = true;
     const injected = ` $$id: "${hash}", $$routeNames: ${routeNamesVar},`;
 
+    const afterParen = callArgs.trimStart();
     if (afterParen.startsWith("{")) {
       const bracePos = code.indexOf("{", parenPos + 1);
       s.appendRight(bracePos + 1, injected);

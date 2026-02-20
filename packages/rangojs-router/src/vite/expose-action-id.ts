@@ -96,7 +96,10 @@ function applyServerReferenceWrapping(
   }
 
   // Match: createServerReference("hash#actionName", ...) or $$ReactClient.createServerReference(...)
-  // The RSC plugin uses $$ReactClient namespace in transformed code
+  // The RSC plugin uses $$ReactClient namespace in transformed code.
+  // Note: [^)]* cannot handle nested parens in trailing args. This is safe in practice
+  // because the RSC plugin always generates simple variable references (e.g., callServer)
+  // as the second argument, never nested function calls.
   const pattern =
     /((?:\$\$\w+\.)?createServerReference)\(("[^"]+#[^"]+")([^)]*)\)/g;
 

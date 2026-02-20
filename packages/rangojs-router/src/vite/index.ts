@@ -27,7 +27,7 @@ import {
   getPackageAliases,
   getPublishedPackageName,
 } from "./package-resolution.ts";
-import { skipStringOrComment } from "./expose-id-utils.ts";
+import { skipStringOrComment, escapeRegExp } from "./expose-id-utils.ts";
 
 // Re-export plugins
 export { exposeActionId } from "./expose-action-id.ts";
@@ -539,8 +539,9 @@ function buildRouteToStaticPrefix(
  * Uses skipStringOrComment from expose-id-utils to correctly handle
  * template literal ${...} expressions, comments, and nested strings.
  * Returns the position after the closing paren, or -1 if unmatched.
+ * @internal Exported for testing only.
  */
-function findMatchingParenInBundle(code: string, openParenPos: number): number {
+export function findMatchingParenInBundle(code: string, openParenPos: number): number {
   let depth = 1;
   let pos = openParenPos;
   while (pos < code.length && depth > 0) {
@@ -559,8 +560,9 @@ function findMatchingParenInBundle(code: string, openParenPos: number): number {
 /**
  * Scan a bundled chunk for handler exports of a given type and extract
  * their names + $$id values. Optionally detects passthrough flag.
+ * @internal Exported for testing only.
  */
-function extractHandlerExportsFromChunk(
+export function extractHandlerExportsFromChunk(
   chunkCode: string,
   handlerModules: Map<string, string[]>,
   fnName: string,
@@ -570,16 +572,18 @@ function extractHandlerExportsFromChunk(
 
   for (const [, handlerNames] of handlerModules) {
     for (const name of handlerNames) {
+      const eName = escapeRegExp(name);
       const idPattern = new RegExp(
-        `\\b${name}\\.\\$\\$id\\s*=\\s*"([^"]+)"`,
+        `(?<![a-zA-Z0-9_])${eName}\\.\\$\\$id\\s*=\\s*"([^"]+)"`,
       );
       const match = chunkCode.match(idPattern);
       if (!match) continue;
 
       let isPassthrough = false;
       if (detectPassthrough) {
+        const eFnName = escapeRegExp(fnName);
         const callStartRe = new RegExp(
-          `const\\s+${name}\\s*=\\s*${fnName}\\s*(?:<[^>]*>)?\\s*\\(`,
+          `const\\s+${eName}\\s*=\\s*${eFnName}\\s*(?:<[^>]*>)?\\s*\\(`,
         );
         const callStart = callStartRe.exec(chunkCode);
         if (callStart) {
@@ -602,8 +606,9 @@ function extractHandlerExportsFromChunk(
  * Evict handler code from a bundled chunk, replacing full handler call
  * expressions with lightweight stub objects. Returns the modified code
  * and bytes saved, or null if no changes were made.
+ * @internal Exported for testing only.
  */
-function evictHandlerCode(
+export function evictHandlerCode(
   code: string,
   exports: Array<{ name: string; handlerId: string; passthrough?: boolean }>,
   fnName: string,
@@ -612,11 +617,13 @@ function evictHandlerCode(
   const originalSize = Buffer.byteLength(code);
   let modified = code;
 
+  const eFnName = escapeRegExp(fnName);
   for (const { name, handlerId, passthrough } of exports) {
     if (passthrough) continue;
 
+    const eName = escapeRegExp(name);
     const callStartRe = new RegExp(
-      `const\\s+${name}\\s*=\\s*${fnName}\\s*(?:<[^>]*>)?\\s*\\(`,
+      `const\\s+${eName}\\s*=\\s*${eFnName}\\s*(?:<[^>]*>)?\\s*\\(`,
     );
     const startMatch = callStartRe.exec(modified);
     if (!startMatch) continue;
@@ -638,10 +645,8 @@ function evictHandlerCode(
     modified = modified.slice(0, startMatch.index) + stub + modified.slice(rangeEnd);
 
     // Remove the now-redundant $$id assignment line.
-    // Use \b word boundary to avoid matching names that are prefixes of others
-    // (e.g., "Article" should not match "ArticleDetail.$$id").
     modified = modified.replace(
-      new RegExp(`\\n\\b${name}\\.\\$\\$id\\s*=\\s*"[^"]+";`),
+      new RegExp(`\\n${eName}\\.\\$\\$id\\s*=\\s*"[^"]+";`),
       "",
     );
   }

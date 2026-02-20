@@ -278,3 +278,11 @@ export function findStatementEnd(code: string, pos: number): number {
   return i;
 }
 
+/**
+ * Escape special regex characters in a string so it can be safely
+ * interpolated into a RegExp pattern.
+ */
+export function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
