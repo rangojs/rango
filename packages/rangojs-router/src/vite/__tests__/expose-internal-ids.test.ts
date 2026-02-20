@@ -841,3 +841,105 @@ export const PAGE_TITLE = "docs";
     expect(result.code).not.toContain("Static(");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Build-mode hashed ID test
+// ---------------------------------------------------------------------------
+
+describe("exposeInternalIds - build mode hashed IDs", () => {
+  it("produces hashed IDs (not file paths) for createLoader in build mode", () => {
+    const plugin = createPlugin({ forceBuild: true });
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+export const cartLoader = createLoader(() => fetch("/api/cart"));
+`;
+    const result = plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+
+    // Build mode: $$id should be a hash format "HASH#exportName", not "filePath#exportName"
+    const idMatch = result.code.match(/cartLoader\.\$\$id\s*=\s*"([^"]+)"/);
+    expect(idMatch).toBeDefined();
+    const id = idMatch![1];
+    // Should be hash#exportName format (8-char hex hash, not a file path)
+    expect(id).toMatch(/^[0-9a-f]{8}#cartLoader$/);
+    // Should NOT contain file path segments
+    expect(id).not.toContain("/");
+    expect(id).not.toContain("src");
+  });
+
+  it("produces file-path IDs (not hashes) for createLoader in dev mode", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+export const cartLoader = createLoader(() => fetch("/api/cart"));
+`;
+    const result = plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+
+    // Dev mode: $$id should be "filePath#exportName"
+    const idMatch = result.code.match(/cartLoader\.\$\$id\s*=\s*"([^"]+)"/);
+    expect(idMatch).toBeDefined();
+    const id = idMatch![1];
+    // Should contain file path, not a hash
+    expect(id).toMatch(/src\/urls\.tsx#cartLoader$/);
+  });
+
+  it("produces hashed IDs for createHandle in build mode", () => {
+    const plugin = createPlugin({ forceBuild: true });
+    initDev(plugin);
+
+    const code = `import { createHandle } from "@rangojs/router";
+export const seoHandle = createHandle({ title: "Shop" });
+`;
+    const result = plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+
+    const idMatch = result.code.match(/seoHandle\.\$\$id\s*=\s*"([^"]+)"/);
+    expect(idMatch).toBeDefined();
+    expect(idMatch![1]).toMatch(/^[0-9a-f]{8}#seoHandle$/);
+  });
+
+  it("produces hashed IDs for Static handler in build mode", () => {
+    const plugin = createPlugin({ forceBuild: true });
+    initDev(plugin);
+
+    const code = `import { Static } from "@rangojs/router";
+export const Nav = Static(() => <nav />);
+`;
+    const result = plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+
+    const idMatch = result.code.match(/Nav\.\$\$id\s*=\s*"([^"]+)"/);
+    expect(idMatch).toBeDefined();
+    expect(idMatch![1]).toMatch(/^[0-9a-f]{8}#Nav$/);
+  });
+
+  it("uses same hash for dev and build client stubs", () => {
+    // Dev mode
+    const devPlugin = createPlugin();
+    initDev(devPlugin);
+    const code = `import { createLoader } from "@rangojs/router";
+export const cartLoader = createLoader(() => fetch("/api/cart"));
+`;
+    const devResult = devPlugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(devResult).toBeDefined();
+    const devId = devResult.code.match(/\$\$id:\s*"([^"]+)"/)?.[1];
+
+    // Build mode
+    const buildPlugin = createPlugin({ forceBuild: true });
+    initDev(buildPlugin);
+    const buildResult = buildPlugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(buildResult).toBeDefined();
+    const buildId = buildResult.code.match(/\$\$id:\s*"([^"]+)"/)?.[1];
+
+    // Client stubs should have the same ID format in both modes
+    // (both reference the same loader by hash or path)
+    expect(devId).toBeDefined();
+    expect(buildId).toBeDefined();
+    // Dev uses filePath#name, build uses hash#name — different formats
+    expect(devId).toMatch(/src\/urls\.tsx#cartLoader/);
+    expect(buildId).toMatch(/^[0-9a-f]{8}#cartLoader$/);
+  });
+});

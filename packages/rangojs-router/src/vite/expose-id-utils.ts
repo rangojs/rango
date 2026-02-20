@@ -119,7 +119,10 @@ export function detectImports(code: string): DetectedImports {
     if (/\bcreateRouter\b/.test(imports)) result.router = true;
   }
 
-  // createRouter has a stricter check: only from "@rangojs/router" (not sub-paths)
+  // createRouter has a stricter check: only from "@rangojs/router" (not sub-paths).
+  // NOTE: This is intentional — detectImports is used as a fast pre-filter in
+  // exposeInternalIds (which does NOT handle router transforms). The separate
+  // exposeRouterId plugin handles createRouter and DOES accept the /server subpath.
   if (result.router) {
     result.router =
       /import\s*\{[^}]*\bcreateRouter\b[^}]*\}\s*from\s*["']@rangojs\/router["']/.test(
@@ -276,47 +279,10 @@ export function findStatementEnd(code: string, pos: number): number {
 }
 
 /**
- * Simple depth-counter paren matching. Does NOT skip strings/comments.
- * Used by loader and handle transforms where the simpler approach suffices.
- * Returns the index after the closing paren.
+ * Escape special regex characters in a string so it can be safely
+ * interpolated into a RegExp pattern.
  */
-export function findClosingParen(code: string, startPos: number): number {
-  let depth = 1;
-  let i = startPos;
-  while (i < code.length && depth > 0) {
-    if (code[i] === "(") depth++;
-    if (code[i] === ")") depth--;
-    i++;
-  }
-  return i;
+export function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/**
- * Count arguments using simple depth counting (no string/comment awareness).
- * Used by the loader transform where the original code used this simpler approach.
- */
-export function countArgsSimple(
-  code: string,
-  startPos: number,
-  endPos: number,
-): number {
-  let depth = 0;
-  let argCount = 0;
-  let hasContent = false;
-
-  for (let i = startPos; i < endPos; i++) {
-    const char = code[i];
-    if (char === "(" || char === "[" || char === "{") {
-      depth++;
-      hasContent = true;
-    } else if (char === ")" || char === "]" || char === "}") {
-      depth--;
-    } else if (char === "," && depth === 0) {
-      argCount++;
-    } else if (!/\s/.test(char)) {
-      hasContent = true;
-    }
-  }
-
-  return hasContent ? argCount + 1 : 0;
-}

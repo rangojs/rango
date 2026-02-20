@@ -1,14 +1,189 @@
 import { describe, it, expect } from "vitest";
 import {
   hashId,
+  normalizePath,
   detectImports,
   skipStringOrComment,
   findMatchingParen,
   countArgs,
   findStatementEnd,
-  findClosingParen,
-  countArgsSimple,
+  buildExportMap,
+  escapeRegExp,
 } from "../expose-id-utils.ts";
+
+describe("normalizePath", () => {
+  it("returns forward-slash paths unchanged", () => {
+    expect(normalizePath("src/utils/file.ts")).toBe("src/utils/file.ts");
+  });
+
+  it("handles paths with path.sep (platform-dependent)", () => {
+    // normalizePath splits on path.sep and joins with "/".
+    // On macOS/Linux path.sep is "/" so backslashes pass through unchanged.
+    // On Windows path.sep is "\\" so backslashes would be converted.
+    const input = ["src", "utils", "file.ts"].join("/");
+    expect(normalizePath(input)).toBe("src/utils/file.ts");
+  });
+
+  it("handles empty string", () => {
+    expect(normalizePath("")).toBe("");
+  });
+
+  it("handles single component path", () => {
+    expect(normalizePath("file.ts")).toBe("file.ts");
+  });
+});
+
+describe("buildExportMap", () => {
+  function makeProgramBody(body: any[]): any {
+    return { body };
+  }
+
+  it("extracts export const declarations", () => {
+    const program = makeProgramBody([
+      {
+        type: "ExportNamedDeclaration",
+        declaration: {
+          type: "VariableDeclaration",
+          declarations: [{ id: { type: "Identifier", name: "myLoader" } }],
+        },
+        specifiers: [],
+        source: null,
+      },
+    ]);
+    const map = buildExportMap(program);
+    expect(map.get("myLoader")).toEqual(["myLoader"]);
+  });
+
+  it("extracts export { X } specifiers", () => {
+    const program = makeProgramBody([
+      {
+        type: "ExportNamedDeclaration",
+        declaration: null,
+        source: null,
+        specifiers: [
+          {
+            type: "ExportSpecifier",
+            local: { type: "Identifier", name: "foo" },
+            exported: { type: "Identifier", name: "foo" },
+          },
+        ],
+      },
+    ]);
+    const map = buildExportMap(program);
+    expect(map.get("foo")).toEqual(["foo"]);
+  });
+
+  it("extracts export { X as Y } renames", () => {
+    const program = makeProgramBody([
+      {
+        type: "ExportNamedDeclaration",
+        declaration: null,
+        source: null,
+        specifiers: [
+          {
+            type: "ExportSpecifier",
+            local: { type: "Identifier", name: "internalName" },
+            exported: { type: "Identifier", name: "PublicName" },
+          },
+        ],
+      },
+    ]);
+    const map = buildExportMap(program);
+    expect(map.get("internalName")).toEqual(["PublicName"]);
+  });
+
+  it("skips re-exports (export { X } from '...')", () => {
+    const program = makeProgramBody([
+      {
+        type: "ExportNamedDeclaration",
+        declaration: null,
+        source: { type: "Literal", value: "./other.ts" },
+        specifiers: [
+          {
+            type: "ExportSpecifier",
+            local: { type: "Identifier", name: "reExported" },
+            exported: { type: "Identifier", name: "reExported" },
+          },
+        ],
+      },
+    ]);
+    const map = buildExportMap(program);
+    expect(map.size).toBe(0);
+  });
+
+  it("handles multiple declarations in one export const", () => {
+    const program = makeProgramBody([
+      {
+        type: "ExportNamedDeclaration",
+        declaration: {
+          type: "VariableDeclaration",
+          declarations: [
+            { id: { type: "Identifier", name: "a" } },
+            { id: { type: "Identifier", name: "b" } },
+          ],
+        },
+        specifiers: [],
+        source: null,
+      },
+    ]);
+    const map = buildExportMap(program);
+    expect(map.get("a")).toEqual(["a"]);
+    expect(map.get("b")).toEqual(["b"]);
+  });
+
+  it("collects multiple export names for same local", () => {
+    const program = makeProgramBody([
+      {
+        type: "ExportNamedDeclaration",
+        declaration: null,
+        source: null,
+        specifiers: [
+          {
+            type: "ExportSpecifier",
+            local: { type: "Identifier", name: "impl" },
+            exported: { type: "Identifier", name: "Alias1" },
+          },
+        ],
+      },
+      {
+        type: "ExportNamedDeclaration",
+        declaration: null,
+        source: null,
+        specifiers: [
+          {
+            type: "ExportSpecifier",
+            local: { type: "Identifier", name: "impl" },
+            exported: { type: "Identifier", name: "Alias2" },
+          },
+        ],
+      },
+    ]);
+    const map = buildExportMap(program);
+    expect(map.get("impl")).toEqual(["Alias1", "Alias2"]);
+  });
+
+  it("handles empty program body", () => {
+    const map = buildExportMap({ body: [] });
+    expect(map.size).toBe(0);
+  });
+
+  it("handles undefined body", () => {
+    const map = buildExportMap({});
+    expect(map.size).toBe(0);
+  });
+});
+
+describe("escapeRegExp", () => {
+  it("escapes special regex characters", () => {
+    expect(escapeRegExp("$Nav")).toBe("\\$Nav");
+    expect(escapeRegExp("foo.bar")).toBe("foo\\.bar");
+    expect(escapeRegExp("a+b*c?")).toBe("a\\+b\\*c\\?");
+  });
+
+  it("leaves normal strings unchanged", () => {
+    expect(escapeRegExp("myLoader")).toBe("myLoader");
+  });
+});
 
 describe("hashId", () => {
   it("should generate consistent hashes", () => {
@@ -123,6 +298,13 @@ describe("detectImports", () => {
     const result = detectImports(code);
     expect(result.any).toBe(false);
   });
+
+  it("should handle empty string", () => {
+    const result = detectImports("");
+    expect(result.any).toBe(false);
+    expect(result.loader).toBe(false);
+    expect(result.router).toBe(false);
+  });
 });
 
 describe("skipStringOrComment", () => {
@@ -167,6 +349,37 @@ describe("skipStringOrComment", () => {
     const code = "abc";
     expect(skipStringOrComment(code, 0)).toBe(0);
   });
+
+  it("should handle unterminated double-quoted string", () => {
+    const code = `"unterminated`;
+    expect(skipStringOrComment(code, 0)).toBe(code.length);
+  });
+
+  it("should handle unterminated single-quoted string", () => {
+    const code = `'unterminated`;
+    expect(skipStringOrComment(code, 0)).toBe(code.length);
+  });
+
+  it("should handle unterminated template literal", () => {
+    const code = "`unterminated";
+    expect(skipStringOrComment(code, 0)).toBe(code.length);
+  });
+
+  it("should handle nested template expression with string", () => {
+    const code = '`a ${`inner`} b` rest';
+    expect(skipStringOrComment(code, 0)).toBe(16);
+  });
+
+  it("should handle unterminated block comment", () => {
+    const code = "/* unclosed";
+    expect(skipStringOrComment(code, 0)).toBe(code.length);
+  });
+
+  it("should not treat / alone as comment start", () => {
+    const code = "a / b";
+    // At pos 2, the char is '/', next is ' ' (not / or *), so returns pos
+    expect(skipStringOrComment(code, 2)).toBe(2);
+  });
 });
 
 describe("findMatchingParen", () => {
@@ -189,18 +402,6 @@ describe("findMatchingParen", () => {
   it("should skip parens inside comments", () => {
     const code = "fn(/* ( */ b)";
     expect(findMatchingParen(code, 3)).toBe(13);
-  });
-});
-
-describe("findClosingParen", () => {
-  it("should find simple closing paren", () => {
-    const code = "fn(a, b)";
-    expect(findClosingParen(code, 3)).toBe(8);
-  });
-
-  it("should handle nested parens", () => {
-    const code = "fn(a(b), c)";
-    expect(findClosingParen(code, 3)).toBe(11);
   });
 });
 
@@ -229,19 +430,20 @@ describe("countArgs", () => {
     const code = `fn("a,b", c)`;
     expect(countArgs(code, 3, 11)).toBe(2);
   });
-});
 
-describe("countArgsSimple", () => {
-  it("should count zero args for empty parens", () => {
-    expect(countArgsSimple("fn()", 3, 3)).toBe(0);
+  it("should count whitespace-only as zero args", () => {
+    const code = "fn(   )";
+    expect(countArgs(code, 3, 6)).toBe(0);
   });
 
-  it("should count two args", () => {
-    expect(countArgsSimple("fn(a, b)", 3, 7)).toBe(2);
+  it("should handle three args", () => {
+    const code = "fn(a, b, c)";
+    expect(countArgs(code, 3, 10)).toBe(3);
   });
 
-  it("should not count commas inside nested structures", () => {
-    expect(countArgsSimple("fn({a: 1, b: 2}, c)", 3, 18)).toBe(2);
+  it("should handle nested array brackets", () => {
+    const code = "fn([1, 2], b)";
+    expect(countArgs(code, 3, 12)).toBe(2);
   });
 });
 
