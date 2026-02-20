@@ -909,7 +909,7 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
           }
         : {}),
       ...(isStaticHandler(handler)
-        ? { isStaticPrerender: true as const }
+        ? { isStaticPrerender: true as const, ...(handler.$$id ? { staticHandlerId: handler.$$id } : {}) }
         : {}),
       ...(resolveResponseType(options)
         ? { responseType: resolveResponseType(options) }

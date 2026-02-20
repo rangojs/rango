@@ -19,10 +19,23 @@ export interface PrerenderStore {
     PrerenderEntry | null | Promise<PrerenderEntry | null>;
 }
 
+export interface StaticEntry {
+  encoded: string;
+  handles: Record<string, unknown[]>;
+}
+
+export interface StaticStore {
+  get(handlerId: string): Promise<StaticEntry | null>;
+}
+
 declare global {
   // Injected by closeBundle post-processing: map of key -> () => import("./assets/__pr-*.js")
   // eslint-disable-next-line no-var
   var __PRERENDER_MANIFEST: Record<string, () => Promise<{ default: PrerenderEntry }>> | undefined;
+  // Injected by closeBundle post-processing: map of handlerId -> () => import("./assets/__st-*.js")
+  // Asset default export is either a string (no handles) or { encoded, handles } object.
+  // eslint-disable-next-line no-var
+  var __STATIC_MANIFEST: Record<string, () => Promise<{ default: string | StaticEntry }>> | undefined;
   // Injected by virtual module in dev mode for on-demand prerender
   // eslint-disable-next-line no-var
   var __PRERENDER_DEV_URL: string | undefined;
@@ -77,6 +90,41 @@ export function createPrerenderStore(): PrerenderStore | null {
 
       const promise = loader().then((mod) => mod.default).catch(() => null);
       cache.set(key, promise);
+      return promise;
+    },
+  };
+}
+
+/**
+ * Create a static segment store.
+ * Production only: backed by globalThis.__STATIC_MANIFEST injected at build time.
+ * Returns null if no static data is available (dev mode or no Static handlers).
+ */
+export function createStaticStore(): StaticStore | null {
+  const manifest = globalThis.__STATIC_MANIFEST;
+  if (!manifest || Object.keys(manifest).length === 0) return null;
+
+  const cache = new Map<string, Promise<StaticEntry | null>>();
+
+  return {
+    get(handlerId: string): Promise<StaticEntry | null> {
+      const cached = cache.get(handlerId);
+      if (cached) return cached;
+
+      const importFn = manifest[handlerId];
+      if (!importFn) return Promise.resolve(null);
+
+      const promise = importFn()
+        .then((mod) => {
+          const val = mod.default;
+          // Normalize: string-only (no handles) or { encoded, handles }
+          if (typeof val === "string") {
+            return { encoded: val, handles: {} } as StaticEntry;
+          }
+          return val as StaticEntry;
+        })
+        .catch(() => null);
+      cache.set(handlerId, promise);
       return promise;
     },
   };

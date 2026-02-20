@@ -105,6 +105,18 @@ test.describe("static-handler (dev)", () => {
     await expect(testId(page, "static-toc-sidebar")).not.toBeVisible();
   });
 
+  // -- Handles (breadcrumbs) with Static layout --
+
+  test("static layout pushes breadcrumb handle data", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-content"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "breadcrumbs")).toBeVisible();
+    await expect(testId(page, "breadcrumb-docs")).toBeVisible();
+  });
+
   // -- Client navigation --
 
   test("client navigation preserves static layout", async ({ page }) => {
@@ -297,6 +309,40 @@ test.describe("static-handler (production)", () => {
     await expect(testId(page, "docs-nav-deployment")).toBeVisible();
   });
 
+  // -- Handles (breadcrumbs) with Static layout --
+
+  test("static layout pushes breadcrumb handle data on direct visit", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-content"));
+    await waitForHydration(page);
+
+    // Breadcrumbs component should render the "Docs" breadcrumb
+    // pushed by the Static DocsNavLayout handler
+    await expect(testId(page, "breadcrumbs")).toBeVisible();
+    await expect(testId(page, "breadcrumb-docs")).toBeVisible();
+  });
+
+  test("static layout breadcrumb persists across client navigation", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-content"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "breadcrumb-docs")).toBeVisible();
+
+    await using __ = await expectNoReload(page);
+
+    // Navigate to slug page — layout breadcrumb should persist
+    await testId(page, "docs-nav-getting-started").click();
+    await expect(testId(page, "docs-page")).toBeVisible();
+    await expect(testId(page, "breadcrumb-docs")).toBeVisible();
+  });
+
   // -- Client navigation (covers all three) --
 
   test("client navigation to static content from another page", async ({
@@ -420,6 +466,122 @@ test.describe("static-handler (production)", () => {
 });
 
 // ==========================================================================
+// Production: verify Static is truly pre-rendered (timestamp frozen)
+// If the handler runs live, the timestamp changes on each reload.
+// ==========================================================================
+
+test.describe("static-handler timestamp stability (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  // NOTE: BUILD_TIMESTAMP is a module-level constant, so it's stable across
+  // requests even if the handler re-executes. These tests confirm module-level
+  // constants work, but do NOT prove true pre-rendering.
+
+  test("layout BUILD_TIMESTAMP is stable across reloads", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-content"));
+    await waitForHydration(page);
+
+    const ts1 = await testId(page, "static-nav-build-time").textContent();
+
+    await page.reload();
+    await waitForHydration(page);
+
+    const ts2 = await testId(page, "static-nav-build-time").textContent();
+
+    expect(ts1).toBe(ts2);
+  });
+
+  test("path BUILD_TIMESTAMP is stable across reloads", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-content"));
+    await waitForHydration(page);
+
+    const ts1 = await testId(page, "static-index-build-time").textContent();
+
+    await page.reload();
+    await waitForHydration(page);
+
+    const ts2 = await testId(page, "static-index-build-time").textContent();
+
+    expect(ts1).toBe(ts2);
+  });
+
+  test("parallel BUILD_TIMESTAMP is stable across reloads", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-content/getting-started"));
+    await waitForHydration(page);
+
+    const ts1 = await testId(page, "static-toc-build-time").textContent();
+
+    await page.reload();
+    await waitForHydration(page);
+
+    const ts2 = await testId(page, "static-toc-build-time").textContent();
+
+    expect(ts1).toBe(ts2);
+  });
+
+  // These tests use Date.now() INSIDE the handler function, which changes
+  // on every invocation. If the handler is truly pre-rendered, this value
+  // would be frozen at build time. If running live, it changes per request.
+
+  test("layout handler-time is stable across reloads (handler not re-executing)", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-content"));
+    await waitForHydration(page);
+
+    const ts1 = await testId(page, "static-nav-handler-time").textContent();
+
+    await page.reload();
+    await waitForHydration(page);
+
+    const ts2 = await testId(page, "static-nav-handler-time").textContent();
+
+    expect(ts1).toBe(ts2);
+  });
+
+  test("path handler-time is stable across reloads (handler not re-executing)", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-content"));
+    await waitForHydration(page);
+
+    const ts1 = await testId(page, "static-index-handler-time").textContent();
+
+    await page.reload();
+    await waitForHydration(page);
+
+    const ts2 = await testId(page, "static-index-handler-time").textContent();
+
+    expect(ts1).toBe(ts2);
+  });
+
+  test("parallel handler-time is stable across reloads (handler not re-executing)", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-content/getting-started"));
+    await waitForHydration(page);
+
+    const ts1 = await testId(page, "static-toc-handler-time").textContent();
+
+    await page.reload();
+    await waitForHydration(page);
+
+    const ts2 = await testId(page, "static-toc-handler-time").textContent();
+
+    expect(ts1).toBe(ts2);
+  });
+});
+
+// ==========================================================================
 // Build output validation: bundle isolation
 // ==========================================================================
 
@@ -457,13 +619,13 @@ test.describe("static-handler build output (production)", () => {
     expect(staticHandlersBundle.length).toBeGreaterThan(0);
   });
 
-  test("static handler code is present in RSC bundle (not yet evicted)", () => {
-    // Handler code lives in the RSC bundle until build-time rendering
-    // + asset serialization is implemented. Once that's done, handler
-    // bodies will be evicted and replaced with asset-loading stubs.
-    expect(staticHandlersBundle).toContain("Static");
-    expect(staticHandlersBundle).toContain("Docs Navigation");
-    expect(staticHandlersBundle).toContain("Table of Contents");
+  test("static handler bodies are evicted from RSC bundle", () => {
+    // Handler bodies are replaced with stubs after build-time rendering.
+    // The original handler content strings should no longer be present.
+    expect(staticHandlersBundle).not.toContain("Docs Navigation");
+    expect(staticHandlersBundle).not.toContain("Table of Contents");
+    // Stub objects should contain the brand marker
+    expect(staticHandlersBundle).toContain("staticHandler");
   });
 
   test("build-time handler content not in client bundle", () => {
@@ -490,11 +652,10 @@ test.describe("static-handler build output (production)", () => {
     expect(ssrBundle).not.toContain("readDocsNavItems");
   });
 
-  test("readDocsNavItems helper evicted from static-handlers RSC chunk", () => {
-    // Static handler code is present in RSC bundle (not yet evicted),
-    // but readDocsNavItems uses dynamic import("node:fs") so it's safe
-    // for workerd -- node:fs is never eagerly imported at module scope.
-    // When handler eviction is implemented, this function will be dropped too.
+  test("readDocsNavItems helper remains in static-handlers RSC chunk after eviction", () => {
+    // After handler eviction, readDocsNavItems stays in the chunk because
+    // eviction is a post-build string replacement -- Rollup already bundled
+    // the helper. node:fs is imported dynamically, not at module scope.
     expect(staticHandlersBundle).toContain("readDocsNavItems");
     expect(staticHandlersBundle).not.toMatch(
       /import\s*\{[^}]*readFileSync[^}]*\}\s*from\s*["']node:fs["']/,

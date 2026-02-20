@@ -93,6 +93,8 @@ import type { ResolvedSegment } from "../../types.js";
 import type { MatchContext, MatchPipelineState } from "../match-context.js";
 import { getRouterContext } from "../router-context.js";
 import type { PrerenderStore, PrerenderEntry } from "../../prerender/store.js";
+import type { HandleStore } from "../../server/handle-store.js";
+import { getRequestContext } from "../../server/request-context.js";
 
 // Lazily initialized prerender store singleton and dynamically imported deps.
 // Dynamic imports prevent pulling in @vitejs/plugin-rsc/rsc virtual module at
@@ -129,6 +131,7 @@ async function* yieldFromStore<TEnv>(
   ctx: MatchContext<TEnv>,
   state: MatchPipelineState,
   pipelineStart: number,
+  handleStoreRef?: HandleStore,
 ): AsyncGenerator<ResolvedSegment> {
   const {
     resolveLoadersOnlyWithRevalidation,
@@ -141,8 +144,9 @@ async function* yieldFromStore<TEnv>(
 
   const segments = await _deserializeSegments(entry.segments);
 
-  // Replay handle data (same as runtime cache hit path)
-  const handleStore = _getRequestContext()?._handleStore;
+  // Replay handle data (same as runtime cache hit path).
+  // Prefer the eagerly-captured handleStoreRef to avoid ALS disruption in workerd.
+  const handleStore = handleStoreRef ?? _getRequestContext()?._handleStore;
   if (handleStore) {
     for (const [segId, segHandles] of Object.entries(entry.handles)) {
       if (Object.keys(segHandles).length > 0) {
@@ -245,6 +249,13 @@ export function withCacheLookup<TEnv>(
     const pipelineStart = performance.now();
     const ms = ctx.metricsStore;
 
+    // Eagerly capture the HandleStore before any async operations.
+    // In workerd/Cloudflare, dynamic imports and fetch() inside the pipeline
+    // can disrupt AsyncLocalStorage, causing getRequestContext() to return
+    // undefined afterward. Capturing the reference early ensures handle replay
+    // and handler handle-push work regardless of ALS state.
+    const handleStoreRef = getRequestContext()?._handleStore;
+
     const {
       evaluateRevalidation,
       buildEntryRevalidateMap,
@@ -265,7 +276,7 @@ export function withCacheLookup<TEnv>(
             ctx.matched.routeKey, paramHash + "/i", { pathname: ctx.pathname }
           );
           if (entry) {
-            yield* yieldFromStore(entry, ctx, state, pipelineStart);
+            yield* yieldFromStore(entry, ctx, state, pipelineStart, handleStoreRef);
             return;
           }
           // No intercept prerender -- fall through to normal pipeline
@@ -276,7 +287,7 @@ export function withCacheLookup<TEnv>(
             ctx.matched.routeKey, paramHash, { pathname: ctx.pathname }
           );
           if (entry) {
-            yield* yieldFromStore(entry, ctx, state, pipelineStart);
+            yield* yieldFromStore(entry, ctx, state, pipelineStart, handleStoreRef);
             return;
           }
         }
@@ -305,7 +316,7 @@ export function withCacheLookup<TEnv>(
               ctx.matched.routeKey, paramHash + "/i", { pathname: ctx.pathname }
             );
             if (entry) {
-              yield* yieldFromStore(entry, ctx, state, pipelineStart);
+              yield* yieldFromStore(entry, ctx, state, pipelineStart, handleStoreRef);
               return;
             }
             // No intercept prerender -- fall through to normal pipeline
@@ -314,7 +325,7 @@ export function withCacheLookup<TEnv>(
               ctx.matched.routeKey, paramHash, { pathname: ctx.pathname }
             );
             if (entry) {
-              yield* yieldFromStore(entry, ctx, state, pipelineStart);
+              yield* yieldFromStore(entry, ctx, state, pipelineStart, handleStoreRef);
               return;
             }
           }

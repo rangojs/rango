@@ -72,6 +72,58 @@ test.describe("prerender-handler (dev mode)", () => {
     expect(locationStateKey).not.toBe("no-ls-key");
   });
 
+  test("Static handler on non-parameterized route renders in dev", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-page"));
+    await waitForHydration(page);
+
+    await expect(page.locator('[data-testid="static-page-title"]')).toContainText(
+      "Static Page"
+    );
+    await expect(page.locator('[data-testid="static-page-content"]')).toContainText(
+      "This is a statically pre-rendered page."
+    );
+  });
+
+  test("Static handler pushes breadcrumb handle data in dev", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-page"));
+    await waitForHydration(page);
+
+    // The Static handler pushes a "Static Page" breadcrumb.
+    // BreadcrumbNav should render it (alongside "Home" from RootLayout).
+    await expect(page.locator('[data-testid="breadcrumbs"]')).toBeVisible();
+    await expect(page.locator('[data-testid="breadcrumbs-current"]')).toContainText("Static Page");
+  });
+
+  test("Static handler on parameterized route serves content for any param", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    // Visit with one param value
+    await page.goto(f.url("/static-shell/hello"));
+    await waitForHydration(page);
+
+    await expect(page.locator('[data-testid="static-shell-title"]')).toContainText(
+      "Static Shell"
+    );
+    await expect(page.locator('[data-testid="static-shell-content"]')).toContainText(
+      "This content is the same for every param."
+    );
+
+    // Visit with a completely different param value -- should get the same content
+    await page.goto(f.url("/static-shell/world"));
+    await waitForHydration(page);
+
+    await expect(page.locator('[data-testid="static-shell-title"]')).toContainText(
+      "Static Shell"
+    );
+    await expect(page.locator('[data-testid="static-shell-content"]')).toContainText(
+      "This content is the same for every param."
+    );
+  });
+
   test("dynamic prerender handler renders different params", async ({
     page,
   }) => {
@@ -218,6 +270,63 @@ test.describe("prerender-complex (dev mode)", () => {
       .textContent();
     expect(Number(ts2)).toBeGreaterThan(0);
     expect(ts2).not.toBe(ts1);
+  });
+});
+
+test.describe("Static handler (production build)", () => {
+  const f = useFixture({
+    root: "./e2e/test-app",
+    mode: "build",
+  });
+
+  test("Static on non-dynamic route renders", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-page"));
+    await waitForHydration(page);
+
+    await expect(page.locator('[data-testid="static-page-title"]')).toContainText(
+      "Static Page"
+    );
+  });
+
+  test("Static on non-dynamic route has stable timestamp across reloads (truly pre-rendered)", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-page"));
+    await waitForHydration(page);
+
+    const ts1 = await page.locator('[data-testid="static-page-timestamp"]').textContent();
+
+    await page.reload();
+    await waitForHydration(page);
+
+    const ts2 = await page.locator('[data-testid="static-page-timestamp"]').textContent();
+
+    // If truly pre-rendered, timestamp should be identical (frozen at build time)
+    expect(ts1).toBe(ts2);
+  });
+
+  test("Static on dynamic route serves content for any param value", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-shell/hello"));
+    await waitForHydration(page);
+
+    await expect(page.locator('[data-testid="static-shell-title"]')).toContainText(
+      "Static Shell"
+    );
+  });
+
+  test("Static on dynamic route serves same content for different param", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static-shell/totally-different-value"));
+    await waitForHydration(page);
+
+    await expect(page.locator('[data-testid="static-shell-title"]')).toContainText(
+      "Static Shell"
+    );
   });
 });
 

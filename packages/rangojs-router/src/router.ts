@@ -53,8 +53,10 @@ import type {
   OnErrorCallback,
   ResolvedRouteMap,
   RouteDefinition,
+  ResolvedSegment,
   RouteEntry,
   TrailingSlashMode,
+  InternalHandlerContext,
 } from "./types";
 import type {
   NonceProvider,
@@ -1020,6 +1022,16 @@ export interface RSCRouter<
     interceptSegments?: SerializedSegmentData[];
     interceptHandles?: Record<string, SegmentHandleData>;
   } | null>;
+
+  /**
+   * Render a single Static handler at build time.
+   * Returns the RSC-serialized component string and handle data, or null on failure.
+   * @internal
+   */
+  renderStaticSegment(
+    handler: Function,
+    handlerId: string,
+  ): Promise<{ encoded: string; handles: Record<string, unknown[]> } | null>;
 
   /**
    * Preview match - returns route middleware without segment resolution.
@@ -2069,6 +2081,92 @@ export function createRouter<TEnv = any>(
   }
 
   /**
+   * Render a single Static handler at build time.
+   * Creates a minimal BuildContext, calls the handler, and RSC-serializes
+   * the component. Returns the encoded Flight string (or null on failure).
+   * Used by the Vite plugin to collect static segment data at build time.
+   */
+  async function renderStaticSegment(
+    handler: Function,
+    handlerId: string,
+  ): Promise<{ encoded: string; handles: Record<string, unknown[]> } | null> {
+    const syntheticUrl = new URL("http://prerender/");
+    const syntheticRequest = new Request(syntheticUrl);
+
+    // Create a HandleStore to capture handle data pushed during rendering
+    const handleStore = createHandleStore();
+
+    // Minimal request context so setupBuildUse can find the HandleStore
+    const stubRes = new Response(null, { status: 200 });
+    const minimalRequestContext: RequestContext<TEnv> = {
+      env: {} as TEnv,
+      request: syntheticRequest,
+      url: syntheticUrl,
+      pathname: "/",
+      searchParams: syntheticUrl.searchParams,
+      var: {},
+      get: () => undefined as any,
+      set: () => {},
+      params: {},
+      res: stubRes,
+      cookie: () => undefined,
+      cookies: () => ({}),
+      setCookie: () => {},
+      deleteCookie: () => {},
+      header: () => {},
+      use: (() => {
+        throw new Error("use() not available during static pre-rendering");
+      }) as any,
+      method: "GET",
+      _handleStore: handleStore,
+      waitUntil: () => {},
+      onResponse: () => {},
+      _onResponseCallbacks: [],
+      setLocationState() {},
+      _locationState: undefined,
+    };
+
+    return runWithRequestContext(minimalRequestContext, async () => {
+      const buildCtx = createHandlerContext<TEnv>(
+        {},
+        syntheticRequest,
+        syntheticUrl.searchParams,
+        "/",
+        syntheticUrl,
+        {},
+        mergedRouteMap,
+        "",
+      );
+
+      // Set segment ID so handle pushes are keyed correctly
+      (buildCtx as InternalHandlerContext)._currentSegmentId = handlerId;
+
+      setupBuildUse(buildCtx);
+
+      const raw = await handler(buildCtx);
+      const component = raw?.type ? raw : raw;
+
+      const segment: ResolvedSegment = {
+        id: handlerId,
+        namespace: handlerId,
+        type: "layout",
+        index: 0,
+        component,
+        params: {},
+        belongsToRoute: false,
+      };
+
+      const { serializeSegments } = await import("./cache/cache-scope.js");
+      const [serialized] = await serializeSegments([segment]);
+
+      // Collect handle data pushed during rendering
+      const handles = handleStore.getDataForSegment(handlerId);
+
+      return { encoded: serialized.encoded, handles };
+    });
+  }
+
+  /**
    * Match request and return segments (document/SSR requests)
    *
    * Uses generator middleware pipeline for clean separation of concerns:
@@ -2723,6 +2821,7 @@ export function createRouter<TEnv = any>(
 
     match,
     matchForPrerender,
+    renderStaticSegment,
     matchPartial,
     matchError,
     previewMatch,
