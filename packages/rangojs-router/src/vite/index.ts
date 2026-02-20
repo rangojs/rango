@@ -1474,7 +1474,12 @@ function createRouterDiscoveryPlugin(
       if (opts?.staticRouteTypesGeneration !== false) {
         server.watcher.on("change", (filePath) => {
           if (filePath.endsWith(".gen.ts")) return;
-          if (!filePath.endsWith(".ts") && !filePath.endsWith(".tsx")) return;
+          if (
+            !filePath.endsWith(".ts") &&
+            !filePath.endsWith(".tsx") &&
+            !filePath.endsWith(".js") &&
+            !filePath.endsWith(".jsx")
+          ) return;
           // Apply scan filter as early-exit before reading file
           if (scanFilter && !scanFilter(filePath)) return;
           try {

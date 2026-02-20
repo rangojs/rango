@@ -226,8 +226,8 @@ export const DEFAULT_EXCLUDE_PATTERNS: string[] = [
   "**/__mocks__/**",
   "**/dist/**",
   "**/coverage/**",
-  "**/*.test.{ts,tsx}",
-  "**/*.spec.{ts,tsx}",
+  "**/*.test.{ts,tsx,js,jsx}",
+  "**/*.spec.{ts,tsx,js,jsx}",
 ];
 
 export type ScanFilter = (absolutePath: string) => boolean;
@@ -278,7 +278,8 @@ export function findTsFiles(dir: string, filter?: ScanFilter): string[] {
       if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
       results.push(...findTsFiles(fullPath, filter));
     } else if (
-      (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) &&
+      (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx") ||
+       entry.name.endsWith(".js") || entry.name.endsWith(".jsx")) &&
       !entry.name.includes(".gen.")
     ) {
       if (filter && !filter(fullPath)) continue;
