@@ -142,6 +142,18 @@ async function rscDeserialize<T>(
 }
 
 /**
+ * RSC-deserialize a single encoded component string back to a React element.
+ * Used by the static handler runtime to revive pre-rendered components.
+ */
+export async function deserializeComponent(
+  encoded: string
+): Promise<unknown> {
+  const temporaryReferences = createTemporaryReferenceSet();
+  const stream = stringToStream(encoded);
+  return createFromReadableStream(stream, { temporaryReferences });
+}
+
+/**
  * Serialize segments for storage.
  * Each segment's component, layout, loading, and loaderData are RSC-serialized.
  * Metadata is preserved as-is.

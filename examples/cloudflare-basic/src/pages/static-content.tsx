@@ -1,6 +1,7 @@
 import { Static } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
 import { reverse } from "../router.js";
+import { Breadcrumbs } from "../handles/breadcrumbs.js";
 
 interface NavItem {
   label: string;
@@ -43,7 +44,10 @@ const BUILD_TIMESTAMP = new Date().toISOString();
 
 // --- Static layout: rendered once at build time, wraps child routes. ---
 // The nav never changes, so there's no reason to re-render it per request.
-export const DocsNavLayout = Static(async () => {
+export const DocsNavLayout = Static(async (ctx) => {
+  const breadcrumb = ctx.use(Breadcrumbs);
+  breadcrumb({ label: "Docs", href: "/static-content" });
+
   const docsNavItems = await readDocsNavItems();
   return (
     <div data-testid="static-docs-layout">
@@ -63,6 +67,9 @@ export const DocsNavLayout = Static(async () => {
         </ul>
         <p data-testid="static-nav-build-time" style={{ fontSize: "0.75rem", color: "#999" }}>
           Nav built at: {BUILD_TIMESTAMP}
+        </p>
+        <p data-testid="static-nav-handler-time" style={{ fontSize: "0.75rem", color: "#999" }}>
+          Nav handler ran at: {Date.now()}
         </p>
       </nav>
       <div data-testid="static-docs-content">
@@ -85,6 +92,9 @@ export const DocsIndexPage = Static(async () => {
       </p>
       <p data-testid="static-index-build-time" style={{ fontSize: "0.75rem", color: "#999" }}>
         Index built at: {BUILD_TIMESTAMP}
+      </p>
+      <p data-testid="static-index-handler-time" style={{ fontSize: "0.75rem", color: "#999" }}>
+        Index handler ran at: {Date.now()}
       </p>
       <ul data-testid="static-docs-list">
         {docsNavItems.map((item) => (
@@ -118,6 +128,9 @@ export const DocsTocSidebar = Static(async () => {
       </ol>
       <p data-testid="static-toc-build-time" style={{ fontSize: "0.75rem", color: "#999" }}>
         TOC built at: {BUILD_TIMESTAMP}
+      </p>
+      <p data-testid="static-toc-handler-time" style={{ fontSize: "0.75rem", color: "#999" }}>
+        TOC handler ran at: {Date.now()}
       </p>
     </aside>
   );

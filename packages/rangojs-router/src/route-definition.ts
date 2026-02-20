@@ -849,10 +849,14 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
   // Unwrap any static handler definitions in parallel slots
   const unwrappedSlots: Record<string, any> = {};
   let hasStaticSlot = false;
+  const staticSlotIds: Record<string, string> = {};
   for (const [slotName, slotHandler] of Object.entries(slots as Record<string, any>)) {
     if (isStaticHandler(slotHandler)) {
       hasStaticSlot = true;
       unwrappedSlots[slotName] = slotHandler.handler;
+      if (slotHandler.$$id) {
+        staticSlotIds[slotName] = slotHandler.$$id;
+      }
     } else {
       unwrappedSlots[slotName] = slotHandler;
     }
@@ -876,7 +880,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     intercept: [],
     loader: [],
     ...(parallelUrlPrefix ? { mountPath: parallelUrlPrefix } : {}),
-    ...(hasStaticSlot ? { isStaticPrerender: true as const } : {}),
+    ...(hasStaticSlot ? { isStaticPrerender: true as const, ...(Object.keys(staticSlotIds).length > 0 ? { staticHandlerIds: staticSlotIds } : {}) } : {}),
   } satisfies EntryData;
 
   // Run use callback if provided to collect loaders, revalidate, loading
@@ -1139,7 +1143,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     layout: [],
     loader: [],
     ...(urlPrefix ? { mountPath: urlPrefix } : {}),
-    ...(isStatic ? { isStaticPrerender: true as const } : {}),
+    ...(isStatic ? { isStaticPrerender: true as const, ...(handler.$$id ? { staticHandlerId: handler.$$id } : {}) } : {}),
   } satisfies EntryData;
 
   // Run use callback if provided

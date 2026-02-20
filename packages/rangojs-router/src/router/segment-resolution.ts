@@ -38,6 +38,60 @@ import type {
   ActionContext,
 } from "./types.js";
 import { debugLog } from "./logging.js";
+import type { StaticStore } from "../prerender/store.js";
+
+// Lazy-initialized static store for production Static handler interception.
+// Remains undefined until first check; null means checked but no manifest.
+// When no __STATIC_MANIFEST exists (dev mode), set to null eagerly to avoid
+// the dynamic import() in ensureStaticDeps() which disrupts AsyncLocalStorage
+// in workerd/Cloudflare runtime.
+let _staticStore: StaticStore | null | undefined =
+  typeof globalThis !== "undefined" && globalThis.__STATIC_MANIFEST
+    ? undefined
+    : null;
+let _deserializeComponent: ((encoded: string) => Promise<unknown>) | undefined;
+
+async function ensureStaticDeps(): Promise<void> {
+  if (_staticStore === undefined) {
+    const { createStaticStore } = await import("../prerender/store.js");
+    _staticStore = createStaticStore();
+  }
+  if (!_deserializeComponent && _staticStore) {
+    const { deserializeComponent } = await import("../cache/cache-scope.js");
+    _deserializeComponent = deserializeComponent;
+  }
+}
+
+/**
+ * Try to load a pre-rendered Static component from the build-time store.
+ * Returns the deserialized React element, or undefined if not available.
+ * Also replays any handle data captured at build time into the request's HandleStore.
+ *
+ * @param handlerId - The handler's $$id used to look up the static store entry.
+ * @param segmentId - The runtime segment shortCode. Handle data is replayed under
+ *   this key so that useHandle's segmentOrder matching works correctly.
+ */
+async function tryStaticLookup(handlerId: string, segmentId: string): Promise<ReactNode | undefined> {
+  // Fast path: already checked and no manifest available (dev mode or no Static handlers).
+  // Avoids await which can disrupt AsyncLocalStorage in workerd/Cloudflare runtime.
+  if (_staticStore === null) return undefined;
+  await ensureStaticDeps();
+  if (!_staticStore || !_deserializeComponent) return undefined;
+  const entry = await _staticStore.get(handlerId);
+  if (!entry) return undefined;
+
+  // Replay handle data captured during build-time rendering.
+  // The data was keyed by handlerId at build time; replay under segmentId
+  // so it matches the segment order used by useHandle on the client.
+  if (entry.handles && Object.keys(entry.handles).length > 0) {
+    const handleStore = getRequestContext()?._handleStore;
+    if (handleStore) {
+      handleStore.replaySegmentData(segmentId, entry.handles);
+    }
+  }
+
+  return _deserializeComponent(entry.encoded) as Promise<ReactNode>;
+}
 
 /**
  * Handle Response returns from handlers.
@@ -145,10 +199,20 @@ export async function resolveSegment<TEnv>(
     }
 
     (context as InternalHandlerContext)._currentSegmentId = entry.shortCode;
-    const component =
-      typeof entry.handler === "function"
-        ? handleHandlerResult(await entry.handler(context))
-        : entry.handler;
+
+    // Static handler interception: use pre-rendered component from build-time store.
+    // Cast via any because the cache entry type in the union lacks isStaticPrerender.
+    const entryAny = entry as any;
+    let component: ReactNode | undefined;
+    if (entryAny.isStaticPrerender && entryAny.staticHandlerId) {
+      component = await tryStaticLookup(entryAny.staticHandlerId, entry.shortCode);
+    }
+    if (component === undefined) {
+      component =
+        typeof entry.handler === "function"
+          ? handleHandlerResult(await entry.handler(context))
+          : entry.handler;
+    }
 
     segments.push({
       id: entry.shortCode,
@@ -190,12 +254,19 @@ export async function resolveSegment<TEnv>(
     }
 
     (context as InternalHandlerContext)._currentSegmentId = entry.shortCode;
-    let component: ReactNode;
-    if (entry.loading) {
-      const result = handleHandlerResult(entry.handler(context));
-      component = result instanceof Promise ? deps.trackHandler(result) : result;
-    } else {
-      component = handleHandlerResult(await entry.handler(context));
+    let component: ReactNode | undefined;
+
+    // Static handler interception: use pre-rendered component from build-time store
+    if (entry.isStaticPrerender && (entry as any).staticHandlerId) {
+      component = await tryStaticLookup((entry as any).staticHandlerId, entry.shortCode);
+    }
+    if (component === undefined) {
+      if (entry.loading) {
+        const result = handleHandlerResult(entry.handler(context));
+        component = result instanceof Promise ? deps.trackHandler(result) : result;
+      } else {
+        component = handleHandlerResult(await entry.handler(context));
+      }
     }
 
     segments.push({
@@ -246,10 +317,18 @@ export async function resolveOrphanLayout<TEnv>(
     segments.push(...parallelSegments);
   }
 
-  const component =
-    typeof orphan.handler === "function"
-      ? handleHandlerResult(await orphan.handler(context))
-      : orphan.handler;
+  // Static handler interception for orphan layouts
+  const orphanAny = orphan as any;
+  let component: ReactNode | undefined;
+  if (orphanAny.isStaticPrerender && orphanAny.staticHandlerId) {
+    component = await tryStaticLookup(orphanAny.staticHandlerId, orphan.shortCode);
+  }
+  if (component === undefined) {
+    component =
+      typeof orphan.handler === "function"
+        ? handleHandlerResult(await orphan.handler(context))
+        : orphan.handler;
+  }
 
   segments.push({
     id: orphan.shortCode,
@@ -293,16 +372,25 @@ export async function resolveParallelEntry<TEnv>(
   >;
 
   for (const [slot, handler] of Object.entries(slots)) {
-    let component: ReactNode;
-    const hasLoadingFallback =
-      parallelEntry.loading !== undefined && parallelEntry.loading !== false;
-    if (hasLoadingFallback) {
-      const result =
-        typeof handler === "function" ? handler(context) : handler;
-      component = result as ReactNode;
-    } else {
-      component =
-        typeof handler === "function" ? await handler(context) : handler;
+    let component: ReactNode | undefined;
+
+    // Static handler interception for individual parallel slots
+    const slotStaticId = (parallelEntry as any).staticHandlerIds?.[slot];
+    if (slotStaticId) {
+      component = await tryStaticLookup(slotStaticId, `${parentShortCode}.${slot}`);
+    }
+
+    if (component === undefined) {
+      const hasLoadingFallback =
+        parallelEntry.loading !== undefined && parallelEntry.loading !== false;
+      if (hasLoadingFallback) {
+        const result =
+          typeof handler === "function" ? handler(context) : handler;
+        component = result as ReactNode;
+      } else {
+        component =
+          typeof handler === "function" ? await handler(context) : handler;
+      }
     }
 
     segments.push({
@@ -760,21 +848,28 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
         });
       })();
 
-      let component: ReactNode;
-      const hasLoadingFallback =
-        parallelEntry.loading !== undefined && parallelEntry.loading !== false;
-      if (!shouldResolve) {
-        component = null;
-      } else if (hasLoadingFallback) {
-        component =
-          (typeof handler === "function"
-            ? handler(context)
-            : handler) as ReactNode;
-      } else {
-        component =
-          typeof handler === "function"
-            ? await handler(context)
-            : handler;
+      let component: ReactNode | undefined;
+      // Static handler interception for individual parallel slots
+      const slotStaticId = (parallelEntry as any).staticHandlerIds?.[slot];
+      if (slotStaticId && shouldResolve) {
+        component = await tryStaticLookup(slotStaticId, parallelId);
+      }
+      if (component === undefined) {
+        const hasLoadingFallback =
+          parallelEntry.loading !== undefined && parallelEntry.loading !== false;
+        if (!shouldResolve) {
+          component = null;
+        } else if (hasLoadingFallback) {
+          component =
+            (typeof handler === "function"
+              ? handler(context)
+              : handler) as ReactNode;
+        } else {
+          component =
+            typeof handler === "function"
+              ? await handler(context)
+              : handler;
+        }
       }
 
       segments.push({
@@ -881,6 +976,12 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
     },
     async () => {
       (context as InternalHandlerContext)._currentSegmentId = entry.shortCode;
+      // Static handler interception: use pre-rendered component from build-time store
+      const entryAny = entry as any;
+      if (entryAny.isStaticPrerender && entryAny.staticHandlerId) {
+        const staticComponent = await tryStaticLookup(entryAny.staticHandlerId, entry.shortCode);
+        if (staticComponent !== undefined) return staticComponent;
+      }
       if (entry.type === "layout" || entry.type === "cache") {
         return typeof entry.handler === "function"
           ? handleHandlerResult(await entry.handler(context))
@@ -1104,21 +1205,28 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         });
       })();
 
-      let component: ReactNode;
-      const hasLoadingFallback =
-        parallelEntry.loading !== undefined && parallelEntry.loading !== false;
-      if (!shouldResolve) {
-        component = null;
-      } else if (hasLoadingFallback) {
-        component =
-          (typeof handler === "function"
-            ? handler(context)
-            : handler) as ReactNode;
-      } else {
-        component =
-          typeof handler === "function"
-            ? await handler(context)
-            : handler;
+      let component: ReactNode | undefined;
+      // Static handler interception for individual parallel slots
+      const slotStaticId = (parallelEntry as any).staticHandlerIds?.[slot];
+      if (slotStaticId && shouldResolve) {
+        component = await tryStaticLookup(slotStaticId, parallelId);
+      }
+      if (component === undefined) {
+        const hasLoadingFallback =
+          parallelEntry.loading !== undefined && parallelEntry.loading !== false;
+        if (!shouldResolve) {
+          component = null;
+        } else if (hasLoadingFallback) {
+          component =
+            (typeof handler === "function"
+              ? handler(context)
+              : handler) as ReactNode;
+        } else {
+          component =
+            typeof handler === "function"
+              ? await handler(context)
+              : handler;
+        }
       }
 
       segments.push({
@@ -1175,10 +1283,17 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         stale,
       });
     },
-    async () =>
-      typeof orphan.handler === "function"
+    async () => {
+      // Static handler interception for orphan layouts
+      const orphanAny = orphan as any;
+      if (orphanAny.isStaticPrerender && orphanAny.staticHandlerId) {
+        const staticComponent = await tryStaticLookup(orphanAny.staticHandlerId, orphan.shortCode);
+        if (staticComponent !== undefined) return staticComponent;
+      }
+      return typeof orphan.handler === "function"
         ? handleHandlerResult(await orphan.handler(context))
-        : orphan.handler,
+        : orphan.handler;
+    },
     () => null,
   );
 

@@ -178,7 +178,8 @@ export function createHandleStore(): HandleStore {
       if (Object.keys(data).length > 0) {
         // Clear pending emissions since we're yielding current state
         pendingEmissions = [];
-        yield cloneHandleData(data);
+        const snapshot = cloneHandleData(data);
+        yield snapshot;
       }
 
       // Continue streaming on each push

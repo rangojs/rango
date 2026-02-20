@@ -281,16 +281,19 @@ export function setupLoaderAccess<TEnv>(
   ctx: HandlerContext<any, TEnv>,
   loaderPromises: Map<string, Promise<any>>
 ): void {
-  const getHandleStore = (): HandleStore | undefined => {
-    return getRequestContext()?._handleStore;
-  };
+  // Eagerly capture the HandleStore at setup time (before pipeline async ops).
+  // In workerd/Cloudflare, dynamic imports and fetch() in the match pipeline
+  // can disrupt AsyncLocalStorage, causing getRequestContext() to return
+  // undefined when handlers later call ctx.use(handle). Capturing early
+  // ensures the store reference survives ALS disruption.
+  const handleStoreRef = getRequestContext()?._handleStore;
 
   const useLoader = createLoaderExecutor(ctx, loaderPromises);
 
   ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
     if (isHandle(item)) {
       const handle = item;
-      const store = getHandleStore();
+      const store = handleStoreRef;
       const segmentId = (ctx as InternalHandlerContext)._currentSegmentId;
 
       if (!segmentId) {
@@ -322,16 +325,14 @@ export function setupLoaderAccess<TEnv>(
 export function setupBuildUse<TEnv>(
   ctx: HandlerContext<any, TEnv>,
 ): void {
-  // Get HandleStore from request context
-  const getHandleStore = (): HandleStore | undefined => {
-    return getRequestContext()?._handleStore;
-  };
+  // Eagerly capture the HandleStore (same ALS protection as setupLoaderAccess).
+  const handleStoreRef = getRequestContext()?._handleStore;
 
   ctx.use = ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
     // Handle case: return a push function bound to the current segment
     if (isHandle(item)) {
       const handle = item;
-      const store = getHandleStore();
+      const store = handleStoreRef;
       const segmentId = (ctx as InternalHandlerContext)._currentSegmentId;
 
       if (!segmentId) {

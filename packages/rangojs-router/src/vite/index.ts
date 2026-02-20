@@ -507,6 +507,15 @@ function createRouterDiscoveryPlugin(
   // RSC entry chunk filename recorded during generateBundle for closeBundle injection.
   let rscEntryFileName: string | null = null;
 
+  // Collected static handler data: handlerId -> { encoded Flight payload, handle data }.
+  let staticCollectedData: Record<string, { encoded: string; handles: Record<string, unknown[]> }> | null = null;
+
+  // Handler chunk info for __static-handlers, populated by generateBundle.
+  let staticHandlerChunkInfo: {
+    fileName: string;
+    exports: Array<{ name: string; handlerId: string }>;
+  } | null = null;
+
   // Resolved prerender handler modules from the expose-internal-ids plugin.
   let resolvedPrerenderModules: Map<string, string[]> | undefined;
 
@@ -859,6 +868,55 @@ function createRouterDiscoveryPlugin(
       }
     }
 
+    // Render Static handlers at build time (segment-level, not route-level).
+    // Each Static handler is called with a synthetic BuildContext and its
+    // output is RSC-serialized. The encoded string is stored keyed by handler $$id.
+    if (opts?.enableBuildPrerender && isBuildMode && resolvedStaticModules?.size) {
+      const collected: Record<string, { encoded: string; handles: Record<string, unknown[]> }> = {};
+      let staticRendered = 0;
+
+      for (const [moduleId, exportNames] of resolvedStaticModules) {
+        let mod: any;
+        try {
+          mod = await rscEnv!.runner.import(moduleId);
+        } catch (err: any) {
+          console.warn(`[rsc-router] Failed to import static module ${moduleId}: ${err.message}`);
+          continue;
+        }
+
+        for (const name of exportNames) {
+          const def = mod[name];
+          if (!def || def.__brand !== "staticHandler" || !def.$$id) continue;
+          // Passthrough handlers stay live in the bundle
+          if (def.options?.passthrough) continue;
+
+          let rendered = false;
+          for (const [, routerInstance] of registry) {
+            if (!routerInstance.renderStaticSegment) continue;
+            try {
+              const result = await routerInstance.renderStaticSegment(def.handler, def.$$id);
+              if (result) {
+                collected[def.$$id] = result;
+                staticRendered++;
+                rendered = true;
+                break;
+              }
+            } catch (err: any) {
+              console.warn(`[rsc-router] Static render failed for ${name}: ${err.message}`);
+            }
+          }
+          if (!rendered) {
+            console.warn(`[rsc-router] No router could render static handler "${name}"`);
+          }
+        }
+      }
+
+      if (staticRendered > 0) {
+        staticCollectedData = collected;
+        console.log(`[rsc-router] Rendered ${staticRendered} static handler(s)`);
+      }
+    }
+
     return serverMod;
   }
 
@@ -1143,7 +1201,10 @@ function createRouterDiscoveryPlugin(
                   rsc({ entries: { client: "virtual:entry-client", ssr: "virtual:entry-ssr", rsc: entryPath } }),
                   createVersionPlugin(),
                   createVirtualStubPlugin(),
-                  exposeInternalIds({ forceBuild: true }),
+                  // Dev prerender must use dev-mode IDs (path-based) to match the
+                  // workerd runtime. forceBuild would produce hashed IDs causing
+                  // handle data key mismatches when replayed into the runtime store.
+                  exposeInternalIds(),
                   exposeRouterId(),
                 ],
               });
@@ -1274,6 +1335,16 @@ function createRouterDiscoveryPlugin(
             "[rsc-router] RSC environment runner not available during build, skipping manifest generation"
           );
           return;
+        }
+
+        // Point resolvedStaticModules at the temp server's expose-internal-ids
+        // plugin so that discoverRouters() can access the static handler module
+        // map after the temp server's transforms populate it.
+        const tempIdsPlugin = (tempServer as any).config?.plugins?.find(
+          (p: any) => p.name === "@rangojs/router:expose-internal-ids",
+        );
+        if (tempIdsPlugin?.api?.staticHandlerModules) {
+          resolvedStaticModules = tempIdsPlugin.api.staticHandlerModules;
         }
 
         await discoverRouters(rscEnv);
@@ -1465,6 +1536,32 @@ function createRouterDiscoveryPlugin(
         break;
       }
 
+      // Process __static-handlers chunk: record handler names and IDs for eviction.
+      if (resolvedStaticModules?.size) {
+        for (const [fileName, chunk] of Object.entries(bundle) as [string, any][]) {
+          if (chunk.type !== "chunk") continue;
+          if (!fileName.includes("__static-handlers")) continue;
+
+          const staticHandlers: Array<{ name: string; handlerId: string }> = [];
+          for (const [, handlerNames] of resolvedStaticModules) {
+            for (const name of handlerNames) {
+              const idPattern = new RegExp(
+                `\\b${name}\\.\\$\\$id\\s*=\\s*"([^"]+)"`,
+              );
+              const match = chunk.code.match(idPattern);
+              if (match) {
+                staticHandlers.push({ name, handlerId: match[1] });
+              }
+            }
+          }
+
+          if (staticHandlers.length > 0) {
+            staticHandlerChunkInfo = { fileName, exports: staticHandlers };
+          }
+          break;
+        }
+      }
+
     },
 
     // Build-time pre-rendering: evict handler code and inject collected prerender data.
@@ -1475,7 +1572,9 @@ function createRouterDiscoveryPlugin(
       sequential: true,
       async handler() {
         if (!isBuildMode) return;
-        if (!prerenderCollectedData || Object.keys(prerenderCollectedData).length === 0) return;
+        const hasPrerenderData = prerenderCollectedData && Object.keys(prerenderCollectedData).length > 0;
+        const hasStaticData = staticCollectedData && Object.keys(staticCollectedData).length > 0;
+        if (!hasPrerenderData && !hasStaticData) return;
 
         // Find RSC entry (recorded in generateBundle, fallback to dist/rsc/index.js)
         const rscEntryPath = resolve(projectRoot, "dist/rsc", rscEntryFileName ?? "index.js");
@@ -1555,35 +1654,121 @@ function createRouterDiscoveryPlugin(
           handlerChunkInfo = null;
         }
 
+        // 1b. Evict handler code from __static-handlers chunk.
+        if (staticHandlerChunkInfo) {
+          const chunkPath = resolve(projectRoot, "dist/rsc", staticHandlerChunkInfo.fileName);
+          try {
+            let code = readFileSync(chunkPath, "utf-8");
+            const originalSize = Buffer.byteLength(code);
+
+            for (const { name, handlerId } of staticHandlerChunkInfo.exports) {
+              const callStartRe = new RegExp(
+                `const\\s+${name}\\s*=\\s*Static\\s*(?:<[^>]*>)?\\s*\\(`,
+              );
+              const startMatch = callStartRe.exec(code);
+              if (!startMatch) continue;
+
+              const openParenPos = startMatch.index + startMatch[0].length;
+              let depth = 1;
+              let pos = openParenPos;
+              while (pos < code.length && depth > 0) {
+                const ch = code[pos];
+                if (ch === '"' || ch === "'" || ch === "`") {
+                  pos++;
+                  while (pos < code.length && code[pos] !== ch) {
+                    if (code[pos] === "\\") pos++;
+                    pos++;
+                  }
+                } else if (ch === "(") {
+                  depth++;
+                } else if (ch === ")") {
+                  depth--;
+                }
+                pos++;
+              }
+              if (depth !== 0) continue;
+
+              let rangeEnd = pos;
+              while (rangeEnd < code.length && /\s/.test(code[rangeEnd])) rangeEnd++;
+              if (code[rangeEnd] === ";") rangeEnd++;
+
+              const matched = code.slice(startMatch.index, rangeEnd);
+              if (!matched.includes(handlerId)) continue;
+
+              const stub = `const ${name} = { __brand: "staticHandler", $$id: "${handlerId}" };`;
+              code = code.slice(0, startMatch.index) + stub + code.slice(rangeEnd);
+
+              code = code.replace(
+                new RegExp(`\\n${name}\\.\\$\\$id\\s*=\\s*"[^"]+";`),
+                "",
+              );
+            }
+
+            writeFileSync(chunkPath, code);
+            const newSize = Buffer.byteLength(code);
+            const savedKB = ((originalSize - newSize) / 1024).toFixed(1);
+            console.log(
+              `[rsc-router] Evicted static handler code (${savedKB} KB saved): ${staticHandlerChunkInfo.fileName}`,
+            );
+          } catch (replaceErr: any) {
+            console.warn(
+              `[rsc-router] Failed to evict static handler code: ${replaceErr.message}`,
+            );
+          }
+          staticHandlerChunkInfo = null;
+        }
+
         // 2. Remap dev-mode client reference IDs in prerender data to production IDs.
         // Prerender data is collected via a dev temp server whose RSC serializer
         // uses dev URLs (e.g., /src/foo.tsx, /@fs/abs/path.tsx). Production uses
         // SHA-256 hashes of root-relative paths. Rewrite the Flight I[] instructions.
-        for (const entry of Object.values(prerenderCollectedData)) {
-          for (const seg of (entry as any).segments) {
-            if (typeof seg.encoded !== "string") continue;
-            seg.encoded = seg.encoded.replace(
+        if (hasPrerenderData) {
+          for (const entry of Object.values(prerenderCollectedData!)) {
+            for (const seg of (entry as any).segments) {
+              if (typeof seg.encoded !== "string") continue;
+              seg.encoded = seg.encoded.replace(
+                /I\["(\/[^"]+)"/g,
+                (_match: string, devId: string) => {
+                  let rootRelative: string;
+                  if (devId.startsWith("/@fs/")) {
+                    const absPath = devId.slice(4);
+                    rootRelative = relative(projectRoot, absPath);
+                  } else {
+                    rootRelative = devId.slice(1);
+                  }
+                  const hash = createHash("sha256").update(rootRelative).digest("hex").slice(0, 12);
+                  return `I["${hash}"`;
+                },
+              );
+            }
+          }
+        }
+
+        // 2b. Remap dev-mode client reference IDs in static data.
+        if (hasStaticData) {
+          const remapClientRefs = (encoded: string): string =>
+            encoded.replace(
               /I\["(\/[^"]+)"/g,
               (_match: string, devId: string) => {
                 let rootRelative: string;
                 if (devId.startsWith("/@fs/")) {
-                  // Absolute FS path via Vite dev server
-                  const absPath = devId.slice(4); // strip /@fs
+                  const absPath = devId.slice(4);
                   rootRelative = relative(projectRoot, absPath);
                 } else {
-                  // Project-relative path with leading /
                   rootRelative = devId.slice(1);
                 }
                 const hash = createHash("sha256").update(rootRelative).digest("hex").slice(0, 12);
                 return `I["${hash}"`;
               },
             );
+          for (const key of Object.keys(staticCollectedData!)) {
+            staticCollectedData![key].encoded = remapClientRefs(staticCollectedData![key].encoded);
           }
         }
 
         // 3. Write prerender data as separate importable asset modules
         // and inject a manifest import into the RSC entry.
-        if (existsSync(rscEntryPath)) {
+        if (hasPrerenderData && existsSync(rscEntryPath)) {
           const rscCode = readFileSync(rscEntryPath, "utf-8");
           if (!rscCode.includes("__PRERENDER_MANIFEST")) {
             try {
@@ -1593,7 +1778,7 @@ function createRouterDiscoveryPlugin(
               const manifestEntries: string[] = [];
               let totalBytes = 0;
 
-              for (const [key, entry] of Object.entries(prerenderCollectedData)) {
+              for (const [key, entry] of Object.entries(prerenderCollectedData!)) {
                 const entryJson = JSON.stringify(entry);
                 const contentHash = createHash("sha256").update(entryJson).digest("hex").slice(0, 8);
                 const assetFileName = `__pr-${contentHash}.js`;
@@ -1614,10 +1799,60 @@ function createRouterDiscoveryPlugin(
 
               const totalKB = (totalBytes / 1024).toFixed(1);
               console.log(
-                `[rsc-router] Wrote prerender assets (${totalKB} KB total, ${Object.keys(prerenderCollectedData).length} entries)`,
+                `[rsc-router] Wrote prerender assets (${totalKB} KB total, ${Object.keys(prerenderCollectedData!).length} entries)`,
               );
             } catch (err: any) {
               throw new Error(`[rsc-router] Failed to write prerender assets: ${err.message}`);
+            }
+          }
+        }
+
+        // 3b. Write static handler data as separate importable asset modules
+        // and inject a __STATIC_MANIFEST import into the RSC entry.
+        if (hasStaticData && existsSync(rscEntryPath)) {
+          const rscCode = readFileSync(rscEntryPath, "utf-8");
+          if (!rscCode.includes("__STATIC_MANIFEST")) {
+            try {
+              const assetsDir = resolve(projectRoot, "dist/rsc/assets");
+              mkdirSync(assetsDir, { recursive: true });
+
+              const manifestEntries: string[] = [];
+              let totalBytes = 0;
+
+              for (const [handlerId, { encoded, handles }] of Object.entries(staticCollectedData!)) {
+                const contentHash = createHash("sha256").update(encoded).digest("hex").slice(0, 8);
+                const assetFileName = `__st-${contentHash}.js`;
+                const assetPath = resolve(assetsDir, assetFileName);
+                // Store both the Flight payload and handle data
+                const hasHandles = Object.keys(handles).length > 0;
+                const exportValue = hasHandles
+                  ? JSON.stringify({ encoded, handles })
+                  : JSON.stringify(encoded);
+                const assetCode = `export default ${exportValue};\n`;
+                writeFileSync(assetPath, assetCode);
+                totalBytes += Buffer.byteLength(assetCode);
+                manifestEntries.push(`${JSON.stringify(handlerId)}:()=>import("./assets/${assetFileName}")`);
+              }
+
+              // Set the global inside the manifest module so it is assigned
+              // during module evaluation (before dependent modules like
+              // segment-resolution.ts run their top-level initializers).
+              const manifestCode = `const m={${manifestEntries.join(",")}};globalThis.__STATIC_MANIFEST=m;export default m;\n`;
+              const manifestPath = resolve(projectRoot, "dist/rsc/__static-manifest.js");
+              writeFileSync(manifestPath, manifestCode);
+              totalBytes += Buffer.byteLength(manifestCode);
+
+              // The import ensures the manifest module is evaluated early.
+              // The global is already set inside the module itself.
+              const injection = `import "./__static-manifest.js";\n`;
+              writeFileSync(rscEntryPath, injection + rscCode);
+
+              const totalKB = (totalBytes / 1024).toFixed(1);
+              console.log(
+                `[rsc-router] Wrote static assets (${totalKB} KB total, ${Object.keys(staticCollectedData!).length} entries)`,
+              );
+            } catch (err: any) {
+              throw new Error(`[rsc-router] Failed to write static assets: ${err.message}`);
             }
           }
         }

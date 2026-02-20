@@ -106,6 +106,8 @@ export const NamedRoutes = {
   "slowProduct.detail": "/slow-product/:productId",
   slowStreaming: "/slow-streaming",
   slowStreamingSkipSsr: "/slow-streaming-skip-ssr",
+  "static-page": "/static-page",
+  "static-shell": "/static-shell/:tag",
   "theme.index": "/theme",
   "theme.toggle": "/theme/toggle",
   "trailingSlash.always": "/ts-always",

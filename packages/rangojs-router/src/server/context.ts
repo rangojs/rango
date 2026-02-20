@@ -161,6 +161,8 @@ export type EntryData =
       prerenderDef?: { getParams?: () => Promise<any[]> | any[]; options?: { passthrough?: boolean } };
       /** Set when handler is a Static definition (build-time only) */
       isStaticPrerender?: true;
+      /** Static handler $$id for build-time store lookup */
+      staticHandlerId?: string;
       /** Response type for non-RSC routes (json, text, image, any) */
       responseType?: string;
     } & EntryPropCommon &
@@ -172,6 +174,8 @@ export type EntryData =
       loading?: ReactNode | false;
       /** Set when handler is a Static definition (build-time only) */
       isStaticPrerender?: true;
+      /** Static handler $$id for build-time store lookup */
+      staticHandlerId?: string;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments)
@@ -181,6 +185,8 @@ export type EntryData =
       loading?: ReactNode | false;
       /** Set when any parallel slot is a Static definition */
       isStaticPrerender?: true;
+      /** Per-slot static handler $$ids for build-time store lookup */
+      staticHandlerIds?: Record<string, string>;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments)
