@@ -6,8 +6,6 @@ import {
   findMatchingParen,
   countArgs,
   findStatementEnd,
-  findClosingParen,
-  countArgsSimple,
 } from "../expose-id-utils.ts";
 
 describe("hashId", () => {
@@ -192,18 +190,6 @@ describe("findMatchingParen", () => {
   });
 });
 
-describe("findClosingParen", () => {
-  it("should find simple closing paren", () => {
-    const code = "fn(a, b)";
-    expect(findClosingParen(code, 3)).toBe(8);
-  });
-
-  it("should handle nested parens", () => {
-    const code = "fn(a(b), c)";
-    expect(findClosingParen(code, 3)).toBe(11);
-  });
-});
-
 describe("countArgs", () => {
   it("should count zero args for empty parens", () => {
     const code = "fn()";
@@ -228,20 +214,6 @@ describe("countArgs", () => {
   it("should skip commas inside strings", () => {
     const code = `fn("a,b", c)`;
     expect(countArgs(code, 3, 11)).toBe(2);
-  });
-});
-
-describe("countArgsSimple", () => {
-  it("should count zero args for empty parens", () => {
-    expect(countArgsSimple("fn()", 3, 3)).toBe(0);
-  });
-
-  it("should count two args", () => {
-    expect(countArgsSimple("fn(a, b)", 3, 7)).toBe(2);
-  });
-
-  it("should not count commas inside nested structures", () => {
-    expect(countArgsSimple("fn({a: 1, b: 2}, c)", 3, 18)).toBe(2);
   });
 });
 

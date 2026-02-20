@@ -534,6 +534,124 @@ function buildRouteToStaticPrefix(
 }
 
 /**
+ * Find matching close paren in bundled code using depth counting.
+ * Skips string literals (single/double/template) and escape sequences.
+ * Returns the position after the closing paren, or -1 if unmatched.
+ */
+function findMatchingParenInBundle(code: string, openParenPos: number): number {
+  let depth = 1;
+  let pos = openParenPos;
+  while (pos < code.length && depth > 0) {
+    const ch = code[pos];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      pos++;
+      while (pos < code.length && code[pos] !== ch) {
+        if (code[pos] === "\\") pos++;
+        pos++;
+      }
+    } else if (ch === "(") {
+      depth++;
+    } else if (ch === ")") {
+      depth--;
+    }
+    pos++;
+  }
+  return depth === 0 ? pos : -1;
+}
+
+/**
+ * Scan a bundled chunk for handler exports of a given type and extract
+ * their names + $$id values. Optionally detects passthrough flag.
+ */
+function extractHandlerExportsFromChunk(
+  chunkCode: string,
+  handlerModules: Map<string, string[]>,
+  fnName: string,
+  detectPassthrough: boolean,
+): Array<{ name: string; handlerId: string; passthrough: boolean }> {
+  const handlers: Array<{ name: string; handlerId: string; passthrough: boolean }> = [];
+
+  for (const [, handlerNames] of handlerModules) {
+    for (const name of handlerNames) {
+      const idPattern = new RegExp(
+        `\\b${name}\\.\\$\\$id\\s*=\\s*"([^"]+)"`,
+      );
+      const match = chunkCode.match(idPattern);
+      if (!match) continue;
+
+      let isPassthrough = false;
+      if (detectPassthrough) {
+        const callStartRe = new RegExp(
+          `const\\s+${name}\\s*=\\s*${fnName}\\s*(?:<[^>]*>)?\\s*\\(`,
+        );
+        const callStart = callStartRe.exec(chunkCode);
+        if (callStart) {
+          const afterOpen = callStart.index + callStart[0].length;
+          const closePos = findMatchingParenInBundle(chunkCode, afterOpen);
+          if (closePos !== -1) {
+            const callBody = chunkCode.slice(callStart.index, closePos);
+            isPassthrough = /passthrough\s*:\s*(!0|true)/.test(callBody);
+          }
+        }
+      }
+      handlers.push({ name, handlerId: match[1], passthrough: isPassthrough });
+    }
+  }
+
+  return handlers;
+}
+
+/**
+ * Evict handler code from a bundled chunk, replacing full handler call
+ * expressions with lightweight stub objects. Returns the modified code
+ * and bytes saved, or null if no changes were made.
+ */
+function evictHandlerCode(
+  code: string,
+  exports: Array<{ name: string; handlerId: string; passthrough?: boolean }>,
+  fnName: string,
+  brand: string,
+): { code: string; savedBytes: number } | null {
+  const originalSize = Buffer.byteLength(code);
+  let modified = code;
+
+  for (const { name, handlerId, passthrough } of exports) {
+    if (passthrough) continue;
+
+    const callStartRe = new RegExp(
+      `const\\s+${name}\\s*=\\s*${fnName}\\s*(?:<[^>]*>)?\\s*\\(`,
+    );
+    const startMatch = callStartRe.exec(modified);
+    if (!startMatch) continue;
+
+    const afterOpen = startMatch.index + startMatch[0].length;
+    const closePos = findMatchingParenInBundle(modified, afterOpen);
+    if (closePos === -1) continue;
+
+    // Skip trailing whitespace and optional semicolon
+    let rangeEnd = closePos;
+    while (rangeEnd < modified.length && /\s/.test(modified[rangeEnd])) rangeEnd++;
+    if (modified[rangeEnd] === ";") rangeEnd++;
+
+    // Validate: matched range must contain the expected handlerId
+    const matched = modified.slice(startMatch.index, rangeEnd);
+    if (!matched.includes(handlerId)) continue;
+
+    const stub = `const ${name} = { __brand: "${brand}", $$id: "${handlerId}" };`;
+    modified = modified.slice(0, startMatch.index) + stub + modified.slice(rangeEnd);
+
+    // Remove the now-redundant $$id assignment line
+    modified = modified.replace(
+      new RegExp(`\\n${name}\\.\\$\\$id\\s*=\\s*"[^"]+";`),
+      "",
+    );
+  }
+
+  if (modified === code) return null;
+  return { code: modified, savedBytes: originalSize - Buffer.byteLength(modified) };
+}
+
+/**
  * Encode route param values for path interpolation while preserving path
  * separators for wildcard params (splat-style values can include `/`).
  */
@@ -1383,10 +1501,12 @@ function createRouterDiscoveryPlugin(
       if (mergedRouteManifest !== null) return;
 
       let tempServer: any = null;
+      // Signal to user-space code (e.g. reverse.ts) that build-time discovery
+      // is active. Uses globalThis because the temp server's module runner
+      // creates a separate module context — there is no shared import path
+      // between the vite plugin and user code loaded via runner.import().
+      (globalThis as any).__rscRouterDiscoveryActive = true;
       try {
-        // Prevent the temp server's plugin instances from running discovery
-        (globalThis as any).__rscRouterDiscoveryActive = true;
-
         // Create a minimal Vite server with just the RSC plugin.
         // We bypass the user's config file because:
         // - Custom environments (e.g., CloudflareDevEnvironment) may not expose
@@ -1445,11 +1565,6 @@ function createRouterDiscoveryPlugin(
         // that the static parser cannot extract from source code.
         writeRouteTypesFiles();
       } catch (err: any) {
-        // Clean up before re-throwing so the temp server doesn't leak
-        delete (globalThis as any).__rscRouterDiscoveryActive;
-        if (tempServer) {
-          await tempServer.close();
-        }
         // Extract the user source file from the stack trace (skip internal frames)
         const sourceFile = err.stack
           ?.split("\n")
@@ -1573,84 +1688,29 @@ function createRouterDiscoveryPlugin(
         }
       }
 
-      if (!resolvedPrerenderModules?.size) return;
+      if (!resolvedPrerenderModules?.size && !resolvedStaticModules?.size) return;
 
       for (const [fileName, chunk] of Object.entries(bundle) as [string, any][]) {
         if (chunk.type !== "chunk") continue;
-        if (!fileName.includes("__prerender-handlers")) continue;
 
-        const handlers: Array<{ name: string; handlerId: string; passthrough: boolean }> = [];
-        for (const [, handlerNames] of resolvedPrerenderModules) {
-          for (const name of handlerNames) {
-            const idPattern = new RegExp(
-              `\\b${name}\\.\\$\\$id\\s*=\\s*"([^"]+)"`,
-            );
-            const match = chunk.code.match(idPattern);
-            if (match) {
-              // Detect passthrough option in the Prerender call.
-              const callStartRe = new RegExp(
-                `const\\s+${name}\\s*=\\s*Prerender\\s*(?:<[^>]*>)?\\s*\\(`,
-              );
-              const callStart = callStartRe.exec(chunk.code);
-              let isPassthrough = false;
-              if (callStart) {
-                const openPos = callStart.index + callStart[0].length;
-                let depth = 1;
-                let p = openPos;
-                while (p < chunk.code.length && depth > 0) {
-                  const ch = chunk.code[p];
-                  if (ch === '"' || ch === "'" || ch === "`") {
-                    p++;
-                    while (p < chunk.code.length && chunk.code[p] !== ch) {
-                      if (chunk.code[p] === "\\") p++;
-                      p++;
-                    }
-                  } else if (ch === "(") {
-                    depth++;
-                  } else if (ch === ")") {
-                    depth--;
-                  }
-                  p++;
-                }
-                if (depth === 0) {
-                  const callBody = chunk.code.slice(callStart.index, p);
-                  isPassthrough = /passthrough\s*:\s*(!0|true)/.test(callBody);
-                }
-              }
-              handlers.push({ name, handlerId: match[1], passthrough: isPassthrough });
-            }
+        // Prerender handlers chunk
+        if (fileName.includes("__prerender-handlers") && resolvedPrerenderModules?.size) {
+          const handlers = extractHandlerExportsFromChunk(
+            chunk.code, resolvedPrerenderModules, "Prerender", true,
+          );
+          if (handlers.length > 0) {
+            handlerChunkInfo = { fileName, exports: handlers };
           }
         }
 
-        if (handlers.length > 0) {
-          handlerChunkInfo = { fileName, exports: handlers };
-        }
-        break;
-      }
-
-      // Process __static-handlers chunk: record handler names and IDs for eviction.
-      if (resolvedStaticModules?.size) {
-        for (const [fileName, chunk] of Object.entries(bundle) as [string, any][]) {
-          if (chunk.type !== "chunk") continue;
-          if (!fileName.includes("__static-handlers")) continue;
-
-          const staticHandlers: Array<{ name: string; handlerId: string }> = [];
-          for (const [, handlerNames] of resolvedStaticModules) {
-            for (const name of handlerNames) {
-              const idPattern = new RegExp(
-                `\\b${name}\\.\\$\\$id\\s*=\\s*"([^"]+)"`,
-              );
-              const match = chunk.code.match(idPattern);
-              if (match) {
-                staticHandlers.push({ name, handlerId: match[1] });
-              }
-            }
+        // Static handlers chunk
+        if (fileName.includes("__static-handlers") && resolvedStaticModules?.size) {
+          const handlers = extractHandlerExportsFromChunk(
+            chunk.code, resolvedStaticModules, "Static", false,
+          );
+          if (handlers.length > 0) {
+            staticHandlerChunkInfo = { fileName, exports: handlers };
           }
-
-          if (staticHandlers.length > 0) {
-            staticHandlerChunkInfo = { fileName, exports: staticHandlers };
-          }
-          break;
         }
       }
 
@@ -1671,144 +1731,42 @@ function createRouterDiscoveryPlugin(
         // Find RSC entry (recorded in generateBundle, fallback to dist/rsc/index.js)
         const rscEntryPath = resolve(projectRoot, "dist/rsc", rscEntryFileName ?? "index.js");
 
-        // 1. Evict handler code from __prerender-handlers chunk.
-        // handlerChunkInfo is populated by generateBundle after the production RSC
-        // build completes. In Vite 6 multi-environment builds, the RSC build runs
-        // twice (analysis pass + production pass). handlerChunkInfo is only available
+        // 1. Evict handler code from __prerender-handlers and __static-handlers chunks.
+        // handlerChunkInfo/staticHandlerChunkInfo are populated by generateBundle
+        // after the production RSC build. In Vite 6 multi-environment builds, the
+        // RSC build runs twice (analysis + production). Chunk info is only available
         // after the production pass, so we run eviction whenever it becomes available.
-        if (handlerChunkInfo) {
-          const chunkPath = resolve(projectRoot, "dist/rsc", handlerChunkInfo.fileName);
+        const evictionTargets: Array<{
+          info: typeof handlerChunkInfo;
+          fnName: string;
+          brand: string;
+          label: string;
+        }> = [
+          { info: handlerChunkInfo, fnName: "Prerender", brand: "prerenderHandler", label: "handler code from RSC bundle" },
+          { info: staticHandlerChunkInfo, fnName: "Static", brand: "staticHandler", label: "static handler code" },
+        ];
+
+        for (const target of evictionTargets) {
+          if (!target.info) continue;
+          const chunkPath = resolve(projectRoot, "dist/rsc", target.info.fileName);
           try {
-            let code = readFileSync(chunkPath, "utf-8");
-            const originalSize = Buffer.byteLength(code);
-
-            for (const { name, handlerId, passthrough } of handlerChunkInfo.exports) {
-              // Passthrough handlers stay in the bundle for live fallback
-              if (passthrough) continue;
-              const callStartRe = new RegExp(
-                `const\\s+${name}\\s*=\\s*Prerender\\s*(?:<[^>]*>)?\\s*\\(`,
-              );
-              const startMatch = callStartRe.exec(code);
-              if (!startMatch) continue;
-
-              // Use paren-depth counting to find the matching close paren
-              const openParenPos = startMatch.index + startMatch[0].length;
-              let depth = 1;
-              let pos = openParenPos;
-              while (pos < code.length && depth > 0) {
-                const ch = code[pos];
-                if (ch === '"' || ch === "'" || ch === "`") {
-                  pos++;
-                  while (pos < code.length && code[pos] !== ch) {
-                    if (code[pos] === "\\") pos++;
-                    pos++;
-                  }
-                } else if (ch === "(") {
-                  depth++;
-                } else if (ch === ")") {
-                  depth--;
-                }
-                pos++;
-              }
-              if (depth !== 0) continue;
-
-              // pos is now after the closing paren. Skip trailing semicolon.
-              let rangeEnd = pos;
-              while (rangeEnd < code.length && /\s/.test(code[rangeEnd])) rangeEnd++;
-              if (code[rangeEnd] === ";") rangeEnd++;
-
-              // Validate: the matched range should contain the expected handlerId
-              const matched = code.slice(startMatch.index, rangeEnd);
-              if (!matched.includes(handlerId)) continue;
-
-              const stub = `const ${name} = { __brand: "prerenderHandler", $$id: "${handlerId}" };`;
-              code = code.slice(0, startMatch.index) + stub + code.slice(rangeEnd);
-
-              // Remove the $$id assignment line (now redundant)
-              code = code.replace(
-                new RegExp(`\\n${name}\\.\\$\\$id\\s*=\\s*"[^"]+";`),
-                "",
+            const code = readFileSync(chunkPath, "utf-8");
+            const result = evictHandlerCode(code, target.info.exports, target.fnName, target.brand);
+            if (result) {
+              writeFileSync(chunkPath, result.code);
+              const savedKB = (result.savedBytes / 1024).toFixed(1);
+              console.log(
+                `[rsc-router] Evicted ${target.label} (${savedKB} KB saved): ${target.info.fileName}`,
               );
             }
-
-            writeFileSync(chunkPath, code);
-            const newSize = Buffer.byteLength(code);
-            const savedKB = ((originalSize - newSize) / 1024).toFixed(1);
-            console.log(
-              `[rsc-router] Evicted handler code from RSC bundle (${savedKB} KB saved): ${handlerChunkInfo.fileName}`,
-            );
           } catch (replaceErr: any) {
             console.warn(
-              `[rsc-router] Failed to evict handler code: ${replaceErr.message}`,
+              `[rsc-router] Failed to evict ${target.label}: ${replaceErr.message}`,
             );
           }
-          // Clear after eviction to avoid re-running
-          handlerChunkInfo = null;
         }
-
-        // 1b. Evict handler code from __static-handlers chunk.
-        if (staticHandlerChunkInfo) {
-          const chunkPath = resolve(projectRoot, "dist/rsc", staticHandlerChunkInfo.fileName);
-          try {
-            let code = readFileSync(chunkPath, "utf-8");
-            const originalSize = Buffer.byteLength(code);
-
-            for (const { name, handlerId } of staticHandlerChunkInfo.exports) {
-              const callStartRe = new RegExp(
-                `const\\s+${name}\\s*=\\s*Static\\s*(?:<[^>]*>)?\\s*\\(`,
-              );
-              const startMatch = callStartRe.exec(code);
-              if (!startMatch) continue;
-
-              const openParenPos = startMatch.index + startMatch[0].length;
-              let depth = 1;
-              let pos = openParenPos;
-              while (pos < code.length && depth > 0) {
-                const ch = code[pos];
-                if (ch === '"' || ch === "'" || ch === "`") {
-                  pos++;
-                  while (pos < code.length && code[pos] !== ch) {
-                    if (code[pos] === "\\") pos++;
-                    pos++;
-                  }
-                } else if (ch === "(") {
-                  depth++;
-                } else if (ch === ")") {
-                  depth--;
-                }
-                pos++;
-              }
-              if (depth !== 0) continue;
-
-              let rangeEnd = pos;
-              while (rangeEnd < code.length && /\s/.test(code[rangeEnd])) rangeEnd++;
-              if (code[rangeEnd] === ";") rangeEnd++;
-
-              const matched = code.slice(startMatch.index, rangeEnd);
-              if (!matched.includes(handlerId)) continue;
-
-              const stub = `const ${name} = { __brand: "staticHandler", $$id: "${handlerId}" };`;
-              code = code.slice(0, startMatch.index) + stub + code.slice(rangeEnd);
-
-              code = code.replace(
-                new RegExp(`\\n${name}\\.\\$\\$id\\s*=\\s*"[^"]+";`),
-                "",
-              );
-            }
-
-            writeFileSync(chunkPath, code);
-            const newSize = Buffer.byteLength(code);
-            const savedKB = ((originalSize - newSize) / 1024).toFixed(1);
-            console.log(
-              `[rsc-router] Evicted static handler code (${savedKB} KB saved): ${staticHandlerChunkInfo.fileName}`,
-            );
-          } catch (replaceErr: any) {
-            console.warn(
-              `[rsc-router] Failed to evict static handler code: ${replaceErr.message}`,
-            );
-          }
-          staticHandlerChunkInfo = null;
-        }
+        handlerChunkInfo = null;
+        staticHandlerChunkInfo = null;
 
         // 2. Write prerender data as separate importable asset modules
         // and inject a manifest import into the RSC entry.
