@@ -710,6 +710,10 @@ export function exposeRouterId(): Plugin {
     },
     transform(code, id) {
       if (!code.includes("createRouter")) return null;
+      // Accepts both @rangojs/router and @rangojs/router/server subpath.
+      // NOTE: detectImports in expose-id-utils has a stricter check that
+      // excludes /server for its router flag — that's intentional since
+      // detectImports is only used in exposeInternalIds, not here.
       if (
         !/import\s*\{[^}]*\bcreateRouter\b[^}]*\}\s*from\s*["']@rangojs\/router(?:\/server)?["']/.test(
           code,

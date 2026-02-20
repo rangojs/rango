@@ -82,13 +82,17 @@ function isUseServerModule(filePath: string): boolean {
  * @param sourceId - The source file identifier (for sourcemap)
  * @param hashToFileMap - Optional mapping from hash to file path (for server bundles)
  */
-function transformServerReferences(
+/**
+ * Apply createServerReference wrapping to a MagicString instance.
+ * Returns true if any changes were made.
+ */
+function applyServerReferenceWrapping(
   code: string,
-  sourceId?: string,
+  s: MagicString,
   hashToFileMap?: Map<string, string>
-): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
+): boolean {
   if (!code.includes("createServerReference(")) {
-    return null;
+    return false;
   }
 
   // Match: createServerReference("hash#actionName", ...) or $$ReactClient.createServerReference(...)
@@ -96,7 +100,6 @@ function transformServerReferences(
   const pattern =
     /((?:\$\$\w+\.)?createServerReference)\(("[^"]+#[^"]+")([^)]*)\)/g;
 
-  const s = new MagicString(code);
   let hasChanges = false;
   let match: RegExpExecArray | null;
 
@@ -127,7 +130,16 @@ function transformServerReferences(
     s.overwrite(start, end, replacement);
   }
 
-  if (!hasChanges) {
+  return hasChanges;
+}
+
+function transformServerReferences(
+  code: string,
+  sourceId?: string,
+  hashToFileMap?: Map<string, string>
+): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
+  const s = new MagicString(code);
+  if (!applyServerReferenceWrapping(code, s, hashToFileMap)) {
     return null;
   }
 
@@ -153,20 +165,26 @@ function transformServerReferences(
  * @param sourceId - The source file identifier (for sourcemap)
  * @param hashToFileMap - Mapping from hash to file path (only module-level "use server" files)
  */
-function transformRegisterServerReference(
+/**
+ * Apply registerServerReference wrapping to a MagicString instance.
+ * Returns true if any changes were made.
+ *
+ * Only actions from module-level "use server" files are transformed.
+ * Inline actions keep their hashed IDs for client security.
+ */
+function applyRegisterReferenceWrapping(
   code: string,
-  sourceId?: string,
-  hashToFileMap?: Map<string, string>
-): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
-  if (!hashToFileMap || !code.includes("registerServerReference(")) {
-    return null;
+  s: MagicString,
+  hashToFileMap: Map<string, string>
+): boolean {
+  if (!code.includes("registerServerReference(")) {
+    return false;
   }
 
   // Match: registerServerReference(fn, "hash", "exportName")
   // The hash is the second argument, exportName is the third
   const pattern = /registerServerReference\(([^,]+),\s*"([^"]+)",\s*"([^"]+)"\)/g;
 
-  const s = new MagicString(code);
   let hasChanges = false;
   let match: RegExpExecArray | null;
 
@@ -190,7 +208,18 @@ function transformRegisterServerReference(
     }
   }
 
-  if (!hasChanges) {
+  return hasChanges;
+}
+
+function transformRegisterServerReference(
+  code: string,
+  sourceId?: string,
+  hashToFileMap?: Map<string, string>
+): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
+  if (!hashToFileMap) return null;
+
+  const s = new MagicString(code);
+  if (!applyRegisterReferenceWrapping(code, s, hashToFileMap)) {
     return null;
   }
 
@@ -308,31 +337,23 @@ export function exposeActionId(): Plugin {
       // Only use file path mapping for RSC environment
       const effectiveMap = isRscEnv ? hashToFileMap : undefined;
 
-      // Transform createServerReference calls (client-side)
-      const result = transformServerReferences(
-        code,
-        chunk.fileName,
-        effectiveMap
-      );
-
-      // For RSC bundles, also transform registerServerReference calls
-      // This replaces hashed IDs with file paths so $id contains the actual path
+      // For RSC bundles, both createServerReference and registerServerReference
+      // may need transforming. Use a single MagicString for correct sourcemaps.
       if (isRscEnv && hashToFileMap) {
-        const codeToTransform = result ? result.code : code;
-        const registerResult = transformRegisterServerReference(
-          codeToTransform,
-          chunk.fileName,
-          hashToFileMap
-        );
-        if (registerResult) {
-          return { code: registerResult.code, map: registerResult.map };
+        const s = new MagicString(code);
+        const changed1 = applyServerReferenceWrapping(code, s, effectiveMap);
+        const changed2 = applyRegisterReferenceWrapping(code, s, hashToFileMap);
+        if (changed1 || changed2) {
+          return {
+            code: s.toString(),
+            map: s.generateMap({ source: chunk.fileName, includeContent: true }),
+          };
         }
+        return null;
       }
 
-      if (result) {
-        return { code: result.code, map: result.map };
-      }
-      return null;
+      // Non-RSC environments: only transform createServerReference calls
+      return transformServerReferences(code, chunk.fileName, effectiveMap);
     },
   };
 }

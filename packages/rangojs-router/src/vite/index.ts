@@ -27,6 +27,7 @@ import {
   getPackageAliases,
   getPublishedPackageName,
 } from "./package-resolution.ts";
+import { skipStringOrComment } from "./expose-id-utils.ts";
 
 // Re-export plugins
 export { exposeActionId } from "./expose-action-id.ts";
@@ -535,25 +536,21 @@ function buildRouteToStaticPrefix(
 
 /**
  * Find matching close paren in bundled code using depth counting.
- * Skips string literals (single/double/template) and escape sequences.
+ * Uses skipStringOrComment from expose-id-utils to correctly handle
+ * template literal ${...} expressions, comments, and nested strings.
  * Returns the position after the closing paren, or -1 if unmatched.
  */
 function findMatchingParenInBundle(code: string, openParenPos: number): number {
   let depth = 1;
   let pos = openParenPos;
   while (pos < code.length && depth > 0) {
-    const ch = code[pos];
-    if (ch === '"' || ch === "'" || ch === "`") {
-      pos++;
-      while (pos < code.length && code[pos] !== ch) {
-        if (code[pos] === "\\") pos++;
-        pos++;
-      }
-    } else if (ch === "(") {
-      depth++;
-    } else if (ch === ")") {
-      depth--;
+    const skipped = skipStringOrComment(code, pos);
+    if (skipped > pos) {
+      pos = skipped;
+      continue;
     }
+    if (code[pos] === "(") depth++;
+    else if (code[pos] === ")") depth--;
     pos++;
   }
   return depth === 0 ? pos : -1;
@@ -640,9 +637,11 @@ function evictHandlerCode(
     const stub = `const ${name} = { __brand: "${brand}", $$id: "${handlerId}" };`;
     modified = modified.slice(0, startMatch.index) + stub + modified.slice(rangeEnd);
 
-    // Remove the now-redundant $$id assignment line
+    // Remove the now-redundant $$id assignment line.
+    // Use \b word boundary to avoid matching names that are prefixes of others
+    // (e.g., "Article" should not match "ArticleDetail.$$id").
     modified = modified.replace(
-      new RegExp(`\\n${name}\\.\\$\\$id\\s*=\\s*"[^"]+";`),
+      new RegExp(`\\n\\b${name}\\.\\$\\$id\\s*=\\s*"[^"]+";`),
       "",
     );
   }

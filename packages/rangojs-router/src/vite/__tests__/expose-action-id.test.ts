@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
 import { exposeActionId } from "../expose-action-id.ts";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 
 function createPlugin() {
   const plugin = exposeActionId();
@@ -193,6 +196,164 @@ const remove = createServerReference("src/actions.ts#remove", callServer);
       expect(result.map).toBeDefined();
       // Source map should reference the chunk fileName
       expect(result.map.sources).toContain("assets/chunk-xyz.js");
+    });
+  });
+
+  // ---- RSC environment: registerServerReference ----
+
+  describe("RSC environment renderChunk", () => {
+    // Create a temp directory with a "use server" file for isUseServerModule to read
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "action-test-"));
+    const actionsFile = path.join(tmpDir, "src", "actions.ts");
+    fs.mkdirSync(path.dirname(actionsFile), { recursive: true });
+    fs.writeFileSync(actionsFile, '"use server";\nexport async function addTodo() {}\nexport async function removeTodo() {}');
+
+    afterAll(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    function initRscBuild() {
+      const metaMap: Record<string, any> = {};
+      metaMap[actionsFile] = {
+        importId: "src/actions.ts",
+        referenceKey: "abc123",
+        exportNames: ["addTodo", "removeTodo"],
+      };
+      return initBuild(tmpDir, metaMap);
+    }
+
+    it("replaces hash with file path for createServerReference $$id in RSC env", () => {
+      const plugin = initRscBuild();
+      const code = `const action = createServerReference("abc123#addTodo", callServer);`;
+      const chunk = { fileName: "chunk-rsc.js" };
+      const ctx = { environment: { name: "rsc" } };
+      const result = plugin.renderChunk.call(ctx, code, chunk);
+      expect(result).toBeDefined();
+      // RSC environment should replace hash with file path
+      expect(result.code).toMatch(/fn\.\$\$id\s*=\s*"src\/actions\.ts#addTodo"/);
+    });
+
+    it("wraps registerServerReference with $id (single dollar) in RSC env", () => {
+      const plugin = initRscBuild();
+      const code = `registerServerReference(addTodoFn, "abc123", "addTodo");`;
+      const chunk = { fileName: "chunk-rsc.js" };
+      const ctx = { environment: { name: "rsc" } };
+      const result = plugin.renderChunk.call(ctx, code, chunk);
+      expect(result).toBeDefined();
+      // Should wrap with IIFE attaching $id (single dollar, not $$id)
+      expect(result.code).toMatch(
+        /\(function\(fn\)\s*\{\s*fn\.\$id\s*=\s*"src\/actions\.ts#addTodo"/,
+      );
+      // Original registerServerReference should still be called with original hash
+      expect(result.code).toMatch(/registerServerReference\(addTodoFn,\s*"abc123",\s*"addTodo"\)/);
+    });
+
+    it("handles both createServerReference and registerServerReference in same chunk", () => {
+      const plugin = initRscBuild();
+      const code = [
+        `const ref = createServerReference("abc123#addTodo", callServer);`,
+        `registerServerReference(addTodoFn, "abc123", "addTodo");`,
+      ].join("\n");
+      const chunk = { fileName: "chunk-rsc.js" };
+      const ctx = { environment: { name: "rsc" } };
+      const result = plugin.renderChunk.call(ctx, code, chunk);
+      expect(result).toBeDefined();
+      // Both should be wrapped
+      expect(result.code).toMatch(/fn\.\$\$id\s*=\s*"src\/actions\.ts#addTodo"/);
+      expect(result.code).toMatch(/fn\.\$id\s*=\s*"src\/actions\.ts#addTodo"/);
+      // Single sourcemap covering both transforms
+      expect(result.map).toBeDefined();
+      expect(result.map.sources).toContain("chunk-rsc.js");
+    });
+
+    it("does not transform registerServerReference for non-use-server files", () => {
+      // Initialize with metaMap pointing to a non-existent file (isUseServerModule returns false)
+      const metaMap = {
+        "/project/src/component.tsx": {
+          importId: "src/component.tsx",
+          referenceKey: "def456",
+          exportNames: ["inlineAction"],
+        },
+      };
+      const plugin = initBuild("/project", metaMap);
+      const code = `registerServerReference(inlineActionFn, "def456", "inlineAction");`;
+      const chunk = { fileName: "chunk-rsc.js" };
+      const ctx = { environment: { name: "rsc" } };
+      const result = plugin.renderChunk.call(ctx, code, chunk);
+      // No hashToFileMap entry for def456 (file is not "use server"), so no $id wrapping
+      expect(result).toBeNull();
+    });
+
+    it("returns null in RSC env when code has no server references", () => {
+      const plugin = initRscBuild();
+      const code = `export const foo = "bar";`;
+      const chunk = { fileName: "chunk-rsc.js" };
+      const ctx = { environment: { name: "rsc" } };
+      const result = plugin.renderChunk.call(ctx, code, chunk);
+      expect(result).toBeNull();
+    });
+  });
+
+  // ---- isUseServerModule filtering (tested via buildStart + renderChunk) ----
+
+  describe("use server module detection", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "use-server-test-"));
+
+    afterAll(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    function writeModule(name: string, content: string): string {
+      const filePath = path.join(tmpDir, name);
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, content);
+      return filePath;
+    }
+
+    function isHashMapped(filePath: string, hash: string): boolean {
+      const metaMap: Record<string, any> = {};
+      metaMap[filePath] = {
+        importId: path.relative(tmpDir, filePath),
+        referenceKey: hash,
+        exportNames: ["action"],
+      };
+      const plugin = initBuild(tmpDir, metaMap);
+      // Test via registerServerReference in RSC env
+      const code = `registerServerReference(actionFn, "${hash}", "action");`;
+      const ctx = { environment: { name: "rsc" } };
+      const result = plugin.renderChunk.call(ctx, code, { fileName: "test.js" });
+      // If isUseServerModule returned true, the hash will be in hashToFileMap
+      // and registerServerReference will be wrapped with $id
+      return result !== null && result.code.includes("fn.$id");
+    }
+
+    it("detects double-quoted 'use server' directive", () => {
+      const fp = writeModule("double.ts", '"use server";\nexport async function action() {}');
+      expect(isHashMapped(fp, "hash1")).toBe(true);
+    });
+
+    it("detects single-quoted 'use server' directive", () => {
+      const fp = writeModule("single.ts", "'use server';\nexport async function action() {}");
+      expect(isHashMapped(fp, "hash2")).toBe(true);
+    });
+
+    it("detects directive after comments", () => {
+      const fp = writeModule("commented.ts", '// file header\n/* license */\n"use server";\nexport async function action() {}');
+      expect(isHashMapped(fp, "hash3")).toBe(true);
+    });
+
+    it("rejects file without use server directive", () => {
+      const fp = writeModule("no-directive.ts", 'export async function action() {}');
+      expect(isHashMapped(fp, "hash4")).toBe(false);
+    });
+
+    it("rejects file with use server inside function (not module-level)", () => {
+      const fp = writeModule("inline.tsx", 'export function Component() {\n  async function action() {\n    "use server";\n  }\n}');
+      expect(isHashMapped(fp, "hash5")).toBe(false);
+    });
+
+    it("handles nonexistent file gracefully", () => {
+      expect(isHashMapped("/nonexistent/path.ts", "hash6")).toBe(false);
     });
   });
 

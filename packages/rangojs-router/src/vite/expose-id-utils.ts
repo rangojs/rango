@@ -119,7 +119,10 @@ export function detectImports(code: string): DetectedImports {
     if (/\bcreateRouter\b/.test(imports)) result.router = true;
   }
 
-  // createRouter has a stricter check: only from "@rangojs/router" (not sub-paths)
+  // createRouter has a stricter check: only from "@rangojs/router" (not sub-paths).
+  // NOTE: This is intentional — detectImports is used as a fast pre-filter in
+  // exposeInternalIds (which does NOT handle router transforms). The separate
+  // exposeRouterId plugin handles createRouter and DOES accept the /server subpath.
   if (result.router) {
     result.router =
       /import\s*\{[^}]*\bcreateRouter\b[^}]*\}\s*from\s*["']@rangojs\/router["']/.test(
