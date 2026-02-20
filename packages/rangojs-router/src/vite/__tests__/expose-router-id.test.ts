@@ -25,10 +25,16 @@ export const router = createRouter({ routes: [] });
 `;
     const result = plugin.transform(code, "/project/src/router.tsx");
     expect(result).toBeDefined();
-    expect(result.code).toContain("$$id:");
-    expect(result.code).toContain("$$routeNames:");
-    // Should import named-routes.gen
-    expect(result.code).toContain("named-routes.gen.js");
+    // $$id should be an 8-char hex hash
+    const idMatch = result.code.match(/\$\$id:\s*"([^"]+)"/);
+    expect(idMatch).toBeDefined();
+    expect(idMatch![1]).toMatch(/^[0-9a-f]{8}$/);
+    // $$routeNames should reference the imported variable
+    expect(result.code).toMatch(/\$\$routeNames:\s*__rsc_rn/);
+    // Should import named-routes.gen with correct filename
+    expect(result.code).toMatch(
+      /import\s*\{\s*NamedRoutes\s+as\s+__rsc_rn\s*\}\s*from\s*"\.\/router\.named-routes\.gen\.js"/,
+    );
   });
 
   it("injects into createRouter() with empty args (no config object)", () => {
@@ -38,8 +44,11 @@ export const router = createRouter();
 `;
     const result = plugin.transform(code, "/project/src/router.tsx");
     expect(result).toBeDefined();
-    expect(result.code).toContain("$$id:");
-    expect(result.code).toContain("$$routeNames:");
+    // Should wrap empty args with a config object containing $$id and $$routeNames
+    const idMatch = result.code.match(/\$\$id:\s*"([0-9a-f]{8})"/);
+    expect(idMatch).toBeDefined();
+    expect(result.code).toMatch(/createRouter\(\{\s*\$\$id:/);
+    expect(result.code).toMatch(/\$\$routeNames:\s*__rsc_rn/);
   });
 
   it("injects when createRouter is imported with alias", () => {
@@ -49,8 +58,10 @@ const router = cr({});
 `;
     const result = plugin.transform(code, "/project/src/router.tsx");
     expect(result).toBeDefined();
-    expect(result.code).toContain("$$id");
-    expect(result.code).toContain("$$routeNames");
+    // Should inject into the aliased cr() call
+    const idMatch = result.code.match(/\$\$id:\s*"([0-9a-f]{8})"/);
+    expect(idMatch).toBeDefined();
+    expect(result.code).toMatch(/\$\$routeNames:\s*__rsc_rn/);
   });
 
   it("injects when createRouter call is exported via specifier alias", () => {
@@ -61,8 +72,9 @@ export { routerDef as router };
 `;
     const result = plugin.transform(code, "/project/src/router.tsx");
     expect(result).toBeDefined();
-    expect(result.code).toContain("$$id");
-    expect(result.code).toContain("$$routeNames");
+    const idMatch = result.code.match(/\$\$id:\s*"([0-9a-f]{8})"/);
+    expect(idMatch).toBeDefined();
+    expect(result.code).toMatch(/\$\$routeNames:\s*__rsc_rn/);
   });
 
   // ---- Source filtering ----
@@ -99,7 +111,8 @@ export const router = createRouter({});
 `;
     const result = plugin.transform(code, "/project/src/router.tsx");
     expect(result).toBeDefined();
-    expect(result.code).toContain("$$id:");
+    const idMatch = result.code.match(/\$\$id:\s*"([0-9a-f]{8})"/);
+    expect(idMatch).toBeDefined();
   });
 
   // ---- ID stability ----
@@ -165,7 +178,7 @@ export const router = createRouter({ $$id: "existing" });
 
   // ---- Multiple routers ----
 
-  it("injects into multiple createRouter calls in one file", () => {
+  it("injects into multiple createRouter calls in one file with distinct IDs", () => {
     const plugin = initPlugin();
     const code = `import { createRouter } from "@rangojs/router";
 export const adminRouter = createRouter({ id: "admin" });
@@ -174,8 +187,24 @@ export const siteRouter = createRouter({ id: "site" });
     const result = plugin.transform(code, "/project/src/router.tsx");
     expect(result).toBeDefined();
     // Both should get $$id injected
-    const idMatches = result.code.match(/\$\$id:/g);
+    const idMatches = [...result.code.matchAll(/\$\$id:\s*"([0-9a-f]{8})"/g)];
     expect(idMatches).toHaveLength(2);
+    // IDs should be distinct (different line numbers produce different hashes)
+    expect(idMatches[0][1]).not.toBe(idMatches[1][1]);
+  });
+
+  // ---- Generics ----
+
+  it("injects into createRouter<T>() with generic type parameter", () => {
+    const plugin = initPlugin();
+    const code = `import { createRouter } from "@rangojs/router";
+export const router = createRouter<MyRoutes>({ routes: [] });
+`;
+    const result = plugin.transform(code, "/project/src/router.tsx");
+    expect(result).toBeDefined();
+    const idMatch = result.code.match(/\$\$id:\s*"([0-9a-f]{8})"/);
+    expect(idMatch).toBeDefined();
+    expect(result.code).toMatch(/\$\$routeNames:\s*__rsc_rn/);
   });
 
   // ---- Source map ----

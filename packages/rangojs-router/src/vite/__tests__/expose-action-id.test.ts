@@ -52,13 +52,17 @@ describe("exposeActionId", () => {
   // ---- Dev mode: transform ----
 
   describe("dev mode transform", () => {
-    it("wraps createServerReference to attach $$id", () => {
+    it("wraps createServerReference to attach $$id via IIFE", () => {
       const plugin = initDev();
       const code = `const action = createServerReference("src/actions.ts#addTodo", callServer);`;
       const result = plugin.transform.call({}, code, "/project/src/client.tsx");
       expect(result).toBeDefined();
-      expect(result.code).toContain("fn.$$id");
-      expect(result.code).toContain('"src/actions.ts#addTodo"');
+      // Should wrap in IIFE that attaches $$id and returns fn
+      expect(result.code).toMatch(
+        /\(function\(fn\)\s*\{\s*fn\.\$\$id\s*=\s*"src\/actions\.ts#addTodo";\s*return fn;\s*\}\)/,
+      );
+      // The original createServerReference call should still be invoked
+      expect(result.code).toMatch(/createServerReference\("src\/actions\.ts#addTodo"/);
     });
 
     it("wraps $$ReactClient.createServerReference (namespace form)", () => {
@@ -66,7 +70,12 @@ describe("exposeActionId", () => {
       const code = `const action = $$ReactClient.createServerReference("src/actions.ts#addTodo", callServer);`;
       const result = plugin.transform.call({}, code, "/project/src/client.tsx");
       expect(result).toBeDefined();
-      expect(result.code).toContain("fn.$$id");
+      // Should wrap the namespace form in IIFE with $$id
+      expect(result.code).toMatch(
+        /\(function\(fn\)\s*\{\s*fn\.\$\$id\s*=\s*"src\/actions\.ts#addTodo"/,
+      );
+      // The namespace call should be preserved
+      expect(result.code).toContain("$$ReactClient.createServerReference(");
     });
 
     it("returns undefined for code without createServerReference", () => {
@@ -90,7 +99,7 @@ describe("exposeActionId", () => {
       expect(result).toBeUndefined();
     });
 
-    it("handles multiple createServerReference calls", () => {
+    it("handles multiple createServerReference calls with distinct IDs", () => {
       const plugin = initDev();
       const code = `
 const add = createServerReference("src/actions.ts#add", callServer);
@@ -98,9 +107,12 @@ const remove = createServerReference("src/actions.ts#remove", callServer);
 `;
       const result = plugin.transform.call({}, code, "/project/src/client.tsx");
       expect(result).toBeDefined();
-      // Both references should be wrapped
-      const wrappings = result.code.match(/fn\.\$\$id/g);
-      expect(wrappings).toHaveLength(2);
+      // Both references should be wrapped with IIFE
+      const idMatches = [...result.code.matchAll(/fn\.\$\$id\s*=\s*"([^"]+)"/g)];
+      expect(idMatches).toHaveLength(2);
+      // Each should have a distinct action ID
+      expect(idMatches[0][1]).toBe("src/actions.ts#add");
+      expect(idMatches[1][1]).toBe("src/actions.ts#remove");
     });
   });
 
@@ -114,12 +126,15 @@ const remove = createServerReference("src/actions.ts#remove", callServer);
       const ctx = { environment: { name: "client" } };
       const result = plugin.renderChunk.call(ctx, code, chunk);
       expect(result).toBeDefined();
-      expect(result.code).toContain("fn.$$id");
+      // Should wrap in IIFE with $$id preserving the original hash
+      expect(result.code).toMatch(
+        /\(function\(fn\)\s*\{\s*fn\.\$\$id\s*=\s*"abc123#addTodo"/,
+      );
       // Client should keep the hash, not replace with file path
-      expect(result.code).toContain('"abc123#addTodo"');
+      expect(result.code).not.toMatch(/src\/actions/);
     });
 
-    it("replaces hash with file path in RSC environment for module-level server actions", () => {
+    it("keeps hash in client environment even when metaMap has file mappings", () => {
       const metaMap = {
         "/project/src/actions.ts": {
           importId: "src/actions.ts",
@@ -128,9 +143,8 @@ const remove = createServerReference("src/actions.ts#remove", callServer);
         },
       };
 
-      // Mock isUseServerModule by providing a real file that starts with "use server"
-      // Since we can't easily mock fs.readFileSync, we test the client path
-      // which doesn't depend on isUseServerModule
+      // Client environment should always keep hash IDs for security,
+      // regardless of metaMap contents (only RSC env gets file paths)
       const plugin = initBuild("/project", metaMap);
 
       const code = `const action = createServerReference("abc123#addTodo", callServer);`;
@@ -138,7 +152,26 @@ const remove = createServerReference("src/actions.ts#remove", callServer);
       const ctx = { environment: { name: "client" } };
       const result = plugin.renderChunk.call(ctx, code, chunk);
       expect(result).toBeDefined();
-      expect(result.code).toContain("fn.$$id");
+      // Client should still use hash, not file path
+      expect(result.code).toMatch(/fn\.\$\$id\s*=\s*"abc123#addTodo"/);
+    });
+
+    it("keeps hash in SSR environment (must match client bundle for hydration)", () => {
+      const metaMap = {
+        "/project/src/actions.ts": {
+          importId: "src/actions.ts",
+          referenceKey: "abc123",
+          exportNames: ["addTodo"],
+        },
+      };
+      const plugin = initBuild("/project", metaMap);
+      const code = `const action = createServerReference("abc123#addTodo", callServer);`;
+      const chunk = { fileName: "chunk-ssr.js" };
+      // SSR environment should keep hash IDs (same as client) to avoid error #418
+      const ctx = { environment: { name: "ssr" } };
+      const result = plugin.renderChunk.call(ctx, code, chunk);
+      expect(result).toBeDefined();
+      expect(result.code).toMatch(/fn\.\$\$id\s*=\s*"abc123#addTodo"/);
     });
 
     it("returns null for code without createServerReference", () => {
@@ -158,6 +191,8 @@ const remove = createServerReference("src/actions.ts#remove", callServer);
       const result = plugin.renderChunk.call(ctx, code, chunk);
       expect(result).toBeDefined();
       expect(result.map).toBeDefined();
+      // Source map should reference the chunk fileName
+      expect(result.map.sources).toContain("assets/chunk-xyz.js");
     });
   });
 
