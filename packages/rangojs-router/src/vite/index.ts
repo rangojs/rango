@@ -721,7 +721,7 @@ function createRouterDiscoveryPlugin(
   // Handler chunk info for __static-handlers, populated by generateBundle.
   let staticHandlerChunkInfo: {
     fileName: string;
-    exports: Array<{ name: string; handlerId: string }>;
+    exports: Array<{ name: string; handlerId: string; passthrough: boolean }>;
   } | null = null;
 
   // Resolved prerender handler modules from the expose-internal-ids plugin.
