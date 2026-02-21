@@ -483,6 +483,23 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
       return moduleLevelReverseResults;
     }, { name: "reverseFallbackTest" }),
 
+    // Runtime manifest test endpoint — reads the cached manifest directly.
+    // Used by HMR tests to verify the runtime manifest stays in sync with
+    // the generated types file after route changes. Uses internal APIs
+    // (getGlobalRouteMap) because ctx.reverse() resolves from a closure-
+    // captured route map that doesn't update on HMR.
+    path.json("/__debug/reverse-test", async (ctx): Promise<Record<string, string | null>> => {
+      const url = new URL(ctx.request.url);
+      const names = url.searchParams.getAll("name");
+      const result: Record<string, string | null> = {};
+      const serverMod = await import("@rangojs/router/server");
+      const routeMap = serverMod.getGlobalRouteMap();
+      for (const name of names) {
+        result[name] = routeMap[name] ?? null;
+      }
+      return result;
+    }),
+
     // Content negotiation test: RSC + JSON + MD on same URL
     path(
       "/negotiate-test",

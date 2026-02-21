@@ -12,9 +12,13 @@ export function createDocsPatterns(config: DocsConfig) {
     // Static layout: sidebar rendered once at build time via node:fs
     layout(DocsLayout, () => [
       // Runtime: consumer-provided articles
-      path("/", (ctx) => <DocsIndex articles={articles} reverse={ctx.reverse} />, {
-        name: "index",
-      }),
+      path(
+        "/",
+        (ctx) => <DocsIndex articles={articles} reverse={ctx.reverse} />,
+        {
+          name: "index",
+        },
+      ),
 
       path.json(
         "/api/search",

@@ -704,8 +704,8 @@ function createRouterDiscoveryPlugin(
     routeManifest: Record<string, string>;
     routeSearchSchemas?: Record<string, Record<string, string>>;
     sourceFile?: string;
+    factoryOnlyPrefixes?: Set<string>;
   }> = [];
-
 
   // Collected prerender data from in-process collection during discoverRouters().
   // Consumed by closeBundle to inject into the RSC entry bundle.
@@ -859,11 +859,32 @@ function createRouterDiscoveryPlugin(
 
       // Merge into the combined manifest
       Object.assign(mergedRouteManifest, manifest.routeManifest);
+      // Compute factory-only prefixes: dot-prefixed groups in the runtime
+      // manifest that the static parser cannot see. These are routes created
+      // by factory functions (e.g. createDocsPatterns()) and should always be
+      // supplemented on file change since HMR won't re-discover them.
+      let factoryOnlyPrefixes: Set<string> | undefined;
+      if (router.__sourceFile) {
+        const staticParsed = buildCombinedRouteMapForRouterFile(router.__sourceFile);
+        const staticNames = new Set(Object.keys(staticParsed.routes));
+        factoryOnlyPrefixes = new Set<string>();
+        for (const name of Object.keys(manifest.routeManifest)) {
+          if (staticNames.has(name)) continue;
+          const dotIdx = name.indexOf(".");
+          if (dotIdx <= 0) continue;
+          const prefix = name.substring(0, dotIdx + 1);
+          if ([...staticNames].some(n => n.startsWith(prefix))) continue;
+          factoryOnlyPrefixes.add(prefix);
+        }
+        if (factoryOnlyPrefixes.size === 0) factoryOnlyPrefixes = undefined;
+      }
+
       perRouterManifests.push({
         id,
         routeManifest: manifest.routeManifest,
         routeSearchSchemas: manifest.routeSearchSchemas,
         sourceFile: router.__sourceFile,
+        factoryOnlyPrefixes,
       });
 
       // Merge ancestry (internal field, used only for trie building)
@@ -1201,6 +1222,68 @@ function createRouterDiscoveryPlugin(
     }
   }
 
+  // After the static parser writes a gen file, supplement it with route groups
+  // from the runtime manifests that the static parser can't resolve (factory
+  // calls like createDocsPatterns()). Only adds groups whose dot-prefix (e.g.
+  // "docs.") is entirely absent from the static output. Groups partially
+  // visible to the static parser are left alone so renames/removals propagate
+  // immediately without requiring a server restart.
+  //
+  // The runtime manifest (cachedManifest / perRouterManifestMap) is updated
+  // automatically: the virtual:rsc-router/routes-manifest module imports the
+  // gen file, so when we write new content here, Vite's HMR invalidates the
+  // virtual module and re-evaluates it on the next request.
+  function supplementGenFilesWithRuntimeRoutes() {
+    // Cache static parsing results to avoid redundant I/O + parsing per router.
+    const parseCache = new Map<string, ReturnType<typeof buildCombinedRouteMapForRouterFile>>();
+    const getParsed = (file: string) => {
+      let cached = parseCache.get(file);
+      if (!cached) {
+        cached = buildCombinedRouteMapForRouterFile(file);
+        parseCache.set(file, cached);
+      }
+      return cached;
+    };
+
+    for (const { routeManifest, routeSearchSchemas, sourceFile, factoryOnlyPrefixes } of perRouterManifests) {
+      if (!sourceFile) continue;
+      if (!factoryOnlyPrefixes || factoryOnlyPrefixes.size === 0) continue;
+
+      const staticParsed = getParsed(sourceFile);
+
+      // Merge: static routes (authoritative) + factory-only groups from runtime.
+      const mergedRoutes: Record<string, string> = { ...staticParsed.routes };
+      const mergedSearchSchemas: Record<string, Record<string, string>> = { ...staticParsed.searchSchemas };
+
+      for (const [name, pattern] of Object.entries(routeManifest)) {
+        const dotIdx = name.indexOf(".");
+        if (dotIdx <= 0) continue;
+        const prefix = name.substring(0, dotIdx + 1);
+        if (factoryOnlyPrefixes.has(prefix)) {
+          mergedRoutes[name] = pattern;
+          // Also merge search schemas from factory-generated routes
+          if (routeSearchSchemas?.[name]) {
+            mergedSearchSchemas[name] = routeSearchSchemas[name];
+          }
+        }
+      }
+
+      const routerDir = dirname(sourceFile);
+      const routerBasename = basename(sourceFile).replace(/\.(tsx?|jsx?)$/, "");
+      const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
+      const source = generateRouteTypesSource(
+        mergedRoutes,
+        Object.keys(mergedSearchSchemas).length > 0 ? mergedSearchSchemas : undefined,
+      );
+      const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
+      if (existing !== source) {
+        writeFileSync(outPath, source);
+      }
+    }
+    // No manual manifest update needed: the virtual module imports the gen
+    // file, so Vite's HMR automatically re-evaluates it with fresh data.
+  }
+
   return {
     name: "@rangojs/router:discovery",
 
@@ -1283,6 +1366,61 @@ function createRouterDiscoveryPlugin(
         server.resolvedUrls?.local?.[0]?.replace(/\/$/, '')
         || `http://localhost:${server.config.server.port || 5173}`;
 
+      // Shared temp server for Cloudflare dev (no module runner in workerd).
+      // Used by both discover() (route type generation) and the prerender
+      // middleware (on-demand prerender evaluation). Created lazily, closed on
+      // server shutdown.
+      let prerenderTempServer: any = null;
+      let prerenderNodeRegistry: Map<string, any> | null = null;
+
+      // Clean up the temporary server when the dev server shuts down
+      server.httpServer?.on("close", () => {
+        if (prerenderTempServer) {
+          prerenderTempServer.close().catch(() => {});
+          prerenderTempServer = null;
+        }
+      });
+
+      async function getOrCreateTempServer(): Promise<any | null> {
+        if (prerenderNodeRegistry) {
+          return (prerenderTempServer.environments as any)?.rsc ?? null;
+        }
+        try {
+          const { default: rsc } = await import("@vitejs/plugin-rsc");
+          prerenderTempServer = await createViteServer({
+            root: projectRoot,
+            configFile: false,
+            server: { middlewareMode: true },
+            appType: "custom",
+            logLevel: "silent",
+            cacheDir: "node_modules/.vite_prerender",
+            resolve: { alias: userResolveAlias },
+            esbuild: { jsx: "automatic", jsxImportSource: "react" },
+            plugins: [
+              rsc({ entries: { client: "virtual:entry-client", ssr: "virtual:entry-ssr", rsc: entryPath } }),
+              createVersionPlugin(),
+              createVirtualStubPlugin(),
+              // Dev prerender must use dev-mode IDs (path-based) to match the
+              // workerd runtime. forceBuild would produce hashed IDs causing
+              // handle data key mismatches when replayed into the runtime store.
+              exposeInternalIds(),
+              exposeRouterId(),
+            ],
+          });
+
+          const tempRscEnv = (prerenderTempServer.environments as any)?.rsc;
+          if (tempRscEnv?.runner) {
+            await tempRscEnv.runner.import(entryPath);
+            const serverMod = await tempRscEnv.runner.import("@rangojs/router/server");
+            prerenderNodeRegistry = serverMod.RouterRegistry;
+            return tempRscEnv;
+          }
+        } catch (err: any) {
+          console.warn(`[rsc-router] Failed to create temp runner: ${err.message}`);
+        }
+        return null;
+      }
+
       const discover = async () => {
         const rscEnv = (server.environments as any)?.rsc;
         if (!rscEnv?.runner) {
@@ -1290,6 +1428,21 @@ function createRouterDiscoveryPlugin(
           // Set devServerOrigin so the virtual module can inject __PRERENDER_DEV_URL
           // for on-demand prerender via the /__rsc_prerender endpoint.
           devServerOrigin = getDevServerOrigin();
+
+          // Create a temp Node.js server to run runtime discovery and generate
+          // named route types (static parser can't resolve factory calls).
+          try {
+            const tempRscEnv = await getOrCreateTempServer();
+            if (tempRscEnv) {
+              await discoverRouters(tempRscEnv);
+              writeRouteTypesFiles();
+            }
+          } catch (err: any) {
+            console.warn(
+              `[rsc-router] Cloudflare dev discovery failed: ${err.message}\n${err.stack}`
+            );
+          }
+
           resolveDiscovery!();
           return;
         }
@@ -1367,16 +1520,7 @@ function createRouterDiscoveryPlugin(
       // instances are already discovered and have matchForPrerender).
       // Cloudflare preset: lazily creates a Node.js temp server because the main
       // RSC environment uses workerd where node:fs can't access the host filesystem.
-      let prerenderTempServer: any = null;
 
-      // Clean up the temporary prerender server when the dev server shuts down
-      server.httpServer?.on("close", () => {
-        if (prerenderTempServer) {
-          prerenderTempServer.close().catch(() => {});
-          prerenderTempServer = null;
-        }
-      });
-      let prerenderNodeRegistry: Map<string, any> | null = null;
       // Registry from the main server's RSC environment (populated by discoverRouters)
       let mainRegistry: Map<string, any> | null = null;
 
@@ -1399,38 +1543,7 @@ function createRouterDiscoveryPlugin(
           // No main registry: the RSC env has no module runner (Cloudflare dev).
           // Lazily create a Node.js temp server for prerender evaluation.
           if (!prerenderNodeRegistry) {
-            try {
-              const { default: rsc } = await import("@vitejs/plugin-rsc");
-              prerenderTempServer = await createViteServer({
-                root: projectRoot,
-                configFile: false,
-                server: { middlewareMode: true },
-                appType: "custom",
-                logLevel: "silent",
-                cacheDir: "node_modules/.vite_prerender",
-                resolve: { alias: userResolveAlias },
-                esbuild: { jsx: "automatic", jsxImportSource: "react" },
-                plugins: [
-                  rsc({ entries: { client: "virtual:entry-client", ssr: "virtual:entry-ssr", rsc: entryPath } }),
-                  createVersionPlugin(),
-                  createVirtualStubPlugin(),
-                  // Dev prerender must use dev-mode IDs (path-based) to match the
-                  // workerd runtime. forceBuild would produce hashed IDs causing
-                  // handle data key mismatches when replayed into the runtime store.
-                  exposeInternalIds(),
-                  exposeRouterId(),
-                ],
-              });
-
-              const tempRscEnv = (prerenderTempServer.environments as any)?.rsc;
-              if (tempRscEnv?.runner) {
-                await tempRscEnv.runner.import(entryPath);
-                const serverMod = await tempRscEnv.runner.import("@rangojs/router/server");
-                prerenderNodeRegistry = serverMod.RouterRegistry;
-              }
-            } catch (err: any) {
-              console.warn(`[rsc-router] Failed to create prerender runner: ${err.message}`);
-            }
+            await getOrCreateTempServer();
           }
           registry = prerenderNodeRegistry;
         }
@@ -1494,8 +1607,29 @@ function createRouterDiscoveryPlugin(
               cachedRouterFiles = undefined;
             }
             writeCombinedRouteTypes(projectRoot, cachedRouterFiles);
+            // Static parsing can't resolve factory calls (e.g. createDocsPatterns()).
+            // If runtime discovery already ran, supplement the static output with
+            // factory-generated routes that the parser missed. Static routes take
+            // precedence (reflecting renames/additions/removals in source), and
+            // runtime-only routes (from factories) fill the gaps.
+            // The runtime manifest updates automatically: the virtual module
+            // imports the gen file, so Vite's HMR re-evaluates setCachedManifest().
+            if (perRouterManifests.length > 0) {
+              supplementGenFilesWithRuntimeRoutes();
+            }
           } catch {
             // Ignore read errors for deleted/moved files
+          }
+        });
+
+        // Regenerate gen files when they are deleted (e.g. manual cleanup).
+        server.watcher.on("unlink", (filePath) => {
+          if (!filePath.endsWith(".gen.ts")) return;
+          if (!filePath.includes("named-routes.gen.ts") && !filePath.includes("urls.gen.ts")) return;
+          if (perRouterManifests.length > 0) {
+            writeRouteTypesFiles();
+          } else {
+            writeCombinedRouteTypes(projectRoot, cachedRouterFiles);
           }
         });
       }
@@ -1621,10 +1755,61 @@ function createRouterDiscoveryPlugin(
         }
         const hasManifest = mergedRouteManifest && Object.keys(mergedRouteManifest).length > 0;
         if (hasManifest) {
+          // Build gen file import statements for each router with a sourceFile.
+          // This creates a dependency in Vite's module graph: when the gen file
+          // changes (e.g. after HMR route edits), Vite invalidates this virtual
+          // module and re-evaluates it on the next request, calling
+          // setCachedManifest() with fresh data. No manual sync needed.
+          const genFileImports: string[] = [];
+          const genFileVars: string[] = [];
+          const routersWithoutGenFile: Array<{ id: string; manifest: Record<string, string> }> = [];
+          let varIdx = 0;
+
+          for (const entry of perRouterManifests) {
+            if (entry.sourceFile) {
+              const routerDir = dirname(entry.sourceFile);
+              const routerBasename = basename(entry.sourceFile).replace(/\.(tsx?|jsx?)$/, "");
+              const genPath = join(routerDir, `${routerBasename}.named-routes.gen.js`);
+              const varName = `_r${varIdx++}`;
+              genFileImports.push(`import { NamedRoutes as ${varName} } from ${JSON.stringify(genPath)};`);
+              genFileVars.push(varName);
+            } else {
+              // Routers without sourceFile: inline their manifest data directly
+              routersWithoutGenFile.push({ id: entry.id, manifest: entry.routeManifest });
+            }
+          }
+
           const lines = [
-            `import { setCachedManifest, setPrecomputedEntries, setRouteTrie, registerRouterManifestLoader } from "@rangojs/router/server";`,
-            `setCachedManifest(${jsonParseExpression(mergedRouteManifest)});`,
+            `import { setCachedManifest, setPrecomputedEntries, setRouteTrie, setRouterManifest, registerRouterManifestLoader } from "@rangojs/router/server";`,
+            ...genFileImports,
           ];
+
+          // Flatten NamedRoutes entries: search schema objects -> plain string paths
+          if (genFileVars.length > 0) {
+            lines.push(`function __flat(r) { const o = {}; for (const [k, v] of Object.entries(r)) o[k] = typeof v === "string" ? v : v.path; return o; }`);
+          }
+
+          // Build the merged manifest from gen file imports + inlined data
+          if (genFileVars.length === 1 && routersWithoutGenFile.length === 0) {
+            lines.push(`setCachedManifest(__flat(${genFileVars[0]}));`);
+          } else {
+            const parts: string[] = [];
+            for (const v of genFileVars) parts.push(`...__flat(${v})`);
+            for (const { manifest } of routersWithoutGenFile) parts.push(`...${jsonParseExpression(manifest)}`);
+            lines.push(`setCachedManifest({ ${parts.join(", ")} });`);
+          }
+
+          // Set per-router manifests
+          let genVarIdx = 0;
+          for (const entry of perRouterManifests) {
+            if (entry.sourceFile) {
+              const varName = genFileVars[genVarIdx++];
+              lines.push(`setRouterManifest(${JSON.stringify(entry.id)}, __flat(${varName}));`);
+            } else {
+              lines.push(`setRouterManifest(${JSON.stringify(entry.id)}, ${jsonParseExpression(entry.routeManifest)});`);
+            }
+          }
+
           if (mergedPrecomputedEntries && mergedPrecomputedEntries.length > 0) {
             lines.push(`setPrecomputedEntries(${jsonParseExpression(mergedPrecomputedEntries)});`);
           }
@@ -1665,12 +1850,25 @@ function createRouterDiscoveryPlugin(
           await discoveryDone;
         }
         const routerId = id.slice(perRouterPrefix.length);
-        const manifest = perRouterManifestDataMap.get(routerId);
+        // Find the per-router entry to get the gen file path
+        const routerEntry = perRouterManifests.find(e => e.id === routerId);
         const trie = perRouterTrieMap.get(routerId);
         const entries = perRouterPrecomputedMap.get(routerId);
         const lines: string[] = [];
-        if (manifest) {
-          lines.push(`export const manifest = ${jsonParseExpression(manifest)};`);
+
+        if (routerEntry?.sourceFile) {
+          // Import manifest from the gen file so HMR auto-propagates
+          const routerDir = dirname(routerEntry.sourceFile);
+          const routerBasename = basename(routerEntry.sourceFile).replace(/\.(tsx?|jsx?)$/, "");
+          const genPath = join(routerDir, `${routerBasename}.named-routes.gen.js`);
+          lines.push(`import { NamedRoutes as _r } from ${JSON.stringify(genPath)};`);
+          lines.push(`function __flat(r) { const o = {}; for (const [k, v] of Object.entries(r)) o[k] = typeof v === "string" ? v : v.path; return o; }`);
+          lines.push(`export const manifest = __flat(_r);`);
+        } else {
+          const manifest = perRouterManifestDataMap.get(routerId);
+          if (manifest) {
+            lines.push(`export const manifest = ${jsonParseExpression(manifest)};`);
+          }
         }
         if (trie) {
           lines.push(`export const trie = ${jsonParseExpression(trie)};`);
@@ -1995,14 +2193,6 @@ function createVirtualStubPlugin(): Plugin {
       return null;
     },
   };
-}
-
-/**
- * Generate a deterministic 12-char hex hash from a router id.
- * Used to create collision-free directory names for per-router static output.
- */
-function hashRouterId(id: string): string {
-  return createHash("sha256").update(id).digest("hex").slice(0, 12);
 }
 
 /**

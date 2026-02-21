@@ -18,6 +18,9 @@ export {
 export {
   registerRouteMap,
   setCachedManifest,
+  clearCachedManifest,
+  getGlobalRouteMap,
+  getRouterManifest,
   setPrecomputedEntries,
   setRouteTrie,
   setManifestReadyPromise,
