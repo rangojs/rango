@@ -1612,8 +1612,8 @@ function createRouterDiscoveryPlugin(
             // factory-generated routes that the parser missed. Static routes take
             // precedence (reflecting renames/additions/removals in source), and
             // runtime-only routes (from factories) fill the gaps.
-            // Also update the runtime cachedManifest so reverse() reflects the
-            // same route changes (adds, removes, renames) seen in the gen file.
+            // The runtime manifest updates automatically: the virtual module
+            // imports the gen file, so Vite's HMR re-evaluates setCachedManifest().
             if (perRouterManifests.length > 0) {
               supplementGenFilesWithRuntimeRoutes();
             }

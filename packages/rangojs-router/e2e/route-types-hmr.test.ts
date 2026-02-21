@@ -300,4 +300,48 @@ test.describe.serial("route-types-hmr", () => {
   // module-level reverse() calls that reference the old name, causing
   // the entire router module to fail on re-evaluation. This is expected
   // behavior — the gen file (tested above) correctly reflects renames.
+
+  // -- Gen file deletion recovery tests --
+  // Verify the watcher recreates deleted gen files and the virtual module
+  // re-evaluates correctly.
+
+  test("should recreate gen file when it is deleted", async () => {
+    // Verify gen file exists with expected routes
+    const before = await fs.readFile(genFilePath, "utf-8");
+    expect(before).toContain('"blog.index"');
+    expect(before).toContain('"blog.post"');
+
+    // Delete the gen file
+    await fs.unlink(genFilePath);
+
+    // Verify it doesn't exist
+    await expect(fs.access(genFilePath)).rejects.toThrow();
+
+    // The unlink handler should recreate it
+    await expect(async () => {
+      const after = await fs.readFile(genFilePath, "utf-8");
+      expect(after).toContain('"blog.index"');
+      expect(after).toContain('"blog.post"');
+    }).toPass({ timeout: 10000 });
+  });
+
+  test("reverse() should still work after gen file deletion and recreation", async () => {
+    // Verify reverse() works before deletion
+    const before = await queryReverse(["blog.index"]);
+    expect(before["blog.index"]).toBe("/blog");
+
+    // Delete the gen file
+    await fs.unlink(genFilePath);
+
+    // Wait for recreation
+    await expect(async () => {
+      await fs.access(genFilePath);
+    }).toPass({ timeout: 10000 });
+
+    // Verify reverse() still resolves after recreation
+    await expect(async () => {
+      const after = await queryReverse(["blog.index"]);
+      expect(after["blog.index"]).toBe("/blog");
+    }).toPass({ timeout: 5000 });
+  });
 });
