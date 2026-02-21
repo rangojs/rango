@@ -40,6 +40,7 @@ export function registerRouteMap(map: Record<string, string>): void {
  * otherwise returns the runtime-accumulated route map.
  *
  * @returns The registered route map
+ * @internal
  */
 export function getGlobalRouteMap(): Record<string, string> {
   // Cached manifest is complete (includes lazy routes), so prefer it
@@ -126,6 +127,7 @@ export function setRouterManifest(routerId: string, manifest: Record<string, str
   perRouterManifestMap.set(routerId, manifest);
 }
 
+/** @internal */
 export function getRouterManifest(routerId: string): Record<string, string> | undefined {
   return perRouterManifestMap.get(routerId);
 }

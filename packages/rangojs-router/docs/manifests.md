@@ -184,6 +184,12 @@ Three tiers in `route-map-builder.ts`:
 
 `getGlobalRouteMap()` returns `cachedManifest` if available, otherwise `globalRouteMap`.
 
+**Internal only:** The storage functions in `route-map-builder.ts` (`getGlobalRouteMap`,
+`getRouterManifest`, `clearCachedManifest`, etc.) are exported from `@rangojs/router/server`
+but marked `@internal`. They are consumed by the virtual module and internal Vite plugin
+code only. User-land code should use `ctx.reverse()` or `href()` to resolve route names —
+never access the manifest storage directly.
+
 ## Testing
 
 ### Unit tests

@@ -280,7 +280,7 @@ export interface RSCRouterOptions<TEnv = any> {
   /**
    * Allow the `?__debug_manifest` query parameter to return route manifest data as JSON.
    * In development mode this is always enabled regardless of this setting.
-   * Defaults to true. Set to false to disable in production.
+   * Defaults to false. Set to true to enable in production.
    * @internal
    */
   allowDebugManifest?: boolean;
@@ -1167,7 +1167,7 @@ export function createRouter<TEnv = any>(
     nonce,
     version,
     warmup: warmupOption,
-    allowDebugManifest: allowDebugManifestOption = true,
+    allowDebugManifest: allowDebugManifestOption = false,
   } = options;
 
   // Capture the source file that called createRouter() via stack trace parsing.
