@@ -12,6 +12,8 @@ export interface RuntimeDiscoveryOptions {
   configFile?: string;
   /** Absolute path to the router entry file. */
   entry: string;
+  /** Override resolve.alias (skips loading from vite config when provided). */
+  resolveAlias?: Record<string, string>;
 }
 
 /**
@@ -54,20 +56,22 @@ export async function discoverAndWriteRouteTypes(opts: RuntimeDiscoveryOptions):
   const { createVersionPlugin } = await import("../vite/version-plugin.ts");
   const { createVirtualStubPlugin } = await import("../vite/virtual-stub-plugin.ts");
 
-  // Load user's vite config to get resolve.alias
-  let userResolveAlias: any = undefined;
-  const configPath = opts.configFile ?? undefined;
-  try {
-    const loaded = await loadConfigFromFile(
-      { command: "serve", mode: "development" },
-      configPath,
-      opts.root
-    );
-    if (loaded?.config?.resolve?.alias) {
-      userResolveAlias = loaded.config.resolve.alias;
+  // Load user's vite config to get resolve.alias (unless provided directly)
+  let userResolveAlias: any = opts.resolveAlias;
+  if (!userResolveAlias) {
+    const configPath = opts.configFile;
+    try {
+      const loaded = await loadConfigFromFile(
+        { command: "serve", mode: "development" },
+        configPath,
+        opts.root
+      );
+      if (loaded?.config?.resolve?.alias) {
+        userResolveAlias = loaded.config.resolve.alias;
+      }
+    } catch {
+      // Config loading failed; proceed without aliases
     }
-  } catch {
-    // Config loading failed; proceed without aliases
   }
 
   const entryPath = resolve(opts.entry);

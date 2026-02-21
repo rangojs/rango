@@ -396,47 +396,6 @@ export function writePerModuleRouteTypesForFile(filePath: string): void {
 // AST-based include() parsing
 // ---------------------------------------------------------------------------
 
-/**
- * Extract include() calls from source code by walking the TypeScript AST.
- * Returns the path prefix, variable name, and optional name prefix for each.
- */
-export function extractIncludesFromSource(
-  code: string
-): Array<{ pathPrefix: string; variableName: string; namePrefix: string | null }> {
-  const sourceFile = ts.createSourceFile("input.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const results: Array<{ pathPrefix: string; variableName: string; namePrefix: string | null }> = [];
-
-  function visit(node: ts.Node) {
-    if (ts.isCallExpression(node)) {
-      const callee = node.expression;
-      if (ts.isIdentifier(callee) && callee.text === "include") {
-        const result = extractIncludeFromCallExpression(node);
-        if (result) results.push(result);
-      }
-    }
-    ts.forEachChild(node, visit);
-  }
-
-  visit(sourceFile);
-  return results;
-}
-
-function extractIncludeFromCallExpression(
-  node: ts.CallExpression
-): { pathPrefix: string; variableName: string; namePrefix: string | null } | null {
-  if (node.arguments.length < 2) return null;
-
-  const pathPrefix = getStringValue(node.arguments[0]);
-  if (pathPrefix === null) return null;
-
-  const secondArg = node.arguments[1];
-  if (!ts.isIdentifier(secondArg)) return null;
-  const variableName = secondArg.text;
-
-  const namePrefix = extractNamePrefixFromInclude(node);
-  return { pathPrefix, variableName, namePrefix };
-}
-
 function extractNamePrefixFromInclude(node: ts.CallExpression): string | null {
   if (node.arguments.length >= 3) {
     const thirdArg = node.arguments[2];
@@ -549,7 +508,7 @@ function resolveImportedVariable(
 
 /**
  * Resolve an import specifier relative to the importing file.
- * Strips .js/.mjs extensions and tries .ts/.tsx candidates.
+ * Strips .js/.mjs/.jsx extensions and tries .ts/.tsx/.js/.jsx candidates.
  */
 function resolveImportPath(
   importSpec: string,
@@ -561,12 +520,17 @@ function resolveImportPath(
   let base = importSpec;
   if (base.endsWith(".js")) base = base.slice(0, -3);
   else if (base.endsWith(".mjs")) base = base.slice(0, -4);
+  else if (base.endsWith(".jsx")) base = base.slice(0, -4);
 
   const candidates = [
     resolve(dir, base + ".ts"),
     resolve(dir, base + ".tsx"),
+    resolve(dir, base + ".js"),
+    resolve(dir, base + ".jsx"),
     resolve(dir, base + "/index.ts"),
     resolve(dir, base + "/index.tsx"),
+    resolve(dir, base + "/index.js"),
+    resolve(dir, base + "/index.jsx"),
   ];
 
   for (const candidate of candidates) {
@@ -615,45 +579,6 @@ function extractUrlsBlockForVariable(
 // ---------------------------------------------------------------------------
 // Combined route map building
 // ---------------------------------------------------------------------------
-
-/**
- * Recursively build a route map from a urls module file.
- * Extracts local path() routes and follows include() calls to sub-modules.
- * Handles both imported and same-file variables.
- */
-export function buildCombinedRouteMap(
-  filePath: string,
-  variableName?: string,
-  visited?: Set<string>
-): Record<string, string> {
-  visited = visited ?? new Set();
-  const realPath = resolve(filePath);
-  const key = variableName ? `${realPath}:${variableName}` : realPath;
-  if (visited.has(key)) {
-    console.warn(`[rsc-router] Circular include detected, skipping: ${key}`);
-    return {};
-  }
-  visited.add(key);
-
-  let source: string;
-  try {
-    source = readFileSync(realPath, "utf-8");
-  } catch {
-    return {};
-  }
-
-  // If a specific variable is requested, extract just its urls() block
-  let block: string;
-  if (variableName) {
-    const extracted = extractUrlsBlockForVariable(source, variableName);
-    if (!extracted) return {};
-    block = extracted;
-  } else {
-    block = source;
-  }
-
-  return buildRouteMapFromBlock(block, source, realPath, visited);
-}
 
 function buildRouteMapFromBlock(
   block: string,

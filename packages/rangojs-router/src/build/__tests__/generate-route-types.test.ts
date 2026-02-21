@@ -7,7 +7,6 @@ import {
   writeCombinedRouteTypes,
   generateRouteTypesSource,
   extractRoutesFromSource,
-  extractIncludesFromSource,
   extractParamsFromPattern,
   formatRouteEntry,
   generatePerModuleTypesSource,
@@ -406,51 +405,6 @@ describe("extractRoutesFromSource", () => {
       pattern: "/:slug",
       params: { slug: "string" },
     });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// extractIncludesFromSource (AST)
-// ---------------------------------------------------------------------------
-
-describe("extractIncludesFromSource", () => {
-  it("extracts include() calls with path prefix and variable", () => {
-    const code = `include("/api", apiUrls)`;
-    const includes = extractIncludesFromSource(code);
-    expect(includes).toEqual([
-      { pathPrefix: "/api", variableName: "apiUrls", namePrefix: null },
-    ]);
-  });
-
-  it("extracts include() with name prefix", () => {
-    const code = `include("/api", apiUrls, { name: "api" })`;
-    const includes = extractIncludesFromSource(code);
-    expect(includes).toEqual([
-      { pathPrefix: "/api", variableName: "apiUrls", namePrefix: "api" },
-    ]);
-  });
-
-  it("extracts multiple includes", () => {
-    const code = `
-      include("/api", apiUrls, { name: "api" });
-      include("/docs", docsUrls, { name: "docs" });
-    `;
-    const includes = extractIncludesFromSource(code);
-    expect(includes).toHaveLength(2);
-    expect(includes[0].variableName).toBe("apiUrls");
-    expect(includes[1].variableName).toBe("docsUrls");
-  });
-
-  it("skips include() with non-string first arg", () => {
-    const code = `include(variable, apiUrls)`;
-    const includes = extractIncludesFromSource(code);
-    expect(includes).toHaveLength(0);
-  });
-
-  it("skips include() with non-identifier second arg", () => {
-    const code = `include("/api", "not-an-identifier")`;
-    const includes = extractIncludesFromSource(code);
-    expect(includes).toHaveLength(0);
   });
 });
 

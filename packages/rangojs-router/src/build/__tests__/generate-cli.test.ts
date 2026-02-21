@@ -1,11 +1,11 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { readFileSync, existsSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   writePerModuleRouteTypesForFile,
   writeCombinedRouteTypes,
-  detectUnresolvableIncludes,
 } from "../generate-route-types";
+import { discoverAndWriteRouteTypes } from "../runtime-discovery";
 
 const fixtureDir = join(__dirname, "__fixtures__", "app");
 
@@ -344,17 +344,35 @@ describe("factory fixture", () => {
     expect(content).not.toContain("docs.page");
   });
 
-  it("detectUnresolvableIncludes returns correct diagnostics", () => {
-    const routerFile = join(factoryFixtureDir, "router.tsx");
-    const diagnostics = detectUnresolvableIncludes(routerFile);
+  it("runtime discovery produces complete output including factory routes", async () => {
+    const packageRoot = resolve(__dirname, "..", "..", "..");
+    const srcDir = join(packageRoot, "src");
+    const genPath = join(factoryFixtureDir, "router.named-routes.gen.ts");
+    generatedFiles.push(genPath);
 
-    expect(diagnostics).toHaveLength(1);
-    expect(diagnostics[0]).toMatchObject({
-      reason: "factory-call",
-      pathPrefix: "/docs",
-      namePrefix: "docs",
+    const result = await discoverAndWriteRouteTypes({
+      root: packageRoot,
+      entry: join(factoryFixtureDir, "router.tsx"),
+      resolveAlias: {
+        "@rangojs/router/server": join(srcDir, "server.ts"),
+        "@rangojs/router/build": join(srcDir, "build", "index.ts"),
+        "@rangojs/router/cache": join(srcDir, "cache", "index.ts"),
+        "@rangojs/router/host": join(srcDir, "host", "index.ts"),
+        "@rangojs/router": join(srcDir, "index.rsc.ts"),
+      },
     });
-    expect(diagnostics[0].detail).toContain("createDocsPatterns");
-    expect(diagnostics[0].sourceFile).toContain("urls.tsx");
-  });
+
+    expect(result.routerCount).toBe(1);
+    expect(result.routeCount).toBe(6);
+
+    const content = readFileSync(genPath, "utf-8");
+    // Static routes present
+    expect(content).toContain("home");
+    expect(content).toContain("about");
+    expect(content).toContain("api.health");
+    expect(content).toContain("api.detail");
+    // Factory routes also present (the key difference from static-only)
+    expect(content).toContain("docs.index");
+    expect(content).toContain("docs.page");
+  }, 30_000);
 });
