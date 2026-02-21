@@ -707,11 +707,6 @@ function createRouterDiscoveryPlugin(
     factoryOnlyPrefixes?: Set<string>;
   }> = [];
 
-
-  // Pending runtime manifest update. Set by the file watcher when routes change,
-  // consumed asynchronously to update the RSC environment's route map.
-  let pendingManifestUpdate: { merged: Record<string, string>; perRouter: Map<string, Record<string, string>> } | null = null;
-
   // Collected prerender data from in-process collection during discoverRouters().
   // Consumed by closeBundle to inject into the RSC entry bundle.
   let prerenderCollectedData: Record<string, any> | null = null;
@@ -1234,100 +1229,59 @@ function createRouterDiscoveryPlugin(
   // visible to the static parser are left alone so renames/removals propagate
   // immediately without requiring a server restart.
   //
-  // Also updates the runtime cachedManifest so that reverse() reflects the
-  // same route changes seen in the gen file (adds, removes, renames).
+  // The runtime manifest (cachedManifest / perRouterManifestMap) is updated
+  // automatically: the virtual:rsc-router/routes-manifest module imports the
+  // gen file, so when we write new content here, Vite's HMR invalidates the
+  // virtual module and re-evaluates it on the next request.
   function supplementGenFilesWithRuntimeRoutes() {
-    const runtimeManifestUpdate: Record<string, string> = {};
+    // Cache static parsing results to avoid redundant I/O + parsing per router.
+    const parseCache = new Map<string, ReturnType<typeof buildCombinedRouteMapForRouterFile>>();
+    const getParsed = (file: string) => {
+      let cached = parseCache.get(file);
+      if (!cached) {
+        cached = buildCombinedRouteMapForRouterFile(file);
+        parseCache.set(file, cached);
+      }
+      return cached;
+    };
 
-    for (const { routeManifest, sourceFile, factoryOnlyPrefixes } of perRouterManifests) {
+    for (const { routeManifest, routeSearchSchemas, sourceFile, factoryOnlyPrefixes } of perRouterManifests) {
       if (!sourceFile) continue;
+      if (!factoryOnlyPrefixes || factoryOnlyPrefixes.size === 0) continue;
 
-      // Re-parse routes from the router source (same as what writeCombinedRouteTypes just did)
-      const staticParsed = buildCombinedRouteMapForRouterFile(sourceFile);
-      const staticRoutes = staticParsed.routes;
+      const staticParsed = getParsed(sourceFile);
 
       // Merge: static routes (authoritative) + factory-only groups from runtime.
-      const mergedRoutes: Record<string, string> = { ...staticRoutes };
-      if (factoryOnlyPrefixes && factoryOnlyPrefixes.size > 0) {
-        for (const [name, pattern] of Object.entries(routeManifest)) {
-          const dotIdx = name.indexOf(".");
-          if (dotIdx <= 0) continue;
-          const prefix = name.substring(0, dotIdx + 1);
-          if (factoryOnlyPrefixes.has(prefix)) {
-            mergedRoutes[name] = pattern;
+      const mergedRoutes: Record<string, string> = { ...staticParsed.routes };
+      const mergedSearchSchemas: Record<string, Record<string, string>> = { ...staticParsed.searchSchemas };
+
+      for (const [name, pattern] of Object.entries(routeManifest)) {
+        const dotIdx = name.indexOf(".");
+        if (dotIdx <= 0) continue;
+        const prefix = name.substring(0, dotIdx + 1);
+        if (factoryOnlyPrefixes.has(prefix)) {
+          mergedRoutes[name] = pattern;
+          // Also merge search schemas from factory-generated routes
+          if (routeSearchSchemas?.[name]) {
+            mergedSearchSchemas[name] = routeSearchSchemas[name];
           }
         }
-
-        const mergedSearchSchemas: Record<string, Record<string, string>> = { ...staticParsed.searchSchemas };
-
-        const routerDir = dirname(sourceFile);
-        const routerBasename = basename(sourceFile).replace(/\.(tsx?|jsx?)$/, "");
-        const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
-        const source = generateRouteTypesSource(
-          mergedRoutes,
-          Object.keys(mergedSearchSchemas).length > 0 ? mergedSearchSchemas : undefined,
-        );
-        const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
-        if (existing !== source) {
-          writeFileSync(outPath, source);
-        }
       }
 
-      // Accumulate merged routes for the runtime manifest update
-      Object.assign(runtimeManifestUpdate, mergedRoutes);
+      const routerDir = dirname(sourceFile);
+      const routerBasename = basename(sourceFile).replace(/\.(tsx?|jsx?)$/, "");
+      const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
+      const source = generateRouteTypesSource(
+        mergedRoutes,
+        Object.keys(mergedSearchSchemas).length > 0 ? mergedSearchSchemas : undefined,
+      );
+      const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
+      if (existing !== source) {
+        writeFileSync(outPath, source);
+      }
     }
-
-    // Schedule a runtime manifest update. Stored function references become
-    // stale after HMR re-evaluates modules, so we re-import via the RSC
-    // runner to get the current module instance.
-    if (Object.keys(runtimeManifestUpdate).length > 0) {
-      mergedRouteManifest = runtimeManifestUpdate;
-      const perRouterUpdates = new Map<string, Record<string, string>>();
-      for (const { id, sourceFile } of perRouterManifests) {
-        if (!sourceFile) continue;
-        const staticParsed = buildCombinedRouteMapForRouterFile(sourceFile);
-        const routerRoutes: Record<string, string> = { ...staticParsed.routes };
-        const entry = perRouterManifests.find(m => m.id === id);
-        if (entry?.factoryOnlyPrefixes) {
-          for (const [name, pattern] of Object.entries(entry.routeManifest)) {
-            const dotIdx = name.indexOf(".");
-            if (dotIdx <= 0) continue;
-            const prefix = name.substring(0, dotIdx + 1);
-            if (entry.factoryOnlyPrefixes.has(prefix)) {
-              routerRoutes[name] = pattern;
-            }
-          }
-        }
-        perRouterUpdates.set(id, routerRoutes);
-        perRouterManifestDataMap.set(id, routerRoutes);
-      }
-      pendingManifestUpdate = { merged: runtimeManifestUpdate, perRouter: perRouterUpdates };
-      applyPendingManifestUpdate();
-    }
-  }
-
-  async function applyPendingManifestUpdate() {
-    const update = pendingManifestUpdate;
-    if (!update || !devServer) return;
-    const rscEnv = (devServer.environments as any)?.rsc;
-    if (!rscEnv?.runner) return;
-    try {
-      const serverMod = await rscEnv.runner.import("@rangojs/router/server");
-      if (serverMod?.setCachedManifest) {
-        serverMod.setCachedManifest(update.merged);
-      }
-      if (serverMod?.setRouterManifest) {
-        for (const [routerId, manifest] of update.perRouter) {
-          serverMod.setRouterManifest(routerId, manifest);
-        }
-      }
-      // Clear pending if this update is still the latest
-      if (pendingManifestUpdate === update) {
-        pendingManifestUpdate = null;
-      }
-    } catch {
-      // Module runner might be shutting down
-    }
+    // No manual manifest update needed: the virtual module imports the gen
+    // file, so Vite's HMR automatically re-evaluates it with fresh data.
   }
 
   return {
@@ -1801,10 +1755,61 @@ function createRouterDiscoveryPlugin(
         }
         const hasManifest = mergedRouteManifest && Object.keys(mergedRouteManifest).length > 0;
         if (hasManifest) {
+          // Build gen file import statements for each router with a sourceFile.
+          // This creates a dependency in Vite's module graph: when the gen file
+          // changes (e.g. after HMR route edits), Vite invalidates this virtual
+          // module and re-evaluates it on the next request, calling
+          // setCachedManifest() with fresh data. No manual sync needed.
+          const genFileImports: string[] = [];
+          const genFileVars: string[] = [];
+          const routersWithoutGenFile: Array<{ id: string; manifest: Record<string, string> }> = [];
+          let varIdx = 0;
+
+          for (const entry of perRouterManifests) {
+            if (entry.sourceFile) {
+              const routerDir = dirname(entry.sourceFile);
+              const routerBasename = basename(entry.sourceFile).replace(/\.(tsx?|jsx?)$/, "");
+              const genPath = join(routerDir, `${routerBasename}.named-routes.gen.js`);
+              const varName = `_r${varIdx++}`;
+              genFileImports.push(`import { NamedRoutes as ${varName} } from ${JSON.stringify(genPath)};`);
+              genFileVars.push(varName);
+            } else {
+              // Routers without sourceFile: inline their manifest data directly
+              routersWithoutGenFile.push({ id: entry.id, manifest: entry.routeManifest });
+            }
+          }
+
           const lines = [
-            `import { setCachedManifest, setPrecomputedEntries, setRouteTrie, registerRouterManifestLoader } from "@rangojs/router/server";`,
-            `setCachedManifest(${jsonParseExpression(mergedRouteManifest)});`,
+            `import { setCachedManifest, setPrecomputedEntries, setRouteTrie, setRouterManifest, registerRouterManifestLoader } from "@rangojs/router/server";`,
+            ...genFileImports,
           ];
+
+          // Flatten NamedRoutes entries: search schema objects -> plain string paths
+          if (genFileVars.length > 0) {
+            lines.push(`function __flat(r) { const o = {}; for (const [k, v] of Object.entries(r)) o[k] = typeof v === "string" ? v : v.path; return o; }`);
+          }
+
+          // Build the merged manifest from gen file imports + inlined data
+          if (genFileVars.length === 1 && routersWithoutGenFile.length === 0) {
+            lines.push(`setCachedManifest(__flat(${genFileVars[0]}));`);
+          } else {
+            const parts: string[] = [];
+            for (const v of genFileVars) parts.push(`...__flat(${v})`);
+            for (const { manifest } of routersWithoutGenFile) parts.push(`...${jsonParseExpression(manifest)}`);
+            lines.push(`setCachedManifest({ ${parts.join(", ")} });`);
+          }
+
+          // Set per-router manifests
+          let genVarIdx = 0;
+          for (const entry of perRouterManifests) {
+            if (entry.sourceFile) {
+              const varName = genFileVars[genVarIdx++];
+              lines.push(`setRouterManifest(${JSON.stringify(entry.id)}, __flat(${varName}));`);
+            } else {
+              lines.push(`setRouterManifest(${JSON.stringify(entry.id)}, ${jsonParseExpression(entry.routeManifest)});`);
+            }
+          }
+
           if (mergedPrecomputedEntries && mergedPrecomputedEntries.length > 0) {
             lines.push(`setPrecomputedEntries(${jsonParseExpression(mergedPrecomputedEntries)});`);
           }
@@ -1845,12 +1850,25 @@ function createRouterDiscoveryPlugin(
           await discoveryDone;
         }
         const routerId = id.slice(perRouterPrefix.length);
-        const manifest = perRouterManifestDataMap.get(routerId);
+        // Find the per-router entry to get the gen file path
+        const routerEntry = perRouterManifests.find(e => e.id === routerId);
         const trie = perRouterTrieMap.get(routerId);
         const entries = perRouterPrecomputedMap.get(routerId);
         const lines: string[] = [];
-        if (manifest) {
-          lines.push(`export const manifest = ${jsonParseExpression(manifest)};`);
+
+        if (routerEntry?.sourceFile) {
+          // Import manifest from the gen file so HMR auto-propagates
+          const routerDir = dirname(routerEntry.sourceFile);
+          const routerBasename = basename(routerEntry.sourceFile).replace(/\.(tsx?|jsx?)$/, "");
+          const genPath = join(routerDir, `${routerBasename}.named-routes.gen.js`);
+          lines.push(`import { NamedRoutes as _r } from ${JSON.stringify(genPath)};`);
+          lines.push(`function __flat(r) { const o = {}; for (const [k, v] of Object.entries(r)) o[k] = typeof v === "string" ? v : v.path; return o; }`);
+          lines.push(`export const manifest = __flat(_r);`);
+        } else {
+          const manifest = perRouterManifestDataMap.get(routerId);
+          if (manifest) {
+            lines.push(`export const manifest = ${jsonParseExpression(manifest)};`);
+          }
         }
         if (trie) {
           lines.push(`export const trie = ${jsonParseExpression(trie)};`);
