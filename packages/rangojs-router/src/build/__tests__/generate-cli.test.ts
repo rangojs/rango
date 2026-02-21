@@ -1,10 +1,11 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { readFileSync, existsSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   writePerModuleRouteTypesForFile,
   writeCombinedRouteTypes,
 } from "../generate-route-types";
+import { discoverAndWriteRouteTypes } from "../runtime-discovery";
 
 const fixtureDir = join(__dirname, "__fixtures__", "app");
 
@@ -299,4 +300,79 @@ describe("generate-cli e2e fixtures", () => {
       expect(detailKeyMatches).toHaveLength(1);
     });
   });
+});
+
+// ---------------------------------------------------------------------------
+// Factory fixture (app-with-factory)
+// ---------------------------------------------------------------------------
+
+describe("factory fixture", () => {
+  const factoryFixtureDir = join(__dirname, "__fixtures__", "app-with-factory");
+
+  afterEach(() => {
+    // Clean up gen files in factory fixture
+    const possibleGens = [
+      join(factoryFixtureDir, "router.named-routes.gen.ts"),
+      join(factoryFixtureDir, "urls.gen.ts"),
+      join(factoryFixtureDir, "api", "urls.gen.ts"),
+    ];
+    for (const f of possibleGens) {
+      try {
+        if (existsSync(f)) unlinkSync(f);
+      } catch {}
+    }
+  });
+
+  it("produces partial gen file with API routes but no docs routes", () => {
+    const routerFile = join(factoryFixtureDir, "router.tsx");
+    const routerDir = join(factoryFixtureDir);
+
+    writeCombinedRouteTypes(routerDir, [routerFile]);
+
+    const genPath = join(factoryFixtureDir, "router.named-routes.gen.ts");
+    expect(existsSync(genPath)).toBe(true);
+
+    const content = readFileSync(genPath, "utf-8");
+    // API routes should be present (statically resolvable)
+    expect(content).toContain("api.health");
+    expect(content).toContain("api.detail");
+    // Static top-level routes should be present
+    expect(content).toContain("home");
+    expect(content).toContain("about");
+    // Docs routes should NOT be present (factory call, unresolvable)
+    expect(content).not.toContain("docs.index");
+    expect(content).not.toContain("docs.page");
+  });
+
+  it("runtime discovery produces complete output including factory routes", async () => {
+    const packageRoot = resolve(__dirname, "..", "..", "..");
+    const srcDir = join(packageRoot, "src");
+    const genPath = join(factoryFixtureDir, "router.named-routes.gen.ts");
+    generatedFiles.push(genPath);
+
+    const result = await discoverAndWriteRouteTypes({
+      root: packageRoot,
+      entry: join(factoryFixtureDir, "router.tsx"),
+      resolveAlias: {
+        "@rangojs/router/server": join(srcDir, "server.ts"),
+        "@rangojs/router/build": join(srcDir, "build", "index.ts"),
+        "@rangojs/router/cache": join(srcDir, "cache", "index.ts"),
+        "@rangojs/router/host": join(srcDir, "host", "index.ts"),
+        "@rangojs/router": join(srcDir, "index.rsc.ts"),
+      },
+    });
+
+    expect(result.routerCount).toBe(1);
+    expect(result.routeCount).toBe(6);
+
+    const content = readFileSync(genPath, "utf-8");
+    // Static routes present
+    expect(content).toContain("home");
+    expect(content).toContain("about");
+    expect(content).toContain("api.health");
+    expect(content).toContain("api.detail");
+    // Factory routes also present (the key difference from static-only)
+    expect(content).toContain("docs.index");
+    expect(content).toContain("docs.page");
+  }, 30_000);
 });

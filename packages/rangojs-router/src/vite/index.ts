@@ -28,11 +28,15 @@ import {
   getPublishedPackageName,
 } from "./package-resolution.ts";
 import { skipStringOrComment, escapeRegExp } from "./expose-id-utils.ts";
+import { createVersionPlugin } from "./version-plugin.ts";
+import { createVirtualStubPlugin } from "./virtual-stub-plugin.ts";
 
 // Re-export plugins
 export { exposeActionId } from "./expose-action-id.ts";
 export { exposeInternalIds, exposeRouterId } from "./expose-internal-ids.ts";
 export type { ExposeInternalIdsApi } from "./expose-internal-ids.ts";
+export { createVersionPlugin } from "./version-plugin.ts";
+export { createVirtualStubPlugin } from "./virtual-stub-plugin.ts";
 
 // Virtual module type declarations in ./version.d.ts
 
@@ -394,88 +398,6 @@ function getManualChunks(id: string): string | undefined {
     return "router";
   }
   return undefined;
-}
-
-/**
- * Plugin providing rsc-router:version virtual module.
- * Exports VERSION that changes when RSC modules change (dev) or at build time (production).
- *
- * The version is used for:
- * 1. Cache invalidation - CFCacheStore uses VERSION to invalidate stale cache
- * 2. Version mismatch detection - client sends version, server reloads on mismatch
- *
- * In dev mode, the version updates when:
- * - Server starts (initial version)
- * - RSC modules change via HMR (triggers version module invalidation)
- *
- * Client-only HMR changes don't update the version since they don't affect
- * server-rendered content or cached RSC payloads.
- * @internal
- */
-function createVersionPlugin(): Plugin {
-  // Generate version at plugin creation time (build/server start)
-  const buildVersion = Date.now().toString(16);
-  let currentVersion = buildVersion;
-  let isDev = false;
-  let server: any = null;
-
-  return {
-    name: "@rangojs/router:version",
-    enforce: "pre",
-
-    configResolved(config) {
-      isDev = config.command === "serve";
-    },
-
-    configureServer(devServer) {
-      server = devServer;
-    },
-
-    resolveId(id) {
-      if (id === VIRTUAL_IDS.version) {
-        return "\0" + id;
-      }
-      return null;
-    },
-
-    load(id) {
-      if (id === "\0" + VIRTUAL_IDS.version) {
-        return getVirtualVersionContent(currentVersion);
-      }
-      return null;
-    },
-
-    // Track RSC module changes and update version
-    hotUpdate(ctx) {
-      if (!isDev) return;
-
-      // Check if this is an RSC environment update (not client/ssr)
-      // RSC modules affect server-rendered content and cached payloads
-      // In Vite 6, environment is accessed via `this.environment`
-      const isRscModule = this.environment?.name === "rsc";
-
-      if (isRscModule && ctx.modules.length > 0) {
-        // Update version when RSC modules change
-        currentVersion = Date.now().toString(16);
-        console.log(
-          `[rsc-router] RSC module changed, version updated: ${currentVersion}`
-        );
-
-        // Invalidate the version module so it gets reloaded with new version
-        if (server) {
-          const rscEnv = server.environments?.rsc;
-          if (rscEnv?.moduleGraph) {
-            const versionMod = rscEnv.moduleGraph.getModuleById(
-              "\0" + VIRTUAL_IDS.version
-            );
-            if (versionMod) {
-              rscEnv.moduleGraph.invalidateModule(versionMod);
-            }
-          }
-        }
-      }
-    },
-  };
 }
 
 /**
@@ -2172,29 +2094,6 @@ function resolveDiscoveryEntryPath(options: RangoOptions, routerPath?: string): 
  * that aren't available in the temp server. The RSC plugin also requires
  * client/ssr entries which don't need real content for discovery.
  */
-function createVirtualStubPlugin(): Plugin {
-  const STUB_PREFIXES = [
-    "virtual:rsc-router/",
-    "virtual:entry-",
-    "virtual:vite-rsc/",
-  ];
-  return {
-    name: "@rangojs/router:virtual-stubs",
-    resolveId(id) {
-      if (STUB_PREFIXES.some((p) => id.startsWith(p))) {
-        return "\0stub:" + id;
-      }
-      return null;
-    },
-    load(id) {
-      if (id.startsWith("\0stub:")) {
-        return "export default {}";
-      }
-      return null;
-    },
-  };
-}
-
 /**
  * Wrap a value as `JSON.parse('...')` instead of a JS object literal.
  * V8's JSON parser is significantly faster than its full JS parser for large

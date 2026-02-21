@@ -7,11 +7,13 @@ import {
   writeCombinedRouteTypes,
   generateRouteTypesSource,
   extractRoutesFromSource,
-  extractIncludesFromSource,
   extractParamsFromPattern,
   formatRouteEntry,
   generatePerModuleTypesSource,
   writePerModuleRouteTypesForFile,
+  extractIncludesWithDiagnostics,
+  detectUnresolvableIncludes,
+  extractUrlsVariableFromRouter,
 } from "../generate-route-types";
 
 // Helper: create a minimal urls module that the static parser can extract routes from.
@@ -407,51 +409,6 @@ describe("extractRoutesFromSource", () => {
 });
 
 // ---------------------------------------------------------------------------
-// extractIncludesFromSource (AST)
-// ---------------------------------------------------------------------------
-
-describe("extractIncludesFromSource", () => {
-  it("extracts include() calls with path prefix and variable", () => {
-    const code = `include("/api", apiUrls)`;
-    const includes = extractIncludesFromSource(code);
-    expect(includes).toEqual([
-      { pathPrefix: "/api", variableName: "apiUrls", namePrefix: null },
-    ]);
-  });
-
-  it("extracts include() with name prefix", () => {
-    const code = `include("/api", apiUrls, { name: "api" })`;
-    const includes = extractIncludesFromSource(code);
-    expect(includes).toEqual([
-      { pathPrefix: "/api", variableName: "apiUrls", namePrefix: "api" },
-    ]);
-  });
-
-  it("extracts multiple includes", () => {
-    const code = `
-      include("/api", apiUrls, { name: "api" });
-      include("/docs", docsUrls, { name: "docs" });
-    `;
-    const includes = extractIncludesFromSource(code);
-    expect(includes).toHaveLength(2);
-    expect(includes[0].variableName).toBe("apiUrls");
-    expect(includes[1].variableName).toBe("docsUrls");
-  });
-
-  it("skips include() with non-string first arg", () => {
-    const code = `include(variable, apiUrls)`;
-    const includes = extractIncludesFromSource(code);
-    expect(includes).toHaveLength(0);
-  });
-
-  it("skips include() with non-identifier second arg", () => {
-    const code = `include("/api", "not-an-identifier")`;
-    const includes = extractIncludesFromSource(code);
-    expect(includes).toHaveLength(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // formatRouteEntry
 // ---------------------------------------------------------------------------
 
@@ -746,5 +703,233 @@ export const patterns = urls(({ path, include }) => [
     expect(content).toContain('index: "/"');
     expect(content).toContain("api.users");
     expect(content).toContain("/api/users");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractIncludesWithDiagnostics
+// ---------------------------------------------------------------------------
+
+describe("extractIncludesWithDiagnostics", () => {
+  it("separates resolved identifiers from factory calls", () => {
+    const code = `
+import { urls } from "@rangojs/router";
+import { apiUrls } from "./api/urls.js";
+import { createDocsPatterns } from "./factory.js";
+export const urlpatterns = urls(({ path, include }) => [
+  path("/", handler, { name: "home" }),
+  include("/api", apiUrls, { name: "api" }),
+  include("/docs", createDocsPatterns(), { name: "docs" }),
+]);
+`;
+    const { resolved, unresolvable } = extractIncludesWithDiagnostics(code);
+
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0]).toEqual({
+      pathPrefix: "/api",
+      variableName: "apiUrls",
+      namePrefix: "api",
+    });
+
+    expect(unresolvable).toHaveLength(1);
+    expect(unresolvable[0].pathPrefix).toBe("/docs");
+    expect(unresolvable[0].namePrefix).toBe("docs");
+    expect(unresolvable[0].reason).toBe("factory-call");
+    expect(unresolvable[0].detail).toContain("createDocsPatterns");
+  });
+
+  it("returns all resolved when no factory calls", () => {
+    const code = `
+import { urls } from "@rangojs/router";
+import { fooUrls } from "./foo.js";
+import { barUrls } from "./bar.js";
+export const patterns = urls(({ include }) => [
+  include("/foo", fooUrls, { name: "foo" }),
+  include("/bar", barUrls, { name: "bar" }),
+]);
+`;
+    const { resolved, unresolvable } = extractIncludesWithDiagnostics(code);
+    expect(resolved).toHaveLength(2);
+    expect(unresolvable).toHaveLength(0);
+  });
+
+  it("handles multiple factory calls", () => {
+    const code = `
+export const patterns = urls(({ include }) => [
+  include("/a", createA()),
+  include("/b", createB(), { name: "b" }),
+]);
+`;
+    const { resolved, unresolvable } = extractIncludesWithDiagnostics(code);
+    expect(resolved).toHaveLength(0);
+    expect(unresolvable).toHaveLength(2);
+    expect(unresolvable[0].reason).toBe("factory-call");
+    expect(unresolvable[1].reason).toBe("factory-call");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectUnresolvableIncludes
+// ---------------------------------------------------------------------------
+
+describe("detectUnresolvableIncludes", () => {
+  const factoryFixtureDir = join(__dirname, "__fixtures__", "app-with-factory");
+
+  it("returns factory-call diagnostic for factory fixture", () => {
+    const routerFile = join(factoryFixtureDir, "router.tsx");
+    const diagnostics = detectUnresolvableIncludes(routerFile);
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].reason).toBe("factory-call");
+    expect(diagnostics[0].pathPrefix).toBe("/docs");
+    expect(diagnostics[0].namePrefix).toBe("docs");
+    expect(diagnostics[0].detail).toContain("createDocsPatterns");
+  });
+
+  it("returns empty for fully static fixture", () => {
+    const staticFixtureDir = join(__dirname, "__fixtures__", "app");
+    const routerFile = join(staticFixtureDir, "router.tsx");
+    const diagnostics = detectUnresolvableIncludes(routerFile);
+
+    expect(diagnostics).toHaveLength(0);
+  });
+
+  it("returns file-not-found for missing import target", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rango-test-"));
+    writeFileSync(
+      join(dir, "router.tsx"),
+      `import { createRouter } from "@rangojs/router";
+import { urlpatterns } from "./urls.js";
+export const router = createRouter().routes(urlpatterns);
+`
+    );
+    writeFileSync(
+      join(dir, "urls.tsx"),
+      `import { urls } from "@rangojs/router";
+import { missingUrls } from "./nonexistent.js";
+const handler = () => null;
+export const urlpatterns = urls(({ path, include }) => [
+  path("/", handler, { name: "home" }),
+  include("/missing", missingUrls, { name: "missing" }),
+]);
+`
+    );
+
+    const diagnostics = detectUnresolvableIncludes(join(dir, "router.tsx"));
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].reason).toBe("file-not-found");
+    expect(diagnostics[0].namePrefix).toBe("missing");
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("returns unresolvable-import for variable not in imports or same-file scope", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rango-test-"));
+    writeFileSync(
+      join(dir, "router.tsx"),
+      `import { createRouter } from "@rangojs/router";
+import { urlpatterns } from "./urls.js";
+export const router = createRouter().routes(urlpatterns);
+`
+    );
+    writeFileSync(
+      join(dir, "urls.tsx"),
+      `import { urls } from "@rangojs/router";
+const handler = () => null;
+export const urlpatterns = urls(({ path, include }) => [
+  path("/", handler, { name: "home" }),
+  include("/ghost", ghostUrls, { name: "ghost" }),
+]);
+`
+    );
+
+    const diagnostics = detectUnresolvableIncludes(join(dir, "router.tsx"));
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].reason).toBe("unresolvable-import");
+    expect(diagnostics[0].namePrefix).toBe("ghost");
+    expect(diagnostics[0].detail).toContain("ghostUrls");
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractUrlsVariableFromRouter (AST-based)
+// ---------------------------------------------------------------------------
+
+describe("extractUrlsVariableFromRouter", () => {
+  it("extracts from .routes(varName) chain", () => {
+    const code = `
+import { createRouter } from "@rangojs/router";
+import { urlpatterns } from "./urls.js";
+export const router = createRouter().routes(urlpatterns);
+`;
+    expect(extractUrlsVariableFromRouter(code)).toBe("urlpatterns");
+  });
+
+  it("extracts from createRouter<T>().routes(varName) with generic", () => {
+    const code = `
+import { createRouter } from "@rangojs/router";
+import { urlpatterns } from "./urls.js";
+export const router = createRouter<AppEnv>({
+  document: Document,
+}).routes(urlpatterns);
+`;
+    expect(extractUrlsVariableFromRouter(code)).toBe("urlpatterns");
+  });
+
+  it("extracts from chained .middleware().routes(varName)", () => {
+    const code = `
+import { createRouter } from "@rangojs/router";
+import { sitePatterns } from "./urls.js";
+export const router = createRouter<AppEnv>({
+  document: Document,
+}).middleware([authMiddleware]).routes(sitePatterns);
+`;
+    expect(extractUrlsVariableFromRouter(code)).toBe("sitePatterns");
+  });
+
+  it("extracts from createRouter({ urls: varName })", () => {
+    const code = `
+import { createRouter } from "@rangojs/router";
+import { urlpatterns } from "./urls.js";
+export const router = createRouter({ urls: urlpatterns, document: Document });
+`;
+    expect(extractUrlsVariableFromRouter(code)).toBe("urlpatterns");
+  });
+
+  it("returns null when no createRouter call exists", () => {
+    const code = `
+import { urls } from "@rangojs/router";
+const handler = () => null;
+export const patterns = urls(({ path }) => [
+  path("/", handler, { name: "home" }),
+]);
+`;
+    expect(extractUrlsVariableFromRouter(code)).toBeNull();
+  });
+
+  it("does not match .routes() on non-createRouter calls", () => {
+    const code = `
+const config = someBuilder().routes(myRoutes);
+`;
+    expect(extractUrlsVariableFromRouter(code)).toBeNull();
+  });
+
+  it("does not match urls: in non-createRouter objects", () => {
+    const code = `
+const config = { urls: myHelper, other: true };
+`;
+    expect(extractUrlsVariableFromRouter(code)).toBeNull();
+  });
+
+  it("handles createRouter with options and .routes() chained", () => {
+    const code = `
+export const router = createRouter({
+  document: Document,
+  theme: { defaultTheme: "light" },
+}).routes(urlpatterns);
+`;
+    expect(extractUrlsVariableFromRouter(code)).toBe("urlpatterns");
   });
 });

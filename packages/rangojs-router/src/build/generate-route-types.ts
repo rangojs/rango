@@ -5,6 +5,20 @@ import picomatch from "picomatch";
 import ts from "typescript";
 
 // ---------------------------------------------------------------------------
+// Unresolvable include diagnostics
+// ---------------------------------------------------------------------------
+
+export type UnresolvableReason = "factory-call" | "dynamic-expression" | "unresolvable-import" | "file-not-found";
+
+export interface UnresolvableInclude {
+  pathPrefix: string;
+  namePrefix: string | null;
+  reason: UnresolvableReason;
+  sourceFile: string;
+  detail: string;
+}
+
+// ---------------------------------------------------------------------------
 // AST helpers
 // ---------------------------------------------------------------------------
 
@@ -382,44 +396,7 @@ export function writePerModuleRouteTypesForFile(filePath: string): void {
 // AST-based include() parsing
 // ---------------------------------------------------------------------------
 
-/**
- * Extract include() calls from source code by walking the TypeScript AST.
- * Returns the path prefix, variable name, and optional name prefix for each.
- */
-export function extractIncludesFromSource(
-  code: string
-): Array<{ pathPrefix: string; variableName: string; namePrefix: string | null }> {
-  const sourceFile = ts.createSourceFile("input.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const results: Array<{ pathPrefix: string; variableName: string; namePrefix: string | null }> = [];
-
-  function visit(node: ts.Node) {
-    if (ts.isCallExpression(node)) {
-      const callee = node.expression;
-      if (ts.isIdentifier(callee) && callee.text === "include") {
-        const result = extractIncludeFromCallExpression(node);
-        if (result) results.push(result);
-      }
-    }
-    ts.forEachChild(node, visit);
-  }
-
-  visit(sourceFile);
-  return results;
-}
-
-function extractIncludeFromCallExpression(
-  node: ts.CallExpression
-): { pathPrefix: string; variableName: string; namePrefix: string | null } | null {
-  if (node.arguments.length < 2) return null;
-
-  const pathPrefix = getStringValue(node.arguments[0]);
-  if (pathPrefix === null) return null;
-
-  const secondArg = node.arguments[1];
-  if (!ts.isIdentifier(secondArg)) return null;
-  const variableName = secondArg.text;
-
-  let namePrefix: string | null = null;
+function extractNamePrefixFromInclude(node: ts.CallExpression): string | null {
   if (node.arguments.length >= 3) {
     const thirdArg = node.arguments[2];
     if (ts.isObjectLiteralExpression(thirdArg)) {
@@ -427,13 +404,72 @@ function extractIncludeFromCallExpression(
         if (!ts.isPropertyAssignment(prop)) continue;
         const propName = ts.isIdentifier(prop.name) ? prop.name.text : null;
         if (propName === "name") {
-          namePrefix = getStringValue(prop.initializer);
+          return getStringValue(prop.initializer);
         }
       }
     }
   }
+  return null;
+}
 
-  return { pathPrefix, variableName, namePrefix };
+/**
+ * Extract include() calls with diagnostics for unresolvable ones.
+ * Returns both resolved includes (identifier second args) and unresolvable
+ * includes (factory calls, etc.) with reasons.
+ */
+export function extractIncludesWithDiagnostics(
+  code: string
+): {
+  resolved: Array<{ pathPrefix: string; variableName: string; namePrefix: string | null }>;
+  unresolvable: Array<{ pathPrefix: string; namePrefix: string | null; reason: UnresolvableReason; detail: string }>;
+} {
+  const sourceFile = ts.createSourceFile("input.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const resolved: Array<{ pathPrefix: string; variableName: string; namePrefix: string | null }> = [];
+  const unresolvable: Array<{ pathPrefix: string; namePrefix: string | null; reason: UnresolvableReason; detail: string }> = [];
+
+  function visit(node: ts.Node) {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      if (ts.isIdentifier(callee) && callee.text === "include") {
+        if (node.arguments.length < 2) {
+          ts.forEachChild(node, visit);
+          return;
+        }
+
+        const pathPrefix = getStringValue(node.arguments[0]);
+        if (pathPrefix === null) {
+          ts.forEachChild(node, visit);
+          return;
+        }
+
+        const secondArg = node.arguments[1];
+        const namePrefix = extractNamePrefixFromInclude(node);
+
+        if (ts.isIdentifier(secondArg)) {
+          resolved.push({ pathPrefix, variableName: secondArg.text, namePrefix });
+        } else if (ts.isCallExpression(secondArg)) {
+          const callText = secondArg.expression.getText(sourceFile);
+          unresolvable.push({
+            pathPrefix,
+            namePrefix,
+            reason: "factory-call",
+            detail: `${callText}()`,
+          });
+        } else {
+          unresolvable.push({
+            pathPrefix,
+            namePrefix,
+            reason: "dynamic-expression",
+            detail: secondArg.getText(sourceFile),
+          });
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return { resolved, unresolvable };
 }
 
 // ---------------------------------------------------------------------------
@@ -472,7 +508,7 @@ function resolveImportedVariable(
 
 /**
  * Resolve an import specifier relative to the importing file.
- * Strips .js/.mjs extensions and tries .ts/.tsx candidates.
+ * Strips .js/.mjs/.jsx extensions and tries .ts/.tsx/.js/.jsx candidates.
  */
 function resolveImportPath(
   importSpec: string,
@@ -484,12 +520,17 @@ function resolveImportPath(
   let base = importSpec;
   if (base.endsWith(".js")) base = base.slice(0, -3);
   else if (base.endsWith(".mjs")) base = base.slice(0, -4);
+  else if (base.endsWith(".jsx")) base = base.slice(0, -4);
 
   const candidates = [
     resolve(dir, base + ".ts"),
     resolve(dir, base + ".tsx"),
+    resolve(dir, base + ".js"),
+    resolve(dir, base + ".jsx"),
     resolve(dir, base + "/index.ts"),
     resolve(dir, base + "/index.tsx"),
+    resolve(dir, base + "/index.js"),
+    resolve(dir, base + "/index.jsx"),
   ];
 
   for (const candidate of candidates) {
@@ -539,51 +580,13 @@ function extractUrlsBlockForVariable(
 // Combined route map building
 // ---------------------------------------------------------------------------
 
-/**
- * Recursively build a route map from a urls module file.
- * Extracts local path() routes and follows include() calls to sub-modules.
- * Handles both imported and same-file variables.
- */
-export function buildCombinedRouteMap(
-  filePath: string,
-  variableName?: string,
-  visited?: Set<string>
-): Record<string, string> {
-  visited = visited ?? new Set();
-  const realPath = resolve(filePath);
-  const key = variableName ? `${realPath}:${variableName}` : realPath;
-  if (visited.has(key)) {
-    console.warn(`[rsc-router] Circular include detected, skipping: ${key}`);
-    return {};
-  }
-  visited.add(key);
-
-  let source: string;
-  try {
-    source = readFileSync(realPath, "utf-8");
-  } catch {
-    return {};
-  }
-
-  // If a specific variable is requested, extract just its urls() block
-  let block: string;
-  if (variableName) {
-    const extracted = extractUrlsBlockForVariable(source, variableName);
-    if (!extracted) return {};
-    block = extracted;
-  } else {
-    block = source;
-  }
-
-  return buildRouteMapFromBlock(block, source, realPath, visited);
-}
-
 function buildRouteMapFromBlock(
   block: string,
   fullSource: string,
   filePath: string,
   visited: Set<string>,
-  searchSchemasOut?: Record<string, Record<string, string>>
+  searchSchemasOut?: Record<string, Record<string, string>>,
+  diagnosticsOut?: UnresolvableInclude[]
 ): Record<string, string> {
   const routeMap: Record<string, string> = {};
 
@@ -596,8 +599,15 @@ function buildRouteMapFromBlock(
     }
   }
 
-  // Extract include() calls
-  const includes = extractIncludesFromSource(block);
+  // Extract include() calls with diagnostics for unresolvable ones
+  const { resolved: includes, unresolvable } = extractIncludesWithDiagnostics(block);
+
+  if (diagnosticsOut) {
+    for (const entry of unresolvable) {
+      diagnosticsOut.push({ ...entry, sourceFile: filePath });
+    }
+  }
+
   for (const { pathPrefix, variableName, namePrefix } of includes) {
     let childResult: { routes: Record<string, string>; searchSchemas: Record<string, Record<string, string>> };
 
@@ -605,15 +615,40 @@ function buildRouteMapFromBlock(
     const imported = resolveImportedVariable(fullSource, variableName);
     if (imported) {
       const targetFile = resolveImportPath(imported.specifier, filePath);
-      if (!targetFile) continue;
+      if (!targetFile) {
+        if (diagnosticsOut) {
+          diagnosticsOut.push({
+            pathPrefix,
+            namePrefix,
+            reason: "file-not-found",
+            sourceFile: filePath,
+            detail: `import "${imported.specifier}" resolved to no file`,
+          });
+        }
+        continue;
+      }
       childResult = buildCombinedRouteMapWithSearch(
         targetFile,
         imported.exportedName,
-        visited
+        visited,
+        diagnosticsOut
       );
     } else {
-      // Same-file variable
-      childResult = buildCombinedRouteMapWithSearch(filePath, variableName, visited);
+      // Check if variable exists as a same-file urls() definition
+      const sameFileBlock = extractUrlsBlockForVariable(fullSource, variableName);
+      if (!sameFileBlock) {
+        if (diagnosticsOut) {
+          diagnosticsOut.push({
+            pathPrefix,
+            namePrefix,
+            reason: "unresolvable-import",
+            sourceFile: filePath,
+            detail: `variable "${variableName}" not found in imports or same-file scope`,
+          });
+        }
+        continue;
+      }
+      childResult = buildCombinedRouteMapWithSearch(filePath, variableName, visited, diagnosticsOut);
     }
 
     // Apply prefixes
@@ -645,7 +680,8 @@ function buildRouteMapFromBlock(
 function buildCombinedRouteMapWithSearch(
   filePath: string,
   variableName?: string,
-  visited?: Set<string>
+  visited?: Set<string>,
+  diagnosticsOut?: UnresolvableInclude[]
 ): { routes: Record<string, string>; searchSchemas: Record<string, Record<string, string>> } {
   visited = visited ?? new Set();
   const realPath = resolve(filePath);
@@ -673,8 +709,61 @@ function buildCombinedRouteMapWithSearch(
   }
 
   const searchSchemas: Record<string, Record<string, string>> = {};
-  const routes = buildRouteMapFromBlock(block, source, realPath, visited, searchSchemas);
+  const routes = buildRouteMapFromBlock(block, source, realPath, visited, searchSchemas, diagnosticsOut);
   return { routes, searchSchemas };
+}
+
+// ---------------------------------------------------------------------------
+// Unresolvable include detection (full include tree walk)
+// ---------------------------------------------------------------------------
+
+/**
+ * Walk the full include tree starting from a router file and detect
+ * all includes that the static parser cannot resolve.
+ * Returns an array of diagnostics; empty means fully resolvable.
+ */
+export function detectUnresolvableIncludes(
+  routerFilePath: string
+): UnresolvableInclude[] {
+  const realPath = resolve(routerFilePath);
+  let source: string;
+  try {
+    source = readFileSync(realPath, "utf-8");
+  } catch {
+    return [];
+  }
+
+  // Extract the urls variable from the router file
+  const urlsVarName = extractUrlsVariableFromRouter(source);
+  if (!urlsVarName) return [];
+
+  // Resolve where the urls variable comes from
+  const imported = resolveImportedVariable(source, urlsVarName);
+  let targetFile: string;
+  let exportedName: string | undefined;
+
+  if (imported) {
+    const resolved = resolveImportPath(imported.specifier, realPath);
+    if (!resolved) {
+      return [{
+        pathPrefix: "/",
+        namePrefix: null,
+        reason: "file-not-found",
+        sourceFile: realPath,
+        detail: `import "${imported.specifier}" resolved to no file`,
+      }];
+    }
+    targetFile = resolved;
+    exportedName = imported.exportedName;
+  } else {
+    // Same-file urls() definition
+    targetFile = realPath;
+    exportedName = urlsVarName;
+  }
+
+  const diagnostics: UnresolvableInclude[] = [];
+  buildCombinedRouteMapWithSearch(targetFile, exportedName, new Set(), diagnostics);
+  return diagnostics;
 }
 
 // ---------------------------------------------------------------------------
@@ -682,24 +771,73 @@ function buildCombinedRouteMapWithSearch(
 // ---------------------------------------------------------------------------
 
 /**
- * Extract the url patterns variable from a router file.
- * Looks for patterns like:
- *   .routes(variableName)
- *   urls: variableName
- * Returns the local variable name and optional import info.
+ * Extract the url patterns variable from a router file using AST.
+ * Detects two patterns:
+ *   1. createRouter(...).routes(variableName)
+ *   2. createRouter({ urls: variableName, ... })
+ * Returns the local variable name.
  */
-function extractUrlsVariableFromRouter(
+export function extractUrlsVariableFromRouter(
   code: string
 ): string | null {
-  // Pattern 1: .routes(variableName) where variableName is an identifier (not a string)
-  const routesCallMatch = code.match(/\.routes\s*\(\s*([a-zA-Z_$][\w$]*)\s*\)/);
-  if (routesCallMatch) return routesCallMatch[1];
+  const sourceFile = ts.createSourceFile("router.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let result: string | null = null;
 
-  // Pattern 2: urls: variableName in createRouter options
-  const urlsOptionMatch = code.match(/urls\s*:\s*([a-zA-Z_$][\w$]*)/);
-  if (urlsOptionMatch) return urlsOptionMatch[1];
+  function isCreateRouterCall(node: ts.Node): boolean {
+    if (!ts.isCallExpression(node)) return false;
+    const callee = node.expression;
+    return ts.isIdentifier(callee) && callee.text === "createRouter";
+  }
 
-  return null;
+  function visit(node: ts.Node) {
+    if (result) return;
+
+    // Pattern 1: createRouter(...).routes(variableName)
+    // The AST shape is CallExpression(.routes) -> PropertyAccessExpression -> CallExpression(createRouter)
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "routes" &&
+      node.arguments.length >= 1 &&
+      ts.isIdentifier(node.arguments[0])
+    ) {
+      // Walk up the chain: createRouter().middleware(...).routes(x) etc.
+      // The innermost call should be createRouter(...)
+      let inner: ts.Expression = node.expression.expression;
+      while (ts.isCallExpression(inner) && ts.isPropertyAccessExpression(inner.expression)) {
+        inner = inner.expression.expression;
+      }
+      if (isCreateRouterCall(inner)) {
+        result = (node.arguments[0] as ts.Identifier).text;
+        return;
+      }
+    }
+
+    // Pattern 2: createRouter({ urls: variableName, ... })
+    if (isCreateRouterCall(node)) {
+      const callExpr = node as ts.CallExpression;
+      for (const arg of callExpr.arguments) {
+        if (ts.isObjectLiteralExpression(arg)) {
+          for (const prop of arg.properties) {
+            if (
+              ts.isPropertyAssignment(prop) &&
+              ts.isIdentifier(prop.name) &&
+              prop.name.text === "urls" &&
+              ts.isIdentifier(prop.initializer)
+            ) {
+              result = prop.initializer.text;
+              return;
+            }
+          }
+        }
+      }
+    }
+
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return result;
 }
 
 /**
