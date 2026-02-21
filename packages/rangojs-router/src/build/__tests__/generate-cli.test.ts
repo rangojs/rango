@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   writePerModuleRouteTypesForFile,
   writeCombinedRouteTypes,
+  detectUnresolvableIncludes,
 } from "../generate-route-types";
 
 const fixtureDir = join(__dirname, "__fixtures__", "app");
@@ -298,5 +299,62 @@ describe("generate-cli e2e fixtures", () => {
       const detailKeyMatches = content.match(/^\s+detail:/gm);
       expect(detailKeyMatches).toHaveLength(1);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Factory fixture (app-with-factory)
+// ---------------------------------------------------------------------------
+
+describe("factory fixture", () => {
+  const factoryFixtureDir = join(__dirname, "__fixtures__", "app-with-factory");
+
+  afterEach(() => {
+    // Clean up gen files in factory fixture
+    const possibleGens = [
+      join(factoryFixtureDir, "router.named-routes.gen.ts"),
+      join(factoryFixtureDir, "urls.gen.ts"),
+      join(factoryFixtureDir, "api", "urls.gen.ts"),
+    ];
+    for (const f of possibleGens) {
+      try {
+        if (existsSync(f)) unlinkSync(f);
+      } catch {}
+    }
+  });
+
+  it("produces partial gen file with API routes but no docs routes", () => {
+    const routerFile = join(factoryFixtureDir, "router.tsx");
+    const routerDir = join(factoryFixtureDir);
+
+    writeCombinedRouteTypes(routerDir, [routerFile]);
+
+    const genPath = join(factoryFixtureDir, "router.named-routes.gen.ts");
+    expect(existsSync(genPath)).toBe(true);
+
+    const content = readFileSync(genPath, "utf-8");
+    // API routes should be present (statically resolvable)
+    expect(content).toContain("api.health");
+    expect(content).toContain("api.detail");
+    // Static top-level routes should be present
+    expect(content).toContain("home");
+    expect(content).toContain("about");
+    // Docs routes should NOT be present (factory call, unresolvable)
+    expect(content).not.toContain("docs.index");
+    expect(content).not.toContain("docs.page");
+  });
+
+  it("detectUnresolvableIncludes returns correct diagnostics", () => {
+    const routerFile = join(factoryFixtureDir, "router.tsx");
+    const diagnostics = detectUnresolvableIncludes(routerFile);
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      reason: "factory-call",
+      pathPrefix: "/docs",
+      namePrefix: "docs",
+    });
+    expect(diagnostics[0].detail).toContain("createDocsPatterns");
+    expect(diagnostics[0].sourceFile).toContain("urls.tsx");
   });
 });

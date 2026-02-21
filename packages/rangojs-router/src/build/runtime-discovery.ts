@@ -1,0 +1,206 @@
+import { dirname, join, basename, resolve } from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  generateRouteTypesSource,
+  buildCombinedRouteMapForRouterFile,
+} from "./generate-route-types.ts";
+
+export interface RuntimeDiscoveryOptions {
+  /** Project root directory (where package.json / node_modules live). */
+  root: string;
+  /** Path to vite.config.ts. Auto-detected from root if omitted. */
+  configFile?: string;
+  /** Absolute path to the router entry file. */
+  entry: string;
+}
+
+/**
+ * Standalone Vite-based route discovery for the CLI.
+ * Creates a temporary Vite server with the RSC plugin, imports the entry via
+ * the module runner, reads the RouterRegistry, generates manifests, and writes
+ * named-routes.gen.ts files.
+ *
+ * This mirrors the logic in the Vite plugin's discoverRouters() + writeRouteTypesFiles()
+ * but without coupling to plugin closure state.
+ */
+export async function discoverAndWriteRouteTypes(opts: RuntimeDiscoveryOptions): Promise<{
+  routerCount: number;
+  routeCount: number;
+  outputFiles: string[];
+}> {
+  let createViteServer: typeof import("vite").createServer;
+  let loadConfigFromFile: typeof import("vite").loadConfigFromFile;
+  let rsc: any;
+
+  try {
+    const vite = await import("vite");
+    createViteServer = vite.createServer;
+    loadConfigFromFile = vite.loadConfigFromFile;
+  } catch {
+    throw new Error(
+      "Runtime discovery requires 'vite'. Install it with: pnpm add -D vite"
+    );
+  }
+
+  try {
+    const rscMod = await import("@vitejs/plugin-rsc");
+    rsc = rscMod.default;
+  } catch {
+    throw new Error(
+      "Runtime discovery requires '@vitejs/plugin-rsc'. Install it with: pnpm add -D @vitejs/plugin-rsc"
+    );
+  }
+
+  const { createVersionPlugin } = await import("../vite/version-plugin.ts");
+  const { createVirtualStubPlugin } = await import("../vite/virtual-stub-plugin.ts");
+
+  // Load user's vite config to get resolve.alias
+  let userResolveAlias: any = undefined;
+  const configPath = opts.configFile ?? undefined;
+  try {
+    const loaded = await loadConfigFromFile(
+      { command: "serve", mode: "development" },
+      configPath,
+      opts.root
+    );
+    if (loaded?.config?.resolve?.alias) {
+      userResolveAlias = loaded.config.resolve.alias;
+    }
+  } catch {
+    // Config loading failed; proceed without aliases
+  }
+
+  const entryPath = resolve(opts.entry);
+  let tempServer: any = null;
+
+  try {
+    tempServer = await createViteServer({
+      root: opts.root,
+      configFile: false,
+      server: { middlewareMode: true },
+      appType: "custom",
+      logLevel: "silent",
+      cacheDir: "node_modules/.vite_rango_generate",
+      resolve: userResolveAlias ? { alias: userResolveAlias } : undefined,
+      esbuild: { jsx: "automatic", jsxImportSource: "react" },
+      plugins: [
+        rsc({
+          entries: {
+            client: "virtual:entry-client",
+            ssr: "virtual:entry-ssr",
+            rsc: entryPath,
+          },
+        }),
+        createVersionPlugin(),
+        createVirtualStubPlugin(),
+      ],
+    });
+
+    const rscEnv = (tempServer.environments as any)?.rsc;
+    if (!rscEnv?.runner) {
+      throw new Error("RSC environment runner not available");
+    }
+
+    // Import the entry to trigger createRouter() registration
+    await rscEnv.runner.import(entryPath);
+
+    // Read the RouterRegistry
+    const serverMod = await rscEnv.runner.import("@rangojs/router/server");
+    const registry: Map<string, any> = serverMod.RouterRegistry;
+
+    if (!registry || registry.size === 0) {
+      throw new Error(
+        `No routers found in registry after importing ${opts.entry}`
+      );
+    }
+
+    // Import build utilities for manifest generation
+    const buildMod = await rscEnv.runner.import("@rangojs/router/build");
+    const generateManifest = buildMod.generateManifest;
+
+    if (!generateManifest) {
+      throw new Error("generateManifest not found in @rangojs/router/build");
+    }
+
+    const outputFiles: string[] = [];
+    let totalRouteCount = 0;
+    let routerMountIndex = 0;
+
+    for (const [id, router] of registry) {
+      if (!router.urlpatterns) continue;
+
+      const manifest = generateManifest(router.urlpatterns, routerMountIndex);
+      routerMountIndex++;
+
+      const routeManifest: Record<string, string> = manifest.routeManifest;
+      let routeSearchSchemas: Record<string, Record<string, string>> | undefined =
+        manifest.routeSearchSchemas;
+
+      // Determine output location from __sourceFile
+      const sourceFile: string | undefined = router.__sourceFile;
+      if (!sourceFile) {
+        console.warn(`[rango] Router "${id}" has no __sourceFile, skipping gen file`);
+        continue;
+      }
+
+      // Guard against writing gen files into node_modules
+      if (sourceFile.includes("node_modules")) {
+        throw new Error(
+          `[rango] Router "${id}" has sourceFile inside node_modules: ${sourceFile}\n` +
+          `This means createRouter() stack trace parsing matched an internal frame.\n` +
+          `Set an explicit \`id\` on createRouter() or check the call site.`
+        );
+      }
+
+      // Search schema fallback: runtime manifest may omit search schema metadata
+      // in some module-runner flows. Fall back to static source parsing.
+      if (!routeSearchSchemas || Object.keys(routeSearchSchemas).length === 0) {
+        const staticParsed = buildCombinedRouteMapForRouterFile(sourceFile);
+        if (Object.keys(staticParsed.searchSchemas).length > 0) {
+          const filtered: Record<string, Record<string, string>> = {};
+          for (const name of Object.keys(routeManifest)) {
+            const schema = staticParsed.searchSchemas[name];
+            if (schema) filtered[name] = schema;
+          }
+          if (Object.keys(filtered).length > 0) {
+            routeSearchSchemas = filtered;
+          }
+        }
+      }
+
+      const routerDir = dirname(sourceFile);
+      const routerBasename = basename(sourceFile).replace(/\.(tsx?|jsx?)$/, "");
+      const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
+
+      const source = generateRouteTypesSource(
+        routeManifest,
+        routeSearchSchemas && Object.keys(routeSearchSchemas).length > 0
+          ? routeSearchSchemas
+          : undefined
+      );
+
+      const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
+      if (existing !== source) {
+        writeFileSync(outPath, source);
+      }
+
+      const routeCount = Object.keys(routeManifest).length;
+      totalRouteCount += routeCount;
+      outputFiles.push(outPath);
+
+      console.log(
+        `[rango] Generated route types (${routeCount} routes) -> ${outPath}`
+      );
+    }
+
+    return {
+      routerCount: routerMountIndex,
+      routeCount: totalRouteCount,
+      outputFiles,
+    };
+  } finally {
+    if (tempServer) {
+      await tempServer.close();
+    }
+  }
+}
