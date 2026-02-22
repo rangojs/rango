@@ -1049,6 +1049,7 @@ export interface RSCRouter<
     handler?: Function;
     params?: Record<string, string>;
     negotiated?: boolean;
+    manifestEntry?: EntryData;
   } | null>;
 
   matchPartial(
@@ -2367,6 +2368,7 @@ export function createRouter<TEnv = any>(
     handler?: Function;
     params?: Record<string, string>;
     negotiated?: boolean;
+    manifestEntry?: EntryData;
   } | null> {
     return runWithRouterLogContext(
       { request, transaction: "previewMatch" },
@@ -2450,6 +2452,7 @@ export function createRouter<TEnv = any>(
           handler: negotiateEntry.type === "route" ? negotiateEntry.handler : undefined,
           params: matched.params,
           negotiated: true,
+          manifestEntry: negotiateEntry,
         };
       }
     }
@@ -2463,6 +2466,7 @@ export function createRouter<TEnv = any>(
               responseType,
               handler: manifestEntry.type === "route" ? manifestEntry.handler : undefined,
               params: matched.params,
+              manifestEntry,
             } : {}),
             ...(hasVariants ? { negotiated: true } : {}),
           };

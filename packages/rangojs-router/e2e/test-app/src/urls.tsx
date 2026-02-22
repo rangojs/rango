@@ -25,6 +25,7 @@ import { prerenderInterceptPatterns } from "./urls/prerender-intercept.js";
 import { transformCasesPatterns } from "./urls/transform-cases.js";
 import { apiShopPatterns } from "./urls/api-shop.js";
 import { locationStatePatterns } from "./urls/location-state.js";
+import { responseCachePatterns } from "./urls/response-cache.js";
 import { includeMiddlewarePatterns } from "./urls/include-middleware.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
@@ -449,6 +450,9 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
 
     // Location state test patterns (redirect with state, flash messages)
     include("/location-state", locationStatePatterns, { name: "locationState" }),
+
+    // Response route caching test patterns (cache() with various MIME types)
+    include("/response-cache", responseCachePatterns, { name: "responseCache" }),
 
     // Include under layout with middleware — tests that layout middleware
     // is applied to routes inside include() even when include() is the

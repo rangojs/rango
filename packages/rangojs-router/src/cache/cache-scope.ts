@@ -163,7 +163,7 @@ export class CacheScope {
    * 1. Explicit store from cache() options
    * 2. App-level store from request context
    */
-  private getStore(): SegmentCacheStore | null {
+  getStore(): SegmentCacheStore | null {
     // Explicit store from cache() options takes precedence
     if (this.explicitStore) {
       return this.explicitStore;
