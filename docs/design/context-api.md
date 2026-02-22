@@ -2,148 +2,96 @@
 
 ## Overview
 
-All request-time handlers share a single base context (`RequestContext`) created after route matching. Each handler type receives a **view** of this context with capabilities narrowed based on execution semantics. Illegal operations produce TypeScript errors at compile time and throw at runtime.
+All request-time handlers share a single base context created after route matching. Each handler type receives a view of this context with capabilities narrowed based on execution semantics. Illegal operations produce TypeScript errors at compile time and throw at runtime.
 
-The core principle: **what's guaranteed to execute determines what you can mutate.**
-
----
+Core principle: **what is guaranteed to execute determines what you can mutate.**
 
 ## Request Lifecycle
 
 ```
-Request arrives
-    |
-Route matching (params, pathname, url extracted)
-    |
-Base context created (request props + empty var + response stub)
-    |
-Middleware executes (can set vars, headers, cookies)
-    |
-Segment resolution (handlers, parallels, intercepts, loaders)
-    |
-Response
+Request -> Route matching -> Base context created -> Middleware -> Segment resolution -> Response
 ```
 
----
+The base context is created once per request right after route matching. It holds request properties, an empty variables map, and a response stub. Middleware populates variables and may set headers/cookies. Segment resolution (handlers, parallels, intercepts, loaders) reads from this context.
 
 ## Base Context
 
-Created once per request, right after route matching. Every handler type reads from this same source.
+### Request properties (read-only)
 
-### Request properties (read-only, all handlers)
+- `request` -- original HTTP request
+- `url` -- parsed URL (handlers receive filtered version without `_rsc*` system params)
+- `pathname` -- URL pathname
+- `searchParams` -- always `URLSearchParams` (handlers receive filtered version)
+- `search` -- typed search params from route schema, `{}` when no schema defined
+- `params` -- route parameters from pattern matching
+- `method` -- HTTP method
+- `env` -- platform bindings (typed via `RouterEnv`)
 
-| Property | Type | Notes |
-|---|---|---|
-| `request` | `Request` | Original HTTP request |
-| `url` | `URL` | Parsed URL (handlers get filtered, no `_rsc*` params) |
-| `pathname` | `string` | URL pathname |
-| `searchParams` | `URLSearchParams` | Always URLSearchParams (handlers get filtered) |
-| `search` | `ResolveSearchSchema<TSearch>` / `{}` | Typed search params from route schema |
-| `params` | typed `TParams` | Route parameters from pattern matching |
-| `method` | `string` | HTTP method (GET, POST, etc.) |
-| `env` | typed `TBindings` | Platform bindings (Cloudflare KV, D1, etc.) |
+### Middleware variables
 
-### Middleware state
-
-| Property | Type | Notes |
-|---|---|---|
-| `get(key)` | typed `V[K]` | Read variables set by middleware |
-| `set(key, value)` | typed | **Middleware only** -- set variables for downstream handlers |
+- `get(key)` -- read variables set by middleware (all handler types)
+- `set(key, value)` -- write variables (middleware only)
 
 ### Response surface
 
-| Property | Type | Notes |
-|---|---|---|
-| `res` | `Response` | Stub response, headers merged into final response |
-| `headers` | `Headers` | Alias for `res.headers` |
-| `header(name, value)` | `void` | Shorthand for `res.headers.set()` |
-| `cookie(name)` | `string \| undefined` | Read cookie from request |
-| `cookies()` | `Record<string, string>` | All request cookies |
-| `setCookie(name, value, opts)` | `void` | Set response cookie |
-| `deleteCookie(name, opts)` | `void` | Delete cookie |
-
----
+- `res` -- stub response, headers merged into final response
+- `headers` -- alias for `res.headers`
+- `header(name, value)` -- shorthand for `res.headers.set()`
+- `cookie(name)`, `cookies()` -- read request cookies
+- `setCookie(name, value, opts)`, `deleteCookie(name, opts)` -- modify response cookies
 
 ## Capability Matrix
 
 | Capability | Middleware | Handler / Layout / Parallel / Intercept | Loader | Action | Prerender |
 |---|---|---|---|---|---|
-| **Request props** | all | all | all | all | synthetic (from `getParams` URL) |
-| `get` (read vars) | yes | yes | yes | yes | never |
-| `set` (write vars) | **yes** | never | never | never | never |
-| `res` / `headers` / cookies | yes | yes | never | yes | never |
-| `use(loader)` | never | yes | yes | yes | never |
-| `use(handle)` | never | yes | never | never | yes |
-| `reverse` | scoped+global | scoped+global | global | global | never |
-| `redirect` / `notFound` | yes | yes | yes | yes | never |
-| `setLocationState` | -- | yes | never | yes | never |
-| `theme` / `setTheme` | -- | yes | never | yes | never |
-| `body` / `formData` | -- | -- | yes (fetchable) | yes | never |
-
----
+| Request props | all | all | all | all | synthetic |
+| `get` (read vars) | yes | yes | yes | yes | no |
+| `set` (write vars) | yes | no | no | no | no |
+| Response surface | yes | yes | no | yes | no |
+| `use(loader)` | no | yes | yes | yes | no |
+| `use(handle)` | no | yes | no | no | yes |
+| `reverse` | scoped+global | scoped+global | global | global | no |
+| `redirect` / `notFound` | yes | yes | yes | yes | no |
+| `setLocationState` | -- | yes | no | yes | no |
+| `theme` / `setTheme` | -- | yes | no | yes | no |
+| `body` / `formData` | -- | -- | yes (fetchable) | yes | no |
 
 ## Design Rationale
 
-### Why middleware is the only one with `set`
+### Middleware is the only handler type with `set`
 
-Middleware always executes, in order, on every request. If a handler, layout, or parallel calls `ctx.set("key", value)` and that segment is cached, on cache hit the handler never runs -- downstream code calling `ctx.get("key")` gets `undefined`. Non-deterministic. Restricting `set` to middleware eliminates this class of bugs.
+Middleware always executes on every request. Handlers, layouts, parallels, and intercepts may be segment-cached. If a cached handler calls `ctx.set("key", value)`, on cache hit the handler never runs and downstream `ctx.get("key")` returns `undefined`. Restricting `set` to middleware eliminates this non-determinism.
 
-### Why loaders can't touch the response
+### Loaders cannot touch the response
 
-Loaders run in parallel and are memoized. If multiple loaders set headers concurrently, the result is a race condition. Loaders are pure data fetchers -- they read context and return data.
+Loaders run in parallel and are memoized. Multiple loaders setting headers concurrently is a race condition. Loaders are pure data fetchers that read context and return data.
 
-### Why loaders CAN redirect/notFound
+### Loaders can redirect and throw notFound
 
-Two kinds of response interaction:
-- **Control flow** (redirect, notFound, throw) -- aborts everything, deterministic, only one wins
-- **Decoration** (headers, cookies, handles) -- additive, races in parallel execution
+Control flow (redirect, notFound, throw) aborts the request deterministically -- only one wins. This is distinct from response decoration (headers, cookies, handles) which is additive and races under parallel execution. A loader that discovers moved or missing data needs to express that without duplicating logic in middleware.
 
-A loader that discovers "this product moved" or "this data doesn't exist" needs to express that. Forcing redirect logic into middleware would require duplicating the data-fetching logic the loader already has.
+### Middleware has no `use`
 
-### Why middleware has no `use`
+Middleware is the setup layer. `use(loader)` would duplicate the existing pattern of fetching data in middleware and calling `ctx.set()`. `use(handle)` has no meaning because middleware has no segment identity to key handle data against.
 
-Middleware is the setup layer -- it reads the request, validates, sets vars, and passes control. `use(loader)` would create two patterns for the same thing (fetch in middleware vs. fetch in loader). `use(handle)` doesn't make sense because middleware has no segment identity for handle data keying. Keeping middleware pure and focused on context setup.
+### `reverse` scoping follows `include()` boundaries
 
-### Why `reverse` scoping follows `include()` boundaries
+Local dot-prefixed names (`.products`) resolve within the `include()` boundary where the handler or middleware is defined. This enables composability -- middleware inside an `include()` can reference local routes without knowing global names, and the `include()` can be remounted without breaking references. Loaders and actions resolve globally since they are standalone definitions outside route trees.
 
-`reverse` supports both global names (`"shop.products"`) and local dot-prefixed names (`".products"`). Local names resolve within the `include()` boundary where the handler or middleware is defined. This enables composability -- middleware inside an `include()` can reference local routes without knowing global names, and the entire `include()` can be remounted at a different path without breaking.
+### Actions have no `use(handle)`
 
-Loaders and actions use global-only resolution since they're standalone definitions outside route trees.
+Handles are keyed by segment identity. Actions are standalone `"use server"` functions with no segment in the rendering tree to key against.
 
-### Why actions have no `use(handle)`
+### `set` is a function, not property assignment
 
-Handles are keyed by segment identity (which segment in the tree pushed the data). Actions are standalone `"use server"` functions with no segment identity -- there's no segment to key against.
-
-### Why `set` is a function, not property assignment
-
-`ctx.get(key)` / `ctx.set(key, value)` instead of `ctx.var.key = value`. Functions can be typed as `never` per handler type to produce TS errors. Property assignment on `ctx.var` can't be restricted at the type level per-context without complex `Readonly` wrappers.
-
----
+`ctx.get(key)` / `ctx.set(key, value)` rather than `ctx.var.key = value`. Functions can be typed as `never` per handler type to produce compile-time errors. Property assignment cannot be restricted at the type level per-context without complex wrappers.
 
 ## Open Questions
 
 ### Intercepts and `use(handle)`
 
-Intercepts only run on client-side navigation, not SSR. If an intercept pushes handle data, that data exists on client nav but not on initial page load -- inconsistent. Current table shows intercepts with `use(handle)` allowed (they are segments in the tree), but this inconsistency may warrant restricting it.
+Intercepts only run on client-side navigation, not on SSR. If an intercept pushes handle data, that data is present on client nav but absent on initial page load. The capability matrix currently allows it (intercepts are segments in the tree), but this inconsistency may warrant restricting it.
 
----
+### `ctx.var` retention
 
-## Typing Strategy
-
-One base context type, narrowed per handler type using conditional types and `never`:
-
-```typescript
-// Illegal operations typed as never -- TS error at compile time
-// Runtime: throw Error("ctx.set() is not available in route handlers")
-
-// Middleware -- full access
-type MiddlewareCtx = BaseCtx & { set: SetFn };
-
-// Handler -- no set
-type HandlerCtx = BaseCtx & { set: never; use: UseFn };
-
-// Loader -- read-only, no response surface
-type LoaderCtx = Pick<BaseCtx, RequestProps> & { use: UseLoaderFn };
-```
-
-Exact type structure TBD during implementation.
+Whether to keep `ctx.var` as a direct property alongside `get`/`set`, or remove it entirely in favour of function-only access.
