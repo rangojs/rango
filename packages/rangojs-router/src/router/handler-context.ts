@@ -5,7 +5,6 @@
  */
 
 import type { HandlerContext, InternalHandlerContext } from "../types";
-import type { HandleStore } from "../server/handle-store.js";
 import { getRequestContext } from "../server/request-context.js";
 import { getSearchSchema } from "../route-map-builder.js";
 import { parseSearchParams, serializeSearchParams } from "../search-params.js";
@@ -175,16 +174,17 @@ export function createHandlerContext<TEnv>(
 }
 
 /**
- * Create a BuildContext for pre-rendering.
+ * Create a PrerenderContext for Prerender() handlers at build time.
  *
- * Returns a HandlerContext-compatible object where params, pathname, url,
- * and use(handle) work, but request/env/headers/cookies/var/searchParams
- * throw with a clear error. Loaders are not available during pre-rendering.
+ * Returns an InternalHandlerContext where params, pathname, url, searchParams,
+ * search, reverse, and use(handle) work. Request-time properties
+ * (request, env, headers, cookies, var, get, set, res) throw with a clear error.
  */
-export function createBuildContext<TEnv>(
+export function createPrerenderContext<TEnv>(
   params: Record<string, string>,
   pathname: string,
-  handleStore: HandleStore,
+  routeMap: Record<string, string>,
+  routeName?: string,
 ): InternalHandlerContext<any, TEnv> {
   const syntheticUrl = new URL(`http://prerender${pathname}`);
 
@@ -200,12 +200,8 @@ export function createBuildContext<TEnv>(
     get request(): Request {
       return throwUnavailable("request");
     },
-    get searchParams(): URLSearchParams {
-      return throwUnavailable("searchParams");
-    },
-    get search(): any {
-      return throwUnavailable("search");
-    },
+    searchParams: syntheticUrl.searchParams,
+    search: {},
     pathname,
     url: syntheticUrl,
     get env(): TEnv {
@@ -238,8 +234,75 @@ export function createBuildContext<TEnv>(
     setLocationState: () => {
       throwUnavailable("setLocationState");
     },
-    reverse: () => {
-      throwUnavailable("reverse");
+    reverse: createReverseFunction(routeMap, routeName),
+  } as InternalHandlerContext<any, TEnv>;
+}
+
+/**
+ * Create a StaticContext for Static() handlers at build time.
+ *
+ * Returns an InternalHandlerContext where only reverse and use(handle) work.
+ * Static handlers have no URL, no params, no pathname — everything else throws.
+ */
+export function createStaticContext<TEnv>(
+  routeMap: Record<string, string>,
+): InternalHandlerContext<any, TEnv> {
+  function throwUnavailable(prop: string): never {
+    throw new Error(
+      `Property "${prop}" is not available in Static() handlers. ` +
+        `Static handlers render content without request context.`,
+    );
+  }
+
+  return {
+    get params(): any {
+      return throwUnavailable("params");
     },
+    get request(): Request {
+      return throwUnavailable("request");
+    },
+    get searchParams(): URLSearchParams {
+      return throwUnavailable("searchParams");
+    },
+    get search(): any {
+      return throwUnavailable("search");
+    },
+    get pathname(): string {
+      return throwUnavailable("pathname");
+    },
+    get url(): URL {
+      return throwUnavailable("url");
+    },
+    get env(): TEnv {
+      return throwUnavailable("env");
+    },
+    get var(): any {
+      return throwUnavailable("var");
+    },
+    get: (() => {
+      throwUnavailable("get");
+    }) as any,
+    set: (() => {
+      throwUnavailable("set");
+    }) as any,
+    get _originalRequest(): Request {
+      return throwUnavailable("request");
+    },
+    get res(): Response {
+      return throwUnavailable("res");
+    },
+    get headers(): Headers {
+      return throwUnavailable("headers");
+    },
+    // Placeholder use() - replaced by setupBuildUse
+    use: () => {
+      throw new Error("ctx.use() called before build context was initialized");
+    },
+    theme: undefined,
+    setTheme: undefined,
+    setLocationState: () => {
+      throwUnavailable("setLocationState");
+    },
+    reverse: createReverseFunction(routeMap),
   } as InternalHandlerContext<any, TEnv>;
 }

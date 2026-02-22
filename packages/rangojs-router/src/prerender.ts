@@ -26,7 +26,7 @@
  * ```
  */
 import type { ReactNode } from "react";
-import type { Handler, HandlerContext, DefaultEnv } from "./types.js";
+import type { Handler } from "./types.js";
 import type { Handle } from "./handle.js";
 
 
@@ -41,6 +41,11 @@ export interface PrerenderOptions {
   passthrough?: boolean;
 }
 
+/**
+ * Context passed to Prerender() handlers at build time.
+ * Has a synthetic URL from getParams, params, and pathname.
+ * No request, env, headers, cookies, or variables.
+ */
 export interface BuildContext<TParams> {
   /** Params extracted from the route pattern (populated from getParams). */
   params: TParams;
@@ -53,6 +58,27 @@ export interface BuildContext<TParams> {
 
   /** Pathname portion of the synthetic URL. */
   pathname: string;
+
+  /** URLSearchParams from the synthetic URL (always empty for prerender). */
+  searchParams: URLSearchParams;
+
+  /** Typed search params — always {} for prerender (no real query string). */
+  search: {};
+
+  /** URL generation by route name. */
+  reverse: (name: string, params?: Record<string, string>, search?: Record<string, unknown>) => string;
+}
+
+/**
+ * Context passed to Static() handlers at build time.
+ * No URL, no params, no pathname — just renders content.
+ */
+export interface StaticBuildContext {
+  /** Push handle data (frozen into pre-rendered output at build time). */
+  use: <T>(handle: Handle<T>) => (data: T) => void;
+
+  /** URL generation by route name. */
+  reverse: (name: string, params?: Record<string, string>, search?: Record<string, unknown>) => string;
 }
 
 export interface PrerenderHandlerDefinition<TParams extends Record<string, any> = any> {
@@ -70,16 +96,16 @@ export interface PrerenderHandlerDefinition<TParams extends Record<string, any> 
 // -- Overloads --------------------------------------------------------------
 
 // Overload 1: Static handler (no params)
-export function Prerender<TParams extends Record<string, any> = {}, TRouteMap = never>(
-  handler: (ctx: HandlerContext<TParams, DefaultEnv, {}, TRouteMap>) => ReactNode | Promise<ReactNode>,
+export function Prerender<TParams extends Record<string, any> = {}>(
+  handler: (ctx: BuildContext<TParams>) => ReactNode | Promise<ReactNode>,
   options?: PrerenderOptions,
   __injectedId?: string,
 ): PrerenderHandlerDefinition<TParams>;
 
 // Overload 2: Dynamic handler (getParams + handler)
-export function Prerender<TParams extends Record<string, any>, TRouteMap = never>(
+export function Prerender<TParams extends Record<string, any>>(
   getParams: () => Promise<TParams[]> | TParams[],
-  handler: (ctx: HandlerContext<TParams, DefaultEnv, {}, TRouteMap>) => ReactNode | Promise<ReactNode>,
+  handler: (ctx: BuildContext<TParams>) => ReactNode | Promise<ReactNode>,
   options?: PrerenderOptions,
   __injectedId?: string,
 ): PrerenderHandlerDefinition<TParams>;

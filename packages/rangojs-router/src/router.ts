@@ -100,7 +100,7 @@ import {
 } from "./router/match-api.js";
 
 import type { SegmentResolutionDeps, MatchApiDeps } from "./router/types.js";
-import { createHandlerContext } from "./router/handler-context.js";
+import { createHandlerContext, createPrerenderContext, createStaticContext } from "./router/handler-context.js";
 import {
   setupLoaderAccess,
   setupLoaderAccessSilent,
@@ -1930,16 +1930,12 @@ export function createRouter<TEnv = any>(
       };
 
       return runWithRequestContext(minimalRequestContext, async () => {
-        // 6. Create handler context with synthetic request for pre-rendering.
-        // The synthetic request and route map are available at build time,
-        // so reverse() and other context properties work normally.
-        const buildCtx = createHandlerContext<TEnv>(
+        // 6. Create prerender context with synthetic URL.
+        // Prerender handlers get params, pathname, url, searchParams, search,
+        // reverse, and use(handle) — but no request, env, headers, or cookies.
+        const buildCtx = createPrerenderContext<TEnv>(
           matchedParams,
-          minimalRequestContext.request,
-          minimalRequestContext.url.searchParams,
           pathname,
-          minimalRequestContext.url,
-          {},
           mergedRouteMap,
           matched.routeKey,
         );
@@ -2128,15 +2124,10 @@ export function createRouter<TEnv = any>(
     };
 
     return runWithRequestContext(minimalRequestContext, async () => {
-      const buildCtx = createHandlerContext<TEnv>(
-        {},
-        syntheticRequest,
-        syntheticUrl.searchParams,
-        "/",
-        syntheticUrl,
-        {},
+      // Static handlers get only reverse and use(handle) — no URL, params,
+      // request, env, headers, or cookies.
+      const buildCtx = createStaticContext<TEnv>(
         mergedRouteMap,
-        "",
       );
 
       // Set segment ID so handle pushes are keyed correctly
