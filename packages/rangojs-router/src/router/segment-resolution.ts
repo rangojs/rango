@@ -57,7 +57,7 @@ async function ensureStaticDeps(): Promise<void> {
     _staticStore = createStaticStore();
   }
   if (!_deserializeComponent && _staticStore) {
-    const { deserializeComponent } = await import("../cache/cache-scope.js");
+    const { deserializeComponent } = await import("../cache/segment-codec.js");
     _deserializeComponent = deserializeComponent;
   }
 }

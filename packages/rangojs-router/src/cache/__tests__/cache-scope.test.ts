@@ -6,7 +6,7 @@ import type { SerializedSegmentData } from "../types.js";
 // Mock the RSC module. The real renderToReadableStream / createFromReadableStream
 // require a full React Server Components runtime which is not available in vitest.
 // We replace them with simple JSON-based encode/decode so we can test the
-// serialize/deserialize logic in cache-scope without the RSC dependency.
+// serialize/deserialize logic without the RSC dependency.
 vi.mock("@vitejs/plugin-rsc/rsc", () => {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
@@ -48,15 +48,9 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => {
   };
 });
 
-// Mock getRequestContext -- serializeSegments does not use it, but the module
-// imports it at the top level.
-vi.mock("../../server/request-context.js", () => ({
-  getRequestContext: () => null,
-}));
-
 // Import AFTER mocks are registered so vitest applies them.
 const { serializeSegments, deserializeSegments } = await import(
-  "../cache-scope.js"
+  "../segment-codec.js"
 );
 
 // ---------------------------------------------------------------------------
@@ -86,9 +80,6 @@ describe("serializeSegments / deserializeSegments", () => {
     vi.clearAllMocks();
   });
 
-  // -------------------------------------------------------------------------
-  // Serialization: verify the "null" sentinel is produced for loading: null
-  // -------------------------------------------------------------------------
   describe("serializeSegments - loading field encoding", () => {
     it("should encode loading: undefined as encodedLoading: undefined", async () => {
       const segments = [makeSegment({ loading: undefined })];
@@ -98,7 +89,10 @@ describe("serializeSegments / deserializeSegments", () => {
       expect(serialized[0].encodedLoading).toBeUndefined();
     });
 
-    it('should encode loading: null as encodedLoading: "null" (sentinel string)', async () => {
+    it('should encode loading: null as "null" sentinel string', async () => {
+      // loading: null is stored as the literal string "null" to distinguish
+      // it from undefined. Both produce the same tree shape, but the
+      // reconciler compares loading values for structural preservation.
       const segments = [makeSegment({ loading: null })];
       const serialized = await serializeSegments(segments);
 
@@ -119,10 +113,7 @@ describe("serializeSegments / deserializeSegments", () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Deserialization: the bug -- "null" sentinel is not handled
-  // -------------------------------------------------------------------------
-  describe("deserializeSegments - loading field decoding (BUG P0-2)", () => {
+  describe("deserializeSegments - loading field decoding", () => {
     it("should deserialize encodedLoading: undefined as loading: undefined", async () => {
       const data: SerializedSegmentData[] = [
         {
@@ -141,19 +132,10 @@ describe("serializeSegments / deserializeSegments", () => {
       const result = await deserializeSegments(data);
 
       expect(result).toHaveLength(1);
-      // rscDeserialize returns undefined for falsy input, which becomes the
-      // loading value. This case works correctly.
       expect(result[0].loading).toBeUndefined();
     });
 
-
     it("round-trip: loading: null should survive serialize -> deserialize as null", async () => {
-      // This is the key round-trip test. A segment with loading: null should
-      // produce loading: null after serialization and deserialization.
-      //
-      // With the current buggy code and our JSON mock, this may pass by
-      // coincidence (JSON.parse("null") === null). See the spy-based test
-      // above for the definitive bug demonstration.
       const original = [makeSegment({ loading: null })];
       const serialized = await serializeSegments(original);
       const deserialized = await deserializeSegments(serialized);
@@ -182,29 +164,56 @@ describe("serializeSegments / deserializeSegments", () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Direct rscDeserialize behavior test via deserializeSegments
-  //
-  // This tests that the "null" sentinel is handled at the deserialization
-  // boundary, NOT inside rscDeserialize (which is a general-purpose function).
-  // The fix should be in deserializeSegments, checking for "null" before
-  // calling rscDeserialize.
-  // -------------------------------------------------------------------------
+  describe("metadata preservation", () => {
+    it("should preserve segment metadata through round-trip", async () => {
+      const original = [makeSegment({
+        id: "L0",
+        type: "layout",
+        namespace: "app",
+        index: 2,
+        params: { slug: "hello" },
+        slot: "main",
+        belongsToRoute: true,
+        layoutName: "root",
+        loaderId: "loader-1",
+        loaderIds: ["a", "b"],
+      })];
+      const serialized = await serializeSegments(original);
+      const deserialized = await deserializeSegments(serialized);
+
+      expect(deserialized).toHaveLength(1);
+      const seg = deserialized[0];
+      expect(seg.id).toBe("L0");
+      expect(seg.type).toBe("layout");
+      expect(seg.namespace).toBe("app");
+      expect(seg.index).toBe(2);
+      expect(seg.params).toEqual({ slug: "hello" });
+      expect(seg.slot).toBe("main");
+      expect(seg.belongsToRoute).toBe(true);
+      expect(seg.layoutName).toBe("root");
+      expect(seg.loaderId).toBe("loader-1");
+      expect(seg.loaderIds).toEqual(["a", "b"]);
+    });
+
+    it("should round-trip component values", async () => {
+      const original = [makeSegment({ component: { type: "div", props: { id: "test" } } as any })];
+      const serialized = await serializeSegments(original);
+      const deserialized = await deserializeSegments(serialized);
+
+      expect(deserialized[0].component).toEqual({ type: "div", props: { id: "test" } });
+    });
+
+    it("should round-trip layout values", async () => {
+      const original = [makeSegment({ layout: { type: "nav", props: {} } as any })];
+      const serialized = await serializeSegments(original);
+      const deserialized = await deserializeSegments(serialized);
+
+      expect(deserialized[0].layout).toEqual({ type: "nav", props: {} });
+    });
+  });
+
   describe("sentinel handling must bypass rscDeserialize", () => {
     it('should NOT call createFromReadableStream when encodedLoading is "null"', async () => {
-      // This is the most direct test for the bug. We intercept
-      // createFromReadableStream at the module level to count calls.
-      //
-      // With the buggy code, createFromReadableStream is called 2 times:
-      //   1. For the component (item.encoded)
-      //   2. For the loading (item.encodedLoading = "null")
-      // Plus potentially for layout, loaderData, loaderDataPromise (all undefined,
-      // so rscDeserialize short-circuits for those).
-      //
-      // After the fix, createFromReadableStream should be called only 1 time
-      // (for the component), because the "null" sentinel should be caught
-      // before rscDeserialize is invoked.
-
       const rscModule = await import("@vitejs/plugin-rsc/rsc");
       const createSpy = vi.fn(rscModule.createFromReadableStream);
 
@@ -232,12 +241,8 @@ describe("serializeSegments / deserializeSegments", () => {
       // the RSC decoder returns for the byte sequence "null".
       expect(result[0].loading).toBe(null);
 
-      // BUG: With the current code, createFromReadableStream is called for
-      // the "null" sentinel. After the fix it should only be called once
-      // (for the component stream).
-      //
-      // This assertion WILL FAIL with the buggy code -- createFromReadableStream
-      // is called 2 times (component + "null" sentinel passed to rscDeserialize).
+      // createFromReadableStream should only be called once (for the component
+      // stream). The "null" sentinel should be caught before rscDeserialize.
       expect(createSpy).toHaveBeenCalledTimes(1);
 
       // Restore

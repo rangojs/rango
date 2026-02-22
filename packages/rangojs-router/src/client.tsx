@@ -20,6 +20,7 @@ import {
   RouteContentWrapper,
   LoaderBoundary,
 } from "./route-content-wrapper.js";
+import { OutletProvider } from "./outlet-provider.js";
 
 /**
  * Outlet component - renders child content in layouts
@@ -254,45 +255,11 @@ export function ParallelOutlet({ name }: { name: `@${string}` }): ReactNode {
   return content;
 }
 
-/**
- * Provider for outlet content - used internally by renderSegments
- *
- * Stores a reference to parent context so useLoader can walk up the chain
- * to find loader data from parent layouts. If this segment defines a loading
- * component, Outlet will wrap content with Suspense using that as fallback.
- */
-export function OutletProvider({
-  content,
-  parallel,
-  segment,
-  loaderData,
-  children,
-}: {
-  content: ReactNode;
-  parallel?: ResolvedSegment[];
-  segment?: ResolvedSegment;
-  loaderData?: Record<string, any>;
-  children: ReactNode;
-}): ReactNode {
-  // Get parent context to enable walking up the chain for loader lookups
-  const parentContext = useContext(OutletContext);
-
-  const value = useMemo(
-    () => ({
-      content,
-      parallel,
-      segment,
-      loaderData,
-      parent: parentContext,
-      loading: segment?.loading,
-    }),
-    [content, parallel, segment, loaderData, parentContext]
-  );
-
-  return (
-    <OutletContext.Provider value={value}>{children}</OutletContext.Provider>
-  );
-}
+// OutletProvider is defined in outlet-provider.tsx to break a circular
+// dependency between client.tsx and route-content-wrapper.tsx.
+// Imported at the top of this file for local use in Outlet/ParallelOutlet,
+// and re-exported here for backwards compatibility.
+export { OutletProvider };
 
 /**
  * Hook to access outlet content programmatically

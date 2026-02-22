@@ -100,19 +100,22 @@ import { getRequestContext } from "../../server/request-context.js";
 // Dynamic imports prevent pulling in @vitejs/plugin-rsc/rsc virtual module at
 // top-level, which breaks vitest (only URLs with file:, data:, node: schemes).
 let prerenderStoreInstance: PrerenderStore | null | undefined;
-let _deserializeSegments: typeof import("../../cache/cache-scope.js").deserializeSegments | undefined;
+let _deserializeSegments: typeof import("../../cache/segment-codec.js").deserializeSegments | undefined;
+let _restoreHandles: typeof import("../../cache/handle-snapshot.js").restoreHandles | undefined;
 let _hashParams: typeof import("../../prerender/param-hash.js").hashParams | undefined;
 let _getRequestContext: typeof import("../../server/request-context.js").getRequestContext | undefined;
 
 async function ensurePrerenderDeps() {
   if (!_deserializeSegments) {
-    const [cache, paramHash, reqCtx, store] = await Promise.all([
-      import("../../cache/cache-scope.js"),
+    const [codec, snapshot, paramHash, reqCtx, store] = await Promise.all([
+      import("../../cache/segment-codec.js"),
+      import("../../cache/handle-snapshot.js"),
       import("../../prerender/param-hash.js"),
       import("../../server/request-context.js"),
       import("../../prerender/store.js"),
     ]);
-    _deserializeSegments = cache.deserializeSegments;
+    _deserializeSegments = codec.deserializeSegments;
+    _restoreHandles = snapshot.restoreHandles;
     _hashParams = paramHash.hashParams;
     _getRequestContext = reqCtx.getRequestContext;
     if (prerenderStoreInstance === undefined) {
@@ -138,7 +141,7 @@ async function* yieldFromStore<TEnv>(
     resolveLoadersOnly,
   } = getRouterContext<TEnv>();
 
-  if (!_deserializeSegments || !_hashParams || !_getRequestContext) {
+  if (!_deserializeSegments || !_restoreHandles || !_hashParams || !_getRequestContext) {
     throw new Error("yieldFromStore called before ensurePrerenderDeps");
   }
 
@@ -148,11 +151,7 @@ async function* yieldFromStore<TEnv>(
   // Prefer the eagerly-captured handleStoreRef to avoid ALS disruption in workerd.
   const handleStore = handleStoreRef ?? _getRequestContext()?._handleStore;
   if (handleStore) {
-    for (const [segId, segHandles] of Object.entries(entry.handles)) {
-      if (Object.keys(segHandles).length > 0) {
-        handleStore.replaySegmentData(segId, segHandles);
-      }
-    }
+    _restoreHandles(entry.handles, handleStore);
   }
 
   state.cacheHit = true;

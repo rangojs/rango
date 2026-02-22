@@ -1475,7 +1475,7 @@ export function createRSCHandler<
         // deserializes these and feeds them through the normal segment pipeline.
         const nonLoaderSegments = match.segments.filter((s) => s.type !== "loader");
         await handleStore.settled;
-        const { serializeSegments } = await import("../cache/cache-scope.js");
+        const { serializeSegments } = await import("../cache/segment-codec.js");
         const serializedSegments = await serializeSegments(nonLoaderSegments);
         const handles: Record<string, Record<string, unknown[]>> = {};
         for (const seg of nonLoaderSegments) {

@@ -1964,7 +1964,7 @@ export function createRouter<TEnv = any>(
         await handleStore.settled;
 
         // 11. Serialize segments using the cache serializer
-        const { serializeSegments } = await import("./cache/cache-scope.js");
+        const { serializeSegments } = await import("./cache/segment-codec.js");
         const serializedSegments = await serializeSegments(nonLoaderSegments);
 
         // 12. Collect handle data per segment (skip segments with no handle data)
@@ -2156,7 +2156,7 @@ export function createRouter<TEnv = any>(
         belongsToRoute: false,
       };
 
-      const { serializeSegments } = await import("./cache/cache-scope.js");
+      const { serializeSegments } = await import("./cache/segment-codec.js");
       const [serialized] = await serializeSegments([segment]);
 
       // Collect handle data pushed during rendering
