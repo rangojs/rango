@@ -239,20 +239,13 @@ export async function resolveSegment<TEnv>(
       segments.push(...loaderSegments);
     }
 
-    for (const orphan of entry.layout) {
-      const orphanSegments = await resolveOrphanLayout(
-        orphan, params, context, loaderPromises, true, deps, options,
-      );
-      segments.push(...orphanSegments);
-    }
-
-    for (const parallelEntry of entry.parallel) {
-      const parallelSegments = await resolveParallelEntry(
-        parallelEntry, params, context, true, entry.shortCode, deps, options,
-      );
-      segments.push(...parallelSegments);
-    }
-
+    // Route handler EXECUTES before its children (orphan layouts, parallels).
+    // This lets the handler set() context variables that children can read
+    // via get(). Caching wraps all segments together (per-route, not
+    // per-segment), so either all run or none do — no partial scenarios.
+    //
+    // The handler's segment is PUSHED after orphans/parallels to preserve
+    // the correct tree composition order (layouts wrap the route content).
     (context as InternalHandlerContext)._currentSegmentId = entry.shortCode;
     let component: ReactNode | undefined;
 
@@ -267,6 +260,20 @@ export async function resolveSegment<TEnv>(
       } else {
         component = handleHandlerResult(await entry.handler(context));
       }
+    }
+
+    for (const orphan of entry.layout) {
+      const orphanSegments = await resolveOrphanLayout(
+        orphan, params, context, loaderPromises, true, deps, options,
+      );
+      segments.push(...orphanSegments);
+    }
+
+    for (const parallelEntry of entry.parallel) {
+      const parallelSegments = await resolveParallelEntry(
+        parallelEntry, params, context, true, entry.shortCode, deps, options,
+      );
+      segments.push(...parallelSegments);
     }
 
     segments.push({
@@ -1064,7 +1071,17 @@ export async function resolveSegmentWithRevalidation<TEnv>(
   segments.push(...loaderResult.segments);
   matchedIds.push(...loaderResult.matchedIds);
 
+  // For route entries, execute the handler BEFORE orphan layouts and parallels
+  // so ctx.set() data is available to them via ctx.get(). The handler's
+  // segment is pushed after children to preserve tree composition order.
+  let routeHandlerResult: { segment: ResolvedSegment; matchedId: string } | undefined;
   if (entry.type === "route") {
+    routeHandlerResult = await resolveEntryHandlerWithRevalidation(
+      entry, params, context, belongsToRoute, clientSegmentIds,
+      prevParams, request, prevUrl, nextUrl, routeKey, deps,
+      actionContext, stale,
+    );
+
     for (const orphan of entry.layout) {
       const orphanResult = await resolveOrphanLayoutWithRevalidation(
         orphan, params, context, clientSegmentIds,
@@ -1096,13 +1113,20 @@ export async function resolveSegmentWithRevalidation<TEnv>(
     }
   }
 
-  const handlerResult = await resolveEntryHandlerWithRevalidation(
-    entry, params, context, belongsToRoute, clientSegmentIds,
-    prevParams, request, prevUrl, nextUrl, routeKey, deps,
-    actionContext, stale,
-  );
-  segments.push(handlerResult.segment);
-  matchedIds.push(handlerResult.matchedId);
+  if (routeHandlerResult) {
+    // Route handler was already executed — push its segment after children
+    segments.push(routeHandlerResult.segment);
+    matchedIds.push(routeHandlerResult.matchedId);
+  } else {
+    // Layout/cache handler — execute and push
+    const handlerResult = await resolveEntryHandlerWithRevalidation(
+      entry, params, context, belongsToRoute, clientSegmentIds,
+      prevParams, request, prevUrl, nextUrl, routeKey, deps,
+      actionContext, stale,
+    );
+    segments.push(handlerResult.segment);
+    matchedIds.push(handlerResult.matchedId);
+  }
 
   return { segments, matchedIds };
 }

@@ -46,7 +46,7 @@ The base context is created once per request right after route matching. It hold
 |---|---|---|---|---|---|
 | Request props | all | all | all | all | synthetic |
 | `get` (read vars) | yes | yes | yes | yes | no |
-| `set` (write vars) | yes | no | no | no | no |
+| `set` (write vars) | yes | yes (route handler only) | no | no | no |
 | Response surface | yes | yes | no | yes | no |
 | `use(loader)` | no | yes | yes | yes | no |
 | `use(handle)` | no | yes | no | no | yes |
@@ -58,9 +58,13 @@ The base context is created once per request right after route matching. It hold
 
 ## Design Rationale
 
-### Middleware is the only handler type with `set`
+### `set` is available to middleware and route handlers
 
-Middleware always executes on every request. Handlers, layouts, parallels, and intercepts may be segment-cached. If a cached handler calls `ctx.set("key", value)`, on cache hit the handler never runs and downstream `ctx.get("key")` returns `undefined`. Restricting `set` to middleware eliminates this non-determinism.
+Middleware always executes on every request, so `set` is always safe there. Route handlers also have `set` because they run before their children (orphan layouts, parallels) during segment resolution. This lets the handler act as data owner for its subtree.
+
+Caching wraps all segments for a route together (per-route, not per-segment). On cache hit, nothing runs. On cache miss, everything runs with the handler first. There is no partial scenario where the handler is cached but its layout isn't.
+
+Middleware sets cross-cutting data (auth, request ID). Route handlers set subtree-scoped data (fetched entities their layout/parallel children need). Layouts, parallels, and intercepts cannot `set` -- they are children in the resolution order and should only read.
 
 ### Loaders cannot touch the response
 

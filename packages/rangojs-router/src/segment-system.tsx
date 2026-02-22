@@ -411,7 +411,28 @@ function* segmentTreeWalk(
   // regardless of the order they arrive in the input array (which can differ
   // between document requests and actions)
   // Shorter IDs come first (closer to root), same length sorted lexicographically
+  //
+  // Orphan layouts (belongsToRoute layouts inside route entries) have IDs
+  // deeper than their parent route (e.g., R3L0 vs R3). Without adjustment
+  // they'd sort after the route and process first in the reversed iteration,
+  // rendering with empty <Outlet /> content. Sort them before their parent
+  // route so that after reversal the route is processed first as a leaf.
   nonParallels.sort((a, b) => {
+    if (
+      a.type === "layout" && a.belongsToRoute &&
+      b.type === "route" &&
+      a.id.length > b.id.length && a.id.startsWith(b.id)
+    ) {
+      return -1;
+    }
+    if (
+      b.type === "layout" && b.belongsToRoute &&
+      a.type === "route" &&
+      b.id.length > a.id.length && b.id.startsWith(a.id)
+    ) {
+      return 1;
+    }
+
     if (a.id.length !== b.id.length) {
       return a.id.length - b.id.length;
     }
