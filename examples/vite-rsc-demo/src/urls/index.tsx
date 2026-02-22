@@ -14,6 +14,7 @@ import { loadersPatterns } from "./loaders.js";
 import { middlewarePatterns } from "./middleware.js";
 import { shopPatterns } from "./shop.js";
 import { magazinePatterns } from "./magazine.js";
+import { compositionPatterns } from "./composition-test.js";
 
 /**
  * URL patterns - Django-style routing API
@@ -39,6 +40,7 @@ export const urlpatterns = urls(({ path, include }) => [
   include("/middleware", middlewarePatterns, { name: "middleware" }),
   include("/shop", shopPatterns, { name: "shop" }),
   include("/magazine", magazinePatterns, { name: "magazine" }),
+  include("/composition", compositionPatterns, { name: "composition" }),
 
   // Unhandled error route - outside of any error boundary
   // (uses urls() directly since it has its own full path)

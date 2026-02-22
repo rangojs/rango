@@ -82,7 +82,27 @@ export {
   redirect,
   type RouteHelpers,
   type RouteHandlers,
+  // Globally importable route helpers for composition
+  layout,
+  cache,
+  middleware,
+  revalidate,
+  loader,
+  loading,
+  parallel,
+  intercept,
+  when,
+  errorBoundary,
+  notFoundBoundary,
 } from "./route-definition.js";
+
+// Composition types for reusable callback factories
+export type {
+  RouteUseItem,
+  LayoutUseItem,
+  AllUseItems,
+  UseItems,
+} from "./route-types.js";
 
 // Handle API
 export { createHandle, isHandle, type Handle } from "./handle.js";

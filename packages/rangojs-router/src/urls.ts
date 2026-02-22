@@ -68,6 +68,7 @@ import type {
   TypedIncludeItem,
   IncludeBrand,
   UrlPatternsBrand,
+  UseItems,
 } from "./route-types.js";
 import {
   getContext,
@@ -524,8 +525,8 @@ export type PathFn<TEnv> = <
     | ((ctx: HandlerContext<TParams, TEnv, TSearch>) => ReactNode | Promise<ReactNode> | Response | Promise<Response>)
     | PrerenderHandlerDefinition<TParams>
     | StaticHandlerDefinition<TParams>,
-  optionsOrUse?: PathOptions<TName, TSearch> | (() => RouteUseItem[]),
-  use?: () => RouteUseItem[],
+  optionsOrUse?: PathOptions<TName, TSearch> | (() => UseItems<RouteUseItem>),
+  use?: () => UseItems<RouteUseItem>,
   // Generic handler bypass: when handler uses index-signature params
   // (e.g. Handler<Record<string, any>>), skip the biconditional.
   // `string extends keyof TParams` is true for index signatures,
@@ -550,8 +551,8 @@ export type ResponsePathFn<TEnv> = <
 >(
   pattern: TPattern,
   handler: ResponseHandler<ExtractParams<TPattern>, TEnv>,
-  optionsOrUse?: PathOptions<TName, TSearch> | (() => ResponseRouteUseItem[]),
-  use?: () => ResponseRouteUseItem[],
+  optionsOrUse?: PathOptions<TName, TSearch> | (() => UseItems<ResponseRouteUseItem>),
+  use?: () => UseItems<ResponseRouteUseItem>,
 ) => TypedRouteItem<TName, TPattern, unknown, TSearch>;
 
 /**
@@ -569,8 +570,8 @@ export type JsonResponsePathFn<TEnv> = <
   handler: (
     ctx: ResponseHandlerContext<ExtractParams<TPattern>, TEnv>,
   ) => TData | Response | Promise<TData | Response>,
-  optionsOrUse?: PathOptions<TName, TSearch> | (() => ResponseRouteUseItem[]),
-  use?: () => ResponseRouteUseItem[],
+  optionsOrUse?: PathOptions<TName, TSearch> | (() => UseItems<ResponseRouteUseItem>),
+  use?: () => UseItems<ResponseRouteUseItem>,
 ) => TypedRouteItem<TName, TPattern, TData, TSearch>;
 
 /**
@@ -584,8 +585,8 @@ export type TextResponsePathFn<TEnv> = <
 >(
   pattern: TPattern,
   handler: TextResponseHandler<ExtractParams<TPattern>, TEnv>,
-  optionsOrUse?: PathOptions<TName, TSearch> | (() => ResponseRouteUseItem[]),
-  use?: () => ResponseRouteUseItem[],
+  optionsOrUse?: PathOptions<TName, TSearch> | (() => UseItems<ResponseRouteUseItem>),
+  use?: () => UseItems<ResponseRouteUseItem>,
 ) => TypedRouteItem<TName, TPattern, string, TSearch>;
 
 /**
@@ -636,7 +637,7 @@ export type PathHelpers<TEnv> = {
    */
   layout: {
     (component: ReactNode | Handler<any, any, TEnv> | StaticHandlerDefinition): TypedLayoutItem<{}, {}>;
-    <const TChildren extends readonly LayoutUseItem[]>(
+    <const TChildren extends readonly (LayoutUseItem | readonly LayoutUseItem[])[]>(
       component: ReactNode | Handler<any, any, TEnv> | StaticHandlerDefinition,
       use: () => TChildren,
     ): TypedLayoutItem<ExtractRoutes<TChildren>, ExtractResponses<TChildren>>;
@@ -723,11 +724,11 @@ export type PathHelpers<TEnv> = {
    */
   cache: {
     (): TypedCacheItem<{}, {}>;
-    <const TChildren extends readonly AllUseItems[]>(
+    <const TChildren extends readonly (AllUseItems | readonly AllUseItems[])[]>(
       children: () => TChildren,
     ): TypedCacheItem<ExtractRoutes<TChildren>, ExtractResponses<TChildren>>;
     (options: PartialCacheOptions | false): TypedCacheItem<{}, {}>;
-    <const TChildren extends readonly AllUseItems[]>(
+    <const TChildren extends readonly (AllUseItems | readonly AllUseItems[])[]>(
       options: PartialCacheOptions | false,
       use: () => TChildren,
     ): TypedCacheItem<ExtractRoutes<TChildren>, ExtractResponses<TChildren>>;
@@ -806,8 +807,8 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
   return ((
     pattern: string,
     handler: ReactNode | Handler<any, any, TEnv>,
-    optionsOrUse?: PathOptions | (() => RouteUseItem[]),
-    maybeUse?: () => RouteUseItem[],
+    optionsOrUse?: PathOptions | (() => UseItems<RouteUseItem>),
+    maybeUse?: () => UseItems<RouteUseItem>,
   ): RouteItem => {
     const store = getContext();
     const ctx = store.getStore();
@@ -833,11 +834,11 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
 
     // Determine options and use based on argument types
     let options: PathOptions | undefined;
-    let use: (() => RouteUseItem[]) | undefined;
+    let use: (() => UseItems<RouteUseItem>) | undefined;
 
     if (typeof optionsOrUse === "function") {
       // path(pattern, handler, use)
-      use = optionsOrUse as () => RouteUseItem[];
+      use = optionsOrUse as () => UseItems<RouteUseItem>;
     } else if (typeof optionsOrUse === "object") {
       // path(pattern, handler, options) or path(pattern, handler, options, use)
       options = optionsOrUse as PathOptions;
@@ -954,7 +955,7 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
 
     // Run use callback if provided
     if (use && typeof use === "function") {
-      const result = store.run(namespace, entry, use);
+      const result = store.run(namespace, entry, use)?.flat(3);
       invariant(
         Array.isArray(result) && result.every((item) => isValidUseItem(item)),
         `path() use() callback must return an array of use items [${namespace}]`,
@@ -1192,7 +1193,7 @@ import { createRouteHelpers } from "./route-definition.js";
  */
 export function urls<
   TEnv = DefaultEnv,
-  const TItems extends readonly AllUseItems[] = readonly AllUseItems[],
+  const TItems extends readonly (AllUseItems | readonly AllUseItems[])[] = readonly AllUseItems[],
 >(
   builder: (helpers: PathHelpers<TEnv>) => TItems,
 ): UrlPatterns<TEnv, ExtractRoutes<TItems>, ExtractResponses<TItems>> {
@@ -1236,7 +1237,7 @@ export function urls<
     // Execute builder directly - manifest.ts handles RootLayout wrapping
     // for inline handlers (non-Promise results).
     // For nested include() calls, routes inherit the outer RootLayout.
-    const builderResult = builder(helpers);
+    const builderResult = builder(helpers).flat(3) as AllUseItems[];
     return processItems(builderResult);
   };
 

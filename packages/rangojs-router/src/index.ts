@@ -84,6 +84,14 @@ export { createLoader } from "./loader.js";
 // Route definition types (safe to import anywhere)
 export type { RouteHelpers, RouteHandlers } from "./route-definition.js";
 
+// Composition types for reusable callback factories
+export type {
+  RouteUseItem,
+  LayoutUseItem,
+  AllUseItems,
+  UseItems,
+} from "./route-types.js";
+
 // Response route types (usable in both server and client contexts)
 export type {
   ResponseHandler,
@@ -205,6 +213,41 @@ export function track(): never {
   throw new Error(
     'track() is server-only and requires RSC context.'
   );
+}
+
+// Error-throwing stubs for server-only route helpers
+export function layout(): never {
+  throw new Error('layout() is server-only and requires RSC context.');
+}
+export function cache(): never {
+  throw new Error('cache() is server-only and requires RSC context.');
+}
+export function middleware(): never {
+  throw new Error('middleware() is server-only and requires RSC context.');
+}
+export function revalidate(): never {
+  throw new Error('revalidate() is server-only and requires RSC context.');
+}
+export function loader(): never {
+  throw new Error('loader() is server-only and requires RSC context.');
+}
+export function loading(): never {
+  throw new Error('loading() is server-only and requires RSC context.');
+}
+export function parallel(): never {
+  throw new Error('parallel() is server-only and requires RSC context.');
+}
+export function intercept(): never {
+  throw new Error('intercept() is server-only and requires RSC context.');
+}
+export function when(): never {
+  throw new Error('when() is server-only and requires RSC context.');
+}
+export function errorBoundary(): never {
+  throw new Error('errorBoundary() is server-only and requires RSC context.');
+}
+export function notFoundBoundary(): never {
+  throw new Error('notFoundBoundary() is server-only and requires RSC context.');
 }
 
 // Request context type (safe for client)

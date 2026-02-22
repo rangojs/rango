@@ -50,6 +50,7 @@ import type {
   LoaderUseItem,
   WhenItem,
   CacheItem,
+  UseItems,
 } from "./route-types.js";
 // const __DEV__ = import.meta.MODE === "development";
 
@@ -219,7 +220,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
   route: <K extends keyof ResolvedRouteMap<T> & string>(
     name: K,
     handler: Handler<ExtractRouteParams<T, K & string>, {}, TEnv>,
-    use?: () => RouteUseItem[]
+    use?: () => UseItems<RouteUseItem>
   ) => RouteItem;
   /**
    * Define a layout that wraps child routes
@@ -243,7 +244,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    */
   layout: (
     component: ReactNode | Handler<any, any, TEnv>,
-    use?: () => LayoutUseItem[]
+    use?: () => UseItems<LayoutUseItem>
   ) => LayoutItem;
   /**
    * Define parallel routes that render simultaneously in named slots
@@ -269,7 +270,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
     TSlots extends Record<`@${string}`, Handler<any, any, TEnv> | ReactNode>,
   >(
     slots: TSlots,
-    use?: () => ParallelUseItem[]
+    use?: () => UseItems<ParallelUseItem>
   ) => ParallelItem;
   /**
    * Define an intercepting route for soft navigation
@@ -301,14 +302,14 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
       slotName: `@${string}`,
       routeName: `.${K}`,
       handler: ReactNode | Handler<ExtractRouteParams<T, K>, {}, TEnv>,
-      use?: () => InterceptUseItem[]
+      use?: () => UseItems<InterceptUseItem>
     ): InterceptItem;
     // Global: unprefixed, params inferred from global route map
     <K extends keyof RSCRouter.GeneratedRouteMap & string>(
       slotName: `@${string}`,
       routeName: K,
       handler: ReactNode | Handler<K, RSCRouter.GeneratedRouteMap, TEnv>,
-      use?: () => InterceptUseItem[]
+      use?: () => UseItems<InterceptUseItem>
     ): InterceptItem;
   };
   /**
@@ -369,7 +370,7 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    */
   loader: <TData>(
     loaderDef: LoaderDefinition<TData>,
-    use?: () => LoaderUseItem[]
+    use?: () => UseItems<LoaderUseItem>
   ) => LoaderItem;
   /**
    * Attach a loading component to the current route/layout
@@ -515,10 +516,10 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
    */
   cache: {
     (): CacheItem;
-    (children: () => AllUseItems[]): CacheItem;
+    (children: () => UseItems<AllUseItems>): CacheItem;
     (
       options: PartialCacheOptions | false,
-      use?: () => AllUseItems[]
+      use?: () => UseItems<AllUseItems>
     ): CacheItem;
   };
 };
@@ -689,8 +690,8 @@ const when: RouteHelpers<any, any>["when"] = (fn) => {
  * - cache({ ttl: 60 }, () => [...]) - with explicit options
  */
 const cache: RouteHelpers<any, any>["cache"] = (
-  optionsOrChildren?: PartialCacheOptions | false | (() => AllUseItems[]),
-  maybeChildren?: () => AllUseItems[]
+  optionsOrChildren?: PartialCacheOptions | false | (() => UseItems<AllUseItems>),
+  maybeChildren?: () => UseItems<AllUseItems>
 ) => {
   const store = getContext();
   const ctx = store.getStore();
@@ -698,7 +699,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
 
   // Handle overloaded signature: cache(), cache(children), or cache(options, children)
   let options: PartialCacheOptions | false;
-  let children: (() => AllUseItems[]) | undefined;
+  let children: (() => UseItems<AllUseItems>) | undefined;
 
   if (optionsOrChildren === undefined) {
     // cache() - no args, use defaults
@@ -741,6 +742,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
       parent: parent, // link to current parent for hierarchy
       cache: cacheConfig,
       handler: RootLayout,
+      loading: undefined, // Allow loading() to attach loading state
       middleware: [],
       revalidate: [],
       errorBoundary: [],
@@ -779,6 +781,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
     cache: cacheConfig,
     // Cache entries render like layouts (with Outlet as default handler)
     handler: RootLayout, // RootLayout just renders <Outlet />
+    loading: undefined, // Allow loading() to attach loading state
     middleware: [],
     revalidate: [],
     errorBoundary: [],
@@ -791,7 +794,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
   } as EntryData;
 
   // Run children with cache entry as parent
-  const result = store.run(namespace, entry, children);
+  const result = store.run(namespace, entry, children)?.flat(3);
 
   invariant(
     Array.isArray(result) && result.every((item) => isValidUseItem(item)),
@@ -885,7 +888,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
 
   // Run use callback if provided to collect loaders, revalidate, loading
   if (use && typeof use === "function") {
-    const result = store.run(namespace, entry, use);
+    const result = store.run(namespace, entry, use)?.flat(3);
     invariant(
       Array.isArray(result) && result.every((item) => isValidUseItem(item)),
       `parallel() use() callback must return an array of use items [${namespace}]`
@@ -967,7 +970,7 @@ const intercept = (
     };
     ctx.parent = tempParent as EntryData;
 
-    const result = use();
+    const result = use()?.flat(3);
 
     // Restore original parent
     ctx.parent = originalParent;
@@ -1022,7 +1025,7 @@ const loaderFn: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
     };
     ctx.parent = tempParent as EntryData;
 
-    const result = use();
+    const result = use()?.flat(3);
 
     // Restore original parent
     ctx.parent = originalParent;
@@ -1095,7 +1098,7 @@ const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
   ctx.manifest.set(name, entry);
   /* Run use and attach handlers */
   if (use && typeof use === "function") {
-    const result = store.run(namespace, entry, use);
+    const result = store.run(namespace, entry, use)?.flat(3);
     invariant(
       Array.isArray(result) && result.every((item) => isValidUseItem(item)),
       `route() use() callback must return an array of use items [${namespace}]`
@@ -1149,7 +1152,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
   // Run use callback if provided
   let result: AllUseItems[] | undefined;
   if (use && typeof use === "function") {
-    result = store.run(namespace, entry, use);
+    result = store.run(namespace, entry, use)?.flat(3);
 
     invariant(
       Array.isArray(result) && result.every((item) => isValidUseItem(item)),
@@ -1233,6 +1236,21 @@ const isValidUseItem = (item: any): item is AllUseItems | undefined | null => {
         "include", // For urls() include() helper
       ].includes(item.type))
   );
+};
+
+// Global helper exports for direct import from @rangojs/router
+export {
+  layout,
+  cache,
+  middleware,
+  revalidate,
+  parallel,
+  intercept,
+  when,
+  errorBoundary,
+  notFoundBoundary,
+  loaderFn as loader,
+  loadingFn as loading,
 };
 
 const isOrphanLayout = (item: AllUseItems): boolean => {

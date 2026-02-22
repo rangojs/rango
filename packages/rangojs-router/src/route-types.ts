@@ -222,3 +222,11 @@ export type InterceptUseItem =
   | RouteItem
   | WhenItem;
 export type LoaderUseItem = RevalidateItem | CacheItem;
+
+/**
+ * Allow composition factories in use() callbacks.
+ * Factories return T[], which placed inside a use() callback array
+ * creates nested arrays like (T | T[])[]. These are flattened at
+ * runtime via .flat(3).
+ */
+export type UseItems<T> = (T | readonly T[])[];

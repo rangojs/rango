@@ -39,6 +39,7 @@ import { staticContentPatterns } from "./pages/static-content-urls.js";
 import { ApiDemoPage } from "./pages/api-demo.js";
 import { SearchPage } from "./pages/search.js";
 import { transformCasesPatterns } from "./pages/transform-cases.js";
+import { compositionPatterns } from "./pages/composition.js";
 import { createDocsPatterns } from "@shared/docs";
 import { docsArticles } from "./docs-content.js";
 import {
@@ -258,6 +259,11 @@ export const urlpatterns = urls(
         // Transform coverage routes (alias imports + export specifiers)
         include("/transform-cases", transformCasesPatterns, {
           name: "transformCases",
+        }),
+
+        // Composition test routes (globally imported helpers)
+        include("/composition", compositionPatterns, {
+          name: "composition",
         }),
       ]),
     ]),

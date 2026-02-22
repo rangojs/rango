@@ -9,6 +9,8 @@ export const NamedRoutes = {
   "blog.author.posts": "/blog/author/:authorSlug/posts",
   "blog.index": "/blog",
   "blog.post": "/blog/:slug",
+  "composition.detail": "/composition/detail",
+  "composition.index": "/composition",
   "dashboard.index": "/dashboard",
   "dashboard.settings": "/dashboard/settings",
   "errors.clientError": "/errors/client-error",
