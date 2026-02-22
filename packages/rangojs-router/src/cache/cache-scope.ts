@@ -2,25 +2,25 @@
  * CacheScope - Runtime cache scope for iterator-based caching
  *
  * Each cache() boundary in the route tree creates a new CacheScope.
- * The scope owns: config, serialization, and storage operations.
+ * The scope owns: config, key management, and storage operations.
+ *
+ * Serialization is delegated to segment-codec.ts.
+ * Handle data capture/restore is delegated to handle-snapshot.ts.
  */
-
-/// <reference types="@vitejs/plugin-rsc/types" />
 
 import type { PartialCacheOptions } from "../types.js";
 import type { ResolvedSegment } from "../types.js";
 import type {
   SegmentCacheStore,
-  SegmentHandleData,
   CachedEntryData,
-  SerializedSegmentData,
 } from "./types.js";
 import { getRequestContext } from "../server/request-context.js";
-import {
-  renderToReadableStream,
-  createTemporaryReferenceSet,
-} from "@vitejs/plugin-rsc/rsc";
-import { createFromReadableStream } from "@vitejs/plugin-rsc/rsc";
+import { serializeSegments, deserializeSegments } from "./segment-codec.js";
+import { captureHandles, restoreHandles } from "./handle-snapshot.js";
+
+// Re-export codec functions for backwards compatibility.
+// Existing call sites import these from cache-scope.ts via dynamic import.
+export { deserializeComponent, serializeSegments, deserializeSegments } from "./segment-codec.js";
 
 // ============================================================================
 // Constants
@@ -30,7 +30,7 @@ import { createFromReadableStream } from "@vitejs/plugin-rsc/rsc";
 const DEFAULT_TTL_SECONDS = 60;
 
 // ============================================================================
-// Serialization Utilities (internal)
+// Key Generation (internal)
 // ============================================================================
 
 /**
@@ -77,213 +77,6 @@ function getDefaultRouteCacheKey(
   return `${prefix}:${getCacheKeyBase(pathname, params)}`;
 }
 
-/**
- * Convert a ReadableStream to a string.
- * @internal
- */
-async function streamToString(
-  stream: ReadableStream<Uint8Array>
-): Promise<string> {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let result = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    result += decoder.decode(value, { stream: true });
-  }
-
-  result += decoder.decode(); // flush
-  return result;
-}
-
-/**
- * Convert a string to a ReadableStream.
- * @internal
- */
-function stringToStream(str: string): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
-  const uint8 = encoder.encode(str);
-
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(uint8);
-      controller.close();
-    },
-  });
-}
-
-/**
- * RSC-serialize a value using React Server Components stream.
- * Used for serializing loaderData, layout, loading components etc.
- * @internal
- */
-async function rscSerialize(value: unknown): Promise<string | undefined> {
-  if (value === undefined || value === null) return undefined;
-
-  const temporaryReferences = createTemporaryReferenceSet();
-  const stream = renderToReadableStream(value, { temporaryReferences });
-  return streamToString(stream);
-}
-
-/**
- * RSC-deserialize a value from a stored string.
- * @internal
- */
-async function rscDeserialize<T>(
-  encoded: string | undefined
-): Promise<T | undefined> {
-  if (!encoded) return undefined;
-
-  const temporaryReferences = createTemporaryReferenceSet();
-  const stream = stringToStream(encoded);
-  return createFromReadableStream<T>(stream, { temporaryReferences });
-}
-
-/**
- * RSC-deserialize a single encoded component string back to a React element.
- * Used by the static handler runtime to revive pre-rendered components.
- */
-export async function deserializeComponent(
-  encoded: string
-): Promise<unknown> {
-  const temporaryReferences = createTemporaryReferenceSet();
-  const stream = stringToStream(encoded);
-  return createFromReadableStream(stream, { temporaryReferences });
-}
-
-/**
- * Serialize segments for storage.
- * Each segment's component, layout, loading, and loaderData are RSC-serialized.
- * Metadata is preserved as-is.
- */
-export async function serializeSegments(
-  segments: ResolvedSegment[]
-): Promise<SerializedSegmentData[]> {
-  const serialized: SerializedSegmentData[] = [];
-
-  for (const segment of segments) {
-    const temporaryReferences = createTemporaryReferenceSet();
-
-    // Await component if it's a Promise (intercepts with loading keep component as Promise)
-    const componentResolved =
-      segment.component instanceof Promise
-        ? await segment.component
-        : segment.component;
-
-    // Serialize the component to RSC stream
-    const stream = renderToReadableStream(componentResolved, {
-      temporaryReferences,
-    });
-
-    // Convert stream to string
-    const encoded = await streamToString(stream);
-
-    // RSC-serialize layout if present (ReactNode)
-    const encodedLayout = segment.layout
-      ? await rscSerialize(segment.layout)
-      : undefined;
-
-    // RSC-serialize loading if present (ReactNode) - preserves tree structure
-    // Use "null" string to distinguish explicit null from undefined
-    const encodedLoading =
-      segment.loading !== undefined
-        ? segment.loading === null
-          ? "null"
-          : await rscSerialize(segment.loading)
-        : undefined;
-
-    // Await and RSC-serialize loaderData if present
-    const loaderDataResolved =
-      segment.loaderData instanceof Promise
-        ? await segment.loaderData
-        : segment.loaderData;
-    const encodedLoaderData = await rscSerialize(loaderDataResolved);
-
-    // Await and RSC-serialize loaderDataPromise if present
-    const loaderDataPromiseResolved =
-      segment.loaderDataPromise instanceof Promise
-        ? await segment.loaderDataPromise
-        : segment.loaderDataPromise;
-    const encodedLoaderDataPromise = await rscSerialize(
-      loaderDataPromiseResolved
-    );
-
-    serialized.push({
-      encoded,
-      encodedLayout,
-      encodedLoading,
-      encodedLoaderData,
-      encodedLoaderDataPromise,
-      metadata: {
-        id: segment.id,
-        type: segment.type,
-        namespace: segment.namespace,
-        index: segment.index,
-        params: segment.params,
-        slot: segment.slot,
-        belongsToRoute: segment.belongsToRoute,
-        layoutName: segment.layoutName,
-        parallelName: segment.parallelName,
-        loaderId: segment.loaderId,
-        loaderIds: segment.loaderIds,
-      },
-    });
-  }
-
-  return serialized;
-}
-
-/**
- * Deserialize segments from storage.
- * Reconstructs ResolvedSegment objects from RSC-serialized data.
- */
-export async function deserializeSegments(
-  data: SerializedSegmentData[]
-): Promise<ResolvedSegment[]> {
-  const segments: ResolvedSegment[] = [];
-
-  for (const item of data) {
-    const temporaryReferences = createTemporaryReferenceSet();
-
-    // Revive the component from cached string
-    const stream = stringToStream(item.encoded);
-    const component = await createFromReadableStream(stream, {
-      temporaryReferences,
-    });
-
-    // RSC-deserialize layout, loaderData, loaderDataPromise in parallel
-    // Handle the "null" sentinel for loading before RSC deserialization.
-    // During serialization, loading: null is stored as the string "null" to
-    // distinguish it from undefined. This sentinel must be intercepted here
-    // rather than passed to rscDeserialize, which would try to decode it as
-    // an RSC Flight payload.
-    const loadingIsNullSentinel = item.encodedLoading === "null";
-
-    const [layout, loaderData, loaderDataPromise, loadingData] =
-      await Promise.all([
-        rscDeserialize(item.encodedLayout),
-        rscDeserialize(item.encodedLoaderData),
-        rscDeserialize(item.encodedLoaderDataPromise),
-        loadingIsNullSentinel
-          ? (null as any)
-          : rscDeserialize(item.encodedLoading),
-      ]);
-
-    segments.push({
-      ...item.metadata,
-      component,
-      layout,
-      loading: loadingData,
-      loaderData,
-      loaderDataPromise,
-    } as ResolvedSegment);
-  }
-
-  return segments;
-}
-
 // ============================================================================
 // CacheScope
 // ============================================================================
@@ -292,7 +85,8 @@ export async function deserializeSegments(
  * CacheScope represents a cache boundary in the route tree.
  *
  * When withCache encounters an entry with cache config, it creates
- * a new CacheScope. The scope owns serialization, storage, and TTL.
+ * a new CacheScope. The scope owns key management, TTL resolution,
+ * and storage operations. Serialization is handled by segment-codec.ts.
  *
  * Store resolution priority:
  * 1. Explicit store in cache() options
@@ -470,11 +264,7 @@ export class CacheScope {
       // Replay handle data
       const handleStore = getRequestContext()?._handleStore;
       if (handleStore) {
-        for (const [segId, segHandles] of Object.entries(cached.handles)) {
-          if (Object.keys(segHandles).length > 0) {
-            handleStore.replaySegmentData(segId, segHandles);
-          }
-        }
+        restoreHandles(cached.handles, handleStore);
       }
 
       const segmentTypes = segments.map((s) =>
@@ -544,10 +334,7 @@ export class CacheScope {
       }
 
       // Collect handle data for non-loader segments only
-      const handles: Record<string, SegmentHandleData> = {};
-      for (const seg of nonLoaderSegments) {
-        handles[seg.id] = handleStore.getDataForSegment(seg.id);
-      }
+      const handles = captureHandles(nonLoaderSegments, handleStore);
 
       try {
         // Serialize non-loader segments only

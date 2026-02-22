@@ -2,7 +2,7 @@
 import type { ReactNode } from "react";
 import { Suspense, use, useId } from "react";
 import { invariant } from "./errors";
-import { OutletProvider } from "./client.js";
+import { OutletProvider } from "./outlet-provider.js";
 import type { ResolvedSegment } from "./types.js";
 import { isLoaderDataResult } from "./types.js";
 
