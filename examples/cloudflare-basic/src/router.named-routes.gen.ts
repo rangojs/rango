@@ -10,6 +10,8 @@ export const NamedRoutes = {
   blog: "/blog",
   blogPost: "/blog/:slug",
   catchAll: "/*",
+  "composition.detail": "/composition/detail",
+  "composition.index": "/composition",
   counter: "/counter",
   "docs.detail": "/docs/:slug",
   "docs.index": "/docs",
