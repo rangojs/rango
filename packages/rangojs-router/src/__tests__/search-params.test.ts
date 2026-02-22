@@ -176,20 +176,25 @@ describe("ResolveSearchSchema", () => {
 // Type-level tests: HandlerContext.searchParams conditional type
 // ============================================================================
 
-describe("HandlerContext.searchParams type", () => {
-  it("should be URLSearchParams when no search schema", () => {
+describe("HandlerContext.searchParams and search types", () => {
+  it("searchParams should always be URLSearchParams", () => {
     type Ctx = HandlerContext<{}, any>;
     expectTypeOf<Ctx["searchParams"]>().toEqualTypeOf<URLSearchParams>();
   });
 
-  it("should be URLSearchParams with empty search schema", () => {
-    type Ctx = HandlerContext<{}, any, {}>;
+  it("searchParams should be URLSearchParams even with search schema", () => {
+    type Ctx = HandlerContext<{}, any, { q: "string"; page: "number?" }>;
     expectTypeOf<Ctx["searchParams"]>().toEqualTypeOf<URLSearchParams>();
   });
 
-  it("should be typed object when search schema is provided", () => {
+  it("search should be empty object when no search schema", () => {
+    type Ctx = HandlerContext<{}, any>;
+    expectTypeOf<Ctx["search"]>().toEqualTypeOf<{}>();
+  });
+
+  it("search should be typed object when search schema is provided", () => {
     type Ctx = HandlerContext<{}, any, { q: "string"; page: "number?" }>;
-    expectTypeOf<Ctx["searchParams"]>().toEqualTypeOf<{ q: string; page?: number }>();
+    expectTypeOf<Ctx["search"]>().toEqualTypeOf<{ q: string; page?: number }>();
   });
 });
 
@@ -200,9 +205,10 @@ describe("HandlerContext.searchParams type", () => {
 describe("path() search schema type inference", () => {
   const patterns = urls(({ path }) => [
     path("/search", (ctx) => {
-      // Verify ctx.searchParams is typed
-      const sp = ctx.searchParams;
-      expectTypeOf(sp).toEqualTypeOf<{ q: string; page?: number }>();
+      // searchParams is always URLSearchParams
+      expectTypeOf(ctx.searchParams).toEqualTypeOf<URLSearchParams>();
+      // search is the typed parsed object
+      expectTypeOf(ctx.search).toEqualTypeOf<{ q: string; page?: number }>();
       return null;
     }, { name: "search", search: { q: "string", page: "number?" } }),
 

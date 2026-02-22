@@ -40,8 +40,8 @@ const bareUnknown: Handler<"unknown", LocalRoutes> = (ctx) => null;
 // Dot-prefixed local with search schema — params AND search should be typed
 const localFiltered: Handler<".filtered", LocalRoutes> = (ctx) => {
   const _itemId: string = ctx.params.itemId;
-  const _q: string = ctx.searchParams.q;
-  const _page: number | undefined = ctx.searchParams.page;
+  const _q: string = ctx.search.q;
+  const _page: number | undefined = ctx.search.page;
   return null;
 };
 

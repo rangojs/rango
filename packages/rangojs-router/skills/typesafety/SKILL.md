@@ -198,8 +198,8 @@ global `GeneratedRouteMap` (the gen file). No explicit route map import needed:
 import type { Handler } from "@rangojs/router";
 
 export const SearchPage: Handler<"search"> = (ctx) => {
-  // ctx.searchParams is typed: { q: string; page?: number; sort?: string }
-  const { q, page, sort } = ctx.searchParams;
+  // ctx.search is typed: { q: string; page?: number; sort?: string }
+  const { q, page, sort } = ctx.search;
   return <SearchResults q={q} page={page} sort={sort} />;
 };
 ```

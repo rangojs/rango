@@ -139,7 +139,8 @@ export function createHandlerContext<TEnv>(
   return {
     params,
     request,
-    searchParams: resolvedSearchParams as any, // Filtered params (typed object or URLSearchParams)
+    searchParams: cleanSearchParams,
+    search: searchSchema ? resolvedSearchParams : {},
     pathname,
     url: cleanUrl, // Clean URL
     env: bindings,
@@ -201,6 +202,9 @@ export function createBuildContext<TEnv>(
     },
     get searchParams(): URLSearchParams {
       return throwUnavailable("searchParams");
+    },
+    get search(): any {
+      return throwUnavailable("search");
     },
     pathname,
     url: syntheticUrl,

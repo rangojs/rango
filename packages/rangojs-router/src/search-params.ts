@@ -2,8 +2,9 @@
  * Search parameter schema types and runtime utilities.
  *
  * Provides a lightweight schema system for typed query parameters.
- * When a route defines a `search` schema, ctx.searchParams becomes
- * a typed object with parsed values instead of raw URLSearchParams.
+ * When a route defines a `search` schema, ctx.search provides a typed
+ * object with parsed values. ctx.searchParams always remains a standard
+ * URLSearchParams instance.
  */
 
 // ============================================================================

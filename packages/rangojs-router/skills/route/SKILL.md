@@ -80,7 +80,7 @@ path("/product/:slug", ProductPage, {
 
 ### Typed Search Params
 
-Add a `search` schema to get typed `ctx.searchParams` instead of `URLSearchParams`:
+Add a `search` schema to get typed `ctx.search`:
 
 ```typescript
 path("/search", SearchPage, {
@@ -95,8 +95,9 @@ Use `Handler<"name">` for typed search params (resolves from the generated route
 import type { Handler } from "@rangojs/router";
 
 export const SearchPage: Handler<"search"> = (ctx) => {
-  // ctx.searchParams is typed: { q: string; page?: number; sort?: string }
-  const { q, page, sort } = ctx.searchParams;
+  // ctx.search is typed: { q: string; page?: number; sort?: string }
+  const { q, page, sort } = ctx.search;
+  // ctx.searchParams is always URLSearchParams
   return <SearchResults q={q} page={page} sort={sort} />;
 };
 ```
@@ -193,7 +194,8 @@ Every handler receives a context object:
 interface HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch = {}> {
   params: TParams;           // URL parameters
   request: Request;          // Original request
-  searchParams: URLSearchParams | ResolveSearchSchema<TSearch>;  // Query params (typed when search schema is set)
+  searchParams: URLSearchParams;  // Query params (always URLSearchParams)
+  search: {} | ResolveSearchSchema<TSearch>;  // Typed search params (from search schema)
   url: URL;                  // Parsed URL
   env: TEnv;                 // Environment (bindings + variables)
   use<T>(handle: Handle<T>): T;  // Access handles
