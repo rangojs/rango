@@ -9,6 +9,7 @@ import type { SegmentCacheStore, CachedEntryData, CacheDefaults, CacheGetResult 
 import type { RequestContext } from "../server/request-context.js";
 
 const CACHE_REGISTRY_KEY = "__rsc_router_segment_cache_registry__";
+const RESPONSE_CACHE_REGISTRY_KEY = "__rsc_router_response_cache_registry__";
 
 /**
  * Returns the globalThis-backed registry of named cache Maps.
@@ -21,6 +22,28 @@ function getGlobalRegistry(): Map<string, Map<string, CachedEntryData>> {
   if (!registry) {
     registry = new Map();
     (globalThis as any)[CACHE_REGISTRY_KEY] = registry;
+  }
+  return registry;
+}
+
+interface CachedResponseEntry {
+  body: ArrayBuffer;
+  status: number;
+  headers: [string, string][];
+  expiresAt: number;
+  staleAt: number;
+}
+
+/**
+ * Returns the globalThis-backed registry of named response cache Maps.
+ */
+function getResponseCacheRegistry(): Map<string, Map<string, CachedResponseEntry>> {
+  let registry = (globalThis as any)[RESPONSE_CACHE_REGISTRY_KEY] as
+    | Map<string, Map<string, CachedResponseEntry>>
+    | undefined;
+  if (!registry) {
+    registry = new Map();
+    (globalThis as any)[RESPONSE_CACHE_REGISTRY_KEY] = registry;
   }
   return registry;
 }
@@ -103,6 +126,7 @@ export interface MemorySegmentCacheStoreOptions<TEnv = unknown> {
  */
 export class MemorySegmentCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private cache: Map<string, CachedEntryData>;
+  private responseCache: Map<string, CachedResponseEntry>;
   readonly defaults?: CacheDefaults;
   readonly keyGenerator?: (
     ctx: RequestContext<TEnv>,
@@ -120,9 +144,18 @@ export class MemorySegmentCacheStore<TEnv = unknown> implements SegmentCacheStor
         registry.set(options.name, map);
       }
       this.cache = map;
+
+      const responseRegistry = getResponseCacheRegistry();
+      let responseMap = responseRegistry.get(options.name);
+      if (!responseMap) {
+        responseMap = new Map<string, CachedResponseEntry>();
+        responseRegistry.set(options.name, responseMap);
+      }
+      this.responseCache = responseMap;
     } else {
       // Unnamed stores get a plain instance-level Map (no globalThis sharing).
       this.cache = new Map<string, CachedEntryData>();
+      this.responseCache = new Map<string, CachedResponseEntry>();
     }
     this.defaults = options?.defaults;
     this.keyGenerator = options?.keyGenerator;
@@ -161,6 +194,54 @@ export class MemorySegmentCacheStore<TEnv = unknown> implements SegmentCacheStor
 
   async clear(): Promise<void> {
     this.cache.clear();
+    this.responseCache.clear();
+  }
+
+  async getResponse(
+    key: string,
+  ): Promise<{ response: Response; shouldRevalidate: boolean } | null> {
+    const cached = this.responseCache.get(key);
+    if (!cached) return null;
+
+    if (Date.now() > cached.expiresAt) {
+      this.responseCache.delete(key);
+      return null;
+    }
+
+    const isStale = cached.staleAt > 0 && Date.now() > cached.staleAt;
+    const headers = new Headers(cached.headers);
+    return {
+      response: new Response(cached.body, {
+        status: cached.status,
+        headers,
+      }),
+      shouldRevalidate: isStale,
+    };
+  }
+
+  async putResponse(
+    key: string,
+    response: Response,
+    ttl: number,
+    swr?: number,
+  ): Promise<void> {
+    const body = await response.clone().arrayBuffer();
+    const headers: [string, string][] = [];
+    response.headers.forEach((value, name) => {
+      headers.push([name, value]);
+    });
+
+    const swrWindow = swr ?? this.defaults?.swr ?? 0;
+    const staleAt = Date.now() + ttl * 1000;
+    const expiresAt = staleAt + swrWindow * 1000;
+
+    this.responseCache.set(key, {
+      body,
+      status: response.status,
+      headers,
+      expiresAt,
+      staleAt,
+    });
   }
 
   /**
@@ -188,5 +269,6 @@ export class MemorySegmentCacheStore<TEnv = unknown> implements SegmentCacheStor
    */
   static resetGlobalCache(): void {
     delete (globalThis as any)[CACHE_REGISTRY_KEY];
+    delete (globalThis as any)[RESPONSE_CACHE_REGISTRY_KEY];
   }
 }

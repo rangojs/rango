@@ -39,6 +39,8 @@ import { VERSION } from "@rangojs/router:version";
 import type { ErrorPhase } from "../types.js";
 import { invokeOnError } from "../router/error-handling.js";
 import { createReverseFunction } from "../router/handler-context.js";
+import { traverseBack } from "../router/pattern-matching.js";
+import { createCacheScope } from "../cache/cache-scope.js";
 import {
   getGlobalRouteMap,
   hasCachedManifest,
@@ -553,21 +555,103 @@ export function createRSCHandler<
         return response;
       };
 
-      if (preview.routeMiddleware && preview.routeMiddleware.length > 0) {
-        const middlewareEntries = preview.routeMiddleware.map((mw) => ({
-          entry: {
-            pattern: null,
-            regex: null,
-            paramNames: [],
-            handler: mw.handler,
-            mountPrefix: null,
-          },
-          params: mw.params,
-        }));
-        return executeMiddleware(middlewareEntries, request, env, variables, callHandlerWithVary, createReverseFunction(getGlobalRouteMap()));
+      // Wrap with response caching if cache() config is present
+      const executeHandler = async () => {
+        if (preview.routeMiddleware && preview.routeMiddleware.length > 0) {
+          const middlewareEntries = preview.routeMiddleware.map((mw) => ({
+            entry: {
+              pattern: null,
+              regex: null,
+              paramNames: [],
+              handler: mw.handler,
+              mountPrefix: null,
+            },
+            params: mw.params,
+          }));
+          return executeMiddleware(middlewareEntries, request, env, variables, callHandlerWithVary, createReverseFunction(getGlobalRouteMap()));
+        }
+        return callHandlerWithVary();
+      };
+
+      // Resolve cache config from entry tree (same pattern as match-api.ts)
+      if (preview.manifestEntry) {
+        const entries = [...traverseBack(preview.manifestEntry)];
+        let cacheScope: ReturnType<typeof createCacheScope> = null;
+        for (const entry of entries) {
+          if (entry.cache) {
+            cacheScope = createCacheScope(entry.cache, cacheScope);
+          }
+        }
+
+        if (cacheScope?.enabled) {
+          const store = cacheScope.getStore() ?? reqCtx._cacheStore;
+          if (store?.getResponse && store?.putResponse) {
+            // Build cache key with response: prefix to avoid collision with segment keys
+            let cacheKey = `response:${url.pathname}`;
+            if (store.keyGenerator) {
+              try {
+                cacheKey = await store.keyGenerator(reqCtx, cacheKey);
+              } catch {
+                // Fall back to default key on keyGenerator failure
+              }
+            }
+
+            try {
+              const cached = await store.getResponse(cacheKey);
+
+              if (cached && cached.response.status === 200) {
+                if (!cached.shouldRevalidate) {
+                  // Fresh hit
+                  return cached.response;
+                }
+
+                // Stale hit (SWR) - return cached, revalidate in background
+                reqCtx.waitUntil(async () => {
+                  try {
+                    const fresh = await executeHandler();
+                    if (fresh.status === 200) {
+                      await store.putResponse!(
+                        cacheKey,
+                        fresh,
+                        cacheScope!.ttl,
+                        cacheScope!.swr,
+                      );
+                    }
+                  } catch (error) {
+                    console.error(`[ResponseCache] Revalidation failed:`, error);
+                  }
+                });
+
+                return cached.response;
+              }
+            } catch (error) {
+              console.error(`[ResponseCache] Cache lookup failed:`, error);
+            }
+
+            // Cache miss - execute handler and cache the result
+            const response = await executeHandler();
+
+            if (response.status === 200) {
+              reqCtx.waitUntil(async () => {
+                try {
+                  await store.putResponse!(
+                    cacheKey,
+                    response.clone(),
+                    cacheScope!.ttl,
+                    cacheScope!.swr,
+                  );
+                } catch (error) {
+                  console.error(`[ResponseCache] Cache write failed:`, error);
+                }
+              });
+            }
+
+            return response;
+          }
+        }
       }
 
-      return callHandlerWithVary();
+      return executeHandler();
     }
 
     // Wrap RSC handler to append Vary: Accept on content-negotiated routes

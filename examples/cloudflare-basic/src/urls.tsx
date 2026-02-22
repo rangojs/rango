@@ -70,6 +70,17 @@ export const urlpatterns = urls(
       { name: "robots" },
     ),
 
+    // Cached response routes: test cache() with CFCacheStore across MIME types
+    cache({ ttl: 600 }, () => [
+      path.json("/test/cached-json", () => ({ source: "cached-json", ts: Date.now() }), { name: "testCachedJson" }),
+      path.text("/test/cached-text", () => `text:${Date.now()}`, { name: "testCachedText" }),
+      path.xml("/test/cached-xml", () => `<root><ts>${Date.now()}</ts></root>`, { name: "testCachedXml" }),
+      path.html("/test/cached-html", () => `<h1 data-ts="${Date.now()}">cached</h1>`, { name: "testCachedHtml" }),
+    ]),
+
+    // Uncached control route for comparison
+    path.json("/test/uncached-json", () => ({ source: "uncached-json", ts: Date.now() }), { name: "testUncachedJson" }),
+
     // Content negotiation test routes (same URL, different response types)
     path.json(
       "/test/negotiate",
