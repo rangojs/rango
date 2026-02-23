@@ -807,6 +807,13 @@ export function createRSCHandler<
     const handleStore = requireRequestContext()._handleStore;
 
     try {
+      // Set route params early so all execution paths (progressive enhancement,
+      // server actions, loader fetches) can access ctx.params via getRequestContext().
+      // Previously this was only done for JS actions, leaving PE actions with empty params.
+      if (routeParams) {
+        setRequestContextParams(routeParams);
+      }
+
       // ============================================================================
       // PROGRESSIVE ENHANCEMENT: No-JS Form Submissions
       // ============================================================================
@@ -826,12 +833,6 @@ export function createRSCHandler<
       // SERVER ACTION EXECUTION (JavaScript-enabled client)
       // ============================================================================
       if (isAction && actionId) {
-        // Set route params before action execution so server actions (including
-        // fetchable loader actions) can access ctx.params via getRequestContext().
-        // Without this, params are only set during revalidation (after the action).
-        if (routeParams) {
-          setRequestContextParams(routeParams);
-        }
         return handleServerAction(request, env, url, actionId, handleStore);
       }
 

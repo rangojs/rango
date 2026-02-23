@@ -48,6 +48,8 @@ export async function executeLoaderAction(
 
   // Execute loader-specific middleware for auth checks, headers, cookies.
   // Route params are passed so middleware patterns can match.
+  // Clone the request so middleware can read the body even if the original
+  // was already consumed by server action argument decoding.
   if (registered.middleware.length > 0 && requestCtx?.res) {
     const { executeServerActionMiddleware } = await import(
       "./router/middleware.js"
@@ -56,9 +58,15 @@ export async function executeLoaderAction(
       "./router/handler-context.js"
     );
     const { getGlobalRouteMap } = await import("./route-map-builder.js");
+    const middlewareRequest = actionRequest.bodyUsed
+      ? new Request(actionRequest.url, {
+          method: actionRequest.method,
+          headers: actionRequest.headers,
+        })
+      : actionRequest;
     await executeServerActionMiddleware(
       registered.middleware,
-      actionRequest,
+      middlewareRequest,
       env,
       requestCtx?.params ?? {},
       variables,
@@ -84,6 +92,14 @@ export async function executeLoaderAction(
     method: "POST",
     formData,
   };
+
+  // Inherit use() from request context so loader actions can compose other
+  // loaders via ctx.use(depLoader). createHandlerContext sets a throwing
+  // placeholder; the request context has the real implementation wired to
+  // the loader executor and handle store.
+  if (requestCtx?.use) {
+    ctx.use = requestCtx.use;
+  }
 
   return registered.fn(ctx);
 }
