@@ -137,8 +137,8 @@ export async function resolveLoaders<TEnv>(
   const hasLoading = "loading" in entry && entry.loading !== undefined;
   const loadingDisabled = hasLoading && entry.loading === false;
 
-  return Promise.all(
-    loaderEntries.map(async ({ loader }, i) => {
+  if (!loadingDisabled) {
+    return loaderEntries.map(({ loader }, i) => {
       const segmentId = `${shortCode}D${i}.${loader.$$id}`;
       return {
         id: segmentId,
@@ -149,15 +149,40 @@ export async function resolveLoaders<TEnv>(
         params: ctx.params,
         loaderId: loader.$$id,
         loaderData: deps.wrapLoaderPromise(
-          loadingDisabled ? await ctx.use(loader) : ctx.use(loader),
+          ctx.use(loader),
           entry,
           segmentId,
           ctx.pathname,
         ),
         belongsToRoute,
       };
-    }),
-  );
+    });
+  }
+
+  // Loading disabled: still start all loaders in parallel, but only emit
+  // settled promises so handlers don't stream loading placeholders.
+  const pendingLoaderData = loaderEntries.map(({ loader }) => ctx.use(loader));
+  await Promise.all(pendingLoaderData);
+
+  return loaderEntries.map(({ loader }, i) => {
+    const segmentId = `${shortCode}D${i}.${loader.$$id}`;
+    return {
+      id: segmentId,
+      namespace: entry.id,
+      type: "loader" as const,
+      index: i,
+      component: null,
+      params: ctx.params,
+      loaderId: loader.$$id,
+      loaderData: deps.wrapLoaderPromise(
+        pendingLoaderData[i]!,
+        entry,
+        segmentId,
+        ctx.pathname,
+      ),
+      belongsToRoute,
+    };
+  });
 }
 
 /**

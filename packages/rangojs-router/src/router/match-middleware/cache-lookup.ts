@@ -105,6 +105,22 @@ let _restoreHandles: typeof import("../../cache/handle-snapshot.js").restoreHand
 let _hashParams: typeof import("../../prerender/param-hash.js").hashParams | undefined;
 let _getRequestContext: typeof import("../../server/request-context.js").getRequestContext | undefined;
 
+function paramsEqual(
+  a: Record<string, string>,
+  b: Record<string, string>,
+): boolean {
+  if (a === b) return true;
+
+  const keysA = Object.keys(a);
+  if (keysA.length !== Object.keys(b).length) return false;
+
+  for (const key of keysA) {
+    if (a[key] !== b[key]) return false;
+  }
+
+  return true;
+}
+
 async function ensurePrerenderDeps() {
   if (!_deserializeSegments) {
     const [codec, snapshot, paramHash, reqCtx, store] = await Promise.all([
@@ -163,7 +179,7 @@ async function* yieldFromStore<TEnv>(
   // When params changed (e.g., different guide slug), the segments have
   // different content, so we must NOT nullify.
   const paramsChanged = !ctx.isFullMatch &&
-    JSON.stringify(ctx.matched.params) !== JSON.stringify(ctx.prevParams);
+    !paramsEqual(ctx.matched.params, ctx.prevParams);
   for (const segment of segments) {
     if (!ctx.isFullMatch && !paramsChanged && ctx.clientSegmentSet.has(segment.id)) {
       segment.component = null;
@@ -364,8 +380,16 @@ export function withCacheLookup<TEnv>(
     state.cachedSegments = cacheResult.segments;
     state.cachedMatchedIds = cacheResult.segments.map((s) => s.id);
 
-    // Apply revalidation to cached segments
-    const entryRevalidateMap = buildEntryRevalidateMap?.(ctx.entries);
+    // Apply revalidation to cached segments.
+    // For full matches or empty client segment sets, this map is unnecessary:
+    // we never run segment-level revalidation and can stream segments directly.
+    const canCheckSegmentRevalidation =
+      !ctx.isFullMatch &&
+      ctx.clientSegmentSet.size > 0 &&
+      !!buildEntryRevalidateMap;
+    const entryRevalidateMap = canCheckSegmentRevalidation
+      ? buildEntryRevalidateMap(ctx.entries)
+      : undefined;
 
     for (const segment of cacheResult.segments) {
       // Skip segments client doesn't have - they need their component

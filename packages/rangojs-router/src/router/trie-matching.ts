@@ -85,39 +85,49 @@ function walkTrie(
   // All segments consumed: check for terminal
   if (index === segments.length) {
     if (node.r) {
-      return { leaf: node.r, paramValues };
+      return { leaf: node.r, paramValues: [...paramValues] };
     }
     return null;
   }
 
   const segment = segments[index];
+  const staticChild = node.s?.[segment];
 
   // Priority 1: Static match
-  if (node.s?.[segment]) {
-    const result = walkTrie(node.s[segment], segments, index + 1, paramValues);
+  if (staticChild) {
+    const result = walkTrie(staticChild, segments, index + 1, paramValues);
     if (result) return result;
   }
 
   // Priority 2: Param match
   if (node.p) {
-    const result = walkTrie(node.p.c, segments, index + 1, [
-      ...paramValues,
-      segment,
-    ]);
+    paramValues.push(segment);
+    const result = walkTrie(node.p.c, segments, index + 1, paramValues);
+    paramValues.pop();
     if (result) return result;
   }
 
   // Priority 3: Wildcard match (consumes rest)
   if (node.w) {
-    const rest = segments.slice(index).join("/");
+    const rest = joinRemainingSegments(segments, index);
     return {
       leaf: node.w,
-      paramValues,
+      paramValues: [...paramValues],
       wildcardValue: rest,
     };
   }
 
   return null;
+}
+
+function joinRemainingSegments(segments: string[], start: number): string {
+  if (start >= segments.length) return "";
+
+  let rest = segments[start]!;
+  for (let i = start + 1; i < segments.length; i++) {
+    rest += "/" + segments[i]!;
+  }
+  return rest;
 }
 
 /**
@@ -145,7 +155,8 @@ function validateAndBuild(
 
   // Validate constraints
   if (leaf.cv) {
-    for (const [paramName, allowed] of Object.entries(leaf.cv)) {
+    for (const paramName in leaf.cv) {
+      const allowed = leaf.cv[paramName]!;
       const value = params[paramName];
       if (value !== undefined && value !== "" && !allowed.includes(value)) {
         return null;
@@ -172,17 +183,20 @@ function validateAndBuild(
     redirectTo = originalPathname.slice(0, -1);
   }
 
-  return {
+  const result: TrieMatchResult = {
     routeKey: leaf.n,
     sp: leaf.sp,
     params,
-    optionalParams: leaf.op,
     ancestry: leaf.a,
-    ...(redirectTo ? { redirectTo } : {}),
-    ...(leaf.pr ? { pr: true } : {}),
-    ...(leaf.pt ? { pt: true } : {}),
-    ...(leaf.rt ? { responseType: leaf.rt } : {}),
-    ...(leaf.nv ? { negotiateVariants: leaf.nv } : {}),
-    ...(leaf.rf ? { rscFirst: true } : {}),
   };
+
+  if (leaf.op) result.optionalParams = leaf.op;
+  if (redirectTo) result.redirectTo = redirectTo;
+  if (leaf.pr) result.pr = true;
+  if (leaf.pt) result.pt = true;
+  if (leaf.rt) result.responseType = leaf.rt;
+  if (leaf.nv) result.negotiateVariants = leaf.nv;
+  if (leaf.rf) result.rscFirst = true;
+
+  return result;
 }
