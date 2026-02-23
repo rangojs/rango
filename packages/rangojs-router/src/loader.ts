@@ -33,15 +33,21 @@ export function createLoader<T>(
 
 // Implementation - client stub that just returns the loader definition
 // The $$id parameter is injected by Vite plugin, not user-provided
+//
+// NOTE: For export-only loader files, the Vite plugin replaces the entire
+// file with object literals (bypassing this function). For fetchable loaders,
+// the plugin generates stubs that import invokeFetchableLoaderAction to
+// provide the action property. This function only runs when loaders are
+// in mixed files (not export-only).
 export function createLoader<T>(
   _fn: LoaderFn<T, Record<string, string | undefined>, any>,
   _fetchable?: true | FetchableLoaderOptions,
   __injectedId?: string
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>> {
-  // Client only needs the $$id for identification
-  // The actual loader function is only used on the server
+  const loaderId = __injectedId || "";
+
   return {
     __brand: "loader",
-    $$id: __injectedId || "",
+    $$id: loaderId,
   };
 }
