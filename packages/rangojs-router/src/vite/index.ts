@@ -1866,8 +1866,11 @@ function createRouterDiscoveryPlugin(
     closeBundle: {
       order: "post" as const,
       sequential: true,
-      async handler() {
+      async handler(this: any) {
         if (!isBuildMode) return;
+        // Only run for the RSC environment — other environments (client, ssr) have
+        // no prerender/static data to process and would just do redundant file I/O.
+        if (this.environment && this.environment.name !== "rsc") return;
         const hasPrerenderData = prerenderCollectedData && Object.keys(prerenderCollectedData).length > 0;
         const hasStaticData = staticCollectedData && Object.keys(staticCollectedData).length > 0;
         if (!hasPrerenderData && !hasStaticData) return;
