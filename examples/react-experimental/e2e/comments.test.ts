@@ -147,10 +147,7 @@ test.describe("blog comments via loader action (production)", () => {
     await expect(testId(page, "no-comments")).toContainText("No comments yet");
   });
 
-  // FIXME: invokeFetchableLoaderAction server reference (09ecd117d1ba) is not
-  // registered in the RSC action manifest. The SSR bundle creates the reference
-  // but loadServerAction() on the RSC side can't find it. See issue #205.
-  test.fixme("should post a comment via loader action", async ({ page }) => {
+  test("should post a comment via loader action", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/blog/rsc-routing"));
@@ -169,8 +166,7 @@ test.describe("blog comments via loader action (production)", () => {
     await expect(testId(page, "no-comments")).not.toBeVisible();
   });
 
-  // FIXME: Same issue as above — server reference not found in production build.
-  test.fixme("should post multiple comments", async ({ page }) => {
+  test("should post multiple comments", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/blog/composable-caching"));

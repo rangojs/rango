@@ -2453,10 +2453,10 @@ export function createRouter<TEnv = any>(
           const hasVariants = matched.negotiateVariants && matched.negotiateVariants.length > 0;
           return {
             routeMiddleware: routeMiddleware.length > 0 ? routeMiddleware : undefined,
+            params: matched.params,
             ...(responseType ? {
               responseType,
               handler: manifestEntry.type === "route" ? manifestEntry.handler : undefined,
-              params: matched.params,
               manifestEntry,
             } : {}),
             ...(hasVariants ? { negotiated: true } : {}),

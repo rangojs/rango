@@ -656,7 +656,7 @@ export function createRSCHandler<
 
     // Wrap RSC handler to append Vary: Accept on content-negotiated routes
     const rscHandler = async () => {
-      const response = await coreRequestHandlerInner(request, env, url, variables, nonce);
+      const response = await coreRequestHandlerInner(request, env, url, variables, nonce, preview?.params);
       if (preview?.negotiated) {
         response.headers.append("Vary", "Accept");
       }
@@ -710,6 +710,7 @@ export function createRSCHandler<
     url: URL,
     variables: Record<string, any>,
     nonce: string | undefined,
+    routeParams?: Record<string, string>,
   ): Promise<Response> {
     const isPartial = url.searchParams.has("_rsc_partial");
     const isAction =
@@ -800,6 +801,12 @@ export function createRSCHandler<
       // SERVER ACTION EXECUTION (JavaScript-enabled client)
       // ============================================================================
       if (isAction && actionId) {
+        // Set route params before action execution so server actions (including
+        // fetchable loader actions) can access ctx.params via getRequestContext().
+        // Without this, params are only set during revalidation (after the action).
+        if (routeParams) {
+          setRequestContextParams(routeParams);
+        }
         return handleServerAction(request, env, url, actionId, handleStore);
       }
 
@@ -808,7 +815,7 @@ export function createRSCHandler<
       // ============================================================================
       const isLoaderRequest = url.searchParams.has("_rsc_loader");
       if (isLoaderRequest) {
-        return handleLoaderFetch(request, env, url, variables);
+        return handleLoaderFetch(request, env, url, variables, routeParams);
       }
 
       // ============================================================================
@@ -1341,11 +1348,24 @@ export function createRSCHandler<
   // LOADER FETCH HANDLER
   // Supports GET (params in query string) and POST/PUT/PATCH/DELETE (JSON body)
   // ============================================================================
+  // LOADER FETCH HANDLER
+  // ============================================================================
+  // Handles load() (GET) requests from the client. load.action() uses a proper
+  // server action instead (invokeFetchableLoaderAction from
+  // fetchable-loader-action.ts).
+  //
+  // Route params (e.g. slug from /blog/:slug) come from previewMatch() in the
+  // outer coreRequestHandler, threaded through coreRequestHandlerInner as
+  // routeParams. This is necessary because handleLoaderFetch doesn't do its
+  // own route matching -- the URL is the page's pathname, and previewMatch
+  // has already extracted params from it.
+  // ============================================================================
   async function handleLoaderFetch(
     request: Request,
     env: TEnv,
     url: URL,
     variables: Record<string, any>,
+    routeParams?: Record<string, string>,
   ): Promise<Response> {
     const loaderId = url.searchParams.get("_rsc_loader");
 
@@ -1364,9 +1384,10 @@ export function createRSCHandler<
       );
     }
 
-    // Parse params and body based on request method
+    // Parse params, body, and formData based on request method and content type
     let loaderParams: Record<string, string> = {};
     let loaderBody: unknown = undefined;
+    let loaderFormData: FormData | undefined;
     const isBodyMethod = request.method !== "GET" && request.method !== "HEAD";
 
     if (isBodyMethod) {
@@ -1376,12 +1397,20 @@ export function createRSCHandler<
           const jsonBody = (await request.json()) as {
             params?: Record<string, string>;
             body?: unknown;
+            formEntries?: Record<string, string>;
           };
           loaderParams = jsonBody.params ?? {};
           loaderBody = jsonBody.body;
+          // Reconstruct FormData from JSON-serialized entries (from load.action)
+          if (jsonBody.formEntries) {
+            loaderFormData = new FormData();
+            for (const [key, value] of Object.entries(jsonBody.formEntries)) {
+              loaderFormData.append(key, value);
+            }
+          }
         }
       } catch {
-        return createResponseWithMergedHeaders("Invalid JSON body", {
+        return createResponseWithMergedHeaders("Invalid request body", {
           status: 400,
         });
       }
@@ -1411,10 +1440,18 @@ export function createRSCHandler<
         variables,
         async () => {
           const ctx = requireRequestContext();
+          // Merge route params (from previewMatch) with explicit loader params.
+          // Explicit params take precedence over route-matched params.
+          const mergedParams = {
+            ...(routeParams ?? {}),
+            ...loaderParams,
+          };
           const loaderCtx: any = {
             ...ctx,
-            params: loaderParams,
+            params: mergedParams,
             body: loaderBody,
+            method: request.method,
+            ...(loaderFormData ? { formData: loaderFormData } : {}),
           };
 
           const result = await fn(loaderCtx);

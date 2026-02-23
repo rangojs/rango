@@ -395,14 +395,8 @@ function generateClientLoaderStubs(
 ): { code: string; map?: undefined } | null {
   if (!isExportOnlyFile(code, bindings)) return null;
 
-  const hasFetchable = bindings.some((b) => b.argCount >= 2);
   const lines: string[] = [];
-
-  if (hasFetchable) {
-    lines.push(
-      `import { invokeFetchableLoaderAction as __ifa } from "@rangojs/router/__internal/fetchable-action";`
-    );
-  }
+  let needsFetchableImport = false;
 
   for (const binding of bindings) {
     for (const name of binding.exportNames) {
@@ -410,10 +404,13 @@ function generateClientLoaderStubs(
         ? hashId(filePath, name)
         : `${filePath}#${name}`;
 
+      // Fetchable loaders (argCount >= 2) get an action property that wraps
+      // the shared "use server" dispatcher. The wrapper passes loaderId so
+      // the server can look up the correct loader in the registry.
       if (binding.argCount >= 2) {
-        // Fetchable loader: include an action that dispatches via server action
+        needsFetchableImport = true;
         lines.push(
-          `export const ${name} = { __brand: "loader", $$id: "${loaderId}", action: (_ps, _fd) => __ifa("${loaderId}", _ps, _fd) };`
+          `export const ${name} = { __brand: "loader", $$id: "${loaderId}", action: (_prev, fd) => __ifa("${loaderId}", _prev, fd) };`
         );
       } else {
         lines.push(
@@ -421,6 +418,12 @@ function generateClientLoaderStubs(
         );
       }
     }
+  }
+
+  if (needsFetchableImport) {
+    lines.unshift(
+      `import { invokeFetchableLoaderAction as __ifa } from "@rangojs/router/__internal/fetchable-action";`
+    );
   }
 
   return { code: lines.join("\n") + "\n" };
@@ -431,10 +434,8 @@ function transformLoaders(
   s: MagicString,
   filePath: string,
   isBuild: boolean,
-  isRscEnv: boolean,
 ): boolean {
   let hasChanges = false;
-  let needsFetchableImport = false;
 
   for (const binding of bindings) {
     const exportName = binding.exportNames[0];
@@ -452,23 +453,9 @@ function transformLoaders(
         : `, "${loaderId}"`;
     s.appendLeft(binding.callCloseParenPos, paramInjection);
 
-    let propInjection = `\n${binding.localName}.$$id = "${loaderId}";`;
-
-    // For fetchable loaders on the client, inject the action property
-    // so load.action works when the loader is directly imported.
-    if (binding.argCount >= 2 && !isRscEnv) {
-      needsFetchableImport = true;
-      propInjection += `\n${binding.localName}.action = (_ps, _fd) => __ifa("${loaderId}", _ps, _fd);`;
-    }
-
+    const propInjection = `\n${binding.localName}.$$id = "${loaderId}";`;
     s.appendRight(binding.statementEnd, propInjection);
     hasChanges = true;
-  }
-
-  if (needsFetchableImport) {
-    s.prepend(
-      `import { invokeFetchableLoaderAction as __ifa } from "@rangojs/router/__internal/fetchable-action";\n`
-    );
   }
 
   return hasChanges;
@@ -1185,7 +1172,7 @@ ${lazyImports.join(",\n")}
 
       if (hasLoaderCode) {
         const fnNames = getFnNames("createLoader");
-        changed = transformLoaders(getBindings(code, fnNames), s, filePath, isBuild, isRscEnv) || changed;
+        changed = transformLoaders(getBindings(code, fnNames), s, filePath, isBuild) || changed;
       }
       if (hasHandleCode) {
         const fnNames = getFnNames("createHandle");

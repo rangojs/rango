@@ -23,6 +23,14 @@ import {
 } from "./server/fetchable-loader-store.js";
 import { executeLoaderAction } from "./loader-action-shared.js";
 
+// Side-effect import: ensures fetchable-loader-action.ts (a "use server" module)
+// is traversed by the RSC build and added to serverReferenceMetaMap. Without this,
+// the module would only be imported from client stubs (SSR/client environments) and
+// never enter the RSC module graph. Client-imported loaders call
+// invokeFetchableLoaderAction as a server action, so loadServerAction() must be
+// able to find it at runtime via the serverReferences map.
+import "./fetchable-loader-action.js";
+
 export { getFetchableLoader };
 
 // Overload 1: With function only (not fetchable)
@@ -75,9 +83,15 @@ export function createLoader<T>(
     registerFetchableLoader(loaderId, fn, middleware);
   }
 
-  // Create server action for form-based fetching.
-  // Signature must be (prevState, formData) for useActionState compatibility.
-  // Delegates to shared executeLoaderAction for the actual execution.
+  // Inline server action for Flight-serialized loaders (passed as props).
+  // This action is only reachable when the loader object is serialized via
+  // RSC Flight (server -> client component props). The RSC build traverses
+  // loader.rsc.ts and discovers this "use server" function, so it appears
+  // in the action manifest.
+  //
+  // Client-imported loaders (direct import in "use client" files) use the
+  // Vite-generated stub which wraps invokeFetchableLoaderAction instead.
+  // See fetchable-loader-action.ts and expose-internal-ids.ts.
   async function loaderAction(
     _prevState: Awaited<T> | null,
     formData: FormData,

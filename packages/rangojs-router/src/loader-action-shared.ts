@@ -1,11 +1,19 @@
 /**
- * Shared logic for executing a fetchable loader via server action.
+ * Shared logic for executing a fetchable loader as a server action.
  *
- * Called by both:
- * - loader.rsc.ts: inline per-loader "use server" action (Flight-serialized)
- * - fetchable-loader-action.ts: generic "use server" dispatcher (client stub import)
+ * Called by two server action paths:
+ *   1. loader.rsc.ts inline per-loader "use server" action (Flight-serialized loaders)
+ *   2. fetchable-loader-action.ts generic "use server" dispatcher (client-imported loaders)
  *
- * This is NOT a "use server" module — callers provide the server boundary.
+ * Both paths converge here. This function looks up the loader in the registry,
+ * builds the handler context from the current request context, runs middleware,
+ * and calls the loader handler.
+ *
+ * Route params (e.g. slug from /blog/:slug) come from requestContext.params,
+ * set by setRequestContextParams() in coreRequestHandlerInner before the
+ * action executes.
+ *
+ * This is NOT a "use server" module -- callers provide the server boundary.
  */
 
 import { getLoaderLazy } from "./server/loader-registry.js";
