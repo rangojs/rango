@@ -386,6 +386,7 @@ export const getContext = (): {
       const counters = store?.counters || {};
       const manifest = store ? store.manifest : new Map<string, EntryData>();
       const patterns = store?.patterns || new Map<string, string>();
+      const patternsByPrefix = store?.patternsByPrefix;
       const trailingSlash = store?.trailingSlash || new Map<string, "never" | "always" | "ignore">();
       const searchSchemas = store?.searchSchemas || new Map<string, Record<string, string>>();
       return context.run(
@@ -399,6 +400,7 @@ export const getContext = (): {
           metrics: store?.metrics,
           isSSR: store?.isSSR,
           patterns,
+          patternsByPrefix,
           trailingSlash,
           searchSchemas,
           urlPrefix: store?.urlPrefix,

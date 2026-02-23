@@ -491,9 +491,11 @@ export const urlpatterns = urls(({ path, transition, loader }) => [
   path("/", HomePage, { name: "home" }),
   path("/about", AboutPage, { name: "about" }),
   path("/counter", CounterPage, { name: "counter" }),
-  path("/static", StaticPage, { name: "static" }),
-  path("/prerender", PrerenderedPage, { name: "prerender" }),
-  path("/prerender/:slug", PrerenderedArticle, { name: "prerender.article" }),
+  transition({ enter: "fade-in", exit: "fade-out" }, () => [
+    path("/static", StaticPage, { name: "static" }),
+    path("/prerender", PrerenderedPage, { name: "prerender" }),
+    path("/prerender/:slug", PrerenderedArticle, { name: "prerender.article" }),
+  ]),
 
   // Direction-aware transitions (ViewTransitionClass object form)
   path("/transition-a", TransitionPageA, { name: "transition.a" }, () => [

@@ -237,6 +237,78 @@ test.describe("cards shared transitions (dev)", () => {
   });
 });
 
+test.describe("prerender/static transitions (dev)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "dev",
+  });
+
+  test("should navigate from home to static page without reload", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await using __ = await expectNoReload(page);
+    await testId(page, "nav-static").click();
+    await expect(page).toHaveURL(/\/static/);
+    await expect(testId(page, "static-page")).toBeVisible();
+    await expect(testId(page, "static-title")).toHaveText("Static Page");
+  });
+
+  test("should navigate from home to prerender page without reload", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await using __ = await expectNoReload(page);
+    await testId(page, "nav-prerender").click();
+    await expect(page).toHaveURL(/\/prerender/);
+    await expect(testId(page, "prerender-page")).toBeVisible();
+    await expect(testId(page, "prerender-title")).toHaveText("Pre-rendered Page");
+  });
+
+  test("should navigate between static and prerender without reload", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static"));
+    await waitForHydration(page);
+    await expect(testId(page, "static-page")).toBeVisible();
+
+    await using __ = await expectNoReload(page);
+    await testId(page, "nav-prerender").click();
+    await expect(page).toHaveURL(/\/prerender/);
+    await expect(testId(page, "prerender-page")).toBeVisible();
+  });
+
+  test("should handle back navigation between static and prerender", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static"));
+    await waitForHydration(page);
+    await expect(testId(page, "static-page")).toBeVisible();
+
+    // Navigate to prerender
+    await testId(page, "nav-prerender").click();
+    await expect(page).toHaveURL(/\/prerender/);
+    await expect(testId(page, "prerender-page")).toBeVisible();
+
+    // Go back to static
+    await page.goBack();
+    await expect(page).toHaveURL(/\/static/);
+    await expect(testId(page, "static-page")).toBeVisible();
+  });
+});
+
 test.describe("transition DSL (production)", () => {
   const f = useFixture({
     root: ".",
@@ -347,5 +419,47 @@ test.describe("transition DSL (production)", () => {
     await testId(page, "card-florence").click();
     await expect(page).toHaveURL(/\/cards\/florence/);
     await expect(testId(page, "card-detail-page")).toBeVisible();
+  });
+
+  test("should navigate to static page without reload in production", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await using __ = await expectNoReload(page);
+    await testId(page, "nav-static").click();
+    await expect(page).toHaveURL(/\/static/);
+    await expect(testId(page, "static-page")).toBeVisible();
+  });
+
+  test("should navigate to prerender page without reload in production", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await using __ = await expectNoReload(page);
+    await testId(page, "nav-prerender").click();
+    await expect(page).toHaveURL(/\/prerender/);
+    await expect(testId(page, "prerender-page")).toBeVisible();
+  });
+
+  test("should navigate between static and prerender in production", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/static"));
+    await waitForHydration(page);
+
+    await using __ = await expectNoReload(page);
+    await testId(page, "nav-prerender").click();
+    await expect(page).toHaveURL(/\/prerender/);
+    await expect(testId(page, "prerender-page")).toBeVisible();
   });
 });
