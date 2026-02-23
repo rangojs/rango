@@ -78,6 +78,12 @@ import "virtual:rsc-router/loader-manifest";
 // In dev mode, this is a no-op (manifest is populated in-memory by the discovery plugin).
 import "virtual:rsc-router/routes-manifest";
 
+// Import the fetchable loader action module so the RSC plugin includes it in
+// the server references map. Without this, the module is only imported from
+// client-side loader stubs (generated at transform time), which the RSC build
+// never traverses. The server would fail to resolve the action at runtime.
+import "@rangojs/router/__internal/fetchable-action";
+
 export default createRSCHandler({
   router,
   version: VERSION,
