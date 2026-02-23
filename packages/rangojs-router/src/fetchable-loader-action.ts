@@ -12,72 +12,12 @@
  * reference for the client and execute the actual function on the server.
  */
 
-import {
-  getFetchableLoader,
-} from "./server/fetchable-loader-store.js";
-import { getRequestContext } from "./server/request-context.js";
+import { executeLoaderAction } from "./loader-action-shared.js";
 
 export async function invokeFetchableLoaderAction(
   loaderId: string,
   _prevState: unknown,
-  formData: FormData
+  formData: FormData,
 ): Promise<unknown> {
-  const registered = getFetchableLoader(loaderId);
-  if (!registered) {
-    throw new Error(`Loader "${loaderId}" not found in registry`);
-  }
-
-  const requestCtx = getRequestContext();
-
-  // Convert FormData to params object
-  const params: Record<string, string> = {};
-  formData.forEach((value, key) => {
-    if (typeof value === "string") {
-      params[key] = value;
-    }
-  });
-
-  const actionUrl = requestCtx?.url ?? new URL("http://localhost/");
-  const actionRequest = requestCtx?.request ?? new Request(actionUrl, { method: "POST" });
-  const env = requestCtx?.env ?? {};
-
-  const variables: Record<string, any> = { ...requestCtx?.var };
-
-  // Execute middleware for auth checks, headers, cookies
-  if (registered.middleware.length > 0 && requestCtx?.res) {
-    const { executeServerActionMiddleware } = await import(
-      "./router/middleware.js"
-    );
-    const { createReverseFunction } = await import(
-      "./router/handler-context.js"
-    );
-    const { getGlobalRouteMap } = await import("./route-map-builder.js");
-    await executeServerActionMiddleware(
-      registered.middleware,
-      actionRequest,
-      env,
-      params,
-      variables,
-      requestCtx.res,
-      createReverseFunction(getGlobalRouteMap()),
-    );
-  }
-
-  const { createHandlerContext } = await import("./router/handler-context.js");
-  const baseCtx = createHandlerContext(
-    params,
-    actionRequest,
-    actionUrl.searchParams,
-    actionUrl.pathname,
-    actionUrl,
-    env
-  );
-
-  const ctx: any = {
-    ...baseCtx,
-    method: "POST",
-    formData,
-  };
-
-  return registered.fn(ctx);
+  return executeLoaderAction(loaderId, formData);
 }
