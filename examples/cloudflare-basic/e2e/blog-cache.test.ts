@@ -187,6 +187,7 @@ test.describe("proactive-caching", () => {
     root: ".",
     mode: "dev",
     isolatedServer: true,
+    cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
   });
 
   test("proactive caching triggers when navigating within cached layout", async ({

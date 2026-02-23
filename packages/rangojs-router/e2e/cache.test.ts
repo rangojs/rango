@@ -18,6 +18,7 @@ test.describe("cache-server-logs", () => {
     root: "./e2e/test-app",
     mode: "dev",
     isolatedServer: true,
+    cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
   });
 
   /**
@@ -320,6 +321,7 @@ test.describe("cache-intercept-routes", () => {
     root: "./e2e/test-app",
     mode: "dev",
     isolatedServer: true,
+    cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
   });
 
   /**
@@ -591,6 +593,7 @@ test.describe("proactive-caching", () => {
     root: "./e2e/test-app",
     mode: "dev",
     isolatedServer: true,
+    cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
   });
 
   test("proactive caching populates cache for future partial navigations", async ({

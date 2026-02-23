@@ -25,6 +25,7 @@ test.describe("cache-status-behavior", () => {
     root: "./e2e/test-app",
     mode: "dev",
     isolatedServer: true,
+    cliOptions: { env: { INTERNAL_RANGO_DEBUG: "1" } },
   });
 
   /**
