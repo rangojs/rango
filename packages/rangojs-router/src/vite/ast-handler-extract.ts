@@ -27,6 +27,7 @@ export interface HandlerCallSite {
 export interface VirtualHandlerEntry {
   originalModuleId: string;
   imports: string[];
+  declarations: string[];
   handlerCode: string;
   exportName: string;
 }
@@ -264,6 +265,164 @@ export function extractImportDeclarations(
   return imports;
 }
 
+/**
+ * Check if an expression AST subtree is "inert" -- safe to evaluate eagerly
+ * without referencing import bindings. Inert expressions contain only literals,
+ * arrays/objects of inert values, template literals with inert expressions,
+ * and unary/binary operators on inert operands.
+ *
+ * Function/arrow expressions are NOT inert (they're lazy -- handled separately).
+ * Identifiers and member expressions are NOT inert (may reference imports).
+ *
+ * This check prevents TDZ errors when declarations are moved to virtual
+ * modules that end up in separate Rollup chunks with circular dependencies.
+ */
+function isInertExpression(node: any): boolean {
+  if (!node) return false;
+  switch (node.type) {
+    case "Literal":
+      return true;
+    case "TemplateLiteral":
+      return (node.expressions ?? []).every((e: any) => isInertExpression(e));
+    case "ArrayExpression":
+      return (node.elements ?? []).every(
+        (e: any) => e === null || isInertExpression(e),
+      );
+    case "ObjectExpression":
+      return (node.properties ?? []).every(
+        (p: any) =>
+          p.type === "Property" &&
+          (!p.computed || isInertExpression(p.key)) &&
+          isInertExpression(p.value),
+      );
+    case "UnaryExpression":
+      return isInertExpression(node.argument);
+    case "BinaryExpression":
+      return (
+        isInertExpression(node.left) && isInertExpression(node.right)
+      );
+    case "ConditionalExpression":
+      return (
+        isInertExpression(node.test) &&
+        isInertExpression(node.consequent) &&
+        isInertExpression(node.alternate)
+      );
+    case "SpreadElement":
+      return isInertExpression(node.argument);
+    default:
+      return false;
+  }
+}
+
+/**
+ * Check if a variable declarator's init is safe for inclusion in a virtual
+ * module. Safe initializers are:
+ *   1. Function/arrow expressions (body is lazy, no TDZ risk)
+ *   2. Inert expressions (no identifier references, no TDZ risk)
+ *
+ * Declarations that reference identifiers at the top level (e.g.
+ * `const VT = React.Fragment`) are NOT safe -- when the virtual module
+ * is bundled into a separate Rollup chunk, circular chunk dependencies
+ * can cause "Cannot access X before initialization" TDZ errors.
+ */
+function isSafeDeclaratorInit(init: any): boolean {
+  if (!init) return true; // `let x;` with no init is safe
+  if (
+    init.type === "ArrowFunctionExpression" ||
+    init.type === "FunctionExpression"
+  ) {
+    return true;
+  }
+  return isInertExpression(init);
+}
+
+/**
+ * Check if all declarators in a VariableDeclaration have safe initializers
+ * and none is a handler call (Static/Prerender).
+ */
+function isSafeVariableDeclaration(
+  node: any,
+  handlerNames: Set<string>,
+): boolean {
+  if (node.type !== "VariableDeclaration") return false;
+  return node.declarations.every(
+    (d: any) =>
+      isSafeDeclaratorInit(d.init) &&
+      !(
+        d.init?.type === "CallExpression" &&
+        d.init.callee?.type === "Identifier" &&
+        handlerNames.has(d.init.callee.name)
+      ),
+  );
+}
+
+/**
+ * Extract module-level declarations that are safe for inclusion in virtual
+ * modules. "Safe" means the declaration can be eagerly evaluated without
+ * referencing import bindings, preventing TDZ errors in separate chunks.
+ *
+ * Included: function declarations, arrow/function expression inits, and
+ * variable inits that are inert (pure literals, arrays, objects).
+ * Excluded: declarations that reference identifiers at init time (may
+ * reference imports causing TDZ), handler call declarations (circular),
+ * class declarations (field initializers can reference imports).
+ *
+ * Strips export keywords so declarations work as plain locals.
+ * Rollup tree-shakes unused declarations from virtual modules.
+ */
+export function extractModuleLevelDeclarations(
+  code: string,
+  parseAst: (code: string, options?: any) => ProgramNode,
+  handlerNames: Set<string>,
+): string[] {
+  let program: ProgramNode;
+  try {
+    program = parseAst(code, { jsx: true });
+  } catch {
+    return [];
+  }
+
+  const declarations: string[] = [];
+  for (const node of program.body as any[]) {
+    // Skip imports (handled by extractImportDeclarations)
+    if (node.type === "ImportDeclaration") continue;
+
+    // VariableDeclaration -- include only if all declarators are safe
+    if (node.type === "VariableDeclaration") {
+      if (isSafeVariableDeclaration(node, handlerNames)) {
+        declarations.push(code.slice(node.start, node.end));
+      }
+      continue;
+    }
+
+    // FunctionDeclaration -- always safe (body is lazy)
+    if (node.type === "FunctionDeclaration") {
+      declarations.push(code.slice(node.start, node.end));
+      continue;
+    }
+
+    // ExportNamedDeclaration with a declaration inside -- strip the export
+    if (node.type === "ExportNamedDeclaration" && node.declaration) {
+      const decl = node.declaration;
+      if (decl.type === "VariableDeclaration") {
+        if (isSafeVariableDeclaration(decl, handlerNames)) {
+          declarations.push(code.slice(decl.start, decl.end));
+        }
+      } else if (decl.type === "FunctionDeclaration") {
+        declarations.push(code.slice(decl.start, decl.end));
+      }
+      continue;
+    }
+
+    // Skip: ClassDeclaration (field initializers can reference imports),
+    // ExportDefaultDeclaration, ExportAllDeclaration,
+    // ExportNamedDeclaration without declaration (re-exports),
+    // ExpressionStatement (side effects), etc.
+  }
+
+  return declarations;
+}
+
 // ---------------------------------------------------------------------------
 // Transform
 // ---------------------------------------------------------------------------
@@ -295,6 +454,17 @@ export function transformInlineHandlers(
 
   const imports = extractImportDeclarations(code, parseAst);
 
+  // Collect local names for both Static and Prerender to exclude their
+  // declarations from virtual modules (avoids circular extraction).
+  const staticNames = getImportedLocalNames(code, "Static", parseAst);
+  const prerenderNames = getImportedLocalNames(code, "Prerender", parseAst);
+  const handlerNames = new Set([...staticNames, ...prerenderNames]);
+  const declarations = extractModuleLevelDeclarations(
+    code,
+    parseAst,
+    handlerNames,
+  );
+
   // Track line occurrences for same-line collision handling
   const lineCounts = new Map<number, number>();
 
@@ -316,6 +486,7 @@ export function transformInlineHandlers(
     virtualRegistry.set(virtualId, {
       originalModuleId: moduleId,
       imports,
+      declarations,
       handlerCode,
       exportName,
     });

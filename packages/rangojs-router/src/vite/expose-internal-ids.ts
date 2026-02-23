@@ -824,6 +824,7 @@ export function exposeInternalIds(options?: {
         if (!entry) return null;
         return [
           ...entry.imports,
+          ...entry.declarations,
           `export const ${entry.exportName} = ${entry.handlerCode};`,
         ].join("\n") + "\n";
       }
