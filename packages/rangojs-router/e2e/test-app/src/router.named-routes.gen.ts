@@ -28,6 +28,8 @@ export const NamedRoutes = {
   fetchLoader: "/fetch-loader",
   handlePassthrough: "/handle-passthrough",
   handlePassthroughAsync: "/handle-passthrough-async",
+  "handlerFirst.cacheScope": "/handler-first/cache-scope",
+  "handlerFirst.index": "/handler-first",
   "hookTests.formAction": "/hook-tests/form-action",
   "hookTests.index": "/hook-tests",
   "hookTests.noLoader": "/hook-tests/no-loader",

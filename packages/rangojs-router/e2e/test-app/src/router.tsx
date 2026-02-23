@@ -35,6 +35,8 @@ export interface AppVariables {
   role?: string;
   // Include + layout middleware test variable
   includeLayoutMw?: string;
+  // Handler-first execution order test variable
+  handlerData?: string;
 }
 
 export type AppEnv = RouterEnv<AppBindings, AppVariables>;

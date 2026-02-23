@@ -1,6 +1,6 @@
 /**
  * Search page handler with type-safe search params via Handler<"search">.
- * ctx.searchParams is typed as { q: string; page?: number; sort?: string }
+ * ctx.search is typed as { q: string; page?: number; sort?: string }
  * from the search schema defined on the route in urls.tsx.
  *
  * Handler defaults to GeneratedRouteMap (from gen file), so no explicit
@@ -9,7 +9,7 @@
 import type { Handler } from "@rangojs/router";
 
 export const SearchPage: Handler<"search"> = (ctx) => {
-  const { q, page, sort } = ctx.searchParams;
+  const { q, page, sort } = ctx.search;
   const nextPage = (page ?? 1) + 1;
   const nextPageUrl = `/search?q=${encodeURIComponent(q)}&page=${nextPage}`;
 

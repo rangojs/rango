@@ -569,6 +569,7 @@ export function createUseFunction<TEnv>(
       params: ctx.params,
       request: ctx.request,
       searchParams: ctx.searchParams,
+      search: (ctx as any).search ?? {},
       pathname: ctx.pathname,
       url: ctx.url,
       env: ctx.env as any,

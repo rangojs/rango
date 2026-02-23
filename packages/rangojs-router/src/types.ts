@@ -403,11 +403,14 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch extends Sear
   request: Request;
   /**
    * Query parameters from the URL (system params like `_rsc*` are filtered).
-   *
-   * When a route defines a `search` schema, this is a typed object with
-   * parsed values. Otherwise it is the standard URLSearchParams.
+   * Always a standard URLSearchParams instance.
    */
-  searchParams: {} extends TSearch ? URLSearchParams : ResolveSearchSchema<TSearch>;
+  searchParams: URLSearchParams;
+  /**
+   * Typed search parameters parsed from URL query string via the route's
+   * search schema. Empty object when no schema is defined.
+   */
+  search: {} extends TSearch ? {} : ResolveSearchSchema<TSearch>;
   /**
    * The pathname portion of the request URL.
    */
@@ -1487,7 +1490,8 @@ export type LoaderContext<
 > = {
   params: TParams;
   request: Request;
-  searchParams: {} extends TSearch ? URLSearchParams : ResolveSearchSchema<TSearch>;
+  searchParams: URLSearchParams;
+  search: {} extends TSearch ? {} : ResolveSearchSchema<TSearch>;
   pathname: string;
   url: URL;
   env: TEnv extends RouterEnv<infer B, any> ? B : {};

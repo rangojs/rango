@@ -54,6 +54,28 @@ parallel({
 })
 ```
 
+## Reading Handler Data
+
+When a parallel is inside a route that uses `ctx.set()`, it can read that
+data via `ctx.get()`. The route handler always executes before its children.
+
+```typescript
+path("/dashboard/:id", (ctx) => {
+  const user = await getUser(ctx.params.id);
+  ctx.set("user", user);
+  return <DashboardPage user={user} />;
+}, { name: "dashboard" }, () => [
+  layout(DashboardLayout, () => [
+    parallel({
+      "@sidebar": (ctx) => {
+        const user = ctx.get("user");
+        return <Sidebar role={user?.role} />;
+      },
+    }),
+  ]),
+])
+```
+
 ## Parallel Routes with Loaders
 
 Add loaders and loading states to parallel routes:

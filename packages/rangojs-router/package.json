@@ -64,6 +64,9 @@
       "types": "./src/__internal.ts",
       "default": "./src/__internal.ts"
     },
+    "./__internal/fetchable-action": {
+      "default": "./src/fetchable-loader-action.ts"
+    },
     "./internal/deps/browser": {
       "types": "./src/deps/browser.ts",
       "default": "./src/deps/browser.ts"

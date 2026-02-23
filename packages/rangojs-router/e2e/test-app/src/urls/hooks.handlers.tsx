@@ -26,6 +26,7 @@ import {
   IsLoadingTest,
   FormActionTest,
   FormActionProgressiveTest,
+  DirectImportFormActionTest,
 } from "../components/HookTests.js";
 
 export const FetchLoaderHandler: Handler<"fetchLoader"> = () => (
@@ -140,6 +141,7 @@ export const HookTestsFormActionHandler: Handler<"hookTests.formAction"> = () =>
       <IsLoadingTest loader={UnregisteredLoader} />
       <FormActionTest loader={UnregisteredLoader} />
       <FormActionProgressiveTest loader={UnregisteredLoader} />
+      <DirectImportFormActionTest />
     </div>
   </div>
 );

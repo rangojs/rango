@@ -753,6 +753,34 @@ test.describe("Form action support", () => {
     expect(formHtml).not.toContain("javascript:throw");
   });
 
+  test("form action works with directly imported loader (not passed as prop)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/hook-tests/form-action"));
+    await waitForHydration(page);
+
+    // Initially no data
+    await expect(testId(page, "direct-import-no-data")).toBeVisible();
+
+    // Submit the form
+    await testId(page, "direct-import-submit-btn").click();
+
+    // Wait for data to appear
+    await expect(testId(page, "direct-import-data")).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Verify data was fetched via the loader action
+    await expect(testId(page, "direct-import-message")).toContainText(
+      "Fetched from unregistered loader"
+    );
+    await expect(testId(page, "direct-import-id")).toContainText(
+      "direct-import-submitted"
+    );
+  });
+
   // Progressive enhancement test: useActionState forms work without JavaScript.
   // The server decodes the action using decodeAction(), executes it, then passes
   // the form state to renderToReadableStream so useActionState hooks receive the result.
