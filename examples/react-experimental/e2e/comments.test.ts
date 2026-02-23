@@ -128,3 +128,65 @@ test.describe("blog comments via loader action (dev)", () => {
     await expect(section).not.toContainText("Scoped-test-unique-xyz");
   });
 });
+
+test.describe("blog comments via loader action (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  test("should show empty comments on blog detail", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog/view-transitions"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "comments-section")).toBeVisible();
+    await expect(testId(page, "comment-form")).toBeVisible();
+    await expect(testId(page, "no-comments")).toBeVisible();
+    await expect(testId(page, "no-comments")).toContainText("No comments yet");
+  });
+
+  // FIXME: invokeFetchableLoaderAction server reference (09ecd117d1ba) is not
+  // registered in the RSC action manifest. The SSR bundle creates the reference
+  // but loadServerAction() on the RSC side can't find it. See issue #205.
+  test.fixme("should post a comment via loader action", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog/rsc-routing"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "no-comments")).toBeVisible();
+
+    await testId(page, "comment-name").fill("Alice");
+    await testId(page, "comment-text").fill("Great article!");
+    await testId(page, "comment-submit").click();
+
+    await expect(testId(page, "comments-list")).toBeVisible({ timeout: 5000 });
+    await expect(testId(page, "comments-section")).toContainText("Comments (1)");
+    await expect(testId(page, "comments-list")).toContainText("Alice");
+    await expect(testId(page, "comments-list")).toContainText("Great article!");
+    await expect(testId(page, "no-comments")).not.toBeVisible();
+  });
+
+  // FIXME: Same issue as above — server reference not found in production build.
+  test.fixme("should post multiple comments", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/blog/composable-caching"));
+    await waitForHydration(page);
+
+    await testId(page, "comment-name").fill("Bob");
+    await testId(page, "comment-text").fill("First comment");
+    await testId(page, "comment-submit").click();
+    await expect(testId(page, "comments-list")).toBeVisible({ timeout: 5000 });
+    await expect(testId(page, "comments-section")).toContainText("Comments (1)");
+
+    await testId(page, "comment-name").fill("Carol");
+    await testId(page, "comment-text").fill("Second comment");
+    await testId(page, "comment-submit").click();
+    await expect(testId(page, "comments-section")).toContainText("Comments (2)", { timeout: 5000 });
+    await expect(testId(page, "comments-list")).toContainText("Bob");
+    await expect(testId(page, "comments-list")).toContainText("Carol");
+  });
+});

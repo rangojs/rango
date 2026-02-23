@@ -34,7 +34,7 @@ test.describe("prerender handler (dev)", () => {
     await waitForHydration(page);
 
     await expect(testId(page, "prerender-article")).toBeVisible();
-    await expect(testId(page, "prerender-article-title")).toHaveText("hello");
+    await expect(testId(page, "prerender-article-title")).toHaveText("Hello World");
     await expect(testId(page, "prerender-article-content")).toHaveText(
       "Content for hello",
     );
@@ -46,7 +46,7 @@ test.describe("prerender handler (dev)", () => {
     await page.goto(f.url("/prerender/world"));
     await waitForHydration(page);
 
-    await expect(testId(page, "prerender-article-title")).toHaveText("world");
+    await expect(testId(page, "prerender-article-title")).toHaveText("World Tour");
     await expect(testId(page, "prerender-article-content")).toHaveText(
       "Content for world",
     );
@@ -105,7 +105,7 @@ test.describe("prerender handler (production)", () => {
     await waitForHydration(page);
 
     await expect(testId(page, "prerender-article")).toBeVisible();
-    await expect(testId(page, "prerender-article-title")).toHaveText("hello");
+    await expect(testId(page, "prerender-article-title")).toHaveText("Hello World");
     await expect(testId(page, "prerender-article-content")).toHaveText(
       "Content for hello",
     );
@@ -133,7 +133,7 @@ test.describe("prerender handler (production)", () => {
     await page.goto(f.url("/prerender/world"));
     await waitForHydration(page);
 
-    await expect(testId(page, "prerender-article-title")).toHaveText("world");
+    await expect(testId(page, "prerender-article-title")).toHaveText("World Tour");
   });
 
   test("should navigate to prerender page via client-side navigation", async ({ page }) => {

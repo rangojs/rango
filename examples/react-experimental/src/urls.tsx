@@ -7,6 +7,7 @@ import { Comments } from "./components/Comments.js";
 import { getCounter } from "./actions/counter.js";
 import { CommentsLoader } from "./loaders/comments.js";
 import * as React from "react";
+import { ARTICLES } from "./data/articles.js";
 
 // React experimental ViewTransition for element-level shared transitions.
 // Wrapping individual elements with the same `name` across pages creates
@@ -60,37 +61,254 @@ async function CounterPage(ctx: HandlerContext) {
   );
 }
 
-// Static handler -- rendered once at build time, frozen in production
+// Static handler -- centered card layout with shared ViewTransition elements
+// that morph into the prerender page's left-aligned layout on navigation.
+// Note: Static() handlers are AST-extracted into virtual modules, so we must
+// define ViewTransition inline (module-level VT alias is not available).
 const StaticPage = Static(() => {
+  const ViewTransition = "ViewTransition" in React
+    ? (React as any).ViewTransition : React.Fragment;
+
   return (
-    <main data-testid="static-page">
-      <h1 data-testid="static-title">Static Page</h1>
-      <p data-testid="static-content">This page is statically rendered at build time.</p>
-      <p data-testid="static-timestamp">Built at: {Date.now()}</p>
+    <main data-testid="static-page" style={{
+      display: "flex", flexDirection: "column", alignItems: "center",
+      justifyContent: "center", minHeight: "60vh", gap: "2rem",
+    }}>
+      <div style={{
+        display: "inline-flex", alignItems: "center", gap: "0.5rem",
+        padding: "0.375rem 0.75rem", borderRadius: "9999px",
+        background: "#f0fdf4", border: "1px solid #bbf7d0",
+        color: "#166534", fontSize: "0.75rem", fontWeight: 600,
+        letterSpacing: "0.05em", textTransform: "uppercase",
+      }}>
+        Statically Rendered
+      </div>
+
+      <div style={{
+        background: "white", borderRadius: "16px", border: "1px solid #e5e7eb",
+        padding: "2.5rem", maxWidth: "480px", width: "100%",
+        display: "flex", flexDirection: "column", alignItems: "center", gap: "1.5rem",
+        boxShadow: "0 4px 24px rgba(0,0,0,0.06)",
+      }}>
+        <ViewTransition name="showcase-shape">
+          <div style={{
+            width: "120px", height: "120px", borderRadius: "24px",
+            background: "linear-gradient(135deg, #a78bfa 0%, #7c3aed 50%, #4c1d95 100%)",
+            boxShadow: "0 8px 32px rgba(124,58,237,0.3)",
+          }} />
+        </ViewTransition>
+
+        <ViewTransition name="showcase-title">
+          <h1 data-testid="static-title" style={{
+            fontSize: "1.75rem", fontWeight: 700, letterSpacing: "-0.02em", textAlign: "center",
+          }}>
+            Static Page
+          </h1>
+        </ViewTransition>
+
+        <p data-testid="static-content" style={{ color: "#6b7280", textAlign: "center", lineHeight: 1.6 }}>
+          This page is statically rendered at build time.
+        </p>
+
+        <ViewTransition name="showcase-timestamp">
+          <p data-testid="static-timestamp" style={{
+            color: "#9ca3af", fontSize: "0.8rem", fontFamily: "monospace",
+          }}>
+            Built at: {Date.now()}
+          </p>
+        </ViewTransition>
+
+        <a href="/prerender" style={{
+          display: "inline-flex", alignItems: "center", gap: "0.5rem",
+          padding: "0.625rem 1.25rem", borderRadius: "8px",
+          background: "#f3f4f6", color: "#374151",
+          textDecoration: "none", fontSize: "0.875rem", fontWeight: 500,
+        }}>
+          Go to Prerender &rarr;
+        </a>
+      </div>
     </main>
   );
 });
 
-// Prerender handler -- no params, rendered at build time
-const PrerenderedPage = Prerender(async (ctx) => {
+// Prerender handler -- article index grid with shared ViewTransition elements.
+// The header morphs from the Static page's centered card layout.
+// Each article card has shared elements that expand into the detail view.
+const PrerenderedPage = Prerender(async () => {
+  const ViewTransition = "ViewTransition" in React
+    ? (React as any).ViewTransition : React.Fragment;
+
   return (
-    <main data-testid="prerender-page">
-      <h1 data-testid="prerender-title">Pre-rendered Page</h1>
-      <p data-testid="prerender-content">This page is pre-rendered.</p>
-      <p data-testid="prerender-timestamp">Built at: {Date.now()}</p>
+    <main data-testid="prerender-page" style={{ minHeight: "60vh" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "1rem", marginBottom: "2rem" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+          <ViewTransition name="showcase-shape">
+            <div style={{
+              width: "48px", height: "48px", borderRadius: "12px",
+              background: "linear-gradient(135deg, #a78bfa 0%, #7c3aed 50%, #4c1d95 100%)",
+              flexShrink: 0,
+            }} />
+          </ViewTransition>
+          <div>
+            <ViewTransition name="showcase-title">
+              <h1 data-testid="prerender-title" style={{
+                fontSize: "2rem", fontWeight: 700, letterSpacing: "-0.02em",
+              }}>
+                Pre-rendered Page
+              </h1>
+            </ViewTransition>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <p data-testid="prerender-content" style={{ color: "#6b7280" }}>
+            This page is pre-rendered.
+          </p>
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: "0.5rem",
+            padding: "0.25rem 0.625rem", borderRadius: "9999px",
+            background: "#eff6ff", border: "1px solid #bfdbfe",
+            color: "#1e40af", fontSize: "0.7rem", fontWeight: 600,
+            letterSpacing: "0.05em", textTransform: "uppercase",
+          }}>
+            Pre-rendered at build time
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <ViewTransition name="showcase-timestamp">
+            <p data-testid="prerender-timestamp" style={{
+              color: "#9ca3af", fontSize: "0.8rem", fontFamily: "monospace",
+            }}>
+              Built at: {Date.now()}
+            </p>
+          </ViewTransition>
+          <a href="/static" style={{
+            color: "#6b7280", textDecoration: "none", fontSize: "0.875rem",
+          }}>
+            &larr; Back to Static
+          </a>
+        </div>
+      </div>
+
+      <div style={{
+        display: "grid", gap: "1.25rem",
+        gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))",
+      }}>
+        {ARTICLES.map((article) => (
+          <a
+            key={article.slug}
+            href={`/prerender/${article.slug}`}
+            data-testid={`prerender-card-${article.slug}`}
+            style={{
+              textDecoration: "none", color: "inherit",
+              borderRadius: "12px", overflow: "hidden",
+              border: "1px solid #e5e7eb",
+              display: "flex", flexDirection: "column",
+            }}
+          >
+            <ViewTransition name={`article-thumb-${article.slug}`}>
+              <div style={{
+                height: "120px", background: article.gradient,
+                borderRadius: "12px 12px 0 0",
+              }} />
+            </ViewTransition>
+            <div style={{ padding: "1rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+              <p style={{ color: "#9ca3af", fontSize: "0.75rem" }}>{article.date}</p>
+              <ViewTransition name={`article-title-${article.slug}`}>
+                <h3 style={{ fontSize: "1rem", fontWeight: 600, lineHeight: 1.3 }}>
+                  {article.title}
+                </h3>
+              </ViewTransition>
+              <p style={{ color: "#6b7280", fontSize: "0.8rem", lineHeight: 1.5 }}>
+                {article.excerpt}
+              </p>
+            </div>
+          </a>
+        ))}
+      </div>
     </main>
   );
 });
 
-// Prerender handler -- with params, rendered at build time for each param set
+// Prerender handler -- article detail with hero gradient and shared ViewTransition
+// elements that morph from the card thumbnail and title in the article index.
 const PrerenderedArticle = Prerender(
-  async () => [{ slug: "hello" }, { slug: "world" }],
+  async () => [
+    { slug: "edge-rendering" },
+    { slug: "incremental-adoption" },
+    { slug: "streaming-rsc" },
+    { slug: "type-safe-routes" },
+    { slug: "hello" },
+    { slug: "world" },
+  ],
   async (ctx) => {
+    const ViewTransition = "ViewTransition" in React
+      ? (React as any).ViewTransition : React.Fragment;
+    const article = ARTICLES.find((a) => a.slug === ctx.params.slug);
+
+    if (!article) {
+      return (
+        <main data-testid="prerender-article">
+          <h1 data-testid="prerender-article-title">{ctx.params.slug}</h1>
+          <p data-testid="prerender-article-content">Content for {ctx.params.slug}</p>
+          <p data-testid="prerender-article-timestamp">Built at: {Date.now()}</p>
+        </main>
+      );
+    }
+
     return (
       <main data-testid="prerender-article">
-        <h1 data-testid="prerender-article-title">{ctx.params.slug}</h1>
-        <p data-testid="prerender-article-content">Content for {ctx.params.slug}</p>
-        <p data-testid="prerender-article-timestamp">Built at: {Date.now()}</p>
+        <a href="/prerender" data-testid="prerender-back" style={{
+          color: "#6b7280", textDecoration: "none", display: "inline-block",
+          marginBottom: "1.5rem", fontSize: "0.875rem",
+        }}>
+          &larr; Back to articles
+        </a>
+
+        <ViewTransition name={`article-thumb-${ctx.params.slug}`}>
+          <div style={{
+            height: "240px", borderRadius: "16px",
+            background: article.gradient, marginBottom: "1.5rem",
+            boxShadow: `0 8px 32px ${article.color}40`,
+          }} />
+        </ViewTransition>
+
+        <div style={{
+          display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.5rem",
+        }}>
+          <p style={{ color: "#9ca3af", fontSize: "0.8rem" }}>{article.date}</p>
+          <div style={{
+            padding: "0.2rem 0.5rem", borderRadius: "9999px",
+            background: "#eff6ff", border: "1px solid #bfdbfe",
+            color: "#1e40af", fontSize: "0.65rem", fontWeight: 600,
+            letterSpacing: "0.05em", textTransform: "uppercase",
+          }}>
+            Pre-rendered
+          </div>
+        </div>
+
+        <ViewTransition name={`article-title-${ctx.params.slug}`}>
+          <h1 data-testid="prerender-article-title" style={{
+            fontSize: "2.25rem", fontWeight: 700, letterSpacing: "-0.02em",
+            marginBottom: "1.5rem",
+          }}>
+            {article.title}
+          </h1>
+        </ViewTransition>
+
+        <div data-testid="prerender-article-content" style={{
+          lineHeight: 1.75, color: "#374151", marginBottom: "1rem",
+        }}>
+          {article.content}
+        </div>
+
+        <p data-testid="prerender-article-timestamp" style={{
+          color: "#9ca3af", fontSize: "0.75rem", fontFamily: "monospace",
+          marginTop: "2rem", paddingTop: "1rem", borderTop: "1px solid #f3f4f6",
+        }}>
+          Built at: {Date.now()}
+        </p>
       </main>
     );
   },
@@ -357,6 +575,9 @@ const PLACES: Place[] = [
     description: "A beachfront city in western Los Angeles County with iconic pier and vibrant boardwalk.",
   },
 ];
+
+// Article data imported from separate module so Prerender/Static handler
+// extraction can resolve it (AST extraction preserves imports, not locals).
 
 function CardIndex(ctx: HandlerContext) {
   const meta = ctx.use(Meta);
