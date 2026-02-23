@@ -76,8 +76,8 @@ export const HrefIndexHandler: Handler<"href.index"> = (ctx) => {
 export const HrefFilteredHandler: Handler<".filtered", routes> = (ctx) => {
   // ctx.params.category comes from "/:category" in the route pattern
   const category: string = ctx.params.category;
-  // ctx.searchParams is typed from the search schema: { q: string; page?: number; active?: boolean }
-  const { q, page, active } = ctx.searchParams;
+  // ctx.search is typed from the search schema: { q: string; page?: number; active?: boolean }
+  const { q, page, active } = ctx.search;
 
   return (
     <div data-testid="href-filtered-page">

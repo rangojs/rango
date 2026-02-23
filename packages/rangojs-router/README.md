@@ -138,9 +138,9 @@ const urlpatterns = urls(({ path }) => [
   }),
 ]);
 
-// Handler receives typed searchParams
+// Handler receives typed search params via ctx.search
 const SearchPage: Handler<"search"> = (ctx) => {
-  const { q, page, sort } = ctx.searchParams;
+  const { q, page, sort } = ctx.search;
   // q: string, page: number | undefined, sort: string | undefined
 };
 ```

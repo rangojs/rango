@@ -6,8 +6,8 @@ import { Link } from "@rangojs/router/client";
  * Uses inline context type since search schema types flow from path() at runtime.
  */
 export function SearchIndexHandler(ctx: HandlerContext<{}, any, { q: "string"; page: "number?"; sort: "string?" }>) {
-  // ctx.searchParams should be typed: { q: string; page?: number; sort?: string }
-  const { q, page, sort } = ctx.searchParams;
+  // ctx.search should be typed: { q: string; page?: number; sort?: string }
+  const { q, page, sort } = ctx.search;
 
   // Build URLs manually for e2e testing (path-based reverse doesn't support search arg)
   const selfUrl = `/search?q=test&page=2`;
@@ -51,7 +51,7 @@ export function SearchIndexHandler(ctx: HandlerContext<{}, any, { q: "string"; p
  * Search detail handler - tests typed search params with route params
  */
 export function SearchDetailHandler(ctx: HandlerContext<{ category: string }, any, { q: "string?"; active: "boolean?" }>) {
-  const { q, active } = ctx.searchParams;
+  const { q, active } = ctx.search;
 
   return (
     <div data-testid="search-detail-page">

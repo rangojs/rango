@@ -12,10 +12,9 @@ import { MagazineIndexPage } from "../handlers/magazine/components/MagazineIndex
 import { MagazineArticlePage } from "../handlers/magazine/components/MagazineArticlePage.js";
 import { MagazineAuthorDetail } from "../handlers/magazine/components/MagazineAuthorDetail.js";
 import { MagazineAuthorPostsPage } from "../handlers/magazine/components/MagazineAuthorPostsPage.js";
-import type { routes } from "./magazine.gen.js";
 
 // Static index -- pre-rendered at build time
-export const MagazineIndex = Prerender<{}, routes>(async (ctx) => {
+export const MagazineIndex = Prerender<{}>(async (ctx) => {
   const articlesWithUrls = magazineArticles.map((article) => {
     const author = magazineAuthors.find((a) => a.slug === article.authorSlug);
     return {
@@ -37,7 +36,7 @@ export const MagazineIndex = Prerender<{}, routes>(async (ctx) => {
 });
 
 // Dynamic article detail -- pre-rendered for each article slug
-export const MagazineArticle = Prerender<{ slug: string }, routes>(
+export const MagazineArticle = Prerender<{ slug: string }>(
   async () => magazineArticles.map((a) => ({ slug: a.slug })),
   async (ctx) => {
     const push = ctx.use(Breadcrumbs);
@@ -61,7 +60,7 @@ export const MagazineArticle = Prerender<{ slug: string }, routes>(
 );
 
 // Dynamic author page -- pre-rendered for each author
-export const MagazineAuthor = Prerender<{ authorSlug: string }, routes>(
+export const MagazineAuthor = Prerender<{ authorSlug: string }>(
   async () => magazineAuthors.map((a) => ({ authorSlug: a.slug })),
   async (ctx) => {
     const push = ctx.use(Breadcrumbs);
@@ -89,7 +88,7 @@ export const MagazineAuthor = Prerender<{ authorSlug: string }, routes>(
 );
 
 // Dynamic author posts -- pre-rendered for each author
-export const MagazineAuthorPosts = Prerender<{ authorSlug: string }, routes>(
+export const MagazineAuthorPosts = Prerender<{ authorSlug: string }>(
   async () => magazineAuthors.map((a) => ({ authorSlug: a.slug })),
   async (ctx) => {
     const push = ctx.use(Breadcrumbs);

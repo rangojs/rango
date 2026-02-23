@@ -80,7 +80,7 @@ path("/product/:slug", ProductPage, {
 
 ### Typed Search Params
 
-Add a `search` schema to get typed `ctx.searchParams` instead of `URLSearchParams`:
+Add a `search` schema to get typed `ctx.search`:
 
 ```typescript
 path("/search", SearchPage, {
@@ -95,8 +95,9 @@ Use `Handler<"name">` for typed search params (resolves from the generated route
 import type { Handler } from "@rangojs/router";
 
 export const SearchPage: Handler<"search"> = (ctx) => {
-  // ctx.searchParams is typed: { q: string; page?: number; sort?: string }
-  const { q, page, sort } = ctx.searchParams;
+  // ctx.search is typed: { q: string; page?: number; sort?: string }
+  const { q, page, sort } = ctx.search;
+  // ctx.searchParams is always URLSearchParams
   return <SearchResults q={q} page={page} sort={sort} />;
 };
 ```
@@ -125,6 +126,45 @@ path("/product/:slug", ProductPage, { name: "product" }, () => [
   revalidate(productRevalidation),
 ])
 ```
+
+## Handler Data Ownership
+
+When a route has children (orphan layouts, parallels), the handler executes
+first. Use `ctx.set(key, value)` to share data with children, who read it
+via `ctx.get(key)`. Caching wraps all segments together, so either all run
+or none do.
+
+```typescript
+import { Outlet, ParallelOutlet } from "@rangojs/router/client";
+
+path("/dashboard/:id", (ctx) => {
+  const data = await fetchDashboard(ctx.params.id);
+  ctx.set("dashboard", data);
+  return <DashboardPage data={data} />;
+}, { name: "dashboard" }, () => [
+  // Orphan layout wraps route content, reads handler data
+  layout((ctx) => {
+    const data = ctx.get("dashboard");
+    return (
+      <div>
+        <h1>{data?.title}</h1>
+        <Outlet />
+        <ParallelOutlet name="@sidebar" />
+      </div>
+    );
+  }),
+  // Parallel also reads handler data
+  parallel({
+    "@sidebar": (ctx) => {
+      const data = ctx.get("dashboard");
+      return <Sidebar stats={data?.stats} />;
+    },
+  }),
+])
+```
+
+Only route handlers and middleware can call `ctx.set()`. Layouts, parallels,
+and intercepts can only read via `ctx.get()`.
 
 ## Redirects
 
@@ -193,9 +233,12 @@ Every handler receives a context object:
 interface HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch = {}> {
   params: TParams;           // URL parameters
   request: Request;          // Original request
-  searchParams: URLSearchParams | ResolveSearchSchema<TSearch>;  // Query params (typed when search schema is set)
+  searchParams: URLSearchParams;  // Query params (always URLSearchParams)
+  search: {} | ResolveSearchSchema<TSearch>;  // Typed search params (from search schema)
   url: URL;                  // Parsed URL
   env: TEnv;                 // Environment (bindings + variables)
+  set(key: string, value: any): void;  // Set context variable (route handlers + middleware only)
+  get(key: string): any;               // Read context variable
   use<T>(handle: Handle<T>): T;  // Access handles
   reverse(name: string, params?: Record<string, string>, search?: Record<string, unknown>): string;  // URL generation
   setLocationState(entries: LocationStateEntry[]): void;  // Attach state to response

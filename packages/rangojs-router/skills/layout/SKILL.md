@@ -141,6 +141,45 @@ function DashboardLayout() {
 }
 ```
 
+## Orphan Layout (inside route)
+
+A layout as a child of `path()` wraps the route content and can read
+data set by the route handler via `ctx.get()`. The handler always
+executes before its children.
+
+```typescript
+import { Outlet, ParallelOutlet } from "@rangojs/router/client";
+
+urls(({ path, layout, parallel }) => [
+  path("/product/:slug", (ctx) => {
+    const product = await fetchProduct(ctx.params.slug);
+    ctx.set("product", product);
+    return <ProductPage product={product} />;
+  }, { name: "product" }, () => [
+    layout((ctx) => {
+      const product = ctx.get("product");
+      return (
+        <div>
+          <Breadcrumb name={product?.name} />
+          <Outlet />
+          <ParallelOutlet name="@related" />
+        </div>
+      );
+    }, () => [
+      parallel({
+        "@related": (ctx) => {
+          const product = ctx.get("product");
+          return <RelatedProducts category={product?.category} />;
+        },
+      }),
+    ]),
+  ]),
+])
+```
+
+Orphan layouts cannot call `ctx.set()` -- only the route handler and
+middleware can write context variables.
+
 ## Layout Revalidation
 
 Layouts don't revalidate by default. Control with `revalidate()`:

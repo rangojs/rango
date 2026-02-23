@@ -27,6 +27,7 @@ import { apiShopPatterns } from "./urls/api-shop.js";
 import { locationStatePatterns } from "./urls/location-state.js";
 import { responseCachePatterns } from "./urls/response-cache.js";
 import { includeMiddlewarePatterns } from "./urls/include-middleware.js";
+import { handlerFirstPatterns } from "./urls/handler-first.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -453,6 +454,9 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
 
     // Response route caching test patterns (cache() with various MIME types)
     include("/response-cache", responseCachePatterns, { name: "responseCache" }),
+
+    // Handler-first execution order + cache scope tests
+    include("/handler-first", handlerFirstPatterns, { name: "handlerFirst" }),
 
     // Include under layout with middleware — tests that layout middleware
     // is applied to routes inside include() even when include() is the

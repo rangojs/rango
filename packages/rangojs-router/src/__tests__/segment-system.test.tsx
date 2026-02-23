@@ -462,12 +462,12 @@ describe("segment-system", () => {
     });
 
     describe("segment ordering", () => {
-      it("sorts segments by ID length regardless of input order", async () => {
-        // Provide in wrong order
+      it("renders segments in root-to-leaf order as emitted by producers", async () => {
+        // Segments arrive in root-to-leaf order from resolveSegment/resolveSegmentWithRevalidation
         const segments: ResolvedSegment[] = [
-          seg({ id: "L0L0R0", type: "route" }),
           seg({ id: "L0", type: "layout" }),
           seg({ id: "L0L0", type: "layout" }),
+          seg({ id: "L0L0R0", type: "route" }),
         ];
 
         const result = await renderSegments(segments);
@@ -477,6 +477,8 @@ describe("segment-system", () => {
         expect(outlets).toHaveLength(3);
         // Outermost is root layout (L0)
         expect(outlets[0].props.segment.id).toBe("L0");
+        // Innermost is route
+        expect(outlets[2].props.segment.id).toBe("L0L0R0");
       });
     });
 

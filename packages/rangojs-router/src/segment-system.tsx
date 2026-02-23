@@ -407,20 +407,13 @@ function* segmentTreeWalk(
     }
   }
 
-  // Sort segments by ID to ensure consistent root-to-leaf ordering
-  // regardless of the order they arrive in the input array (which can differ
-  // between document requests and actions)
-  // Shorter IDs come first (closer to root), same length sorted lexicographically
-  nonParallels.sort((a, b) => {
-    if (a.id.length !== b.id.length) {
-      return a.id.length - b.id.length;
-    }
-    return a.id.localeCompare(b.id);
-  });
-
-  // Iterate bottom-to-top using reverse() to process leaf segments first
+  // Segments arrive in root-to-leaf order from the server (resolveSegment
+  // and resolveSegmentWithRevalidation push segments in this order).
+  // All consumers (reconcileSegments, cache) preserve this order.
+  // No sorting needed — iterate bottom-to-top to process leaf segments first.
   // This processes route/leaf layouts first, then parent layouts
   // Note: We reverse the array to iterate from end to start (bottom-to-top)
+
   for (let i = nonParallels.length - 1; i >= 0; i--) {
     const segment = nonParallels[i];
 
