@@ -1102,10 +1102,20 @@ const loadingFn: RouteHelpers<any, any>["loading"] = (component, options) => {
  * Transition helper - attaches a ViewTransition config to the current entry
  * or wraps a group of routes in a transparent layout with ViewTransition
  */
-const transitionFn: RouteHelpers<any, any>["transition"] = (
-  config: TransitionConfig,
-  children?: () => UseItems<AllUseItems>
-) => {
+const transitionFn = (
+  configOrChildren?: TransitionConfig | (() => UseItems<AllUseItems>),
+  maybeChildren?: () => UseItems<AllUseItems>
+): TransitionItem => {
+  // Resolve overloaded arguments:
+  //   transition()                    -> config={}, children=undefined
+  //   transition(config)              -> config=config, children=undefined
+  //   transition(children)            -> config={}, children=children
+  //   transition(config, children)    -> config=config, children=children
+  const config: TransitionConfig =
+    typeof configOrChildren === "function" ? {} : (configOrChildren ?? {});
+  const children: (() => UseItems<AllUseItems>) | undefined =
+    typeof configOrChildren === "function" ? configOrChildren : maybeChildren;
+
   const store = getContext();
   const ctx = store.getStore();
   if (!ctx) throw new Error("transition() must be called inside map()");
@@ -1352,6 +1362,7 @@ export {
   notFoundBoundary,
   loaderFn as loader,
   loadingFn as loading,
+  transitionFn as transition,
 };
 
 const isOrphanLayout = (item: AllUseItems): boolean => {
@@ -1467,7 +1478,7 @@ const createCacheHelper = (): RouteHelpers<any, any>["cache"] => {
  * Create transition helper
  */
 const createTransitionHelper = (): RouteHelpers<any, any>["transition"] => {
-  return transitionFn;
+  return transitionFn as RouteHelpers<any, any>["transition"];
 };
 
 /**

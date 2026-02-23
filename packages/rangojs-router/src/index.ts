@@ -250,6 +250,9 @@ export function errorBoundary(): never {
 export function notFoundBoundary(): never {
   throw new Error('notFoundBoundary() is server-only and requires RSC context.');
 }
+export function transition(): never {
+  throw new Error('transition() is server-only and requires RSC context.');
+}
 
 // Request context type (safe for client)
 export type { RequestContext } from "./server/request-context.js";

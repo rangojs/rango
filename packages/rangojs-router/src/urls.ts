@@ -66,6 +66,7 @@ import type {
   CacheItem,
   TypedCacheItem,
   TransitionItem,
+  TypedTransitionItem,
   IncludeItem,
   TypedIncludeItem,
   IncludeBrand,
@@ -397,8 +398,11 @@ type ExtractRoutesFromItem<T, D extends number = 40> = [D] extends [never]
         : // TypedCacheItem: extract child routes from phantom type
           T extends TypedCacheItem<infer TChildRoutes>
           ? TChildRoutes
-          : // Fallback (won't extract routes)
-            {};
+          : // TypedTransitionItem: extract child routes from phantom type
+            T extends TypedTransitionItem<infer TChildRoutes>
+            ? TChildRoutes
+            : // Fallback (won't extract routes)
+              {};
 
 /**
  * Extract routes from an array of items using mapped types.
@@ -479,7 +483,11 @@ type ExtractResponsesFromItem<T, D extends number = 40> = [D] extends [never]
           ? TChildResponses extends Record<string, unknown>
             ? TChildResponses
             : {}
-          : {};
+          : T extends TypedTransitionItem<any, infer TChildResponses>
+            ? TChildResponses extends Record<string, unknown>
+              ? TChildResponses
+              : {}
+            : {};
 
 /**
  * Extract responses from an array of items using mapped types.
@@ -740,8 +748,15 @@ export type PathHelpers<TEnv> = {
    * Attach a ViewTransition boundary to the current segment or a group of routes
    */
   transition: {
+    (): TransitionItem;
     (config: TransitionConfig): TransitionItem;
-    (config: TransitionConfig, children: () => UseItems<AllUseItems>): TransitionItem;
+    <const TChildren extends readonly (AllUseItems | readonly AllUseItems[])[]>(
+      children: () => TChildren,
+    ): TypedTransitionItem<ExtractRoutes<TChildren>, ExtractResponses<TChildren>>;
+    <const TChildren extends readonly (AllUseItems | readonly AllUseItems[])[]>(
+      config: TransitionConfig,
+      children: () => TChildren,
+    ): TypedTransitionItem<ExtractRoutes<TChildren>, ExtractResponses<TChildren>>;
   };
 };
 
@@ -1243,7 +1258,7 @@ export function urls<
       notFoundBoundary: baseHelpers.notFoundBoundary,
       when: baseHelpers.when,
       cache: baseHelpers.cache as PathHelpers<TEnv>["cache"],
-      transition: baseHelpers.transition,
+      transition: baseHelpers.transition as PathHelpers<TEnv>["transition"],
     };
 
     // Execute builder directly - manifest.ts handles RootLayout wrapping

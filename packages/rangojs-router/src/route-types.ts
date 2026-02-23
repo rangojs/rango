@@ -128,6 +128,18 @@ export type TransitionItem = {
 };
 
 /**
+ * Typed transition item that carries child routes as phantom type
+ * Used for type inference when transition() wraps child routes
+ */
+export type TypedTransitionItem<
+  TChildRoutes extends Record<string, any> = Record<string, string>,
+  TChildResponses extends Record<string, unknown> = Record<string, unknown>,
+> = TransitionItem & {
+  readonly __childRoutes?: TChildRoutes;
+  readonly __childResponses?: TChildResponses;
+};
+
+/**
  * Typed cache item that carries child routes as phantom type
  * Used for type inference in urls() API
  */

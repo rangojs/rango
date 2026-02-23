@@ -228,7 +228,11 @@ export async function renderSegments(
           })
         : registerLazyRef(resolvedComponent);
 
-    // Wrap with <ViewTransition> if transition config exists (React experimental only)
+    // Wrap with <ViewTransition> if transition config exists (React experimental only).
+    // An empty config ({}) creates a bare <ViewTransition> boundary that participates
+    // in transitions without adding custom animation classes. Named element-level
+    // <ViewTransition> components inside (with name/share props) morph independently
+    // from the parent's default cross-fade.
     if (ReactViewTransition && node.segment.transition) {
       nodeContent = createElement(ReactViewTransition, {
         ...node.segment.transition,

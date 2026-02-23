@@ -3,7 +3,9 @@ import { Meta } from "@rangojs/router";
 import type { HandlerContext } from "@rangojs/router";
 import { Link, href } from "@rangojs/router/client";
 import { Counter } from "./components/Counter.js";
+import { Comments } from "./components/Comments.js";
 import { getCounter } from "./actions/counter.js";
+import { CommentsLoader } from "./loaders/comments.js";
 import * as React from "react";
 
 // React experimental ViewTransition for element-level shared transitions.
@@ -152,92 +154,269 @@ function TransitionPageB(ctx: HandlerContext) {
   );
 }
 
-// Gallery data
-const galleryItems = [
-  { id: "1", title: "Sunset", color: "#e94560", bg: "#1a1a2e", desc: "Golden hour over the mountains" },
-  { id: "2", title: "Ocean", color: "#0ea5e9", bg: "#0c1222", desc: "Deep blue waves crashing" },
-  { id: "3", title: "Forest", color: "#22c55e", bg: "#0a1a0e", desc: "Ancient trees and morning mist" },
-  { id: "4", title: "Desert", color: "#f59e0b", bg: "#1a150a", desc: "Endless golden sand dunes" },
+// ---------------------------------------------------------------------------
+// Blog example — "Floating Elements"
+// Shared element transitions: title, date, avatars morph between list/detail
+// ---------------------------------------------------------------------------
+
+interface Author { name: string; handle: string; }
+interface Post {
+  slug: string; title: string; date: string; description: string;
+  content: string; authors: Author[];
+}
+
+const AUTHORS: Record<string, Author> = {
+  seb: { name: "Sebastian Markbage", handle: "seb" },
+  jiachi: { name: "Jiachi Liu", handle: "jiachi" },
+  zack: { name: "Zack Tanner", handle: "zack" },
+  lee: { name: "Lee Robinson", handle: "lee" },
+};
+
+const POSTS: Post[] = [
+  {
+    slug: "rsc-routing",
+    title: "RSC Routing",
+    date: "Feb 26, 2025",
+    description: "Server-first routing with React Server Components and view transitions.",
+    content: "RSC routing enables server-first rendering where route handlers run on the server and produce a Flight payload. The client receives this payload and renders the UI without a full page reload. Combined with view transitions, navigation feels instant and animated.",
+    authors: [AUTHORS.seb, AUTHORS.jiachi, AUTHORS.zack],
+  },
+  {
+    slug: "composable-caching",
+    title: "Composable Caching",
+    date: "Jan 3, 2025",
+    description: "Segment-level caching with cache() boundaries for fine-grained control.",
+    content: "Composable caching lets you wrap route segments with cache() boundaries. Each cached segment stores its Flight payload independently. When a user navigates, only stale segments are re-rendered on the server — cached ones are served instantly from storage.",
+    authors: [AUTHORS.lee],
+  },
+  {
+    slug: "view-transitions",
+    title: "View Transitions",
+    date: "Dec 10, 2024",
+    description: "Declarative view transitions using React's experimental ViewTransition API.",
+    content: "The transition() DSL maps directly to React's <ViewTransition> component. By wrapping individual elements with matching names across pages, you get smooth shared element morphing — a title in a card list flies into the detail page header.",
+    authors: [AUTHORS.jiachi, AUTHORS.seb],
+  },
 ];
 
-// Gallery index — card grid with links to detail pages
-function GalleryIndex(ctx: HandlerContext) {
+// Avatar as a colored circle with initials (no image assets needed)
+function Avatar({ author, size = 36 }: { author: Author; size?: number }) {
+  const colors = ["#e94560", "#0ea5e9", "#22c55e", "#f59e0b", "#8b5cf6"];
+  const idx = author.handle.charCodeAt(0) % colors.length;
+  const initials = author.name.split(" ").map((n) => n[0]).join("");
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: "50%", background: colors[idx],
+      display: "inline-flex", alignItems: "center", justifyContent: "center",
+      color: "white", fontSize: size * 0.38, fontWeight: 600,
+      border: "2px solid white", flexShrink: 0,
+    }}>
+      {initials}
+    </div>
+  );
+}
+
+function BlogIndex(ctx: HandlerContext) {
   const meta = ctx.use(Meta);
-  meta({ title: "Gallery - React Experimental" });
+  meta({ title: "Blog - React Experimental" });
 
   return (
-    <main data-testid="gallery-index-page" style={{ padding: "1rem 0" }}>
-      <h1 data-testid="gallery-index-title" style={{ marginBottom: "1.5rem" }}>Gallery</h1>
-      <p style={{ marginBottom: "1.5rem", color: "#666" }}>
-        Click a card to see named shared transitions. The card morphs into the detail view.
-      </p>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
-        {galleryItems.map((item) => (
-          <Link key={item.id} to={href(`/gallery/${item.id}`)} style={{ textDecoration: "none" }}>
-            <VT name={`card-${item.id}`} share="gallery-morph">
-              <div data-testid={`gallery-card-${item.id}`} style={{
-                background: item.bg, borderRadius: "12px", padding: "1.5rem",
-                border: `2px solid ${item.color}`, color: "white", minHeight: "120px",
-                cursor: "pointer", transition: "transform 0.15s",
-              }}>
-                <h3 style={{ color: item.color, marginBottom: "0.5rem" }}>{item.title}</h3>
-                <p style={{ opacity: 0.7, fontSize: "0.9rem" }}>{item.desc}</p>
+    <main data-testid="blog-index-page">
+      <h1 data-testid="blog-index-title" style={{ fontSize: "2rem", marginBottom: "1.5rem" }}>
+        The Latest News
+      </h1>
+      <div style={{ display: "grid", gap: "1.5rem", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+        {POSTS.map((post) => (
+          <div key={post.slug} data-testid={`blog-card-${post.slug}`} style={{
+            border: "1px solid #e5e7eb", borderRadius: "12px", padding: "1.5rem",
+            display: "flex", flexDirection: "column", gap: "0.75rem",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <VT name={`date-${post.slug}`}>
+                <p style={{ color: "#6b7280", fontSize: "0.875rem" }}>{post.date}</p>
+              </VT>
+              <div style={{ display: "flex", marginLeft: "auto" }}>
+                {post.authors.map((author) => (
+                  <VT key={author.handle} name={`avatar-${post.slug}-${author.handle}`}>
+                    <div style={{ marginLeft: "-8px" }}>
+                      <Avatar author={author} size={32} />
+                    </div>
+                  </VT>
+                ))}
               </div>
+            </div>
+
+            <VT name={`title-${post.slug}`}>
+              <Link to={href(`/blog/${post.slug}`)} style={{ textDecoration: "none", color: "inherit", display: "inline-block" }}>
+                <h2 style={{ fontSize: "1.25rem", fontWeight: 600 }}>{post.title}</h2>
+              </Link>
             </VT>
-          </Link>
+
+            <VT name={`authors-${post.slug}`}>{null}</VT>
+
+            <p style={{ color: "#6b7280", fontSize: "0.9rem", lineHeight: 1.5 }}>{post.description}</p>
+
+            <Link to={href(`/blog/${post.slug}`)} style={{
+              display: "block", textAlign: "center", padding: "0.5rem 1rem",
+              background: "#f3f4f6", borderRadius: "6px", textDecoration: "none",
+              color: "#374151", fontSize: "0.875rem", marginTop: "auto",
+            }}>
+              Read More
+            </Link>
+          </div>
         ))}
       </div>
     </main>
   );
 }
 
-// Gallery detail — expanded view of a single item
-function GalleryDetail(ctx: HandlerContext) {
-  const { id } = ctx.params;
-  const item = galleryItems.find((i) => i.id === id) ?? galleryItems[0];
+function BlogDetail(ctx: HandlerContext<{ slug: string }>) {
+  const { slug } = ctx.params;
+  const post = POSTS.find((p) => p.slug === slug) ?? POSTS[0];
   const meta = ctx.use(Meta);
-  meta({ title: `${item.title} - Gallery` });
+  meta({ title: `${post.title} - Blog` });
 
   return (
-    <main data-testid="gallery-detail-page" style={{ padding: "1rem 0" }}>
-      <Link to={href("/gallery")} data-testid="gallery-back" style={{
-        display: "inline-block", marginBottom: "1rem", color: item.color,
-        textDecoration: "none", fontSize: "0.9rem",
+    <main data-testid="blog-detail-page">
+      <Link to={href("/blog")} data-testid="blog-back" style={{
+        color: "#3b82f6", textDecoration: "none", display: "inline-block", marginBottom: "1.5rem",
       }}>
-        &larr; Back to Gallery
+        &larr; Back to blog
       </Link>
-      <VT name={`card-${id}`} share="gallery-morph">
-        <div style={{
-          background: item.bg, borderRadius: "16px", padding: "2rem",
-          border: `2px solid ${item.color}`, color: "white", minHeight: "300px",
-        }}>
-          <h1 data-testid="gallery-detail-title" style={{
-            color: item.color, fontSize: "2.5rem", marginBottom: "1rem",
+
+      <VT name={`date-${slug}`}>
+        <time style={{ color: "#6b7280", display: "block", marginBottom: "0.5rem" }}>{post.date}</time>
+      </VT>
+
+      <div>
+        <VT name={`title-${slug}`}>
+          <h1 data-testid="blog-detail-title" style={{
+            fontSize: "2.5rem", fontWeight: 700, letterSpacing: "-0.02em",
+            marginBottom: "2rem", display: "inline-block",
           }}>
-            {item.title}
+            {post.title}
           </h1>
-          <p data-testid="gallery-detail-desc" style={{ fontSize: "1.2rem", opacity: 0.9, marginBottom: "1.5rem" }}>
-            {item.desc}
-          </p>
+        </VT>
+      </div>
+
+      <h2 style={{ color: "#6b7280", fontSize: "0.875rem", marginBottom: "0.75rem" }}>Posted by</h2>
+      <VT name={`authors-${slug}`}>
+        <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", marginBottom: "2rem" }}>
+          {post.authors.map((author) => (
+            <div key={author.handle} style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <VT name={`avatar-${slug}-${author.handle}`}>
+                <Avatar author={author} size={32} />
+              </VT>
+              <div style={{ fontSize: "0.875rem" }}>
+                <div>{author.name}</div>
+                <div style={{ color: "#6b7280" }}>@{author.handle}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </VT>
+
+      <div data-testid="blog-detail-content" style={{ lineHeight: 1.75, color: "#374151" }}>
+        {post.content}
+      </div>
+
+      <Comments slug={slug} />
+    </main>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Cards example — "Transform Cards"
+// Split layout with sidebar; card images morph into detail view
+// ---------------------------------------------------------------------------
+
+interface Place {
+  slug: string; name: string; description: string;
+  gradient: string; color: string;
+}
+
+const PLACES: Place[] = [
+  {
+    slug: "florence", name: "Florence", color: "#e94560",
+    gradient: "linear-gradient(135deg, #e94560 0%, #c62a46 50%, #8b1a30 100%)",
+    description: "A city in central Italy and the capital of the Tuscany region, known for its Renaissance art and architecture.",
+  },
+  {
+    slug: "xian", name: "Xi'an", color: "#22c55e",
+    gradient: "linear-gradient(135deg, #22c55e 0%, #16a34a 50%, #0d6e31 100%)",
+    description: "An ancient city in China with 2000 years of history, home to the Terracotta Army.",
+  },
+  {
+    slug: "barcelona", name: "Barcelona", color: "#0ea5e9",
+    gradient: "linear-gradient(135deg, #0ea5e9 0%, #0284c7 50%, #075985 100%)",
+    description: "A city on the coast of northeastern Spain, capital of Catalonia, famous for Gaudi's architecture.",
+  },
+  {
+    slug: "santamonica", name: "Santa Monica", color: "#f59e0b",
+    gradient: "linear-gradient(135deg, #f59e0b 0%, #d97706 50%, #92400e 100%)",
+    description: "A beachfront city in western Los Angeles County with iconic pier and vibrant boardwalk.",
+  },
+];
+
+function CardIndex(ctx: HandlerContext) {
+  const meta = ctx.use(Meta);
+  meta({ title: "Cards - React Experimental" });
+
+  return (
+    <main data-testid="card-index-page" style={{ display: "flex", gap: "2rem", margin: "-2rem", minHeight: "100vh" }}>
+      {/* Left sidebar */}
+      <VT name="card-sidebar">
+        <div style={{
+          width: "50%", background: "linear-gradient(135deg, #6ee7b7 0%, #34d399 100%)",
+          padding: "2rem", display: "flex", flexDirection: "column", justifyContent: "center",
+          position: "relative", overflow: "hidden",
+        }}>
           <div style={{
-            display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem",
-          }}>
-            <div style={{
-              background: `${item.color}22`, borderRadius: "8px", padding: "1rem",
-            }}>
-              <h4 style={{ color: item.color }}>Shared Element</h4>
-              <p style={{ opacity: 0.6, fontSize: "0.85rem", marginTop: "0.25rem" }}>
-                {"<VT name={`card-${id}`}>"} — same name in index card and detail
-              </p>
-            </div>
-            <div style={{
-              background: `${item.color}22`, borderRadius: "8px", padding: "1rem",
-            }}>
-              <h4 style={{ color: item.color }}>Morph</h4>
-              <p style={{ opacity: 0.6, fontSize: "0.85rem", marginTop: "0.25rem" }}>
-                share="gallery-morph" — card expands into detail view
-              </p>
-            </div>
+            position: "absolute", width: "300px", height: "300px", borderRadius: "50%",
+            background: "rgba(59,130,246,0.3)", filter: "blur(60px)",
+            top: "20%", left: "25%",
+          }} />
+          <div style={{ position: "relative", zIndex: 1 }}>
+            <p style={{ color: "#374151", fontWeight: 700, marginBottom: "1rem" }}>
+              {"<ViewTransition>"}
+            </p>
+            <Link to={href("/")} style={{ color: "#374151", textDecoration: "none", display: "block", marginBottom: "2rem" }}>
+              &larr; Back
+            </Link>
+            <h1 style={{ fontSize: "3rem", fontFamily: "Georgia, serif", color: "#1f2937" }}>
+              Explore<br />
+              <span style={{ fontSize: "2rem" }}>The cities.</span>
+            </h1>
+          </div>
+        </div>
+      </VT>
+
+      {/* Right content — card grid */}
+      <VT name="card-content">
+        <div style={{ width: "50%", padding: "2rem" }}>
+          <h2 style={{ color: "#6b7280", fontSize: "1.1rem", marginBottom: "1rem" }}>Spots</h2>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem" }}>
+            {PLACES.map((place) => (
+              <Link key={place.slug} to={href(`/cards/${place.slug}`)} style={{ textDecoration: "none", width: "calc(50% - 0.5rem)" }}>
+                <div data-testid={`card-${place.slug}`} style={{ position: "relative", borderRadius: "12px", overflow: "hidden", height: "200px", cursor: "pointer" }}>
+                  <VT name={`place-image-${place.slug}`}>
+                    <div style={{
+                      width: "100%", height: "100%", background: place.gradient,
+                      transition: "transform 0.15s", borderRadius: "12px",
+                    }} />
+                  </VT>
+                  <VT name={`place-name-${place.slug}`}>
+                    <div style={{
+                      position: "absolute", bottom: "12px", right: "12px",
+                      color: "white", fontSize: "1.5rem", fontWeight: 600,
+                      textShadow: "0 2px 8px rgba(0,0,0,0.4)",
+                    }}>
+                      {place.name}
+                    </div>
+                  </VT>
+                </div>
+              </Link>
+            ))}
           </div>
         </div>
       </VT>
@@ -245,7 +424,70 @@ function GalleryDetail(ctx: HandlerContext) {
   );
 }
 
-export const urlpatterns = urls(({ path, transition }) => [
+function CardDetail(ctx: HandlerContext<{ slug: string }>) {
+  const { slug } = ctx.params;
+  const place = PLACES.find((p) => p.slug === slug) ?? PLACES[0];
+  const meta = ctx.use(Meta);
+  meta({ title: `${place.name} - Cards` });
+
+  return (
+    <main data-testid="card-detail-page" style={{ margin: "-2rem", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ display: "flex", flexDirection: "row", width: "100%", padding: "2rem", gap: "2rem", alignItems: "center" }}>
+        {/* Main image area */}
+        <div style={{ position: "relative", flex: 1 }}>
+          <VT name="back-button">
+            <Link to={href("/cards")} data-testid="card-back" style={{
+              position: "absolute", top: "16px", left: "16px", zIndex: 2,
+              color: "white", textDecoration: "none", filter: "drop-shadow(2px 2px 6px rgba(0,0,0,0.5))",
+              fontSize: "1.5rem",
+            }}>
+              &larr;
+            </Link>
+          </VT>
+
+          <VT name={`place-image-${slug}`}>
+            <div style={{
+              width: "100%", height: "70vh", background: place.gradient,
+              borderRadius: "12px", position: "relative",
+            }} />
+          </VT>
+
+          <VT name={`place-name-${slug}`}>
+            <div style={{
+              position: "absolute", bottom: "16px", right: "16px",
+              color: "white", fontSize: "2rem", fontWeight: 600,
+              textShadow: "0 2px 12px rgba(0,0,0,0.4)",
+            }}>
+              {place.name}
+            </div>
+          </VT>
+        </div>
+
+        {/* Sidebar with all places */}
+        <VT name="card-content">
+          <div style={{ width: "220px", flexShrink: 0 }}>
+            <h3 data-testid="card-detail-title" style={{ fontSize: "1.1rem", color: "#374151", marginBottom: "1rem" }}>Spots</h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+              {PLACES.map((p) => (
+                <Link key={p.slug} to={href(`/cards/${p.slug}`)} style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                  <VT name={`place-image-${p.slug}`}>
+                    <div style={{
+                      width: "60px", height: "60px", borderRadius: "8px",
+                      background: p.gradient, flexShrink: 0,
+                    }} />
+                  </VT>
+                  <span style={{ color: "#374151", fontSize: "0.875rem" }}>{p.name}</span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </VT>
+      </div>
+    </main>
+  );
+}
+
+export const urlpatterns = urls(({ path, transition, loader }) => [
   path("/", HomePage, { name: "home" }),
   path("/about", AboutPage, { name: "about" }),
   path("/counter", CounterPage, { name: "counter" }),
@@ -267,21 +509,21 @@ export const urlpatterns = urls(({ path, transition }) => [
     }),
   ]),
 
-  // Named shared transitions — index and detail share a ViewTransition name
-  // so React morphs between them (shared element transition)
-  path("/gallery", GalleryIndex, { name: "gallery" }, () => [
-    transition({
-      name: "gallery-content",
-      enter: "fade-in",
-      exit: "fade-out",
-    }),
+  // Blog — wrapper-position transition() enables startTransition for all
+  // child routes at once. Element-level <VT> wrappers in JSX handle the
+  // shared morphing (title, date, avatars fly between index and detail).
+  transition(() => [
+    path("/blog", BlogIndex, { name: "blog" }),
+    path("/blog/:slug", BlogDetail, { name: "blog.detail" }, () => [
+      loader(CommentsLoader),
+    ]),
   ]),
-  path("/gallery/:id", GalleryDetail, { name: "gallery.detail" }, () => [
-    transition({
-      name: "gallery-content",
-      share: "gallery-morph",
-      enter: "slide-up",
-      exit: "slide-down",
-    }),
+
+  // Cards — per-route transition() (same effect, different DSL position).
+  path("/cards", CardIndex, { name: "cards" }, () => [
+    transition(),
+  ]),
+  path("/cards/:slug", CardDetail, { name: "cards.detail" }, () => [
+    transition(),
   ]),
 ]);

@@ -21,40 +21,30 @@ export function Document({ children }: { children: ReactNode }) {
               button:hover { background: #0051a8; }
               .counter { font-size: 2rem; margin: 1rem 0; }
 
-              /* Fade transitions */
+              /* Fade transitions
+                 animation-fill-mode: both keeps the final state until the
+                 pseudo-element is removed by the View Transitions API. Without
+                 it the old content snaps back to visible between animation end
+                 and pseudo-element teardown. */
               ::view-transition-new(.fade-in) {
-                animation: fade-in 300ms ease-in;
+                animation: fade-in 300ms ease-in both;
               }
               ::view-transition-old(.fade-out) {
-                animation: fade-out 300ms ease-out;
-              }
-
-              /* Slide-up/down transitions (gallery detail) */
-              ::view-transition-new(.slide-up) {
-                animation: slide-up 300ms ease-out;
-              }
-              ::view-transition-old(.slide-down) {
-                animation: slide-down 300ms ease-in;
-              }
-
-              /* Shared morph transition (gallery named) */
-              ::view-transition-group(.gallery-morph) {
-                animation-duration: 350ms;
-                animation-timing-function: ease-in-out;
+                animation: fade-out 300ms ease-out both;
               }
 
               /* Direction-aware slide transitions */
               ::view-transition-new(.slide-from-right) {
-                animation: slide-from-right 300ms ease-in-out;
+                animation: slide-from-right 300ms ease-in-out both;
               }
               ::view-transition-old(.slide-to-left) {
-                animation: slide-to-left 300ms ease-in-out;
+                animation: slide-to-left 300ms ease-in-out both;
               }
               ::view-transition-new(.slide-from-left) {
-                animation: slide-from-left 300ms ease-in-out;
+                animation: slide-from-left 300ms ease-in-out both;
               }
               ::view-transition-old(.slide-to-right) {
-                animation: slide-to-right 300ms ease-in-out;
+                animation: slide-to-right 300ms ease-in-out both;
               }
 
               @keyframes fade-in {
@@ -64,14 +54,6 @@ export function Document({ children }: { children: ReactNode }) {
               @keyframes fade-out {
                 from { opacity: 1; }
                 to { opacity: 0; }
-              }
-              @keyframes slide-up {
-                from { transform: translateY(30px); opacity: 0; }
-                to { transform: translateY(0); opacity: 1; }
-              }
-              @keyframes slide-down {
-                from { transform: translateY(0); opacity: 1; }
-                to { transform: translateY(30px); opacity: 0; }
               }
               @keyframes slide-from-right {
                 from { transform: translateX(100%); }
@@ -102,7 +84,8 @@ export function Document({ children }: { children: ReactNode }) {
           <Link to={href("/prerender")} data-testid="nav-prerender">Prerender</Link>
           <Link to={href("/transition-a")} data-testid="nav-transition-a">Slide A</Link>
           <Link to={href("/transition-b")} data-testid="nav-transition-b">Slide B</Link>
-          <Link to={href("/gallery")} data-testid="nav-gallery">Gallery</Link>
+          <Link to={href("/blog")} data-testid="nav-blog">Blog</Link>
+          <Link to={href("/cards")} data-testid="nav-cards">Cards</Link>
         </nav>
         {children}
       </body>

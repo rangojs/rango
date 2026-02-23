@@ -95,77 +95,145 @@ test.describe("transition DSL (dev)", () => {
   });
 });
 
-test.describe("gallery named transitions (dev)", () => {
+test.describe("blog shared transitions (dev)", () => {
   const f = useFixture({
     root: ".",
     mode: "dev",
   });
 
-  test("should render gallery index on direct visit", async ({ page }) => {
+  test("should render blog index on direct visit", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/gallery"));
+    await page.goto(f.url("/blog"));
     await waitForHydration(page);
 
-    await expect(testId(page, "gallery-index-page")).toBeVisible();
-    await expect(testId(page, "gallery-index-title")).toHaveText("Gallery");
+    await expect(testId(page, "blog-index-page")).toBeVisible();
+    await expect(testId(page, "blog-index-title")).toHaveText("The Latest News");
   });
 
-  test("should render gallery detail on direct visit", async ({ page }) => {
+  test("should render blog detail on direct visit", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/gallery/1"));
+    await page.goto(f.url("/blog/rsc-routing"));
     await waitForHydration(page);
 
-    await expect(testId(page, "gallery-detail-page")).toBeVisible();
-    await expect(testId(page, "gallery-detail-title")).toHaveText("Sunset");
+    await expect(testId(page, "blog-detail-page")).toBeVisible();
+    await expect(testId(page, "blog-detail-title")).toHaveText("RSC Routing");
   });
 
-  test("should navigate from gallery index to detail via card click", async ({
+  test("should navigate from blog index to detail via card click", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/gallery"));
+    await page.goto(f.url("/blog"));
     await waitForHydration(page);
-    await expect(testId(page, "gallery-index-page")).toBeVisible();
+    await expect(testId(page, "blog-index-page")).toBeVisible();
 
     // Click a card to navigate to detail
     await using __ = await expectNoReload(page);
-    await testId(page, "gallery-card-2").click();
-    await expect(page).toHaveURL(/\/gallery\/2/);
-    await expect(testId(page, "gallery-detail-page")).toBeVisible();
-    await expect(testId(page, "gallery-detail-title")).toHaveText("Ocean");
+    await testId(page, "blog-card-composable-caching").locator("a").first().click();
+    await expect(page).toHaveURL(/\/blog\/composable-caching/);
+    await expect(testId(page, "blog-detail-page")).toBeVisible();
+    await expect(testId(page, "blog-detail-title")).toHaveText("Composable Caching");
   });
 
   test("should navigate back from detail to index", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/gallery"));
+    await page.goto(f.url("/blog"));
     await waitForHydration(page);
 
     // Go to detail
-    await testId(page, "gallery-card-3").click();
-    await expect(page).toHaveURL(/\/gallery\/3/);
-    await expect(testId(page, "gallery-detail-title")).toHaveText("Forest");
+    await testId(page, "blog-card-view-transitions").locator("a").first().click();
+    await expect(page).toHaveURL(/\/blog\/view-transitions/);
+    await expect(testId(page, "blog-detail-title")).toHaveText("View Transitions");
 
     // Click back link
     await using __ = await expectNoReload(page);
-    await testId(page, "gallery-back").click();
-    await expect(page).toHaveURL(/\/gallery$/);
-    await expect(testId(page, "gallery-index-page")).toBeVisible();
+    await testId(page, "blog-back").click();
+    await expect(page).toHaveURL(/\/blog$/);
+    await expect(testId(page, "blog-index-page")).toBeVisible();
   });
 
-  test("should navigate from home to gallery", async ({ page }) => {
+  test("should navigate from home to blog", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/"));
     await waitForHydration(page);
 
     await using __ = await expectNoReload(page);
-    await testId(page, "nav-gallery").click();
-    await expect(page).toHaveURL(/\/gallery$/);
-    await expect(testId(page, "gallery-index-page")).toBeVisible();
+    await testId(page, "nav-blog").click();
+    await expect(page).toHaveURL(/\/blog$/);
+    await expect(testId(page, "blog-index-page")).toBeVisible();
+  });
+});
+
+test.describe("cards shared transitions (dev)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "dev",
+  });
+
+  test("should render card index on direct visit", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cards"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "card-index-page")).toBeVisible();
+  });
+
+  test("should render card detail on direct visit", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cards/florence"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "card-detail-page")).toBeVisible();
+    await expect(testId(page, "card-detail-title")).toHaveText("Spots");
+  });
+
+  test("should navigate from card index to detail via card click", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cards"));
+    await waitForHydration(page);
+    await expect(testId(page, "card-index-page")).toBeVisible();
+
+    // Click a card to navigate to detail
+    await using __ = await expectNoReload(page);
+    await testId(page, "card-barcelona").click();
+    await expect(page).toHaveURL(/\/cards\/barcelona/);
+    await expect(testId(page, "card-detail-page")).toBeVisible();
+  });
+
+  test("should navigate back from detail to index", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cards/xian"));
+    await waitForHydration(page);
+    await expect(testId(page, "card-detail-page")).toBeVisible();
+
+    // Click back arrow
+    await using __ = await expectNoReload(page);
+    await testId(page, "card-back").click();
+    await expect(page).toHaveURL(/\/cards$/);
+    await expect(testId(page, "card-index-page")).toBeVisible();
+  });
+
+  test("should navigate from home to cards", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/"));
+    await waitForHydration(page);
+
+    await using __ = await expectNoReload(page);
+    await testId(page, "nav-cards").click();
+    await expect(page).toHaveURL(/\/cards$/);
+    await expect(testId(page, "card-index-page")).toBeVisible();
   });
 });
 
@@ -233,28 +301,51 @@ test.describe("transition DSL (production)", () => {
     await expect(testId(page, "transition-a-page")).toBeVisible();
   });
 
-  test("should render gallery index in production", async ({ page }) => {
+  test("should render blog index in production", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/gallery"));
+    await page.goto(f.url("/blog"));
     await waitForHydration(page);
 
-    await expect(testId(page, "gallery-index-page")).toBeVisible();
-    await expect(testId(page, "gallery-index-title")).toHaveText("Gallery");
+    await expect(testId(page, "blog-index-page")).toBeVisible();
+    await expect(testId(page, "blog-index-title")).toHaveText("The Latest News");
   });
 
-  test("should navigate from gallery to detail in production", async ({
+  test("should navigate from blog to detail in production", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/gallery"));
+    await page.goto(f.url("/blog"));
     await waitForHydration(page);
 
     await using __ = await expectNoReload(page);
-    await testId(page, "gallery-card-1").click();
-    await expect(page).toHaveURL(/\/gallery\/1/);
-    await expect(testId(page, "gallery-detail-page")).toBeVisible();
-    await expect(testId(page, "gallery-detail-title")).toHaveText("Sunset");
+    await testId(page, "blog-card-rsc-routing").locator("a").first().click();
+    await expect(page).toHaveURL(/\/blog\/rsc-routing/);
+    await expect(testId(page, "blog-detail-page")).toBeVisible();
+    await expect(testId(page, "blog-detail-title")).toHaveText("RSC Routing");
+  });
+
+  test("should render card index in production", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cards"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "card-index-page")).toBeVisible();
+  });
+
+  test("should navigate from cards to detail in production", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/cards"));
+    await waitForHydration(page);
+
+    await using __ = await expectNoReload(page);
+    await testId(page, "card-florence").click();
+    await expect(page).toHaveURL(/\/cards\/florence/);
+    await expect(testId(page, "card-detail-page")).toBeVisible();
   });
 });
