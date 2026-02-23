@@ -5,7 +5,14 @@ import type {
   ResolvedSegment,
 } from "./types.js";
 import type { ReactNode } from "react";
+import * as React from "react";
 import { startTransition } from "react";
+
+// addTransitionType is only available in React experimental
+const addTransitionType: ((type: string) => void) | undefined =
+  "addTransitionType" in React
+    ? (React as any).addTransitionType
+    : undefined;
 import type { RenderSegmentsOptions } from "../segment-system.js";
 import { reconcileSegments } from "./segment-reconciler.js";
 import type { ReconcileActor } from "./segment-reconciler.js";
@@ -276,13 +283,27 @@ export function createPartialUpdater(
           // When rendering from cache with empty diff, we want to use cachedHandleData instead.
           const { handles: _unusedHandles, ...metadataWithoutHandles } =
             payload.metadata!;
-          onUpdate({
+          const cachedUpdate = {
             root: newTree,
             metadata: {
               ...metadataWithoutHandles,
               cachedHandleData: targetCacheHandleData,
             },
-          });
+          };
+
+          const cachedHasTransition = existingSegments.some(
+            (s) => s.transition,
+          );
+          if (cachedHasTransition) {
+            startTransition(() => {
+              if (addTransitionType) {
+                addTransitionType("navigation");
+              }
+              onUpdate(cachedUpdate);
+            });
+          } else {
+            onUpdate(cachedUpdate);
+          }
 
           debugLog("[Browser] Navigation complete (rendered from cache)");
           return streamComplete;
@@ -452,8 +473,26 @@ export function createPartialUpdater(
       // Emit update to trigger React render
       // For stale revalidation: wait for stream to complete (loaders resolved), then update
       // For actions: wrap in startTransition to avoid UI flickering
+      // For transitions: wrap in startTransition + addTransitionType for ViewTransition
+      const hasTransition = reconciled.mainSegments.some(
+        (s) => s.transition,
+      );
+
       if (isAction || staleRevalidation) {
         startTransition(() => {
+          if (hasTransition && addTransitionType) {
+            addTransitionType("action");
+          }
+          onUpdate({
+            root: newTree,
+            metadata: payload.metadata!,
+          });
+        });
+      } else if (hasTransition) {
+        startTransition(() => {
+          if (addTransitionType) {
+            addTransitionType("navigation");
+          }
           onUpdate({
             root: newTree,
             metadata: payload.metadata!,
@@ -507,9 +546,17 @@ export function createPartialUpdater(
       // Emit update to trigger React render
       // For stale revalidation: wait for stream to complete, then update
       // For actions: wrap in startTransition to avoid UI flickering
+      // For transitions: wrap in startTransition + addTransitionType
+      const fullHasTransition = segments.some(
+        (s: ResolvedSegment) => s.transition,
+      );
+
       if (staleRevalidation) {
         await rawStreamComplete;
         startTransition(() => {
+          if (fullHasTransition && addTransitionType) {
+            addTransitionType("action");
+          }
           onUpdate({
             root: newTree,
             metadata: payload.metadata!,
@@ -517,6 +564,19 @@ export function createPartialUpdater(
         });
       } else if (isAction) {
         startTransition(async () => {
+          if (fullHasTransition && addTransitionType) {
+            addTransitionType("action");
+          }
+          onUpdate({
+            root: newTree,
+            metadata: payload.metadata!,
+          });
+        });
+      } else if (fullHasTransition) {
+        startTransition(() => {
+          if (addTransitionType) {
+            addTransitionType("navigation");
+          }
           onUpdate({
             root: newTree,
             metadata: payload.metadata!,

@@ -17,11 +17,19 @@ import type {
   LoaderFn,
 } from "./types.js";
 import type { MiddlewareFn } from "./router/middleware.js";
-import { getRequestContext } from "./server/request-context.js";
 import {
   registerFetchableLoader,
   getFetchableLoader,
 } from "./server/fetchable-loader-store.js";
+import { executeLoaderAction } from "./loader-action-shared.js";
+
+// Side-effect import: ensures fetchable-loader-action.ts (a "use server" module)
+// is traversed by the RSC build and added to serverReferenceMetaMap. Without this,
+// the module would only be imported from client stubs (SSR/client environments) and
+// never enter the RSC module graph. Client-imported loaders call
+// invokeFetchableLoaderAction as a server action, so loadServerAction() must be
+// able to find it at runtime via the serverReferences map.
+import "./fetchable-loader-action.js";
 
 export { getFetchableLoader };
 
@@ -75,88 +83,21 @@ export function createLoader<T>(
     registerFetchableLoader(loaderId, fn, middleware);
   }
 
-  // Create server action for form-based fetching
-  // This action is serializable and can be passed to client components
-  // The loaderId is captured in closure (it's a primitive string)
+  // Inline server action for Flight-serialized loaders (passed as props).
+  // This action is only reachable when the loader object is serialized via
+  // RSC Flight (server -> client component props). The RSC build traverses
+  // loader.rsc.ts and discovers this "use server" function, so it appears
+  // in the action manifest.
   //
-  // IMPORTANT: The signature must be (prevState, formData) for useActionState compatibility.
-  // When used with useActionState, React passes the previous state as the first argument.
-  // The prevState is ignored here since loaders are stateless data fetchers.
+  // Client-imported loaders (direct import in "use client" files) use the
+  // Vite-generated stub which wraps invokeFetchableLoaderAction instead.
+  // See fetchable-loader-action.ts and expose-internal-ids.ts.
   async function loaderAction(
     _prevState: Awaited<T> | null,
-    formData: FormData
+    formData: FormData,
   ): Promise<Awaited<T>> {
     "use server";
-
-    // Look up the loader from registry by $$id
-    const registered = getFetchableLoader(loaderId);
-    if (!registered) {
-      throw new Error(`Loader "${loaderId}" not found in registry`);
-    }
-
-    // Get request context (env, request, url, variables) from the RSC handler
-    // This is set by runWithRequestContext in rsc/index.ts when executing actions
-    const requestCtx = getRequestContext();
-
-    // Convert FormData to params object
-    const params: Record<string, string> = {};
-    formData.forEach((value, key) => {
-      if (typeof value === "string") {
-        params[key] = value;
-      }
-    });
-
-    // Use real request/url from context, or fall back to synthetic for edge cases
-    const actionUrl = requestCtx?.url ?? new URL("http://localhost/");
-    const actionRequest = requestCtx?.request ?? new Request(actionUrl, { method: "POST" });
-    const env = requestCtx?.env ?? {};
-
-    // Merge variables from request context (app-level middleware) with loader-specific variables
-    // requestCtx.var is the shared variables object from the handler
-    const variables: Record<string, any> = { ...requestCtx?.var };
-
-    // Execute middleware for auth checks, headers, cookies
-    // Headers/cookies set on ctx.res will be merged into the final response
-    if (registered.middleware.length > 0 && requestCtx?.res) {
-      const { executeServerActionMiddleware } = await import(
-        "./router/middleware.js"
-      );
-      const { createReverseFunction } = await import(
-        "./router/handler-context.js"
-      );
-      const { getGlobalRouteMap } = await import("./route-map-builder.js");
-      await executeServerActionMiddleware(
-        registered.middleware,
-        actionRequest,
-        env,
-        params,
-        variables,
-        requestCtx.res,
-        createReverseFunction(getGlobalRouteMap()),
-      );
-    }
-
-    // Build context using createHandlerContext for consistency with route handlers
-    // Variables are now accessed from request context via getRequestContext()
-    const { createHandlerContext } = await import("./router/handler-context.js");
-    const baseCtx = createHandlerContext(
-      params,
-      actionRequest,
-      actionUrl.searchParams,
-      actionUrl.pathname,
-      actionUrl,
-      env
-    );
-
-    // Extend with server action specific properties
-    const ctx: any = {
-      ...baseCtx,
-      method: "POST",
-      formData,
-    };
-
-    // Execute and return result
-    return registered.fn(ctx);
+    return executeLoaderAction(loaderId, formData) as Promise<Awaited<T>>;
   }
 
   // Return a plain object with action for form-based fetching.

@@ -762,6 +762,162 @@ export const helperFn = () => "not a loader";
 });
 
 // ---------------------------------------------------------------------------
+// Fetchable loader client stubs (action property)
+// ---------------------------------------------------------------------------
+
+describe("exposeInternalIds - fetchable loader client stubs", () => {
+  it("generates client stub with action for fetchable loader (export-only file)", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+export const MyLoader = createLoader(async () => ({ ok: true }), true);
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain('__brand: "loader"');
+    expect(result.code).toContain("$$id");
+    // Fetchable loaders include an action wrapper that delegates to the
+    // invokeFetchableLoaderAction server action.
+    expect(result.code).toContain("action:");
+    expect(result.code).toContain("__ifa");
+    expect(result.code).toContain("invokeFetchableLoaderAction");
+    // No server code
+    expect(result.code).not.toContain("async () =>");
+  });
+
+  it("generates client stub without action for non-fetchable loader", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+export const MyLoader = createLoader(async () => ({ ok: true }));
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain('__brand: "loader"');
+    expect(result.code).not.toContain("action:");
+    expect(result.code).not.toContain("__ifa");
+    expect(result.code).not.toContain("invokeFetchableLoaderAction");
+  });
+
+  it("generates mixed stubs when file has both fetchable and non-fetchable loaders", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+export const ReadOnly = createLoader(async () => ({ data: "read" }));
+export const Fetchable = createLoader(async () => ({ data: "write" }), true);
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    // Fetchable loader gets action wrapper, non-fetchable does not
+    expect(result.code).toContain("invokeFetchableLoaderAction");
+    expect(result.code).toMatch(/Fetchable\s*=\s*\{[^}]*action:/);
+    expect(result.code).not.toMatch(/ReadOnly\s*=\s*\{[^}]*action:/);
+    // Both stubs have __brand and $$id
+    expect(result.code).toMatch(/ReadOnly\s*=\s*\{[^}]*__brand/);
+    expect(result.code).toMatch(/Fetchable\s*=\s*\{[^}]*__brand/);
+  });
+
+  it("client stub includes correct loader ID in dev mode", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+export const CartLoader = createLoader(async () => ({ items: [] }), true);
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    // Stub should reference the correct loader ID
+    expect(result.code).toContain("src/urls.tsx#CartLoader");
+    // The ID appears twice: once in $$id and once in the action wrapper
+    const idOccurrences = result.code.match(/src\/urls\.tsx#CartLoader/g);
+    expect(idOccurrences).toHaveLength(2);
+  });
+
+  it("client stub includes correct loader ID in build mode", () => {
+    const plugin = createPlugin({ forceBuild: true });
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+export const CartLoader = createLoader(async () => ({ items: [] }), true);
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    // Build mode uses hashed IDs, appears twice: $$id and action wrapper
+    const ids = result.code.match(/[0-9a-f]{8}#CartLoader/g);
+    expect(ids).toHaveLength(2);
+  });
+
+  it("does not inject action for fetchable loader in mixed file (transformLoaders path)", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    // Mixed file: has a non-loader export, so whole-file stub won't apply
+    const code = `import { createLoader } from "@rangojs/router";
+export const MyLoader = createLoader(async () => ({ ok: true }), true);
+export const PAGE_TITLE = "docs";
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    // The non-loader export is preserved (not whole-file replaced)
+    expect(result.code).toContain("PAGE_TITLE");
+    // No action injection in transformLoaders path (only whole-file stubs get it)
+    expect(result.code).not.toContain("MyLoader.action");
+    expect(result.code).not.toContain("invokeFetchableLoaderAction");
+    // $$id is still injected
+    expect(result.code).toContain("MyLoader.$$id");
+  });
+
+  it("does not inject action for non-fetchable loader in mixed file", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+export const MyLoader = createLoader(async () => ({ ok: true }));
+export const PAGE_TITLE = "docs";
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    expect(result.code).toContain("PAGE_TITLE");
+    expect(result.code).not.toContain(".action");
+    expect(result.code).not.toContain("invokeFetchableLoaderAction");
+  });
+
+  it("does not inject action on server (RSC env)", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+export const MyLoader = createLoader(async () => ({ ok: true }), true);
+export const PAGE_TITLE = "docs";
+`;
+    const result = plugin.transform.call(rscCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    // Server side should NOT have the fetchable action import
+    expect(result.code).not.toContain("invokeFetchableLoaderAction");
+    expect(result.code).not.toContain("__ifa");
+  });
+
+  it("generates client stub for fetchable loader using options object", () => {
+    const plugin = createPlugin();
+    initDev(plugin);
+
+    const code = `import { createLoader } from "@rangojs/router";
+export const Guarded = createLoader(async () => ({ ok: true }), { middleware: [authMiddleware] });
+`;
+    const result = plugin.transform.call(clientCtx(), code, FILE_ID);
+    expect(result).toBeDefined();
+    // Client stub has __brand, $$id, and action wrapper (options object makes it fetchable)
+    expect(result.code).toContain('__brand: "loader"');
+    expect(result.code).toContain("$$id");
+    expect(result.code).toContain("action:");
+    expect(result.code).toContain("__ifa");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Whole-file handler stubs for const + export { X } pattern
 // ---------------------------------------------------------------------------
 

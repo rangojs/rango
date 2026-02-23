@@ -2,8 +2,13 @@
  * rsc-router/loader (client version)
  *
  * Client-only stub for createLoader. Returns a minimal loader definition
- * that can be passed to hooks like useLoader. The actual loader function
- * is not included - it only exists on the server.
+ * ({ __brand, $$id }) that can be passed to hooks like useLoader.
+ * The actual loader function is not included -- it only exists on the server.
+ *
+ * For export-only loader files, the Vite plugin replaces the entire file with
+ * object literals (bypassing this function). Those stubs include an action
+ * property for fetchable loaders that wraps invokeFetchableLoaderAction.
+ * This function only runs when loaders are in mixed files (not export-only).
  *
  * The $$id is injected by the Vite exposeInternalIds plugin.
  */
@@ -33,15 +38,19 @@ export function createLoader<T>(
 
 // Implementation - client stub that just returns the loader definition
 // The $$id parameter is injected by Vite plugin, not user-provided
+//
+// NOTE: For export-only loader files, the Vite plugin replaces the entire
+// file with object literals (bypassing this function). This function only
+// runs when loaders are in mixed files (not export-only).
 export function createLoader<T>(
   _fn: LoaderFn<T, Record<string, string | undefined>, any>,
   _fetchable?: true | FetchableLoaderOptions,
   __injectedId?: string
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>> {
-  // Client only needs the $$id for identification
-  // The actual loader function is only used on the server
+  const loaderId = __injectedId || "";
+
   return {
     __brand: "loader",
-    $$id: __injectedId || "",
+    $$id: loaderId,
   };
 }
