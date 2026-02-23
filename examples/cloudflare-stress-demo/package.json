@@ -23,7 +23,7 @@
     "@playwright/test": "^1.57.0",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
-    "@vitejs/plugin-react": "latest",
+    "@vitejs/plugin-react": "catalog:",
     "tinyexec": "^0.3.2",
     "typescript": "^5.7.0",
     "vite": "catalog:",
