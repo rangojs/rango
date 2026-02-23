@@ -6,16 +6,8 @@ import { Counter } from "./components/Counter.js";
 import { Comments } from "./components/Comments.js";
 import { getCounter } from "./actions/counter.js";
 import { CommentsLoader } from "./loaders/comments.js";
-import * as React from "react";
+import { ViewTransition } from "react";
 import { ARTICLES } from "./data/articles.js";
-
-// React experimental ViewTransition for element-level shared transitions.
-// Wrapping individual elements with the same `name` across pages creates
-// a shared element morph (the card title flies into the detail title).
-const VT: React.FC<{
-  name?: string; share?: string; enter?: string; exit?: string;
-  children: React.ReactNode;
-}> = "ViewTransition" in React ? (React as any).ViewTransition : React.Fragment;
 
 function HomePage(ctx: HandlerContext) {
   const meta = ctx.use(Meta);
@@ -63,12 +55,7 @@ async function CounterPage(ctx: HandlerContext) {
 
 // Static handler -- centered card layout with shared ViewTransition elements
 // that morph into the prerender page's left-aligned layout on navigation.
-// Note: Static() handlers are AST-extracted into virtual modules, so we must
-// define ViewTransition inline (module-level VT alias is not available).
 const StaticPage = Static(() => {
-  const ViewTransition = "ViewTransition" in React
-    ? (React as any).ViewTransition : React.Fragment;
-
   return (
     <main data-testid="static-page" style={{
       display: "flex", flexDirection: "column", alignItems: "center",
@@ -135,9 +122,6 @@ const StaticPage = Static(() => {
 // The header morphs from the Static page's centered card layout.
 // Each article card has shared elements that expand into the detail view.
 const PrerenderedPage = Prerender(async () => {
-  const ViewTransition = "ViewTransition" in React
-    ? (React as any).ViewTransition : React.Fragment;
-
   return (
     <main data-testid="prerender-page" style={{ minHeight: "60vh" }}>
       <div style={{ display: "flex", flexDirection: "column", gap: "1rem", marginBottom: "2rem" }}>
@@ -243,8 +227,6 @@ const PrerenderedArticle = Prerender(
     { slug: "world" },
   ],
   async (ctx) => {
-    const ViewTransition = "ViewTransition" in React
-      ? (React as any).ViewTransition : React.Fragment;
     const article = ARTICLES.find((a) => a.slug === ctx.params.slug);
 
     if (!article) {
@@ -450,27 +432,27 @@ function BlogIndex(ctx: HandlerContext) {
             display: "flex", flexDirection: "column", gap: "0.75rem",
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <VT name={`date-${post.slug}`}>
+              <ViewTransition name={`date-${post.slug}`}>
                 <p style={{ color: "#6b7280", fontSize: "0.875rem" }}>{post.date}</p>
-              </VT>
+              </ViewTransition>
               <div style={{ display: "flex", marginLeft: "auto" }}>
                 {post.authors.map((author) => (
-                  <VT key={author.handle} name={`avatar-${post.slug}-${author.handle}`}>
+                  <ViewTransition key={author.handle} name={`avatar-${post.slug}-${author.handle}`}>
                     <div style={{ marginLeft: "-8px" }}>
                       <Avatar author={author} size={32} />
                     </div>
-                  </VT>
+                  </ViewTransition>
                 ))}
               </div>
             </div>
 
-            <VT name={`title-${post.slug}`}>
+            <ViewTransition name={`title-${post.slug}`}>
               <Link to={href(`/blog/${post.slug}`)} style={{ textDecoration: "none", color: "inherit", display: "inline-block" }}>
                 <h2 style={{ fontSize: "1.25rem", fontWeight: 600 }}>{post.title}</h2>
               </Link>
-            </VT>
+            </ViewTransition>
 
-            <VT name={`authors-${post.slug}`}>{null}</VT>
+            <ViewTransition name={`authors-${post.slug}`}>{null}</ViewTransition>
 
             <p style={{ color: "#6b7280", fontSize: "0.9rem", lineHeight: 1.5 }}>{post.description}</p>
 
@@ -502,29 +484,29 @@ function BlogDetail(ctx: HandlerContext<{ slug: string }>) {
         &larr; Back to blog
       </Link>
 
-      <VT name={`date-${slug}`}>
+      <ViewTransition name={`date-${slug}`}>
         <time style={{ color: "#6b7280", display: "block", marginBottom: "0.5rem" }}>{post.date}</time>
-      </VT>
+      </ViewTransition>
 
       <div>
-        <VT name={`title-${slug}`}>
+        <ViewTransition name={`title-${slug}`}>
           <h1 data-testid="blog-detail-title" style={{
             fontSize: "2.5rem", fontWeight: 700, letterSpacing: "-0.02em",
             marginBottom: "2rem", display: "inline-block",
           }}>
             {post.title}
           </h1>
-        </VT>
+        </ViewTransition>
       </div>
 
       <h2 style={{ color: "#6b7280", fontSize: "0.875rem", marginBottom: "0.75rem" }}>Posted by</h2>
-      <VT name={`authors-${slug}`}>
+      <ViewTransition name={`authors-${slug}`}>
         <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", marginBottom: "2rem" }}>
           {post.authors.map((author) => (
             <div key={author.handle} style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              <VT name={`avatar-${slug}-${author.handle}`}>
+              <ViewTransition name={`avatar-${slug}-${author.handle}`}>
                 <Avatar author={author} size={32} />
-              </VT>
+              </ViewTransition>
               <div style={{ fontSize: "0.875rem" }}>
                 <div>{author.name}</div>
                 <div style={{ color: "#6b7280" }}>@{author.handle}</div>
@@ -532,7 +514,7 @@ function BlogDetail(ctx: HandlerContext<{ slug: string }>) {
             </div>
           ))}
         </div>
-      </VT>
+      </ViewTransition>
 
       <div data-testid="blog-detail-content" style={{ lineHeight: 1.75, color: "#374151" }}>
         {post.content}
@@ -576,9 +558,6 @@ const PLACES: Place[] = [
   },
 ];
 
-// Article data imported from separate module so Prerender/Static handler
-// extraction can resolve it (AST extraction preserves imports, not locals).
-
 function CardIndex(ctx: HandlerContext) {
   const meta = ctx.use(Meta);
   meta({ title: "Cards - React Experimental" });
@@ -586,7 +565,7 @@ function CardIndex(ctx: HandlerContext) {
   return (
     <main data-testid="card-index-page" style={{ display: "flex", gap: "2rem", margin: "-2rem", minHeight: "100vh" }}>
       {/* Left sidebar */}
-      <VT name="card-sidebar">
+      <ViewTransition name="card-sidebar">
         <div style={{
           width: "50%", background: "linear-gradient(135deg, #6ee7b7 0%, #34d399 100%)",
           padding: "2rem", display: "flex", flexDirection: "column", justifyContent: "center",
@@ -610,23 +589,23 @@ function CardIndex(ctx: HandlerContext) {
             </h1>
           </div>
         </div>
-      </VT>
+      </ViewTransition>
 
       {/* Right content — card grid */}
-      <VT name="card-content">
+      <ViewTransition name="card-content">
         <div style={{ width: "50%", padding: "2rem" }}>
           <h2 style={{ color: "#6b7280", fontSize: "1.1rem", marginBottom: "1rem" }}>Spots</h2>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem" }}>
             {PLACES.map((place) => (
               <Link key={place.slug} to={href(`/cards/${place.slug}`)} style={{ textDecoration: "none", width: "calc(50% - 0.5rem)" }}>
                 <div data-testid={`card-${place.slug}`} style={{ position: "relative", borderRadius: "12px", overflow: "hidden", height: "200px", cursor: "pointer" }}>
-                  <VT name={`place-image-${place.slug}`}>
+                  <ViewTransition name={`place-image-${place.slug}`}>
                     <div style={{
                       width: "100%", height: "100%", background: place.gradient,
                       transition: "transform 0.15s", borderRadius: "12px",
                     }} />
-                  </VT>
-                  <VT name={`place-name-${place.slug}`}>
+                  </ViewTransition>
+                  <ViewTransition name={`place-name-${place.slug}`}>
                     <div style={{
                       position: "absolute", bottom: "12px", right: "12px",
                       color: "white", fontSize: "1.5rem", fontWeight: 600,
@@ -634,13 +613,13 @@ function CardIndex(ctx: HandlerContext) {
                     }}>
                       {place.name}
                     </div>
-                  </VT>
+                  </ViewTransition>
                 </div>
               </Link>
             ))}
           </div>
         </div>
-      </VT>
+      </ViewTransition>
     </main>
   );
 }
@@ -656,7 +635,7 @@ function CardDetail(ctx: HandlerContext<{ slug: string }>) {
       <div style={{ display: "flex", flexDirection: "row", width: "100%", padding: "2rem", gap: "2rem", alignItems: "center" }}>
         {/* Main image area */}
         <div style={{ position: "relative", flex: 1 }}>
-          <VT name="back-button">
+          <ViewTransition name="back-button">
             <Link to={href("/cards")} data-testid="card-back" style={{
               position: "absolute", top: "16px", left: "16px", zIndex: 2,
               color: "white", textDecoration: "none", filter: "drop-shadow(2px 2px 6px rgba(0,0,0,0.5))",
@@ -664,16 +643,16 @@ function CardDetail(ctx: HandlerContext<{ slug: string }>) {
             }}>
               &larr;
             </Link>
-          </VT>
+          </ViewTransition>
 
-          <VT name={`place-image-${slug}`}>
+          <ViewTransition name={`place-image-${slug}`}>
             <div style={{
               width: "100%", height: "70vh", background: place.gradient,
               borderRadius: "12px", position: "relative",
             }} />
-          </VT>
+          </ViewTransition>
 
-          <VT name={`place-name-${slug}`}>
+          <ViewTransition name={`place-name-${slug}`}>
             <div style={{
               position: "absolute", bottom: "16px", right: "16px",
               color: "white", fontSize: "2rem", fontWeight: 600,
@@ -681,28 +660,28 @@ function CardDetail(ctx: HandlerContext<{ slug: string }>) {
             }}>
               {place.name}
             </div>
-          </VT>
+          </ViewTransition>
         </div>
 
         {/* Sidebar with all places */}
-        <VT name="card-content">
+        <ViewTransition name="card-content">
           <div style={{ width: "220px", flexShrink: 0 }}>
             <h3 data-testid="card-detail-title" style={{ fontSize: "1.1rem", color: "#374151", marginBottom: "1rem" }}>Spots</h3>
             <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
               {PLACES.map((p) => (
                 <Link key={p.slug} to={href(`/cards/${p.slug}`)} style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: "0.75rem" }}>
-                  <VT name={`place-image-${p.slug}`}>
+                  <ViewTransition name={`place-image-${p.slug}`}>
                     <div style={{
                       width: "60px", height: "60px", borderRadius: "8px",
                       background: p.gradient, flexShrink: 0,
                     }} />
-                  </VT>
+                  </ViewTransition>
                   <span style={{ color: "#374151", fontSize: "0.875rem" }}>{p.name}</span>
                 </Link>
               ))}
             </div>
           </div>
-        </VT>
+        </ViewTransition>
       </div>
     </main>
   );
@@ -733,7 +712,7 @@ export const urlpatterns = urls(({ path, transition, loader }) => [
   ]),
 
   // Blog — wrapper-position transition() enables startTransition for all
-  // child routes at once. Element-level <VT> wrappers in JSX handle the
+  // child routes at once. Element-level <ViewTransition> wrappers in JSX handle the
   // shared morphing (title, date, avatars fly between index and detail).
   transition(() => [
     path("/blog", BlogIndex, { name: "blog" }),

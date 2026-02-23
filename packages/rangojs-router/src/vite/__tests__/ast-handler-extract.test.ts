@@ -4,6 +4,7 @@ import MagicString from "magic-string";
 import {
   findHandlerCalls,
   extractImportDeclarations,
+  extractModuleLevelDeclarations,
   transformInlineHandlers,
   type VirtualHandlerEntry,
 } from "../ast-handler-extract.ts";
@@ -139,6 +140,104 @@ export const X = Static(() => Nav());
     const code = `const x = 1;`;
     const imports = extractImportDeclarations(code, parseAst);
     expect(imports).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractModuleLevelDeclarations
+// ---------------------------------------------------------------------------
+
+describe("extractModuleLevelDeclarations", () => {
+  it("extracts safe declarations (literals, functions, arrows)", () => {
+    const code = `import { Static } from "@rangojs/router";
+let counter = 0;
+var flag = true;
+const ITEMS = [1, 2, 3];
+const CONFIG = { key: "value", count: 42 };
+const fn = () => counter + 1;
+function helper() { return 42; }
+
+layout(Static(() => <div />));
+`;
+    const decls = extractModuleLevelDeclarations(code, parseAst, new Set(["Static"]));
+    expect(decls).toHaveLength(6);
+    expect(decls[0]).toContain("let counter");
+    expect(decls[1]).toContain("var flag");
+    expect(decls[2]).toContain("const ITEMS");
+    expect(decls[3]).toContain("const CONFIG");
+    expect(decls[4]).toContain("const fn");
+    expect(decls[5]).toContain("function helper");
+  });
+
+  it("skips declarations that reference identifiers (unsafe for separate chunks)", () => {
+    const code = `import { Static } from "@rangojs/router";
+import * as React from "react";
+const VT = React.Fragment;
+const result = someFunction();
+const alias = existingVar;
+
+layout(Static(() => <div />));
+`;
+    const decls = extractModuleLevelDeclarations(code, parseAst, new Set(["Static"]));
+    expect(decls).toHaveLength(0);
+  });
+
+  it("excludes declarations that are handler calls", () => {
+    const code = `import { Static, Prerender } from "@rangojs/router";
+const ITEMS = [1, 2];
+const Nav = Static(() => <nav />);
+const Page = Prerender(() => <div />);
+
+layout(Static(() => <div />));
+`;
+    const decls = extractModuleLevelDeclarations(
+      code, parseAst, new Set(["Static", "Prerender"]),
+    );
+    expect(decls).toHaveLength(1);
+    expect(decls[0]).toContain("const ITEMS");
+  });
+
+  it("strips export keyword from exported declarations", () => {
+    const code = `import { Static } from "@rangojs/router";
+export const ITEMS = [1, 2, 3];
+export function helper() { return 42; }
+
+layout(Static(() => helper()));
+`;
+    const decls = extractModuleLevelDeclarations(code, parseAst, new Set(["Static"]));
+    expect(decls).toHaveLength(2);
+    expect(decls[0]).not.toMatch(/^export/);
+    expect(decls[0]).toContain("const ITEMS");
+    expect(decls[1]).not.toMatch(/^export/);
+    expect(decls[1]).toContain("function helper");
+  });
+
+  it("skips class declarations and re-exports", () => {
+    const code = `import { Static } from "@rangojs/router";
+class Formatter {}
+export { something } from "./other";
+
+layout(Static(() => <div />));
+`;
+    const decls = extractModuleLevelDeclarations(code, parseAst, new Set(["Static"]));
+    expect(decls).toHaveLength(0);
+  });
+
+  it("skips expression statements (side effects)", () => {
+    const code = `import { Static } from "@rangojs/router";
+console.log("loaded");
+const ITEMS = [1, 2];
+
+layout(Static(() => <div />));
+`;
+    const decls = extractModuleLevelDeclarations(code, parseAst, new Set(["Static"]));
+    expect(decls).toHaveLength(1);
+    expect(decls[0]).toContain("const ITEMS");
+  });
+
+  it("returns empty array on parse failure", () => {
+    const decls = extractModuleLevelDeclarations("{{invalid", parseAst, new Set());
+    expect(decls).toEqual([]);
   });
 });
 
@@ -329,6 +428,56 @@ layout(Static(() => <Nav />));
     expect(entry.imports[0]).toContain("@rangojs/router");
     expect(entry.imports[1]).toContain("./components/Nav");
     expect(entry.imports[2]).toContain("node:fs");
+  });
+
+  it("includes safe module-level declarations in virtual entry", () => {
+    const code = `import { Static } from "@rangojs/router";
+const ITEMS = [1, 2, 3];
+const CONFIG = { key: "value" };
+const helper = () => ITEMS.length;
+
+layout(Static(() => helper()));
+`;
+    const s = new MagicString(code);
+    const registry = new Map<string, VirtualHandlerEntry>();
+
+    transformInlineHandlers(
+      "Static", "virtual:handler-extract:",
+      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+    );
+
+    const entry = [...registry.values()][0];
+    expect(entry.declarations).toHaveLength(3);
+    expect(entry.declarations[0]).toContain("const ITEMS");
+    expect(entry.declarations[1]).toContain("const CONFIG");
+    expect(entry.declarations[2]).toContain("const helper");
+  });
+
+  it("excludes unsafe declarations and handler calls from virtual entry", () => {
+    const code = `import { Static } from "@rangojs/router";
+import * as React from "react";
+const VT = React.Fragment;
+const ITEMS = [1, 2];
+const Nav = Static(() => <nav />);
+
+layout(Static(() => <div />));
+`;
+    const s = new MagicString(code);
+    const registry = new Map<string, VirtualHandlerEntry>();
+
+    transformInlineHandlers(
+      "Static", "virtual:handler-extract:",
+      s, code, "src/urls.tsx", registry, "/abs/src/urls.tsx", parseAst,
+    );
+
+    const entries = [...registry.values()];
+    for (const entry of entries) {
+      // Only ITEMS is safe (literal array); VT references React, Nav is handler call
+      expect(entry.declarations).toHaveLength(1);
+      expect(entry.declarations[0]).toContain("const ITEMS");
+      expect(entry.declarations.some((d) => d.includes("VT"))).toBe(false);
+      expect(entry.declarations.some((d) => d.includes("Nav"))).toBe(false);
+    }
   });
 
   it("handles same-line collisions with index tiebreaker", () => {
