@@ -19,6 +19,7 @@ export declare const ErrorBoundaryBrand: unique symbol;
 export declare const NotFoundBoundaryBrand: unique symbol;
 export declare const WhenBrand: unique symbol;
 export declare const CacheBrand: unique symbol;
+export declare const TransitionBrand: unique symbol;
 export declare const IncludeBrand: unique symbol;
 export declare const UrlPatternsBrand: unique symbol;
 
@@ -120,6 +121,11 @@ export type CacheItem = {
   uses?: AllUseItems[];
   [CacheBrand]: void;
 };
+export type TransitionItem = {
+  name: string;
+  type: "transition";
+  [TransitionBrand]: void;
+};
 
 /**
  * Typed cache item that carries child routes as phantom type
@@ -186,6 +192,7 @@ export type AllUseItems =
   | ErrorBoundaryItem
   | NotFoundBoundaryItem
   | CacheItem
+  | TransitionItem
   | IncludeItem;
 
 /** Items that can be used inside a layout callback */
@@ -200,7 +207,8 @@ export type RouteUseItem =
   | LoadingItem
   | ErrorBoundaryItem
   | NotFoundBoundaryItem
-  | CacheItem;
+  | CacheItem
+  | TransitionItem;
 /** Items that can be used inside a response route (path.json(), etc.) */
 export type ResponseRouteUseItem =
   | MiddlewareItem
@@ -210,7 +218,8 @@ export type ParallelUseItem =
   | LoaderItem
   | LoadingItem
   | ErrorBoundaryItem
-  | NotFoundBoundaryItem;
+  | NotFoundBoundaryItem
+  | TransitionItem;
 export type InterceptUseItem =
   | MiddlewareItem
   | RevalidateItem
@@ -220,7 +229,8 @@ export type InterceptUseItem =
   | NotFoundBoundaryItem
   | LayoutItem
   | RouteItem
-  | WhenItem;
+  | WhenItem
+  | TransitionItem;
 export type LoaderUseItem = RevalidateItem | CacheItem;
 
 /**

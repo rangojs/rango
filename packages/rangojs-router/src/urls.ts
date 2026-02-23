@@ -39,6 +39,7 @@ import type {
   RouterEnv,
   ShouldRevalidateFn,
   TrailingSlashMode,
+  TransitionConfig,
 } from "./types.js";
 import type { CookieOptions } from "./router/middleware.js";
 import type {
@@ -64,6 +65,7 @@ import type {
   WhenItem,
   CacheItem,
   TypedCacheItem,
+  TransitionItem,
   IncludeItem,
   TypedIncludeItem,
   IncludeBrand,
@@ -733,6 +735,14 @@ export type PathHelpers<TEnv> = {
       use: () => TChildren,
     ): TypedCacheItem<ExtractRoutes<TChildren>, ExtractResponses<TChildren>>;
   };
+
+  /**
+   * Attach a ViewTransition boundary to the current segment or a group of routes
+   */
+  transition: {
+    (config: TransitionConfig): TransitionItem;
+    (config: TransitionConfig, children: () => UseItems<AllUseItems>): TransitionItem;
+  };
 };
 
 // ============================================================================
@@ -762,6 +772,7 @@ const isValidUseItem = (item: any): item is AllUseItems | undefined | null => {
         "notFoundBoundary",
         "when",
         "cache",
+        "transition",
         "include",
       ].includes(item.type))
   );
@@ -1232,6 +1243,7 @@ export function urls<
       notFoundBoundary: baseHelpers.notFoundBoundary,
       when: baseHelpers.when,
       cache: baseHelpers.cache as PathHelpers<TEnv>["cache"],
+      transition: baseHelpers.transition,
     };
 
     // Execute builder directly - manifest.ts handles RootLayout wrapping

@@ -6,10 +6,18 @@ import type {
   NavigationStore,
   ResolvedSegment,
 } from "./types.js";
+import * as React from "react";
+import { startTransition } from "react";
 import {
   isLocationStateEntry,
   resolveLocationStateEntries,
 } from "./react/location-state-shared.js";
+
+// addTransitionType is only available in React experimental
+const addTransitionType: ((type: string) => void) | undefined =
+  "addTransitionType" in React
+    ? (React as any).addTransitionType
+    : undefined;
 
 /**
  * Check if state is from typed LocationStateEntry[] (has __rsc_ls_ keys)
@@ -729,7 +737,7 @@ export function createNavigationBridge(
           const root = await renderSegments(cachedSegments, {
             forceAwait: true,
           });
-          onUpdate({
+          const popstateUpdate = {
             root,
             metadata: {
               pathname: new URL(url).pathname,
@@ -739,7 +747,18 @@ export function createNavigationBridge(
               diff: [],
               cachedHandleData,
             },
-          });
+          };
+          const hasTransition = cachedSegments.some((s) => s.transition);
+          if (hasTransition) {
+            startTransition(() => {
+              if (addTransitionType) {
+                addTransitionType("navigation-back");
+              }
+              onUpdate(popstateUpdate);
+            });
+          } else {
+            onUpdate(popstateUpdate);
+          }
 
           // Restore scroll position for back/forward navigation
           handleNavigationEnd({ restore: true, isStreaming });

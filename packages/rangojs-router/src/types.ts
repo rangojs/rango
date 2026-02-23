@@ -970,6 +970,26 @@ export type NotFoundBoundaryHandler = (
 ) => ReactNode;
 
 /**
+ * CSS class(es) for a ViewTransition phase.
+ * Can be a simple string or an object mapping transition types to class names
+ * for direction-aware transitions (e.g., { "navigation": "slide-right", "navigation-back": "slide-left" }).
+ */
+export type ViewTransitionClass = Record<string, string> | string;
+
+/**
+ * Configuration for React's <ViewTransition> component.
+ * Maps directly to ViewTransitionProps (minus children/ref/callbacks).
+ */
+export interface TransitionConfig {
+  enter?: ViewTransitionClass;
+  exit?: ViewTransitionClass;
+  update?: ViewTransitionClass;
+  share?: ViewTransitionClass;
+  default?: ViewTransitionClass;
+  name?: string;
+}
+
+/**
  * Resolved segment with component
  *
  * Segment types:
@@ -989,6 +1009,7 @@ export interface ResolvedSegment {
   index: number;
   component: ReactNode; // Component, handler promise, or resolved element
   loading?: ReactNode; // Loading component for this segment (shown during navigation)
+  transition?: TransitionConfig; // ViewTransition config for this segment
   layout?: ReactNode; // Layout element to wrap content (used by intercept segments)
   params?: Record<string, string>;
   slot?: string; // For parallel segments: '@sidebar', '@modal', etc.

@@ -221,6 +221,7 @@ export async function resolveSegment<TEnv>(
       index: 0,
       component,
       loading: entry.loading === false ? null : entry.loading,
+      transition: entry.transition,
       params,
       belongsToRoute: false,
       layoutName: entry.id,
@@ -276,6 +277,7 @@ export async function resolveSegment<TEnv>(
       index: 0,
       component,
       loading: entry.loading === false ? null : entry.loading,
+      transition: entry.transition,
       params,
       belongsToRoute: true,
       ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
@@ -340,6 +342,7 @@ export async function resolveOrphanLayout<TEnv>(
     belongsToRoute,
     layoutName: orphan.id,
     loading: orphan.loading === false ? null : orphan.loading,
+    transition: orphan.transition,
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
   });
 
@@ -400,6 +403,7 @@ export async function resolveParallelEntry<TEnv>(
       index: 0,
       component,
       loading: parallelEntry.loading === false ? null : parallelEntry.loading,
+      transition: parallelEntry.transition,
       params,
       slot,
       belongsToRoute,
@@ -880,6 +884,7 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
         component,
         loading:
           parallelEntry.loading === false ? null : parallelEntry.loading,
+        transition: parallelEntry.transition,
         params,
         slot,
         belongsToRoute,
@@ -1022,6 +1027,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
     index: 0,
     component: resolvedComponent,
     loading: entry.loading === false ? null : entry.loading,
+    transition: entry.transition,
     params,
     belongsToRoute,
     ...(entry.type === "layout" || entry.type === "cache"
@@ -1237,6 +1243,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         component,
         loading:
           parallelEntry.loading === false ? null : parallelEntry.loading,
+        transition: parallelEntry.transition,
         params,
         slot,
         belongsToRoute,
@@ -1307,6 +1314,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     belongsToRoute,
     layoutName: orphan.id,
     loading: orphan.loading === false ? null : orphan.loading,
+    transition: orphan.transition,
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
   });
 
