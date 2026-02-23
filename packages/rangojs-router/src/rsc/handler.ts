@@ -211,6 +211,16 @@ export function createRSCHandler<
     invokeOnError(router.onError, error, phase, context, "RSC");
   }
 
+  function getRequiredRouteMap(): Record<string, string> {
+    const routeMap = getRouterManifest(router.id);
+    if (!routeMap) {
+      throw new Error(
+        `Route manifest for router "${router.id}" is not available.`,
+      );
+    }
+    return routeMap;
+  }
+
   /**
    * Build a 200 Flight response that carries a redirect URL and optional state.
    * Used when a partial/action request results in a redirect -- fetch
@@ -388,7 +398,7 @@ export function createRSCHandler<
           env,
           variables,
           coreHandler,
-          createReverseFunction(getGlobalRouteMap()),
+          createReverseFunction(getRequiredRouteMap()),
         );
 
         // If global middleware returned a redirect with location state during
@@ -593,7 +603,14 @@ export function createRSCHandler<
             },
             params: mw.params,
           }));
-          return executeMiddleware(middlewareEntries, request, env, variables, callHandlerWithVary, createReverseFunction(getGlobalRouteMap()));
+          return executeMiddleware(
+            middlewareEntries,
+            request,
+            env,
+            variables,
+            callHandlerWithVary,
+            createReverseFunction(getRequiredRouteMap()),
+          );
         }
         return callHandlerWithVary();
       };
@@ -702,7 +719,14 @@ export function createRSCHandler<
       }));
 
       // Execute route middleware wrapping the actual request handling
-      const mwResponse = await executeMiddleware(middlewareEntries, request, env, variables, rscHandler, createReverseFunction(getGlobalRouteMap()));
+      const mwResponse = await executeMiddleware(
+        middlewareEntries,
+        request,
+        env,
+        variables,
+        rscHandler,
+        createReverseFunction(getRequiredRouteMap()),
+      );
 
       // If route middleware returned a redirect with location state during
       // a partial (SPA) request, convert to a 200 Flight payload so the
@@ -783,7 +807,7 @@ export function createRSCHandler<
       (isDev || router.allowDebugManifest)
     ) {
       const trie = getRouterTrie(router.id) ?? getRouteTrie();
-      const routeManifest = getRouterManifest(router.id) ?? getGlobalRouteMap();
+      const routeManifest = getRequiredRouteMap();
       const { extractAncestryFromTrie } = await import("../build/route-trie.js");
       return new Response(
         JSON.stringify(
@@ -1492,7 +1516,7 @@ export function createRSCHandler<
             headers: { "content-type": "text/x-component;charset=utf-8" },
           });
         },
-        createReverseFunction(getGlobalRouteMap()),
+        createReverseFunction(getRequiredRouteMap()),
       );
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
