@@ -2477,6 +2477,12 @@ export function createRouter<TEnv = any>(
 
     // Merge routes into the reverse map
     // Keys stay unchanged for composability - only URL patterns get prefixed
+    if (routes == null) {
+      throw new Error(
+        `[rsc-router] createRouteBuilder received null/undefined routes for prefix "${prefix}". ` +
+        `This is an invariant violation — the route builder callback must return a Record<string, string>.`,
+      );
+    }
     const routeEntries = routes as Record<string, string>;
     for (const [key, pattern] of Object.entries(routeEntries)) {
       // Build prefixed pattern: "/shop" + "/cart" -> "/shop/cart"
