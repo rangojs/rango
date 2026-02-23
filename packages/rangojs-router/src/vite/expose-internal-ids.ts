@@ -395,15 +395,38 @@ function generateClientLoaderStubs(
 ): { code: string; map?: undefined } | null {
   if (!isExportOnlyFile(code, bindings)) return null;
 
-  const exportNames = bindings.flatMap((b) => b.exportNames);
-  const stubs = exportNames.map((name) => {
-    const loaderId = isBuild
-      ? hashId(filePath, name)
-      : `${filePath}#${name}`;
-    return `export const ${name} = { __brand: "loader", $$id: "${loaderId}" };`;
-  });
+  const lines: string[] = [];
+  let needsFetchableImport = false;
 
-  return { code: stubs.join("\n") + "\n" };
+  for (const binding of bindings) {
+    for (const name of binding.exportNames) {
+      const loaderId = isBuild
+        ? hashId(filePath, name)
+        : `${filePath}#${name}`;
+
+      // Fetchable loaders (argCount >= 2) get an action property that wraps
+      // the shared "use server" dispatcher. The wrapper passes loaderId so
+      // the server can look up the correct loader in the registry.
+      if (binding.argCount >= 2) {
+        needsFetchableImport = true;
+        lines.push(
+          `export const ${name} = { __brand: "loader", $$id: "${loaderId}", action: (_prev, fd) => __ifa("${loaderId}", _prev, fd) };`
+        );
+      } else {
+        lines.push(
+          `export const ${name} = { __brand: "loader", $$id: "${loaderId}" };`
+        );
+      }
+    }
+  }
+
+  if (needsFetchableImport) {
+    lines.unshift(
+      `import { invokeFetchableLoaderAction as __ifa } from "@rangojs/router/__internal/fetchable-action";`
+    );
+  }
+
+  return { code: lines.join("\n") + "\n" };
 }
 
 function transformLoaders(
@@ -413,6 +436,7 @@ function transformLoaders(
   isBuild: boolean,
 ): boolean {
   let hasChanges = false;
+
   for (const binding of bindings) {
     const exportName = binding.exportNames[0];
 

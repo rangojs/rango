@@ -1,3 +1,29 @@
+// ============================================================================
+// load.action Architecture
+// ============================================================================
+//
+// load.action() calls the loader's server action (loader.action) directly.
+// This is a real "use server" function dispatched via React's server action
+// protocol — NOT a custom fetch.
+//
+// Two paths provide the action depending on how the loader reaches the client:
+//
+// 1. Flight-serialized (loader passed as props from server component):
+//    loader.rsc.ts createLoader() creates an inline "use server" loaderAction
+//    that captures loaderId in closure. Flight serializes it as a server action
+//    reference. The RSC build sees it because it traverses loader.rsc.ts.
+//
+// 2. Client-imported (direct import in "use client" file):
+//    The Vite plugin replaces the file with a stub. The stub imports
+//    invokeFetchableLoaderAction from a "use server" MODULE and wraps it
+//    per-loader: (prev, fd) => __ifa(loaderId, prev, fd). loader.rsc.ts
+//    has a side-effect import of the module so the RSC build discovers it
+//    and registers it in the action manifest (serverReferenceMetaMap).
+//
+// load() (data fetching without mutation) uses fetch-based dispatch to the
+// ?_rsc_loader endpoint - that path does not need a server action reference.
+// ============================================================================
+
 "use client";
 
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
@@ -193,16 +219,15 @@ function useLoaderInternal<T>(
     [throwOnError]
   );
 
-  // Form action for progressive enhancement
-  // This wrapper is for useFetchLoader's load.action - it manages state internally
-  // and doesn't use React's useActionState. For true PE, use loader.action directly
-  // with useActionState.
+  // Form action for mutations. Calls the loader's server action directly.
+  // See architecture comment at the top of this file for the two paths
+  // (Flight-serialized vs client-imported) that provide loader.action.
   const action = useCallback(
     async (formData: FormData): Promise<void> => {
       if (!loader.action) {
         throw new Error(
           `Loader "${loader.$$id}" does not have an action. ` +
-            `Make sure the loader is created with fetchable: true.`
+            `Make sure the loader is fetchable: createLoader(fn, true).`
         );
       }
 
@@ -210,9 +235,8 @@ function useLoaderInternal<T>(
       setError(null);
 
       try {
-        // Pass null as prevState - this wrapper manages state internally
         const result = await loader.action(null, formData);
-        setFetchedData(result);
+        setFetchedData(result as T);
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));
         setError(err);
@@ -223,7 +247,7 @@ function useLoaderInternal<T>(
         setIsLoading(false);
       }
     },
-    [throwOnError]
+    [throwOnError, loader.action, loader.$$id]
   );
 
   // Attach action to load function

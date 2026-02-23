@@ -94,6 +94,7 @@ export {
   when,
   errorBoundary,
   notFoundBoundary,
+  transition,
 } from "./route-definition.js";
 
 // Composition types for reusable callback factories

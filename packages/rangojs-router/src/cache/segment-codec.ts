@@ -179,6 +179,7 @@ export async function serializeSegments(
         parallelName: segment.parallelName,
         loaderId: segment.loaderId,
         loaderIds: segment.loaderIds,
+        transition: segment.transition,
       },
     });
   }

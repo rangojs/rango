@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ReactNode } from "react";
-import type { PartialCacheOptions, ErrorBoundaryHandler, Handler, LoaderDefinition, MiddlewareFn, NotFoundBoundaryHandler, ShouldRevalidateFn } from "../types";
+import type { PartialCacheOptions, ErrorBoundaryHandler, Handler, LoaderDefinition, MiddlewareFn, NotFoundBoundaryHandler, ShouldRevalidateFn, TransitionConfig } from "../types";
 import { invariant } from "../errors";
 
 // ============================================================================
@@ -137,6 +137,7 @@ export type InterceptEntry = {
   notFoundBoundary: (ReactNode | NotFoundBoundaryHandler)[];
   loader: LoaderEntry[];
   loading?: ReactNode | false;
+  transition?: TransitionConfig;
   layout?: ReactNode | Handler<any, any, any>;  // Wrapper layout with <Outlet /> for content
   when: InterceptWhenFn[];  // Selector conditions - all must return true to intercept
 };
@@ -153,6 +154,7 @@ export type EntryData =
       type: "route";
       handler: Handler<any, any, any>;
       loading?: ReactNode | false;
+      transition?: TransitionConfig;
       /** URL pattern for this route (used by path() in urls()) */
       pattern?: string;
       /** Set when handler is a Prerender definition */
@@ -172,6 +174,7 @@ export type EntryData =
       type: "layout";
       handler: ReactNode | Handler<any, any, any>;
       loading?: ReactNode | false;
+      transition?: TransitionConfig;
       /** Set when handler is a Static definition (build-time only) */
       isStaticPrerender?: true;
       /** Static handler $$id for build-time store lookup */
@@ -183,6 +186,7 @@ export type EntryData =
       type: "parallel";
       handler: Record<`@${string}`, Handler<any, any, any> | ReactNode>;
       loading?: ReactNode | false;
+      transition?: TransitionConfig;
       /** Set when any parallel slot is a Static definition */
       isStaticPrerender?: true;
       /** Per-slot static handler $$ids for build-time store lookup */
@@ -195,6 +199,7 @@ export type EntryData =
       /** Cache entries create cache boundaries and render like layouts (with Outlet) */
       handler: ReactNode | Handler<any, any, any>;
       loading?: ReactNode | false;
+      transition?: TransitionConfig;
     } & EntryPropCommon &
       EntryPropDatas &
       EntryPropSegments);
@@ -381,6 +386,7 @@ export const getContext = (): {
       const counters = store?.counters || {};
       const manifest = store ? store.manifest : new Map<string, EntryData>();
       const patterns = store?.patterns || new Map<string, string>();
+      const patternsByPrefix = store?.patternsByPrefix;
       const trailingSlash = store?.trailingSlash || new Map<string, "never" | "always" | "ignore">();
       const searchSchemas = store?.searchSchemas || new Map<string, Record<string, string>>();
       return context.run(
@@ -394,6 +400,7 @@ export const getContext = (): {
           metrics: store?.metrics,
           isSSR: store?.isSSR,
           patterns,
+          patternsByPrefix,
           trailingSlash,
           searchSchemas,
           urlPrefix: store?.urlPrefix,

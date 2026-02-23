@@ -753,6 +753,34 @@ test.describe("Form action support", () => {
     expect(formHtml).not.toContain("javascript:throw");
   });
 
+  test("form action works with directly imported loader (not passed as prop)", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/hook-tests/form-action"));
+    await waitForHydration(page);
+
+    // Initially no data
+    await expect(testId(page, "direct-import-no-data")).toBeVisible();
+
+    // Submit the form
+    await testId(page, "direct-import-submit-btn").click();
+
+    // Wait for data to appear
+    await expect(testId(page, "direct-import-data")).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Verify data was fetched via the loader action
+    await expect(testId(page, "direct-import-message")).toContainText(
+      "Fetched from unregistered loader"
+    );
+    await expect(testId(page, "direct-import-id")).toContainText(
+      "direct-import-submitted"
+    );
+  });
+
   // Progressive enhancement test: useActionState forms work without JavaScript.
   // The server decodes the action using decodeAction(), executes it, then passes
   // the form state to renderToReadableStream so useActionState hooks receive the result.
@@ -915,4 +943,95 @@ test.describe("useLoader hooks (production)", () => {
       "This is protected data"
     );
   });
+
+  test("form action triggers loader fetch on submit", async ({ page }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/hook-tests/form-action"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "form-action-no-data")).toBeVisible();
+
+    await testId(page, "form-action-submit-btn").click();
+
+    await expect(testId(page, "form-action-data")).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(testId(page, "form-action-message")).toContainText(
+      "Fetched from unregistered loader"
+    );
+  });
+
+  test("form uses correct server action markup for progressive enhancement", async ({
+    page,
+  }) => {
+    using _ = expectNoPageError(page);
+
+    await page.goto(f.url("/hook-tests/form-action"));
+    await waitForHydration(page);
+
+    const formHtml = await testId(
+      page,
+      "form-action-progressive-form"
+    ).evaluate((el) => el.outerHTML);
+
+    expect(formHtml).toContain('method="POST"');
+    expect(formHtml).toContain('enctype="multipart/form-data"');
+    expect(formHtml).toContain('name="$ACTION_REF_');
+    expect(formHtml).toContain('name="$ACTION_KEY"');
+    expect(formHtml).not.toContain("javascript:throw");
+  });
+
+  test("form action works with directly imported loader (not passed as prop)", async ({
+    page,
+  }) => {
+    await page.goto(f.url("/hook-tests/form-action"));
+    await waitForHydration(page);
+
+    await expect(testId(page, "direct-import-no-data")).toBeVisible();
+
+    await testId(page, "direct-import-submit-btn").click();
+
+    await expect(testId(page, "direct-import-data")).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(testId(page, "direct-import-message")).toContainText(
+      "Fetched from unregistered loader"
+    );
+    await expect(testId(page, "direct-import-id")).toContainText(
+      "direct-import-submitted"
+    );
+  });
+
+  test(
+    "form action works without JavaScript (progressive enhancement)",
+    async ({ browser }) => {
+      const context = await browser.newContext({
+        javaScriptEnabled: false,
+      });
+      const page = await context.newPage();
+
+      try {
+        await page.goto(f.url("/hook-tests/form-action"));
+
+        await expect(
+          testId(page, "form-action-progressive-no-data")
+        ).toBeVisible();
+
+        await testId(page, "form-action-progressive-submit-btn").click();
+
+        await page.waitForLoadState("networkidle");
+
+        await expect(
+          testId(page, "form-action-progressive-data")
+        ).toBeVisible({ timeout: 5000 });
+
+        await expect(
+          testId(page, "form-action-progressive-message")
+        ).toContainText("Fetched from unregistered loader");
+      } finally {
+        await context.close();
+      }
+    }
+  );
 });

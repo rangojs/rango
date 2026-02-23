@@ -1,3 +1,4 @@
+import * as React from "react";
 import { createElement, type ReactNode, type ComponentType } from "react";
 import { OutletProvider } from "./client.js";
 import { MountContextProvider } from "./browser/react/mount-context.js";
@@ -13,6 +14,11 @@ import {
   LoaderBoundary,
 } from "./route-content-wrapper.js";
 import { RootErrorBoundary } from "./root-error-boundary.js";
+
+// ViewTransition is only available in React experimental.
+// Access via namespace import to avoid compile-time errors on stable React.
+const ReactViewTransition: any =
+  "ViewTransition" in React ? (React as any).ViewTransition : null;
 
 /**
  * Resolve loader data from raw results, unwrapping LoaderDataResult wrappers
@@ -221,6 +227,19 @@ export async function renderSegments(
             segmentId: id,
           })
         : registerLazyRef(resolvedComponent);
+
+    // Wrap with <ViewTransition> if transition config exists (React experimental only).
+    // An empty config ({}) creates a bare <ViewTransition> boundary that participates
+    // in transitions without adding custom animation classes. Named element-level
+    // <ViewTransition> components inside (with name/share props) morph independently
+    // from the parent's default cross-fade.
+    if (ReactViewTransition && node.segment.transition) {
+      nodeContent = createElement(ReactViewTransition, {
+        ...node.segment.transition,
+        children: nodeContent,
+      });
+    }
+
     // Common props for OutletProvider
     const outletContent: ReactNode =
       node.segment.type === "layout" ? content : null;

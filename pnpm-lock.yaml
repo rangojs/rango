@@ -16,6 +16,8 @@ catalogs:
 overrides:
   react: ^19.2.1
   react-dom: ^19.2.1
+  react-experimental>react: experimental
+  react-experimental>react-dom: experimental
   rollup: ^4.54.0
   vite: ^7.3.0
 
@@ -198,6 +200,49 @@ importers:
       '@vitejs/plugin-react':
         specifier: latest
         version: 5.1.3(vite@7.3.0(@types/node@24.10.4)(jiti@2.6.1)(tsx@4.21.0))
+      tinyexec:
+        specifier: ^0.3.2
+        version: 0.3.2
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vite:
+        specifier: ^7.3.0
+        version: 7.3.0(@types/node@24.10.4)(jiti@2.6.1)(tsx@4.21.0)
+      wrangler:
+        specifier: ^4.67.0
+        version: 4.67.0(@cloudflare/workers-types@4.20260228.0)
+
+  examples/react-experimental:
+    dependencies:
+      '@rangojs/router':
+        specifier: workspace:*
+        version: link:../../packages/rangojs-router
+      react:
+        specifier: experimental
+        version: 0.0.0-experimental-ab18f33d-20260220
+      react-dom:
+        specifier: experimental
+        version: 0.0.0-experimental-ab18f33d-20260220(react@0.0.0-experimental-ab18f33d-20260220)
+    devDependencies:
+      '@cloudflare/vite-plugin':
+        specifier: ^1.21.0
+        version: 1.21.0(vite@7.3.0(@types/node@24.10.4)(jiti@2.6.1)(tsx@4.21.0))(workerd@1.20260219.0)(wrangler@4.67.0(@cloudflare/workers-types@4.20260228.0))
+      '@cloudflare/workers-types':
+        specifier: ^4.20260228.0
+        version: 4.20260228.0
+      '@playwright/test':
+        specifier: ^1.49.1
+        version: 1.57.0
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.2.7
+      '@types/react-dom':
+        specifier: 'catalog:'
+        version: 19.2.3(@types/react@19.2.7)
+      '@vitejs/plugin-react':
+        specifier: latest
+        version: 5.1.4(vite@7.3.0(@types/node@24.10.4)(jiti@2.6.1)(tsx@4.21.0))
       tinyexec:
         specifier: ^0.3.2
         version: 0.3.2
@@ -1545,6 +1590,11 @@ packages:
     engines: {node: '>=14'}
     hasBin: true
 
+  react-dom@0.0.0-experimental-ab18f33d-20260220:
+    resolution: {integrity: sha512-UXGhVKyGJ+k8LBrbaTk16zwQowaJriHGENGUNZiK3qNX/mPk+JUPRNK4p7qL9xeayxnX9fALDcPpNNEPc1w0kA==}
+    peerDependencies:
+      react: ^19.2.1
+
   react-dom@19.2.4:
     resolution: {integrity: sha512-AXJdLo8kgMbimY95O2aKQqsz2iWi9jMgKJhRBAxECE4IFxfcazB2LmzloIoibJI3C12IlY20+KFaLv+71bUJeQ==}
     peerDependencies:
@@ -1552,6 +1602,10 @@ packages:
 
   react-refresh@0.18.0:
     resolution: {integrity: sha512-QgT5//D3jfjJb6Gsjxv0Slpj23ip+HtOpnNgnb2S5zU3CB26G/IDPGoy4RJB42wzFE46DRsstbW6tKHoKbhAxw==}
+    engines: {node: '>=0.10.0'}
+
+  react@0.0.0-experimental-ab18f33d-20260220:
+    resolution: {integrity: sha512-hnphlgmXP0DIbbWz/c0mMfxFsb+qQ6gCMbE6IyvbGz55ay1DgfYKD0YtKfWUOs2cktp4LmDM5+5ewGw9LSfiCg==}
     engines: {node: '>=0.10.0'}
 
   react@19.2.4:
@@ -1568,6 +1622,9 @@ packages:
 
   rsc-html-stream@0.0.7:
     resolution: {integrity: sha512-v9+fuY7usTgvXdNl8JmfXCvSsQbq2YMd60kOeeMIqCJFZ69fViuIxztHei7v5mlMMa2h3SqS+v44Gu9i9xANZA==}
+
+  scheduler@0.0.0-experimental-ab18f33d-20260220:
+    resolution: {integrity: sha512-k2FNJuxo0mIDFGryeRsIkpo2T9pboTLJPEiYuj1W6iZEETku4Ive83zHy9p0znQBHBpBV56A0f4lfq2t+PT37g==}
 
   scheduler@0.27.0:
     resolution: {integrity: sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q==}
@@ -2857,12 +2914,19 @@ snapshots:
 
   prettier@3.7.4: {}
 
+  react-dom@0.0.0-experimental-ab18f33d-20260220(react@0.0.0-experimental-ab18f33d-20260220):
+    dependencies:
+      react: 0.0.0-experimental-ab18f33d-20260220
+      scheduler: 0.0.0-experimental-ab18f33d-20260220
+
   react-dom@19.2.4(react@19.2.4):
     dependencies:
       react: 19.2.4
       scheduler: 0.27.0
 
   react-refresh@0.18.0: {}
+
+  react@0.0.0-experimental-ab18f33d-20260220: {}
 
   react@19.2.4: {}
 
@@ -2898,6 +2962,8 @@ snapshots:
       fsevents: 2.3.3
 
   rsc-html-stream@0.0.7: {}
+
+  scheduler@0.0.0-experimental-ab18f33d-20260220: {}
 
   scheduler@0.27.0: {}
 

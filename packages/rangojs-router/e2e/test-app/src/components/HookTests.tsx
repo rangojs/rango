@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useActionState } from "react";
 import { useLoader, useFetchLoader, ErrorBoundary, type LoaderDefinition } from "@rangojs/router/client";
+import { UnregisteredLoader } from "../loaders.js";
 
 // Type for the hook test loader data
 interface HookTestLoaderData {
@@ -562,6 +563,51 @@ export function FormActionProgressiveTest({ loader }: UseFetchLoaderUnregistered
           disabled={isPending}
         >
           Submit Form (PE)
+        </button>
+      </form>
+    </div>
+  );
+}
+
+/**
+ * Tests load.action with a directly imported loader (not passed as prop).
+ * This is the pattern where a client component imports the loader module
+ * directly instead of receiving the loader definition through Flight props.
+ */
+export function DirectImportFormActionTest() {
+  const { data, load, isLoading } = useFetchLoader<{
+    id: string;
+    message: string;
+    timestamp: string;
+  }>(UnregisteredLoader);
+
+  return (
+    <div data-testid="direct-import-form-action-test">
+      <h3>Direct Import Form Action Test</h3>
+
+      {data ? (
+        <div data-testid="direct-import-data">
+          <p data-testid="direct-import-message">Message: {data.message}</p>
+          <p data-testid="direct-import-id">ID: {data.id}</p>
+        </div>
+      ) : (
+        <p data-testid="direct-import-no-data">No data</p>
+      )}
+
+      {isLoading && <p data-testid="direct-import-loading">Loading...</p>}
+
+      <form
+        data-testid="direct-import-form"
+        action={load.action}
+        style={{ marginTop: "1rem" }}
+      >
+        <input type="hidden" name="id" value="direct-import-submitted" />
+        <button
+          type="submit"
+          data-testid="direct-import-submit-btn"
+          disabled={isLoading}
+        >
+          Submit (Direct Import)
         </button>
       </form>
     </div>

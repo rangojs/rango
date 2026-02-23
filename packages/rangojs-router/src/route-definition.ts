@@ -16,6 +16,7 @@ import type {
   RouteDefinitionOptions,
   ShouldRevalidateFn,
   TrailingSlashMode,
+  TransitionConfig,
 } from "./types.js";
 import {
   getContext,
@@ -50,6 +51,7 @@ import type {
   LoaderUseItem,
   WhenItem,
   CacheItem,
+  TransitionItem,
   UseItems,
 } from "./route-types.js";
 // const __DEV__ = import.meta.MODE === "development";
@@ -521,6 +523,37 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
       options: PartialCacheOptions | false,
       use?: () => UseItems<AllUseItems>
     ): CacheItem;
+  };
+  /**
+   * Attach a ViewTransition boundary to the current segment or a group of routes
+   *
+   * Wraps segment content with React's `<ViewTransition>` component.
+   * Only takes effect when React experimental is used (no-op on stable React).
+   *
+   * ```typescript
+   * // Attach to a single route
+   * path("/about", AboutPage, { name: "about" }, () => [
+   *   transition({ enter: "fade-in", exit: "fade-out" }),
+   * ])
+   *
+   * // Wrap a group of routes
+   * transition({ enter: "fade-in", exit: "fade-out" }, () => [
+   *   path("/", HomePage),
+   *   path("/about", AboutPage),
+   * ])
+   *
+   * // Direction-aware transitions
+   * transition({
+   *   enter: { "navigation": "slide-right", "navigation-back": "slide-left" },
+   *   exit: { "navigation": "slide-left", "navigation-back": "slide-right" },
+   * })
+   * ```
+   * @param config - ViewTransition configuration (enter, exit, update, share, default, name)
+   * @param children - Optional callback returning child routes to wrap
+   */
+  transition: {
+    (config: TransitionConfig): TransitionItem;
+    (config: TransitionConfig, children: () => UseItems<AllUseItems>): TransitionItem;
   };
 };
 
@@ -1065,6 +1098,83 @@ const loadingFn: RouteHelpers<any, any>["loading"] = (component, options) => {
   return { name, type: "loading" } as LoadingItem;
 };
 
+/**
+ * Transition helper - attaches a ViewTransition config to the current entry
+ * or wraps a group of routes in a transparent layout with ViewTransition
+ */
+const transitionFn = (
+  configOrChildren?: TransitionConfig | (() => UseItems<AllUseItems>),
+  maybeChildren?: () => UseItems<AllUseItems>
+): TransitionItem => {
+  // Resolve overloaded arguments:
+  //   transition()                    -> config={}, children=undefined
+  //   transition(config)              -> config=config, children=undefined
+  //   transition(children)            -> config={}, children=children
+  //   transition(config, children)    -> config=config, children=children
+  const config: TransitionConfig =
+    typeof configOrChildren === "function" ? {} : (configOrChildren ?? {});
+  const children: (() => UseItems<AllUseItems>) | undefined =
+    typeof configOrChildren === "function" ? configOrChildren : maybeChildren;
+
+  const store = getContext();
+  const ctx = store.getStore();
+  if (!ctx) throw new Error("transition() must be called inside map()");
+
+  const name = `$${store.getNextIndex("transition")}`;
+
+  if (!children) {
+    // Position 1: child of path() — attach to parent entry
+    const parent = ctx.parent;
+    if (!parent || !("loading" in parent)) {
+      invariant(false, "No parent entry available for transition()");
+    }
+    parent.transition = config;
+    return { name, type: "transition" } as TransitionItem;
+  }
+
+  // Position 2: wrapper — create a transparent layout with transition config
+  const namespace = `${ctx.namespace}.${store.getNextIndex("transition")}`;
+  const entry = {
+    id: namespace,
+    shortCode: store.getShortCode("layout"),
+    type: "layout",
+    parent: ctx.parent,
+    handler: RootLayout,
+    loading: undefined,
+    transition: config,
+    middleware: [],
+    revalidate: [],
+    errorBoundary: [],
+    notFoundBoundary: [],
+    layout: [],
+    parallel: [],
+    intercept: [],
+    loader: [],
+  } as EntryData;
+
+  const result = store.run(namespace, entry, children)?.flat(3);
+
+  invariant(
+    Array.isArray(result) && result.every((item) => isValidUseItem(item)),
+    `transition() children callback must return an array of use items [${namespace}]`
+  );
+
+  const hasRoutes =
+    result &&
+    Array.isArray(result) &&
+    result.some((item) => hasRoutesInItem(item));
+
+  if (!hasRoutes) {
+    const parent = ctx.parent;
+    if (parent && "layout" in parent) {
+      entry.parent = null;
+      parent.layout.push(entry);
+    }
+  }
+
+  return { name: namespace, type: "transition" } as TransitionItem;
+};
+
 const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
   const store = getContext();
   const ctx = store.getStore();
@@ -1233,6 +1343,7 @@ const isValidUseItem = (item: any): item is AllUseItems | undefined | null => {
         "notFoundBoundary",
         "when",
         "cache",
+        "transition",
         "include", // For urls() include() helper
       ].includes(item.type))
   );
@@ -1251,6 +1362,7 @@ export {
   notFoundBoundary,
   loaderFn as loader,
   loadingFn as loading,
+  transitionFn as transition,
 };
 
 const isOrphanLayout = (item: AllUseItems): boolean => {
@@ -1363,6 +1475,13 @@ const createCacheHelper = (): RouteHelpers<any, any>["cache"] => {
 };
 
 /**
+ * Create transition helper
+ */
+const createTransitionHelper = (): RouteHelpers<any, any>["transition"] => {
+  return transitionFn as RouteHelpers<any, any>["transition"];
+};
+
+/**
  * Branded type for route handlers that carries the route type info.
  * This enables type-safe verification that imported handlers match route definitions.
  */
@@ -1399,6 +1518,7 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
       notFoundBoundary: createNotFoundBoundaryHelper<TEnv>(),
       when: createWhenHelper(),
       cache: createCacheHelper(),
+      transition: createTransitionHelper(),
     };
 
     return [layout(RootLayout, () => builder(helpers))].flat(3);
@@ -1428,6 +1548,7 @@ export function createRouteHelpers<
     notFoundBoundary: createNotFoundBoundaryHelper<TEnv>(),
     when: createWhenHelper(),
     cache: createCacheHelper(),
+    transition: createTransitionHelper(),
   };
 }
 
