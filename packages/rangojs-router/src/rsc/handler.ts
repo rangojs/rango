@@ -81,6 +81,70 @@ function createResponseErrorPayload(error: unknown, isDev: boolean): ResponseErr
 }
 
 /**
+ * Build a fresh route trie from router.urlpatterns and store it in the
+ * per-router cache. Also sets the per-router manifest and merges into
+ * the global manifest for reverse()/href().
+ *
+ * Called when manifest data may exist but the per-router trie is missing,
+ * which happens in dev mode after HMR: the virtual module sets the manifest
+ * from fresh gen files but skips the trie (which would be stale from initial
+ * discovery). The trie is essential for correct wildcard priority — without
+ * it, the regex fallback matches catch-all patterns before specific routes.
+ */
+async function buildRouterTrieFromUrlpatterns(router: any): Promise<void> {
+  const { generateManifest } =
+    await import("../build/generate-manifest.js");
+  const generated = generateManifest(router.urlpatterns);
+  if (
+    generated._routeAncestry &&
+    Object.keys(generated._routeAncestry).length > 0
+  ) {
+    const { buildRouteTrie } = await import("../build/route-trie.js");
+    // Map each route to its include() staticPrefix so the trie
+    // returns the correct sp for lazy entry lookup in findMatch.
+    const routeToStaticPrefix: Record<string, string> = {};
+    for (const name of Object.keys(generated.routeManifest)) {
+      routeToStaticPrefix[name] = "";
+    }
+    // Override with prefix from include() entries so the trie
+    // returns the correct sp for lazy entry lookup in findMatch.
+    // Walk recursively to include routes in nested includes.
+    if (generated.prefixTree) {
+      const visitPrefixNode = (node: any): void => {
+        const sp = node.staticPrefix || "";
+        for (const route of (node.routes || [])) {
+          routeToStaticPrefix[route] = sp;
+        }
+        for (const child of Object.values(node.children || {})) {
+          visitPrefixNode(child);
+        }
+      };
+      for (const node of Object.values(generated.prefixTree)) {
+        visitPrefixNode(node);
+      }
+    }
+    const trie = buildRouteTrie(
+      generated.routeManifest,
+      generated._routeAncestry,
+      routeToStaticPrefix,
+      generated.routeTrailingSlash,
+      generated.prerenderRoutes ? new Set(generated.prerenderRoutes) : undefined,
+      generated.passthroughRoutes ? new Set(generated.passthroughRoutes) : undefined,
+      generated.responseTypeRoutes,
+    );
+    setRouterTrie(router.id, trie);
+    // Set global trie only if not already set by another router
+    if (!getRouteTrie()) {
+      setRouteTrie(trie);
+    }
+  }
+  setRouterManifest(router.id, generated.routeManifest);
+  // Merge into global manifest (needed for reverse/href across routers)
+  const existing = hasCachedManifest() ? getGlobalRouteMap() : {};
+  setCachedManifest({ ...existing, ...generated.routeManifest });
+}
+
+/**
  * Create an RSC request handler.
  *
  * **Recommended:** Use `router.createHandler()` instead for simpler setup:
@@ -253,62 +317,23 @@ export function createRSCHandler<
         // Cloudflare dev: generate manifest inline for this router.
         // Each router generates its own manifest independently so
         // multi-router setups (host routing) work correctly.
-        const { generateManifest } =
-          await import("../build/generate-manifest.js");
-        const generated = generateManifest(router.urlpatterns);
-        if (
-          generated._routeAncestry &&
-          Object.keys(generated._routeAncestry).length > 0
-        ) {
-          const { buildRouteTrie } = await import("../build/route-trie.js");
-          // Map each route to its include() staticPrefix so the trie
-          // returns the correct sp for lazy entry lookup in findMatch.
-          const routeToStaticPrefix: Record<string, string> = {};
-          for (const name of Object.keys(generated.routeManifest)) {
-            routeToStaticPrefix[name] = "";
-          }
-          // Override with prefix from include() entries so the trie
-          // returns the correct sp for lazy entry lookup in findMatch.
-          // Walk recursively to include routes in nested includes.
-          if (generated.prefixTree) {
-            const visitPrefixNode = (node: any): void => {
-              const sp = node.staticPrefix || "";
-              for (const route of (node.routes || [])) {
-                routeToStaticPrefix[route] = sp;
-              }
-              for (const child of Object.values(node.children || {})) {
-                visitPrefixNode(child);
-              }
-            };
-            for (const node of Object.values(generated.prefixTree)) {
-              visitPrefixNode(node);
-            }
-          }
-          const trie = buildRouteTrie(
-            generated.routeManifest,
-            generated._routeAncestry,
-            routeToStaticPrefix,
-            generated.routeTrailingSlash,
-            generated.prerenderRoutes ? new Set(generated.prerenderRoutes) : undefined,
-            generated.passthroughRoutes ? new Set(generated.passthroughRoutes) : undefined,
-            generated.responseTypeRoutes,
-          );
-          setRouterTrie(router.id, trie);
-          // Set global trie only if not already set by another router
-          if (!getRouteTrie()) {
-            setRouteTrie(trie);
-          }
-        }
-        setRouterManifest(router.id, generated.routeManifest);
-        // Merge into global manifest (needed for reverse/href across routers)
-        const existing = hasCachedManifest() ? getGlobalRouteMap() : {};
-        setCachedManifest({ ...existing, ...generated.routeManifest });
+        await buildRouterTrieFromUrlpatterns(router);
       }
       if (!getRouterManifest(router.id) && !hasCachedManifest()) {
         throw new Error(
           'Route manifest not available. Ensure "virtual:rsc-router/routes-manifest" is imported in your entry file.',
         );
       }
+    }
+
+    // Rebuild the trie when the manifest exists but the per-router trie is
+    // missing. This happens in dev mode after HMR: the virtual module sets
+    // the manifest (from fresh gen files) but the trie is intentionally not
+    // injected to avoid stale discovery-time data. Without the trie, route
+    // matching falls back to regex iteration which does not handle wildcard
+    // priority correctly (catch-all patterns match before specific routes).
+    if (!getRouterTrie(router.id) && router.urlpatterns) {
+      await buildRouterTrieFromUrlpatterns(router);
     }
     const manifestCacheDur = performance.now() - manifestCacheStart;
 

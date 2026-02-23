@@ -19,6 +19,7 @@ export {
   registerRouteMap,
   setCachedManifest,
   clearCachedManifest,
+  clearAllRouterData,
   getGlobalRouteMap,
   getRouterManifest,
   setPrecomputedEntries,

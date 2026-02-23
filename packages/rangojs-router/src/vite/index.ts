@@ -1702,8 +1702,14 @@ function createRouterDiscoveryPlugin(
           }
 
           const lines = [
-            `import { setCachedManifest, setPrecomputedEntries, setRouteTrie, setRouterManifest, registerRouterManifestLoader } from "@rangojs/router/server";`,
+            `import { setCachedManifest, setPrecomputedEntries, setRouteTrie, setRouterManifest, registerRouterManifestLoader, clearAllRouterData } from "@rangojs/router/server";`,
             ...genFileImports,
+            // Clear stale per-router cached data (manifest, trie, precomputed entries)
+            // before re-populating. In Cloudflare dev mode, program reloads re-evaluate
+            // this virtual module but the route-map-builder singleton retains old data
+            // because it's not in the HMR invalidation chain. Without this clear, the
+            // handler finds stale trie data and never rebuilds from updated urlpatterns.
+            `clearAllRouterData();`,
           ];
 
           // Flatten NamedRoutes entries: search schema objects -> plain string paths
@@ -1732,11 +1738,20 @@ function createRouterDiscoveryPlugin(
             }
           }
 
-          if (mergedPrecomputedEntries && mergedPrecomputedEntries.length > 0) {
-            lines.push(`setPrecomputedEntries(${jsonParseExpression(mergedPrecomputedEntries)});`);
-          }
-          if (mergedRouteTrie) {
-            lines.push(`setRouteTrie(${jsonParseExpression(mergedRouteTrie)});`);
+          // In dev mode, skip trie and precomputed entries injection. These are
+          // computed once during initial discovery and become stale after route
+          // changes. A stale trie would incorrectly match removed routes. The
+          // handler falls back to Phase 2 regex matching against the live
+          // router.urlpatterns, which is always correct after a program reload.
+          // In build mode, the trie is always fresh (built from the final route
+          // tree) so it's safe to inject.
+          if (isBuildMode) {
+            if (mergedPrecomputedEntries && mergedPrecomputedEntries.length > 0) {
+              lines.push(`setPrecomputedEntries(${jsonParseExpression(mergedPrecomputedEntries)});`);
+            }
+            if (mergedRouteTrie) {
+              lines.push(`setRouteTrie(${jsonParseExpression(mergedRouteTrie)});`);
+            }
           }
           // Register lazy loaders for per-router manifest modules.
           // Each import() uses a static string literal so Rollup creates separate chunks.

@@ -123,6 +123,18 @@ const perRouterPrecomputedEntriesMap: Map<
   Array<{ staticPrefix: string; routes: Record<string, string> }>
 > = new Map();
 
+/**
+ * Clear all per-router cached data (manifest, trie, precomputed entries).
+ * Called during HMR when route definitions change so the handler rebuilds
+ * the trie from the updated router.urlpatterns on the next request.
+ */
+export function clearAllRouterData(): void {
+  perRouterManifestMap.clear();
+  perRouterTrieMap.clear();
+  perRouterPrecomputedEntriesMap.clear();
+  cachedRouteTrie = null;
+}
+
 export function setRouterManifest(routerId: string, manifest: Record<string, string>): void {
   perRouterManifestMap.set(routerId, manifest);
 }
