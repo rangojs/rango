@@ -8,14 +8,19 @@
  * This is NOT a "use server" module — callers provide the server boundary.
  */
 
-import { getFetchableLoader } from "./server/fetchable-loader-store.js";
+import { getLoaderLazy } from "./server/loader-registry.js";
 import { getRequestContext } from "./server/request-context.js";
 
 export async function executeLoaderAction(
   loaderId: string,
   formData: FormData,
 ): Promise<unknown> {
-  const registered = getFetchableLoader(loaderId);
+  // Use getLoaderLazy to support production lazy imports.
+  // In production, loader modules are code-split into lazy chunks.
+  // For loaders not on the current route (e.g. directly imported by client),
+  // the module hasn't been imported yet. getLoaderLazy triggers the import
+  // via the loader manifest, which runs createLoader and populates the registry.
+  const registered = await getLoaderLazy(loaderId);
   if (!registered) {
     throw new Error(`Loader "${loaderId}" not found in registry`);
   }

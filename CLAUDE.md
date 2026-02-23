@@ -2,6 +2,7 @@
 - Before working on routing, run `/rango` to understand the API. Skills are in `node_modules/@rangojs/router/skills/`.
 - Run the full test suite with `pnpm test` from the repo root.
 - After changing router Vite plugin code (`packages/rangojs-router/src/vite/`), rebuild with `pnpm build-router` before running `pnpm dev`.
+- **MANDATORY**: All e2e tests MUST cover BOTH dev AND production modes. Never write a dev-only test. When adding new e2e test cases, always add the production counterpart. Verify output in both modes. Any gap in production test coverage must be flagged immediately — it is not acceptable. Test the cloudflare basic app and e2e test app.
 
 ## Design Documents
 
