@@ -1101,6 +1101,22 @@ export async function resolveSegmentWithRevalidation<TEnv>(
   segments.push(...parallelResult.segments);
   matchedIds.push(...parallelResult.matchedIds);
 
+  // Push handler BEFORE orphan layouts for layout/cache entries (matching SSR
+  // order in resolveSegment). Route handler was already executed and is pushed
+  // after children for tree composition.
+  if (routeHandlerResult) {
+    segments.push(routeHandlerResult.segment);
+    matchedIds.push(routeHandlerResult.matchedId);
+  } else {
+    const handlerResult = await resolveEntryHandlerWithRevalidation(
+      entry, params, context, belongsToRoute, clientSegmentIds,
+      prevParams, request, prevUrl, nextUrl, routeKey, deps,
+      actionContext, stale,
+    );
+    segments.push(handlerResult.segment);
+    matchedIds.push(handlerResult.matchedId);
+  }
+
   if (entry.type === "layout" || entry.type === "cache") {
     for (const orphan of entry.layout) {
       const orphanResult = await resolveOrphanLayoutWithRevalidation(
@@ -1111,21 +1127,6 @@ export async function resolveSegmentWithRevalidation<TEnv>(
       segments.push(...orphanResult.segments);
       matchedIds.push(...orphanResult.matchedIds);
     }
-  }
-
-  if (routeHandlerResult) {
-    // Route handler was already executed — push its segment after children
-    segments.push(routeHandlerResult.segment);
-    matchedIds.push(routeHandlerResult.matchedId);
-  } else {
-    // Layout/cache handler — execute and push
-    const handlerResult = await resolveEntryHandlerWithRevalidation(
-      entry, params, context, belongsToRoute, clientSegmentIds,
-      prevParams, request, prevUrl, nextUrl, routeKey, deps,
-      actionContext, stale,
-    );
-    segments.push(handlerResult.segment);
-    matchedIds.push(handlerResult.matchedId);
   }
 
   return { segments, matchedIds };
