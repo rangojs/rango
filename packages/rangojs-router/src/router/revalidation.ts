@@ -8,6 +8,22 @@ import type { ResolvedSegment, HandlerContext } from "../types";
 import type { ActionContext } from "./types";
 import { debugLog } from "./logging.js";
 
+function paramsEqual(
+  a: Record<string, string>,
+  b: Record<string, string>,
+): boolean {
+  if (a === b) return true;
+
+  const keysA = Object.keys(a);
+  if (keysA.length !== Object.keys(b).length) return false;
+
+  for (const key of keysA) {
+    if (a[key] !== b[key]) return false;
+  }
+
+  return true;
+}
+
 /**
  * Options for revalidation evaluation
  */
@@ -57,11 +73,7 @@ export async function evaluateRevalidation<TEnv>(
     stale,
   } = options;
   const nextParams = segment.params || {};
-  const paramsChanged =
-    Object.keys(nextParams).length !== Object.keys(prevParams).length ||
-    Object.keys(nextParams).some(
-      (key) => nextParams[key] !== prevParams[key]
-    );
+  const paramsChanged = !paramsEqual(nextParams, prevParams);
 
   // Calculate default revalidation based on segment type and request method
   let defaultShouldRevalidate: boolean;

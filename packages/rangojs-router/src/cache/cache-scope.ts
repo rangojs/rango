@@ -14,6 +14,7 @@ import type {
   SegmentCacheStore,
   CachedEntryData,
 } from "./types.js";
+import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import { getRequestContext } from "../server/request-context.js";
 import { serializeSegments, deserializeSegments } from "./segment-codec.js";
 import { captureHandles, restoreHandles } from "./handle-snapshot.js";
@@ -28,6 +29,12 @@ export { deserializeComponent, serializeSegments, deserializeSegments } from "./
 
 /** Default TTL when no explicit value or store defaults are configured */
 const DEFAULT_TTL_SECONDS = 60;
+
+function debugCacheLog(message: string): void {
+  if (INTERNAL_RANGO_DEBUG) {
+    console.log(message);
+  }
+}
 
 // ============================================================================
 // Key Generation (internal)
@@ -252,7 +259,7 @@ export class CacheScope {
       const result = await store.get(key);
 
       if (!result) {
-        console.log(`[CacheScope] MISS: ${key}`);
+        debugCacheLog(`[CacheScope] MISS: ${key}`);
         return null;
       }
 
@@ -267,12 +274,14 @@ export class CacheScope {
         restoreHandles(cached.handles, handleStore);
       }
 
-      const segmentTypes = segments.map((s) =>
-        s.type === "parallel" ? s.slot : s.type
-      );
-      console.log(
-        `[CacheScope] ${shouldRevalidate ? "STALE" : "HIT"}: ${key} (${segmentTypes.join(", ")})`
-      );
+      if (INTERNAL_RANGO_DEBUG) {
+        const segmentTypes = segments.map((s) =>
+          s.type === "parallel" ? s.slot : s.type
+        );
+        debugCacheLog(
+          `[CacheScope] ${shouldRevalidate ? "STALE" : "HIT"}: ${key} (${segmentTypes.join(", ")})`
+        );
+      }
 
       return { segments, shouldRevalidate };
     } catch (error) {
@@ -348,12 +357,14 @@ export class CacheScope {
 
         await store.set(key, data, ttl, swr);
 
-        const segmentTypes = nonLoaderSegments.map((s) =>
-          s.type === "parallel" ? s.slot : s.type
-        );
-        console.log(
-          `[CacheScope] Cached: ${key} (${segmentTypes.join(", ")}) ttl=${ttl}s [loaders excluded]`
-        );
+        if (INTERNAL_RANGO_DEBUG) {
+          const segmentTypes = nonLoaderSegments.map((s) =>
+            s.type === "parallel" ? s.slot : s.type
+          );
+          debugCacheLog(
+            `[CacheScope] Cached: ${key} (${segmentTypes.join(", ")}) ttl=${ttl}s [loaders excluded]`
+          );
+        }
       } catch (error) {
         console.error(`[CacheScope] Failed to cache ${key}:`, error);
       }

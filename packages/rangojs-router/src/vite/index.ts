@@ -1284,9 +1284,13 @@ function createRouterDiscoveryPlugin(
     name: "@rangojs/router:discovery",
 
     config() {
-      if (!opts?.enableBuildPrerender) return {};
-      return {
-        environments: {
+      const config: any = {
+        define: {
+          __RANGO_DEBUG__: JSON.stringify(!!process.env.INTERNAL_RANGO_DEBUG),
+        },
+      };
+      if (opts?.enableBuildPrerender) {
+        config.environments = {
           rsc: {
             build: {
               rollupOptions: {
@@ -1303,8 +1307,9 @@ function createRouterDiscoveryPlugin(
               },
             },
           },
-        },
-      };
+        };
+      }
+      return config;
     },
 
     configResolved(config) {
