@@ -40,6 +40,8 @@ import { ApiDemoPage } from "./pages/api-demo.js";
 import { SearchPage } from "./pages/search.js";
 import { transformCasesPatterns } from "./pages/transform-cases.js";
 import { compositionPatterns } from "./pages/composition.js";
+import { buildSkipPatterns } from "./pages/build-skip.js";
+import { prerenderCtxPatterns } from "./pages/prerender-ctx.js";
 import { createDocsPatterns } from "@shared/docs";
 import { docsArticles } from "./docs-content.js";
 import {
@@ -276,6 +278,10 @@ export const urlpatterns = urls(
         include("/composition", compositionPatterns, {
           name: "composition",
         }),
+
+        // Skip test routes (prerender + static skip/error handling)
+        include("/build-skip", buildSkipPatterns, { name: "buildSkip" }),
+        include("/prerender-ctx", prerenderCtxPatterns, { name: "prerenderCtx" }),
       ]),
     ]),
   ],

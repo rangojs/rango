@@ -25,6 +25,8 @@ export {
   isNetworkError,
   sanitizeError,
   RouterError,
+  Skip,
+  isSkip,
 } from "./index.js";
 
 // Re-export all types from types.ts (user-facing types only)
@@ -115,6 +117,8 @@ export {
   type PrerenderHandlerDefinition,
   type PrerenderOptions,
   type BuildContext,
+  type StaticBuildContext,
+  type GetParamsContext,
 } from "./prerender.js";
 
 // Static handler API

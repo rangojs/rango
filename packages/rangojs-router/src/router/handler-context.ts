@@ -137,6 +137,7 @@ export function createHandlerContext<TEnv>(
 
   return {
     params,
+    build: false,
     request,
     searchParams: cleanSearchParams,
     search: searchSchema ? resolvedSearchParams : {},
@@ -185,8 +186,10 @@ export function createPrerenderContext<TEnv>(
   pathname: string,
   routeMap: Record<string, string>,
   routeName?: string,
+  buildVars?: Record<string, any>,
 ): InternalHandlerContext<any, TEnv> {
   const syntheticUrl = new URL(`http://prerender${pathname}`);
+  const variables = buildVars ?? {};
 
   function throwUnavailable(prop: string): never {
     throw new Error(
@@ -197,6 +200,7 @@ export function createPrerenderContext<TEnv>(
 
   return {
     params,
+    build: true,
     get request(): Request {
       return throwUnavailable("request");
     },
@@ -210,11 +214,9 @@ export function createPrerenderContext<TEnv>(
     get var(): any {
       return throwUnavailable("var");
     },
-    get: (() => {
-      throwUnavailable("get");
-    }) as any,
-    set: (() => {
-      throwUnavailable("set");
+    get: ((key: string) => variables[key]) as any,
+    set: ((key: string, value: any) => {
+      variables[key] = value;
     }) as any,
     get _originalRequest(): Request {
       return throwUnavailable("request");
@@ -246,7 +248,10 @@ export function createPrerenderContext<TEnv>(
  */
 export function createStaticContext<TEnv>(
   routeMap: Record<string, string>,
+  routeName?: string,
 ): InternalHandlerContext<any, TEnv> {
+  const variables: Record<string, any> = {};
+
   function throwUnavailable(prop: string): never {
     throw new Error(
       `Property "${prop}" is not available in Static() handlers. ` +
@@ -258,6 +263,7 @@ export function createStaticContext<TEnv>(
     get params(): any {
       return throwUnavailable("params");
     },
+    build: true,
     get request(): Request {
       return throwUnavailable("request");
     },
@@ -279,11 +285,9 @@ export function createStaticContext<TEnv>(
     get var(): any {
       return throwUnavailable("var");
     },
-    get: (() => {
-      throwUnavailable("get");
-    }) as any,
-    set: (() => {
-      throwUnavailable("set");
+    get: ((key: string) => variables[key]) as any,
+    set: ((key: string, value: any) => {
+      variables[key] = value;
     }) as any,
     get _originalRequest(): Request {
       return throwUnavailable("request");
@@ -303,6 +307,6 @@ export function createStaticContext<TEnv>(
     setLocationState: () => {
       throwUnavailable("setLocationState");
     },
-    reverse: createReverseFunction(routeMap),
+    reverse: createReverseFunction(routeMap, routeName),
   } as InternalHandlerContext<any, TEnv>;
 }

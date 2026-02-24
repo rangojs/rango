@@ -488,8 +488,13 @@ export async function resolveWithErrorHandling<TEnv>(
           error, entry.shortCode, entry.type, context.pathname,
         );
 
+        // Safe request access: during build-time prerendering, context.request
+        // is a throwing getter. Use undefined when unavailable.
+        let safeRequest: Request | undefined;
+        try { safeRequest = context.request; } catch {}
+
         deps.callOnError(error, "handler", {
-          request: context.request,
+          request: safeRequest as Request,
           url: context.url,
           routeKey,
           params,
@@ -527,8 +532,13 @@ export async function resolveWithErrorHandling<TEnv>(
     const errorInfo = createErrorInfo(error, entry.shortCode, segmentType);
     const effectiveFallback = fallback ?? DefaultErrorFallback;
 
+    // Safe request access: during build-time prerendering, context.request
+    // is a throwing getter. Use undefined when unavailable.
+    let safeReq: Request | undefined;
+    try { safeReq = context.request; } catch {}
+
     deps.callOnError(error, "handler", {
-      request: context.request,
+      request: safeReq as Request,
       url: context.url,
       routeKey,
       params,

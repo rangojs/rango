@@ -943,6 +943,11 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
         : {}),
     };
 
+    // Capture namespace prefix on static handler for build-time reverse() resolution
+    if (isStaticHandler(handler) && handler.$$id && ctx.namePrefix) {
+      (handler as any).$$routePrefix = ctx.namePrefix;
+    }
+
     // Check for duplicate route names (TypeScript should catch this, but runtime check too)
     invariant(
       ctx.manifest.get(routeName) === undefined,

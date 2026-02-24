@@ -28,6 +28,8 @@ import { locationStatePatterns } from "./urls/location-state.js";
 import { responseCachePatterns } from "./urls/response-cache.js";
 import { includeMiddlewarePatterns } from "./urls/include-middleware.js";
 import { handlerFirstPatterns } from "./urls/handler-first.js";
+import { buildSkipPatterns } from "./urls/prerender-build-skip.js";
+import { prerenderCtxPatterns } from "./urls/prerender-ctx.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -457,6 +459,12 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
 
     // Handler-first execution order + cache scope tests
     include("/handler-first", handlerFirstPatterns, { name: "handlerFirst" }),
+
+    // Skip test patterns (prerender + static skip/error handling)
+    include("/build-skip", buildSkipPatterns, { name: "buildSkip" }),
+
+    // Prerender context test patterns (ctx.build, ctx.set/get, getParams context)
+    include("/prerender-ctx", prerenderCtxPatterns, { name: "prerenderCtx" }),
 
     // Include under layout with middleware — tests that layout middleware
     // is applied to routes inside include() even when include() is the

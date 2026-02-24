@@ -397,6 +397,12 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch extends Sear
   /** @internal Phantom property for params type invariance. Prevents mounting handlers on wrong routes. */
   readonly _paramCheck?: (params: TParams) => TParams;
   /**
+   * True during build-time pre-rendering, false at runtime.
+   * In dev mode, Prerender handlers run live so build is false.
+   * In production passthrough (live fallback), build is also false.
+   */
+  build: boolean;
+  /**
    * The incoming Request object.
    * System params (`_rsc*`) are filtered from the URL for cleaner access.
    */
@@ -1677,6 +1683,8 @@ export type ErrorPhase =
   | "rendering" // During RSC/SSR rendering (SSR handler uses separate callback)
   | "action" // During server action execution
   | "revalidation" // During revalidation evaluation
+  | "prerender" // During build-time pre-rendering (Vite closeBundle)
+  | "static" // During build-time static handler rendering (Vite closeBundle)
   | "unknown"; // Fallback for unclassified errors
 
 /**

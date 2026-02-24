@@ -39,16 +39,41 @@ export interface PrerenderOptions {
    * true: handler stays in bundle, unknown params render live at request time.
    */
   passthrough?: boolean;
+
+  /**
+   * Maximum number of param sets to render in parallel (default: 1).
+   * Only applies to dynamic Prerender handlers with getParams().
+   * Set to higher values to speed up builds with many routes.
+   *
+   * @example
+   * ```typescript
+   * export const BlogPost = Prerender(
+   *   async () => allPosts.map(p => ({ slug: p.slug })),
+   *   async (ctx) => <PostPage slug={ctx.params.slug} />,
+   *   { concurrency: 4 },
+   * );
+   * ```
+   */
+  concurrency?: number;
 }
 
 /**
  * Context passed to Prerender() handlers at build time.
  * Has a synthetic URL from getParams, params, and pathname.
- * No request, env, headers, cookies, or variables.
+ * No request, env, headers, cookies.
  */
 export interface BuildContext<TParams> {
   /** Params extracted from the route pattern (populated from getParams). */
   params: TParams;
+
+  /** True during build-time pre-rendering, false during passthrough live render. */
+  build: true;
+
+  /** Read a variable set by getParams or a parent handler. */
+  get: (key: string) => any;
+
+  /** Set a variable readable by child layouts and parallels. */
+  set: (key: string, value: any) => void;
 
   /** Push handle data (frozen into pre-rendered output at build time). */
   use: <T>(handle: Handle<T>) => (data: T) => void;
@@ -74,8 +99,32 @@ export interface BuildContext<TParams> {
  * No URL, no params, no pathname — just renders content.
  */
 export interface StaticBuildContext {
+  /** Always true for Static handlers at build time. */
+  build: true;
+
+  /** Read a variable (available for type consistency with BuildContext). */
+  get: (key: string) => any;
+
+  /** Set a variable (available for type consistency with BuildContext). */
+  set: (key: string, value: any) => void;
+
   /** Push handle data (frozen into pre-rendered output at build time). */
   use: <T>(handle: Handle<T>) => (data: T) => void;
+
+  /** URL generation by route name. */
+  reverse: (name: string, params?: Record<string, string>, search?: Record<string, unknown>) => string;
+}
+
+/**
+ * Context passed to getParams() at build time.
+ * Allows sharing data with handler invocations via set().
+ */
+export interface GetParamsContext {
+  /** Always true during build-time getParams execution. */
+  build: true;
+
+  /** Set a variable that will be available to each handler invocation via ctx.get(). */
+  set: (key: string, value: any) => void;
 
   /** URL generation by route name. */
   reverse: (name: string, params?: Record<string, string>, search?: Record<string, unknown>) => string;
@@ -88,7 +137,7 @@ export interface PrerenderHandlerDefinition<TParams extends Record<string, any> 
   /** In dev mode, the actual handler function that path() can call. */
   handler: Handler<TParams>;
   /** Returns the list of param objects to pre-render (dynamic routes). */
-  getParams?: () => Promise<TParams[]> | TParams[];
+  getParams?: (ctx: GetParamsContext) => Promise<TParams[]> | TParams[];
   /** Pre-render options. */
   options?: PrerenderOptions;
 }
@@ -104,7 +153,7 @@ export function Prerender<TParams extends Record<string, any> = {}>(
 
 // Overload 2: Dynamic handler (getParams + handler)
 export function Prerender<TParams extends Record<string, any>>(
-  getParams: () => Promise<TParams[]> | TParams[],
+  getParams: (ctx: GetParamsContext) => Promise<TParams[]> | TParams[],
   handler: (ctx: BuildContext<TParams>) => ReactNode | Promise<ReactNode>,
   options?: PrerenderOptions,
   __injectedId?: string,

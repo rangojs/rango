@@ -1026,6 +1026,7 @@ export interface RSCRouter<
   matchForPrerender(
     pathname: string,
     params: Record<string, string>,
+    buildVars?: Record<string, any>,
   ): Promise<{
     segments: SerializedSegmentData[];
     handles: Record<string, SegmentHandleData>;
@@ -1043,6 +1044,7 @@ export interface RSCRouter<
   renderStaticSegment(
     handler: Function,
     handlerId: string,
+    routeName?: string,
   ): Promise<{ encoded: string; handles: Record<string, unknown[]> } | null>;
 
   /**
@@ -1857,6 +1859,7 @@ export function createRouter<TEnv = any>(
   async function matchForPrerender(
     pathname: string,
     params: Record<string, string>,
+    buildVars?: Record<string, any>,
   ): Promise<{
     segments: SerializedSegmentData[];
     handles: Record<string, SegmentHandleData>;
@@ -1916,6 +1919,8 @@ export function createRouter<TEnv = any>(
       const handleStore = createHandleStore();
 
       // 5. Create a minimal request context with the handle store
+      // Shallow-copy getParams vars so each param set is independent
+      const variables: Record<string, any> = buildVars ? { ...buildVars } : {};
       const stubRes = new Response(null, { status: 200 });
       const minimalRequestContext: RequestContext<TEnv> = {
         env: {} as TEnv,
@@ -1923,9 +1928,9 @@ export function createRouter<TEnv = any>(
         url: new URL("http://prerender" + pathname),
         pathname,
         searchParams: new URLSearchParams(),
-        var: {},
-        get: () => undefined as any,
-        set: () => {},
+        var: variables,
+        get: ((key: string) => variables[key]) as any,
+        set: ((key: string, value: any) => { variables[key] = value; }) as any,
         params: matchedParams,
         res: stubRes,
         cookie: () => undefined,
@@ -1954,6 +1959,7 @@ export function createRouter<TEnv = any>(
           pathname,
           mergedRouteMap,
           matched.routeKey,
+          variables,
         );
 
         // 7. Wire use() for handles only (loaders throw)
@@ -2102,6 +2108,7 @@ export function createRouter<TEnv = any>(
   async function renderStaticSegment(
     handler: Function,
     handlerId: string,
+    routeName?: string,
   ): Promise<{ encoded: string; handles: Record<string, unknown[]> } | null> {
     const syntheticUrl = new URL("http://prerender/");
     const syntheticRequest = new Request(syntheticUrl);
@@ -2144,6 +2151,7 @@ export function createRouter<TEnv = any>(
       // request, env, headers, or cookies.
       const buildCtx = createStaticContext<TEnv>(
         mergedRouteMap,
+        routeName,
       );
 
       // Set segment ID so handle pushes are keyed correctly
