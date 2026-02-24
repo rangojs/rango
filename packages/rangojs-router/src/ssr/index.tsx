@@ -103,7 +103,6 @@ export interface SSRDependencies<TEnv = unknown> {
  * RSC payload type (minimal interface for SSR)
  */
 interface RscPayload {
-  root: React.ReactNode | null;
   metadata?: {
     segments?: ResolvedSegment[];
     rootLayout?: React.ComponentType<{ children: React.ReactNode }>;
@@ -249,16 +248,15 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
           refresh: async () => {},
         };
 
-        // Build content tree with all necessary providers
+        // Build content tree from segments.
         // Order must match NavigationProvider: NavigationStoreContext > ThemeProvider > content
         const reconstructedRoot = renderSegments(resolved.metadata?.segments ?? [], {
           rootLayout: resolved.metadata?.rootLayout,
         });
-        const reconstructedContent =
+        let content: React.ReactNode =
           reconstructedRoot instanceof Promise
             ? React.use(reconstructedRoot)
             : reconstructedRoot;
-        let content: React.ReactNode = resolved.root ?? reconstructedContent;
 
         // Wrap content with ThemeProvider if theme is enabled
         if (themeConfig) {

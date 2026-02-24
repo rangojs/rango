@@ -14,7 +14,7 @@ import {
 } from "./context.js";
 import type {
   NavigationStore,
-  RscPayload,
+  NavigationUpdate,
   NavigateOptions,
   NavigationBridge,
 } from "../types.js";
@@ -100,9 +100,9 @@ export interface NavigationProviderProps {
   eventController: EventController;
 
   /**
-   * Initial RSC payload from server
+   * Initial rendered tree + metadata from server payload
    */
-  initialPayload: RscPayload;
+  initialPayload: NavigationUpdate;
 
   /**
    * Navigation bridge for handling navigation

@@ -8,10 +8,10 @@ import type { RenderSegmentsOptions } from "../segment-system.js";
 // ============================================================================
 
 /**
- * RSC payload received from server
+ * RSC payload received from server.
+ * The tree is reconstructed from metadata.segments by the browser bridges.
  */
 export interface RscPayload<TMetadata = RscMetadata> {
-  root: ReactNode | Promise<ReactNode> | null;
   metadata?: TMetadata;
   returnValue?: ActionResult;
   formState?: unknown;

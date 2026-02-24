@@ -11,10 +11,11 @@ import type { RSCRouter } from "../router.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 
 /**
- * RSC payload sent to the client
+ * RSC payload sent to the client.
+ * The tree is always reconstructed from metadata.segments by consumers
+ * (SSR via renderSegments, browser via renderSegments in bridges).
  */
 export interface RscPayload {
-  root: React.ReactNode | Promise<React.ReactNode>;
   metadata?: {
     pathname: string;
     segments: ResolvedSegment[];

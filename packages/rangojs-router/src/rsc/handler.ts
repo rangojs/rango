@@ -230,7 +230,7 @@ export function createRSCHandler<
     locationState?: Record<string, unknown>,
   ): Response {
     const redirectPayload: RscPayload = {
-      root: null,
+
       metadata: {
         pathname: redirectUrl,
         segments: [],
@@ -254,7 +254,7 @@ export function createRSCHandler<
     const handlerStart = performance.now();
 
     // Connection warmup: return 204 immediately before any processing
-    if (router.warmupEnabled && request.method === "HEAD") {
+    if (router?.warmupEnabled && request.method === "HEAD") {
       const warmupUrl = new URL(request.url);
       if (warmupUrl.searchParams.has("_rsc_warmup")) {
         return new Response(null, { status: 204 });
@@ -958,7 +958,7 @@ export function createRSCHandler<
         };
 
         const payload: RscPayload = {
-          root: null,
+    
           metadata: {
             pathname: url.pathname,
             segments: [notFoundSegment],
@@ -1129,7 +1129,7 @@ export function createRSCHandler<
     }
 
     const payload: RscPayload = {
-      root: null,
+
       metadata: {
         pathname: url.pathname,
         segments: match.segments,
@@ -1253,7 +1253,7 @@ export function createRSCHandler<
         setRequestContextParams(errorResult.params);
 
         const payload: RscPayload = {
-          root: null,
+    
           metadata: {
             pathname: url.pathname,
             segments: errorResult.segments,
@@ -1307,7 +1307,7 @@ export function createRSCHandler<
       const serverTiming = fullMatch.serverTiming;
 
       const payload: RscPayload = {
-        root: null,
+  
         metadata: {
           pathname: url.pathname,
           segments: fullMatch.segments,
@@ -1343,7 +1343,7 @@ export function createRSCHandler<
     const serverTiming = matchResult.serverTiming;
 
     const payload: RscPayload = {
-      root: null,
+
       metadata: {
         pathname: url.pathname,
         segments: matchResult.segments,
@@ -1567,7 +1567,7 @@ export function createRSCHandler<
         serverTiming = match.serverTiming;
 
         payload = {
-          root: null,
+    
           metadata: {
             pathname: url.pathname,
             segments: match.segments,
@@ -1586,7 +1586,7 @@ export function createRSCHandler<
         serverTiming = result.serverTiming;
 
         payload = {
-          root: null,
+    
           metadata: {
             pathname: url.pathname,
             segments: result.segments,
@@ -1644,7 +1644,7 @@ export function createRSCHandler<
         payload = {
           // Initial SSR can reconstruct the tree from segments + rootLayout,
           // so we omit root to avoid sending the same structure twice.
-          root: null,
+    
           metadata: {
             pathname: url.pathname,
             segments: match.segments,
