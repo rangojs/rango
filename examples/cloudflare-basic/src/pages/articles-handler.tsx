@@ -1,7 +1,6 @@
 import { Meta, Prerender } from "@rangojs/router";
 import { Link, ParallelOutlet } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
-import { reverse } from "../router.js";
 
 interface Article {
   slug: string;
@@ -60,8 +59,8 @@ export const ArticlesIndex = Prerender(async (ctx) => {
   });
 
   const breadcrumb = ctx.use(Breadcrumbs);
-  breadcrumb({ label: "Home", href: reverse("home") });
-  breadcrumb({ label: "Articles", href: reverse("articles.index") });
+  breadcrumb({ label: "Home", href: ctx.reverse("home") });
+  breadcrumb({ label: "Articles", href: ctx.reverse("articles.index") });
 
   return (
     <div data-testid="articles-index" style={{ display: "flex", gap: "2rem" }}>
@@ -83,7 +82,7 @@ export const ArticlesIndex = Prerender(async (ctx) => {
             >
               <h2 style={{ marginBottom: "0.5rem" }}>
                 <Link
-                  to={reverse("articles.detail", { slug: article.slug })}
+                  to={ctx.reverse("articles.detail", { slug: article.slug })}
                   style={{ color: "#0070f3", textDecoration: "none" }}
                   data-testid={`article-link-${article.slug}`}
                 >
@@ -137,11 +136,11 @@ export const ArticleDetail = Prerender(
     meta({ name: "description", content: article.excerpt });
 
     const breadcrumb = ctx.use(Breadcrumbs);
-    breadcrumb({ label: "Home", href: reverse("home") });
-    breadcrumb({ label: "Articles", href: reverse("articles.index") });
+    breadcrumb({ label: "Home", href: ctx.reverse("home") });
+    breadcrumb({ label: "Articles", href: ctx.reverse("articles.index") });
     breadcrumb({
       label: article.title,
-      href: reverse("articles.detail", { slug: article.slug }),
+      href: ctx.reverse("articles.detail", { slug: article.slug }),
     });
 
     return (
@@ -154,7 +153,7 @@ export const ArticleDetail = Prerender(
           }}
         >
           <Link
-            to={reverse("articles.index")}
+            to={ctx.reverse("articles.index")}
             style={{ color: "#0070f3", textDecoration: "none" }}
           >
             &larr; Back to Articles

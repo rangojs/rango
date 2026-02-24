@@ -78,20 +78,29 @@ import "virtual:rsc-router/loader-manifest";
 // In dev mode, this is a no-op (manifest is populated in-memory by the discovery plugin).
 import "virtual:rsc-router/routes-manifest";
 
-export default createRSCHandler({
-  router,
-  version: VERSION,
-  deps: {
-    renderToReadableStream,
-    decodeReply,
-    createTemporaryReferenceSet,
-    loadServerAction,
-    decodeAction,
-    decodeFormState,
-  },
-  loadSSRModule: () =>
-    import.meta.viteRsc.loadModule("ssr", "index"),
-});
+// Lazily create the handler on first request so that ESM live bindings
+// have resolved by the time we read \`router\`. During HMR the module may
+// re-evaluate before router.tsx finishes, leaving the import undefined.
+let _handler;
+export default function handler(request, env) {
+  if (!_handler) {
+    _handler = createRSCHandler({
+      router,
+      version: VERSION,
+      deps: {
+        renderToReadableStream,
+        decodeReply,
+        createTemporaryReferenceSet,
+        loadServerAction,
+        decodeAction,
+        decodeFormState,
+      },
+      loadSSRModule: () =>
+        import.meta.viteRsc.loadModule("ssr", "index"),
+    });
+  }
+  return _handler(request, env);
+}
 `.trim();
 }
 

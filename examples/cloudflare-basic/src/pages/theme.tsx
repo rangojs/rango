@@ -1,7 +1,6 @@
 import { Link } from "@rangojs/router/client";
 import type { HandlerContext } from "@rangojs/router";
 import { ThemeToggle } from "../components/ThemeToggle.js";
-import { reverse } from "../router.js";
 
 export function ThemePage(ctx: HandlerContext) {
   return (
@@ -29,7 +28,7 @@ export function ThemePage(ctx: HandlerContext) {
           <li><strong>Cross-tab sync</strong> - Theme changes sync across tabs</li>
         </ul>
       </div>
-      <Link to={reverse("home")}>Back to Home</Link>
+      <Link to={ctx.reverse("home")}>Back to Home</Link>
       <style dangerouslySetInnerHTML={{ __html: `
         .theme-page h1 { margin-bottom: 1rem; }
         .theme-page h2 { margin: 1.5rem 0 0.5rem; font-size: 1.25rem; }
