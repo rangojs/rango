@@ -229,6 +229,25 @@ test.describe("proactive-caching", () => {
     const proactiveCached = partialNavLogs.includes("[CacheScope] Cached:");
     const partialCacheHit = partialNavLogs.includes("HIT: partial:");
     expect(proactiveCached || partialCacheHit).toBe(true);
+
+    // Step 3: Verify cache serves frozen content by comparing timestamps.
+    // Navigate away, then partial-nav to item-b twice — both should return the
+    // same cached render timestamp (proving segments come from cache, not re-rendered).
+    await page.goto(f.url("/proactive-cache"));
+    await waitForHydration(page);
+
+    await testId(page, "proactive-nav-b").click();
+    await expect(testId(page, "proactive-item-b-page")).toBeVisible();
+    const firstCachedTimestamp = await testId(page, "proactive-item-b-rendered").textContent();
+
+    await testId(page, "proactive-nav-index").click();
+    await expect(testId(page, "proactive-index-page")).toBeVisible();
+
+    await testId(page, "proactive-nav-b").click();
+    await expect(testId(page, "proactive-item-b-page")).toBeVisible();
+    const secondCachedTimestamp = await testId(page, "proactive-item-b-rendered").textContent();
+
+    expect(secondCachedTimestamp).toBe(firstCachedTimestamp);
   });
 
   test("layout renders correctly after proactive caching", async ({ page }) => {
