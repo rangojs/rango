@@ -1268,7 +1268,7 @@ function createRouterDiscoveryPlugin(
           for (const [, routerInstance] of registry) {
             if (!routerInstance.renderStaticSegment) continue;
             try {
-              const result = await routerInstance.renderStaticSegment(def.handler, def.$$id);
+              const result = await routerInstance.renderStaticSegment(def.handler, def.$$id, (def as any).$$routePrefix);
               if (result) {
                 collected[def.$$id] = result;
                 const elapsed = (performance.now() - startHandler).toFixed(0);

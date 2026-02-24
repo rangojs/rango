@@ -248,6 +248,7 @@ export function createPrerenderContext<TEnv>(
  */
 export function createStaticContext<TEnv>(
   routeMap: Record<string, string>,
+  routeName?: string,
 ): InternalHandlerContext<any, TEnv> {
   const variables: Record<string, any> = {};
 
@@ -306,6 +307,6 @@ export function createStaticContext<TEnv>(
     setLocationState: () => {
       throwUnavailable("setLocationState");
     },
-    reverse: createReverseFunction(routeMap),
+    reverse: createReverseFunction(routeMap, routeName),
   } as InternalHandlerContext<any, TEnv>;
 }
