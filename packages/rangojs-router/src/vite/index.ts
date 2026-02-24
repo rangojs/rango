@@ -589,6 +589,96 @@ function encodePathParam(value: unknown): string {
 }
 
 /**
+ * Run an async function over items with bounded concurrency.
+ * Errors propagate immediately and abort remaining work.
+ */
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  const limit = Math.max(1, Math.min(concurrency, items.length));
+  if (limit <= 1) {
+    for (const item of items) await fn(item);
+    return;
+  }
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < items.length) {
+      const idx = nextIndex++;
+      await fn(items[idx]);
+    }
+  }
+  await Promise.all(Array.from({ length: limit }, () => worker()));
+}
+
+/**
+ * Group prerender entries by their concurrency setting so each group
+ * can be rendered with the appropriate parallelism.
+ */
+function groupByConcurrency<T extends { concurrency: number }>(
+  entries: T[],
+): { concurrency: number; entries: T[] }[] {
+  const map = new Map<number, T[]>();
+  for (const entry of entries) {
+    const key = entry.concurrency;
+    let group = map.get(key);
+    if (!group) {
+      group = [];
+      map.set(key, group);
+    }
+    group.push(entry);
+  }
+  return Array.from(map.entries(), ([concurrency, items]) => ({
+    concurrency,
+    entries: items,
+  }));
+}
+
+/**
+ * Notify all routers' onError callbacks about a build-time error.
+ * Uses a synthetic request since there is no real request during build.
+ */
+function notifyOnError(
+  registry: Map<string, any>,
+  error: unknown,
+  phase: "prerender" | "static",
+  routeKey?: string,
+  pathname?: string,
+  skipped?: boolean,
+): void {
+  for (const [, routerInstance] of registry) {
+    const onError = routerInstance.onError;
+    if (!onError) continue;
+
+    const errorObj = error instanceof Error ? error : new Error(String(error));
+    const syntheticUrl = new URL("http://prerender" + (pathname || "/"));
+    const context = {
+      error: errorObj,
+      phase,
+      request: new Request(syntheticUrl),
+      url: syntheticUrl,
+      pathname: syntheticUrl.pathname,
+      method: "GET",
+      routeKey,
+      metadata: skipped ? { skipped: true } : undefined,
+    };
+
+    try {
+      const result = onError(context);
+      if (result instanceof Promise) {
+        result.catch((cbErr: unknown) => {
+          console.error(`[Build.onError] Callback error:`, cbErr);
+        });
+      }
+    } catch (cbErr) {
+      console.error(`[Build.onError] Callback error:`, cbErr);
+    }
+    break; // Only notify the first router with onError
+  }
+}
+
+/**
  * Plugin that discovers router instances at dev/build time via the RSC environment.
  *
  * Uses `server.environments.rsc.runner.import()` to load the user's router file
@@ -967,8 +1057,11 @@ function createRouterDiscoveryPlugin(
 
     // Expand prerender routes into concrete URLs for build-time rendering.
     // Static routes use pattern as-is; dynamic routes call getParams() to enumerate.
+    // Each entry tracks its route name and concurrency setting for grouped parallel rendering.
     if (opts?.enableBuildPrerender && isBuildMode) {
-      const urls: string[] = [];
+      type PrerenderEntry = { urlPath: string; routeName: string; concurrency: number };
+      const entries: PrerenderEntry[] = [];
+
       for (const { manifest } of allManifests) {
         if (!manifest.prerenderRoutes) continue;
         const defs = manifest._prerenderDefs || {};
@@ -978,13 +1071,18 @@ function createRouterDiscoveryPlugin(
           const hasDynamic = pattern.includes(":") || pattern.includes("*");
           if (!hasDynamic) {
             // Static route: use pattern directly (strip trailing slash for URL)
-            urls.push(pattern.replace(/\/$/, "") || "/");
+            entries.push({
+              urlPath: pattern.replace(/\/$/, "") || "/",
+              routeName,
+              concurrency: 1,
+            });
           } else {
             // Dynamic route: call getParams() to enumerate param combinations
             const def = defs[routeName];
             if (def?.getParams) {
               try {
                 const paramsList = await def.getParams();
+                const concurrency = def.options?.concurrency ?? 1;
                 for (const params of paramsList) {
                   let url = pattern;
                   for (const [key, value] of Object.entries(params as Record<string, string>)) {
@@ -1001,12 +1099,27 @@ function createRouterDiscoveryPlugin(
                       url = url.replace(/\*[^/]*$/, encodePathParam(wildcardValue));
                     }
                   }
-                  urls.push(url.replace(/\/$/, "") || "/");
+                  entries.push({
+                    urlPath: url.replace(/\/$/, "") || "/",
+                    routeName,
+                    concurrency,
+                  });
                 }
               } catch (err: any) {
-                console.warn(
+                // Skip in getParams() skips the entire route
+                if (err.name === "Skip") {
+                  console.log(
+                    `[rsc-router]   SKIP route "${routeName}" - ${err.message}`
+                  );
+                  notifyOnError(registry, err, "prerender", routeName, undefined, true);
+                  continue;
+                }
+                // Regular error: fail the build
+                console.error(
                   `[rsc-router] Failed to get params for prerender route "${routeName}": ${err.message}`
                 );
+                notifyOnError(registry, err, "prerender", routeName);
+                throw err;
               }
             } else {
               console.warn(
@@ -1016,46 +1129,79 @@ function createRouterDiscoveryPlugin(
           }
         }
       }
-      if (urls.length > 0) {
+      if (entries.length > 0) {
+        // Determine the max concurrency for the log header
+        const maxConcurrency = Math.max(...entries.map(e => e.concurrency));
+        const concurrencyNote = maxConcurrency > 1 ? ` (concurrency: ${maxConcurrency})` : "";
         console.log(
-          `[rsc-router] Pre-render URLs: ${urls.join(", ")}`
+          `[rsc-router] Pre-rendering ${entries.length} URL(s)${concurrencyNote}...`
         );
 
         const { hashParams } = await rscEnv.runner.import("@rangojs/router/build");
 
         const collectedData: Record<string, any> = {};
-        let rendered = 0;
+        let doneCount = 0;
+        let skipCount = 0;
+        const startTotal = performance.now();
 
-        for (const urlPath of urls) {
-          // Try all routers since the URL->router mapping isn't direct
-          for (const [, routerInstance] of registry) {
-            if (!routerInstance.matchForPrerender) continue;
-            try {
-              const result = await routerInstance.matchForPrerender(urlPath, {});
-              if (!result) continue;
-              const paramHash = hashParams(result.params || {});
-              collectedData[`${result.routeName}/${paramHash}`] = {
-                segments: result.segments,
-                handles: result.handles,
-              };
-              if (result.interceptSegments?.length) {
-                collectedData[`${result.routeName}/${paramHash}/i`] = {
-                  segments: [...result.segments, ...result.interceptSegments],
-                  handles: { ...result.handles, ...(result.interceptHandles || {}) },
+        // Group entries by concurrency for batched rendering.
+        // Within each group, all entries share the same concurrency limit.
+        const groups = groupByConcurrency(entries);
+
+        for (const group of groups) {
+          await runWithConcurrency(group.entries, group.concurrency, async (entry) => {
+            const startUrl = performance.now();
+            for (const [, routerInstance] of registry) {
+              if (!routerInstance.matchForPrerender) continue;
+              try {
+                const result = await routerInstance.matchForPrerender(entry.urlPath, {});
+                if (!result) continue;
+                const paramHash = hashParams(result.params || {});
+                collectedData[`${result.routeName}/${paramHash}`] = {
+                  segments: result.segments,
+                  handles: result.handles,
                 };
+                if (result.interceptSegments?.length) {
+                  collectedData[`${result.routeName}/${paramHash}/i`] = {
+                    segments: [...result.segments, ...result.interceptSegments],
+                    handles: { ...result.handles, ...(result.interceptHandles || {}) },
+                  };
+                }
+                const elapsed = (performance.now() - startUrl).toFixed(0);
+                console.log(`[rsc-router]   OK   ${entry.urlPath.padEnd(40)} (${elapsed}ms)`);
+                doneCount++;
+                break;
+              } catch (err: any) {
+                if (err.name === "Skip") {
+                  const elapsed = (performance.now() - startUrl).toFixed(0);
+                  console.log(
+                    `[rsc-router]   SKIP ${entry.urlPath.padEnd(40)} (${elapsed}ms) - ${err.message}`
+                  );
+                  skipCount++;
+                  notifyOnError(registry, err, "prerender", entry.routeName, entry.urlPath, true);
+                  break;
+                }
+                // Regular error: log, notify, and fail the build
+                const elapsed = (performance.now() - startUrl).toFixed(0);
+                console.error(
+                  `[rsc-router]   FAIL ${entry.urlPath.padEnd(40)} (${elapsed}ms) - ${err.message}`
+                );
+                notifyOnError(registry, err, "prerender", entry.routeName, entry.urlPath);
+                throw err;
               }
-              rendered++;
-              break;
-            } catch (err: any) {
-              console.warn(`[rsc-router] Pre-render failed for ${urlPath}: ${err.message}`);
             }
-          }
+          });
         }
 
-        if (rendered > 0) {
+        const totalElapsed = (performance.now() - startTotal).toFixed(0);
+        if (doneCount > 0) {
           prerenderCollectedData = collectedData;
-          console.log(`[rsc-router] Pre-rendered ${rendered}/${urls.length} route(s)`);
         }
+        const parts = [`${doneCount} done`];
+        if (skipCount > 0) parts.push(`${skipCount} skipped`);
+        console.log(
+          `[rsc-router] Pre-render complete: ${parts.join(", ")} (${totalElapsed}ms total)`
+        );
       }
     }
 
@@ -1064,15 +1210,25 @@ function createRouterDiscoveryPlugin(
     // output is RSC-serialized. The encoded string is stored keyed by handler $$id.
     if (opts?.enableBuildPrerender && isBuildMode && resolvedStaticModules?.size) {
       const collected: Record<string, { encoded: string; handles: Record<string, unknown[]> }> = {};
-      let staticRendered = 0;
+      let staticDone = 0;
+      let staticSkip = 0;
+      let totalStaticCount = 0;
+
+      // Count handlers for the log header
+      for (const [, exportNames] of resolvedStaticModules) {
+        totalStaticCount += exportNames.length;
+      }
+      const startStatic = performance.now();
+      console.log(`[rsc-router] Rendering ${totalStaticCount} static handler(s)...`);
 
       for (const [moduleId, exportNames] of resolvedStaticModules) {
         let mod: any;
         try {
           mod = await rscEnv!.runner.import(moduleId);
         } catch (err: any) {
-          console.warn(`[rsc-router] Failed to import static module ${moduleId}: ${err.message}`);
-          continue;
+          console.error(`[rsc-router] Failed to import static module ${moduleId}: ${err.message}`);
+          notifyOnError(registry, err, "static");
+          throw err;
         }
 
         for (const name of exportNames) {
@@ -1081,31 +1237,55 @@ function createRouterDiscoveryPlugin(
           // Passthrough handlers stay live in the bundle
           if (def.options?.passthrough) continue;
 
-          let rendered = false;
+          const startHandler = performance.now();
+          let handled = false;
           for (const [, routerInstance] of registry) {
             if (!routerInstance.renderStaticSegment) continue;
             try {
               const result = await routerInstance.renderStaticSegment(def.handler, def.$$id);
               if (result) {
                 collected[def.$$id] = result;
-                staticRendered++;
-                rendered = true;
+                const elapsed = (performance.now() - startHandler).toFixed(0);
+                console.log(`[rsc-router]   OK   ${name.padEnd(40)} (${elapsed}ms)`);
+                staticDone++;
+                handled = true;
                 break;
               }
             } catch (err: any) {
-              console.warn(`[rsc-router] Static render failed for ${name}: ${err.message}`);
+              if (err.name === "Skip") {
+                const elapsed = (performance.now() - startHandler).toFixed(0);
+                console.log(
+                  `[rsc-router]   SKIP ${name.padEnd(40)} (${elapsed}ms) - ${err.message}`
+                );
+                staticSkip++;
+                notifyOnError(registry, err, "static", undefined, undefined, true);
+                handled = true;
+                break;
+              }
+              // Regular error: log, notify, and fail the build
+              const elapsed = (performance.now() - startHandler).toFixed(0);
+              console.error(
+                `[rsc-router]   FAIL ${name.padEnd(40)} (${elapsed}ms) - ${err.message}`
+              );
+              notifyOnError(registry, err, "static");
+              throw err;
             }
           }
-          if (!rendered) {
+          if (!handled) {
             console.warn(`[rsc-router] No router could render static handler "${name}"`);
           }
         }
       }
 
-      if (staticRendered > 0) {
+      const totalStaticElapsed = (performance.now() - startStatic).toFixed(0);
+      if (staticDone > 0) {
         staticCollectedData = collected;
-        console.log(`[rsc-router] Rendered ${staticRendered} static handler(s)`);
       }
+      const staticParts = [`${staticDone} done`];
+      if (staticSkip > 0) staticParts.push(`${staticSkip} skipped`);
+      console.log(
+        `[rsc-router] Static render complete: ${staticParts.join(", ")} (${totalStaticElapsed}ms total)`
+      );
     }
 
     return serverMod;
