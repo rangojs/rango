@@ -1044,6 +1044,7 @@ export interface RSCRouter<
   renderStaticSegment(
     handler: Function,
     handlerId: string,
+    routeName?: string,
   ): Promise<{ encoded: string; handles: Record<string, unknown[]> } | null>;
 
   /**
@@ -2107,6 +2108,7 @@ export function createRouter<TEnv = any>(
   async function renderStaticSegment(
     handler: Function,
     handlerId: string,
+    routeName?: string,
   ): Promise<{ encoded: string; handles: Record<string, unknown[]> } | null> {
     const syntheticUrl = new URL("http://prerender/");
     const syntheticRequest = new Request(syntheticUrl);
@@ -2149,6 +2151,7 @@ export function createRouter<TEnv = any>(
       // request, env, headers, or cookies.
       const buildCtx = createStaticContext<TEnv>(
         mergedRouteMap,
+        routeName,
       );
 
       // Set segment ID so handle pushes are keyed correctly
