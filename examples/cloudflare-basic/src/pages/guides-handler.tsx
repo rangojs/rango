@@ -1,5 +1,6 @@
 import { Prerender } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
+import { reverse } from "../router.js";
 
 // Known slugs that get pre-rendered at build time.
 // Unknown slugs fall through to the live handler thanks to passthrough: true.
@@ -21,21 +22,21 @@ export const GuidesDetail = Prerender<{ slug: string }>(
         <p data-testid="guide-slug">Slug: {ctx.params.slug}</p>
         <nav style={{ marginTop: "1rem" }}>
           <Link
-            to={ctx.reverse("guides.detail", { slug: "routing" })}
+            to={reverse("guides.detail", { slug: "routing" })}
             data-testid="guide-link-routing"
           >
             Routing
           </Link>
           {" | "}
           <Link
-            to={ctx.reverse("guides.detail", { slug: "caching" })}
+            to={reverse("guides.detail", { slug: "caching" })}
             data-testid="guide-link-caching"
           >
             Caching
           </Link>
           {" | "}
           <Link
-            to={ctx.reverse("guides.detail", { slug: "dynamic-test" })}
+            to={reverse("guides.detail", { slug: "dynamic-test" })}
             data-testid="guide-link-dynamic"
           >
             Dynamic Test

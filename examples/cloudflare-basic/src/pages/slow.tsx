@@ -1,4 +1,5 @@
 import { Link } from "@rangojs/router/client";
+import { reverse } from "../router.js";
 
 async function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -17,16 +18,16 @@ export async function SlowPage1() {
         Navigate between pages to see the loading indicator appear after 400ms.
       </p>
       <nav style={{ marginTop: "2rem", display: "flex", gap: "1rem" }}>
-        <Link to="/slow/1" style={{ color: "#0070f3" }}>
+        <Link to={reverse("slow1")} style={{ color: "#0070f3" }}>
           Slow 1
         </Link>
-        <Link to="/slow/2" style={{ color: "#0070f3" }}>
+        <Link to={reverse("slow2")} style={{ color: "#0070f3" }}>
           Slow 2
         </Link>
-        <Link to="/slow/fast" style={{ color: "#22c55e" }}>
+        <Link to={reverse("fast")} style={{ color: "#22c55e" }}>
           Fast
         </Link>
-        <Link to="/" style={{ color: "#666" }}>
+        <Link to={reverse("home")} style={{ color: "#666" }}>
           Home
         </Link>
       </nav>
@@ -47,16 +48,16 @@ export async function SlowPage2() {
         Navigate between pages to see the loading indicator appear after 400ms.
       </p>
       <nav style={{ marginTop: "2rem", display: "flex", gap: "1rem" }}>
-        <Link to="/slow/1" style={{ color: "#0070f3" }}>
+        <Link to={reverse("slow1")} style={{ color: "#0070f3" }}>
           Slow 1
         </Link>
-        <Link to="/slow/2" style={{ color: "#0070f3" }}>
+        <Link to={reverse("slow2")} style={{ color: "#0070f3" }}>
           Slow 2
         </Link>
-        <Link to="/slow/fast" style={{ color: "#22c55e" }}>
+        <Link to={reverse("fast")} style={{ color: "#22c55e" }}>
           Fast
         </Link>
-        <Link to="/" style={{ color: "#666" }}>
+        <Link to={reverse("home")} style={{ color: "#666" }}>
           Home
         </Link>
       </nav>
@@ -73,16 +74,16 @@ export function FastPage() {
         The progress bar should NOT appear when navigating here.
       </p>
       <nav style={{ marginTop: "2rem", display: "flex", gap: "1rem" }}>
-        <Link to="/slow/1" style={{ color: "#0070f3" }}>
+        <Link to={reverse("slow1")} style={{ color: "#0070f3" }}>
           Slow 1
         </Link>
-        <Link to="/slow/2" style={{ color: "#0070f3" }}>
+        <Link to={reverse("slow2")} style={{ color: "#0070f3" }}>
           Slow 2
         </Link>
-        <Link to="/slow/fast" style={{ color: "#22c55e" }}>
+        <Link to={reverse("fast")} style={{ color: "#22c55e" }}>
           Fast
         </Link>
-        <Link to="/" style={{ color: "#666" }}>
+        <Link to={reverse("home")} style={{ color: "#666" }}>
           Home
         </Link>
       </nav>

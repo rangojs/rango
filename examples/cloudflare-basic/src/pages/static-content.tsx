@@ -1,5 +1,6 @@
 import { Static } from "@rangojs/router";
 import { Link, Outlet } from "@rangojs/router/client";
+import { reverse } from "../router.js";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
 
 interface NavItem {
@@ -56,7 +57,7 @@ export const DocsNavLayout = Static(async (ctx) => {
           {docsNavItems.map((item) => (
             <li key={item.slug}>
               <Link
-                to={ctx.reverse("staticContent.docsPage", { slug: item.slug })}
+                to={reverse("staticContent.docsPage", { slug: item.slug })}
                 data-testid={`docs-nav-${item.slug}`}
               >
                 {item.label}
@@ -80,7 +81,7 @@ export const DocsNavLayout = Static(async (ctx) => {
 
 // --- Static path: rendered once at build time on a path() route. ---
 // The index page content is fixed.
-export const DocsIndexPage = Static(async (ctx) => {
+export const DocsIndexPage = Static(async () => {
   const docsNavItems = await readDocsNavItems();
   return (
     <div data-testid="static-docs-index">
@@ -99,7 +100,7 @@ export const DocsIndexPage = Static(async (ctx) => {
         {docsNavItems.map((item) => (
           <li key={item.slug}>
             <Link
-              to={ctx.reverse("staticContent.docsPage", { slug: item.slug })}
+              to={reverse("staticContent.docsPage", { slug: item.slug })}
               data-testid={`docs-index-link-${item.slug}`}
             >
               {item.label}
