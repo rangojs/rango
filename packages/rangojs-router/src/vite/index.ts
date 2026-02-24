@@ -1636,13 +1636,7 @@ function createRouterDiscoveryPlugin(
           }, 100);
         };
 
-        // Include "add" because many editors use atomic saves (unlink + rename)
-        // which can emit add instead of change for modified files.
-        server.watcher.on("add", (filePath) => {
-          maybeHandleGeneratedRouteFileMutation(filePath);
-        });
-
-        server.watcher.on("change", (filePath) => {
+        const handleRouteFileChange = (filePath: string) => {
           if (maybeHandleGeneratedRouteFileMutation(filePath)) return;
           if (
             !filePath.endsWith(".ts") &&
@@ -1667,7 +1661,13 @@ function createRouterDiscoveryPlugin(
           } catch {
             // Ignore read errors for deleted/moved files
           }
-        });
+        };
+
+        // Handle both "add" and "change" events: editors with atomic saves
+        // (unlink + rename) emit "add" instead of "change", and chokidar's
+        // polling mode on CI Linux can also emit "add" for overwrites.
+        server.watcher.on("add", handleRouteFileChange);
+        server.watcher.on("change", handleRouteFileChange);
 
         // Regenerate gen files when they are deleted (e.g. manual cleanup).
         server.watcher.on("unlink", (filePath) => {
