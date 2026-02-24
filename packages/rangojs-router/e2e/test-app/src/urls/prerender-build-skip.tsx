@@ -12,7 +12,7 @@ export const SkipArticle = Prerender(
       <div data-testid="build-skip-article">
         <h1 data-testid="build-skip-article-title">{ctx.params.slug}</h1>
         <p data-testid="build-skip-article-content">
-          Content for {ctx.params.slug}
+          Article: {ctx.params.slug}
         </p>
       </div>
     );
