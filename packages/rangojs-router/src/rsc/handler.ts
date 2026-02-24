@@ -977,8 +977,10 @@ export function createRSCHandler<
 
         const rscStream = renderToReadableStream(payload);
 
-        // Determine if this is an RSC request or HTML request
+        // Determine if this is an RSC request or HTML request.
+        // Partial requests are always RSC (see main isRscRequest comment).
         const isRscRequest =
+          isPartial ||
           (!request.headers.get("accept")?.includes("text/html") &&
             !url.searchParams.has("__html")) ||
           url.searchParams.has("__rsc");
@@ -1674,8 +1676,12 @@ export function createRSCHandler<
     const rscStream = renderToReadableStream<RscPayload>(payload);
     const rscSerializeDur = performance.now() - rscSerializeStart;
 
-    // Determine if this is an RSC request or HTML request
+    // Determine if this is an RSC request or HTML request.
+    // Partial requests (_rsc_partial) are always RSC — they come from client-side
+    // navigation or <link rel="prefetch">. Chrome sends Accept: text/html for
+    // prefetch links despite as="fetch", so we cannot rely on Accept alone.
     const isRscRequest =
+      isPartial ||
       (!request.headers.get("accept")?.includes("text/html") &&
         !url.searchParams.has("__html")) ||
       url.searchParams.has("__rsc");
