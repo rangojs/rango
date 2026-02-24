@@ -867,6 +867,15 @@ export const router = createRouter().routes(urlpatterns);
     expect(extractUrlsVariableFromRouter(code)).toBe("urlpatterns");
   });
 
+  it("extracts from .routes(() => varName) chain", () => {
+    const code = `
+import { createRouter } from "@rangojs/router";
+import { urlpatterns } from "./urls.js";
+export const router = createRouter().routes(() => urlpatterns);
+`;
+    expect(extractUrlsVariableFromRouter(code)).toBe("urlpatterns");
+  });
+
   it("extracts from createRouter<T>().routes(varName) with generic", () => {
     const code = `
 import { createRouter } from "@rangojs/router";
@@ -894,6 +903,15 @@ export const router = createRouter<AppEnv>({
 import { createRouter } from "@rangojs/router";
 import { urlpatterns } from "./urls.js";
 export const router = createRouter({ urls: urlpatterns, document: Document });
+`;
+    expect(extractUrlsVariableFromRouter(code)).toBe("urlpatterns");
+  });
+
+  it("extracts from createRouter({ urls: () => varName })", () => {
+    const code = `
+import { createRouter } from "@rangojs/router";
+import { urlpatterns } from "./urls.js";
+export const router = createRouter({ urls: () => urlpatterns, document: Document });
 `;
     expect(extractUrlsVariableFromRouter(code)).toBe("urlpatterns");
   });

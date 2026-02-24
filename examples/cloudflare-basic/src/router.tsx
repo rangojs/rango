@@ -29,7 +29,7 @@ export const router = createRouter<AppEnv>({
   // Document cache middleware - caches full responses based on Cache-Control headers
   .use(createDocumentCacheMiddleware())
   // Register all routes
-  .routes(urlpatterns);
+  .routes(() => urlpatterns);
 
 type AppRoutes = typeof router.routeMap;
 

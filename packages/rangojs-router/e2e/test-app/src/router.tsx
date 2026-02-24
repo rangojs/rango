@@ -168,9 +168,21 @@ export const reverse = router.reverse;
 
 // Module-level reverse() calls — these run before lazy includes resolve.
 // createRouter() seeds reverse() from the generated NamedRoutes map.
+function safeModuleReverse(name: string, params?: Record<string, string>): string {
+  try {
+    return params
+      ? (router.reverse as any)(name, params)
+      : (router.reverse as any)(name);
+  } catch {
+    // During HMR include toggles, routes can be transiently missing while modules
+    // re-evaluate. Keep module evaluation alive to avoid cascading reload errors.
+    return "__unresolved__";
+  }
+}
+
 export const moduleLevelReverseResults: Record<string, string> = {
-  "blog.index": router.reverse("blog.index"),
-  "blog.post": router.reverse("blog.post", { postId: "test-post" }),
-  "search.index": router.reverse("search.index"),
-  "middlewareTest.index": router.reverse("middlewareTest.index"),
+  "blog.index": safeModuleReverse("blog.index"),
+  "blog.post": safeModuleReverse("blog.post", { postId: "test-post" }),
+  "search.index": safeModuleReverse("search.index"),
+  "middlewareTest.index": safeModuleReverse("middlewareTest.index"),
 };

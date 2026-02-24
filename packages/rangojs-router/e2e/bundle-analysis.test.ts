@@ -115,8 +115,9 @@ test.describe("bundle-analysis", () => {
     test("client bundle should only have loader name references", async () => {
       const clientBundle = getClientBundleContent();
 
-      // LoaderBoundary component should exist (it's a client component)
-      expect(clientBundle).toContain("LoaderBoundary");
+      // Keep this minification-safe: the boundary symbol name may be mangled,
+      // but the runtime boundary key string should still be present.
+      expect(clientBundle).toContain("loader-boundary-");
 
       // But the actual loader function implementations should not
       expect(clientBundle).not.toMatch(/createLoader\s*\(\s*["']products["']/);

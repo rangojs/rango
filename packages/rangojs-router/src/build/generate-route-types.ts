@@ -774,7 +774,9 @@ export function detectUnresolvableIncludes(
  * Extract the url patterns variable from a router file using AST.
  * Detects two patterns:
  *   1. createRouter(...).routes(variableName)
+ *      createRouter(...).routes(() => variableName)
  *   2. createRouter({ urls: variableName, ... })
+ *      createRouter({ urls: () => variableName, ... })
  * Returns the local variable name.
  */
 export function extractUrlsVariableFromRouter(
@@ -782,6 +784,34 @@ export function extractUrlsVariableFromRouter(
 ): string | null {
   const sourceFile = ts.createSourceFile("router.tsx", code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   let result: string | null = null;
+
+  function unwrapIdentifierFromExpression(expr: ts.Expression): string | null {
+    if (ts.isIdentifier(expr)) return expr.text;
+
+    if (ts.isParenthesizedExpression(expr)) {
+      return unwrapIdentifierFromExpression(expr.expression);
+    }
+
+    if (ts.isAsExpression(expr) || ts.isTypeAssertionExpression(expr)) {
+      return unwrapIdentifierFromExpression(expr.expression);
+    }
+
+    if (ts.isArrowFunction(expr) || ts.isFunctionExpression(expr)) {
+      if (ts.isIdentifier(expr.body)) return expr.body.text;
+      if (ts.isParenthesizedExpression(expr.body)) {
+        return unwrapIdentifierFromExpression(expr.body.expression);
+      }
+      if (ts.isBlock(expr.body)) {
+        for (const stmt of expr.body.statements) {
+          if (!ts.isReturnStatement(stmt) || !stmt.expression) continue;
+          const id = unwrapIdentifierFromExpression(stmt.expression);
+          if (id) return id;
+        }
+      }
+    }
+
+    return null;
+  }
 
   function isCreateRouterCall(node: ts.Node): boolean {
     if (!ts.isCallExpression(node)) return false;
@@ -798,8 +828,7 @@ export function extractUrlsVariableFromRouter(
       ts.isCallExpression(node) &&
       ts.isPropertyAccessExpression(node.expression) &&
       node.expression.name.text === "routes" &&
-      node.arguments.length >= 1 &&
-      ts.isIdentifier(node.arguments[0])
+      node.arguments.length >= 1
     ) {
       // Walk up the chain: createRouter().middleware(...).routes(x) etc.
       // The innermost call should be createRouter(...)
@@ -808,8 +837,11 @@ export function extractUrlsVariableFromRouter(
         inner = inner.expression.expression;
       }
       if (isCreateRouterCall(inner)) {
-        result = (node.arguments[0] as ts.Identifier).text;
-        return;
+        const name = unwrapIdentifierFromExpression(node.arguments[0] as ts.Expression);
+        if (name) {
+          result = name;
+          return;
+        }
       }
     }
 
@@ -822,11 +854,13 @@ export function extractUrlsVariableFromRouter(
             if (
               ts.isPropertyAssignment(prop) &&
               ts.isIdentifier(prop.name) &&
-              prop.name.text === "urls" &&
-              ts.isIdentifier(prop.initializer)
-            ) {
-              result = prop.initializer.text;
-              return;
+                prop.name.text === "urls"
+              ) {
+              const name = unwrapIdentifierFromExpression(prop.initializer);
+              if (name) {
+                result = name;
+                return;
+              }
             }
           }
         }
