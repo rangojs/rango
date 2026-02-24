@@ -61,7 +61,7 @@ export const ProductPage = Prerender(
     const product = await db.query("SELECT * FROM products WHERE id = ?", ctx.params.id);
     return <Product data={product} />;
   },
-  { passthrough: true }
+  { passthrough: true, concurrency: 4 }
 );
 ```
 
@@ -211,6 +211,87 @@ dist/static/__<hash>/
     about/
       _.flight            # static route, no params
 ```
+
+## Concurrency
+
+Prerender handlers can specify how many param sets render in parallel:
+
+```typescript
+export const BlogPost = Prerender(
+  async () => posts.map(p => ({ slug: p.slug })),
+  async (ctx) => <PostPage slug={ctx.params.slug} />,
+  { concurrency: 4 },
+);
+```
+
+Default is `1` (sequential). Only `Prerender` supports concurrency; `Static` handlers
+always render sequentially.
+
+## Skipping Entries with Skip
+
+Throw `Skip` inside a Prerender or Static handler to skip an individual entry
+without failing the build:
+
+```typescript
+import { Prerender, Skip } from "@rangojs/router";
+
+export const BlogPost = Prerender(
+  async () => [{ slug: "published" }, { slug: "draft" }],
+  async (ctx) => {
+    if (ctx.params.slug === "draft") {
+      throw new Skip("Draft articles are not pre-rendered");
+    }
+    return <PostPage slug={ctx.params.slug} />;
+  },
+  { passthrough: true },
+);
+```
+
+Skipped entries are excluded from the build output. With `passthrough: true`,
+the handler stays in the bundle and serves skipped params live at request time.
+
+`Skip` also works in `Static` handlers:
+
+```typescript
+import { Static, Skip } from "@rangojs/router";
+
+export const TocSidebar = Static(() => {
+  throw new Skip("Not ready for pre-rendering");
+});
+```
+
+### Error behavior at build time
+
+| Throw type | Effect |
+|---|---|
+| `throw new Skip("reason")` | Skip entry, log SKIP, continue with remaining entries |
+| `throw new Error("reason")` | Log FAIL, stop ALL pre-rendering, fail the build |
+
+Both error types propagate to the router's `onError` callback with phase
+`"prerender"` or `"static"`.
+
+### Build logs
+
+The build produces per-URL timing logs:
+
+```
+[rsc-router] Pre-rendering 12 URL(s) (concurrency: 4)...
+[rsc-router]   OK   /articles/hello            (42ms)
+[rsc-router]   SKIP /articles/draft-post       (3ms) - Article is a draft
+[rsc-router]   FAIL /articles/broken           (15ms) - DB connection refused
+[rsc-router] Pre-render complete: 10 ok, 1 skipped, 1 failed (1204ms total)
+
+[rsc-router] Rendering 3 static handler(s)...
+[rsc-router]   OK   DocsLayout                 (28ms)
+[rsc-router]   SKIP TocSidebar                 (1ms) - Not ready
+[rsc-router] Static render complete: 2 ok, 1 skipped (120ms total)
+```
+
+### Dev mode behavior
+
+In dev mode, `Skip` is a regular Error. Throwing it in a handler will surface
+as a runtime error (no build-time skip logic exists in dev). This matches the
+general dev-mode principle where Prerender handlers run live per request.
 
 ## Edge Cases and Constraints
 

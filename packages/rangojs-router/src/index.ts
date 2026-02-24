@@ -26,6 +26,8 @@ export {
   isNetworkError,
   sanitizeError,
   RouterError,
+  Skip,
+  isSkip,
 } from "./errors.js";
 
 // Types (safe to import anywhere - no runtime code)
