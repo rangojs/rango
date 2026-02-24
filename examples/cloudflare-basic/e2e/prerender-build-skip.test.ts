@@ -55,7 +55,7 @@ test.describe("build-skip prerender (production)", () => {
 
     await expect(testId(page, "bs-article-title")).toContainText("published");
     await expect(testId(page, "bs-article-content")).toContainText(
-      "Content for published"
+      "Article: published"
     );
   });
 

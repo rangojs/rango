@@ -11,7 +11,7 @@ export const SkipArticle = Prerender(
     return (
       <div data-testid="bs-article">
         <h1 data-testid="bs-article-title">{ctx.params.slug}</h1>
-        <p data-testid="bs-article-content">Content for {ctx.params.slug}</p>
+        <p data-testid="bs-article-content">Article: {ctx.params.slug}</p>
       </div>
     );
   },

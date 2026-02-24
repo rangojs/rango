@@ -1059,8 +1059,26 @@ function createRouterDiscoveryPlugin(
     // Static routes use pattern as-is; dynamic routes call getParams() to enumerate.
     // Each entry tracks its route name and concurrency setting for grouped parallel rendering.
     if (opts?.enableBuildPrerender && isBuildMode) {
-      type PrerenderEntry = { urlPath: string; routeName: string; concurrency: number };
+      type PrerenderEntry = { urlPath: string; routeName: string; concurrency: number; buildVars?: Record<string, any> };
       const entries: PrerenderEntry[] = [];
+
+      // Build a merged route map for getParams context reverse()
+      const allRoutes: Record<string, string> = {};
+      for (const { manifest: m } of allManifests) {
+        if (m.routeManifest) Object.assign(allRoutes, m.routeManifest);
+      }
+      const getParamsReverse = (name: string, params?: Record<string, string>) => {
+        const pattern = allRoutes[name];
+        if (!pattern) throw new Error(`Unknown route: "${name}"`);
+        let result = pattern;
+        if (params) {
+          for (const [key, value] of Object.entries(params)) {
+            result = result.replace(`:${key}`, encodeURIComponent(value));
+            result = result.replace(`*${key}`, encodeURIComponent(value));
+          }
+        }
+        return result;
+      };
 
       for (const { manifest } of allManifests) {
         if (!manifest.prerenderRoutes) continue;
@@ -1081,8 +1099,15 @@ function createRouterDiscoveryPlugin(
             const def = defs[routeName];
             if (def?.getParams) {
               try {
-                const paramsList = await def.getParams();
+                const buildVars: Record<string, any> = {};
+                const getParamsCtx = {
+                  build: true as const,
+                  set: (key: string, value: any) => { buildVars[key] = value; },
+                  reverse: getParamsReverse,
+                };
+                const paramsList = await def.getParams(getParamsCtx);
                 const concurrency = def.options?.concurrency ?? 1;
+                const hasBuildVars = Object.keys(buildVars).length > 0;
                 for (const params of paramsList) {
                   let url = pattern;
                   for (const [key, value] of Object.entries(params as Record<string, string>)) {
@@ -1103,6 +1128,7 @@ function createRouterDiscoveryPlugin(
                     urlPath: url.replace(/\/$/, "") || "/",
                     routeName,
                     concurrency,
+                    ...(hasBuildVars ? { buildVars } : {}),
                   });
                 }
               } catch (err: any) {
@@ -1154,7 +1180,7 @@ function createRouterDiscoveryPlugin(
             for (const [, routerInstance] of registry) {
               if (!routerInstance.matchForPrerender) continue;
               try {
-                const result = await routerInstance.matchForPrerender(entry.urlPath, {});
+                const result = await routerInstance.matchForPrerender(entry.urlPath, {}, entry.buildVars);
                 if (!result) continue;
                 const paramHash = hashParams(result.params || {});
                 collectedData[`${result.routeName}/${paramHash}`] = {
