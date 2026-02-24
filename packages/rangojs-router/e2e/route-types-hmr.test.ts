@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { execSync } from "node:child_process";
 
 /**
  * Tests for route type generation HMR:
@@ -19,8 +20,8 @@ import path from "node:path";
 // Filesystem watcher events can be slow on CI Linux runners under parallel
 // load, so we use longer timeouts there.
 const isCI = !!process.env.CI;
-const WATCHER_TIMEOUT = isCI ? 20_000 : 10_000;
-const RUNTIME_TIMEOUT = isCI ? 15_000 : 5_000;
+const WATCHER_TIMEOUT = isCI ? 30_000 : 10_000;
+const RUNTIME_TIMEOUT = isCI ? 20_000 : 5_000;
 
 test.describe.serial("route-types-hmr", () => {
   const f = useFixture({
@@ -44,6 +45,13 @@ test.describe.serial("route-types-hmr", () => {
   let originalMainUrlsContent: string;
 
   test.beforeAll(async () => {
+    // Restore git-tracked versions in case a prior timed-out test left
+    // modified files on disk (afterEach does not run when workers crash).
+    try {
+      execSync(`git checkout -- "${blogUrlsPath}" "${mainUrlsPath}" "${handlersPath}"`, {
+        stdio: "ignore",
+      });
+    } catch {}
     originalBlogContent = await fs.readFile(blogUrlsPath, "utf-8");
     originalMainUrlsContent = await fs.readFile(mainUrlsPath, "utf-8");
   });
@@ -52,7 +60,7 @@ test.describe.serial("route-types-hmr", () => {
     await fs.writeFile(blogUrlsPath, originalBlogContent);
     await fs.writeFile(mainUrlsPath, originalMainUrlsContent);
     // Wait for HMR + re-discovery to process the restore
-    await new Promise((r) => setTimeout(r, isCI ? 3000 : 2000));
+    await new Promise((r) => setTimeout(r, isCI ? 5000 : 2000));
   });
 
   test("should regenerate route types when a new route is added", async () => {

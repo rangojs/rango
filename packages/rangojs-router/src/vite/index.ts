@@ -1619,6 +1619,23 @@ function createRouterDiscoveryPlugin(
           return true;
         };
 
+        // Debounce timer for batching rapid route-file changes (e.g. afterEach
+        // restoring two files in quick succession). The cheap checks (extension,
+        // scanFilter, content sniff) run synchronously to gate non-route files;
+        // only the expensive regeneration is debounced.
+        let routeChangeTimer: ReturnType<typeof setTimeout> | undefined;
+
+        const scheduleRouteRegeneration = () => {
+          clearTimeout(routeChangeTimer);
+          routeChangeTimer = setTimeout(() => {
+            routeChangeTimer = undefined;
+            writeCombinedRouteTypesWithTracking();
+            if (perRouterManifests.length > 0) {
+              supplementGenFilesWithRuntimeRoutes();
+            }
+          }, 100);
+        };
+
         // Include "add" because many editors use atomic saves (unlink + rename)
         // which can emit add instead of change for modified files.
         server.watcher.on("add", (filePath) => {
@@ -1646,17 +1663,7 @@ function createRouterDiscoveryPlugin(
             if (hasCreateRouter) {
               cachedRouterFiles = undefined;
             }
-            writeCombinedRouteTypesWithTracking();
-            // Static parsing can't resolve factory calls (e.g. createDocsPatterns()).
-            // If runtime discovery already ran, supplement the static output with
-            // factory-generated routes that the parser missed. Static routes take
-            // precedence (reflecting renames/additions/removals in source), and
-            // runtime-only routes (from factories) fill the gaps.
-            // The runtime manifest updates automatically: the virtual module
-            // imports the gen file, so Vite's HMR re-evaluates setCachedManifest().
-            if (perRouterManifests.length > 0) {
-              supplementGenFilesWithRuntimeRoutes();
-            }
+            scheduleRouteRegeneration();
           } catch {
             // Ignore read errors for deleted/moved files
           }

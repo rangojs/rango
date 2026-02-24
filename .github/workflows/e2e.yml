@@ -91,18 +91,13 @@ jobs:
         run: pnpm --filter @rangojs/router build
 
       - name: Cache Playwright browsers
-        id: playwright-cache-demo
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-browsers-${{ hashFiles('pnpm-lock.yaml') }}
 
-      - name: Install Playwright browsers
-        if: steps.playwright-cache-demo.outputs.cache-hit != 'true'
-        run: pnpm --filter vite-rsc-demo exec playwright install chromium
-
-      - name: Install Playwright system dependencies
-        run: pnpm --filter vite-rsc-demo exec playwright install-deps chromium
+      - name: Install Playwright
+        run: pnpm --filter vite-rsc-demo exec playwright install --with-deps chromium
 
       - name: Run demo app e2e tests (${{ matrix.project }})
         run: pnpm --filter vite-rsc-demo exec playwright test --project=${{ matrix.project }}
@@ -152,18 +147,13 @@ jobs:
         run: pnpm --filter @rangojs/router build
 
       - name: Cache Playwright browsers
-        id: playwright-cache-router
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-browsers-${{ hashFiles('pnpm-lock.yaml') }}
 
-      - name: Install Playwright browsers
-        if: steps.playwright-cache-router.outputs.cache-hit != 'true'
-        run: pnpm --filter @rangojs/router exec playwright install chromium
-
-      - name: Install Playwright system dependencies
-        run: pnpm --filter @rangojs/router exec playwright install-deps chromium
+      - name: Install Playwright
+        run: pnpm --filter @rangojs/router exec playwright install --with-deps chromium
 
       - name: Run rangojs-router e2e tests (${{ matrix.project }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
         run: |
@@ -205,18 +195,13 @@ jobs:
         run: pnpm --filter @rangojs/router build
 
       - name: Cache Playwright browsers
-        id: playwright-cache-cf
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-browsers-${{ hashFiles('pnpm-lock.yaml') }}
 
-      - name: Install Playwright browsers
-        if: steps.playwright-cache-cf.outputs.cache-hit != 'true'
-        run: pnpm --filter cloudflare-basic exec playwright install chromium
-
-      - name: Install Playwright system dependencies
-        run: pnpm --filter cloudflare-basic exec playwright install-deps chromium
+      - name: Install Playwright
+        run: pnpm --filter cloudflare-basic exec playwright install --with-deps chromium
 
       - name: Run cloudflare-basic e2e tests
         run: pnpm --filter cloudflare-basic test:e2e
@@ -255,18 +240,13 @@ jobs:
         run: pnpm --filter @rangojs/router build
 
       - name: Cache Playwright browsers
-        id: playwright-cache-react
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-browsers-${{ hashFiles('pnpm-lock.yaml') }}
 
-      - name: Install Playwright browsers
-        if: steps.playwright-cache-react.outputs.cache-hit != 'true'
-        run: pnpm --filter react-experimental exec playwright install chromium
-
-      - name: Install Playwright system dependencies
-        run: pnpm --filter react-experimental exec playwright install-deps chromium
+      - name: Install Playwright
+        run: pnpm --filter react-experimental exec playwright install --with-deps chromium
 
       - name: Run react-experimental e2e tests
         run: pnpm --filter react-experimental test:e2e
@@ -303,18 +283,13 @@ jobs:
         run: pnpm --filter @rangojs/router build
 
       - name: Cache Playwright browsers
-        id: playwright-cache-stress
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-browsers-${{ hashFiles('pnpm-lock.yaml') }}
 
-      - name: Install Playwright browsers
-        if: steps.playwright-cache-stress.outputs.cache-hit != 'true'
-        run: pnpm --filter cloudflare-stress-demo exec playwright install chromium
-
-      - name: Install Playwright system dependencies
-        run: pnpm --filter cloudflare-stress-demo exec playwright install-deps chromium
+      - name: Install Playwright
+        run: pnpm --filter cloudflare-stress-demo exec playwright install --with-deps chromium
 
       - name: Run cloudflare-stress-demo e2e tests
         run: pnpm --filter cloudflare-stress-demo test:e2e

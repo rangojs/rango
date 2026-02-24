@@ -8,11 +8,22 @@ import {
 } from "./helper";
 import fs from "node:fs";
 import path from "node:path";
+import { execSync } from "node:child_process";
 
 test.describe("hmr", () => {
   const f = useFixture({
     root: ".",
     mode: "dev",
+  });
+
+  // Restore git-tracked sources in case a prior timed-out test left
+  // modified files on disk (afterEach does not run when workers crash).
+  test.beforeAll(() => {
+    try {
+      execSync("git checkout -- src/pages/ src/urls.tsx", {
+        cwd: f.root, stdio: "ignore",
+      });
+    } catch {}
   });
 
   // Store original file contents for cleanup
@@ -187,6 +198,16 @@ test.describe.serial("hmr-route-mutations", () => {
   // cycle (file change -> gen file -> virtual module -> program reload)
   // can take 10-20s depending on system load.
   const ROUTE_CHANGE_TIMEOUT = 30000;
+
+  // Restore git-tracked sources in case a prior timed-out test left
+  // modified files on disk (afterEach does not run when workers crash).
+  test.beforeAll(() => {
+    try {
+      execSync("git checkout -- src/urls.tsx", {
+        cwd: f.root, stdio: "ignore",
+      });
+    } catch {}
+  });
 
   const originalContents = new Map<string, string>();
 
@@ -521,10 +542,11 @@ import { Outlet } from "@rangojs/router/client";`
       await expect(testId(page, "proactive-index-page")).toBeVisible({
         timeout: 2000,
       });
+      // Layout should no longer be present — only passes after HMR processes
+      await expect(testId(page, "proactive-cache-layout")).not.toBeVisible({
+        timeout: 2000,
+      });
     }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
-
-    // Layout should no longer be present
-    await expect(testId(page, "proactive-cache-layout")).not.toBeVisible();
   });
 
   // -- Group 5: Parallel Route Mutations --
