@@ -28,6 +28,7 @@ test.describe.serial("route-types-hmr", () => {
     root: "./e2e/test-app",
     mode: "dev",
     isolatedServer: true,
+    cliOptions: isCI ? { env: { ...process.env, DEBUG_ROUTE_WATCHER: "1", TEST_DEBUG: "1" } } : undefined,
   });
 
   test.setTimeout(isCI ? 60_000 : 30_000);

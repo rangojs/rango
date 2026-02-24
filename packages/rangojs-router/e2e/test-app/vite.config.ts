@@ -26,10 +26,10 @@ export default defineConfig({
   },
   server: {
     watch: {
-      // On CI, multiple Vite servers watch the same directory. Native inotify
-      // watchers can miss events under this contention. Use polling instead.
-      usePolling: !!process.env.CI,
-      interval: 200,
+      // Native inotify works well on GitHub Actions Ubuntu VMs and handles
+      // multiple concurrent watchers better than polling (no stat contention).
+      // Polling was previously used here but missed events on CI due to the
+      // 200ms interval being too coarse for rapid test file writes.
     },
   },
 });

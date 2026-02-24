@@ -1624,20 +1624,29 @@ function createRouterDiscoveryPlugin(
         // scanFilter, content sniff) run synchronously to gate non-route files;
         // only the expensive regeneration is debounced.
         let routeChangeTimer: ReturnType<typeof setTimeout> | undefined;
+        const debugWatcher = !!process.env.DEBUG_ROUTE_WATCHER;
 
         const scheduleRouteRegeneration = () => {
           clearTimeout(routeChangeTimer);
           routeChangeTimer = setTimeout(() => {
             routeChangeTimer = undefined;
-            writeCombinedRouteTypesWithTracking();
-            if (perRouterManifests.length > 0) {
-              supplementGenFilesWithRuntimeRoutes();
+            try {
+              writeCombinedRouteTypesWithTracking();
+              if (perRouterManifests.length > 0) {
+                supplementGenFilesWithRuntimeRoutes();
+              }
+            } catch (err: any) {
+              console.error(`[rsc-router] Route regeneration error: ${err.message}`);
             }
           }, 100);
         };
 
         const handleRouteFileChange = (filePath: string) => {
-          if (maybeHandleGeneratedRouteFileMutation(filePath)) return;
+          if (debugWatcher) console.log(`[rsc-router:watcher] event for ${relative(projectRoot, filePath)}`);
+          if (maybeHandleGeneratedRouteFileMutation(filePath)) {
+            if (debugWatcher) console.log(`[rsc-router:watcher] handled as gen file mutation`);
+            return;
+          }
           if (
             !filePath.endsWith(".ts") &&
             !filePath.endsWith(".tsx") &&
@@ -1657,6 +1666,7 @@ function createRouterDiscoveryPlugin(
             if (hasCreateRouter) {
               cachedRouterFiles = undefined;
             }
+            if (debugWatcher) console.log(`[rsc-router:watcher] scheduling regeneration for ${relative(projectRoot, filePath)}`);
             scheduleRouteRegeneration();
           } catch {
             // Ignore read errors for deleted/moved files
