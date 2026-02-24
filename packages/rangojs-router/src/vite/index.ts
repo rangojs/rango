@@ -1629,9 +1629,13 @@ function createRouterDiscoveryPlugin(
           clearTimeout(routeChangeTimer);
           routeChangeTimer = setTimeout(() => {
             routeChangeTimer = undefined;
-            writeCombinedRouteTypesWithTracking();
-            if (perRouterManifests.length > 0) {
-              supplementGenFilesWithRuntimeRoutes();
+            try {
+              writeCombinedRouteTypesWithTracking();
+              if (perRouterManifests.length > 0) {
+                supplementGenFilesWithRuntimeRoutes();
+              }
+            } catch (err: any) {
+              console.error(`[rsc-router] Route regeneration error: ${err.message}`);
             }
           }, 100);
         };
