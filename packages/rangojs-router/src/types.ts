@@ -1677,6 +1677,8 @@ export type ErrorPhase =
   | "rendering" // During RSC/SSR rendering (SSR handler uses separate callback)
   | "action" // During server action execution
   | "revalidation" // During revalidation evaluation
+  | "prerender" // During build-time pre-rendering (Vite closeBundle)
+  | "static" // During build-time static handler rendering (Vite closeBundle)
   | "unknown"; // Fallback for unclassified errors
 
 /**

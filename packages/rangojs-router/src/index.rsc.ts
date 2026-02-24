@@ -25,6 +25,8 @@ export {
   isNetworkError,
   sanitizeError,
   RouterError,
+  Skip,
+  isSkip,
 } from "./index.js";
 
 // Re-export all types from types.ts (user-facing types only)

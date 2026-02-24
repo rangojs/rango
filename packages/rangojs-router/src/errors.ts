@@ -215,6 +215,44 @@ export class RouterError extends Error {
 }
 
 /**
+ * Thrown inside a Prerender or Static handler at build time to signal
+ * "skip this entry, log it, and continue with the rest."
+ *
+ * When thrown, the entry is excluded from the pre-render manifest
+ * but the build continues normally. Regular throws (non-Skip)
+ * stop all further pre-rendering and fail the build.
+ *
+ * @example
+ * ```typescript
+ * export const BlogPost = Prerender(
+ *   async () => allPosts.map(p => ({ slug: p.slug })),
+ *   async (ctx) => {
+ *     const post = await getPost(ctx.params.slug);
+ *     if (post.draft) throw new Skip(`"${ctx.params.slug}" is a draft`);
+ *     return <PostPage post={post} />;
+ *   },
+ * );
+ * ```
+ */
+export class Skip extends Error {
+  name = "Skip" as const;
+  cause?: unknown;
+
+  constructor(message: string = "Entry skipped", options?: ErrorOptions) {
+    super(message);
+    Object.setPrototypeOf(this, Skip.prototype);
+    this.cause = options?.cause;
+  }
+}
+
+/**
+ * Type guard to check if a thrown value is a Skip signal.
+ */
+export function isSkip(value: unknown): value is Skip {
+  return value instanceof Skip;
+}
+
+/**
  * Thrown by the partial updater when the server responds with a redirect payload
  * that carries location state. Caught by navigate() to re-navigate to the
  * redirect target with the server-set state merged into history.pushState.

@@ -39,6 +39,22 @@ export interface PrerenderOptions {
    * true: handler stays in bundle, unknown params render live at request time.
    */
   passthrough?: boolean;
+
+  /**
+   * Maximum number of param sets to render in parallel (default: 1).
+   * Only applies to dynamic Prerender handlers with getParams().
+   * Set to higher values to speed up builds with many routes.
+   *
+   * @example
+   * ```typescript
+   * export const BlogPost = Prerender(
+   *   async () => allPosts.map(p => ({ slug: p.slug })),
+   *   async (ctx) => <PostPage slug={ctx.params.slug} />,
+   *   { concurrency: 4 },
+   * );
+   * ```
+   */
+  concurrency?: number;
 }
 
 /**
