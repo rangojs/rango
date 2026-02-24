@@ -8,12 +8,11 @@ import {
   BlogSidebarLoader,
   type BlogSidebarData,
 } from "../loaders/blog.js";
-import { reverse } from "../router.js";
 
 export function BlogLayout(ctx: HandlerContext) {
   const breadcrumb = ctx.use(Breadcrumbs);
-  breadcrumb({ label: "Home", href: reverse("home") });
-  breadcrumb({ label: "Blog", href: reverse("blog") });
+  breadcrumb({ label: "Home", href: ctx.reverse("home") });
+  breadcrumb({ label: "Blog", href: ctx.reverse("blog") });
 
   return (
     <div data-testid="blog-layout" style={{ display: "flex", gap: "2rem" }}>
@@ -38,7 +37,7 @@ export function BlogSidebar({ data }: { data: BlogSidebarData }) {
         {data.recentPosts.map((post) => (
           <li key={post.slug} style={{ marginBottom: "0.75rem" }}>
             <Link
-              to={reverse("blogPost", { slug: post.slug })}
+              to={`/blog/${post.slug}`}
               style={{
                 color: "#0070f3",
                 textDecoration: "none",
@@ -205,7 +204,7 @@ export function BlogIndexPage(ctx: HandlerContext) {
           >
             <h2 style={{ marginBottom: "0.5rem" }}>
               <Link
-                to={reverse("blogPost", { slug: post.slug })}
+                to={ctx.reverse("blogPost", { slug: post.slug })}
                 style={{ color: "#0070f3", textDecoration: "none" }}
                 data-testid={`blog-link-${post.slug}`}
               >
@@ -267,7 +266,7 @@ export function BlogPostPage(ctx: HandlerContext<{ slug: string }>) {
   const breadcrumb = ctx.use(Breadcrumbs);
   breadcrumb({
     label: post.title,
-    href: reverse("blogPost", { slug: post.slug }),
+    href: ctx.reverse("blogPost", { slug: post.slug }),
   });
 
   return (
@@ -280,7 +279,7 @@ export function BlogPostPage(ctx: HandlerContext<{ slug: string }>) {
         }}
       >
         <Link
-          to={reverse("blog")}
+          to={ctx.reverse("blog")}
           style={{ color: "#0070f3", textDecoration: "none" }}
         >
           &larr; Back to Blog
