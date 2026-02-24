@@ -2649,11 +2649,15 @@ export async function rango(
   // Node preset: uses the (possibly auto-discovered) router path.
   // Cloudflare preset: deferred to configResolved (read from resolved Vite env config).
   const discoveryEntryPath = preset !== "cloudflare" ? routerPath : undefined;
-  const injectorEntryPath = rscEntryPath ?? discoveryEntryPath;
 
   // Version injector: auto-injects VERSION and routes-manifest into custom entry.rsc files.
-  // For cloudflare, the entry is resolved lazily in configResolved from the RSC environment.
-  plugins.push(createVersionInjectorPlugin(injectorEntryPath));
+  // Only applies when there's an explicit rscEntryPath or for cloudflare preset (resolved
+  // lazily in configResolved). For node preset without a custom entry, the router file
+  // must NOT be transformed — injecting routes-manifest there creates a circular dependency.
+  const injectorEntryPath = rscEntryPath ?? (preset === "cloudflare" ? undefined : null);
+  if (injectorEntryPath !== null) {
+    plugins.push(createVersionInjectorPlugin(injectorEntryPath));
+  }
 
   // Transform CJS vendor files to ESM for browser compatibility
   // optimizeDeps.include doesn't work because the file is loaded after initial optimization
