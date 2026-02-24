@@ -892,6 +892,10 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
       unwrappedSlots[slotName] = slotHandler.handler;
       if (slotHandler.$$id) {
         staticSlotIds[slotName] = slotHandler.$$id;
+        // Capture namespace prefix for build-time reverse() resolution
+        if (ctx.namePrefix) {
+          (slotHandler as any).$$routePrefix = ctx.namePrefix;
+        }
       }
     } else {
       unwrappedSlots[slotName] = slotHandler;
@@ -1258,6 +1262,11 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     ...(urlPrefix ? { mountPath: urlPrefix } : {}),
     ...(isStatic ? { isStaticPrerender: true as const, ...(handler.$$id ? { staticHandlerId: handler.$$id } : {}) } : {}),
   } satisfies EntryData;
+
+  // Capture namespace prefix on static handler for build-time reverse() resolution
+  if (isStatic && handler.$$id && ctx.namePrefix) {
+    (handler as any).$$routePrefix = ctx.namePrefix;
+  }
 
   // Run use callback if provided
   let result: AllUseItems[] | undefined;
