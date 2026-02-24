@@ -24,4 +24,12 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  server: {
+    watch: {
+      // On CI, multiple Vite servers watch the same directory. Native inotify
+      // watchers can miss events under this contention. Use polling instead.
+      usePolling: !!process.env.CI,
+      interval: 200,
+    },
+  },
 });

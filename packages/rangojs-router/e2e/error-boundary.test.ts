@@ -111,7 +111,11 @@ test.describe("error-boundary", () => {
       await page.goto(f.url("/errors/streaming-error"));
 
       // Should briefly show loading state
-      await expect(testId(page, "streaming-error-loading")).toBeVisible({
+      await expect(
+        testId(page, "main-content").locator(
+          '[data-testid="streaming-error-loading"]'
+        )
+      ).toBeVisible({
         timeout: 2000,
       });
 
@@ -137,7 +141,11 @@ test.describe("error-boundary", () => {
       await testId(page, "streaming-error-link").click();
 
       // Should show loading
-      await expect(testId(page, "streaming-error-loading")).toBeVisible({
+      await expect(
+        testId(page, "main-content").locator(
+          '[data-testid="streaming-error-loading"]'
+        )
+      ).toBeVisible({
         timeout: 2000,
       });
 

@@ -115,8 +115,10 @@ test.describe("bundle-analysis", () => {
     test("client bundle should only have loader name references", async () => {
       const clientBundle = getClientBundleContent();
 
-      // LoaderBoundary component should exist (it's a client component)
-      expect(clientBundle).toContain("LoaderBoundary");
+      // LoaderBoundary component code should exist (it's a client component).
+      // The name itself may be minified, so check for a unique string literal
+      // from route-content-wrapper.tsx that survives minification.
+      expect(clientBundle).toContain("route-content-suspense-");
 
       // But the actual loader function implementations should not
       expect(clientBundle).not.toMatch(/createLoader\s*\(\s*["']products["']/);
