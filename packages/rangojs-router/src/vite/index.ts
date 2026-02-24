@@ -280,7 +280,7 @@ export interface RangoCloudflareOptions extends RangoBaseOptions {
    * - @vitejs/plugin-rsc is NOT added (cloudflare plugin adds it)
    * - Your worker entry (e.g., worker.rsc.tsx) imports the router directly
    * - Browser and SSR use virtual entries
-   * - Build-time manifest generation is auto-detected from wrangler.json main entry
+   * - Build-time manifest generation is auto-detected from the resolved RSC environment config
    */
   preset: "cloudflare";
 }
@@ -691,9 +691,10 @@ function notifyOnError(
  * @internal
  */
 function createRouterDiscoveryPlugin(
-  entryPath: string,
+  entryPath: string | undefined,
   opts?: { enableBuildPrerender?: boolean; staticRouteTypesGeneration?: boolean; include?: string[]; exclude?: string[] },
 ): Plugin {
+  let resolvedEntryPath: string | undefined = entryPath;
   let projectRoot = "";
   let isBuildMode = false;
   let userResolveAlias: any = undefined;
@@ -809,10 +810,11 @@ function createRouterDiscoveryPlugin(
   // Shared discovery logic: import entry via RSC runner, generate manifests,
   // write static files, and populate mergedRouteManifest.
   async function discoverRouters(rscEnv: any) {
+    if (!resolvedEntryPath) return;
     // Import the entry file via RSC environment.
     // For node preset: this is the router file (createRouter() registers in RouterRegistry).
     // For cloudflare preset: this is the worker entry (which imports the router).
-    await rscEnv.runner.import(entryPath);
+    await rscEnv.runner.import(resolvedEntryPath);
 
     // Import the router package to access the registry
     const serverMod = await rscEnv.runner.import("@rangojs/router/server");
@@ -866,7 +868,7 @@ function createRouterDiscoveryPlugin(
       // If still no routers after host router resolution, fail
       if (!registry || registry.size === 0) {
         throw new Error(
-          `[rsc-router] No routers found in registry after importing ${entryPath}`
+          `[rsc-router] No routers found in registry after importing ${resolvedEntryPath}`
         );
       }
     }
@@ -1336,7 +1338,7 @@ function createRouterDiscoveryPlugin(
 
     // Delete old combined named-routes.gen.ts if it exists
     try {
-      const entryDir = dirname(resolve(projectRoot, entryPath));
+      const entryDir = dirname(resolve(projectRoot, resolvedEntryPath!));
       const oldCombinedPath = join(entryDir, "named-routes.gen.ts");
       if (existsSync(oldCombinedPath)) {
         unlinkSync(oldCombinedPath);
@@ -1497,6 +1499,18 @@ function createRouterDiscoveryPlugin(
       isBuildMode = config.command === "build";
       // Capture user's resolve aliases for the temp server
       userResolveAlias = config.resolve.alias;
+      // Cloudflare preset: read entry from resolved environment config.
+      // The @cloudflare/vite-plugin reads wrangler config (toml/json/jsonc)
+      // and sets optimizeDeps.entries on the RSC environment.
+      if (!resolvedEntryPath) {
+        const rscEnvConfig = (config.environments as any)?.["rsc"];
+        const entries = rscEnvConfig?.optimizeDeps?.entries;
+        if (typeof entries === "string") {
+          resolvedEntryPath = entries;
+        } else if (Array.isArray(entries) && entries.length > 0) {
+          resolvedEntryPath = entries[0];
+        }
+      }
       // Compile include/exclude patterns into a scan filter
       if (opts?.include || opts?.exclude) {
         scanFilter = createScanFilter(projectRoot, {
@@ -1578,7 +1592,7 @@ function createRouterDiscoveryPlugin(
             resolve: { alias: userResolveAlias },
             esbuild: { jsx: "automatic", jsxImportSource: "react" },
             plugins: [
-              rsc({ entries: { client: "virtual:entry-client", ssr: "virtual:entry-ssr", rsc: entryPath } }),
+              rsc({ entries: { client: "virtual:entry-client", ssr: "virtual:entry-ssr", rsc: resolvedEntryPath! } }),
               createVersionPlugin(),
               createVirtualStubPlugin(),
               // Dev prerender must use dev-mode IDs (path-based) to match the
@@ -1591,7 +1605,7 @@ function createRouterDiscoveryPlugin(
 
           const tempRscEnv = (prerenderTempServer.environments as any)?.rsc;
           if (tempRscEnv?.runner) {
-            await tempRscEnv.runner.import(entryPath);
+            await tempRscEnv.runner.import(resolvedEntryPath!);
             const serverMod = await tempRscEnv.runner.import("@rangojs/router/server");
             prerenderNodeRegistry = serverMod.RouterRegistry;
             return tempRscEnv;
@@ -1785,6 +1799,23 @@ function createRouterDiscoveryPlugin(
           return true;
         };
 
+        // Debounce timer for batching rapid route-file changes (e.g. afterEach
+        // restoring two files in quick succession). The cheap checks (extension,
+        // scanFilter, content sniff) run synchronously to gate non-route files;
+        // only the expensive regeneration is debounced.
+        let routeChangeTimer: ReturnType<typeof setTimeout> | undefined;
+
+        const scheduleRouteRegeneration = () => {
+          clearTimeout(routeChangeTimer);
+          routeChangeTimer = setTimeout(() => {
+            routeChangeTimer = undefined;
+            writeCombinedRouteTypesWithTracking();
+            if (perRouterManifests.length > 0) {
+              supplementGenFilesWithRuntimeRoutes();
+            }
+          }, 100);
+        };
+
         // Include "add" because many editors use atomic saves (unlink + rename)
         // which can emit add instead of change for modified files.
         server.watcher.on("add", (filePath) => {
@@ -1812,17 +1843,7 @@ function createRouterDiscoveryPlugin(
             if (hasCreateRouter) {
               cachedRouterFiles = undefined;
             }
-            writeCombinedRouteTypesWithTracking();
-            // Static parsing can't resolve factory calls (e.g. createDocsPatterns()).
-            // If runtime discovery already ran, supplement the static output with
-            // factory-generated routes that the parser missed. Static routes take
-            // precedence (reflecting renames/additions/removals in source), and
-            // runtime-only routes (from factories) fill the gaps.
-            // The runtime manifest updates automatically: the virtual module
-            // imports the gen file, so Vite's HMR re-evaluates setCachedManifest().
-            if (perRouterManifests.length > 0) {
-              supplementGenFilesWithRuntimeRoutes();
-            }
+            scheduleRouteRegeneration();
           } catch {
             // Ignore read errors for deleted/moved files
           }
@@ -1871,7 +1892,7 @@ function createRouterDiscoveryPlugin(
           // which fails when lazy host-router handlers load sub-app modules with JSX.
           esbuild: { jsx: "automatic", jsxImportSource: "react" },
           plugins: [
-            rsc({ entries: { client: "virtual:entry-client", ssr: "virtual:entry-ssr", rsc: entryPath } }),
+            rsc({ entries: { client: "virtual:entry-client", ssr: "virtual:entry-ssr", rsc: resolvedEntryPath! } }),
             hashClientRefs(projectRoot),
             createVersionPlugin(),
             // Stub virtual modules that the RSC entry may import
@@ -2289,101 +2310,8 @@ function createRouterDiscoveryPlugin(
   };
 }
 
-/**
- * Strip JSONC comments (single-line // and block comments) from a string
- * without corrupting URLs or other values inside quoted strings.
- * Uses a simple state machine to track whether we are inside a JSON string.
- */
-function stripJsonComments(input: string): string {
-  let result = "";
-  let i = 0;
-  const len = input.length;
-
-  while (i < len) {
-    const ch = input[i];
-
-    // Quoted string: copy verbatim, respecting backslash escapes
-    if (ch === '"') {
-      result += ch;
-      i++;
-      while (i < len) {
-        const sc = input[i];
-        result += sc;
-        i++;
-        if (sc === "\\") {
-          // Copy the escaped character as-is
-          if (i < len) {
-            result += input[i];
-            i++;
-          }
-        } else if (sc === '"') {
-          break;
-        }
-      }
-      continue;
-    }
-
-    // Single-line comment: skip to end of line
-    if (ch === "/" && i + 1 < len && input[i + 1] === "/") {
-      i += 2;
-      while (i < len && input[i] !== "\n") {
-        i++;
-      }
-      continue;
-    }
-
-    // Block comment: skip to closing */
-    if (ch === "/" && i + 1 < len && input[i + 1] === "*") {
-      i += 2;
-      while (i < len) {
-        if (input[i] === "*" && i + 1 < len && input[i + 1] === "/") {
-          i += 2;
-          break;
-        }
-        i++;
-      }
-      continue;
-    }
-
-    result += ch;
-    i++;
-  }
-
-  return result;
-}
-
 const VIRTUAL_ROUTES_MANIFEST_ID = "virtual:rsc-router/routes-manifest";
 // VIRTUAL_PRERENDER_PATHS_ID removed: prerender data is served through the worker
-
-/**
- * Resolve the entry path for build-time router discovery.
- * - Node preset: uses the `router` option (may be undefined if auto-discovery failed).
- * - Cloudflare preset: reads the `main` field from wrangler.json.
- */
-function resolveDiscoveryEntryPath(options: RangoOptions, routerPath?: string): string | undefined {
-  if (options.preset === "cloudflare") {
-    // Auto-detect from wrangler.json
-    const wranglerPaths = ["wrangler.json", "wrangler.jsonc"];
-    for (const filename of wranglerPaths) {
-      if (existsSync(filename)) {
-        try {
-          const raw = readFileSync(filename, "utf-8");
-          // Strip JSONC comments (// and /* */) without corrupting URLs in strings
-          const cleaned = stripJsonComments(raw);
-          const config = JSON.parse(cleaned);
-          if (config.main) {
-            return config.main;
-          }
-        } catch {
-          // Ignore parse errors
-        }
-      }
-    }
-    return undefined;
-  }
-  // Node preset: use resolved routerPath (may be auto-discovered or explicit)
-  return routerPath;
-}
 
 /**
  * Stub plugin for virtual modules in the temp discovery server.
@@ -2409,8 +2337,7 @@ function jsonParseExpression(value: unknown): string {
  * Also ensures the routes-manifest virtual module is always imported.
  * @internal
  */
-function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
-  let projectRoot = "";
+function createVersionInjectorPlugin(rscEntryPath: string | undefined): Plugin {
   let resolvedEntryPath = "";
 
   return {
@@ -2418,11 +2345,26 @@ function createVersionInjectorPlugin(rscEntryPath: string): Plugin {
     enforce: "pre",
 
     configResolved(config) {
-      projectRoot = config.root;
-      resolvedEntryPath = resolve(projectRoot, rscEntryPath);
+      let entryPath = rscEntryPath;
+      // Cloudflare preset: read entry from resolved environment config.
+      // The @cloudflare/vite-plugin reads wrangler config (toml/json/jsonc)
+      // and sets optimizeDeps.entries on the RSC environment.
+      if (!entryPath) {
+        const rscEnvConfig = (config.environments as any)?.["rsc"];
+        const entries = rscEnvConfig?.optimizeDeps?.entries;
+        if (typeof entries === "string") {
+          entryPath = entries;
+        } else if (Array.isArray(entries) && entries.length > 0) {
+          entryPath = entries[0];
+        }
+      }
+      if (entryPath) {
+        resolvedEntryPath = resolve(config.root, entryPath);
+      }
     },
 
     transform(code, id) {
+      if (!resolvedEntryPath) return null;
       // Only transform the RSC entry file
       const normalizedId = Vite.normalizePath(id);
       const normalizedEntry = Vite.normalizePath(resolvedEntryPath);
@@ -2890,18 +2832,17 @@ export async function rango(
   // Add version virtual module plugin for cache invalidation
   plugins.push(createVersionPlugin());
 
-  // Resolve discovery entry path (used for both discovery and version injection).
+  // Entry path for discovery and version injection.
   // Node preset: uses the (possibly auto-discovered) router path.
-  // Cloudflare preset: auto-detects RSC entry from wrangler.json main field.
-  const discoveryEntryPath = resolveDiscoveryEntryPath(
-    resolvedOptions,
-    preset !== "cloudflare" ? routerPath : undefined,
-  );
+  // Cloudflare preset: deferred to configResolved (read from resolved Vite env config).
+  const discoveryEntryPath = preset !== "cloudflare" ? routerPath : undefined;
 
-  // Add version injector for custom entry.rsc files.
-  // For Cloudflare preset, the RSC entry is the worker file (from wrangler.json).
-  const injectorEntryPath = rscEntryPath ?? (preset === "cloudflare" ? discoveryEntryPath : null);
-  if (injectorEntryPath) {
+  // Version injector: auto-injects VERSION and routes-manifest into custom entry.rsc files.
+  // Only applies when there's an explicit rscEntryPath or for cloudflare preset (resolved
+  // lazily in configResolved). For node preset without a custom entry, the router file
+  // must NOT be transformed — injecting routes-manifest there creates a circular dependency.
+  const injectorEntryPath = rscEntryPath ?? (preset === "cloudflare" ? undefined : null);
+  if (injectorEntryPath !== null) {
     plugins.push(createVersionInjectorPlugin(injectorEntryPath));
   }
 
@@ -2909,15 +2850,14 @@ export async function rango(
   // optimizeDeps.include doesn't work because the file is loaded after initial optimization
   plugins.push(createCjsToEsmPlugin());
 
-  // Add router discovery plugin for build-time manifest generation.
-  if (discoveryEntryPath) {
-    plugins.push(createRouterDiscoveryPlugin(discoveryEntryPath, {
-      enableBuildPrerender: prerenderEnabled,
-      staticRouteTypesGeneration: resolvedOptions.staticRouteTypesGeneration,
-      include: resolvedOptions.include,
-      exclude: resolvedOptions.exclude,
-    }));
-  }
+  // Router discovery plugin for build-time manifest generation.
+  // For cloudflare, the entry is resolved lazily in configResolved from the RSC environment.
+  plugins.push(createRouterDiscoveryPlugin(discoveryEntryPath, {
+    enableBuildPrerender: prerenderEnabled,
+    staticRouteTypesGeneration: resolvedOptions.staticRouteTypesGeneration,
+    include: resolvedOptions.include,
+    exclude: resolvedOptions.exclude,
+  }));
 
   return plugins;
 }
