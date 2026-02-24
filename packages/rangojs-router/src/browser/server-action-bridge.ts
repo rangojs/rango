@@ -11,6 +11,7 @@ import {
 } from "./segment-reconciler.js";
 import { classifyActionResponse } from "./action-response-classifier.js";
 import { prepareClientLoaders } from "./client-loader-resolution.js";
+import { prepareServices } from "./service-init.js";
 import { startTransition } from "react";
 import type { EventController } from "./event-controller.js";
 import {
@@ -513,6 +514,9 @@ export function createServerActionBridge(
       }
 
       case "normal": {
+        // Initialize services before client loaders
+        prepareServices(fullSegments);
+
         // Prepare client loaders: put pending Promises in loaderData
         prepareClientLoaders(fullSegments, new URL(window.location.href), undefined, window.history.state);
 

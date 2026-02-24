@@ -11,8 +11,9 @@
  * The Promises flow through the segment system's loaderDataPromise path.
  */
 
-import type { ResolvedSegment, ClientLoaderContext } from "../types.js";
+import type { ResolvedSegment, ClientLoaderContext, ServiceDefinition } from "../types.js";
 import { getClientLoader, waitForClientLoader } from "./client-loader-registry.js";
+import { getServiceInstance } from "./service-registry.js";
 
 /**
  * Prepare client-side loaders by putting pending Promises into segment.loaderData.
@@ -51,6 +52,16 @@ export function prepareClientLoaders(
       signal: effectiveSignal,
       segments: url.pathname.split("/").filter(Boolean),
       state: state ?? null,
+      use: <TInit, TInstance>(service: ServiceDefinition<TInit, TInstance>): TInstance => {
+        const instance = getServiceInstance(service.$$id);
+        if (instance === undefined) {
+          throw new Error(
+            `Service "${service.$$id}" not initialized. ` +
+            `Ensure service() is declared in the route definition and the module is imported.`,
+          );
+        }
+        return instance;
+      },
     };
 
     for (const loaderId of segment.clientLoaderIds!) {

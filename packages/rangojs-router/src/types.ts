@@ -529,6 +529,9 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch extends Sear
     <TData, TAccumulated = TData[]>(
       handle: Handle<TData, TAccumulated>,
     ): (data: TData | Promise<TData> | (() => Promise<TData>)) => void;
+    <TInit>(
+      service: ServiceDefinition<TInit, any>,
+    ): Promise<TInit>;
   };
   /**
    * Current theme (from cookie or default).
@@ -1003,6 +1006,9 @@ export interface ResolvedSegment {
   loaderData?: any; // For loaders: the resolved data from loader execution
   // Client loader fields (resolved in the browser, not on the server)
   clientLoaderIds?: string[]; // IDs of client/isomorphic loaders needing browser resolution
+  // Service fields (for transporting init data to browser)
+  serviceIds?: string[]; // IDs of services attached to this segment
+  serviceData?: Record<string, any>; // { [$$id]: initData } from service server fns
   // Intercept loader fields (for streaming loader data in parallel segments)
   loaderDataPromise?: Promise<any[]> | any[]; // Loader data promise or resolved array
   loaderIds?: string[]; // IDs ($$id) of loaders for this segment
@@ -1648,6 +1654,8 @@ export type ClientLoaderContext = {
   segments: readonly string[];
   /** Resolved navigation state from history.state, or null if none */
   state: Record<string, unknown> | null;
+  /** Get a service instance created via createService(). */
+  use: <TInit, TInstance>(service: ServiceDefinition<TInit, TInstance>) => TInstance;
 };
 
 /**
@@ -1687,6 +1695,43 @@ export type AnyLoaderDefinition<T = any> =
   | LoaderDefinition<T>
   | ClientLoaderDefinition<T>
   | IsomorphicLoaderDefinition<T>;
+
+// ============================================================================
+// Service Types
+// ============================================================================
+
+/**
+ * Server-side service function. Runs during SSR to produce init data
+ * that is serialized to the browser via Flight payload.
+ */
+export type ServiceServerFn<TInit, TParams = Record<string, string | undefined>, TEnv = any> = (
+  ctx: LoaderContext<TParams, TEnv>,
+) => Promise<TInit> | TInit;
+
+/**
+ * Client-side service function. Called once in the browser with init data
+ * from the server fn (or undefined for client-only services).
+ * The returned instance is cached and reused across navigations.
+ */
+export type ServiceClientFn<TInit, TInstance> = (initData: TInit) => TInstance;
+
+/**
+ * Service definition created via createService().
+ *
+ * Services provide shared instances (API clients, HTTP agents, etc.) to client
+ * loaders. The server fn runs during SSR to produce init data (tokens, config).
+ * The client fn runs once in the browser to create the instance. The instance
+ * persists across SPA navigations and is only re-created on full page reload.
+ *
+ * Server handlers access init data via ctx.use(service).
+ * Client loaders access the cached instance via ctx.use(service).
+ */
+export type ServiceDefinition<TInit = any, TInstance = any> = {
+  __brand: "service";
+  $$id: string;
+  serverFn?: ServiceServerFn<TInit, any, any>;
+  clientFn?: ServiceClientFn<TInit, TInstance>;
+};
 
 // ============================================================================
 // Error Handling Types

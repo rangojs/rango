@@ -141,11 +141,22 @@ export type InterceptEntry = {
   when: InterceptWhenFn[];  // Selector conditions - all must return true to intercept
 };
 
+/**
+ * Service entry stored in EntryData.
+ * Contains the service definition attached via service() DSL helper.
+ *
+ * @internal This type is an implementation detail and may change without notice.
+ */
+export type ServiceEntry = {
+  service: import("../types.js").ServiceDefinition<any, any>;
+};
+
 export type EntryPropSegments = {
   loader: LoaderEntry[];
   layout: EntryData[];
   parallel: EntryData[]; // type: "parallel" entries with their own loaders/revalidate/loading
   intercept: InterceptEntry[]; // intercept definitions for soft navigation
+  service: ServiceEntry[]; // service definitions for client loader initialization
 };
 
 export type EntryData =

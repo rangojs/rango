@@ -12,7 +12,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { CookieOptions } from "../router/middleware.js";
-import type { LoaderDefinition, IsomorphicLoaderDefinition, LoaderContext } from "../types.js";
+import type { LoaderDefinition, IsomorphicLoaderDefinition, LoaderContext, ServiceDefinition } from "../types.js";
 import type { Handle } from "../handle.js";
 import { createHandleStore, type HandleStore } from "./handle-store.js";
 import { isHandle } from "../handle.js";
@@ -93,6 +93,7 @@ export interface RequestContext<
   use: {
     <T, TLoaderParams = any>(loader: LoaderDefinition<T, TLoaderParams>): Promise<T>;
     <T>(loader: IsomorphicLoaderDefinition<T>): Promise<T>;
+    <TInit>(service: ServiceDefinition<TInit, any>): Promise<TInit>;
     <TData, TAccumulated = TData[]>(handle: Handle<TData, TAccumulated>): (
       data: TData | Promise<TData> | (() => Promise<TData>)
     ) => void;
@@ -308,6 +309,7 @@ export function createRequestContext<TEnv>(
   // Create handle store and loader memoization for this request
   const handleStore = createHandleStore();
   const loaderPromises = new Map<string, Promise<any>>();
+  const servicePromises = new Map<string, Promise<any>>();
 
   // Lazy parse cookies
   const getParsedCookies = (): Record<string, string> => {
@@ -439,6 +441,7 @@ export function createRequestContext<TEnv>(
   ctx.use = createUseFunction({
     handleStore,
     loaderPromises,
+    servicePromises,
     getContext: () => ctx,
   });
 
@@ -499,6 +502,7 @@ function serializeCookieValue(
 export interface CreateUseFunctionOptions<TEnv> {
   handleStore: HandleStore;
   loaderPromises: Map<string, Promise<any>>;
+  servicePromises: Map<string, Promise<any>>;
   getContext: () => RequestContext<TEnv>;
 }
 
@@ -512,9 +516,9 @@ export interface CreateUseFunctionOptions<TEnv> {
 export function createUseFunction<TEnv>(
   options: CreateUseFunctionOptions<TEnv>
 ): RequestContext["use"] {
-  const { handleStore, loaderPromises, getContext } = options;
+  const { handleStore, loaderPromises, servicePromises, getContext } = options;
 
-  return ((item: LoaderDefinition<any, any> | Handle<any, any>) => {
+  return ((item: LoaderDefinition<any, any> | Handle<any, any> | ServiceDefinition<any, any>) => {
     // Handle case: return a push function
     if (isHandle(item)) {
       const handle = item;
@@ -538,6 +542,49 @@ export function createUseFunction<TEnv>(
         // Push directly - promises will be serialized by RSC and streamed
         handleStore.push(handle.$$id, segmentId, valueOrPromise);
       };
+    }
+
+    // Service case: memoized per-request, runs server fn
+    if ((item as any).__brand === "service") {
+      const service = item as ServiceDefinition<any, any>;
+
+      if (servicePromises.has(service.$$id)) {
+        return servicePromises.get(service.$$id);
+      }
+
+      // Client-only services have no server fn
+      if (!service.serverFn) {
+        const promise = Promise.resolve(undefined);
+        servicePromises.set(service.$$id, promise);
+        return promise;
+      }
+
+      const ctx = getContext();
+      const serviceCtx: LoaderContext<Record<string, string | undefined>, TEnv> = {
+        params: ctx.params,
+        request: ctx.request,
+        searchParams: ctx.searchParams,
+        pathname: ctx.pathname,
+        url: ctx.url,
+        env: ctx.env as any,
+        var: ctx.var as any,
+        get: ctx.get as any,
+        use: <TDep, TDepParams = any>(
+          dep: LoaderDefinition<TDep, TDepParams>
+        ): Promise<TDep> => {
+          return ctx.use(dep);
+        },
+        method: "GET",
+        body: undefined,
+      };
+
+      const doneService = track(`service:${service.$$id}`);
+      const promise = Promise.resolve(service.serverFn(serviceCtx)).finally(() => {
+        doneService();
+      });
+
+      servicePromises.set(service.$$id, promise);
+      return promise;
     }
 
     // Loader case

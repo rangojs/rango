@@ -11,6 +11,7 @@ import type {
   ClientLoaderContext,
 } from "./types.js";
 import { getClientLoader } from "./browser/client-loader-registry.js";
+import { getServiceInstance } from "./browser/service-registry.js";
 
 /**
  * Payload returned by loader RSC requests
@@ -168,6 +169,16 @@ function useLoaderInternal<T>(
             signal: controller.signal,
             segments: currentUrl.pathname.split("/").filter(Boolean),
             state: window.history.state ?? null,
+            use: (service: any) => {
+              const instance = getServiceInstance(service.$$id);
+              if (instance === undefined) {
+                throw new Error(
+                  `Service "${service.$$id}" not initialized. ` +
+                  `Ensure service() is declared in the route definition.`,
+                );
+              }
+              return instance;
+            },
           };
 
           const result = await clientFn(ctx);

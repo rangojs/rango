@@ -43,6 +43,7 @@ export interface DetectedImports {
   locationState: boolean;
   prerenderHandler: boolean;
   staticHandler: boolean;
+  service: boolean;
   router: boolean;
   any: boolean;
 }
@@ -108,6 +109,7 @@ export function detectImports(code: string): DetectedImports {
     locationState: false,
     prerenderHandler: false,
     staticHandler: false,
+    service: false,
     router: false,
     any: false,
   };
@@ -122,6 +124,7 @@ export function detectImports(code: string): DetectedImports {
     if (/\bcreateLocationState\b/.test(imports)) result.locationState = true;
     if (/\bPrerender\b/.test(imports)) result.prerenderHandler = true;
     if (/\bStatic\b/.test(imports)) result.staticHandler = true;
+    if (/\bcreateService\b/.test(imports)) result.service = true;
     if (/\bcreateRouter\b/.test(imports)) result.router = true;
   }
 
@@ -141,6 +144,7 @@ export function detectImports(code: string): DetectedImports {
     result.locationState ||
     result.prerenderHandler ||
     result.staticHandler ||
+    result.service ||
     result.router;
 
   return result;

@@ -107,6 +107,7 @@ export function buildRouteTree(
     parallel: [],
     intercept: [],
     loader: [],
+    service: [],
   };
 
   let handlerResult: AllUseItems[] = [];

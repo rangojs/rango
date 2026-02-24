@@ -15,6 +15,7 @@ import type {
   RouteConfig,
   RouteDefinition,
   RouteDefinitionOptions,
+  ServiceDefinition,
   ShouldRevalidateFn,
   TrailingSlashMode,
 } from "./types.js";
@@ -51,6 +52,7 @@ import type {
   LoaderUseItem,
   WhenItem,
   CacheItem,
+  ServiceItem,
 } from "./route-types.js";
 // const __DEV__ = import.meta.MODE === "development";
 
@@ -372,6 +374,21 @@ export type RouteHelpers<T extends RouteDefinition, TEnv> = {
     loaderDef: AnyLoaderDefinition<TData>,
     use?: () => LoaderUseItem[]
   ) => LoaderItem;
+  /**
+   * Attach a service to the current layout/route subtree.
+   * Services provide shared instances (API clients, HTTP agents, etc.) to
+   * client loaders. Server handlers access init data via ctx.use(service),
+   * client loaders access the cached instance via ctx.use(service).
+   *
+   * ```typescript
+   * layout(Shell, () => [
+   *   service(ApiService),
+   *   route("dashboard", DashHandler),
+   * ])
+   * ```
+   * @param serviceDef - Service created with createService()
+   */
+  service: (serviceDef: ServiceDefinition<any, any>) => ServiceItem;
   /**
    * Attach a loading component to the current route/layout
    * ```typescript
@@ -750,6 +767,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
       parallel: [],
       intercept: [],
       loader: [],
+      service: [],
       ...(cacheUrlPrefix ? { mountPath: cacheUrlPrefix } : {}),
     } as EntryData;
 
@@ -788,6 +806,7 @@ const cache: RouteHelpers<any, any>["cache"] = (
     parallel: [],
     intercept: [],
     loader: [],
+    service: [],
     ...(cacheUrlPrefix2 ? { mountPath: cacheUrlPrefix2 } : {}),
   } as EntryData;
 
@@ -876,6 +895,7 @@ const parallel: RouteHelpers<any, any>["parallel"] = (slots, use) => {
     parallel: [],
     intercept: [],
     loader: [],
+    service: [],
     ...(parallelUrlPrefix ? { mountPath: parallelUrlPrefix } : {}),
     ...(hasStaticSlot ? { isStaticPrerender: true as const } : {}),
   } satisfies EntryData;
@@ -1035,6 +1055,23 @@ const loaderFn: RouteHelpers<any, any>["loader"] = (loaderDef, use) => {
 };
 
 /**
+ * Service helper - attaches a service to the current entry
+ */
+const serviceFn: RouteHelpers<any, any>["service"] = (serviceDef) => {
+  const store = getContext();
+  const ctx = store.getStore();
+  if (!ctx) throw new Error("service() must be called inside map()");
+
+  if (!ctx.parent || !ctx.parent?.service) {
+    invariant(false, "No parent entry available for service()");
+  }
+
+  const name = `${ctx.namespace}.$${store.getNextIndex("service")}`;
+  ctx.parent.service.push({ service: serviceDef });
+  return { name, type: "service" } as ServiceItem;
+};
+
+/**
  * Loading helper - attaches a loading component to the current entry
  * Loading components are static (no context) and shown during navigation
  */
@@ -1081,6 +1118,7 @@ const routeFn: RouteHelpers<any, any>["route"] = (name, handler, use) => {
     parallel: [],
     intercept: [],
     loader: [],
+    service: [],
   } satisfies EntryData;
 
   /* We will throw if user is registring same route name twice */
@@ -1139,6 +1177,7 @@ const layout: RouteHelpers<any, any>["layout"] = (handler, use) => {
     intercept: [],
     layout: [],
     loader: [],
+    service: [],
     ...(urlPrefix ? { mountPath: urlPrefix } : {}),
     ...(isStatic ? { isStaticPrerender: true as const } : {}),
   } satisfies EntryData;
@@ -1228,6 +1267,7 @@ const isValidUseItem = (item: any): item is AllUseItems | undefined | null => {
         "when",
         "cache",
         "include", // For urls() include() helper
+        "service",
       ].includes(item.type))
   );
 };
@@ -1303,6 +1343,10 @@ const createLoaderHelper = <TEnv>(): RouteHelpers<any, TEnv>["loader"] => {
   return loaderFn as RouteHelpers<any, TEnv>["loader"];
 };
 
+const createServiceHelper = (): RouteHelpers<any, any>["service"] => {
+  return serviceFn;
+};
+
 /**
  * Create loading helper
  */
@@ -1373,6 +1417,7 @@ export function map<const T extends RouteDefinition, TEnv = DefaultEnv>(
       middleware: createMiddlewareHelper<TEnv>(),
       revalidate: createRevalidateHelper<TEnv>(),
       loader: createLoaderHelper<TEnv>(),
+      service: createServiceHelper(),
       loading: createLoadingHelper(),
       errorBoundary: createErrorBoundaryHelper<TEnv>(),
       notFoundBoundary: createNotFoundBoundaryHelper<TEnv>(),
@@ -1407,6 +1452,7 @@ export function createRouteHelpers<
     notFoundBoundary: createNotFoundBoundaryHelper<TEnv>(),
     when: createWhenHelper(),
     cache: createCacheHelper(),
+    service: createServiceHelper(),
   };
 }
 

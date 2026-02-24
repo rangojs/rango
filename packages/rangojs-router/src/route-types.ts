@@ -171,6 +171,11 @@ export type TypedIncludeItem<
   readonly __responses?: TResponses;
 };
 
+export type ServiceItem = {
+  type: "service";
+  name: string;
+};
+
 /**
  * Union types for use() callbacks
  */
@@ -186,7 +191,8 @@ export type AllUseItems =
   | ErrorBoundaryItem
   | NotFoundBoundaryItem
   | CacheItem
-  | IncludeItem;
+  | IncludeItem
+  | ServiceItem;
 
 /** Items that can be used inside a layout callback */
 export type LayoutUseItem = AllUseItems;

@@ -63,6 +63,10 @@ export type {
   ClientLoaderFn,
   ClientLoaderContext,
   IsomorphicLoaderDefinition,
+  // Service types
+  ServiceDefinition,
+  ServiceServerFn,
+  ServiceClientFn,
   // Error boundary types
   ErrorInfo,
   ErrorBoundaryFallbackProps,
@@ -91,6 +95,9 @@ export {
 
 // Client loader (RSC version - stub with just $id, no function)
 export { createClientLoader } from "./client-loader.rsc.js";
+
+// Service (RSC version - keeps server fn, strips client fn)
+export { createService } from "./service.rsc.js";
 
 // Isomorphic loader (RSC version - keeps server fn, strips client fn)
 export { createIsomorphicLoader } from "./isomorphic-loader.rsc.js";

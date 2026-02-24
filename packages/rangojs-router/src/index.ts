@@ -64,6 +64,10 @@ export type {
   ClientLoaderFn,
   ClientLoaderContext,
   IsomorphicLoaderDefinition,
+  // Service types
+  ServiceDefinition,
+  ServiceServerFn,
+  ServiceClientFn,
   // Error boundary types
   ErrorInfo,
   ErrorBoundaryFallbackProps,
@@ -88,6 +92,9 @@ export { createLoader } from "./loader.js";
 
 // Client loader - runs only in the browser, never on the server
 export { createClientLoader } from "./client-loader.js";
+
+// Service - shared instances for client loaders (API clients, etc.)
+export { createService } from "./service.js";
 
 // Isomorphic loader - server fn for SSR, client fn for SPA navigation
 export { createIsomorphicLoader } from "./isomorphic-loader.js";

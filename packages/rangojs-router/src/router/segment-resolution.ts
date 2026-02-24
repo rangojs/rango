@@ -24,7 +24,7 @@ import {
 import { evaluateRevalidation } from "./revalidation.js";
 import { getRequestContext } from "../server/request-context.js";
 import { DefaultErrorFallback } from "../default-error-boundary.js";
-import type { EntryData } from "../server/context";
+import type { EntryData, ServiceEntry } from "../server/context";
 import type {
   HandlerContext,
   InternalHandlerContext,
@@ -59,6 +59,46 @@ export function handleHandlerResult(
     }) as ReactNode;
   }
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Service resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve services for an entry by executing server fns and collecting init data.
+ * Returns serviceIds and serviceData to attach to the entry's layout/route segment.
+ *
+ * During partial navigation, only serviceIds are returned (browser has cached instances).
+ * During SSR, server fns are executed to produce init data for browser hydration.
+ */
+async function resolveEntryServices<TEnv>(
+  entry: EntryData,
+  ctx: HandlerContext<any, TEnv>,
+  isPartial?: boolean,
+): Promise<{ serviceIds?: string[]; serviceData?: Record<string, any> }> {
+  const services: ServiceEntry[] = (entry as any).service ?? [];
+  if (services.length === 0) return {};
+
+  const serviceIds = services.map((s) => s.service.$$id);
+
+  // During partial navigation, skip server fn execution.
+  // Browser already has cached instances for mounted layouts.
+  if (isPartial) {
+    return { serviceIds };
+  }
+
+  // Execute all service server fns and collect init data.
+  // ctx.use(service) is memoized per request, so multiple calls are safe.
+  const serviceData: Record<string, any> = {};
+  await Promise.all(
+    services.map(async (s) => {
+      const initData = await (ctx as any).use(s.service);
+      serviceData[s.service.$$id] = initData;
+    }),
+  );
+
+  return { serviceIds, serviceData };
 }
 
 // ---------------------------------------------------------------------------
@@ -196,12 +236,16 @@ export async function resolveSegment<TEnv>(
       segments.push(...parallelSegments);
     }
 
+    // Start service server fns before handler (handler may call ctx.use(service))
+    const serviceResultPromise = resolveEntryServices(entry, context, options?.isPartial);
+
     (context as InternalHandlerContext)._currentSegmentId = entry.shortCode;
     const component =
       typeof entry.handler === "function"
         ? handleHandlerResult(await entry.handler(context))
         : entry.handler;
 
+    const serviceResult = await serviceResultPromise;
     segments.push({
       id: entry.shortCode,
       namespace: entry.id,
@@ -213,6 +257,7 @@ export async function resolveSegment<TEnv>(
       belongsToRoute: false,
       layoutName: entry.id,
       ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
+      ...serviceResult,
     });
 
     for (const orphan of entry.layout) {
@@ -241,6 +286,9 @@ export async function resolveSegment<TEnv>(
       segments.push(...parallelSegments);
     }
 
+    // Start service server fns before handler (handler may call ctx.use(service))
+    const routeServicePromise = resolveEntryServices(entry, context, options?.isPartial);
+
     (context as InternalHandlerContext)._currentSegmentId = entry.shortCode;
     let component: ReactNode;
     if (entry.loading) {
@@ -250,6 +298,7 @@ export async function resolveSegment<TEnv>(
       component = handleHandlerResult(await entry.handler(context));
     }
 
+    const routeServiceResult = await routeServicePromise;
     segments.push({
       id: entry.shortCode,
       namespace: entry.id,
@@ -260,6 +309,7 @@ export async function resolveSegment<TEnv>(
       params,
       belongsToRoute: true,
       ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
+      ...routeServiceResult,
     });
   } else {
     throw new Error(`Unknown entry type: ${(entry as any).type}`);
@@ -298,11 +348,14 @@ export async function resolveOrphanLayout<TEnv>(
     segments.push(...parallelSegments);
   }
 
+  const orphanServicePromise = resolveEntryServices(orphan, context);
+
   const component =
     typeof orphan.handler === "function"
       ? handleHandlerResult(await orphan.handler(context))
       : orphan.handler;
 
+  const orphanServiceResult = await orphanServicePromise;
   segments.push({
     id: orphan.shortCode,
     namespace: orphan.id,
@@ -314,6 +367,7 @@ export async function resolveOrphanLayout<TEnv>(
     layoutName: orphan.id,
     loading: orphan.loading === false ? null : orphan.loading,
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
+    ...orphanServiceResult,
   });
 
   return segments;
@@ -987,6 +1041,13 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       ? (component as { content: ReactNode }).content
       : component;
 
+  // Resolve services: for revalidation, only include serviceIds (browser has instances).
+  // If the segment is new (component !== null), include full serviceData.
+  const isNewSegment = resolvedComponent !== null;
+  const revalServiceResult = await resolveEntryServices(
+    entry, context, !isNewSegment,
+  );
+
   const segment: ResolvedSegment = {
     id: entry.shortCode,
     namespace: entry.id,
@@ -1001,6 +1062,7 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       ? { layoutName: entry.id }
       : {}),
     ...(entry.mountPath ? { mountPath: entry.mountPath } : {}),
+    ...revalServiceResult,
   };
 
   return { segment, matchedId };
@@ -1256,6 +1318,11 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     () => null,
   );
 
+  const isOrphanNew = component !== null;
+  const orphanRevalServiceResult = await resolveEntryServices(
+    orphan, context, !isOrphanNew,
+  );
+
   segments.push({
     id: orphan.shortCode,
     namespace: orphan.id,
@@ -1267,6 +1334,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     layoutName: orphan.id,
     loading: orphan.loading === false ? null : orphan.loading,
     ...(orphan.mountPath ? { mountPath: orphan.mountPath } : {}),
+    ...orphanRevalServiceResult,
   });
 
   return { segments, matchedIds };

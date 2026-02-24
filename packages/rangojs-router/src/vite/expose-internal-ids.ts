@@ -50,7 +50,7 @@ interface CreateExportBinding {
 }
 
 interface StrictCreateTransformConfig {
-  fnName: "createLoader" | "createClientLoader" | "createIsomorphicLoader" | "createHandle" | "createLocationState";
+  fnName: "createLoader" | "createClientLoader" | "createIsomorphicLoader" | "createHandle" | "createLocationState" | "createService";
 }
 
 const PRERENDER_CONFIG: HandlerTransformConfig = {
@@ -69,6 +69,7 @@ const STRICT_CREATE_CONFIGS: StrictCreateTransformConfig[] = [
   { fnName: "createIsomorphicLoader" },
   { fnName: "createHandle" },
   { fnName: "createLocationState" },
+  { fnName: "createService" },
 ];
 
 function escapeRegExp(input: string): string {
@@ -548,6 +549,43 @@ function transformIsomorphicLoaders(
     s.appendLeft(binding.callCloseParenPos, `, "${loaderId}"`);
 
     const propInjection = `\n${binding.localName}.$$id = "${loaderId}";`;
+    s.appendRight(binding.statementEnd, propInjection);
+    hasChanges = true;
+  }
+  return hasChanges;
+}
+
+// ---------------------------------------------------------------------------
+// Service helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Inject $$id into createService() calls.
+ * createService(fn) -> createService(fn, undefined, "id")
+ * createService(serverFn, clientFn) -> createService(serverFn, clientFn, "id")
+ */
+function transformServices(
+  bindings: CreateExportBinding[],
+  s: MagicString,
+  filePath: string,
+  isBuild: boolean,
+): boolean {
+  let hasChanges = false;
+  for (const binding of bindings) {
+    const exportName = binding.exportNames[0];
+    const serviceId = isBuild
+      ? hashId(filePath, exportName)
+      : `${filePath}#${exportName}`;
+
+    // 1 arg (client-only): createService(fn) -> createService(fn, undefined, "id")
+    // 2 args (server + client): createService(serverFn, clientFn) -> createService(serverFn, clientFn, "id")
+    const paramInjection =
+      binding.argCount === 1
+        ? `, undefined, "${serviceId}"`
+        : `, "${serviceId}"`;
+    s.appendLeft(binding.callCloseParenPos, paramInjection);
+
+    const propInjection = `\n${binding.localName}.$$id = "${serviceId}";`;
     s.appendRight(binding.statementEnd, propInjection);
     hasChanges = true;
   }
@@ -1073,6 +1111,8 @@ ${lazyImports.join(",\n")}
         has.prerenderHandler && code.includes("Prerender");
       const hasStaticHandlerCode =
         has.staticHandler && code.includes("Static");
+      const hasServiceCode =
+        has.service && code.includes("createService");
       if (
         !hasLoaderCode &&
         !hasClientLoaderCode &&
@@ -1080,7 +1120,8 @@ ${lazyImports.join(",\n")}
         !hasHandleCode &&
         !hasLocationStateCode &&
         !hasPrerenderHandlerCode &&
-        !hasStaticHandlerCode
+        !hasStaticHandlerCode &&
+        !hasServiceCode
       ) {
         return;
       }
@@ -1143,6 +1184,8 @@ ${lazyImports.join(",\n")}
             ? hasIsomorphicLoaderCode
             : cfg.fnName === "createHandle"
             ? hasHandleCode
+            : cfg.fnName === "createService"
+            ? hasServiceCode
             : hasLocationStateCode;
         if (!hasCode) continue;
 
@@ -1315,6 +1358,10 @@ ${lazyImports.join(",\n")}
       if (hasIsomorphicLoaderCode) {
         const fnNames = getFnNames("createIsomorphicLoader");
         changed = transformIsomorphicLoaders(getBindings(code, fnNames), s, filePath, isBuild) || changed;
+      }
+      if (hasServiceCode) {
+        const fnNames = getFnNames("createService");
+        changed = transformServices(getBindings(code, fnNames), s, filePath, isBuild) || changed;
       }
       if (hasHandleCode) {
         const fnNames = getFnNames("createHandle");

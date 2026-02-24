@@ -2526,6 +2526,7 @@ export function createRouter<TEnv = any>(
           parallel: [],
           intercept: [],
           loader: [],
+          service: [],
         };
 
         let handlerResult: AllUseItems[] = [];

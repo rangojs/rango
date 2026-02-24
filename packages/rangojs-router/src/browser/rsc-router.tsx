@@ -4,6 +4,7 @@ import {
   type RenderSegmentsOptions,
 } from "../segment-system.js";
 import { prepareClientLoaders } from "./client-loader-resolution.js";
+import { prepareServices } from "./service-init.js";
 import {
   createNavigationStore,
   generateHistoryKey,
@@ -274,6 +275,9 @@ export async function initBrowserApp(
           const currentHandleData = eventController.getHandleState().data;
           store.cacheSegmentsForHistory(historyKey, segments, currentHandleData);
 
+          // Initialize services before client loaders
+          prepareServices(segments);
+
           // Re-run client loaders for refreshed segments (server segments
           // don't include client loader data, so it must be re-fetched).
           prepareClientLoaders(segments, new URL(window.location.href), undefined, window.history.state);
@@ -376,6 +380,7 @@ export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
     );
     if (!hasClientLoaders) return;
 
+    prepareServices(segments);
     prepareClientLoaders(segments, new URL(window.location.href), undefined, window.history.state);
 
     store.emitUpdate({

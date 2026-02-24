@@ -12,6 +12,7 @@ import type { ReconcileActor } from "./segment-reconciler.js";
 import { hasActiveIntercept as hasActiveInterceptSlots } from "./intercept-utils.js";
 import type { BoundTransaction } from "./navigation-bridge.js";
 import { prepareClientLoaders } from "./client-loader-resolution.js";
+import { prepareServices } from "./service-init.js";
 import { ServerRedirect } from "../errors.js";
 import { debugLog } from "./logging.js";
 
@@ -374,6 +375,9 @@ export function createPartialUpdater(
         return streamComplete;
       }
 
+      // Initialize services before client loaders
+      prepareServices(reconciled.segments);
+
       // Prepare client loaders: put pending Promises in loaderData.
       // The segment system's LoaderBoundary handles Suspense lifecycle.
       prepareClientLoaders(reconciled.segments, new URL(url), signal, navigationState);
@@ -495,6 +499,9 @@ export function createPartialUpdater(
       }
 
       const segmentIds = segments.map((s: ResolvedSegment) => s.id);
+
+      // Initialize services before client loaders
+      prepareServices(segments);
 
       // Prepare client loaders before rendering
       prepareClientLoaders(segments, new URL(url), signal, navigationState);

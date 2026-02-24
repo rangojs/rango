@@ -38,6 +38,7 @@ import type {
   NotFoundBoundaryHandler,
   PartialCacheOptions,
   RouterEnv,
+  ServiceDefinition,
   ShouldRevalidateFn,
   TrailingSlashMode,
 } from "./types.js";
@@ -65,6 +66,7 @@ import type {
   WhenItem,
   CacheItem,
   TypedCacheItem,
+  ServiceItem,
   IncludeItem,
   TypedIncludeItem,
   IncludeBrand,
@@ -696,6 +698,11 @@ export type PathHelpers<TEnv> = {
   ) => LoaderItem;
 
   /**
+   * Attach a service to the current layout/route subtree
+   */
+  service: (serviceDef: ServiceDefinition<any, any>) => ServiceItem;
+
+  /**
    * Attach a loading component to the current route/layout
    */
   loading: (component: ReactNode, options?: { ssr?: boolean }) => LoadingItem;
@@ -763,6 +770,7 @@ const isValidUseItem = (item: any): item is AllUseItems | undefined | null => {
         "when",
         "cache",
         "include",
+        "service",
       ].includes(item.type))
   );
 };
@@ -902,6 +910,7 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
       parallel: [],
       intercept: [],
       loader: [],
+      service: [],
       ...(urlPrefix ? { mountPath: urlPrefix } : {}),
       ...(isPrerenderHandler(handler)
         ? {
@@ -1227,6 +1236,7 @@ export function urls<
       middleware: baseHelpers.middleware,
       revalidate: baseHelpers.revalidate,
       loader: baseHelpers.loader,
+      service: baseHelpers.service,
       loading: baseHelpers.loading,
       errorBoundary: baseHelpers.errorBoundary,
       notFoundBoundary: baseHelpers.notFoundBoundary,
