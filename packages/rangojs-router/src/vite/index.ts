@@ -695,13 +695,23 @@ function createRouterDiscoveryPlugin(
   function consumeSelfGenWrite(filePath: string): boolean {
     const info = selfWrittenGenFiles.get(filePath);
     if (!info) return false;
-    selfWrittenGenFiles.delete(filePath);
-    if (Date.now() - info.at > SELF_WRITE_WINDOW_MS) return false;
+    if (Date.now() - info.at > SELF_WRITE_WINDOW_MS) {
+      selfWrittenGenFiles.delete(filePath);
+      return false;
+    }
     try {
       const current = readFileSync(filePath, "utf-8");
       const currentHash = createHash("sha256").update(current).digest("hex");
-      return currentHash === info.hash;
+      if (currentHash === info.hash) {
+        selfWrittenGenFiles.delete(filePath);
+        return true;
+      }
+      // Hash mismatch: file was changed externally. Keep the entry so a
+      // subsequent watcher event from our own write can still be consumed
+      // (e.g. when multiple Vite servers watch the same directory).
+      return false;
     } catch {
+      selfWrittenGenFiles.delete(filePath);
       return false;
     }
   }
@@ -1106,10 +1116,25 @@ function createRouterDiscoveryPlugin(
     const routerFiles = cachedRouterFiles ?? findRouterFiles(projectRoot, scanFilter);
     cachedRouterFiles = routerFiles;
 
+    // Snapshot pre-write content to detect which files actually change.
+    const preContent = new Map<string, string>();
+    for (const routerFilePath of routerFiles) {
+      const routerDir = dirname(routerFilePath);
+      const routerBasename = basename(routerFilePath).replace(/\.(tsx?|jsx?)$/, "");
+      const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
+      try {
+        preContent.set(outPath, readFileSync(outPath, "utf-8"));
+      } catch {
+        // File doesn't exist yet — any write is a real change.
+      }
+    }
+
     writeCombinedRouteTypes(projectRoot, routerFiles, opts);
 
-    // Mark outputs written by the static generator so their own watcher
-    // invalidations do not get treated as external tampering.
+    // Mark only files that were actually written so the watcher can
+    // distinguish self-triggered change events from manual edits.
+    // Marking unchanged files creates stale entries that interfere with
+    // multi-server setups (e.g. shared webServer + isolated HMR server).
     for (const routerFilePath of routerFiles) {
       const routerDir = dirname(routerFilePath);
       const routerBasename = basename(routerFilePath).replace(/\.(tsx?|jsx?)$/, "");
@@ -1117,7 +1142,9 @@ function createRouterDiscoveryPlugin(
       if (!existsSync(outPath)) continue;
       try {
         const content = readFileSync(outPath, "utf-8");
-        markSelfGenWrite(outPath, content);
+        if (content !== preContent.get(outPath)) {
+          markSelfGenWrite(outPath, content);
+        }
       } catch {
         // Ignore transient fs errors while files are being rewritten.
       }
