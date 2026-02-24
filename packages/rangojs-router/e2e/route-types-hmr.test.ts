@@ -305,6 +305,31 @@ test.describe.serial("route-types-hmr", () => {
   // Verify the watcher recreates deleted gen files and the virtual module
   // re-evaluates correctly.
 
+  test("should restore gen file when it is manually edited", async () => {
+    const before = await fs.readFile(genFilePath, "utf-8");
+    expect(before).toContain('"blog.index": "/blog"');
+
+    const tampered = before.replace(
+      '"blog.index": "/blog"',
+      '"blog.index": "/tampered-blog"',
+    );
+    expect(tampered).not.toBe(before);
+    await fs.writeFile(genFilePath, tampered);
+
+    // Change watcher should detect external tampering and regenerate.
+    await expect(async () => {
+      const healed = await fs.readFile(genFilePath, "utf-8");
+      expect(healed).toContain('"blog.index": "/blog"');
+      expect(healed).not.toContain("/tampered-blog");
+    }).toPass({ timeout: 10000 });
+
+    // Runtime manifest should stay in sync with repaired file.
+    await expect(async () => {
+      const after = await queryReverse(["blog.index"]);
+      expect(after["blog.index"]).toBe("/blog");
+    }).toPass({ timeout: 5000 });
+  });
+
   test("should recreate gen file when it is deleted", async () => {
     // Verify gen file exists with expected routes
     const before = await fs.readFile(genFilePath, "utf-8");
