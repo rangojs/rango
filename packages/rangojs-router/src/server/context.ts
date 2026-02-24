@@ -160,7 +160,7 @@ export type EntryData =
       /** Set when handler is a Prerender definition */
       isPrerender?: true;
       /** Original PrerenderHandlerDefinition (for build-time getParams access) */
-      prerenderDef?: { getParams?: () => Promise<any[]> | any[]; options?: { passthrough?: boolean } };
+      prerenderDef?: { getParams?: (ctx: any) => Promise<any[]> | any[]; options?: { passthrough?: boolean } };
       /** Set when handler is a Static definition (build-time only) */
       isStaticPrerender?: true;
       /** Static handler $$id for build-time store lookup */
