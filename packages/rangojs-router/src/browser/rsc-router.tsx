@@ -356,7 +356,7 @@ export function RSCRouter(_props: RSCRouterProps): React.ReactElement {
     <NavigationProvider
       store={store}
       eventController={eventController}
-      initialPayload={{ ...initialPayload, root: initialTree }}
+      initialPayload={{ root: initialTree, metadata: initialPayload.metadata! }}
       bridge={bridge}
       themeConfig={themeConfig}
       initialTheme={initialTheme}

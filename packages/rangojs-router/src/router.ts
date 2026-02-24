@@ -15,7 +15,6 @@ import {
 } from "./reverse.js";
 import {
   registerRouteMap,
-  getGlobalRouteMap,
   getPrecomputedEntries,
   getRouteTrie,
   getRouterManifest,
@@ -155,6 +154,19 @@ const RESPONSE_TYPE_MIME: Record<string, string> = {
 const MIME_RESPONSE_TYPE: Record<string, string> = Object.fromEntries(
   Object.entries(RESPONSE_TYPE_MIME).map(([tag, mime]) => [mime, tag]),
 );
+
+type NamedRouteEntry = string | { path: string; search?: Record<string, string> };
+
+function flattenNamedRoutes(
+  routeNames?: Record<string, NamedRouteEntry>,
+): Record<string, string> {
+  if (!routeNames) return {};
+  const flattened: Record<string, string> = {};
+  for (const [name, entry] of Object.entries(routeNames)) {
+    flattened[name] = typeof entry === "string" ? entry : entry.path;
+  }
+  return flattened;
+}
 
 interface AcceptEntry {
   mime: string;
@@ -509,10 +521,10 @@ export interface RSCRouterOptions<TEnv = any> {
   /**
    * Injected by the Vite transform at compile time.
    * Static import of NamedRoutes from the generated named-routes file.
-   * Provides O(1) reverse() fallback when lazy includes haven't resolved.
+   * Used to seed reverse() with the full named route map.
    * @internal
    */
-  $$routeNames?: Record<string, string>;
+  $$routeNames?: Record<string, NamedRouteEntry>;
 
   /**
    * Nonce provider for Content Security Policy (CSP).
@@ -1283,8 +1295,10 @@ export function createRouter<TEnv = any>(
     });
   }
 
-  // Track all registered routes with their prefixes for reverse()
-  const mergedRouteMap: Record<string, string> = {};
+  // Track all registered routes with their prefixes for reverse().
+  // Seed from injected NamedRoutes so reverse() works at module load time
+  // for routes that come from lazy includes.
+  const mergedRouteMap: Record<string, string> = flattenNamedRoutes(staticRouteNames);
 
   // Lazy precomputed entries lookup: rebuilt when per-router data arrives.
   // In production multi-router setups, per-router data is loaded lazily via
@@ -1390,7 +1404,9 @@ export function createRouter<TEnv = any>(
       findInterceptForRoute(routeKey, parentEntry, selectorContext, isAction),
     callOnError,
     findNearestErrorBoundary,
-    getRouteMap: () => getRouterManifest(routerId) ?? getGlobalRouteMap(),
+    // Use per-router manifest when available, otherwise the static named map
+    // seeded into mergedRouteMap at router creation.
+    getRouteMap: () => getRouterManifest(routerId) ?? mergedRouteMap,
   };
 
   // Thin wrappers that bind the deps to extracted functions.
@@ -2787,8 +2803,8 @@ export function createRouter<TEnv = any>(
 
     // Type-safe URL builder using merged route map
     // Types are tracked through the builder chain via TRoutes parameter
-    // Falls back to static route names from the generated file (injected by Vite)
-    reverse: createReverse(mergedRouteMap, () => staticRouteNames),
+    // Seeded with static route names from the generated file (injected by Vite)
+    reverse: createReverse(mergedRouteMap),
 
     // Expose accumulated route map for typeof extraction
     // Returns {} initially, but builder chain accumulates specific route types

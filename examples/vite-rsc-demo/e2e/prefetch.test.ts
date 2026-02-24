@@ -1,5 +1,7 @@
 import { test, expect, devURL } from "./dev-fixture";
+import { test as base, expect as baseExpect } from "@playwright/test";
 import { waitForHydration, expectNoPageError } from "./helper";
+import { useFixture } from "./fixture";
 
 /**
  * Prefetch on hover tests - verifies that prefetch="hover" on Link components
@@ -105,5 +107,52 @@ test.describe("prefetch-on-hover", () => {
 
     expect(blogPrefetch).toBe(1);
     expect(shopPrefetch).toBe(1);
+  });
+
+  test("should return RSC Flight for partial request with Accept: text/html", async ({
+    devServerURL,
+  }) => {
+    // Chrome sends Accept: text/html for <link rel="prefetch" as="fetch">.
+    // Partial requests (_rsc_partial) must always return RSC Flight regardless
+    // of Accept header — they are client-side navigation/prefetch requests.
+    const url = new URL("/shop", devServerURL);
+    url.searchParams.set("_rsc_partial", "true");
+
+    const res = await fetch(url, {
+      headers: {
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/x-component");
+  });
+});
+
+/**
+ * Prefetch content negotiation (production)
+ */
+base.describe("prefetch-content-negotiation (production)", () => {
+  const f = useFixture({
+    root: ".",
+    mode: "build",
+  });
+
+  base.setTimeout(120000);
+
+  base("should return RSC Flight for partial request with Accept: text/html", async () => {
+    const url = new URL("/shop", f.url("/"));
+    url.searchParams.set("_rsc_partial", "true");
+
+    const res = await fetch(url, {
+      headers: {
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      },
+    });
+
+    baseExpect(res.status).toBe(200);
+    baseExpect(res.headers.get("content-type")).toContain("text/x-component");
   });
 });

@@ -682,6 +682,39 @@ function createRouterDiscoveryPlugin(
   // Dev-mode state for on-demand prerender endpoint.
   let devServerOrigin: string | null = null;
   let devServer: any = null;
+  // Tracks gen files recently written by this plugin so the watcher can
+  // distinguish self-triggered change events from manual edits.
+  const selfWrittenGenFiles = new Map<string, { at: number; hash: string }>();
+  const SELF_WRITE_WINDOW_MS = 5_000;
+
+  function markSelfGenWrite(filePath: string, content: string): void {
+    const hash = createHash("sha256").update(content).digest("hex");
+    selfWrittenGenFiles.set(filePath, { at: Date.now(), hash });
+  }
+
+  function consumeSelfGenWrite(filePath: string): boolean {
+    const info = selfWrittenGenFiles.get(filePath);
+    if (!info) return false;
+    if (Date.now() - info.at > SELF_WRITE_WINDOW_MS) {
+      selfWrittenGenFiles.delete(filePath);
+      return false;
+    }
+    try {
+      const current = readFileSync(filePath, "utf-8");
+      const currentHash = createHash("sha256").update(current).digest("hex");
+      if (currentHash === info.hash) {
+        selfWrittenGenFiles.delete(filePath);
+        return true;
+      }
+      // Hash mismatch: file was changed externally. Keep the entry so a
+      // subsequent watcher event from our own write can still be consumed
+      // (e.g. when multiple Vite servers watch the same directory).
+      return false;
+    } catch {
+      selfWrittenGenFiles.delete(filePath);
+      return false;
+    }
+  }
 
   // Shared discovery logic: import entry via RSC runner, generate manifests,
   // write static files, and populate mergedRouteManifest.
@@ -1079,6 +1112,45 @@ function createRouterDiscoveryPlugin(
   // Write per-router named-routes type files next to each router's source file.
   // Each router gets its own {basename}.named-routes.gen.ts with only its routes.
   // Only writes when content has changed to avoid triggering HMR loops.
+  function writeCombinedRouteTypesWithTracking(opts?: { preserveIfLarger?: boolean }): void {
+    const routerFiles = cachedRouterFiles ?? findRouterFiles(projectRoot, scanFilter);
+    cachedRouterFiles = routerFiles;
+
+    // Snapshot pre-write content to detect which files actually change.
+    const preContent = new Map<string, string>();
+    for (const routerFilePath of routerFiles) {
+      const routerDir = dirname(routerFilePath);
+      const routerBasename = basename(routerFilePath).replace(/\.(tsx?|jsx?)$/, "");
+      const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
+      try {
+        preContent.set(outPath, readFileSync(outPath, "utf-8"));
+      } catch {
+        // File doesn't exist yet — any write is a real change.
+      }
+    }
+
+    writeCombinedRouteTypes(projectRoot, routerFiles, opts);
+
+    // Mark only files that were actually written so the watcher can
+    // distinguish self-triggered change events from manual edits.
+    // Marking unchanged files creates stale entries that interfere with
+    // multi-server setups (e.g. shared webServer + isolated HMR server).
+    for (const routerFilePath of routerFiles) {
+      const routerDir = dirname(routerFilePath);
+      const routerBasename = basename(routerFilePath).replace(/\.(tsx?|jsx?)$/, "");
+      const outPath = join(routerDir, `${routerBasename}.named-routes.gen.ts`);
+      if (!existsSync(outPath)) continue;
+      try {
+        const content = readFileSync(outPath, "utf-8");
+        if (content !== preContent.get(outPath)) {
+          markSelfGenWrite(outPath, content);
+        }
+      } catch {
+        // Ignore transient fs errors while files are being rewritten.
+      }
+    }
+  }
+
   function writeRouteTypesFiles() {
     if (perRouterManifests.length === 0) return;
 
@@ -1138,6 +1210,7 @@ function createRouterDiscoveryPlugin(
       );
       const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
       if (existing !== source) {
+        markSelfGenWrite(outPath, source);
         writeFileSync(outPath, source);
         console.log(`[rsc-router] Generated route types -> ${outPath}`);
       }
@@ -1199,6 +1272,7 @@ function createRouterDiscoveryPlugin(
       );
       const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
       if (existing !== source) {
+        markSelfGenWrite(outPath, source);
         writeFileSync(outPath, source);
       }
     }
@@ -1258,7 +1332,7 @@ function createRouterDiscoveryPlugin(
       // file with a partial one.
       if (opts?.staticRouteTypesGeneration !== false) {
         cachedRouterFiles = findRouterFiles(projectRoot, scanFilter);
-        writeCombinedRouteTypes(projectRoot, cachedRouterFiles, { preserveIfLarger: true });
+        writeCombinedRouteTypesWithTracking({ preserveIfLarger: true });
       }
       // Resolve prerenderHandlerModules and staticHandlerModules from the consolidated IDs plugin's API.
       if (opts?.enableBuildPrerender) {
@@ -1512,8 +1586,33 @@ function createRouterDiscoveryPlugin(
       // Watch url module and router files for changes and regenerate named-routes.gen.ts.
       // Process files containing urls( or createRouter( to update the combined route map.
       if (opts?.staticRouteTypesGeneration !== false) {
+        const isGeneratedRouteFile = (filePath: string): boolean =>
+          filePath.endsWith(".gen.ts") &&
+          (filePath.includes("named-routes.gen.ts") || filePath.includes("urls.gen.ts"));
+
+        const regenerateGeneratedRouteFiles = () => {
+          if (perRouterManifests.length > 0) {
+            writeRouteTypesFiles();
+          } else {
+            writeCombinedRouteTypesWithTracking();
+          }
+        };
+
+        const maybeHandleGeneratedRouteFileMutation = (filePath: string): boolean => {
+          if (!isGeneratedRouteFile(filePath)) return false;
+          if (consumeSelfGenWrite(filePath)) return true;
+          regenerateGeneratedRouteFiles();
+          return true;
+        };
+
+        // Include "add" because many editors use atomic saves (unlink + rename)
+        // which can emit add instead of change for modified files.
+        server.watcher.on("add", (filePath) => {
+          maybeHandleGeneratedRouteFileMutation(filePath);
+        });
+
         server.watcher.on("change", (filePath) => {
-          if (filePath.endsWith(".gen.ts")) return;
+          if (maybeHandleGeneratedRouteFileMutation(filePath)) return;
           if (
             !filePath.endsWith(".ts") &&
             !filePath.endsWith(".tsx") &&
@@ -1533,7 +1632,7 @@ function createRouterDiscoveryPlugin(
             if (hasCreateRouter) {
               cachedRouterFiles = undefined;
             }
-            writeCombinedRouteTypes(projectRoot, cachedRouterFiles);
+            writeCombinedRouteTypesWithTracking();
             // Static parsing can't resolve factory calls (e.g. createDocsPatterns()).
             // If runtime discovery already ran, supplement the static output with
             // factory-generated routes that the parser missed. Static routes take
@@ -1551,13 +1650,8 @@ function createRouterDiscoveryPlugin(
 
         // Regenerate gen files when they are deleted (e.g. manual cleanup).
         server.watcher.on("unlink", (filePath) => {
-          if (!filePath.endsWith(".gen.ts")) return;
-          if (!filePath.includes("named-routes.gen.ts") && !filePath.includes("urls.gen.ts")) return;
-          if (perRouterManifests.length > 0) {
-            writeRouteTypesFiles();
-          } else {
-            writeCombinedRouteTypes(projectRoot, cachedRouterFiles);
-          }
+          if (!isGeneratedRouteFile(filePath)) return;
+          regenerateGeneratedRouteFiles();
         });
       }
     },
@@ -1871,8 +1965,11 @@ function createRouterDiscoveryPlugin(
     closeBundle: {
       order: "post" as const,
       sequential: true,
-      async handler() {
+      async handler(this: any) {
         if (!isBuildMode) return;
+        // Only run for the RSC environment — other environments (client, ssr) have
+        // no prerender/static data to process and would just do redundant file I/O.
+        if (this.environment && this.environment.name !== "rsc") return;
         const hasPrerenderData = prerenderCollectedData && Object.keys(prerenderCollectedData).length > 0;
         const hasStaticData = staticCollectedData && Object.keys(staticCollectedData).length > 0;
         if (!hasPrerenderData && !hasStaticData) return;

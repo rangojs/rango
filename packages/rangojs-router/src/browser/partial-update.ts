@@ -509,11 +509,8 @@ export function createPartialUpdater(
       return streamComplete;
     } else {
       // Full update (fallback)
-      // Use client-side renderSegments instead of payload.root to ensure
-      // consistent component references with action revalidation.
-      // Server-rendered RSC tree has different component references than
-      // client-created tree, which causes React to remount LoaderBoundary
-      // when actions trigger revalidation.
+      // Reconstruct the tree client-side from segments via renderSegments
+      // to ensure consistent component references with action revalidation.
       console.warn(`[Browser] Full update (fallback)`);
 
       const segments = payload.metadata?.segments || [];

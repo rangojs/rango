@@ -16,6 +16,12 @@ import path from "node:path";
  * These tests must run serially since they modify shared source files.
  */
 
+// Filesystem watcher events can be slow on CI Linux runners under parallel
+// load, so we use longer timeouts there.
+const isCI = !!process.env.CI;
+const WATCHER_TIMEOUT = isCI ? 20_000 : 10_000;
+const RUNTIME_TIMEOUT = isCI ? 15_000 : 5_000;
+
 test.describe.serial("route-types-hmr", () => {
   const f = useFixture({
     root: "./e2e/test-app",
@@ -23,7 +29,7 @@ test.describe.serial("route-types-hmr", () => {
     isolatedServer: true,
   });
 
-  test.setTimeout(30000);
+  test.setTimeout(isCI ? 60_000 : 30_000);
 
   const blogUrlsPath = path.resolve("./e2e/test-app/src/urls/blog.tsx");
   const mainUrlsPath = path.resolve("./e2e/test-app/src/urls.tsx");
@@ -46,7 +52,7 @@ test.describe.serial("route-types-hmr", () => {
     await fs.writeFile(blogUrlsPath, originalBlogContent);
     await fs.writeFile(mainUrlsPath, originalMainUrlsContent);
     // Wait for HMR + re-discovery to process the restore
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, isCI ? 3000 : 2000));
   });
 
   test("should regenerate route types when a new route is added", async () => {
@@ -68,7 +74,7 @@ test.describe.serial("route-types-hmr", () => {
       const after = await fs.readFile(genFilePath, "utf-8");
       expect(after).toContain('"blog.comments"');
       expect(after).toContain("/blog/:postId/comments");
-    }).toPass({ timeout: 10000 });
+    }).toPass({ timeout: WATCHER_TIMEOUT });
   });
 
   test("should regenerate route types when a route is removed", async () => {
@@ -84,7 +90,7 @@ test.describe.serial("route-types-hmr", () => {
     await expect(async () => {
       const content = await fs.readFile(genFilePath, "utf-8");
       expect(content).toContain('"blog.comments"');
-    }).toPass({ timeout: 10000 });
+    }).toPass({ timeout: WATCHER_TIMEOUT });
 
     // Now remove it by restoring original
     await fs.writeFile(blogUrlsPath, originalBlogContent);
@@ -93,7 +99,7 @@ test.describe.serial("route-types-hmr", () => {
     await expect(async () => {
       const content = await fs.readFile(genFilePath, "utf-8");
       expect(content).not.toContain('"blog.comments"');
-    }).toPass({ timeout: 10000 });
+    }).toPass({ timeout: WATCHER_TIMEOUT });
   });
 
   test("should not overwrite when routes have not changed", async () => {
@@ -106,7 +112,7 @@ test.describe.serial("route-types-hmr", () => {
 
     // Negative assertion: wait long enough for HMR + re-discovery (100ms debounce)
     // to complete, then verify the file was NOT rewritten.
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, isCI ? 4000 : 2000));
 
     // mtime should not have changed since route patterns are identical
     const statAfter = await fs.stat(genFilePath);
@@ -134,7 +140,7 @@ test.describe.serial("route-types-hmr", () => {
       const after = await fs.readFile(genFilePath, "utf-8");
       expect(after).not.toContain('"blog.post"');
       expect(after).toContain('"blog.article"');
-    }).toPass({ timeout: 10000 });
+    }).toPass({ timeout: WATCHER_TIMEOUT });
   });
 
   test("should update route types when a search schema is added", async () => {
@@ -156,7 +162,7 @@ test.describe.serial("route-types-hmr", () => {
       expect(after).toContain('"blog.post"');
       expect(after).toContain('tag: "string"');
       expect(after).toContain('draft: "boolean?"');
-    }).toPass({ timeout: 10000 });
+    }).toPass({ timeout: WATCHER_TIMEOUT });
   });
 
   test("should update route types when a search schema is removed", async () => {
@@ -171,7 +177,7 @@ test.describe.serial("route-types-hmr", () => {
       const content = await fs.readFile(genFilePath, "utf-8");
       expect(content).toContain('tag: "string"');
       expect(content).toContain('draft: "boolean?"');
-    }).toPass({ timeout: 10000 });
+    }).toPass({ timeout: WATCHER_TIMEOUT });
 
     // Remove the search schema by restoring the original
     await fs.writeFile(blogUrlsPath, originalBlogContent);
@@ -182,7 +188,7 @@ test.describe.serial("route-types-hmr", () => {
       expect(after).toContain('"blog.post": "/blog/:postId"');
       expect(after).not.toContain('tag: "string"');
       expect(after).not.toContain('draft: "boolean?"');
-    }).toPass({ timeout: 10000 });
+    }).toPass({ timeout: WATCHER_TIMEOUT });
   });
 
   test("should update route types when an include is removed", async () => {
@@ -202,7 +208,7 @@ test.describe.serial("route-types-hmr", () => {
       const after = await fs.readFile(genFilePath, "utf-8");
       expect(after).not.toContain('"blog.index"');
       expect(after).not.toContain('"blog.post"');
-    }).toPass({ timeout: 10000 });
+    }).toPass({ timeout: WATCHER_TIMEOUT });
   });
 
   test("should update route types when an include is re-added", async () => {
@@ -216,7 +222,7 @@ test.describe.serial("route-types-hmr", () => {
     await expect(async () => {
       const content = await fs.readFile(genFilePath, "utf-8");
       expect(content).not.toContain('"blog.index"');
-    }).toPass({ timeout: 10000 });
+    }).toPass({ timeout: WATCHER_TIMEOUT });
 
     // Restore the include
     await fs.writeFile(mainUrlsPath, originalMainUrlsContent);
@@ -225,7 +231,7 @@ test.describe.serial("route-types-hmr", () => {
       const after = await fs.readFile(genFilePath, "utf-8");
       expect(after).toContain('"blog.index"');
       expect(after).toContain('"blog.post"');
-    }).toPass({ timeout: 10000 });
+    }).toPass({ timeout: WATCHER_TIMEOUT });
   });
 
   // -- Runtime reverse() tests --
@@ -256,13 +262,13 @@ test.describe.serial("route-types-hmr", () => {
     await expect(async () => {
       const content = await fs.readFile(genFilePath, "utf-8");
       expect(content).toContain('"blog.comments"');
-    }).toPass({ timeout: 10000 });
+    }).toPass({ timeout: WATCHER_TIMEOUT });
 
     // Verify reverse() now resolves the new route
     await expect(async () => {
       const after = await queryReverse(["blog.comments"]);
       expect(after["blog.comments"]).toBe("/blog/:postId/comments");
-    }).toPass({ timeout: 5000 });
+    }).toPass({ timeout: RUNTIME_TIMEOUT });
   });
 
   test("reverse() should not resolve a removed route", async () => {
@@ -277,7 +283,7 @@ test.describe.serial("route-types-hmr", () => {
     await expect(async () => {
       const result = await queryReverse(["blog.comments"]);
       expect(result["blog.comments"]).toBe("/blog/:postId/comments");
-    }).toPass({ timeout: 10000 });
+    }).toPass({ timeout: WATCHER_TIMEOUT });
 
     // Remove the route by restoring original
     await fs.writeFile(blogUrlsPath, originalBlogContent);
@@ -286,13 +292,13 @@ test.describe.serial("route-types-hmr", () => {
     await expect(async () => {
       const content = await fs.readFile(genFilePath, "utf-8");
       expect(content).not.toContain('"blog.comments"');
-    }).toPass({ timeout: 10000 });
+    }).toPass({ timeout: WATCHER_TIMEOUT });
 
     // Verify reverse() no longer resolves it
     await expect(async () => {
       const after = await queryReverse(["blog.comments"]);
       expect(after["blog.comments"]).toBeNull();
-    }).toPass({ timeout: 5000 });
+    }).toPass({ timeout: RUNTIME_TIMEOUT });
   });
 
   // Note: rename tests for reverse() are intentionally omitted here.
@@ -304,6 +310,31 @@ test.describe.serial("route-types-hmr", () => {
   // -- Gen file deletion recovery tests --
   // Verify the watcher recreates deleted gen files and the virtual module
   // re-evaluates correctly.
+
+  test("should restore gen file when it is manually edited", async () => {
+    const before = await fs.readFile(genFilePath, "utf-8");
+    expect(before).toContain('"blog.index": "/blog"');
+
+    const tampered = before.replace(
+      '"blog.index": "/blog"',
+      '"blog.index": "/tampered-blog"',
+    );
+    expect(tampered).not.toBe(before);
+    await fs.writeFile(genFilePath, tampered);
+
+    // Change watcher should detect external tampering and regenerate.
+    await expect(async () => {
+      const healed = await fs.readFile(genFilePath, "utf-8");
+      expect(healed).toContain('"blog.index": "/blog"');
+      expect(healed).not.toContain("/tampered-blog");
+    }).toPass({ timeout: WATCHER_TIMEOUT });
+
+    // Runtime manifest should stay in sync with repaired file.
+    await expect(async () => {
+      const after = await queryReverse(["blog.index"]);
+      expect(after["blog.index"]).toBe("/blog");
+    }).toPass({ timeout: RUNTIME_TIMEOUT });
+  });
 
   test("should recreate gen file when it is deleted", async () => {
     // Verify gen file exists with expected routes
@@ -322,7 +353,7 @@ test.describe.serial("route-types-hmr", () => {
       const after = await fs.readFile(genFilePath, "utf-8");
       expect(after).toContain('"blog.index"');
       expect(after).toContain('"blog.post"');
-    }).toPass({ timeout: 10000 });
+    }).toPass({ timeout: WATCHER_TIMEOUT });
   });
 
   test("reverse() should still work after gen file deletion and recreation", async () => {
@@ -336,12 +367,12 @@ test.describe.serial("route-types-hmr", () => {
     // Wait for recreation
     await expect(async () => {
       await fs.access(genFilePath);
-    }).toPass({ timeout: 10000 });
+    }).toPass({ timeout: WATCHER_TIMEOUT });
 
     // Verify reverse() still resolves after recreation
     await expect(async () => {
       const after = await queryReverse(["blog.index"]);
       expect(after["blog.index"]).toBe("/blog");
-    }).toPass({ timeout: 5000 });
+    }).toPass({ timeout: RUNTIME_TIMEOUT });
   });
 });

@@ -8,7 +8,6 @@
  */
 
 import { createElement } from "react";
-import { renderSegments } from "../segment-system.js";
 import { RouteNotFoundError, RouterError } from "../errors.js";
 import type { ResponseError } from "../urls.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
@@ -211,6 +210,16 @@ export function createRSCHandler<
     invokeOnError(router.onError, error, phase, context, "RSC");
   }
 
+  function getRequiredRouteMap(): Record<string, string> {
+    const routeMap = getRouterManifest(router.id);
+    if (!routeMap) {
+      throw new Error(
+        `Route manifest for router "${router.id}" is not available.`,
+      );
+    }
+    return routeMap;
+  }
+
   /**
    * Build a 200 Flight response that carries a redirect URL and optional state.
    * Used when a partial/action request results in a redirect -- fetch
@@ -221,7 +230,7 @@ export function createRSCHandler<
     locationState?: Record<string, unknown>,
   ): Response {
     const redirectPayload: RscPayload = {
-      root: null,
+
       metadata: {
         pathname: redirectUrl,
         segments: [],
@@ -245,7 +254,7 @@ export function createRSCHandler<
     const handlerStart = performance.now();
 
     // Connection warmup: return 204 immediately before any processing
-    if (router.warmupEnabled && request.method === "HEAD") {
+    if (router?.warmupEnabled && request.method === "HEAD") {
       const warmupUrl = new URL(request.url);
       if (warmupUrl.searchParams.has("_rsc_warmup")) {
         return new Response(null, { status: 204 });
@@ -388,7 +397,7 @@ export function createRSCHandler<
           env,
           variables,
           coreHandler,
-          createReverseFunction(getGlobalRouteMap()),
+          createReverseFunction(getRequiredRouteMap()),
         );
 
         // If global middleware returned a redirect with location state during
@@ -593,7 +602,14 @@ export function createRSCHandler<
             },
             params: mw.params,
           }));
-          return executeMiddleware(middlewareEntries, request, env, variables, callHandlerWithVary, createReverseFunction(getGlobalRouteMap()));
+          return executeMiddleware(
+            middlewareEntries,
+            request,
+            env,
+            variables,
+            callHandlerWithVary,
+            createReverseFunction(getRequiredRouteMap()),
+          );
         }
         return callHandlerWithVary();
       };
@@ -702,7 +718,14 @@ export function createRSCHandler<
       }));
 
       // Execute route middleware wrapping the actual request handling
-      const mwResponse = await executeMiddleware(middlewareEntries, request, env, variables, rscHandler, createReverseFunction(getGlobalRouteMap()));
+      const mwResponse = await executeMiddleware(
+        middlewareEntries,
+        request,
+        env,
+        variables,
+        rscHandler,
+        createReverseFunction(getRequiredRouteMap()),
+      );
 
       // If route middleware returned a redirect with location state during
       // a partial (SPA) request, convert to a 200 Flight payload so the
@@ -783,7 +806,7 @@ export function createRSCHandler<
       (isDev || router.allowDebugManifest)
     ) {
       const trie = getRouterTrie(router.id) ?? getRouteTrie();
-      const routeManifest = getRouterManifest(router.id) ?? getGlobalRouteMap();
+      const routeManifest = getRequiredRouteMap();
       const { extractAncestryFromTrie } = await import("../build/route-trie.js");
       return new Response(
         JSON.stringify(
@@ -807,6 +830,13 @@ export function createRSCHandler<
     const handleStore = requireRequestContext()._handleStore;
 
     try {
+      // Set route params early so all execution paths (progressive enhancement,
+      // server actions, loader fetches) can access ctx.params via getRequestContext().
+      // Previously this was only done for JS actions, leaving PE actions with empty params.
+      if (routeParams) {
+        setRequestContextParams(routeParams);
+      }
+
       // ============================================================================
       // PROGRESSIVE ENHANCEMENT: No-JS Form Submissions
       // ============================================================================
@@ -826,12 +856,6 @@ export function createRSCHandler<
       // SERVER ACTION EXECUTION (JavaScript-enabled client)
       // ============================================================================
       if (isAction && actionId) {
-        // Set route params before action execution so server actions (including
-        // fetchable loader actions) can access ctx.params via getRequestContext().
-        // Without this, params are only set during revalidation (after the action).
-        if (routeParams) {
-          setRequestContextParams(routeParams);
-        }
         return handleServerAction(request, env, url, actionId, handleStore);
       }
 
@@ -933,20 +957,15 @@ export function createRSCHandler<
           params: {},
         };
 
-        // Render with rootLayout to maintain app shell
-        const root = await renderSegments([notFoundSegment], {
-          rootLayout: router.rootLayout,
-          // No routeName for not-found routes
-        });
-
         const payload: RscPayload = {
-          root,
+    
           metadata: {
             pathname: url.pathname,
             segments: [notFoundSegment],
             matched: [],
             diff: [],
             isPartial: false,
+            rootLayout: router.rootLayout,
             handles: handleStore.stream(),
             version,
             themeConfig: router.themeConfig,
@@ -958,8 +977,10 @@ export function createRSCHandler<
 
         const rscStream = renderToReadableStream(payload);
 
-        // Determine if this is an RSC request or HTML request
+        // Determine if this is an RSC request or HTML request.
+        // Partial requests are always RSC (see main isRscRequest comment).
         const isRscRequest =
+          isPartial ||
           (!request.headers.get("accept")?.includes("text/html") &&
             !url.searchParams.has("__html")) ||
           url.searchParams.has("__rsc");
@@ -1107,12 +1128,8 @@ export function createRSCHandler<
       });
     }
 
-    const root = renderSegments(match.segments, {
-      rootLayout: router.rootLayout,
-    });
-
     const payload: RscPayload = {
-      root,
+
       metadata: {
         pathname: url.pathname,
         segments: match.segments,
@@ -1236,7 +1253,7 @@ export function createRSCHandler<
         setRequestContextParams(errorResult.params);
 
         const payload: RscPayload = {
-          root: null,
+    
           metadata: {
             pathname: url.pathname,
             segments: errorResult.segments,
@@ -1287,23 +1304,16 @@ export function createRSCHandler<
         });
       }
 
-      const renderStart = performance.now();
-      const root = renderSegments(fullMatch.segments, {
-        rootLayout: router.rootLayout,
-        isAction: true,
-      });
-      const renderDuration = performance.now() - renderStart;
-      const serverTiming = fullMatch.serverTiming
-        ? `${fullMatch.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
-        : `rendering;dur=${renderDuration.toFixed(2)}`;
+      const serverTiming = fullMatch.serverTiming;
 
       const payload: RscPayload = {
-        root,
+  
         metadata: {
           pathname: url.pathname,
           segments: fullMatch.segments,
           matched: fullMatch.matched,
           diff: fullMatch.diff,
+          rootLayout: router.rootLayout,
           handles: handleStore.stream(),
           version,
         },
@@ -1330,15 +1340,10 @@ export function createRSCHandler<
     // Return updated segments
     setRequestContextParams(matchResult.params);
 
-    const renderStart = performance.now();
-
-    const renderDuration = performance.now() - renderStart;
-    const serverTiming = matchResult.serverTiming
-      ? `${matchResult.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
-      : `rendering;dur=${renderDuration.toFixed(2)}`;
+    const serverTiming = matchResult.serverTiming;
 
     const payload: RscPayload = {
-      root: null,
+
       metadata: {
         pathname: url.pathname,
         segments: matchResult.segments,
@@ -1492,7 +1497,7 @@ export function createRSCHandler<
             headers: { "content-type": "text/x-component;charset=utf-8" },
           });
         },
-        createReverseFunction(getGlobalRouteMap()),
+        createReverseFunction(getRequiredRouteMap()),
       );
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -1559,23 +1564,17 @@ export function createRSCHandler<
           });
         }
 
-        const renderStart = performance.now();
-        const root = renderSegments(match.segments, {
-          rootLayout: router.rootLayout,
-        });
-        const renderDuration = performance.now() - renderStart;
-        serverTiming = match.serverTiming
-          ? `${match.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
-          : `rendering;dur=${renderDuration.toFixed(2)}`;
+        serverTiming = match.serverTiming;
 
         payload = {
-          root,
+    
           metadata: {
             pathname: url.pathname,
             segments: match.segments,
             matched: match.matched,
             diff: match.diff,
             isPartial: false,
+            rootLayout: router.rootLayout,
             handles: handleStore.stream(),
             version,
             themeConfig: router.themeConfig,
@@ -1587,7 +1586,7 @@ export function createRSCHandler<
         serverTiming = result.serverTiming;
 
         payload = {
-          root: null,
+    
           metadata: {
             pathname: url.pathname,
             segments: result.segments,
@@ -1640,17 +1639,12 @@ export function createRSCHandler<
           { headers: { "Content-Type": "application/json" } },
         );
       } else {
-        const renderStart = performance.now();
-        const root = renderSegments(match.segments, {
-          rootLayout: router.rootLayout,
-        });
-        const renderDuration = performance.now() - renderStart;
-        serverTiming = match.serverTiming
-          ? `${match.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
-          : `rendering;dur=${renderDuration.toFixed(2)}`;
+        serverTiming = match.serverTiming;
 
         payload = {
-          root,
+          // Initial SSR can reconstruct the tree from segments + rootLayout,
+          // so we omit root to avoid sending the same structure twice.
+    
           metadata: {
             pathname: url.pathname,
             segments: match.segments,
@@ -1682,13 +1676,17 @@ export function createRSCHandler<
     const rscStream = renderToReadableStream<RscPayload>(payload);
     const rscSerializeDur = performance.now() - rscSerializeStart;
 
-    // Determine if this is an RSC request or HTML request
+    // Determine if this is an RSC request or HTML request.
+    // Partial requests (_rsc_partial) are always RSC — they come from client-side
+    // navigation or <link rel="prefetch">. Chrome sends Accept: text/html for
+    // prefetch links despite as="fetch", so we cannot rely on Accept alone.
     const isRscRequest =
+      isPartial ||
       (!request.headers.get("accept")?.includes("text/html") &&
         !url.searchParams.has("__html")) ||
       url.searchParams.has("__rsc");
 
-    // Build complete Server-Timing: handler phases + match/manifest + rendering + RSC serialize
+    // Build complete Server-Timing: handler phases + match/manifest + RSC serialize
     const timingParts: string[] = [...handlerTimingArr];
     if (serverTiming) {
       timingParts.push(serverTiming);
