@@ -313,17 +313,9 @@ function resolveRoutePattern(entry: RouteMapEntry | undefined): string | undefin
 
 export function createReverse<TRoutes extends Record<string, string>>(
   routeMap: TRoutes,
-  getFallbackMap?: () => Record<string, RouteMapEntry> | undefined,
 ): ReverseFunction<TRoutes & Record<string, string>> {
   return ((name: string, params?: Record<string, string>, search?: Record<string, unknown>) => {
-    let pattern = resolveRoutePattern(routeMap[name] as unknown as RouteMapEntry);
-    if (!pattern) {
-      // Try the static route names from the generated file (O(1) fallback)
-      const fallback = getFallbackMap?.();
-      if (fallback) {
-        pattern = resolveRoutePattern(fallback[name]);
-      }
-    }
+    const pattern = resolveRoutePattern(routeMap[name] as unknown as RouteMapEntry);
     if (!pattern) {
       // During build-time discovery, lazy includes haven't resolved yet.
       // Return a placeholder instead of crashing the build.

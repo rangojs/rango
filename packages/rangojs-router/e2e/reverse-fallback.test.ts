@@ -1,13 +1,13 @@
 import { expect, test } from "@playwright/test";
 import { useFixture } from "./fixture";
 
-test.describe("reverse-fallback", () => {
+test.describe("reverse-module-level", () => {
   const f = useFixture({
     root: "./e2e/test-app",
     mode: "dev",
   });
 
-  test("module-level reverse() resolves via NamedRoutes fallback", async ({
+  test("module-level reverse() resolves via injected NamedRoutes map", async ({
     request,
   }) => {
     const res = await request.get(f.url("/reverse-fallback-test"));
@@ -17,7 +17,7 @@ test.describe("reverse-fallback", () => {
     const results = envelope.data;
 
     // These routes come from include() calls — at module load time the lazy
-    // includes haven't resolved yet, so reverse() must fall back to the
+    // includes haven't resolved yet, so reverse() relies on the injected
     // static NamedRoutes map from the generated file.
     expect(results["blog.index"]).toBe("/blog");
     expect(results["blog.post"]).toBe("/blog/test-post");
