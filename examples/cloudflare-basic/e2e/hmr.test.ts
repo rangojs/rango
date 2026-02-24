@@ -521,10 +521,11 @@ import { Outlet } from "@rangojs/router/client";`
       await expect(testId(page, "proactive-index-page")).toBeVisible({
         timeout: 2000,
       });
+      // Layout should no longer be present — only passes after HMR processes
+      await expect(testId(page, "proactive-cache-layout")).not.toBeVisible({
+        timeout: 2000,
+      });
     }).toPass({ timeout: ROUTE_CHANGE_TIMEOUT });
-
-    // Layout should no longer be present
-    await expect(testId(page, "proactive-cache-layout")).not.toBeVisible();
   });
 
   // -- Group 5: Parallel Route Mutations --
