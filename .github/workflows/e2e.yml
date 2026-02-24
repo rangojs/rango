@@ -131,7 +131,7 @@ jobs:
             playwright-browsers-
 
       - name: Install Playwright system deps
-        run: pnpm --filter vite-rsc-demo exec playwright install --with-deps chromium
+        run: pnpm --filter vite-rsc-demo exec playwright install-deps chromium
 
       - name: Run demo app e2e tests (${{ matrix.project }})
         run: pnpm --filter vite-rsc-demo exec playwright test --project=${{ matrix.project }}
@@ -190,7 +190,7 @@ jobs:
             playwright-browsers-
 
       - name: Install Playwright system deps
-        run: pnpm --filter @rangojs/router exec playwright install --with-deps chromium
+        run: pnpm --filter @rangojs/router exec playwright install-deps chromium
 
       - name: Run rangojs-router e2e tests (${{ matrix.project }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
         run: |
@@ -241,7 +241,7 @@ jobs:
             playwright-browsers-
 
       - name: Install Playwright system deps
-        run: pnpm --filter cloudflare-basic exec playwright install --with-deps chromium
+        run: pnpm --filter cloudflare-basic exec playwright install-deps chromium
 
       - name: Run cloudflare-basic e2e tests
         run: pnpm --filter cloudflare-basic test:e2e
@@ -289,7 +289,7 @@ jobs:
             playwright-browsers-
 
       - name: Install Playwright system deps
-        run: pnpm --filter react-experimental exec playwright install --with-deps chromium
+        run: pnpm --filter react-experimental exec playwright install-deps chromium
 
       - name: Run react-experimental e2e tests
         run: pnpm --filter react-experimental test:e2e
@@ -335,7 +335,7 @@ jobs:
             playwright-browsers-
 
       - name: Install Playwright system deps
-        run: pnpm --filter cloudflare-stress-demo exec playwright install --with-deps chromium
+        run: pnpm --filter cloudflare-stress-demo exec playwright install-deps chromium
 
       - name: Run cloudflare-stress-demo e2e tests
         run: pnpm --filter cloudflare-stress-demo test:e2e
