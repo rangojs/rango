@@ -8,7 +8,6 @@
  */
 
 import { createElement } from "react";
-import { renderSegments } from "../segment-system.js";
 import { RouteNotFoundError, RouterError } from "../errors.js";
 import type { ResponseError } from "../urls.js";
 import { getLoaderLazy } from "../server/loader-registry.js";
@@ -958,20 +957,15 @@ export function createRSCHandler<
           params: {},
         };
 
-        // Render with rootLayout to maintain app shell
-        const root = await renderSegments([notFoundSegment], {
-          rootLayout: router.rootLayout,
-          // No routeName for not-found routes
-        });
-
         const payload: RscPayload = {
-          root,
+          root: null,
           metadata: {
             pathname: url.pathname,
             segments: [notFoundSegment],
             matched: [],
             diff: [],
             isPartial: false,
+            rootLayout: router.rootLayout,
             handles: handleStore.stream(),
             version,
             themeConfig: router.themeConfig,
@@ -1132,12 +1126,8 @@ export function createRSCHandler<
       });
     }
 
-    const root = renderSegments(match.segments, {
-      rootLayout: router.rootLayout,
-    });
-
     const payload: RscPayload = {
-      root,
+      root: null,
       metadata: {
         pathname: url.pathname,
         segments: match.segments,
@@ -1312,23 +1302,16 @@ export function createRSCHandler<
         });
       }
 
-      const renderStart = performance.now();
-      const root = renderSegments(fullMatch.segments, {
-        rootLayout: router.rootLayout,
-        isAction: true,
-      });
-      const renderDuration = performance.now() - renderStart;
-      const serverTiming = fullMatch.serverTiming
-        ? `${fullMatch.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
-        : `rendering;dur=${renderDuration.toFixed(2)}`;
+      const serverTiming = fullMatch.serverTiming;
 
       const payload: RscPayload = {
-        root,
+        root: null,
         metadata: {
           pathname: url.pathname,
           segments: fullMatch.segments,
           matched: fullMatch.matched,
           diff: fullMatch.diff,
+          rootLayout: router.rootLayout,
           handles: handleStore.stream(),
           version,
         },
@@ -1355,12 +1338,7 @@ export function createRSCHandler<
     // Return updated segments
     setRequestContextParams(matchResult.params);
 
-    const renderStart = performance.now();
-
-    const renderDuration = performance.now() - renderStart;
-    const serverTiming = matchResult.serverTiming
-      ? `${matchResult.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
-      : `rendering;dur=${renderDuration.toFixed(2)}`;
+    const serverTiming = matchResult.serverTiming;
 
     const payload: RscPayload = {
       root: null,
@@ -1584,23 +1562,17 @@ export function createRSCHandler<
           });
         }
 
-        const renderStart = performance.now();
-        const root = renderSegments(match.segments, {
-          rootLayout: router.rootLayout,
-        });
-        const renderDuration = performance.now() - renderStart;
-        serverTiming = match.serverTiming
-          ? `${match.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
-          : `rendering;dur=${renderDuration.toFixed(2)}`;
+        serverTiming = match.serverTiming;
 
         payload = {
-          root,
+          root: null,
           metadata: {
             pathname: url.pathname,
             segments: match.segments,
             matched: match.matched,
             diff: match.diff,
             isPartial: false,
+            rootLayout: router.rootLayout,
             handles: handleStore.stream(),
             version,
             themeConfig: router.themeConfig,
@@ -1665,17 +1637,12 @@ export function createRSCHandler<
           { headers: { "Content-Type": "application/json" } },
         );
       } else {
-        const renderStart = performance.now();
-        const root = renderSegments(match.segments, {
-          rootLayout: router.rootLayout,
-        });
-        const renderDuration = performance.now() - renderStart;
-        serverTiming = match.serverTiming
-          ? `${match.serverTiming}, rendering;dur=${renderDuration.toFixed(2)}`
-          : `rendering;dur=${renderDuration.toFixed(2)}`;
+        serverTiming = match.serverTiming;
 
         payload = {
-          root,
+          // Initial SSR can reconstruct the tree from segments + rootLayout,
+          // so we omit root to avoid sending the same structure twice.
+          root: null,
           metadata: {
             pathname: url.pathname,
             segments: match.segments,
@@ -1713,7 +1680,7 @@ export function createRSCHandler<
         !url.searchParams.has("__html")) ||
       url.searchParams.has("__rsc");
 
-    // Build complete Server-Timing: handler phases + match/manifest + rendering + RSC serialize
+    // Build complete Server-Timing: handler phases + match/manifest + RSC serialize
     const timingParts: string[] = [...handlerTimingArr];
     if (serverTiming) {
       timingParts.push(serverTiming);

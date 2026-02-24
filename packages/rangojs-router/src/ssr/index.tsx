@@ -1,4 +1,5 @@
 import React from "react";
+import { renderSegments } from "../segment-system.js";
 import { initHandleDataSync } from "../browser/react/use-handle.js";
 import { initSegmentsSync } from "../browser/react/use-segments.js";
 import { initThemeConfigSync } from "../theme/theme-context.js";
@@ -7,6 +8,7 @@ import { NavigationStoreContext } from "../browser/react/context.js";
 import type { NavigationStoreContextValue } from "../browser/react/context.js";
 import type { HandleData } from "../browser/types.js";
 import type { ErrorPhase } from "../types.js";
+import type { ResolvedSegment } from "../types.js";
 import type { ResolvedThemeConfig, Theme } from "../theme/types.js";
 import type { EventController, DerivedNavigationState } from "../browser/event-controller.js";
 
@@ -101,8 +103,10 @@ export interface SSRDependencies<TEnv = unknown> {
  * RSC payload type (minimal interface for SSR)
  */
 interface RscPayload {
-  root: React.ReactNode;
+  root: React.ReactNode | null;
   metadata?: {
+    segments?: ResolvedSegment[];
+    rootLayout?: React.ComponentType<{ children: React.ReactNode }>;
     handles?: AsyncGenerator<HandleData, void, unknown>;
     matched?: string[];
     pathname?: string;
@@ -247,7 +251,14 @@ export function createSSRHandler<TEnv = unknown>(deps: SSRDependencies<TEnv>) {
 
         // Build content tree with all necessary providers
         // Order must match NavigationProvider: NavigationStoreContext > ThemeProvider > content
-        let content: React.ReactNode = resolved.root;
+        const reconstructedRoot = renderSegments(resolved.metadata?.segments ?? [], {
+          rootLayout: resolved.metadata?.rootLayout,
+        });
+        const reconstructedContent =
+          reconstructedRoot instanceof Promise
+            ? React.use(reconstructedRoot)
+            : reconstructedRoot;
+        let content: React.ReactNode = resolved.root ?? reconstructedContent;
 
         // Wrap content with ThemeProvider if theme is enabled
         if (themeConfig) {
