@@ -24,12 +24,4 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
-  server: {
-    watch: {
-      // Native inotify works well on GitHub Actions Ubuntu VMs and handles
-      // multiple concurrent watchers better than polling (no stat contention).
-      // Polling was previously used here but missed events on CI due to the
-      // 200ms interval being too coarse for rapid test file writes.
-    },
-  },
 });
