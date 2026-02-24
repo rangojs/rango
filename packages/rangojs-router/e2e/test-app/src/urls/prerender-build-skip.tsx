@@ -36,11 +36,11 @@ export const SkipWorkingStatic = Static(() => {
 });
 
 export const buildSkipPatterns = urls(({ path }) => [
+  path("/static-skip", SkipStatic, { name: "staticSkip" }),
+  path("/working-static", SkipWorkingStatic, { name: "workingStatic" }),
   path(
     "/:slug",
     SkipArticle,
     { name: "article" },
   ),
-  path("/static-skip", SkipStatic, { name: "staticSkip" }),
-  path("/working-static", SkipWorkingStatic, { name: "workingStatic" }),
 ]);

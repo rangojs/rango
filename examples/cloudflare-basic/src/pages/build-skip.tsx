@@ -6,7 +6,7 @@ import {
 } from "./build-skip-handler.js";
 
 export const buildSkipPatterns = urls(({ path }) => [
-  path("/:slug", SkipArticle, { name: "article" }),
   path("/static-skip", SkipStaticHandler, { name: "staticSkip" }),
   path("/working-static", SkipWorkingStatic, { name: "workingStatic" }),
+  path("/:slug", SkipArticle, { name: "article" }),
 ]);
