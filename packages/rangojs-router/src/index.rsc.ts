@@ -117,6 +117,8 @@ export {
   type PrerenderHandlerDefinition,
   type PrerenderOptions,
   type BuildContext,
+  type StaticBuildContext,
+  type GetParamsContext,
 } from "./prerender.js";
 
 // Static handler API
