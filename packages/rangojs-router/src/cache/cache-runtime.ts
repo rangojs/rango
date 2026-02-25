@@ -267,22 +267,29 @@ export function registerCachedFunction<T extends (...args: any[]) => any>(
       stopHandleCapture(handleStore, capture);
     }
 
-    // Serialize and store (non-blocking)
-    try {
-      const serialized = await serializeResult(result);
-      if (serialized !== null) {
-        const storePromise = store.setItem!(cacheKey, serialized, {
-          handles: capture?.data,
-          ttl: profile.ttl,
-          swr: profile.swr,
-          tags: profile.tags,
-        });
-        if (requestCtx?.waitUntil) {
-          requestCtx.waitUntil(async () => { await storePromise; });
+    // Serialize and store — fully non-blocking when waitUntil is available.
+    // The response does not need to wait for serialization or the store write.
+    const cacheWrite = async () => {
+      try {
+        const serialized = await serializeResult(result);
+        if (serialized !== null) {
+          await store.setItem!(cacheKey, serialized, {
+            handles: capture?.data,
+            ttl: profile.ttl,
+            swr: profile.swr,
+            tags: profile.tags,
+          });
         }
+      } catch {
+        // Serialization or store write failed silently
       }
-    } catch {
-      // Serialization failed: return uncached
+    };
+
+    if (requestCtx?.waitUntil) {
+      requestCtx.waitUntil(cacheWrite);
+    } else {
+      // No waitUntil (e.g. Node.js dev server): run inline as best-effort
+      await cacheWrite();
     }
 
     return result;
