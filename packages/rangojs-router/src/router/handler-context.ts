@@ -58,10 +58,17 @@ function resolveRouteName(
 /**
  * Create a reverse function for URL generation from route names.
  * Used by both HandlerContext and MiddlewareContext.
+ *
+ * When currentParams is provided, those params are used as defaults for URL
+ * generation. This enables auto-filling mount params from include() prefixes:
+ * inner handlers can call ctx.reverse(".sibling") without explicitly passing
+ * params that are already known from the current URL match.
+ * Explicitly passed hrefParams take priority over currentParams.
  */
 export function createReverseFunction(
   routeMap: Record<string, string>,
-  currentRoutePrefix?: string
+  currentRoutePrefix?: string,
+  currentParams?: Record<string, string>
 ): (name: string, hrefParams?: Record<string, string>, search?: Record<string, unknown>) => string {
   return (name, hrefParams, search) => {
     // Resolve route name with namespace support
@@ -75,10 +82,15 @@ export function createReverseFunction(
 
     let result = pattern;
 
+    // Merge current request params as defaults, explicit params override
+    const effectiveParams = currentParams
+      ? { ...currentParams, ...hrefParams }
+      : hrefParams;
+
     // Substitute params (strip constraint syntax: :param(a|b) -> value)
-    if (hrefParams) {
+    if (effectiveParams) {
       result = result.replace(/:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?/g, (_, key) => {
-        const value = hrefParams[key];
+        const value = effectiveParams[key];
         if (value === undefined) {
           throw new Error(`Missing param "${key}" for route "${name}"`);
         }
@@ -170,8 +182,8 @@ export function createHandlerContext<TEnv>(
       }
       requestContext.setLocationState(entries);
     },
-    // Scoped reverse for URL generation
-    reverse: createReverseFunction(routeMap, routeName),
+    // Scoped reverse for URL generation (auto-fills current request params)
+    reverse: createReverseFunction(routeMap, routeName, params),
   };
 }
 
@@ -237,7 +249,7 @@ export function createPrerenderContext<TEnv>(
     setLocationState: () => {
       throwUnavailable("setLocationState");
     },
-    reverse: createReverseFunction(routeMap, routeName),
+    reverse: createReverseFunction(routeMap, routeName, params),
   } as InternalHandlerContext<any, TEnv>;
 }
 
