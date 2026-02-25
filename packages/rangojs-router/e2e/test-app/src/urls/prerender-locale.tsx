@@ -8,10 +8,10 @@ import { Outlet } from "@rangojs/router/client";
 const LOCALES = ["en", "fr"];
 const SLUGS = ["hello", "world"];
 
-export const PrerenderLocaleDetail = Prerender<{
-  locale: string;
-  slug: string;
-}>(
+// Prerender generic only declares the route's own params (slug).
+// The locale param comes from the parent include() prefix and is
+// available at runtime via ctx.params but not typed on the path pattern.
+export const PrerenderLocaleDetail = Prerender<{ slug: string }>(
   async () => {
     // getParams must return cross-product of locale x slug
     // because the full pattern is /:locale/blog/:slug
@@ -24,14 +24,16 @@ export const PrerenderLocaleDetail = Prerender<{
     return params;
   },
   async (ctx) => {
-    const content = `content-${ctx.params.locale}-${ctx.params.slug}`;
+    // locale comes from parent include() prefix, cast to access it
+    const params = ctx.params as Record<string, string>;
+    const content = `content-${params.locale}-${params.slug}`;
     ctx.set("localeContent", content);
     // Test reverse auto-fill: locale should be inherited from ctx.params
     const listUrl = ctx.reverse(".list");
     return (
       <div data-testid="locale-detail-page">
-        <h1 data-testid="locale-detail-title">{ctx.params.slug}</h1>
-        <p data-testid="locale-detail-locale">{ctx.params.locale}</p>
+        <h1 data-testid="locale-detail-title">{params.slug}</h1>
+        <p data-testid="locale-detail-locale">{params.locale}</p>
         <p data-testid="locale-detail-content">{content}</p>
         <p data-testid="locale-detail-build">{String(ctx.build)}</p>
         <p data-testid="locale-detail-timestamp">{Date.now()}</p>
