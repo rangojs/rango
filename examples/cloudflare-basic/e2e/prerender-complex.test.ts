@@ -10,16 +10,14 @@ import {
 test.describe.configure({ mode: "serial" });
 
 /**
- * Complex pre-render tests: layout, parallel slots, loader freshness,
+ * Complex pre-render tests: layout, pagination via handler-first ctx.set/ctx.get,
  * and cross-route navigation with pre-rendered routes.
  *
  * Route structure:
- *   layout(ArticlesLayout)              -- runtime (wraps all)
- *     path("/", ArticlesIndex, () => [  -- prerendered
- *       parallel(@stats)                -- prerendered structure, useLoader for fresh data
- *         loader(ArticleStatsLoader)
- *     ])
- *     path("/:slug", ArticleDetail)     -- prerendered
+ *   layout(ArticlesLayout)                        -- runtime (wraps all)
+ *     path("/:page(1|2|3|4)", PaginatedArticles,  -- prerendered
+ *       () => [layout(PaginationLayout)])          -- reads ctx.get("pagination")
+ *     path("/:slug", ArticleDetail)               -- prerendered
  */
 test.describe("prerender-complex (production)", () => {
   const f = useFixture({
@@ -32,7 +30,7 @@ test.describe("prerender-complex (production)", () => {
   test("layout renders on direct visit", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/articles"));
+    await page.goto(f.url("/articles/page/1"));
     await waitForHydration(page);
 
     await expect(testId(page, "articles-layout")).toBeVisible();
@@ -55,32 +53,32 @@ test.describe("prerender-complex (production)", () => {
   test("layout preserved between article details", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/articles"));
+    await page.goto(f.url("/articles/page/1"));
     await waitForHydration(page);
 
     await using __ = await expectNoReload(page);
 
     // Navigate to first article
-    await testId(page, "article-link-what-is-prerendering").click();
+    await testId(page, "article-link-composable-patterns").click();
     await expect(testId(page, "article-detail")).toBeVisible();
     await expect(testId(page, "articles-layout")).toBeVisible();
 
-    // Navigate back to articles index
+    // Navigate back to articles list
     await page.locator("text=Back to Articles").click();
     await expect(testId(page, "articles-index")).toBeVisible();
     await expect(testId(page, "articles-layout")).toBeVisible();
 
     // Navigate to a different article
-    await testId(page, "article-link-static-params").click();
+    await testId(page, "article-link-workers-at-edge").click();
     await expect(testId(page, "article-detail")).toBeVisible();
     await expect(testId(page, "articles-layout")).toBeVisible();
   });
 
-  test("layout wraps both index and detail routes", async ({ page }) => {
+  test("layout wraps both list and detail routes", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    // Layout visible on index
-    await page.goto(f.url("/articles"));
+    // Layout visible on list
+    await page.goto(f.url("/articles/page/1"));
     await waitForHydration(page);
     await expect(testId(page, "articles-layout")).toBeVisible();
     await expect(testId(page, "layout-rendered-at")).toBeVisible();
@@ -92,87 +90,28 @@ test.describe("prerender-complex (production)", () => {
     await expect(testId(page, "layout-rendered-at")).toBeVisible();
   });
 
-  // -- Parallel slot tests --
-  // The @stats parallel is a child of path("/") — scoped to index only.
+  // -- Pagination layout tests (handler-first ctx.set/ctx.get) --
 
-  test("stats sidebar renders on index direct visit", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/articles"));
-    await waitForHydration(page);
-
-    await expect(testId(page, "articles-stats-sidebar")).toBeVisible();
-    await expect(testId(page, "stats-rendered-at")).toBeVisible();
-  });
-
-  test("stats sidebar renders on index client navigation", async ({
+  test("pagination layout renders with correct page info", async ({
     page,
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/counter"));
+    await page.goto(f.url("/articles/page/1"));
     await waitForHydration(page);
 
-    await using __ = await expectNoReload(page);
-
-    await testId(page, "nav-articles").click();
-    await expect(testId(page, "articles-stats-sidebar")).toBeVisible();
-    await expect(testId(page, "stats-rendered-at")).toBeVisible();
+    await expect(testId(page, "pagination-layout")).toBeVisible();
+    await expect(testId(page, "pagination-info")).toContainText("Page 1 of");
   });
 
-  test("stats sidebar not present on article detail", async ({ page }) => {
+  test("pagination layout not present on article detail", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/articles/what-is-prerendering"));
     await waitForHydration(page);
 
     await expect(testId(page, "article-detail")).toBeVisible();
-    await expect(testId(page, "articles-stats-sidebar")).not.toBeVisible();
-  });
-
-  // -- Loader data tests --
-  // Loader data via useLoader is SSR'd and displayed correctly.
-
-  test("loader data renders valid timestamp", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/articles"));
-    await waitForHydration(page);
-
-    const text = await testId(page, "stats-rendered-at").textContent();
-    expect(text).toBeTruthy();
-
-    // Verify the timestamp is a valid ISO date string
-    const match = text!.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[\d.]*Z)/);
-    expect(match).toBeTruthy();
-
-    const renderedAt = new Date(match![1]);
-    expect(renderedAt.getTime()).not.toBeNaN();
-  });
-
-  test("loader re-executes on each navigation (not cached)", async ({
-    page,
-  }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/articles"));
-    await waitForHydration(page);
-
-    const text1 = await testId(page, "stats-rendered-at").textContent();
-    expect(text1).toBeTruthy();
-
-    // Navigate away and back — loader should re-execute
-    await testId(page, "nav-counter").click();
-    await expect(testId(page, "counter-page")).toBeVisible();
-
-    await testId(page, "nav-articles").click();
-    await expect(testId(page, "articles-stats-sidebar")).toBeVisible();
-
-    const text2 = await testId(page, "stats-rendered-at").textContent();
-    expect(text2).toBeTruthy();
-
-    // Loader runs fresh each time — timestamps must differ
-    expect(text2).not.toEqual(text1);
+    await expect(testId(page, "pagination-layout")).not.toBeVisible();
   });
 
   // -- Navigation tests --
@@ -182,15 +121,15 @@ test.describe("prerender-complex (production)", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/articles"));
+    await page.goto(f.url("/articles/page/1"));
     await waitForHydration(page);
 
     await using __ = await expectNoReload(page);
 
     // Click first article
-    await testId(page, "article-link-what-is-prerendering").click();
+    await testId(page, "article-link-composable-patterns").click();
     await expect(testId(page, "article-title")).toHaveText(
-      "What is Pre-rendering?"
+      "Composable Patterns"
     );
 
     // Go back
@@ -198,9 +137,9 @@ test.describe("prerender-complex (production)", () => {
     await expect(testId(page, "articles-index")).toBeVisible();
 
     // Click second article
-    await testId(page, "article-link-static-params").click();
+    await testId(page, "article-link-workers-at-edge").click();
     await expect(testId(page, "article-title")).toHaveText(
-      "Static Params with getParams"
+      "Workers at the Edge"
     );
   });
 
@@ -220,34 +159,34 @@ test.describe("prerender-complex (production)", () => {
     await expect(breadcrumbs.locator("text=Articles")).toBeVisible();
 
     // Click into article detail
-    await testId(page, "article-link-what-is-prerendering").click();
+    await testId(page, "article-link-composable-patterns").click();
     await expect(testId(page, "article-detail")).toBeVisible();
 
     await expect(breadcrumbs.locator("text=Home")).toBeVisible();
     await expect(breadcrumbs.locator("text=Articles")).toBeVisible();
     await expect(
-      breadcrumbs.locator("text=What is Pre-rendering?")
+      breadcrumbs.locator("text=Composable Patterns")
     ).toBeVisible();
   });
 
   test("meta tags update between prerendered articles", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/articles"));
+    await page.goto(f.url("/articles/page/1"));
     await waitForHydration(page);
 
-    // Articles index title
+    // Articles list title
     let title = await page.title();
     expect(title).toContain("Articles");
 
     // Navigate to article detail
-    await testId(page, "article-link-what-is-prerendering").click();
+    await testId(page, "article-link-composable-patterns").click();
     await expect(testId(page, "article-detail")).toBeVisible();
 
     title = await page.title();
-    expect(title).toContain("What is Pre-rendering?");
+    expect(title).toContain("Composable Patterns");
 
-    // Navigate back to articles index
+    // Navigate back to articles list
     await page.locator("text=Back to Articles").click();
     await expect(testId(page, "articles-index")).toBeVisible();
 
@@ -266,12 +205,12 @@ test.describe("prerender-complex (production)", () => {
     await expect(testId(page, "articles-index")).toBeVisible();
 
     // Navigate to article detail
-    await testId(page, "article-link-what-is-prerendering").click();
+    await testId(page, "article-link-composable-patterns").click();
     await expect(testId(page, "article-title")).toHaveText(
-      "What is Pre-rendering?"
+      "Composable Patterns"
     );
 
-    // Browser back -> articles index
+    // Browser back -> articles list
     await page.goBack();
     await expect(testId(page, "articles-index")).toBeVisible();
 
@@ -309,7 +248,7 @@ test.describe("prerender-complex (production)", () => {
 
 /**
  * Dev mode: same route structure, no pre-rendering.
- * All handlers run live at request time. Loader freshness can be asserted.
+ * All handlers run live at request time.
  */
 test.describe("prerender-complex (dev)", () => {
   const f = useFixture({
@@ -322,7 +261,7 @@ test.describe("prerender-complex (dev)", () => {
   test("layout renders on direct visit", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/articles"));
+    await page.goto(f.url("/articles/page/1"));
     await waitForHydration(page);
 
     await expect(testId(page, "articles-layout")).toBeVisible();
@@ -342,64 +281,26 @@ test.describe("prerender-complex (dev)", () => {
     await expect(testId(page, "articles-index")).toBeVisible();
   });
 
-  // -- Parallel slots --
+  // -- Pagination layout --
 
-  test("stats sidebar renders on index", async ({ page }) => {
+  test("pagination layout renders on list page", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/articles"));
+    await page.goto(f.url("/articles/page/1"));
     await waitForHydration(page);
 
-    await expect(testId(page, "articles-stats-sidebar")).toBeVisible();
-    await expect(testId(page, "stats-rendered-at")).toBeVisible();
+    await expect(testId(page, "pagination-layout")).toBeVisible();
+    await expect(testId(page, "pagination-info")).toContainText("Page 1 of");
   });
 
-  test("stats sidebar not present on article detail", async ({ page }) => {
+  test("pagination layout not present on article detail", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/articles/what-is-prerendering"));
     await waitForHydration(page);
 
     await expect(testId(page, "article-detail")).toBeVisible();
-    await expect(testId(page, "articles-stats-sidebar")).not.toBeVisible();
-  });
-
-  // -- Loader freshness --
-
-  test("loader timestamp is fresh on direct visit", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/articles"));
-    await waitForHydration(page);
-
-    const text = await testId(page, "stats-rendered-at").textContent();
-    const match = text!.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[\d.]*Z)/);
-    expect(match).toBeTruthy();
-
-    const renderedAt = new Date(match![1]);
-    const diffMs = Date.now() - renderedAt.getTime();
-    // In dev mode, loader runs at request time — timestamp must be recent
-    expect(diffMs).toBeLessThan(30_000);
-  });
-
-  test("loader re-executes on each navigation", async ({ page }) => {
-    using _ = expectNoPageError(page);
-
-    await page.goto(f.url("/articles"));
-    await waitForHydration(page);
-
-    const text1 = await testId(page, "stats-rendered-at").textContent();
-
-    await testId(page, "nav-counter").click();
-    await expect(testId(page, "counter-page")).toBeVisible();
-
-    await testId(page, "nav-articles").click();
-    await expect(testId(page, "articles-stats-sidebar")).toBeVisible();
-
-    const text2 = await testId(page, "stats-rendered-at").textContent();
-
-    // Loader runs fresh each time — timestamps must differ
-    expect(text2).not.toEqual(text1);
+    await expect(testId(page, "pagination-layout")).not.toBeVisible();
   });
 
   // -- Navigation --
@@ -407,22 +308,22 @@ test.describe("prerender-complex (dev)", () => {
   test("navigate between articles without reload", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/articles"));
+    await page.goto(f.url("/articles/page/1"));
     await waitForHydration(page);
 
     await using __ = await expectNoReload(page);
 
-    await testId(page, "article-link-what-is-prerendering").click();
+    await testId(page, "article-link-composable-patterns").click();
     await expect(testId(page, "article-title")).toHaveText(
-      "What is Pre-rendering?"
+      "Composable Patterns"
     );
 
     await page.locator("text=Back to Articles").click();
     await expect(testId(page, "articles-index")).toBeVisible();
 
-    await testId(page, "article-link-static-params").click();
+    await testId(page, "article-link-workers-at-edge").click();
     await expect(testId(page, "article-title")).toHaveText(
-      "Static Params with getParams"
+      "Workers at the Edge"
     );
   });
 

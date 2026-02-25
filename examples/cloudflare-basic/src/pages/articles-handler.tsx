@@ -1,6 +1,15 @@
-import { Meta, Prerender } from "@rangojs/router";
-import { Link, ParallelOutlet } from "@rangojs/router/client";
+import { Meta, Prerender, createVar } from "@rangojs/router";
+import { Link, Outlet, ParallelOutlet } from "@rangojs/router/client";
 import { Breadcrumbs } from "../handles/breadcrumbs.js";
+
+interface PaginationData {
+  current: number;
+  total: number;
+  perPage: number;
+  articleCount: number;
+}
+
+export const Pagination = createVar<PaginationData>();
 
 interface Article {
   slug: string;
@@ -36,21 +45,76 @@ function parseFrontmatter(raw: string): {
   return { meta, content: match[2].trim() };
 }
 
-const articles: Article[] = Object.entries(mdFiles).map(([filePath, mod]) => {
-  const slug = filePath.split("/").pop()!.replace(".md", "");
-  const { meta, content } = parseFrontmatter(mod.default);
-  return {
-    slug,
-    title: meta.title ?? slug,
-    excerpt: meta.excerpt ?? "",
-    author: meta.author ?? "Unknown",
-    publishedAt: meta.publishedAt ?? "",
-    content,
-  };
-});
+const articles: Article[] = Object.entries(mdFiles)
+  .map(([filePath, mod]) => {
+    const slug = filePath.split("/").pop()!.replace(".md", "");
+    const { meta, content } = parseFrontmatter(mod.default);
+    return {
+      slug,
+      title: meta.title ?? slug,
+      excerpt: meta.excerpt ?? "",
+      author: meta.author ?? "Unknown",
+      publishedAt: meta.publishedAt ?? "",
+      content,
+    };
+  })
+  .sort(
+    (a, b) =>
+      new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime(),
+  );
 
-// Article list
+export const ARTICLES_PER_PAGE = 5;
+export const PAGE_COUNT = Math.ceil(articles.length / ARTICLES_PER_PAGE);
+
+// Helper: renders the article card list for a given slice.
+function renderArticleCards(
+  pageArticles: Article[],
+  reverse: (name: string, params?: Record<string, string>) => string,
+) {
+  return pageArticles.map((article) => (
+    <article
+      key={article.slug}
+      style={{
+        marginBottom: "2rem",
+        paddingBottom: "1.5rem",
+        borderBottom: "1px solid #eee",
+      }}
+      data-testid={`article-card-${article.slug}`}
+    >
+      <h2 style={{ marginBottom: "0.5rem" }}>
+        <Link
+          to={reverse("articles.detail", { slug: article.slug })}
+          style={{ color: "#0070f3", textDecoration: "none" }}
+          data-testid={`article-link-${article.slug}`}
+        >
+          {article.title}
+        </Link>
+      </h2>
+      <p
+        style={{
+          color: "#666",
+          fontSize: "0.875rem",
+          marginBottom: "0.5rem",
+        }}
+      >
+        By {article.author} on {article.publishedAt}
+      </p>
+      <p>{article.excerpt}</p>
+    </article>
+  ));
+}
+
+// Index route at /articles — pre-rendered, shows page 1 content.
 export const ArticlesIndex = Prerender(async (ctx) => {
+  const pageArticles = articles.slice(0, ARTICLES_PER_PAGE);
+
+  ctx.set(Pagination, {
+    current: 1,
+    total: PAGE_COUNT,
+    perPage: ARTICLES_PER_PAGE,
+    articleCount: articles.length,
+  });
+
   const meta = ctx.use(Meta);
   meta({ title: "Articles - RSC Router Cloudflare" });
   meta({
@@ -60,7 +124,10 @@ export const ArticlesIndex = Prerender(async (ctx) => {
 
   const breadcrumb = ctx.use(Breadcrumbs);
   breadcrumb({ label: "Home", href: ctx.reverse("home") });
-  breadcrumb({ label: "Articles", href: ctx.reverse("articles.index") });
+  breadcrumb({
+    label: "Articles",
+    href: ctx.reverse("articles.index"),
+  });
 
   return (
     <div data-testid="articles-index" style={{ display: "flex", gap: "2rem" }}>
@@ -70,43 +137,13 @@ export const ArticlesIndex = Prerender(async (ctx) => {
           Pre-rendered articles about RSC patterns and techniques.
         </p>
         <div data-testid="articles-list">
-          {articles.map((article) => (
-            <article
-              key={article.slug}
-              style={{
-                marginBottom: "2rem",
-                paddingBottom: "1.5rem",
-                borderBottom: "1px solid #eee",
-              }}
-              data-testid={`article-card-${article.slug}`}
-            >
-              <h2 style={{ marginBottom: "0.5rem" }}>
-                <Link
-                  to={ctx.reverse("articles.detail", { slug: article.slug })}
-                  style={{ color: "#0070f3", textDecoration: "none" }}
-                  data-testid={`article-link-${article.slug}`}
-                >
-                  {article.title}
-                </Link>
-              </h2>
-              <p
-                style={{
-                  color: "#666",
-                  fontSize: "0.875rem",
-                  marginBottom: "0.5rem",
-                }}
-              >
-                By {article.author} on {article.publishedAt}
-              </p>
-              <p>{article.excerpt}</p>
-            </article>
-          ))}
+          {renderArticleCards(pageArticles, ctx.reverse)}
         </div>
         <p
-          data-testid="prerender-info"
+          data-testid="prerender-timestamp"
           style={{ marginTop: "2rem", fontSize: "0.875rem", color: "#999" }}
         >
-          This page is pre-rendered at build time from {articles.length} articles.
+          Pre-rendered at: {new Date().toISOString()}
         </p>
       </div>
       <aside style={{ width: "280px", flexShrink: 0 }}>
@@ -115,6 +152,142 @@ export const ArticlesIndex = Prerender(async (ctx) => {
     </div>
   );
 });
+
+// Paginated article list (pre-rendered).
+// getParams(ctx) shares allArticles via ctx.set() at build time.
+// Handler slices articles for each page, ctx.set(Pagination, {...}).
+// PaginationLayout (orphan layout) reads ctx.get("pagination") for nav controls.
+export const PaginatedArticles = Prerender<{ page: string }>(
+  async (ctx) => {
+    ctx.set("allArticles", articles);
+    return Array.from({ length: PAGE_COUNT }, (_, i) => ({
+      page: String(i + 1),
+    }));
+  },
+  async (ctx) => {
+    const page = parseInt(ctx.params.page, 10);
+    const start = (page - 1) * ARTICLES_PER_PAGE;
+    const pageArticles = articles.slice(start, start + ARTICLES_PER_PAGE);
+
+    ctx.set(Pagination, {
+      current: page,
+      total: PAGE_COUNT,
+      perPage: ARTICLES_PER_PAGE,
+      articleCount: articles.length,
+    });
+
+    const meta = ctx.use(Meta);
+    meta({ title: "Articles - RSC Router Cloudflare" });
+    meta({
+      name: "description",
+      content: "Articles about pre-rendering, caching, and RSC patterns",
+    });
+
+    const breadcrumb = ctx.use(Breadcrumbs);
+    breadcrumb({ label: "Home", href: ctx.reverse("home") });
+    breadcrumb({
+      label: "Articles",
+      href: ctx.reverse("articles.list", { page: "1" }),
+    });
+
+    return (
+      <div
+        data-testid="articles-index"
+        style={{ display: "flex", gap: "2rem" }}
+      >
+        <div style={{ flex: 1 }}>
+          <h1 data-testid="articles-title">Articles</h1>
+          <p style={{ color: "#666", marginBottom: "2rem" }}>
+            Pre-rendered articles about RSC patterns and techniques.
+          </p>
+          <div data-testid="articles-list">
+            {renderArticleCards(pageArticles, ctx.reverse)}
+          </div>
+          <p
+            data-testid="prerender-timestamp"
+            style={{ marginTop: "2rem", fontSize: "0.875rem", color: "#999" }}
+          >
+            Pre-rendered at: {new Date().toISOString()}
+          </p>
+        </div>
+        <aside style={{ width: "280px", flexShrink: 0 }}>
+          <ParallelOutlet name="@stats" />
+        </aside>
+      </div>
+    );
+  },
+  { passthrough: true, concurrency: 2 },
+);
+
+// Orphan layout that reads pagination metadata from the handler via ctx.get().
+// Renders prev/next navigation controls around the article list.
+export function PaginationLayout(ctx: any) {
+  const pagination = ctx.get(Pagination);
+  if (!pagination) return <Outlet />;
+
+  const { current, total } = pagination;
+  const hasPrev = current > 1;
+  const hasNext = current < total;
+
+  return (
+    <div data-testid="pagination-layout">
+      <Outlet />
+      <nav
+        data-testid="pagination-nav"
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginTop: "2rem",
+          padding: "1rem 0",
+          borderTop: "1px solid #eee",
+        }}
+      >
+        {hasPrev ? (
+          <Link
+            to={
+              current - 1 === 1
+                ? ctx.reverse("articles.index")
+                : ctx.reverse("articles.list", {
+                    page: String(current - 1),
+                  })
+            }
+            data-testid="pagination-prev"
+            style={{ color: "#0070f3", textDecoration: "none" }}
+          >
+            &larr; Page {current - 1}
+          </Link>
+        ) : (
+          <span
+            data-testid="pagination-prev-disabled"
+            style={{ color: "#ccc" }}
+          >
+            &larr; Previous
+          </span>
+        )}
+        <span data-testid="pagination-info">
+          Page {current} of {total}
+        </span>
+        {hasNext ? (
+          <Link
+            to={ctx.reverse("articles.list", { page: String(current + 1) })}
+            data-testid="pagination-next"
+            style={{ color: "#0070f3", textDecoration: "none" }}
+          >
+            Page {current + 1} &rarr;
+          </Link>
+        ) : (
+          <span
+            data-testid="pagination-next-disabled"
+            style={{ color: "#ccc" }}
+          >
+            Next &rarr;
+          </span>
+        )}
+      </nav>
+    </div>
+  );
+}
 
 // Article detail -- derives params from discovered .md files
 export const ArticleDetail = Prerender(
@@ -137,7 +310,10 @@ export const ArticleDetail = Prerender(
 
     const breadcrumb = ctx.use(Breadcrumbs);
     breadcrumb({ label: "Home", href: ctx.reverse("home") });
-    breadcrumb({ label: "Articles", href: ctx.reverse("articles.index") });
+    breadcrumb({
+      label: "Articles",
+      href: ctx.reverse("articles.index"),
+    });
     breadcrumb({
       label: article.title,
       href: ctx.reverse("articles.detail", { slug: article.slug }),
@@ -186,5 +362,5 @@ export const ArticleDetail = Prerender(
         </footer>
       </article>
     );
-  }
+  },
 );

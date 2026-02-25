@@ -93,6 +93,7 @@ import {
 } from "./static-handler.js";
 import type { SearchSchema } from "./search-params.js";
 import { registerSearchSchema } from "./route-map-builder.js";
+import type { ContextVar } from "./context-var.js";
 
 // ============================================================================
 // Response Route Symbol and Types
@@ -169,8 +170,11 @@ export interface ResponseHandlerContext<
   /** The pathname portion of the request URL. */
   pathname: string;
   reverse: (name: string, params?: Record<string, string>) => string;
-  /** Read a variable set by middleware via ctx.set(key, value). */
-  get: (key: string) => unknown;
+  /** Read a variable set by middleware via ctx.set(key, value) or ctx.set(ContextVar, value). */
+  get: {
+    <T>(contextVar: ContextVar<T>): T | undefined;
+    (key: string): unknown;
+  };
   /** Set a response header. Merged into the auto-wrapped or pass-through Response. */
   header: (name: string, value: string) => void;
   /** Set a cookie on the response. */

@@ -184,12 +184,12 @@ test.describe("prerender passthrough (production)", () => {
   test("prerendered articles to passthrough guides", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/articles"));
+    await page.goto(f.url("/articles/page/1"));
     await waitForHydration(page);
 
     await using __ = await expectNoReload(page);
 
-    // articles (prerendered, no passthrough) -> guides (prerendered, passthrough)
+    // articles (prerendered, passthrough) -> guides (prerendered, passthrough)
     await testId(page, "nav-guides").click();
     await expect(testId(page, "guide-detail")).toBeVisible();
     await expect(testId(page, "guide-title")).toHaveText("Routing Guide");
@@ -285,12 +285,16 @@ test.describe("prerender passthrough bundle output (production)", () => {
     );
   });
 
-  test("non-passthrough handlers ARE evicted from RSC bundle", () => {
-    // ArticlesIndex (no passthrough) should be replaced with a stub
+  test("passthrough handler code stays for PaginatedArticles", () => {
+    // PaginatedArticles (passthrough: true) should NOT be evicted
+    expect(prerenderHandlersBundle).toContain("PaginatedArticles");
     expect(prerenderHandlersBundle).toMatch(
-      /const\s+ArticlesIndex\s*=\s*\{\s*__brand:\s*"prerenderHandler"/,
+      /const\s+PaginatedArticles\s*=\s*Prerender/,
     );
-    // ArticleDetail (no passthrough) should also be replaced with a stub
+  });
+
+  test("non-passthrough handlers ARE evicted from RSC bundle", () => {
+    // ArticleDetail (no passthrough) should be replaced with a stub
     expect(prerenderHandlersBundle).toMatch(
       /const\s+ArticleDetail\s*=\s*\{\s*__brand:\s*"prerenderHandler"/,
     );

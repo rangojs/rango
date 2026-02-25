@@ -23,7 +23,7 @@ test.describe("prerender (production)", () => {
   test("should render articles index on direct visit", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/articles"));
+    await page.goto(f.url("/articles/page/1"));
     await waitForHydration(page);
 
     await expect(testId(page, "articles-index")).toBeVisible();
@@ -34,12 +34,12 @@ test.describe("prerender (production)", () => {
   test("should render article detail on direct visit", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/articles/what-is-prerendering"));
+    await page.goto(f.url("/articles/composable-patterns"));
     await waitForHydration(page);
 
     await expect(testId(page, "article-detail")).toBeVisible();
     await expect(testId(page, "article-title")).toHaveText(
-      "What is Pre-rendering?"
+      "Composable Patterns"
     );
   });
 
@@ -75,11 +75,11 @@ test.describe("prerender (production)", () => {
     await testId(page, "nav-articles").click();
     await expect(testId(page, "articles-index")).toBeVisible();
 
-    // Click on an article
-    await testId(page, "article-link-what-is-prerendering").click();
+    // Click on an article (page 1 has newest articles)
+    await testId(page, "article-link-composable-patterns").click();
     await expect(testId(page, "article-detail")).toBeVisible();
     await expect(testId(page, "article-title")).toHaveText(
-      "What is Pre-rendering?"
+      "Composable Patterns"
     );
   });
 
@@ -88,7 +88,7 @@ test.describe("prerender (production)", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/articles"));
+    await page.goto(f.url("/articles/page/1"));
     await waitForHydration(page);
 
     const breadcrumbs = testId(page, "breadcrumbs");
@@ -129,7 +129,7 @@ test.describe("prerender (production)", () => {
     await testId(page, "nav-articles").click();
     await expect(testId(page, "articles-index")).toBeVisible();
 
-    await testId(page, "article-link-static-params").click();
+    await testId(page, "article-link-workers-at-edge").click();
     await expect(testId(page, "article-detail")).toBeVisible();
 
     const breadcrumbs = testId(page, "breadcrumbs");
@@ -137,7 +137,7 @@ test.describe("prerender (production)", () => {
     await expect(breadcrumbs.locator("text=Home")).toBeVisible();
     await expect(breadcrumbs.locator("text=Articles")).toBeVisible();
     await expect(
-      breadcrumbs.locator("text=Static Params with getParams")
+      breadcrumbs.locator("text=Workers at the Edge")
     ).toBeVisible();
   });
 
@@ -145,7 +145,7 @@ test.describe("prerender (production)", () => {
     page,
   }) => {
     using _ = expectNoPageError(page);
-    await page.goto(f.url("/articles"));
+    await page.goto(f.url("/articles/page/1"));
     await waitForHydration(page);
 
     const warnings: string[] = [];
@@ -171,7 +171,7 @@ test.describe("prerender (production)", () => {
   test("should display meta tags on pre-rendered page", async ({ page }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/articles"));
+    await page.goto(f.url("/articles/page/1"));
     await waitForHydration(page);
 
     const title = await page.title();

@@ -28,6 +28,7 @@
 import type { ReactNode } from "react";
 import type { Handler } from "./types.js";
 import type { Handle } from "./handle.js";
+import type { ContextVar } from "./context-var.js";
 
 
 // -- Types ------------------------------------------------------------------
@@ -70,10 +71,16 @@ export interface BuildContext<TParams> {
   build: true;
 
   /** Read a variable set by getParams or a parent handler. */
-  get: (key: string) => any;
+  get: {
+    <T>(contextVar: ContextVar<T>): T | undefined;
+    (key: string): any;
+  };
 
   /** Set a variable readable by child layouts and parallels. */
-  set: (key: string, value: any) => void;
+  set: {
+    <T>(contextVar: ContextVar<T>, value: T): void;
+    (key: string, value: any): void;
+  };
 
   /** Push handle data (frozen into pre-rendered output at build time). */
   use: <T>(handle: Handle<T>) => (data: T) => void;
@@ -103,10 +110,16 @@ export interface StaticBuildContext {
   build: true;
 
   /** Read a variable (available for type consistency with BuildContext). */
-  get: (key: string) => any;
+  get: {
+    <T>(contextVar: ContextVar<T>): T | undefined;
+    (key: string): any;
+  };
 
   /** Set a variable (available for type consistency with BuildContext). */
-  set: (key: string, value: any) => void;
+  set: {
+    <T>(contextVar: ContextVar<T>, value: T): void;
+    (key: string, value: any): void;
+  };
 
   /** Push handle data (frozen into pre-rendered output at build time). */
   use: <T>(handle: Handle<T>) => (data: T) => void;
@@ -124,7 +137,10 @@ export interface GetParamsContext {
   build: true;
 
   /** Set a variable that will be available to each handler invocation via ctx.get(). */
-  set: (key: string, value: any) => void;
+  set: {
+    <T>(contextVar: ContextVar<T>, value: T): void;
+    (key: string, value: any): void;
+  };
 
   /** URL generation by route name. */
   reverse: (name: string, params?: Record<string, string>, search?: Record<string, unknown>) => string;

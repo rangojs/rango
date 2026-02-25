@@ -14,6 +14,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { CookieOptions } from "../router/middleware.js";
 import type { LoaderDefinition, LoaderContext } from "../types.js";
 import type { Handle } from "../handle.js";
+import { type ContextVar, contextGet, contextSet } from "../context-var.js";
 import { createHandleStore, type HandleStore } from "./handle-store.js";
 import { isHandle } from "../handle.js";
 import { track } from "./context.js";
@@ -46,9 +47,15 @@ export interface RequestContext<
   /** Variables set by middleware (same as ctx.var) */
   var: Record<string, any>;
   /** Get a variable set by middleware */
-  get: <K extends string>(key: K) => any;
+  get: {
+    <T>(contextVar: ContextVar<T>): T | undefined;
+    <K extends string>(key: K): any;
+  };
   /** Set a variable (shared with middleware and handlers) */
-  set: <K extends string>(key: K, value: any) => void;
+  set: {
+    <T>(contextVar: ContextVar<T>, value: T): void;
+    <K extends string>(key: K, value: any): void;
+  };
   /**
    * Route params (populated after route matching)
    * Initially empty, then set to matched params
@@ -361,10 +368,10 @@ export function createRequestContext<TEnv>(
     pathname: url.pathname,
     searchParams: url.searchParams,
     var: variables,
-    get: <K extends string>(key: K) => variables[key],
-    set: <K extends string>(key: K, value: any) => {
-      variables[key] = value;
-    },
+    get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as RequestContext<TEnv>["get"],
+    set: ((keyOrVar: any, value: any) => {
+      contextSet(variables, keyOrVar, value);
+    }) as RequestContext<TEnv>["set"],
     params: {} as Record<string, string>,
     res: stubResponse,
 

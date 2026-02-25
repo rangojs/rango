@@ -10,6 +10,7 @@
  */
 
 import type { RouterEnv } from "../types.js";
+import { type ContextVar, contextGet, contextSet } from "../context-var.js";
 
 /**
  * Helper type to extract Variables from RouterEnv
@@ -24,17 +25,18 @@ type ExtractVariables<TEnv> = 0 extends 1 & TEnv
 /**
  * Get variable function type
  */
-type GetVariableFn<TEnv> = <K extends keyof ExtractVariables<TEnv>>(
-  key: K
-) => ExtractVariables<TEnv>[K];
+type GetVariableFn<TEnv> = {
+  <T>(contextVar: ContextVar<T>): T | undefined;
+  <K extends keyof ExtractVariables<TEnv>>(key: K): ExtractVariables<TEnv>[K];
+};
 
 /**
  * Set variable function type
  */
-type SetVariableFn<TEnv> = <K extends keyof ExtractVariables<TEnv>>(
-  key: K,
-  value: ExtractVariables<TEnv>[K]
-) => void;
+type SetVariableFn<TEnv> = {
+  <T>(contextVar: ContextVar<T>, value: T): void;
+  <K extends keyof ExtractVariables<TEnv>>(key: K, value: ExtractVariables<TEnv>[K]): void;
+};
 
 /**
  * Cookie options for setting cookies
@@ -382,10 +384,10 @@ export function createMiddlewareContext<TEnv>(
       );
     },
 
-    get: ((key: string) => variables[key]) as MiddlewareContext<TEnv>["get"],
+    get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as MiddlewareContext<TEnv>["get"],
 
-    set: ((key: string, value: unknown) => {
-      variables[key] = value;
+    set: ((keyOrVar: any, value: unknown) => {
+      contextSet(variables, keyOrVar, value);
     }) as MiddlewareContext<TEnv>["set"],
 
     header(name: string, value: string): void {

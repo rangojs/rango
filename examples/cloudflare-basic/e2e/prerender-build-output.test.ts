@@ -200,10 +200,12 @@ test.describe("prerender asset structure (production)", () => {
       "utf-8",
     );
 
-    // Static route uses "_" param hash
-    expect(manifestCode).toContain('"articles.index/_"');
+    // Paginated list routes use hex param hashes (page param)
+    expect(manifestCode).toMatch(/"articles\.list\/[a-f0-9]+"/);
+    const listMatches = manifestCode.match(/"articles\.list\/[a-f0-9]+"/g);
+    expect(listMatches).toHaveLength(4); // 4 pages
 
-    // Dynamic route uses hex param hashes
+    // Dynamic detail routes use hex param hashes
     expect(manifestCode).toMatch(/"articles\.detail\/[a-f0-9]+"/);
 
     // References __pr-*.js asset imports
@@ -214,7 +216,7 @@ test.describe("prerender asset structure (production)", () => {
     const prFiles = fs.readdirSync(RSC_ASSETS_DIR).filter(
       (f) => f.startsWith("__pr-") && f.endsWith(".js"),
     );
-    // At least articles.index (1) + articles.detail (3 articles) = 4 entries
+    // At least articles.list (4 pages) + articles.detail (20 articles) = 24 entries
     expect(prFiles.length).toBeGreaterThanOrEqual(4);
     // Each file follows __pr-<8hexchars>.js naming
     for (const file of prFiles) {
