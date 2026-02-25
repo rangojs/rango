@@ -39,6 +39,8 @@ export interface AppVariables {
   handlerData?: string;
   // Prerender ctx test variable
   sharedFromGetParams?: string;
+  // Prerender locale test variable
+  localeContent?: string;
 }
 
 export type AppEnv = RouterEnv<AppBindings, AppVariables>;

@@ -49,6 +49,8 @@ export const NamedRoutes = {
   index: "/",
   inlineAction: "/inline-action",
   loaderComposition: "/loader-composition",
+  "locale.detail": "/:locale/blog/:slug",
+  "locale.list": "/:locale/blog",
   "locationState.index": "/location-state",
   "locationState.mwRedirect": "/location-state/mw-redirect",
   "locationState.other": "/location-state/other",
