@@ -54,6 +54,30 @@ Prefix a name with `.` to resolve it within the current `include()` scope. The r
 }
 ```
 
+### Auto-fill of mount params
+
+When routes are mounted via a parameterized `include()`, `ctx.reverse()` automatically fills mount params from `ctx.params`. Inner handlers don't need to pass params that are already known from the current URL match. Explicitly passed params override auto-filled values.
+
+```typescript
+// urls/tenant.tsx — mounted at include("/tenant/:tenantId", tenantPatterns, { name: "tenant" })
+export const tenantPatterns = urls(({ path }) => [
+  path("/", (ctx) => {
+    // tenantId is auto-filled from ctx.params — no need to pass it
+    ctx.reverse(".settings");                              // "/tenant/acme/settings" (when visiting /tenant/acme)
+    ctx.reverse(".user", { userId: "u1" });                // "/tenant/acme/users/u1" (tenantId auto-filled, userId explicit)
+    ctx.reverse(".settings", { tenantId: "other" });       // "/tenant/other/settings" (explicit override)
+
+    // Global names also get auto-filled params
+    ctx.reverse("tenant.settings");                        // "/tenant/acme/settings"
+    return <TenantIndex />;
+  }, { name: "index" }),
+  path("/settings", SettingsPage, { name: "settings" }),
+  path("/users/:userId", UserPage, { name: "user" }),
+]);
+```
+
+Auto-fill uses `{ ...ctx.params, ...hrefParams }` — current request params are defaults, explicit params win. Params not needed by the target route are silently ignored.
+
 ### Global names (unprefixed)
 
 Unprefixed names resolve against the full named-routes map (the generated `router.named-routes.gen.ts`).
