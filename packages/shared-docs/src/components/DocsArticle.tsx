@@ -42,7 +42,11 @@ export function DocsArticle({
         </Link>
         <a
           href={reverse(".raw", { slug: article.slug })}
-          style={{ color: "#666", textDecoration: "none", fontSize: "0.875rem" }}
+          style={{
+            color: "#666",
+            textDecoration: "none",
+            fontSize: "0.875rem",
+          }}
           data-testid="docs-raw-link"
         >
           View Raw Markdown
@@ -50,7 +54,10 @@ export function DocsArticle({
       </nav>
       <h1 data-testid="docs-detail-title">{article.title}</h1>
       <p style={{ color: "#666", marginBottom: "1.5rem" }}>{article.excerpt}</p>
-      <div data-testid="docs-detail-content" style={{ lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+      <div
+        data-testid="docs-detail-content"
+        style={{ lineHeight: 1.7, whiteSpace: "pre-wrap" }}
+      >
         {article.content}
       </div>
     </article>

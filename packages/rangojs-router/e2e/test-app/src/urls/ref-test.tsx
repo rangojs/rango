@@ -12,33 +12,23 @@ import {
  * The RSC Flight protocol uses toJSON to serialize these refs.
  */
 export const refTestPatterns = urls(({ path, loader, loading }) => [
-  path(
-    "/loader-prop",
-    RefTestLoaderPropHandler,
-    { name: "loaderProp" },
-    () => [
-      loader(SlowLoader),
-      loading(
-        <div data-testid="ref-test-loader-loading">
-          <p>Loading loader ref test...</p>
-        </div>,
-      ),
-    ],
-  ),
+  path("/loader-prop", RefTestLoaderPropHandler, { name: "loaderProp" }, () => [
+    loader(SlowLoader),
+    loading(
+      <div data-testid="ref-test-loader-loading">
+        <p>Loading loader ref test...</p>
+      </div>,
+    ),
+  ]),
 
   path("/handle-prop", RefTestHandlePropHandler, { name: "handleProp" }),
 
-  path(
-    "/both-props",
-    RefTestBothPropsHandler,
-    { name: "bothProps" },
-    () => [
-      loader(SlowLoader),
-      loading(
-        <div data-testid="ref-test-both-loading">
-          <p>Loading both refs test...</p>
-        </div>,
-      ),
-    ],
-  ),
+  path("/both-props", RefTestBothPropsHandler, { name: "bothProps" }, () => [
+    loader(SlowLoader),
+    loading(
+      <div data-testid="ref-test-both-loading">
+        <p>Loading both refs test...</p>
+      </div>,
+    ),
+  ]),
 ]);

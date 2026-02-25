@@ -14,12 +14,16 @@ import {
 export const shopPatterns = urls(({ path, layout, intercept, when }) => [
   layout(ShopLayout, () => [
     path("/", ShopIndexPage, { name: "index" }),
-    path("/product/:productId", (ctx) => <ProductDetailPage params={ctx.params} />, { name: "product" }),
+    path(
+      "/product/:productId",
+      (ctx) => <ProductDetailPage params={ctx.params} />,
+      { name: "product" },
+    ),
     intercept(
       "@modal",
       ".product",
       (ctx) => <ProductModal params={ctx.params} />,
-      () => [when(({ from }) => from.pathname === "/shop")]
+      () => [when(({ from }) => from.pathname === "/shop")],
     ),
     path("/cart", CartPage, { name: "cart" }),
   ]),

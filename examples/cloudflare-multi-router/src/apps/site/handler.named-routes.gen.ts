@@ -4,8 +4,8 @@ export {};
 declare global {
   namespace RSCRouter {
     interface GeneratedRouteMap {
-      "about": "/about";
-      "home": "/";
+      about: "/about";
+      home: "/";
     }
   }
 }

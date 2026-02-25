@@ -34,8 +34,7 @@ export interface VirtualHandlerEntry {
 
 function isDirectivePrologueStatement(node: any): boolean {
   return (
-    node?.type === "ExpressionStatement" &&
-    typeof node.directive === "string"
+    node?.type === "ExpressionStatement" && typeof node.directive === "string"
   );
 }
 
@@ -100,7 +99,11 @@ function walkNode(
           walkNode(item, node, ancestors, enter);
         }
       }
-    } else if (child && typeof child === "object" && typeof child.type === "string") {
+    } else if (
+      child &&
+      typeof child === "object" &&
+      typeof child.type === "string"
+    ) {
       walkNode(child, node, ancestors, enter);
     }
   }
@@ -159,8 +162,10 @@ export function findHandlerCalls(
 
     if (parent?.type === "VariableDeclarator" && parent.init === node) {
       // ancestors: [..., ExportNamedDecl, VarDecl, VarDeclarator, CallExpr]
-      const grandParent = ancestors.length >= 3 ? ancestors[ancestors.length - 3] : null;
-      const greatGrandParent = ancestors.length >= 4 ? ancestors[ancestors.length - 4] : null;
+      const grandParent =
+        ancestors.length >= 3 ? ancestors[ancestors.length - 3] : null;
+      const greatGrandParent =
+        ancestors.length >= 4 ? ancestors[ancestors.length - 4] : null;
 
       if (
         grandParent?.type === "VariableDeclaration" &&
@@ -298,9 +303,7 @@ function isInertExpression(node: any): boolean {
     case "UnaryExpression":
       return isInertExpression(node.argument);
     case "BinaryExpression":
-      return (
-        isInertExpression(node.left) && isInertExpression(node.right)
-      );
+      return isInertExpression(node.left) && isInertExpression(node.right);
     case "ConditionalExpression":
       return (
         isInertExpression(node.test) &&
@@ -496,9 +499,7 @@ export function transformInlineHandlers(
 
     // Build the import specifier for this virtual module
     const importId = `${virtualPrefix}${filePath}:${site.lineNumber}${lineCount > 0 ? `:${lineCount}` : ""}`;
-    importStatements.push(
-      `import { ${exportName} } from "${importId}";`,
-    );
+    importStatements.push(`import { ${exportName} } from "${importId}";`);
   }
 
   // Insert imports after directive prologue + existing import block

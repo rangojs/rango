@@ -56,9 +56,9 @@ In route handlers, `ctx.reverse()` uses two namespaces:
 import type { Handler } from "@rangojs/router";
 
 export const ProductHandler: Handler<"shop.product"> = (ctx) => {
-  ctx.reverse(".cart");                                   // Local: /shop/cart
-  ctx.reverse(".product", { slug: "widget" });            // Local: /shop/product/widget
-  ctx.reverse("blog.post", { slug: "1" });                // Global: /blog/1
+  ctx.reverse(".cart"); // Local: /shop/cart
+  ctx.reverse(".product", { slug: "widget" }); // Local: /shop/product/widget
+  ctx.reverse("blog.post", { slug: "1" }); // Global: /blog/1
 };
 ```
 
@@ -70,9 +70,9 @@ import type { Handler } from "@rangojs/router";
 import type { routes } from "./shop.gen.js";
 
 export const ProductHandler: Handler<"shop.product", routes> = (ctx) => {
-  ctx.reverse(".cart");                        // Type-safe local name
+  ctx.reverse(".cart"); // Type-safe local name
   ctx.reverse(".product", { slug: "widget" }); // Type-safe local with params
-  ctx.reverse("blog.post", { slug: "hi" });    // Type-safe global name
+  ctx.reverse("blog.post", { slug: "hi" }); // Type-safe global name
 };
 ```
 
@@ -139,13 +139,17 @@ const router = createRouter<AppEnv>({
 import { createMiddleware } from "@rangojs/router";
 
 export const authMiddleware = createMiddleware(async (ctx, next) => {
-  ctx.env.Variables.user = { id: "123", email: "user@example.com", role: "admin" };
+  ctx.env.Variables.user = {
+    id: "123",
+    email: "user@example.com",
+    role: "admin",
+  };
   await next();
 });
 
 // loaders - typed context
 export const UserLoader = createLoader("user", async (ctx) => {
-  const db = ctx.env.Bindings.DB;  // D1Database
+  const db = ctx.env.Bindings.DB; // D1Database
   const userId = ctx.env.Variables.user?.id;
   return db.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
 });
@@ -185,7 +189,7 @@ Add a `search` schema to `path()` options for type-safe query parameters:
 path("/search", SearchPage, {
   name: "search",
   search: { q: "string", page: "number?", sort: "string?" },
-})
+});
 ```
 
 ### Handler with typed search params
@@ -260,8 +264,11 @@ use `{ path, search }` objects:
 ```typescript
 // router.named-routes.gen.ts (auto-generated)
 export const NamedRoutes = {
-  "search.index": { path: "/search", search: { q: "string", page: "number?", sort: "string?" } },
-  "home.index": "/",  // No search schema -> plain string
+  "search.index": {
+    path: "/search",
+    search: { q: "string", page: "number?", sort: "string?" },
+  },
+  "home.index": "/", // No search schema -> plain string
 } as const;
 ```
 
@@ -395,7 +402,7 @@ export const ProductLoader = createLoader(async (ctx) => {
 export const Breadcrumbs = createHandle<{ label: string; href: string }>();
 
 // Client component — typeof infers all generics
-"use client";
+("use client");
 import { useLoader, useHandle } from "@rangojs/router/client";
 import type { ProductLoader } from "../loaders";
 import type { Breadcrumbs } from "../handles";
@@ -404,11 +411,11 @@ function MyComponent({
   loader,
   handle,
 }: {
-  loader: typeof ProductLoader;   // LoaderDefinition<{ product: Product }>
-  handle: typeof Breadcrumbs;     // Handle<{ label: string; href: string }>
+  loader: typeof ProductLoader; // LoaderDefinition<{ product: Product }>
+  handle: typeof Breadcrumbs; // Handle<{ label: string; href: string }>
 }) {
-  const { data } = useLoader(loader);   // data is typed
-  const crumbs = useHandle(handle);     // crumbs is typed array
+  const { data } = useLoader(loader); // data is typed
+  const crumbs = useHandle(handle); // crumbs is typed array
   // ...
 }
 ```
@@ -470,8 +477,8 @@ global type declarations (like `RSCRouter.Env`).
     "skipLibCheck": true,
     "isolatedModules": true,
     "esModuleInterop": true,
-    "resolveJsonModule": true
-  }
+    "resolveJsonModule": true,
+  },
 }
 ```
 
@@ -480,7 +487,7 @@ global type declarations (like `RSCRouter.Env`).
 {
   "extends": "../../tsconfig.base.json",
   "include": ["src"],
-  "files": ["src/router.tsx"]
+  "files": ["src/router.tsx"],
 }
 ```
 
@@ -489,7 +496,7 @@ global type declarations (like `RSCRouter.Env`).
 {
   "extends": "../../tsconfig.base.json",
   "include": ["src"],
-  "files": ["src/router.tsx"]
+  "files": ["src/router.tsx"],
 }
 ```
 

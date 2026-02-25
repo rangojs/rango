@@ -32,7 +32,7 @@ let lazyLoaderImports: Map<string, LazyLoaderImport> | null = null;
  * Set the lazy loader imports map (called by the loader manifest)
  */
 export function setLoaderImports(
-  imports: Record<string, LazyLoaderImport>
+  imports: Record<string, LazyLoaderImport>,
 ): void {
   lazyLoaderImports = new Map(Object.entries(imports));
 }
@@ -44,7 +44,7 @@ export function setLoaderImports(
 export function registerLoader(
   id: string,
   fn: LoaderFn<any, any, any>,
-  middleware: MiddlewareFn[] = []
+  middleware: MiddlewareFn[] = [],
 ): void {
   // Always update the registry entry. During HMR, the module is re-executed
   // with the new loader function, so we must replace the stale reference.
@@ -67,7 +67,7 @@ export function getLoader(id: string): RegisteredLoader | undefined {
  * In dev: IDs are "filePath#exportName", resolved via dynamic import
  */
 export async function getLoaderLazy(
-  id: string
+  id: string,
 ): Promise<RegisteredLoader | undefined> {
   // Check if already cached in main registry
   const existing = loaderRegistry.get(id);

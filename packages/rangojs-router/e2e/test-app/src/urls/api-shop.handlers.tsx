@@ -22,7 +22,12 @@ type CartItem = {
 const products: Product[] = [
   { id: "p1", name: "Widget", price: 9.99, description: "A fine widget" },
   { id: "p2", name: "Gadget", price: 19.99, description: "A cool gadget" },
-  { id: "p3", name: "Doohickey", price: 4.99, description: "A small doohickey" },
+  {
+    id: "p3",
+    name: "Doohickey",
+    price: 4.99,
+    description: "A small doohickey",
+  },
 ];
 
 let cart: CartItem[] = [];
@@ -38,13 +43,19 @@ export function CatalogHandler(ctx: ResponseHandlerContext) {
   return { products };
 }
 
-export function ProductHandler(ctx: ResponseHandlerContext<{ productId: string }>) {
+export function ProductHandler(
+  ctx: ResponseHandlerContext<{ productId: string }>,
+) {
   if (ctx.request.method !== "GET") {
     return new Response(null, { status: 405 });
   }
   const product = products.find((p) => p.id === ctx.params.productId);
   if (!product) {
-    throw new RouterError("NOT_FOUND", `Product ${ctx.params.productId} not found`, { status: 404 });
+    throw new RouterError(
+      "NOT_FOUND",
+      `Product ${ctx.params.productId} not found`,
+      { status: 404 },
+    );
   }
   return { product };
 }
@@ -57,10 +68,17 @@ export async function CartHandler(ctx: ResponseHandlerContext) {
   }
 
   if (method === "POST") {
-    const body = (await ctx.request.json()) as { productId: string; quantity?: number };
+    const body = (await ctx.request.json()) as {
+      productId: string;
+      quantity?: number;
+    };
     const product = products.find((p) => p.id === body.productId);
     if (!product) {
-      throw new RouterError("NOT_FOUND", `Product ${body.productId} not found`, { status: 404 });
+      throw new RouterError(
+        "NOT_FOUND",
+        `Product ${body.productId} not found`,
+        { status: 404 },
+      );
     }
     const item: CartItem = {
       itemId: String(nextItemId++),
@@ -79,14 +97,18 @@ export async function CartHandler(ctx: ResponseHandlerContext) {
   return new Response(null, { status: 405 });
 }
 
-export async function CartItemHandler(ctx: ResponseHandlerContext<{ itemId: string }>) {
+export async function CartItemHandler(
+  ctx: ResponseHandlerContext<{ itemId: string }>,
+) {
   const method = ctx.request.method;
   const { itemId } = ctx.params;
 
   if (method === "GET") {
     const item = cart.find((i) => i.itemId === itemId);
     if (!item) {
-      throw new RouterError("NOT_FOUND", `Cart item ${itemId} not found`, { status: 404 });
+      throw new RouterError("NOT_FOUND", `Cart item ${itemId} not found`, {
+        status: 404,
+      });
     }
     return { item };
   }
@@ -94,7 +116,9 @@ export async function CartItemHandler(ctx: ResponseHandlerContext<{ itemId: stri
   if (method === "PATCH") {
     const item = cart.find((i) => i.itemId === itemId);
     if (!item) {
-      throw new RouterError("NOT_FOUND", `Cart item ${itemId} not found`, { status: 404 });
+      throw new RouterError("NOT_FOUND", `Cart item ${itemId} not found`, {
+        status: 404,
+      });
     }
     const body = (await ctx.request.json()) as { quantity?: number };
     if (body.quantity !== undefined) {
@@ -106,9 +130,14 @@ export async function CartItemHandler(ctx: ResponseHandlerContext<{ itemId: stri
   if (method === "PUT") {
     const idx = cart.findIndex((i) => i.itemId === itemId);
     if (idx === -1) {
-      throw new RouterError("NOT_FOUND", `Cart item ${itemId} not found`, { status: 404 });
+      throw new RouterError("NOT_FOUND", `Cart item ${itemId} not found`, {
+        status: 404,
+      });
     }
-    const body = (await ctx.request.json()) as { productId: string; quantity: number };
+    const body = (await ctx.request.json()) as {
+      productId: string;
+      quantity: number;
+    };
     cart[idx] = { itemId, productId: body.productId, quantity: body.quantity };
     return { item: cart[idx] };
   }
@@ -116,7 +145,9 @@ export async function CartItemHandler(ctx: ResponseHandlerContext<{ itemId: stri
   if (method === "DELETE") {
     const idx = cart.findIndex((i) => i.itemId === itemId);
     if (idx === -1) {
-      throw new RouterError("NOT_FOUND", `Cart item ${itemId} not found`, { status: 404 });
+      throw new RouterError("NOT_FOUND", `Cart item ${itemId} not found`, {
+        status: 404,
+      });
     }
     cart.splice(idx, 1);
     return { deleted: true as const, itemId };

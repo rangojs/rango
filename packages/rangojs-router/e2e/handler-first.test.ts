@@ -77,9 +77,7 @@ test.describe("revalidate and cache mix", () => {
     await page.goto(f.url("/handler-first"));
     await waitForHydration(page);
 
-    const ts1 = await page
-      .getByTestId("handler-first-timestamp")
-      .textContent();
+    const ts1 = await page.getByTestId("handler-first-timestamp").textContent();
     expect(ts1).toBeTruthy();
 
     // SPA navigate away to cached route
@@ -90,9 +88,7 @@ test.describe("revalidate and cache mix", () => {
     await page.getByTestId("link-to-uncached").click();
     await expect(page.getByTestId("handler-first-title")).toBeVisible();
 
-    const ts2 = await page
-      .getByTestId("handler-first-timestamp")
-      .textContent();
+    const ts2 = await page.getByTestId("handler-first-timestamp").textContent();
 
     // Timestamp must change — revalidate forced a fresh server render
     expect(ts2).not.toBe(ts1);

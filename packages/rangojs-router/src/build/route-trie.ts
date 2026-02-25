@@ -6,7 +6,10 @@
  * shortCodes for layout pruning.
  */
 
-import { parsePattern, type ParsedSegment } from "../router/pattern-matching.js";
+import {
+  parsePattern,
+  type ParsedSegment,
+} from "../router/pattern-matching.js";
 
 // -- Trie data structures (compact keys for JSON serialization) --
 
@@ -239,7 +242,7 @@ function insertSegments(
   } else if (segment.type === "wildcard") {
     // Wildcard consumes all remaining segments
     const wildLeaf = { ...leaf, pn: "*" };
-    const existing = node.w ? { ...node.w } as TrieLeaf : undefined;
+    const existing = node.w ? ({ ...node.w } as TrieLeaf) : undefined;
     const merged = mergeLeaves(existing, wildLeaf);
     node.w = merged as TrieLeaf & { pn: string };
   }

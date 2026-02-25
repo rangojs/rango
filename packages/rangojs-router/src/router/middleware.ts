@@ -17,7 +17,7 @@ import { type ContextVar, contextGet, contextSet } from "../context-var.js";
  * Uses 0 extends 1 & TEnv to detect `any` type and fall back to Record<string, unknown>
  */
 type ExtractVariables<TEnv> = 0 extends 1 & TEnv
-  ? Record<string, unknown>  // TEnv is any
+  ? Record<string, unknown> // TEnv is any
   : TEnv extends RouterEnv<unknown, infer V>
     ? V
     : Record<string, unknown>;
@@ -35,7 +35,10 @@ type GetVariableFn<TEnv> = {
  */
 type SetVariableFn<TEnv> = {
   <T>(contextVar: ContextVar<T>, value: T): void;
-  <K extends keyof ExtractVariables<TEnv>>(key: K, value: ExtractVariables<TEnv>[K]): void;
+  <K extends keyof ExtractVariables<TEnv>>(
+    key: K,
+    value: ExtractVariables<TEnv>[K],
+  ): void;
 };
 
 /**
@@ -113,7 +116,7 @@ export interface MiddlewareContext<
   /** Delete a cookie */
   deleteCookie(
     name: string,
-    options?: Pick<CookieOptions, "domain" | "path">
+    options?: Pick<CookieOptions, "domain" | "path">,
   ): void;
 
   /** Get a context variable (shared with route handlers) */
@@ -135,7 +138,11 @@ export interface MiddlewareContext<
    * Generate URLs from route names.
    * - `name` — global route, from the named-routes definition
    */
-  reverse(name: string, params?: Record<string, string>, search?: Record<string, unknown>): string;
+  reverse(
+    name: string,
+    params?: Record<string, string>,
+    search?: Record<string, unknown>,
+  ): string;
 }
 
 /**
@@ -158,7 +165,7 @@ export interface MiddlewareContext<
  */
 export type MiddlewareFn<TEnv = any, TParams = Record<string, string>> = (
   ctx: MiddlewareContext<TEnv, TParams>,
-  next: () => Promise<Response>
+  next: () => Promise<Response>,
 ) => Response | void | Promise<Response | void>;
 
 /**
@@ -239,7 +246,7 @@ function escapeRegex(str: string): string {
 export function extractParams(
   pathname: string,
   regex: RegExp,
-  paramNames: string[]
+  paramNames: string[],
 ): Record<string, string> {
   const match = pathname.match(regex);
   if (!match) return {};
@@ -255,7 +262,7 @@ export function extractParams(
  * Parse cookies from Cookie header
  */
 export function parseCookies(
-  cookieHeader: string | null
+  cookieHeader: string | null,
 ): Record<string, string> {
   if (!cookieHeader) return {};
 
@@ -278,7 +285,7 @@ export function parseCookies(
 export function serializeCookie(
   name: string,
   value: string,
-  options: CookieOptions = {}
+  options: CookieOptions = {},
 ): string {
   let cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)}`;
 
@@ -313,7 +320,11 @@ export function createMiddlewareContext<TEnv>(
   params: Record<string, string>,
   variables: Record<string, unknown>,
   responseHolder: ResponseHolder,
-  reverse?: (name: string, params?: Record<string, string>, search?: Record<string, unknown>) => string
+  reverse?: (
+    name: string,
+    params?: Record<string, string>,
+    search?: Record<string, unknown>,
+  ) => string,
 ): MiddlewareContext<TEnv> {
   const url = new URL(request.url);
   const cookieHeader = request.headers.get("Cookie");
@@ -332,7 +343,7 @@ export function createMiddlewareContext<TEnv>(
     get res(): Response {
       if (!responseHolder.response) {
         throw new Error(
-          "ctx.res is not available - responseHolder was not initialized"
+          "ctx.res is not available - responseHolder was not initialized",
         );
       }
       return responseHolder.response;
@@ -360,31 +371,32 @@ export function createMiddlewareContext<TEnv>(
     setCookie(name: string, value: string, options?: CookieOptions): void {
       if (!responseHolder.response) {
         throw new Error(
-          "ctx.setCookie() is not available - responseHolder was not initialized"
+          "ctx.setCookie() is not available - responseHolder was not initialized",
         );
       }
       responseHolder.response.headers.append(
         "Set-Cookie",
-        serializeCookie(name, value, options)
+        serializeCookie(name, value, options),
       );
     },
 
     deleteCookie(
       name: string,
-      options?: Pick<CookieOptions, "domain" | "path">
+      options?: Pick<CookieOptions, "domain" | "path">,
     ): void {
       if (!responseHolder.response) {
         throw new Error(
-          "ctx.deleteCookie() is not available - responseHolder was not initialized"
+          "ctx.deleteCookie() is not available - responseHolder was not initialized",
         );
       }
       responseHolder.response.headers.append(
         "Set-Cookie",
-        serializeCookie(name, "", { ...options, maxAge: 0 })
+        serializeCookie(name, "", { ...options, maxAge: 0 }),
       );
     },
 
-    get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as MiddlewareContext<TEnv>["get"],
+    get: ((keyOrVar: any) =>
+      contextGet(variables, keyOrVar)) as MiddlewareContext<TEnv>["get"],
 
     set: ((keyOrVar: any, value: unknown) => {
       contextSet(variables, keyOrVar, value);
@@ -393,17 +405,19 @@ export function createMiddlewareContext<TEnv>(
     header(name: string, value: string): void {
       if (!responseHolder.response) {
         throw new Error(
-          "ctx.header() is not available - responseHolder was not initialized"
+          "ctx.header() is not available - responseHolder was not initialized",
         );
       }
       responseHolder.response.headers.set(name, value);
     },
 
-    reverse: reverse ?? ((name: string) => {
-      throw new Error(
-        `ctx.reverse() is not available - route map was not provided to middleware context`
-      );
-    }),
+    reverse:
+      reverse ??
+      ((name: string) => {
+        throw new Error(
+          `ctx.reverse() is not available - route map was not provided to middleware context`,
+        );
+      }),
   };
 }
 
@@ -413,7 +427,7 @@ export function createMiddlewareContext<TEnv>(
  */
 export function matchMiddleware<TEnv>(
   pathname: string,
-  entries: MiddlewareEntry<TEnv>[]
+  entries: MiddlewareEntry<TEnv>[],
 ): Array<{ entry: MiddlewareEntry<TEnv>; params: Record<string, string> }> {
   const matches: Array<{
     entry: MiddlewareEntry<TEnv>;
@@ -457,7 +471,11 @@ export async function executeMiddleware<TEnv>(
   env: TEnv,
   variables: Record<string, any>,
   finalHandler: () => Promise<Response>,
-  reverse?: (name: string, params?: Record<string, string>, search?: Record<string, unknown>) => string
+  reverse?: (
+    name: string,
+    params?: Record<string, string>,
+    search?: Record<string, unknown>,
+  ) => string,
 ): Promise<Response> {
   let index = 0;
 
@@ -499,7 +517,7 @@ export async function executeMiddleware<TEnv>(
       params,
       variables,
       responseHolder,
-      reverse
+      reverse,
     );
 
     // Track if next() was called and capture its Promise
@@ -524,7 +542,7 @@ export async function executeMiddleware<TEnv>(
       const fnName = entry.handler.name || "(anonymous)";
       console.warn(
         `[Middleware] "${fnName}" returned ${typeof result} instead of Response or undefined. ` +
-          `This return value will be ignored. Did you mean to return a Response?`
+          `This return value will be ignored. Did you mean to return a Response?`,
       );
     }
 
@@ -541,7 +559,7 @@ export async function executeMiddleware<TEnv>(
       `Middleware must call next() or return a Response. ` +
         `Function: ${fnName}, Pattern: ${entry.pattern ?? "(all)"}
         Source: ${import.meta.env.DEV ? entry.handler.toString().slice(0, 200) : "(source hidden in production)"}`,
-      { cause: { url: request.url, fn: entry.handler } }
+      { cause: { url: request.url, fn: entry.handler } },
     );
   };
 
@@ -572,7 +590,11 @@ export async function executeServerActionMiddleware<TEnv>(
   params: Record<string, string>,
   variables: Record<string, any>,
   stubResponse: Response,
-  reverse?: (name: string, params?: Record<string, string>, search?: Record<string, unknown>) => string
+  reverse?: (
+    name: string,
+    params?: Record<string, string>,
+    search?: Record<string, unknown>,
+  ) => string,
 ): Promise<void> {
   if (middlewares.length === 0) {
     return;
@@ -593,7 +615,7 @@ export async function executeServerActionMiddleware<TEnv>(
       params,
       variables,
       responseHolder,
-      reverse
+      reverse,
     );
 
     const result = await middleware(ctx, next);
@@ -604,7 +626,7 @@ export async function executeServerActionMiddleware<TEnv>(
       throw new Error(
         `Loader middleware returned a Response (status: ${result.status}). ` +
           `Server actions cannot return Response. ` +
-          `Use GET-based loader fetching for redirects, or throw an error instead.`
+          `Use GET-based loader fetching for redirects, or throw an error instead.`,
       );
     }
 
@@ -637,7 +659,11 @@ export async function executeInterceptMiddleware<TEnv>(
   params: Record<string, string>,
   variables: Record<string, any>,
   stubResponse: Response,
-  reverse?: (name: string, params?: Record<string, string>, search?: Record<string, unknown>) => string
+  reverse?: (
+    name: string,
+    params?: Record<string, string>,
+    search?: Record<string, unknown>,
+  ) => string,
 ): Promise<Response | null> {
   if (middlewares.length === 0) {
     return null;
@@ -661,7 +687,7 @@ export async function executeInterceptMiddleware<TEnv>(
       params,
       variables,
       responseHolder,
-      reverse
+      reverse,
     );
 
     const result = await middleware(ctx, next);
@@ -730,7 +756,11 @@ export async function executeLoaderMiddleware<TEnv>(
   params: Record<string, string>,
   variables: Record<string, any>,
   finalHandler: () => Promise<Response>,
-  reverse?: (name: string, params?: Record<string, string>, search?: Record<string, unknown>) => string
+  reverse?: (
+    name: string,
+    params?: Record<string, string>,
+    search?: Record<string, unknown>,
+  ) => string,
 ): Promise<Response> {
   if (middlewares.length === 0) {
     return finalHandler();
@@ -754,7 +784,7 @@ export async function executeLoaderMiddleware<TEnv>(
     env,
     variables,
     finalHandler,
-    reverse
+    reverse,
   );
 }
 
@@ -787,7 +817,7 @@ export interface CollectedMiddleware {
  */
 export function collectRouteMiddleware(
   entries: Iterable<MiddlewareCollectableEntry>,
-  params: Record<string, string>
+  params: Record<string, string>,
 ): CollectedMiddleware[] {
   const result: CollectedMiddleware[] = [];
 

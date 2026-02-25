@@ -147,7 +147,9 @@ describe("generate-cli e2e fixtures", () => {
       expect(content).toContain('"docs.page": "/docs/:slug",');
 
       // docs.guides.detail has /:guideId in the pattern string
-      expect(content).toContain('"docs.guides.detail": "/docs/guides/:guideId",');
+      expect(content).toContain(
+        '"docs.guides.detail": "/docs/guides/:guideId",',
+      );
     });
 
     it("propagates search schemas through includes", () => {
@@ -251,7 +253,9 @@ describe("generate-cli e2e fixtures", () => {
       // Parameterized routes are plain strings (params extracted at type level)
       expect(content).toContain('"api.detail": "/api/:id",');
       expect(content).toContain('"docs.page": "/docs/:slug",');
-      expect(content).toContain('"docs.guides.detail": "/docs/guides/:guideId",');
+      expect(content).toContain(
+        '"docs.guides.detail": "/docs/guides/:guideId",',
+      );
 
       // api.search has search schema (object format)
       expect(content).toContain('q: "string"');

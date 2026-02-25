@@ -63,7 +63,7 @@ export function createVersionPlugin(): Plugin {
         // Update version when RSC modules change
         currentVersion = Date.now().toString(16);
         console.log(
-          `[rsc-router] RSC module changed, version updated: ${currentVersion}`
+          `[rsc-router] RSC module changed, version updated: ${currentVersion}`,
         );
 
         // Invalidate the version module so it gets reloaded with new version
@@ -71,7 +71,7 @@ export function createVersionPlugin(): Plugin {
           const rscEnv = server.environments?.rsc;
           if (rscEnv?.moduleGraph) {
             const versionMod = rscEnv.moduleGraph.getModuleById(
-              "\0" + VIRTUAL_IDS.version
+              "\0" + VIRTUAL_IDS.version,
             );
             if (versionMod) {
               rscEnv.moduleGraph.invalidateModule(versionMod);

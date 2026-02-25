@@ -11,7 +11,13 @@
  * - Handles SSR hydration by deferring system theme detection
  */
 
-import React, { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useRef,
+} from "react";
 import { ThemeContext } from "./theme-context.js";
 import type {
   ResolvedTheme,
@@ -90,15 +96,13 @@ function writeThemeToStorage(storageKey: string, theme: Theme): void {
 /**
  * Apply theme to HTML element
  */
-function applyThemeToDocument(
-  theme: Theme,
-  config: ResolvedThemeConfig
-): void {
+function applyThemeToDocument(theme: Theme, config: ResolvedThemeConfig): void {
   if (typeof document === "undefined") return;
 
-  const resolved = theme === "system" && config.enableSystem
-    ? getSystemTheme()
-    : (theme as ResolvedTheme);
+  const resolved =
+    theme === "system" && config.enableSystem
+      ? getSystemTheme()
+      : (theme as ResolvedTheme);
 
   const value = config.value[resolved] || resolved;
   const el = document.documentElement;
@@ -188,7 +192,7 @@ export function ThemeProvider({
       writeThemeToStorage(config.storageKey, newTheme);
       applyThemeToDocument(newTheme, config);
     },
-    [config]
+    [config],
   );
 
   // Listen for system preference changes
@@ -227,10 +231,7 @@ export function ThemeProvider({
       if (!newTheme) return;
 
       // Validate and apply
-      if (
-        newTheme === "system" ||
-        config.themes.includes(newTheme)
-      ) {
+      if (newTheme === "system" || config.themes.includes(newTheme)) {
         setThemeState(newTheme as Theme);
         applyThemeToDocument(newTheme as Theme, config);
       }
@@ -280,7 +281,7 @@ export function ThemeProvider({
       themes,
       config,
     }),
-    [theme, setTheme, resolvedTheme, systemTheme, themes, config, mounted]
+    [theme, setTheme, resolvedTheme, systemTheme, themes, config, mounted],
   );
 
   return (

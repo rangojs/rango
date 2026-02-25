@@ -16,9 +16,7 @@ export const ThemeIndexHandler: Handler<"theme.index"> = (ctx) => {
       <p data-testid="theme-description">
         Tests theme functionality including ctx.theme and ctx.setTheme
       </p>
-      <div data-testid="server-theme">
-        Server theme: {ctx.theme}
-      </div>
+      <div data-testid="server-theme">Server theme: {ctx.theme}</div>
       <nav>
         <Link to="/theme/toggle" data-testid="theme-toggle-link">
           Go to Theme Toggle
@@ -38,9 +36,7 @@ export const ThemeToggleHandler: Handler<"theme.toggle"> = (ctx) => {
         ← Back to Theme Index
       </Link>
       <h1 data-testid="theme-toggle-title">Theme Toggle</h1>
-      <div data-testid="server-theme">
-        Server theme: {ctx.theme}
-      </div>
+      <div data-testid="server-theme">Server theme: {ctx.theme}</div>
       <ThemeToggle testId="theme-toggle" />
     </div>
   );

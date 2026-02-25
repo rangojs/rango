@@ -187,9 +187,7 @@ describe("route definition edge cases", () => {
       const tree = buildRouteTree(
         urls(({ path, layout, cache }) => [
           layout(RootLayout, () => [
-            cache({ ttl: 300 }, () => [
-              path("/", HomePage, { name: "home" }),
-            ]),
+            cache({ ttl: 300 }, () => [path("/", HomePage, { name: "home" })]),
           ]),
         ]),
       );
@@ -265,9 +263,7 @@ describe("route definition edge cases", () => {
       const tree = buildRouteTree(
         urls(({ path, layout, middleware }) => [
           layout(RootLayout, () => [
-            path("/", HomePage, { name: "home" }, () => [
-              middleware(mw1),
-            ]),
+            path("/", HomePage, { name: "home" }, () => [middleware(mw1)]),
           ]),
         ]),
       );
@@ -281,10 +277,14 @@ describe("route definition edge cases", () => {
       const tree = buildRouteTree(
         urls(({ path, layout, include }) => [
           layout(RootLayout, () => [
-            include("/blog", urls(({ path: p }) => [
-              p("/", BlogIndex, { name: "index" }),
-              p("/:postId", BlogPost, { name: "post" }),
-            ]), { name: "blog" }),
+            include(
+              "/blog",
+              urls(({ path: p }) => [
+                p("/", BlogIndex, { name: "index" }),
+                p("/:postId", BlogPost, { name: "post" }),
+              ]),
+              { name: "blog" },
+            ),
           ]),
         ]),
       );
@@ -338,9 +338,7 @@ describe("route definition edge cases", () => {
           urls(({ path, layout }) => [
             layout(RootLayout, () => [
               layout(WrapperA, () => [
-                layout(WrapperB, () => [
-                  layout(WrapperC),
-                ]),
+                layout(WrapperB, () => [layout(WrapperC)]),
               ]),
               path("/", HomePage, { name: "home" }),
             ]),
@@ -355,9 +353,7 @@ describe("route definition edge cases", () => {
           urls(({ path, layout }) => [
             layout(RootLayout, () => [
               path("/", HomePage, { name: "home" }, () => [
-                layout(AuthLayout, () => [
-                  layout(RootLayout),
-                ]),
+                layout(AuthLayout, () => [layout(RootLayout)]),
               ]),
             ]),
           ]),
@@ -431,9 +427,7 @@ describe("route definition edge cases", () => {
           urls(({ path, layout, when }) => [
             layout(RootLayout, () => [
               // @ts-expect-error - WhenItem is not in RouteUseItem
-              path("/", HomePage, { name: "home" }, () => [
-                when(() => true),
-              ]),
+              path("/", HomePage, { name: "home" }, () => [when(() => true)]),
             ]),
           ]),
         ),
@@ -533,9 +527,11 @@ describe("route definition edge cases", () => {
         urls(({ path, layout, middleware, include }) => [
           layout(RootLayout, () => [
             middleware(mw1),
-            include("/blog", urls(({ path: p }) => [
-              p("/", BlogIndex, { name: "index" }),
-            ]), { name: "blog" }),
+            include(
+              "/blog",
+              urls(({ path: p }) => [p("/", BlogIndex, { name: "index" })]),
+              { name: "blog" },
+            ),
           ]),
         ]),
       );
@@ -551,9 +547,11 @@ describe("route definition edge cases", () => {
             middleware(mw1),
             layout(AuthLayout, () => [
               middleware(mw2),
-              include("/blog", urls(({ path: p }) => [
-                p("/", BlogIndex, { name: "index" }),
-              ]), { name: "blog" }),
+              include(
+                "/blog",
+                urls(({ path: p }) => [p("/", BlogIndex, { name: "index" })]),
+                { name: "blog" },
+              ),
             ]),
           ]),
         ]),

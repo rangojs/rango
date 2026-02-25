@@ -11,11 +11,7 @@ import { RevalidateButton } from "./RevalidateButton.js";
  * Uses `typeof SlowLoader` for the prop type -- this infers the full generic
  * from the loader definition, so the data type is automatically type-checked.
  */
-export function RefTestLoaderProp({
-  loader,
-}: {
-  loader: typeof SlowLoader;
-}) {
+export function RefTestLoaderProp({ loader }: { loader: typeof SlowLoader }) {
   const {
     data: { message, count, loadedAt },
   } = useLoader(loader);

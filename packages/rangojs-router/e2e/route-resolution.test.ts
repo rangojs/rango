@@ -25,7 +25,7 @@ test.describe("route-resolution", () => {
 
       await expect(page.locator('[data-testid="index-page"]')).toBeVisible();
       await expect(page.locator('[data-testid="page-title"]')).toContainText(
-        "Products"
+        "Products",
       );
     });
 
@@ -35,9 +35,11 @@ test.describe("route-resolution", () => {
       await page.goto(f.url("/blog"));
       await waitForHydration(page);
 
-      await expect(page.locator('[data-testid="blog-index-page"]')).toBeVisible();
+      await expect(
+        page.locator('[data-testid="blog-index-page"]'),
+      ).toBeVisible();
       await expect(page.locator('[data-testid="blog-title"]')).toContainText(
-        "Blog"
+        "Blog",
       );
     });
   });
@@ -54,9 +56,11 @@ test.describe("route-resolution", () => {
       await waitForHydration(page);
 
       // Should render the same as /blog
-      await expect(page.locator('[data-testid="blog-index-page"]')).toBeVisible();
+      await expect(
+        page.locator('[data-testid="blog-index-page"]'),
+      ).toBeVisible();
       await expect(page.locator('[data-testid="blog-title"]')).toContainText(
-        "Blog"
+        "Blog",
       );
     });
 
@@ -81,10 +85,10 @@ test.describe("route-resolution", () => {
       await waitForHydration(page);
 
       await expect(
-        page.locator('[data-testid="product-detail-page"]')
+        page.locator('[data-testid="product-detail-page"]'),
       ).toBeVisible();
       await expect(page.locator('[data-testid="product-name"]')).toContainText(
-        "Product A"
+        "Product A",
       );
     });
   });
@@ -100,10 +104,12 @@ test.describe("route-resolution", () => {
       await page.goto(f.url("/ts-ignore"));
       await waitForHydration(page);
 
-      await expect(page.locator('[data-testid="ts-ignore-page"]')).toBeVisible();
-      await expect(page.locator('[data-testid="ts-ignore-title"]')).toContainText(
-        "Trailing Slash: Ignore"
-      );
+      await expect(
+        page.locator('[data-testid="ts-ignore-page"]'),
+      ).toBeVisible();
+      await expect(
+        page.locator('[data-testid="ts-ignore-title"]'),
+      ).toContainText("Trailing Slash: Ignore");
     });
 
     test("trailingSlash: ignore - should match /ts-ignore/ without redirect", async ({
@@ -114,10 +120,12 @@ test.describe("route-resolution", () => {
       await page.goto(f.url("/ts-ignore/"));
       await waitForHydration(page);
 
-      await expect(page.locator('[data-testid="ts-ignore-page"]')).toBeVisible();
-      await expect(page.locator('[data-testid="ts-ignore-title"]')).toContainText(
-        "Trailing Slash: Ignore"
-      );
+      await expect(
+        page.locator('[data-testid="ts-ignore-page"]'),
+      ).toBeVisible();
+      await expect(
+        page.locator('[data-testid="ts-ignore-title"]'),
+      ).toContainText("Trailing Slash: Ignore");
     });
 
     test("trailingSlash: always - should redirect /ts-always to /ts-always/", async ({
@@ -131,7 +139,9 @@ test.describe("route-resolution", () => {
 
       // Should redirect to /ts-always/ and render the page
       expect(page.url()).toContain("/ts-always/");
-      await expect(page.locator('[data-testid="ts-always-page"]')).toBeVisible();
+      await expect(
+        page.locator('[data-testid="ts-always-page"]'),
+      ).toBeVisible();
     });
 
     test("trailingSlash: always - should match /ts-always/ directly", async ({
@@ -142,7 +152,9 @@ test.describe("route-resolution", () => {
       await page.goto(f.url("/ts-always/"));
       await waitForHydration(page);
 
-      await expect(page.locator('[data-testid="ts-always-page"]')).toBeVisible();
+      await expect(
+        page.locator('[data-testid="ts-always-page"]'),
+      ).toBeVisible();
     });
 
     test("trailingSlash: never - should redirect /ts-never/ to /ts-never", async ({
@@ -179,10 +191,12 @@ test.describe("route-resolution", () => {
       await page.goto(f.url("/blog/my-first-post"));
       await waitForHydration(page);
 
-      await expect(page.locator('[data-testid="blog-post-page"]')).toBeVisible();
-      await expect(page.locator('[data-testid="blog-post-title"]')).toContainText(
-        "Post: my-first-post"
-      );
+      await expect(
+        page.locator('[data-testid="blog-post-page"]'),
+      ).toBeVisible();
+      await expect(
+        page.locator('[data-testid="blog-post-title"]'),
+      ).toContainText("Post: my-first-post");
     });
 
     test("blog post should resolve with trailing slash", async ({ page }) => {
@@ -191,10 +205,12 @@ test.describe("route-resolution", () => {
       await page.goto(f.url("/blog/my-first-post/"));
       await waitForHydration(page);
 
-      await expect(page.locator('[data-testid="blog-post-page"]')).toBeVisible();
-      await expect(page.locator('[data-testid="blog-post-title"]')).toContainText(
-        "Post: my-first-post"
-      );
+      await expect(
+        page.locator('[data-testid="blog-post-page"]'),
+      ).toBeVisible();
+      await expect(
+        page.locator('[data-testid="blog-post-title"]'),
+      ).toContainText("Post: my-first-post");
     });
   });
 
@@ -208,10 +224,10 @@ test.describe("route-resolution", () => {
       await waitForHydration(page);
 
       await expect(
-        page.locator('[data-testid="product-detail-page"]')
+        page.locator('[data-testid="product-detail-page"]'),
       ).toBeVisible();
       await expect(page.locator('[data-testid="product-name"]')).toContainText(
-        "Product A"
+        "Product A",
       );
     });
 
@@ -225,7 +241,7 @@ test.describe("route-resolution", () => {
       await waitForHydration(page);
 
       await expect(page.locator('[data-testid="product-name"]')).toContainText(
-        "Product B"
+        "Product B",
       );
 
       // Test product-c
@@ -233,7 +249,7 @@ test.describe("route-resolution", () => {
       await waitForHydration(page);
 
       await expect(page.locator('[data-testid="product-name"]')).toContainText(
-        "Product C"
+        "Product C",
       );
     });
 
@@ -243,16 +259,16 @@ test.describe("route-resolution", () => {
       // Numeric ID
       await page.goto(f.url("/blog/123"));
       await waitForHydration(page);
-      await expect(page.locator('[data-testid="blog-post-title"]')).toContainText(
-        "Post: 123"
-      );
+      await expect(
+        page.locator('[data-testid="blog-post-title"]'),
+      ).toContainText("Post: 123");
 
       // Slug with hyphens
       await page.goto(f.url("/blog/my-awesome-post"));
       await waitForHydration(page);
-      await expect(page.locator('[data-testid="blog-post-title"]')).toContainText(
-        "Post: my-awesome-post"
-      );
+      await expect(
+        page.locator('[data-testid="blog-post-title"]'),
+      ).toContainText("Post: my-awesome-post");
     });
   });
 
@@ -268,10 +284,12 @@ test.describe("route-resolution", () => {
       // Click on a post link
       await page.locator('[data-testid="blog-post-link-1"]').click();
 
-      await expect(page.locator('[data-testid="blog-post-page"]')).toBeVisible();
-      await expect(page.locator('[data-testid="blog-post-title"]')).toContainText(
-        "Post: post-1"
-      );
+      await expect(
+        page.locator('[data-testid="blog-post-page"]'),
+      ).toBeVisible();
+      await expect(
+        page.locator('[data-testid="blog-post-title"]'),
+      ).toContainText("Post: post-1");
     });
 
     test("SPA navigation should work from post back to blog index", async ({
@@ -285,7 +303,9 @@ test.describe("route-resolution", () => {
       // Click back to blog
       await page.locator('[data-testid="back-to-blog"]').click();
 
-      await expect(page.locator('[data-testid="blog-index-page"]')).toBeVisible();
+      await expect(
+        page.locator('[data-testid="blog-index-page"]'),
+      ).toBeVisible();
     });
   });
 });

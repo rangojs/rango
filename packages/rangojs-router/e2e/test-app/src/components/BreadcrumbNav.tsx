@@ -57,7 +57,9 @@ export function BreadcrumbNav({ testId }: { testId?: string }) {
                 <Link
                   to={crumb.href}
                   data-testid={
-                    testId ? `${testId}-link-${crumb.label.toLowerCase()}` : undefined
+                    testId
+                      ? `${testId}-link-${crumb.label.toLowerCase()}`
+                      : undefined
                   }
                   style={{ color: "#0066cc", textDecoration: "none" }}
                 >

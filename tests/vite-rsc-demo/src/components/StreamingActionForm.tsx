@@ -1,0 +1,148 @@
+"use client";
+
+import { use, useActionState, Suspense, startTransition } from "react";
+import { StreamingAction } from "../actions/test.actions";
+import { useAction } from "@rangojs/router/client";
+export const StreamingActionStatus = () => {
+  const status = useAction(StreamingAction);
+  console.log("StreamingActionStatus", status.state);
+  return <div>StreamingAction status: {status.state}</div>;
+};
+const getOwnProps = (item: any) => {
+  const reflect = Reflect.ownKeys(item);
+  const ownProps: Record<string, any> = {};
+  reflect.forEach((key) => {
+    ownProps[key as string] = (item as any)[key as string];
+  });
+  return ownProps;
+};
+export const ActionStatus = ({
+  fn,
+}: {
+  fn: ((...args: any[]) => any) | string;
+}) => {
+  const status = useAction(fn);
+  const name = (fn as any).$$id;
+  console.log({
+    name: (fn as any).$$id,
+    $$typeof: (fn as any).$$typeof,
+    $$id: (fn as any).$$id,
+    $$bound: (fn as any).$$bound,
+  });
+  console.log(`${name} Status`, status.state, fn, getOwnProps(fn));
+  return (
+    <div>
+      {name} status: {status.state}
+    </div>
+  );
+};
+/**
+ * Streaming Action Form - demonstrates Promise streaming with Suspense
+ *
+ * The action returns a Promise that streams to the client.
+ * Suspense boundary waits for it to resolve.
+ */
+export function StreamingActionForm({
+  productId,
+  action,
+  children,
+}: {
+  productId: string | number;
+  action: (productId: string, quantity?: number) => Promise<any>;
+  children?: React.ReactNode;
+}) {
+  const [state, formAction, isPending] = useActionState(
+    async (_prevState: unknown, formData: FormData) => {
+      try {
+        console.log("StreamingActionForm data set", { isPending, state });
+        const result = await StreamingAction(formData);
+        console.log("[StreamingAction] Action result:", result);
+        return result;
+      } catch (error) {
+        console.error("[StreamingAction] Action error:", error);
+        return { success: false, error: String(error) };
+      }
+    },
+    null,
+  );
+
+  return (
+    <div>
+      <form action={formAction}>
+        <button
+          type="submit"
+          disabled={isPending}
+          style={{
+            background: isPending ? "#ccc" : "#ff6b6b",
+            color: "white",
+            border: "none",
+            padding: "0.75rem 1.5rem",
+            borderRadius: "4px",
+            fontSize: "1rem",
+            cursor: isPending ? "not-allowed" : "pointer",
+            marginTop: "1rem",
+          }}
+        >
+          {isPending ? "Processing..." : <>{children}</>}
+        </button>
+      </form>
+      {state && "promise" in state && (
+        <div
+          style={{
+            marginTop: "1rem",
+            padding: "1rem",
+            background: "#fff3cd",
+            border: "1px solid '#ffc107'",
+            borderRadius: "4px",
+          }}
+        >
+          <Suspense
+            fallback={
+              <div>
+                <h4 style={{ margin: "0 0 0.5rem 0" }}>⏳ Streaming...</h4>
+                <p style={{ margin: 0, fontSize: "0.9rem" }}>
+                  Waiting for server to complete slow operation (10 seconds)...
+                </p>
+                <div
+                  style={{
+                    marginTop: "0.5rem",
+                    width: "100%",
+                    height: "4px",
+                    background: "#e0e0e0",
+                    borderRadius: "2px",
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      background: "#ffc107",
+                      animation: "slide 1.5s ease-in-out infinite",
+                    }}
+                  />
+                </div>
+              </div>
+            }
+          >
+            <PromiseResolver
+              promise={(state as { promise: Promise<any> }).promise}
+            />
+          </Suspense>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Component that uses() a Promise - triggers Suspense
+ */
+function PromiseResolver({ promise }: { promise: Promise<any> }) {
+  // use() hook suspends until Promise resolves
+  const result = use(promise);
+
+  console.log("[PromiseResolver] Promise resolved:", result);
+
+  return promise;
+}

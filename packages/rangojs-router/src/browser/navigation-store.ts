@@ -88,7 +88,7 @@ export interface HistoryKeyOptions {
  */
 export function generateHistoryKey(
   url?: string,
-  options?: HistoryKeyOptions
+  options?: HistoryKeyOptions,
 ): string {
   if (!url) {
     url = typeof window !== "undefined" ? window.location.href : "/";
@@ -182,7 +182,7 @@ function createLocation(loc: { href: string }): NavigationLocation {
  * ```
  */
 export function createNavigationStore(
-  config?: NavigationStoreConfig
+  config?: NavigationStoreConfig,
 ): NavigationStore {
   // Default location from window or config
   const defaultLocation: NavigationLocation =
@@ -270,7 +270,7 @@ export function createNavigationStore(
    */
   function createDebouncedNotifier<T extends (...args: any[]) => void>(
     fn: T,
-    ms: number = 20
+    ms: number = 20,
   ): T {
     let timeout: ReturnType<typeof setTimeout> | null = null;
     return ((...args: Parameters<T>) => {
@@ -297,7 +297,7 @@ export function createNavigationStore(
         setTimeout(() => {
           timeouts.delete(key);
           fn(key, ...args);
-        }, ms)
+        }, ms),
       );
     }) as T;
   }
@@ -312,7 +312,7 @@ export function createNavigationStore(
       if (listeners) {
         listeners.forEach((listener) => listener(state));
       }
-    }
+    },
   );
 
   /**
@@ -345,7 +345,7 @@ export function createNavigationStore(
    */
   function markStaleAndBroadcast(): void {
     console.log(
-      "[Browser] Marking cache as stale and broadcasting to other tabs"
+      "[Browser] Marking cache as stale and broadcasting to other tabs",
     );
     markCacheAsStaleInternal();
     broadcastInvalidation();
@@ -373,7 +373,7 @@ export function createNavigationStore(
         "[Browser] Broadcast sent for path:",
         currentPath,
         "segments:",
-        currentSegmentIds.join(", ")
+        currentSegmentIds.join(", "),
       );
     } else {
       console.warn("[Browser] No BroadcastChannel available");
@@ -393,7 +393,7 @@ export function createNavigationStore(
           // Check for shared segments between tabs
           // Routes sharing any segment (layout, loader, etc.) should invalidate together
           const hasSharedSegment = mutatedSegmentIds.some((id) =>
-            currentSegmentIds.includes(id)
+            currentSegmentIds.includes(id),
           );
 
           if (!hasSharedSegment) {
@@ -405,7 +405,7 @@ export function createNavigationStore(
             "[Browser] Cache marked stale by another tab, shared segments:",
             mutatedSegmentIds
               .filter((id) => currentSegmentIds.includes(id))
-              .join(", ")
+              .join(", "),
           );
           markCacheAsStaleInternal();
 
@@ -419,7 +419,7 @@ export function createNavigationStore(
               // Only queue one refresh, ignore subsequent events while loading
               pendingCrossTabRefresh = true;
               console.log(
-                "[Browser] Navigation in progress, deferring cross-tab refresh"
+                "[Browser] Navigation in progress, deferring cross-tab refresh",
               );
               // Subscribe to state changes, refresh when idle
               const listener: StateListener = () => {
@@ -427,7 +427,7 @@ export function createNavigationStore(
                   stateListeners.delete(listener);
                   pendingCrossTabRefresh = false;
                   console.log(
-                    "[Browser] Cross-tab refresh triggered (deferred)"
+                    "[Browser] Cross-tab refresh triggered (deferred)",
                   );
                   crossTabRefreshCallback?.();
                 }
@@ -574,7 +574,7 @@ export function createNavigationStore(
     cacheSegmentsForHistory(
       historyKey: string,
       segments: ResolvedSegment[],
-      handleData?: HandleData
+      handleData?: HandleData,
     ): void {
       // Shallow clone handleData arrays to avoid reference sharing between cache entries
       // We only clone the structure (objects and arrays), not the data items themselves,
@@ -585,10 +585,15 @@ export function createNavigationStore(
 
       // Check if entry already exists and update it
       const existingIndex = historyCache.findIndex(
-        ([key]) => key === historyKey
+        ([key]) => key === historyKey,
       );
       if (existingIndex !== -1) {
-        historyCache[existingIndex] = [historyKey, segments, false, clonedHandleData];
+        historyCache[existingIndex] = [
+          historyKey,
+          segments,
+          false,
+          clonedHandleData,
+        ];
       } else {
         // Add new entry at the end (not stale)
         historyCache.push([historyKey, segments, false, clonedHandleData]);
@@ -604,8 +609,10 @@ export function createNavigationStore(
      * Returns { segments, stale, handleData } or undefined if not cached
      */
     getCachedSegments(
-      historyKey: string
-    ): { segments: ResolvedSegment[]; stale: boolean; handleData?: HandleData } | undefined {
+      historyKey: string,
+    ):
+      | { segments: ResolvedSegment[]; stale: boolean; handleData?: HandleData }
+      | undefined {
       const entry = historyCache.find(([key]) => key === historyKey);
       if (!entry) return undefined;
       return { segments: entry[1], stale: entry[2], handleData: entry[3] };
@@ -625,13 +632,18 @@ export function createNavigationStore(
      */
     updateCacheHandleData(historyKey: string, handleData: HandleData): void {
       const existingIndex = historyCache.findIndex(
-        ([key]) => key === historyKey
+        ([key]) => key === historyKey,
       );
       if (existingIndex !== -1) {
         const entry = historyCache[existingIndex];
         // Shallow clone handleData arrays to avoid reference sharing
         const clonedHandleData = cloneHandleData(handleData);
-        historyCache[existingIndex] = [entry[0], entry[1], entry[2], clonedHandleData];
+        historyCache[existingIndex] = [
+          entry[0],
+          entry[1],
+          entry[2],
+          clonedHandleData,
+        ];
       }
     },
 
@@ -646,7 +658,7 @@ export function createNavigationStore(
       console.log(
         "[Browser] Marked",
         historyCache.length,
-        "cache entries as stale"
+        "cache entries as stale",
       );
     },
 
@@ -745,7 +757,7 @@ export function createNavigationStore(
      */
     setActionState(
       actionId: string,
-      partial: Partial<TrackedActionState>
+      partial: Partial<TrackedActionState>,
     ): void {
       const current = actionStates.get(actionId) ?? { ...DEFAULT_ACTION_STATE };
       const updated: TrackedActionState = {
@@ -763,7 +775,7 @@ export function createNavigationStore(
      */
     subscribeToAction(
       actionId: string,
-      listener: ActionStateListener
+      listener: ActionStateListener,
     ): () => void {
       let listeners = actionListeners.get(actionId);
       if (!listeners) {
@@ -793,7 +805,7 @@ let storeInstance: NavigationStore | null = null;
  * Subsequent calls return the existing instance.
  */
 export function initNavigationStore(
-  config?: NavigationStoreConfig
+  config?: NavigationStoreConfig,
 ): NavigationStore {
   if (!storeInstance) {
     storeInstance = createNavigationStore(config);
@@ -809,7 +821,7 @@ export function initNavigationStore(
 export function getNavigationStore(): NavigationStore {
   if (!storeInstance) {
     throw new Error(
-      "Navigation store not initialized. Call initNavigationStore first."
+      "Navigation store not initialized. Call initNavigationStore first.",
     );
   }
   return storeInstance;

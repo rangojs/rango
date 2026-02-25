@@ -185,9 +185,7 @@ export function createDocumentCacheMiddleware<TEnv = any>(
 ): MiddlewareFn<TEnv> {
   const { skipPaths = [], keyGenerator, isEnabled, debug = false } = options;
 
-  const log = debug
-    ? (message: string) => console.log(message)
-    : () => {};
+  const log = debug ? (message: string) => console.log(message) : () => {};
 
   return async function documentCacheMiddleware(
     ctx: MiddlewareContext<TEnv>,
@@ -235,7 +233,8 @@ export function createDocumentCacheMiddleware<TEnv = any>(
     // For partial requests, include hash of client segments to prevent serving
     // wrong cached response when navigating from different pages with different layouts
     const clientSegments = url.searchParams.get("_rsc_segments") || "";
-    const segmentHash = isPartial && clientSegments ? `:${hashSegmentIds(clientSegments)}` : "";
+    const segmentHash =
+      isPartial && clientSegments ? `:${hashSegmentIds(clientSegments)}` : "";
     const typeSuffix = isPartial ? ":rsc" : ":html";
     const cacheKey = keyGenerator
       ? keyGenerator(url) + segmentHash + typeSuffix
@@ -261,7 +260,9 @@ export function createDocumentCacheMiddleware<TEnv = any>(
         }
 
         // Stale hit - return cached response, revalidate in background
-        log(`[DocumentCache] STALE ${typeLabel}: ${url.pathname} (revalidating)`);
+        log(
+          `[DocumentCache] STALE ${typeLabel}: ${url.pathname} (revalidating)`,
+        );
 
         if (requestCtx) {
           requestCtx.waitUntil(async () => {
@@ -276,7 +277,9 @@ export function createDocumentCacheMiddleware<TEnv = any>(
                   directives.sMaxAge!,
                   directives.staleWhileRevalidate,
                 );
-                log(`[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`);
+                log(
+                  `[DocumentCache] REVALIDATED ${typeLabel}: ${url.pathname}`,
+                );
               }
             } catch (error) {
               console.error(`[DocumentCache] Revalidation failed:`, error);
@@ -302,7 +305,9 @@ export function createDocumentCacheMiddleware<TEnv = any>(
       const directives = shouldCacheResponse(originalResponse);
 
       if (directives) {
-        log(`[DocumentCache] MISS ${typeLabel}: ${url.pathname} (caching with s-maxage=${directives.sMaxAge})`);
+        log(
+          `[DocumentCache] MISS ${typeLabel}: ${url.pathname} (caching with s-maxage=${directives.sMaxAge})`,
+        );
 
         // Tee the body so we can return one stream and cache the other
         const [returnStream, cacheStream] = originalResponse.body!.tee();

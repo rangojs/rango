@@ -191,13 +191,19 @@ describe("RequestContext", () => {
       ctx.onResponse((res) => {
         const newHeaders = new Headers(res.headers);
         newHeaders.set("X-First", "1");
-        return new Response(res.body, { status: res.status, headers: newHeaders });
+        return new Response(res.body, {
+          status: res.status,
+          headers: newHeaders,
+        });
       });
 
       ctx.onResponse((res) => {
         const newHeaders = new Headers(res.headers);
         newHeaders.set("X-Second", "2");
-        return new Response(res.body, { status: res.status, headers: newHeaders });
+        return new Response(res.body, {
+          status: res.status,
+          headers: newHeaders,
+        });
       });
 
       let response = new Response("OK");

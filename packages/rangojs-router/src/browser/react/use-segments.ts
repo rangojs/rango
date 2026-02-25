@@ -87,7 +87,7 @@ function parsePathname(pathname: string): string[] {
  */
 function buildSegmentsState(
   location: URL,
-  segmentOrder: string[]
+  segmentOrder: string[],
 ): SegmentsState {
   return {
     path: parsePathname(location.pathname),
@@ -127,7 +127,7 @@ function buildSsrState(): SegmentsState {
 export function useSegments(): SegmentsState;
 export function useSegments<T>(selector: (state: SegmentsState) => T): T;
 export function useSegments<T>(
-  selector?: (state: SegmentsState) => T
+  selector?: (state: SegmentsState) => T,
 ): T | SegmentsState {
   const ctx = useContext(NavigationStoreContext);
 
@@ -143,7 +143,7 @@ export function useSegments<T>(
     const handleState = ctx.eventController.getHandleState();
     const segmentsState = buildSegmentsState(
       navState.location as URL,
-      handleState.segmentOrder
+      handleState.segmentOrder,
     );
     return selector ? selector(segmentsState) : segmentsState;
   });
@@ -161,7 +161,7 @@ export function useSegments<T>(
       const handleState = ctx.eventController.getHandleState();
       const segmentsState = buildSegmentsState(
         navState.location as URL,
-        handleState.segmentOrder
+        handleState.segmentOrder,
       );
       const nextSelected = selector ? selector(segmentsState) : segmentsState;
 
@@ -176,7 +176,8 @@ export function useSegments<T>(
 
     // Subscribe to both state sources
     const unsubscribeNav = ctx.eventController.subscribe(updateState);
-    const unsubscribeHandles = ctx.eventController.subscribeToHandles(updateState);
+    const unsubscribeHandles =
+      ctx.eventController.subscribeToHandles(updateState);
 
     return () => {
       unsubscribeNav();

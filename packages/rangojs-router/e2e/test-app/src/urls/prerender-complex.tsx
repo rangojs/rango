@@ -1,6 +1,9 @@
 import { urls, Prerender } from "@rangojs/router";
 import { ParallelOutlet } from "@rangojs/router/client";
-import { PrerenderComplexLayout, PrerenderInnerLayout } from "../components/layouts/index.js";
+import {
+  PrerenderComplexLayout,
+  PrerenderInnerLayout,
+} from "../components/layouts/index.js";
 import { FreshTimestampLoader } from "../loaders.js";
 import { FreshDataDisplay } from "../components/FreshDataDisplay.js";
 
@@ -33,7 +36,7 @@ export const PrerenderComplexDetail = Prerender(
         <FreshDataDisplay loader={FreshTimestampLoader} />
       </div>
     );
-  }
+  },
 );
 
 // Parallel sidebar handler - pre-rendered as part of the B segment
@@ -41,7 +44,9 @@ function PrerenderSidebarHandler() {
   return (
     <div data-testid="prerender-sidebar">
       <h2 data-testid="prerender-sidebar-title">Sidebar</h2>
-      <p data-testid="prerender-sidebar-content">Pre-rendered sidebar content.</p>
+      <p data-testid="prerender-sidebar-content">
+        Pre-rendered sidebar content.
+      </p>
     </div>
   );
 }
@@ -59,5 +64,5 @@ export const prerenderComplexPatterns = urls(
         ]),
       ]),
     ]),
-  ]
+  ],
 );

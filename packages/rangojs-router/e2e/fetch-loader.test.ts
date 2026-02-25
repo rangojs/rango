@@ -29,7 +29,7 @@ test.describe("useFetchLoader", () => {
     // Page should render
     await expect(testId(page, "fetch-loader-page")).toBeVisible();
     await expect(testId(page, "fetch-loader-title")).toContainText(
-      "useFetchLoader Test"
+      "useFetchLoader Test",
     );
 
     // Component should render with buttons
@@ -58,7 +58,7 @@ test.describe("useFetchLoader", () => {
 
     // Verify fetched data
     await expect(testId(page, "fetch-loader-message")).toContainText(
-      "Fetched via GET!"
+      "Fetched via GET!",
     );
     await expect(testId(page, "fetch-loader-id")).toContainText("ID: default");
     await expect(testId(page, "fetch-loader-count")).toContainText("Count: 1");
@@ -80,7 +80,7 @@ test.describe("useFetchLoader", () => {
 
     // Verify custom ID was passed
     await expect(testId(page, "fetch-loader-id")).toContainText(
-      "ID: custom-123"
+      "ID: custom-123",
     );
   });
 
@@ -111,7 +111,7 @@ test.describe("useFetchLoader", () => {
     // Count should have incremented (wait for it to update)
     await expect(testId(page, "fetch-loader-count")).not.toHaveText(
       `Count: ${count1}`,
-      { timeout: 5000 }
+      { timeout: 5000 },
     );
 
     const count2Text = await testId(page, "fetch-loader-count").textContent();
@@ -142,7 +142,7 @@ test.describe("useFetchLoader (production)", () => {
 
     // Verify data is correct
     await expect(testId(page, "fetch-loader-message")).toContainText(
-      "Fetched via GET!"
+      "Fetched via GET!",
     );
   });
 });

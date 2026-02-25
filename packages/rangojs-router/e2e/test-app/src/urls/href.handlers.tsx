@@ -85,11 +85,19 @@ export const HrefFilteredHandler: Handler<".filtered", routes> = (ctx) => {
       <section data-testid="filtered-params">
         <p data-testid="filtered-category">category: {category}</p>
         <p data-testid="filtered-q">q: {q}</p>
-        <p data-testid="filtered-page">page: {page !== undefined ? String(page) : "undefined"}</p>
-        <p data-testid="filtered-active">active: {active !== undefined ? String(active) : "undefined"}</p>
+        <p data-testid="filtered-page">
+          page: {page !== undefined ? String(page) : "undefined"}
+        </p>
+        <p data-testid="filtered-active">
+          active: {active !== undefined ? String(active) : "undefined"}
+        </p>
         <p data-testid="filtered-q-type">q-type: {typeof q}</p>
-        <p data-testid="filtered-page-type">page-type: {page !== undefined ? typeof page : "undefined"}</p>
-        <p data-testid="filtered-active-type">active-type: {active !== undefined ? typeof active : "undefined"}</p>
+        <p data-testid="filtered-page-type">
+          page-type: {page !== undefined ? typeof page : "undefined"}
+        </p>
+        <p data-testid="filtered-active-type">
+          active-type: {active !== undefined ? typeof active : "undefined"}
+        </p>
       </section>
       <nav>
         <Link to="/href" data-testid="filtered-back-link">

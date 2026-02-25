@@ -95,7 +95,7 @@ export interface UseLoaderOptions {
  */
 function useLoaderInternal<T>(
   loader: LoaderDefinition<T>,
-  options?: UseLoaderOptions
+  options?: UseLoaderOptions,
 ): UseFetchLoaderResult<T> {
   const context = useContext(OutletContext);
 
@@ -140,7 +140,7 @@ function useLoaderInternal<T>(
       // Verify the loader has $$id
       if (!loader.$$id) {
         throw new Error(
-          `Loader is missing $$id. Make sure the exposeLoaderId Vite plugin is enabled.`
+          `Loader is missing $$id. Make sure the exposeLoaderId Vite plugin is enabled.`,
         );
       }
 
@@ -158,11 +158,20 @@ function useLoaderInternal<T>(
 
         if (isBodyMethod) {
           // POST/PUT/PATCH/DELETE - send params and body as JSON
-          const bodyPayload: { params?: Record<string, string>; body?: unknown } = {};
-          if (loadOptions?.params && Object.keys(loadOptions.params).length > 0) {
+          const bodyPayload: {
+            params?: Record<string, string>;
+            body?: unknown;
+          } = {};
+          if (
+            loadOptions?.params &&
+            Object.keys(loadOptions.params).length > 0
+          ) {
             bodyPayload.params = loadOptions.params;
           }
-          if ("body" in (loadOptions ?? {}) && (loadOptions as any).body !== undefined) {
+          if (
+            "body" in (loadOptions ?? {}) &&
+            (loadOptions as any).body !== undefined
+          ) {
             bodyPayload.body = (loadOptions as any).body;
           }
 
@@ -176,10 +185,13 @@ function useLoaderInternal<T>(
           };
         } else {
           // GET - send params in query string
-          if (loadOptions?.params && Object.keys(loadOptions.params).length > 0) {
+          if (
+            loadOptions?.params &&
+            Object.keys(loadOptions.params).length > 0
+          ) {
             url.searchParams.set(
               "_rsc_loader_params",
-              JSON.stringify(loadOptions.params)
+              JSON.stringify(loadOptions.params),
             );
           }
 
@@ -216,7 +228,7 @@ function useLoaderInternal<T>(
         setIsLoading(false);
       }
     },
-    [throwOnError]
+    [throwOnError],
   );
 
   // Form action for mutations. Calls the loader's server action directly.
@@ -227,7 +239,7 @@ function useLoaderInternal<T>(
       if (!loader.action) {
         throw new Error(
           `Loader "${loader.$$id}" does not have an action. ` +
-            `Make sure the loader is fetchable: createLoader(fn, true).`
+            `Make sure the loader is fetchable: createLoader(fn, true).`,
         );
       }
 
@@ -247,7 +259,7 @@ function useLoaderInternal<T>(
         setIsLoading(false);
       }
     },
-    [throwOnError, loader.action, loader.$$id]
+    [throwOnError, loader.action, loader.$$id],
   );
 
   // Attach action to load function
@@ -300,7 +312,7 @@ function useLoaderInternal<T>(
  */
 export function useLoader<T>(
   loader: LoaderDefinition<T>,
-  options?: UseLoaderOptions
+  options?: UseLoaderOptions,
 ): UseLoaderResult<T> {
   const result = useLoaderInternal(loader, options);
 
@@ -309,7 +321,7 @@ export function useLoader<T>(
     throw new Error(
       `useLoader: Loader "${loader.$$id}" data not found in context. ` +
         `Make sure the loader is registered on the route with loader(). ` +
-        `If you need on-demand fetching, use useFetchLoader() instead.`
+        `If you need on-demand fetching, use useFetchLoader() instead.`,
     );
   }
 
@@ -364,7 +376,7 @@ export function useLoader<T>(
  */
 export function useFetchLoader<T>(
   loader: LoaderDefinition<T>,
-  options?: UseLoaderOptions
+  options?: UseLoaderOptions,
 ): UseFetchLoaderResult<T> {
   return useLoaderInternal(loader, options);
 }

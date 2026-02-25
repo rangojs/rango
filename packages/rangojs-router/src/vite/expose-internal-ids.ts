@@ -70,7 +70,6 @@ const STRICT_CREATE_CONFIGS: StrictCreateTransformConfig[] = [
   { fnName: "createLocationState" },
 ];
 
-
 /**
  * Check whether every non-type export in `code` is accounted for by the given
  * bindings. Returns false if any export exists that is not one of the known
@@ -134,10 +133,7 @@ function countCreateCallsForNames(code: string, fnNames: string[]): number {
   return (code.match(pattern) || []).length;
 }
 
-function getImportedFnNames(
-  code: string,
-  importedName: string,
-): string[] {
+function getImportedFnNames(code: string, importedName: string): string[] {
   const importPattern =
     /import\s*\{([^}]*)\}\s*from\s*["']@rangojs\/router(?:\/[^"']*)?["']/g;
 
@@ -151,7 +147,9 @@ function getImportedFnNames(
       .filter(Boolean);
 
     for (const spec of specList) {
-      const m = spec.match(/^([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/);
+      const m = spec.match(
+        /^([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/,
+      );
       if (!m) continue;
       const imported = m[1];
       const local = m[2] || imported;
@@ -337,7 +335,10 @@ function collectCreateExportBindings(
   return bindings;
 }
 
-function buildUnsupportedShapeWarning(filePath: string, fnName: string): string {
+function buildUnsupportedShapeWarning(
+  filePath: string,
+  fnName: string,
+): string {
   return [
     `[rsc-router] Unsupported ${fnName} shape in "${filePath}".`,
     `Supported shapes are:`,
@@ -400,9 +401,7 @@ function generateClientLoaderStubs(
 
   for (const binding of bindings) {
     for (const name of binding.exportNames) {
-      const loaderId = isBuild
-        ? hashId(filePath, name)
-        : `${filePath}#${name}`;
+      const loaderId = isBuild ? hashId(filePath, name) : `${filePath}#${name}`;
 
       // Fetchable loaders (argCount >= 2) get an action property that wraps
       // the shared "use server" dispatcher. The wrapper passes loaderId so
@@ -410,11 +409,11 @@ function generateClientLoaderStubs(
       if (binding.argCount >= 2) {
         needsFetchableImport = true;
         lines.push(
-          `export const ${name} = { __brand: "loader", $$id: "${loaderId}", action: (_prev, fd) => __ifa("${loaderId}", _prev, fd) };`
+          `export const ${name} = { __brand: "loader", $$id: "${loaderId}", action: (_prev, fd) => __ifa("${loaderId}", _prev, fd) };`,
         );
       } else {
         lines.push(
-          `export const ${name} = { __brand: "loader", $$id: "${loaderId}" };`
+          `export const ${name} = { __brand: "loader", $$id: "${loaderId}" };`,
         );
       }
     }
@@ -422,7 +421,7 @@ function generateClientLoaderStubs(
 
   if (needsFetchableImport) {
     lines.unshift(
-      `import { invokeFetchableLoaderAction as __ifa } from "@rangojs/router/__internal/fetchable-action";`
+      `import { invokeFetchableLoaderAction as __ifa } from "@rangojs/router/__internal/fetchable-action";`,
     );
   }
 
@@ -448,9 +447,7 @@ function transformLoaders(
     // createLoader(fn) -> createLoader(fn, undefined, "id")
     // createLoader(fn, true) -> createLoader(fn, true, "id")
     const paramInjection =
-      binding.argCount === 1
-        ? `, undefined, "${loaderId}"`
-        : `, "${loaderId}"`;
+      binding.argCount === 1 ? `, undefined, "${loaderId}"` : `, "${loaderId}"`;
     s.appendLeft(binding.callCloseParenPos, paramInjection);
 
     const propInjection = `\n${binding.localName}.$$id = "${loaderId}";`;
@@ -531,8 +528,7 @@ function transformLocationState(
     // Key is injected as a property assignment (not as a function argument).
     // This allows createLocationState to accept options like { flash: true }
     // without conflicting with key injection.
-    const propInjection =
-      `\n${binding.localName}.__rsc_ls_key = "__rsc_ls_${stateKey}";`;
+    const propInjection = `\n${binding.localName}.__rsc_ls_key = "__rsc_ls_${stateKey}";`;
     s.appendRight(binding.statementEnd, propInjection);
     hasChanges = true;
   }
@@ -559,9 +555,7 @@ function generateWholeFileStubs(
 
   const exportNames = bindings.flatMap((b) => b.exportNames);
   const stubs = exportNames.map((name) => {
-    const handlerId = isBuild
-      ? hashId(filePath, name)
-      : `${filePath}#${name}`;
+    const handlerId = isBuild ? hashId(filePath, name) : `${filePath}#${name}`;
     return `export const ${name} = { __brand: "${cfg.brand}", $$id: "${handlerId}" };`;
   });
 
@@ -709,7 +703,9 @@ function transformRouter(
 
   // Prepend the static import as the first line. MagicString tracks the
   // offset so all downstream source maps remain correct.
-  s.prepend(`import { NamedRoutes as ${routeNamesVar} } from "${routeNamesImport}";\n`);
+  s.prepend(
+    `import { NamedRoutes as ${routeNamesVar} } from "${routeNamesImport}";\n`,
+  );
 
   return {
     code: s.toString(),
@@ -760,9 +756,7 @@ export function exposeRouterId(): Plugin {
 // Consolidated plugin
 // ---------------------------------------------------------------------------
 
-export function exposeInternalIds(options?: {
-  forceBuild?: boolean;
-}): Plugin {
+export function exposeInternalIds(options?: { forceBuild?: boolean }): Plugin {
   let config: ResolvedConfig;
   let isBuild = false;
   let projectRoot = "";
@@ -822,11 +816,13 @@ export function exposeInternalIds(options?: {
       if (id.startsWith("\0" + VIRTUAL_HANDLER_PREFIX)) {
         const entry = virtualHandlers.get(id);
         if (!entry) return null;
-        return [
-          ...entry.imports,
-          ...entry.declarations,
-          `export const ${entry.exportName} = ${entry.handlerCode};`,
-        ].join("\n") + "\n";
+        return (
+          [
+            ...entry.imports,
+            ...entry.declarations,
+            `export const ${entry.exportName} = ${entry.handlerCode};`,
+          ].join("\n") + "\n"
+        );
       }
 
       if (id !== RESOLVED_VIRTUAL_LOADER_MANIFEST) return;
@@ -932,27 +928,31 @@ ${lazyImports.join(",\n")}
 
       // Warn if named-routes.gen is imported in a client component.
       // NamedRoutes is server-only data and would bloat the client bundle.
-      if (id.includes(".named-routes.gen.") && !isRscEnv && this.environment?.name === "client") {
+      if (
+        id.includes(".named-routes.gen.") &&
+        !isRscEnv &&
+        this.environment?.name === "client"
+      ) {
         this.warn(
           `\n` +
-          `!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n` +
-          `!!                                                              !!\n` +
-          `!!  WARNING: NamedRoutes imported in a CLIENT component!        !!\n` +
-          `!!                                                              !!\n` +
-          `!!  File: ${filePath.padEnd(53)}!!\n` +
-          `!!                                                              !!\n` +
-          `!!  NamedRoutes contains your entire route structure — every    !!\n` +
-          `!!  route name and URL pattern in your application. Shipping    !!\n` +
-          `!!  this to the browser exposes your full routing topology to   !!\n` +
-          `!!  the client, which is a security concern (internal/admin     !!\n` +
-          `!!  routes, API endpoints, hidden paths become visible).        !!\n` +
-          `!!                                                              !!\n` +
-          `!!  It also bloats the client bundle — this map contains all    !!\n` +
-          `!!  named routes in your application.                           !!\n` +
-          `!!                                                              !!\n` +
-          `!!  Fix: remove the import or move it to a server component.    !!\n` +
-          `!!                                                              !!\n` +
-          `!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n`
+            `!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n` +
+            `!!                                                              !!\n` +
+            `!!  WARNING: NamedRoutes imported in a CLIENT component!        !!\n` +
+            `!!                                                              !!\n` +
+            `!!  File: ${filePath.padEnd(53)}!!\n` +
+            `!!                                                              !!\n` +
+            `!!  NamedRoutes contains your entire route structure — every    !!\n` +
+            `!!  route name and URL pattern in your application. Shipping    !!\n` +
+            `!!  this to the browser exposes your full routing topology to   !!\n` +
+            `!!  the client, which is a security concern (internal/admin     !!\n` +
+            `!!  routes, API endpoints, hidden paths become visible).        !!\n` +
+            `!!                                                              !!\n` +
+            `!!  It also bloats the client bundle — this map contains all    !!\n` +
+            `!!  named routes in your application.                           !!\n` +
+            `!!                                                              !!\n` +
+            `!!  Fix: remove the import or move it to a server component.    !!\n` +
+            `!!                                                              !!\n` +
+            `!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n`,
         );
       }
 
@@ -973,8 +973,7 @@ ${lazyImports.join(",\n")}
         has.locationState && code.includes("createLocationState");
       const hasPrerenderHandlerCode =
         has.prerenderHandler && code.includes("Prerender");
-      const hasStaticHandlerCode =
-        has.staticHandler && code.includes("Static");
+      const hasStaticHandlerCode = has.staticHandler && code.includes("Static");
       if (
         !hasLoaderCode &&
         !hasHandleCode &&
@@ -1021,7 +1020,10 @@ ${lazyImports.join(",\n")}
         return _cachedAst;
       };
 
-      const getBindings = (currentCode: string, fnNames: string[]): CreateExportBinding[] => {
+      const getBindings = (
+        currentCode: string,
+        fnNames: string[],
+      ): CreateExportBinding[] => {
         const key = fnNames.join("\0");
         let result = _bindingsCache.get(key);
         if (!result) {
@@ -1038,8 +1040,8 @@ ${lazyImports.join(",\n")}
           cfg.fnName === "createLoader"
             ? hasLoaderCode
             : cfg.fnName === "createHandle"
-            ? hasHandleCode
-            : hasLocationStateCode;
+              ? hasHandleCode
+              : hasLocationStateCode;
         if (!hasCode) continue;
 
         const fnNames = getFnNames(cfg.fnName);
@@ -1071,7 +1073,12 @@ ${lazyImports.join(",\n")}
       if (hasLoaderCode && !isRscEnv) {
         const fnNames = getFnNames("createLoader");
         const bindings = getBindings(code, fnNames);
-        const stubResult = generateClientLoaderStubs(bindings, code, filePath, isBuild);
+        const stubResult = generateClientLoaderStubs(
+          bindings,
+          code,
+          filePath,
+          isBuild,
+        );
         if (stubResult) return stubResult;
       }
 
@@ -1080,12 +1087,21 @@ ${lazyImports.join(",\n")}
         const fnNames = getFnNames(PRERENDER_CONFIG.fnName);
         const bindings = getBindings(code, fnNames);
         const wholeFile = generateWholeFileStubs(
-          PRERENDER_CONFIG, bindings, code, filePath, isBuild,
+          PRERENDER_CONFIG,
+          bindings,
+          code,
+          filePath,
+          isBuild,
         );
         if (wholeFile) return wholeFile;
 
         const exprStubs = generateExprStubs(
-          PRERENDER_CONFIG, bindings, code, filePath, id, isBuild,
+          PRERENDER_CONFIG,
+          bindings,
+          code,
+          filePath,
+          id,
+          isBuild,
         );
         if (exprStubs) return exprStubs;
       }
@@ -1093,8 +1109,9 @@ ${lazyImports.join(",\n")}
       // --- PrerenderHandler: RSC build module tracking ---
       if (hasPrerenderHandlerCode && isRscEnv && isBuild) {
         const fnNames = getFnNames(PRERENDER_CONFIG.fnName);
-        const exportNames = getBindings(code, fnNames)
-          .map((b) => b.exportNames[0]);
+        const exportNames = getBindings(code, fnNames).map(
+          (b) => b.exportNames[0],
+        );
         if (exportNames.length > 0) {
           prerenderHandlerModules.set(id, exportNames);
         }
@@ -1116,10 +1133,12 @@ ${lazyImports.join(",\n")}
       const handlerConfigs = [
         hasStaticHandlerCode && STATIC_CONFIG,
         hasPrerenderHandlerCode && PRERENDER_CONFIG,
-      ].filter((c): c is HandlerTransformConfig => !!c).map((cfg) => {
-        const fnNames = getFnNames(cfg.fnName);
-        return { cfg, fnNames };
-      });
+      ]
+        .filter((c): c is HandlerTransformConfig => !!c)
+        .map((cfg) => {
+          const fnNames = getFnNames(cfg.fnName);
+          return { cfg, fnNames };
+        });
 
       for (const { cfg, fnNames } of handlerConfigs) {
         const totalCalls = countCreateCallsForNames(code, fnNames);
@@ -1128,9 +1147,14 @@ ${lazyImports.join(",\n")}
         if (totalCalls > supportedBindings) {
           const iterS = new MagicString(code);
           const result = transformInlineHandlers(
-            cfg.fnName, VIRTUAL_HANDLER_PREFIX,
-            iterS, code, filePath,
-            virtualHandlers, id, parseAst,
+            cfg.fnName,
+            VIRTUAL_HANDLER_PREFIX,
+            iterS,
+            code,
+            filePath,
+            virtualHandlers,
+            id,
+            parseAst,
           );
           if (result) {
             changed = true;
@@ -1145,12 +1169,21 @@ ${lazyImports.join(",\n")}
         const fnNames = getFnNames(STATIC_CONFIG.fnName);
         const bindings = getBindings(code, fnNames);
         const wholeFile = generateWholeFileStubs(
-          STATIC_CONFIG, bindings, code, filePath, isBuild,
+          STATIC_CONFIG,
+          bindings,
+          code,
+          filePath,
+          isBuild,
         );
         if (wholeFile) return wholeFile;
 
         const exprStubs = generateExprStubs(
-          STATIC_CONFIG, bindings, code, filePath, id, isBuild,
+          STATIC_CONFIG,
+          bindings,
+          code,
+          filePath,
+          id,
+          isBuild,
         );
         if (exprStubs) return exprStubs;
       }
@@ -1158,8 +1191,9 @@ ${lazyImports.join(",\n")}
       // --- StaticHandler: RSC build module tracking ---
       if (hasStaticHandlerCode && isRscEnv && isBuild) {
         const fnNames = getFnNames(STATIC_CONFIG.fnName);
-        const exportNames = getBindings(code, fnNames)
-          .map((b) => b.exportNames[0]);
+        const exportNames = getBindings(code, fnNames).map(
+          (b) => b.exportNames[0],
+        );
         if (exportNames.length > 0) {
           staticHandlerModules.set(id, exportNames);
         }
@@ -1173,26 +1207,52 @@ ${lazyImports.join(",\n")}
 
       if (hasLoaderCode) {
         const fnNames = getFnNames("createLoader");
-        changed = transformLoaders(getBindings(code, fnNames), s, filePath, isBuild) || changed;
+        changed =
+          transformLoaders(getBindings(code, fnNames), s, filePath, isBuild) ||
+          changed;
       }
       if (hasHandleCode) {
         const fnNames = getFnNames("createHandle");
-        changed = transformHandles(getBindings(code, fnNames), s, code, filePath, isBuild) || changed;
+        changed =
+          transformHandles(
+            getBindings(code, fnNames),
+            s,
+            code,
+            filePath,
+            isBuild,
+          ) || changed;
       }
       if (hasLocationStateCode) {
         const fnNames = getFnNames("createLocationState");
         changed =
-          transformLocationState(getBindings(code, fnNames), s, filePath, isBuild) || changed;
+          transformLocationState(
+            getBindings(code, fnNames),
+            s,
+            filePath,
+            isBuild,
+          ) || changed;
       }
       if (hasPrerenderHandlerCode && isRscEnv) {
         const fnNames = getFnNames(PRERENDER_CONFIG.fnName);
         changed =
-          transformHandlerIds(PRERENDER_CONFIG, getBindings(code, fnNames), s, filePath, isBuild) || changed;
+          transformHandlerIds(
+            PRERENDER_CONFIG,
+            getBindings(code, fnNames),
+            s,
+            filePath,
+            isBuild,
+          ) || changed;
       }
       if (hasStaticHandlerCode && isRscEnv) {
         const fnNames = getFnNames(STATIC_CONFIG.fnName);
         changed =
-          transformHandlerIds(STATIC_CONFIG, getBindings(code, fnNames), s, filePath, isBuild) || changed;
+          transformHandlerIds(
+            STATIC_CONFIG,
+            getBindings(code, fnNames),
+            s,
+            filePath,
+            isBuild,
+          ) || changed;
       }
 
       if (!changed) return;

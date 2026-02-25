@@ -5,7 +5,11 @@
  */
 
 import type { ReactNode } from "react";
-import type { EntryData, InterceptEntry, InterceptSelectorContext } from "../server/context";
+import type {
+  EntryData,
+  InterceptEntry,
+  InterceptSelectorContext,
+} from "../server/context";
 import type {
   ErrorInfo,
   ErrorPhase,
@@ -52,10 +56,10 @@ export type ActionContext = {
  */
 export interface RouterDependencies<TEnv> {
   findNearestErrorBoundary: (
-    entry: EntryData | null
+    entry: EntryData | null,
   ) => ReactNode | ErrorBoundaryHandler | null;
   findNearestNotFoundBoundary: (
-    entry: EntryData | null
+    entry: EntryData | null,
   ) => ReactNode | NotFoundBoundaryHandler | null;
 }
 
@@ -86,11 +90,7 @@ export interface SegmentResolutionDeps<TEnv = any> {
   findNearestNotFoundBoundary: (
     entry: EntryData | null,
   ) => ReactNode | NotFoundBoundaryHandler | null;
-  callOnError: (
-    error: unknown,
-    phase: ErrorPhase,
-    context: any,
-  ) => void;
+  callOnError: (error: unknown, phase: ErrorPhase, context: any) => void;
 }
 
 /**

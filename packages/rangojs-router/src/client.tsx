@@ -365,13 +365,13 @@ export function useLoaderData(): Record<string, any> {
  */
 // Overload 1: With function only (not fetchable)
 export function createLoader<T>(
-  fn: LoaderFn<T, Record<string, string | undefined>, any>
+  fn: LoaderFn<T, Record<string, string | undefined>, any>,
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
 
 // Overload 2: With function and fetchable flag
 export function createLoader<T>(
   fn: LoaderFn<T, Record<string, string | undefined>, any>,
-  fetchable: true
+  fetchable: true,
 ): LoaderDefinition<Awaited<T>, Record<string, string | undefined>>;
 
 // Implementation - function is ignored at runtime on client
@@ -379,7 +379,7 @@ export function createLoader<T>(
 export function createLoader(
   _fn: LoaderFn<any, Record<string, string | undefined>, any>,
   _fetchable?: true,
-  __injectedId?: string
+  __injectedId?: string,
 ): LoaderDefinition<any, Record<string, string | undefined>> {
   return {
     __brand: "loader",
@@ -573,7 +573,12 @@ export {
 } from "./browser/react/location-state.js";
 
 // Type-safe href for client-side path validation
-export { href, type ValidPaths, type PatternToPath, type PathResponse } from "./href-client.js";
+export {
+  href,
+  type ValidPaths,
+  type PatternToPath,
+  type PathResponse,
+} from "./href-client.js";
 
 // Response envelope types for consuming JSON response routes
 export type { ResponseEnvelope, ResponseError } from "./urls.js";
@@ -592,8 +597,10 @@ export type { ResponseEnvelope, ResponseError } from "./urls.js";
  * ```
  */
 export function isResponseError<T>(
-  result: import("./urls.js").ResponseEnvelope<T>
-): result is import("./urls.js").ResponseEnvelope<T> & { error: import("./urls.js").ResponseError } {
+  result: import("./urls.js").ResponseEnvelope<T>,
+): result is import("./urls.js").ResponseEnvelope<T> & {
+  error: import("./urls.js").ResponseError;
+} {
   return result.error !== undefined;
 }
 

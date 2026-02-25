@@ -527,7 +527,7 @@ describe("createEventController", () => {
       ctrl.setHandleData(
         { title: { "seg.2": ["Page 2"] } },
         ["seg.1", "seg.2"],
-        true
+        true,
       );
 
       const state = ctrl.getHandleState();
@@ -537,16 +537,16 @@ describe("createEventController", () => {
 
     it("partial update removes data for segments not in matched list", () => {
       const ctrl = createController();
-      ctrl.setHandleData(
-        { title: { "seg.1": ["A"], "seg.2": ["B"] } },
-        ["seg.1", "seg.2"]
-      );
+      ctrl.setHandleData({ title: { "seg.1": ["A"], "seg.2": ["B"] } }, [
+        "seg.1",
+        "seg.2",
+      ]);
 
       // Navigate: seg.2 replaced with seg.3
       ctrl.setHandleData(
         { title: { "seg.3": ["C"] } },
         ["seg.1", "seg.3"],
-        true
+        true,
       );
 
       const state = ctrl.getHandleState();
@@ -557,10 +557,13 @@ describe("createEventController", () => {
 
     it("filterSegmentOrder excludes parallels (.@) and loaders (D digit)", () => {
       const ctrl = createController();
-      ctrl.setHandleData(
-        {},
-        ["root", "layout.@sidebar", "page", "D1.loader", "content"]
-      );
+      ctrl.setHandleData({}, [
+        "root",
+        "layout.@sidebar",
+        "page",
+        "D1.loader",
+        "content",
+      ]);
 
       const state = ctrl.getHandleState();
       expect(state.segmentOrder).toEqual(["root", "page", "content"]);
@@ -619,7 +622,10 @@ describe("createEventController", () => {
 
       expect(listener).toHaveBeenCalledTimes(1);
       expect(listener).toHaveBeenCalledWith(
-        expect.objectContaining({ state: "loading", actionId: "hash#addToCart" })
+        expect.objectContaining({
+          state: "loading",
+          actionId: "hash#addToCart",
+        }),
       );
     });
 

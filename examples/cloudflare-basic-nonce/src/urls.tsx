@@ -10,12 +10,19 @@ import { getCounter } from "./actions/counter.js";
 function HomePage(ctx: HandlerContext) {
   const meta = ctx.use(Meta);
   meta({ title: "Home - RSC Router CSP Example" });
-  meta({ name: "description", content: "RSC Router example with Content Security Policy (CSP) nonce support" });
+  meta({
+    name: "description",
+    content:
+      "RSC Router example with Content Security Policy (CSP) nonce support",
+  });
 
   return (
     <main data-testid="home-page">
       <h1 data-testid="home-title">Welcome to RSC Router with CSP</h1>
-      <p>This example demonstrates Content Security Policy (CSP) with nonce support.</p>
+      <p>
+        This example demonstrates Content Security Policy (CSP) with nonce
+        support.
+      </p>
       <p style={{ marginTop: "1rem" }}>Features:</p>
       <ul style={{ marginTop: "1rem", marginLeft: "1.5rem" }}>
         <li>Auto-generated cryptographic nonce per request</li>
@@ -36,7 +43,10 @@ function HomePage(ctx: HandlerContext) {
 function AboutPage(ctx: HandlerContext) {
   const meta = ctx.use(Meta);
   meta({ title: "About - RSC Router CSP Example" });
-  meta({ name: "description", content: "Learn about CSP nonce implementation in RSC Router" });
+  meta({
+    name: "description",
+    content: "Learn about CSP nonce implementation in RSC Router",
+  });
   meta({ property: "og:title", content: "About RSC Router CSP" });
 
   return (
@@ -46,22 +56,28 @@ function AboutPage(ctx: HandlerContext) {
         Content Security Policy (CSP) is a security standard that helps prevent
         cross-site scripting (XSS) and other code injection attacks.
       </p>
-      <h2 style={{ marginTop: "1.5rem", marginBottom: "0.5rem" }}>How It Works</h2>
+      <h2 style={{ marginTop: "1.5rem", marginBottom: "0.5rem" }}>
+        How It Works
+      </h2>
       <ul style={{ marginLeft: "1.5rem" }}>
         <li>A unique nonce is generated for each request</li>
         <li>The nonce is added to all inline script tags</li>
         <li>The CSP header includes the nonce in script-src directive</li>
         <li>Only scripts with matching nonce can execute</li>
       </ul>
-      <h2 style={{ marginTop: "1.5rem", marginBottom: "0.5rem" }}>Implementation</h2>
-      <pre style={{
-        background: "#f5f5f5",
-        padding: "1rem",
-        borderRadius: "4px",
-        overflow: "auto",
-        fontSize: "0.85rem"
-      }}>
-{`const router = createRouter({
+      <h2 style={{ marginTop: "1.5rem", marginBottom: "0.5rem" }}>
+        Implementation
+      </h2>
+      <pre
+        style={{
+          background: "#f5f5f5",
+          padding: "1rem",
+          borderRadius: "4px",
+          overflow: "auto",
+          fontSize: "0.85rem",
+        }}
+      >
+        {`const router = createRouter({
   document: Document,
   nonce: () => true, // Auto-generate
 });
@@ -79,7 +95,10 @@ router.fetch(request, env);`}
 async function CounterPage(ctx: HandlerContext) {
   const meta = ctx.use(Meta);
   meta({ title: "Counter - RSC Router CSP Example" });
-  meta({ name: "description", content: "Interactive counter with CSP-protected Server Actions" });
+  meta({
+    name: "description",
+    content: "Interactive counter with CSP-protected Server Actions",
+  });
 
   const initialCount = await getCounter();
 

@@ -118,10 +118,10 @@ import { debugLog } from "../logging.js";
  */
 export function withInterceptResolution<TEnv>(
   ctx: MatchContext<TEnv>,
-  state: MatchPipelineState
+  state: MatchPipelineState,
 ): GeneratorMiddleware<ResolvedSegment> {
   return async function* (
-    source: AsyncGenerator<ResolvedSegment>
+    source: AsyncGenerator<ResolvedSegment>,
   ): AsyncGenerator<ResolvedSegment> {
     const pipelineStart = performance.now();
     const ms = ctx.metricsStore;
@@ -136,7 +136,11 @@ export function withInterceptResolution<TEnv>(
     // Skip intercept resolution for full match (document requests don't have intercepts)
     if (ctx.isFullMatch) {
       if (ms) {
-        ms.metrics.push({ label: "pipeline:intercept", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
+        ms.metrics.push({
+          label: "pipeline:intercept",
+          duration: performance.now() - pipelineStart,
+          startTime: pipelineStart - ms.requestStart,
+        });
       }
       return;
     }
@@ -157,7 +161,11 @@ export function withInterceptResolution<TEnv>(
         await handleCacheHitIntercept(ctx, state, segments);
       }
       if (ms) {
-        ms.metrics.push({ label: "pipeline:intercept", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
+        ms.metrics.push({
+          label: "pipeline:intercept",
+          duration: performance.now() - pipelineStart,
+          startTime: pipelineStart - ms.requestStart,
+        });
       }
       return;
     }
@@ -189,8 +197,8 @@ export function withInterceptResolution<TEnv>(
           routeKey: ctx.routeKey,
           actionContext: ctx.actionContext,
           stale: ctx.stale,
-        }
-      )
+        },
+      ),
     );
 
     // Update state
@@ -206,7 +214,11 @@ export function withInterceptResolution<TEnv>(
     }
 
     if (ms) {
-      ms.metrics.push({ label: "pipeline:intercept", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
+      ms.metrics.push({
+        label: "pipeline:intercept",
+        duration: performance.now() - pipelineStart,
+        startTime: pipelineStart - ms.requestStart,
+      });
     }
   };
 }
@@ -219,7 +231,7 @@ export function withInterceptResolution<TEnv>(
 async function handleCacheHitIntercept<TEnv>(
   ctx: MatchContext<TEnv>,
   state: MatchPipelineState,
-  segments: ResolvedSegment[]
+  segments: ResolvedSegment[],
 ): Promise<void> {
   if (!ctx.interceptResult) return;
 
@@ -229,7 +241,7 @@ async function handleCacheHitIntercept<TEnv>(
 
   // Find intercept segments from cached segments (namespace starts with "intercept:")
   const interceptSegments = segments.filter((s) =>
-    s.namespace?.startsWith("intercept:")
+    s.namespace?.startsWith("intercept:"),
   );
   state.interceptSegments = interceptSegments;
 
@@ -253,28 +265,37 @@ async function handleCacheHitIntercept<TEnv>(
           routeKey: ctx.routeKey,
           actionContext: ctx.actionContext,
           stale: ctx.stale,
-        }
-      )
+        },
+      ),
     );
 
     // Update intercept segment's loaderDataPromise with fresh data
     if (freshLoaderResult) {
       const interceptMainSegment = interceptSegments.find(
-        (s) => s.type === "parallel" && s.slot
+        (s) => s.type === "parallel" && s.slot,
       );
       if (interceptMainSegment) {
-        interceptMainSegment.loaderDataPromise = freshLoaderResult.loaderDataPromise;
+        interceptMainSegment.loaderDataPromise =
+          freshLoaderResult.loaderDataPromise;
         interceptMainSegment.loaderIds = freshLoaderResult.loaderIds;
-        debugLog("matchPartial.intercept", "cache hit with fresh intercept loaders", {
-          routeName: ctx.localRouteName,
-          slotName,
-        });
+        debugLog(
+          "matchPartial.intercept",
+          "cache hit with fresh intercept loaders",
+          {
+            routeName: ctx.localRouteName,
+            slotName,
+          },
+        );
       }
     } else {
-      debugLog("matchPartial.intercept", "cache hit without intercept loader revalidation", {
-        routeName: ctx.localRouteName,
-        slotName,
-      });
+      debugLog(
+        "matchPartial.intercept",
+        "cache hit without intercept loader revalidation",
+        {
+          routeName: ctx.localRouteName,
+          slotName,
+        },
+      );
     }
   }
 

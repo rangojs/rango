@@ -66,7 +66,14 @@ describe("match-context", () => {
       state.cacheHit = true;
       state.shouldRevalidate = true;
       state.cachedSegments = [
-        { id: "cached1", namespace: "cached1", type: "route", index: 0, component: "CachedComponent", params: {} },
+        {
+          id: "cached1",
+          namespace: "cached1",
+          type: "route",
+          index: 0,
+          component: "CachedComponent",
+          params: {},
+        },
       ];
       state.cachedMatchedIds = ["cached1"];
 
@@ -98,8 +105,22 @@ describe("match-context", () => {
       state.slots["@modal"] = {
         active: true,
         segments: [
-          { id: "modal1", namespace: "modal1", type: "route", index: 0, component: "Modal1", params: {} },
-          { id: "modal2", namespace: "modal2", type: "route", index: 0, component: "Modal2", params: {} },
+          {
+            id: "modal1",
+            namespace: "modal1",
+            type: "route",
+            index: 0,
+            component: "Modal1",
+            params: {},
+          },
+          {
+            id: "modal2",
+            namespace: "modal2",
+            type: "route",
+            index: 0,
+            component: "Modal2",
+            params: {},
+          },
         ],
       };
 

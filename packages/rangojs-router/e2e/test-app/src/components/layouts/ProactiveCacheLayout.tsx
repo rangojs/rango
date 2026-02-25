@@ -11,13 +11,21 @@ export function ProactiveCacheLayout() {
         Layout rendered at: {new Date().toISOString()}
       </p>
       <nav data-testid="proactive-nav">
-        <Link to="/" data-testid="proactive-back-home">← Home</Link>
+        <Link to="/" data-testid="proactive-back-home">
+          ← Home
+        </Link>
         {" | "}
-        <Link to="/proactive-cache" data-testid="proactive-nav-index">Index</Link>
+        <Link to="/proactive-cache" data-testid="proactive-nav-index">
+          Index
+        </Link>
         {" | "}
-        <Link to="/proactive-cache/item-a" data-testid="proactive-nav-a">Item A</Link>
+        <Link to="/proactive-cache/item-a" data-testid="proactive-nav-a">
+          Item A
+        </Link>
         {" | "}
-        <Link to="/proactive-cache/item-b" data-testid="proactive-nav-b">Item B</Link>
+        <Link to="/proactive-cache/item-b" data-testid="proactive-nav-b">
+          Item B
+        </Link>
       </nav>
       <Outlet />
     </div>

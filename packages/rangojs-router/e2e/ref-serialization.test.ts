@@ -96,8 +96,7 @@ test.describe("ref-serialization", () => {
       // Wait for count to change
       await expect
         .poll(
-          async () =>
-            await testId(page, "ref-test-loader-count").textContent(),
+          async () => await testId(page, "ref-test-loader-count").textContent(),
           { timeout: STREAM_TIMEOUT },
         )
         .not.toBe(initialCount);
@@ -156,9 +155,7 @@ test.describe("ref-serialization", () => {
   });
 
   test.describe("both-refs-as-props", () => {
-    test("SSR: should render both loader and handle data", async ({
-      page,
-    }) => {
+    test("SSR: should render both loader and handle data", async ({ page }) => {
       using _ = expectNoPageError(page);
 
       await page.goto(f.url("/ref-test/both-props"));
@@ -184,9 +181,7 @@ test.describe("ref-serialization", () => {
       await expect(lastItem).toContainText("Both Props");
     });
 
-    test("SPA: should render both refs after navigation", async ({
-      page,
-    }) => {
+    test("SPA: should render both refs after navigation", async ({ page }) => {
       using _ = expectNoPageError(page);
 
       // Start from index

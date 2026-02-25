@@ -14,22 +14,22 @@ import type {
   HostPattern,
   RouteEntry,
   HostMatchResult,
-} from './types.js';
+} from "./types.js";
 import {
   matchPattern,
   parseRequest,
   normalizePattern,
   validatePattern,
-} from './pattern-matcher.js';
+} from "./pattern-matcher.js";
 import {
   handleCookieOverride,
   createCookieErrorResponse,
-} from './cookie-handler.js';
+} from "./cookie-handler.js";
 import {
   HostRouterError,
   NoRouteMatchError,
   InvalidHandlerError,
-} from './errors.js';
+} from "./errors.js";
 
 /**
  * Registry entry for a host router instance.
@@ -46,7 +46,8 @@ export interface HostRouterRegistryEntry {
  * Populated by createHostRouter() so the build-time discovery plugin can find
  * host routers and resolve their lazy handlers to trigger sub-app createRouter() calls.
  */
-export const HostRouterRegistry: Map<string, HostRouterRegistryEntry> = new Map();
+export const HostRouterRegistry: Map<string, HostRouterRegistryEntry> =
+  new Map();
 
 let hostRouterAutoId = 0;
 
@@ -71,7 +72,7 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
    */
   function createRouteBuilder(
     patterns: string[],
-    isFallback = false
+    isFallback = false,
   ): HostRouteBuilder {
     const middleware: Middleware[] = [];
 
@@ -96,8 +97,8 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
         }
 
         log(
-          `Registered ${isFallback ? 'fallback' : 'route'}:`,
-          patterns.join(', ')
+          `Registered ${isFallback ? "fallback" : "route"}:`,
+          patterns.join(", "),
         );
 
         return router;
@@ -110,9 +111,9 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
    */
   function findMatchingRoute(
     hostname: string,
-    pathname: string
+    pathname: string,
   ): RouteEntry | null {
-    const parts = hostname.split('.');
+    const parts = hostname.split(".");
 
     for (const route of routes) {
       for (const pattern of route.patterns) {
@@ -133,7 +134,7 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
     middleware: Middleware[],
     request: Request,
     context: any,
-    finalHandler: () => Promise<Response>
+    finalHandler: () => Promise<Response>,
   ): Promise<Response> {
     let index = 0;
 
@@ -159,28 +160,28 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
   async function executeHandler(
     handler: Handler | LazyHandler,
     request: Request,
-    context: any
+    context: any,
   ): Promise<Response> {
     // Check if it's a lazy handler (function that returns promise)
-    if (typeof handler === 'function') {
+    if (typeof handler === "function") {
       const result = handler(request, context);
 
       // If it returns a promise with default export
-      if (result && typeof result === 'object' && 'then' in result) {
+      if (result && typeof result === "object" && "then" in result) {
         const module = await result;
         if (
-          typeof module === 'object' &&
+          typeof module === "object" &&
           module !== null &&
-          'default' in module
+          "default" in module
         ) {
           const defaultExport = (module as { default: Handler | HostRouter })
             .default;
 
           // If default export is a router with match method
           if (
-            typeof defaultExport === 'object' &&
+            typeof defaultExport === "object" &&
             defaultExport !== null &&
-            'match' in defaultExport
+            "match" in defaultExport
           ) {
             return (defaultExport as HostRouter).match(request, context);
           }
@@ -228,8 +229,8 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
     },
 
     test(hostname: string): HostMatchResult | null {
-      const parts = hostname.split('.');
-      const pathname = '/';
+      const parts = hostname.split(".");
+      const pathname = "/";
 
       for (const route of routes) {
         for (const pattern of route.patterns) {
@@ -255,7 +256,7 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
         effectiveHostname = handleCookieOverride(
           request,
           hostOverride,
-          context
+          context,
         );
       } catch (error) {
         // If it's a HostRouterError from cookie override
@@ -271,7 +272,7 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
             ];
 
             return executeMiddleware(allMiddleware, request, context, () =>
-              executeHandler(fallbackRoute!.handler, request, context)
+              executeHandler(fallbackRoute!.handler, request, context),
             );
           }
 
@@ -279,7 +280,7 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
           if (hostOverride) {
             return createCookieErrorResponse(
               hostOverride.cookieName,
-              error.message
+              error.message,
             );
           }
         }
@@ -312,7 +313,7 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
 
       // Execute middleware chain and handler
       return executeMiddleware(allMiddleware, request, context, () =>
-        executeHandler(matchedRoute.handler, request, context)
+        executeHandler(matchedRoute.handler, request, context),
       );
     },
   };
@@ -322,8 +323,12 @@ export function createHostRouter(options: HostRouterOptions = {}): HostRouter {
   // added via .host().map() after this point.
   const registryId = `host-router-${hostRouterAutoId++}`;
   HostRouterRegistry.set(registryId, {
-    get routes() { return routes; },
-    get fallback() { return fallbackRoute; },
+    get routes() {
+      return routes;
+    },
+    get fallback() {
+      return fallbackRoute;
+    },
   });
 
   return router;

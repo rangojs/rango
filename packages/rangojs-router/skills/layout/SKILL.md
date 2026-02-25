@@ -45,9 +45,7 @@ layout(<ShopLayout />, () => [
 ### Component Function
 
 ```typescript
-layout(ShopLayout, () => [
-  path("/shop", ShopIndex, { name: "shop" }),
-])
+layout(ShopLayout, () => [path("/shop", ShopIndex, { name: "shop" })]);
 ```
 
 ### Handler with Context

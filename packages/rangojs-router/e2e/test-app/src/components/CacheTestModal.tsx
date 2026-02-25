@@ -15,7 +15,10 @@ interface CacheTestModalProps {
  * the data via ctx.use(). This allows testing that the segment is cached
  * while the loader data is fresh (loaders excluded from segment cache).
  */
-export function CacheTestModal({ data, testId = "cache-test-modal" }: CacheTestModalProps) {
+export function CacheTestModal({
+  data,
+  testId = "cache-test-modal",
+}: CacheTestModalProps) {
   return (
     <div
       data-testid={testId}
@@ -55,7 +58,10 @@ interface UseLoaderModalProps {
  * Client component that uses useLoader to get data from context.
  * Requires loader() to be registered on the route so data is in context.
  */
-export function UseLoaderModal({ loader, testId = "useloader-modal" }: UseLoaderModalProps) {
+export function UseLoaderModal({
+  loader,
+  testId = "useloader-modal",
+}: UseLoaderModalProps) {
   const { data } = useLoader<InterceptCacheTestLoaderData>(loader);
 
   return (

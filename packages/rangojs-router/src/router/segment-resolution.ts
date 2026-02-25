@@ -8,19 +8,14 @@
  */
 
 import type { ReactNode } from "react";
-import {
-  DataNotFoundError,
-  invariant,
-} from "../errors";
+import { DataNotFoundError, invariant } from "../errors";
 import {
   createErrorInfo,
   createErrorSegment,
   createNotFoundInfo,
   createNotFoundSegment,
 } from "./error-handling.js";
-import {
-  revalidate,
-} from "./loader-resolution.js";
+import { revalidate } from "./loader-resolution.js";
 import { evaluateRevalidation } from "./revalidation.js";
 import { getRequestContext } from "../server/request-context.js";
 import { DefaultErrorFallback } from "../default-error-boundary.js";
@@ -71,7 +66,10 @@ async function ensureStaticDeps(): Promise<void> {
  * @param segmentId - The runtime segment shortCode. Handle data is replayed under
  *   this key so that useHandle's segmentOrder matching works correctly.
  */
-async function tryStaticLookup(handlerId: string, segmentId: string): Promise<ReactNode | undefined> {
+async function tryStaticLookup(
+  handlerId: string,
+  segmentId: string,
+): Promise<ReactNode | undefined> {
   // Fast path: already checked and no manifest available (dev mode or no Static handlers).
   // Avoids await which can disrupt AsyncLocalStorage in workerd/Cloudflare runtime.
   if (_staticStore === null) return undefined;
@@ -218,7 +216,13 @@ export async function resolveSegment<TEnv>(
 
     for (const parallelEntry of entry.parallel) {
       const parallelSegments = await resolveParallelEntry(
-        parallelEntry, params, context, false, entry.shortCode, deps, options,
+        parallelEntry,
+        params,
+        context,
+        false,
+        entry.shortCode,
+        deps,
+        options,
       );
       segments.push(...parallelSegments);
     }
@@ -230,7 +234,10 @@ export async function resolveSegment<TEnv>(
     const entryAny = entry as any;
     let component: ReactNode | undefined;
     if (entryAny.isStaticPrerender && entryAny.staticHandlerId) {
-      component = await tryStaticLookup(entryAny.staticHandlerId, entry.shortCode);
+      component = await tryStaticLookup(
+        entryAny.staticHandlerId,
+        entry.shortCode,
+      );
     }
     if (component === undefined) {
       component =
@@ -255,7 +262,13 @@ export async function resolveSegment<TEnv>(
 
     for (const orphan of entry.layout) {
       const orphanSegments = await resolveOrphanLayout(
-        orphan, params, context, loaderPromises, false, deps, options,
+        orphan,
+        params,
+        context,
+        loaderPromises,
+        false,
+        deps,
+        options,
       );
       segments.push(...orphanSegments);
     }
@@ -277,12 +290,16 @@ export async function resolveSegment<TEnv>(
 
     // Static handler interception: use pre-rendered component from build-time store
     if (entry.isStaticPrerender && (entry as any).staticHandlerId) {
-      component = await tryStaticLookup((entry as any).staticHandlerId, entry.shortCode);
+      component = await tryStaticLookup(
+        (entry as any).staticHandlerId,
+        entry.shortCode,
+      );
     }
     if (component === undefined) {
       if (entry.loading) {
         const result = handleHandlerResult(entry.handler(context));
-        component = result instanceof Promise ? deps.trackHandler(result) : result;
+        component =
+          result instanceof Promise ? deps.trackHandler(result) : result;
       } else {
         component = handleHandlerResult(await entry.handler(context));
       }
@@ -290,14 +307,26 @@ export async function resolveSegment<TEnv>(
 
     for (const orphan of entry.layout) {
       const orphanSegments = await resolveOrphanLayout(
-        orphan, params, context, loaderPromises, true, deps, options,
+        orphan,
+        params,
+        context,
+        loaderPromises,
+        true,
+        deps,
+        options,
       );
       segments.push(...orphanSegments);
     }
 
     for (const parallelEntry of entry.parallel) {
       const parallelSegments = await resolveParallelEntry(
-        parallelEntry, params, context, true, entry.shortCode, deps, options,
+        parallelEntry,
+        params,
+        context,
+        true,
+        entry.shortCode,
+        deps,
+        options,
       );
       segments.push(...parallelSegments);
     }
@@ -340,13 +369,24 @@ export async function resolveOrphanLayout<TEnv>(
 
   const segments: ResolvedSegment[] = [];
   if (!options?.skipLoaders) {
-    const loaderSegments = await resolveLoaders(orphan, context, belongsToRoute, deps);
+    const loaderSegments = await resolveLoaders(
+      orphan,
+      context,
+      belongsToRoute,
+      deps,
+    );
     segments.push(...loaderSegments);
   }
 
   for (const parallelEntry of orphan.parallel) {
     const parallelSegments = await resolveParallelEntry(
-      parallelEntry, params, context, belongsToRoute, orphan.shortCode, deps, options,
+      parallelEntry,
+      params,
+      context,
+      belongsToRoute,
+      orphan.shortCode,
+      deps,
+      options,
     );
     segments.push(...parallelSegments);
   }
@@ -355,7 +395,10 @@ export async function resolveOrphanLayout<TEnv>(
   const orphanAny = orphan as any;
   let component: ReactNode | undefined;
   if (orphanAny.isStaticPrerender && orphanAny.staticHandlerId) {
-    component = await tryStaticLookup(orphanAny.staticHandlerId, orphan.shortCode);
+    component = await tryStaticLookup(
+      orphanAny.staticHandlerId,
+      orphan.shortCode,
+    );
   }
   if (component === undefined) {
     component =
@@ -412,7 +455,10 @@ export async function resolveParallelEntry<TEnv>(
     // Static handler interception for individual parallel slots
     const slotStaticId = (parallelEntry as any).staticHandlerIds?.[slot];
     if (slotStaticId) {
-      component = await tryStaticLookup(slotStaticId, `${parentShortCode}.${slot}`);
+      component = await tryStaticLookup(
+        slotStaticId,
+        `${parentShortCode}.${slot}`,
+      );
     }
 
     if (component === undefined) {
@@ -448,7 +494,11 @@ export async function resolveParallelEntry<TEnv>(
 
   if (!parallelEntry.loading && !options?.skipLoaders) {
     const loaderSegments = await resolveLoaders(
-      parallelEntry, context, belongsToRoute, deps, parentShortCode,
+      parallelEntry,
+      context,
+      belongsToRoute,
+      deps,
+      parentShortCode,
     );
     segments.push(...loaderSegments);
   }
@@ -485,13 +535,18 @@ export async function resolveWithErrorHandling<TEnv>(
 
       if (notFoundFallback) {
         const notFoundInfo = createNotFoundInfo(
-          error, entry.shortCode, entry.type, context.pathname,
+          error,
+          entry.shortCode,
+          entry.type,
+          context.pathname,
         );
 
         // Safe request access: during build-time prerendering, context.request
         // is a throwing getter. Use undefined when unavailable.
         let safeRequest: Request | undefined;
-        try { safeRequest = context.request; } catch {}
+        try {
+          safeRequest = context.request;
+        } catch {}
 
         deps.callOnError(error, "handler", {
           request: safeRequest as Request,
@@ -521,7 +576,10 @@ export async function resolveWithErrorHandling<TEnv>(
         }
 
         const notFoundSegment = createNotFoundSegment(
-          notFoundInfo, notFoundFallback, entry, params,
+          notFoundInfo,
+          notFoundFallback,
+          entry,
+          params,
         );
         return [notFoundSegment];
       }
@@ -535,7 +593,9 @@ export async function resolveWithErrorHandling<TEnv>(
     // Safe request access: during build-time prerendering, context.request
     // is a throwing getter. Use undefined when unavailable.
     let safeReq: Request | undefined;
-    try { safeReq = context.request; } catch {}
+    try {
+      safeReq = context.request;
+    } catch {}
 
     deps.callOnError(error, "handler", {
       request: safeReq as Request,
@@ -566,7 +626,12 @@ export async function resolveWithErrorHandling<TEnv>(
       }
     }
 
-    const errorSegment = createErrorSegment(errorInfo, effectiveFallback, entry, params);
+    const errorSegment = createErrorSegment(
+      errorInfo,
+      effectiveFallback,
+      entry,
+      params,
+    );
     return [errorSegment];
   }
 }
@@ -588,8 +653,22 @@ export async function resolveAllSegments<TEnv>(
 
   for (const entry of entries) {
     const resolvedSegments = await resolveWithErrorHandling(
-      entry, routeKey, params, context, loaderPromises,
-      () => resolveSegment(entry, routeKey, params, context, loaderPromises, deps, false, options),
+      entry,
+      routeKey,
+      params,
+      context,
+      loaderPromises,
+      () =>
+        resolveSegment(
+          entry,
+          routeKey,
+          params,
+          context,
+          loaderPromises,
+          deps,
+          false,
+          options,
+        ),
       deps,
     );
     // Deduplicate by segment ID. include() scopes can produce entries that
@@ -751,8 +830,17 @@ export async function resolveLoadersOnlyWithRevalidation<TEnv>(
   for (const entry of entries) {
     const belongsToRoute = entry.type === "route";
     const { segments, matchedIds } = await resolveLoadersWithRevalidation(
-      entry, context, belongsToRoute, clientSegmentIds,
-      prevParams, request, prevUrl, nextUrl, routeKey, deps, actionContext,
+      entry,
+      context,
+      belongsToRoute,
+      clientSegmentIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      routeKey,
+      deps,
+      actionContext,
     );
     allLoaderSegments.push(...segments);
     allMatchedIds.push(...matchedIds);
@@ -859,7 +947,8 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
 
       const shouldResolve = await (async () => {
         if (isFullRefetch) return true;
-        if (!clientSegmentIds.has(parallelId)) return belongsToRoute || isNewParent;
+        if (!clientSegmentIds.has(parallelId))
+          return belongsToRoute || isNewParent;
 
         const dummySegment: ResolvedSegment = {
           id: parallelId,
@@ -902,19 +991,17 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
       }
       if (component === undefined) {
         const hasLoadingFallback =
-          parallelEntry.loading !== undefined && parallelEntry.loading !== false;
+          parallelEntry.loading !== undefined &&
+          parallelEntry.loading !== false;
         if (!shouldResolve) {
           component = null;
         } else if (hasLoadingFallback) {
-          component =
-            (typeof handler === "function"
-              ? handler(context)
-              : handler) as ReactNode;
+          component = (
+            typeof handler === "function" ? handler(context) : handler
+          ) as ReactNode;
         } else {
           component =
-            typeof handler === "function"
-              ? await handler(context)
-              : handler;
+            typeof handler === "function" ? await handler(context) : handler;
         }
       }
 
@@ -924,8 +1011,7 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
         type: "parallel",
         index: 0,
         component,
-        loading:
-          parallelEntry.loading === false ? null : parallelEntry.loading,
+        loading: parallelEntry.loading === false ? null : parallelEntry.loading,
         transition: parallelEntry.transition,
         params,
         slot,
@@ -939,9 +1025,19 @@ export async function resolveParallelSegmentsWithRevalidation<TEnv>(
 
     if (!parallelEntry.loading) {
       const loaderResult = await resolveLoadersWithRevalidation(
-        parallelEntry, context, belongsToRoute, clientSegmentIds,
-        prevParams, request, prevUrl, nextUrl, routeKey, deps,
-        actionContext, entry.shortCode, stale,
+        parallelEntry,
+        context,
+        belongsToRoute,
+        clientSegmentIds,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey,
+        deps,
+        actionContext,
+        entry.shortCode,
+        stale,
       );
       segments.push(...loaderResult.segments);
       matchedIds.push(...loaderResult.matchedIds);
@@ -1026,7 +1122,10 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       // Static handler interception: use pre-rendered component from build-time store
       const entryAny = entry as any;
       if (entryAny.isStaticPrerender && entryAny.staticHandlerId) {
-        const staticComponent = await tryStaticLookup(entryAny.staticHandlerId, entry.shortCode);
+        const staticComponent = await tryStaticLookup(
+          entryAny.staticHandlerId,
+          entry.shortCode,
+        );
         if (staticComponent !== undefined) return staticComponent;
       }
       if (entry.type === "layout" || entry.type === "cache") {
@@ -1041,7 +1140,8 @@ export async function resolveEntryHandlerWithRevalidation<TEnv>(
       if (!actionContext) {
         const result = handleHandlerResult(routeEntry.handler(context));
         return {
-          content: result instanceof Promise ? deps.trackHandler(result) : result,
+          content:
+            result instanceof Promise ? deps.trackHandler(result) : result,
         };
       }
       debugLog("segment.action", "resolving action route with awaited value", {
@@ -1105,9 +1205,19 @@ export async function resolveSegmentWithRevalidation<TEnv>(
   const belongsToRoute = entry.type === "route";
 
   const loaderResult = await resolveLoadersWithRevalidation(
-    entry, context, belongsToRoute, clientSegmentIds,
-    prevParams, request, prevUrl, nextUrl, routeKey, deps,
-    actionContext, undefined, stale,
+    entry,
+    context,
+    belongsToRoute,
+    clientSegmentIds,
+    prevParams,
+    request,
+    prevUrl,
+    nextUrl,
+    routeKey,
+    deps,
+    actionContext,
+    undefined,
+    stale,
   );
   segments.push(...loaderResult.segments);
   matchedIds.push(...loaderResult.matchedIds);
@@ -1115,19 +1225,42 @@ export async function resolveSegmentWithRevalidation<TEnv>(
   // For route entries, execute the handler BEFORE orphan layouts and parallels
   // so ctx.set() data is available to them via ctx.get(). The handler's
   // segment is pushed after children to preserve tree composition order.
-  let routeHandlerResult: { segment: ResolvedSegment; matchedId: string } | undefined;
+  let routeHandlerResult:
+    | { segment: ResolvedSegment; matchedId: string }
+    | undefined;
   if (entry.type === "route") {
     routeHandlerResult = await resolveEntryHandlerWithRevalidation(
-      entry, params, context, belongsToRoute, clientSegmentIds,
-      prevParams, request, prevUrl, nextUrl, routeKey, deps,
-      actionContext, stale,
+      entry,
+      params,
+      context,
+      belongsToRoute,
+      clientSegmentIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      routeKey,
+      deps,
+      actionContext,
+      stale,
     );
 
     for (const orphan of entry.layout) {
       const orphanResult = await resolveOrphanLayoutWithRevalidation(
-        orphan, params, context, clientSegmentIds,
-        prevParams, request, prevUrl, nextUrl, routeKey,
-        loaderPromises, true, deps, actionContext, stale,
+        orphan,
+        params,
+        context,
+        clientSegmentIds,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey,
+        loaderPromises,
+        true,
+        deps,
+        actionContext,
+        stale,
       );
       segments.push(...orphanResult.segments);
       matchedIds.push(...orphanResult.matchedIds);
@@ -1135,9 +1268,19 @@ export async function resolveSegmentWithRevalidation<TEnv>(
   }
 
   const parallelResult = await resolveParallelSegmentsWithRevalidation(
-    entry, params, context, belongsToRoute, clientSegmentIds,
-    prevParams, request, prevUrl, nextUrl, routeKey, deps,
-    actionContext, stale,
+    entry,
+    params,
+    context,
+    belongsToRoute,
+    clientSegmentIds,
+    prevParams,
+    request,
+    prevUrl,
+    nextUrl,
+    routeKey,
+    deps,
+    actionContext,
+    stale,
   );
   segments.push(...parallelResult.segments);
   matchedIds.push(...parallelResult.matchedIds);
@@ -1150,9 +1293,19 @@ export async function resolveSegmentWithRevalidation<TEnv>(
     matchedIds.push(routeHandlerResult.matchedId);
   } else {
     const handlerResult = await resolveEntryHandlerWithRevalidation(
-      entry, params, context, belongsToRoute, clientSegmentIds,
-      prevParams, request, prevUrl, nextUrl, routeKey, deps,
-      actionContext, stale,
+      entry,
+      params,
+      context,
+      belongsToRoute,
+      clientSegmentIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      routeKey,
+      deps,
+      actionContext,
+      stale,
     );
     segments.push(handlerResult.segment);
     matchedIds.push(handlerResult.matchedId);
@@ -1161,9 +1314,20 @@ export async function resolveSegmentWithRevalidation<TEnv>(
   if (entry.type === "layout" || entry.type === "cache") {
     for (const orphan of entry.layout) {
       const orphanResult = await resolveOrphanLayoutWithRevalidation(
-        orphan, params, context, clientSegmentIds,
-        prevParams, request, prevUrl, nextUrl, routeKey,
-        loaderPromises, false, deps, actionContext, stale,
+        orphan,
+        params,
+        context,
+        clientSegmentIds,
+        prevParams,
+        request,
+        prevUrl,
+        nextUrl,
+        routeKey,
+        loaderPromises,
+        false,
+        deps,
+        actionContext,
+        stale,
       );
       segments.push(...orphanResult.segments);
       matchedIds.push(...orphanResult.matchedIds);
@@ -1201,9 +1365,19 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
   const matchedIds: string[] = [];
 
   const loaderResult = await resolveLoadersWithRevalidation(
-    orphan, context, belongsToRoute, clientSegmentIds,
-    prevParams, request, prevUrl, nextUrl, routeKey, deps,
-    actionContext, undefined, stale,
+    orphan,
+    context,
+    belongsToRoute,
+    clientSegmentIds,
+    prevParams,
+    request,
+    prevUrl,
+    nextUrl,
+    routeKey,
+    deps,
+    actionContext,
+    undefined,
+    stale,
   );
   segments.push(...loaderResult.segments);
   matchedIds.push(...loaderResult.matchedIds);
@@ -1215,9 +1389,19 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
     );
 
     const loaderResult = await resolveLoadersWithRevalidation(
-      parallelEntry, context, belongsToRoute, clientSegmentIds,
-      prevParams, request, prevUrl, nextUrl, routeKey, deps,
-      actionContext, undefined, stale,
+      parallelEntry,
+      context,
+      belongsToRoute,
+      clientSegmentIds,
+      prevParams,
+      request,
+      prevUrl,
+      nextUrl,
+      routeKey,
+      deps,
+      actionContext,
+      undefined,
+      stale,
     );
     segments.push(...loaderResult.segments);
     matchedIds.push(...loaderResult.matchedIds);
@@ -1279,19 +1463,17 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       }
       if (component === undefined) {
         const hasLoadingFallback =
-          parallelEntry.loading !== undefined && parallelEntry.loading !== false;
+          parallelEntry.loading !== undefined &&
+          parallelEntry.loading !== false;
         if (!shouldResolve) {
           component = null;
         } else if (hasLoadingFallback) {
-          component =
-            (typeof handler === "function"
-              ? handler(context)
-              : handler) as ReactNode;
+          component = (
+            typeof handler === "function" ? handler(context) : handler
+          ) as ReactNode;
         } else {
           component =
-            typeof handler === "function"
-              ? await handler(context)
-              : handler;
+            typeof handler === "function" ? await handler(context) : handler;
         }
       }
 
@@ -1301,8 +1483,7 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
         type: "parallel",
         index: 0,
         component,
-        loading:
-          parallelEntry.loading === false ? null : parallelEntry.loading,
+        loading: parallelEntry.loading === false ? null : parallelEntry.loading,
         transition: parallelEntry.transition,
         params,
         slot,
@@ -1354,7 +1535,10 @@ export async function resolveOrphanLayoutWithRevalidation<TEnv>(
       // Static handler interception for orphan layouts
       const orphanAny = orphan as any;
       if (orphanAny.isStaticPrerender && orphanAny.staticHandlerId) {
-        const staticComponent = await tryStaticLookup(orphanAny.staticHandlerId, orphan.shortCode);
+        const staticComponent = await tryStaticLookup(
+          orphanAny.staticHandlerId,
+          orphan.shortCode,
+        );
         if (staticComponent !== undefined) return staticComponent;
       }
       return typeof orphan.handler === "function"
@@ -1411,7 +1595,10 @@ export async function resolveWithRevalidationErrorHandling<TEnv>(
 
       if (notFoundFallback) {
         const notFoundInfo = createNotFoundInfo(
-          error, entry.shortCode, entry.type, pathname,
+          error,
+          entry.shortCode,
+          entry.type,
+          pathname,
         );
 
         if (errorContext) {
@@ -1444,7 +1631,10 @@ export async function resolveWithRevalidationErrorHandling<TEnv>(
         }
 
         const notFoundSegment = createNotFoundSegment(
-          notFoundInfo, notFoundFallback, entry, params,
+          notFoundInfo,
+          notFoundFallback,
+          entry,
+          params,
         );
 
         return {
@@ -1490,7 +1680,12 @@ export async function resolveWithRevalidationErrorHandling<TEnv>(
       }
     }
 
-    const errorSegment = createErrorSegment(errorInfo, effectiveFallback, entry, params);
+    const errorSegment = createErrorSegment(
+      errorInfo,
+      effectiveFallback,
+      entry,
+      params,
+    );
 
     return {
       segments: [errorSegment],
@@ -1526,10 +1721,14 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
 
   for (const entry of entries) {
     if (entry.type === "route" && interceptResult) {
-      debugLog("matchPartial.intercept", "skipping route handler during intercept", {
-        localRouteName,
-        segmentId: entry.shortCode,
-      });
+      debugLog(
+        "matchPartial.intercept",
+        "skipping route handler during intercept",
+        {
+          localRouteName,
+          segmentId: entry.shortCode,
+        },
+      );
       if (!seenMatchIds.has(entry.shortCode)) {
         seenMatchIds.add(entry.shortCode);
         matchedIds.push(entry.shortCode);
@@ -1543,9 +1742,19 @@ export async function resolveAllSegmentsWithRevalidation<TEnv>(
       params,
       () =>
         resolveSegmentWithRevalidation(
-          nonParallelEntry, routeKey, params, context, clientSegmentSet,
-          prevParams, request, prevUrl, nextUrl, loaderPromises, deps,
-          actionContext, false,
+          nonParallelEntry,
+          routeKey,
+          params,
+          context,
+          clientSegmentSet,
+          prevParams,
+          request,
+          prevUrl,
+          nextUrl,
+          loaderPromises,
+          deps,
+          actionContext,
+          false,
         ),
       deps,
       pathname,

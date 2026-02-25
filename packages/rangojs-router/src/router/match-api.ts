@@ -6,9 +6,7 @@
  */
 
 import { CacheScope, createCacheScope } from "../cache/cache-scope.js";
-import {
-  RouteNotFoundError,
-} from "../errors";
+import { RouteNotFoundError } from "../errors";
 import {
   createErrorInfo,
   createErrorSegment,
@@ -35,7 +33,10 @@ import type {
   ResolvedSegment,
 } from "../types";
 import type { ReactNode } from "react";
-import type { MatchContext, ActionContext as MatchActionContext } from "./match-context.js";
+import type {
+  MatchContext,
+  ActionContext as MatchActionContext,
+} from "./match-context.js";
 import type { MatchApiDeps, ActionContext } from "./types.js";
 import type { InterceptEntry } from "../server/context";
 import type { RouteMatchResult } from "./pattern-matching.js";
@@ -308,8 +309,7 @@ export async function createMatchContextForPartial<TEnv>(
   }
 
   const isSameRouteNavigation = !!(
-    interceptContextMatch &&
-    interceptContextMatch.routeKey === matched.routeKey
+    interceptContextMatch && interceptContextMatch.routeKey === matched.routeKey
   );
 
   if (interceptSourceUrl) {

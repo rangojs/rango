@@ -23,13 +23,13 @@
  */
 
 // Core router
-export { createHostRouter } from './router.js';
+export { createHostRouter } from "./router.js";
 
 // Host router registry for build-time discovery
-export { HostRouterRegistry, type HostRouterRegistryEntry } from './router.js';
+export { HostRouterRegistry, type HostRouterRegistryEntry } from "./router.js";
 
 // Utilities
-export { defineHosts } from './utils.js';
+export { defineHosts } from "./utils.js";
 
 // Errors
 export {
@@ -40,7 +40,7 @@ export {
   HostValidationError,
   NoRouteMatchError,
   InvalidHandlerError,
-} from './errors.js';
+} from "./errors.js";
 
 // Types
 export type {
@@ -53,4 +53,4 @@ export type {
   HostPattern,
   HostMatchResult,
   HostOverrideConfig,
-} from './types.js';
+} from "./types.js";

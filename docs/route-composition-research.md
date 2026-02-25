@@ -32,12 +32,15 @@ export default map<typeof shopRoutes>(
 ## Current Limitations
 
 ### 1. Tight Coupling of Routes + Handlers
+
 The `map()` is bound to a specific `typeof routes`. Can't easily:
+
 - Share handler configurations across different route trees
 - Create reusable "route fragments"
 - Compose routes from multiple sources
 
 ### 2. No Reusable Patterns
+
 Common combinations must be repeated:
 
 ```typescript
@@ -51,9 +54,11 @@ route("someRoute", Handler, () => [
 ```
 
 ### 3. Hard to Create Feature Modules
+
 A "comments" feature that works on any route requires manual wiring each time.
 
 ### 4. Monolithic Handler Files
+
 All handlers for a route tree live in one `map()`. Can't split by feature.
 
 ---
@@ -110,12 +115,12 @@ const commentsFeature = defineFeature(({ parallel, loader }) => ({
 // Attach to any route
 route("blog.post", BlogPost, () => [
   loader(PostLoader),
-  use(commentsFeature),  // Adds @comments parallel + loader
+  use(commentsFeature), // Adds @comments parallel + loader
 ]);
 
 route("product", ProductPage, () => [
   loader(ProductLoader),
-  use(commentsFeature),  // Same feature, different context
+  use(commentsFeature), // Same feature, different context
 ]);
 ```
 
@@ -140,15 +145,14 @@ const routes = route({
 });
 
 // Handler fragment
-const crudHandlers = <T extends string>(
-  resource: T,
-  handlers: { List, Create, Edit, Detail }
-) => (helpers) => [
-  helpers.route(`${resource}`, handlers.List),
-  helpers.route(`${resource}.create`, handlers.Create),
-  helpers.route(`${resource}.edit`, handlers.Edit),
-  helpers.route(`${resource}.detail`, handlers.Detail),
-];
+const crudHandlers =
+  <T extends string>(resource: T, handlers: { List; Create; Edit; Detail }) =>
+  (helpers) => [
+    helpers.route(`${resource}`, handlers.List),
+    helpers.route(`${resource}.create`, handlers.Create),
+    helpers.route(`${resource}.edit`, handlers.Edit),
+    helpers.route(`${resource}.detail`, handlers.Detail),
+  ];
 ```
 
 ### Use Case 4: Plugin System
@@ -172,7 +176,7 @@ export const authPlugin = definePlugin({
 
 // Main app
 const router = createRouter()
-  .use(authPlugin)  // Adds routes + handlers
+  .use(authPlugin) // Adds routes + handlers
   .routes(appRoutes)
   .map(appHandlers);
 ```
@@ -185,11 +189,9 @@ const router = createRouter()
 const router = createRouter()
   .routes(baseRoutes)
   .map(baseHandlers)
-  .when(config.enableBeta, (r) =>
-    r.routes(betaRoutes).map(betaHandlers)
-  )
+  .when(config.enableBeta, (r) => r.routes(betaRoutes).map(betaHandlers))
   .when(config.enableAdmin, (r) =>
-    r.routes("/admin", adminRoutes).map(adminHandlers)
+    r.routes("/admin", adminRoutes).map(adminHandlers),
   );
 ```
 
@@ -266,10 +268,13 @@ const withCache = (ttl: number) => (routeConfig) => ({
 const protectedCached = compose(withAuth, withCache(300));
 
 map<typeof routes>(({ route }) => [
-  route("products", protectedCached({
-    handler: ProductsPage,
-    loader: ProductsLoader,
-  })),
+  route(
+    "products",
+    protectedCached({
+      handler: ProductsPage,
+      loader: ProductsLoader,
+    }),
+  ),
 ]);
 ```
 
@@ -351,13 +356,13 @@ const router = createRouter()
 
 ## Comparison Matrix
 
-| Design | Reusable Patterns | Feature Modules | Type Safety | Migration Effort |
-|--------|-------------------|-----------------|-------------|------------------|
-| A: Composable Items | ✅ Good | ⚠️ Partial | ✅ Good | Low |
-| B: Route Decorators | ✅ Good | ⚠️ Partial | ⚠️ Complex | Medium |
-| C: Builder per Route | ✅ Excellent | ✅ Good | ✅ Good | Medium |
-| D: Declarative Object | ⚠️ Limited | ✅ Good | ✅ Excellent | High |
-| E: Nested Routers | ✅ Good | ✅ Excellent | ✅ Good | Medium |
+| Design                | Reusable Patterns | Feature Modules | Type Safety  | Migration Effort |
+| --------------------- | ----------------- | --------------- | ------------ | ---------------- |
+| A: Composable Items   | ✅ Good           | ⚠️ Partial      | ✅ Good      | Low              |
+| B: Route Decorators   | ✅ Good           | ⚠️ Partial      | ⚠️ Complex   | Medium           |
+| C: Builder per Route  | ✅ Excellent      | ✅ Good         | ✅ Good      | Medium           |
+| D: Declarative Object | ⚠️ Limited        | ✅ Good         | ✅ Excellent | High             |
+| E: Nested Routers     | ✅ Good           | ✅ Excellent    | ✅ Good      | Medium           |
 
 ---
 
@@ -442,14 +447,14 @@ Features can behave differently based on segment type:
 
 ```typescript
 const withAnalytics = defineUse((segment) => {
-  if (segment.type === 'layout') {
+  if (segment.type === "layout") {
     // For layouts: add page view tracking
     return {
       middleware: [pageViewMiddleware],
     };
   }
 
-  if (segment.type === 'route') {
+  if (segment.type === "route") {
     // For routes: add specific event tracking
     return {
       middleware: [routeEventMiddleware(segment.name)],
@@ -494,15 +499,18 @@ interface UseResult {
   parallel?: Record<`@${string}`, ReactNode | Handler>;
 
   // Intercepts for soft navigation
-  intercept?: Record<`@${string}`, {
-    route: string;
-    handler: ReactNode | Handler;
-    loaders?: LoaderDefinition[];
-  }>;
+  intercept?: Record<
+    `@${string}`,
+    {
+      route: string;
+      handler: ReactNode | Handler;
+      loaders?: LoaderDefinition[];
+    }
+  >;
 
   // Handler modifications
-  wrap?: (handler: ReactNode) => ReactNode;  // Wrap the handler
-  replace?: ReactNode;                        // Replace entirely (rare)
+  wrap?: (handler: ReactNode) => ReactNode; // Wrap the handler
+  replace?: ReactNode; // Replace entirely (rare)
 
   // Future: caching
   cache?: {
@@ -546,6 +554,7 @@ route("products", <ProductsPage />, () => [
 ```
 
 **Why this works:**
+
 - Grep `"ProductsPage"` → finds it immediately
 - The wrapping is explicit: you see `use(withErrorBoundary)`
 - No hidden HOC magic: `withFeatures(ProductsPage)` hides the wrapper name
@@ -572,6 +581,7 @@ route("checkout", <CheckoutPage />, () => [
 ```
 
 **When to use `replace`:**
+
 - A/B testing different implementations
 - Feature flag rollouts
 - Gradual migrations

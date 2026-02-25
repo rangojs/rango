@@ -41,10 +41,10 @@ test.describe.serial("route-types-hmr", () => {
   const blogUrlsPath = path.resolve("./e2e/test-app/src/urls/blog.tsx");
   const mainUrlsPath = path.resolve("./e2e/test-app/src/urls.tsx");
   const genFilePath = path.resolve(
-    "./e2e/test-app/src/router.named-routes.gen.ts"
+    "./e2e/test-app/src/router.named-routes.gen.ts",
   );
   const handlersPath = path.resolve(
-    "./e2e/test-app/src/urls/blog.handlers.tsx"
+    "./e2e/test-app/src/urls/blog.handlers.tsx",
   );
 
   let originalBlogContent: string;
@@ -54,9 +54,12 @@ test.describe.serial("route-types-hmr", () => {
     // Restore git-tracked versions in case a prior timed-out test left
     // modified files on disk (afterEach does not run when workers crash).
     try {
-      execSync(`git checkout -- "${blogUrlsPath}" "${mainUrlsPath}" "${handlersPath}"`, {
-        stdio: "ignore",
-      });
+      execSync(
+        `git checkout -- "${blogUrlsPath}" "${mainUrlsPath}" "${handlersPath}"`,
+        {
+          stdio: "ignore",
+        },
+      );
     } catch {}
     originalBlogContent = await fs.readFile(blogUrlsPath, "utf-8");
     originalMainUrlsContent = await fs.readFile(mainUrlsPath, "utf-8");
@@ -78,7 +81,7 @@ test.describe.serial("route-types-hmr", () => {
     const modified = originalBlogContent.replace(
       'path("/:postId", BlogPostHandler, { name: "post" }),',
       `path("/:postId", BlogPostHandler, { name: "post" }),
-    path("/:postId/comments", BlogPostHandler, { name: "comments" }),`
+    path("/:postId/comments", BlogPostHandler, { name: "comments" }),`,
     );
     expect(modified).not.toBe(originalBlogContent);
     await fs.writeFile(blogUrlsPath, modified);
@@ -96,7 +99,7 @@ test.describe.serial("route-types-hmr", () => {
     const modified = originalBlogContent.replace(
       'path("/:postId", BlogPostHandler, { name: "post" }),',
       `path("/:postId", BlogPostHandler, { name: "post" }),
-    path("/:postId/comments", BlogPostHandler, { name: "comments" }),`
+    path("/:postId/comments", BlogPostHandler, { name: "comments" }),`,
     );
     await fs.writeFile(blogUrlsPath, modified);
 
@@ -145,7 +148,7 @@ test.describe.serial("route-types-hmr", () => {
     // Rename "post" -> "article"
     const modified = originalBlogContent.replace(
       '{ name: "post" }',
-      '{ name: "article" }'
+      '{ name: "article" }',
     );
     expect(modified).not.toBe(originalBlogContent);
     await fs.writeFile(blogUrlsPath, modified);
@@ -165,7 +168,7 @@ test.describe.serial("route-types-hmr", () => {
     // Add a search schema to the post route
     const modified = originalBlogContent.replace(
       '{ name: "post" }',
-      '{ name: "post", search: { tag: "string", draft: "boolean?" } }'
+      '{ name: "post", search: { tag: "string", draft: "boolean?" } }',
     );
     expect(modified).not.toBe(originalBlogContent);
     await fs.writeFile(blogUrlsPath, modified);
@@ -183,7 +186,7 @@ test.describe.serial("route-types-hmr", () => {
     // First add a search schema
     const withSchema = originalBlogContent.replace(
       '{ name: "post" }',
-      '{ name: "post", search: { tag: "string", draft: "boolean?" } }'
+      '{ name: "post", search: { tag: "string", draft: "boolean?" } }',
     );
     await fs.writeFile(blogUrlsPath, withSchema);
 
@@ -213,7 +216,7 @@ test.describe.serial("route-types-hmr", () => {
     // Comment out the blog include
     const modified = originalMainUrlsContent.replace(
       'include("/blog", blogPatterns, { name: "blog" }),',
-      '// include("/blog", blogPatterns, { name: "blog" }),'
+      '// include("/blog", blogPatterns, { name: "blog" }),',
     );
     expect(modified).not.toBe(originalMainUrlsContent);
     await fs.writeFile(mainUrlsPath, modified);
@@ -229,7 +232,7 @@ test.describe.serial("route-types-hmr", () => {
     // First remove the blog include
     const removed = originalMainUrlsContent.replace(
       'include("/blog", blogPatterns, { name: "blog" }),',
-      '// include("/blog", blogPatterns, { name: "blog" }),'
+      '// include("/blog", blogPatterns, { name: "blog" }),',
     );
     await fs.writeFile(mainUrlsPath, removed);
 
@@ -252,7 +255,9 @@ test.describe.serial("route-types-hmr", () => {
   // Verify that the runtime manifest used by ctx.reverse() stays in sync
   // with the gen file after HMR route changes.
 
-  async function queryReverse(names: string[]): Promise<Record<string, string | null>> {
+  async function queryReverse(
+    names: string[],
+  ): Promise<Record<string, string | null>> {
     const params = names.map((n) => `name=${encodeURIComponent(n)}`).join("&");
     const res = await fetch(f.url(`/__debug/reverse-test?${params}`));
     const envelope = await res.json();
@@ -268,7 +273,7 @@ test.describe.serial("route-types-hmr", () => {
     const modified = originalBlogContent.replace(
       'path("/:postId", BlogPostHandler, { name: "post" }),',
       `path("/:postId", BlogPostHandler, { name: "post" }),
-    path("/:postId/comments", BlogPostHandler, { name: "comments" }),`
+    path("/:postId/comments", BlogPostHandler, { name: "comments" }),`,
     );
     await fs.writeFile(blogUrlsPath, modified);
 
@@ -290,7 +295,7 @@ test.describe.serial("route-types-hmr", () => {
     const modified = originalBlogContent.replace(
       'path("/:postId", BlogPostHandler, { name: "post" }),',
       `path("/:postId", BlogPostHandler, { name: "post" }),
-    path("/:postId/comments", BlogPostHandler, { name: "comments" }),`
+    path("/:postId/comments", BlogPostHandler, { name: "comments" }),`,
     );
     await fs.writeFile(blogUrlsPath, modified);
 

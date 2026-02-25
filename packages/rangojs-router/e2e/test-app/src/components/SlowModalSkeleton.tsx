@@ -18,7 +18,12 @@ export function SlowModalSkeleton() {
         ) : (
           <div
             data-testid="slow-modal-skeleton-name"
-            style={{ width: "200px", height: "24px", background: "#e0e0e0", marginBottom: "8px" }}
+            style={{
+              width: "200px",
+              height: "24px",
+              background: "#e0e0e0",
+              marginBottom: "8px",
+            }}
           />
         )}
         {productPrice !== undefined ? (
@@ -26,7 +31,12 @@ export function SlowModalSkeleton() {
         ) : (
           <div
             data-testid="slow-modal-skeleton-price"
-            style={{ width: "100px", height: "20px", background: "#e0e0e0", marginBottom: "8px" }}
+            style={{
+              width: "100px",
+              height: "20px",
+              background: "#e0e0e0",
+              marginBottom: "8px",
+            }}
           />
         )}
         <div

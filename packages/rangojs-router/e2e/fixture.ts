@@ -37,8 +37,8 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
       const timeout = setTimeout(() => {
         reject(
           new Error(
-            `Timed out waiting for server to start after ${timeoutMs}ms. Stdout: ${stdout}`
-          )
+            `Timed out waiting for server to start after ${timeoutMs}ms. Stdout: ${stdout}`,
+          ),
         );
       }, timeoutMs);
 
@@ -55,7 +55,7 @@ function runCli(options: { command: string; label?: string } & SpawnOptions) {
         clearTimeout(timeout);
         if (code !== 0) {
           reject(
-            new Error(`Server exited with code ${code}. Stdout: ${stdout}`)
+            new Error(`Server exited with code ${code}. Stdout: ${stdout}`),
           );
         }
       });
@@ -110,8 +110,7 @@ export function useFixture(options: {
 
   test.beforeAll(async ({}, testInfo) => {
     if (options.mode === "dev") {
-      const sharedURL =
-        !options.isolatedServer && testInfo.project.use.baseURL;
+      const sharedURL = !options.isolatedServer && testInfo.project.use.baseURL;
       if (sharedURL) {
         baseURL = sharedURL;
       } else {
@@ -131,8 +130,7 @@ export function useFixture(options: {
       }
     }
     if (options.mode === "build") {
-      const hasBuildDep =
-        testInfo.project.dependencies.includes("build");
+      const hasBuildDep = testInfo.project.dependencies.includes("build");
       if (!process.env.TEST_SKIP_BUILD && !hasBuildDep) {
         const buildProc = runCli({
           command: options.buildCommand ?? `pnpm build`,

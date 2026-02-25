@@ -41,8 +41,8 @@ export type {
   RouteDefinitionOptions,
   TrailingSlashMode,
   // Handler types
-  Handler,            // Supports params object, path pattern, or route name
-  ScopedRouteMap,     // Scoped view of GeneratedRouteMap for Handler<"localName", ScopedRouteMap<"prefix">>
+  Handler, // Supports params object, path pattern, or route name
+  ScopedRouteMap, // Scoped view of GeneratedRouteMap for Handler<"localName", ScopedRouteMap<"prefix">>
   HandlerContext,
   ExtractParams,
   GenericParams,
@@ -77,7 +77,13 @@ export type {
 } from "./types.js";
 
 // Search params schema types
-export type { SearchSchema, SearchSchemaValue, ResolveSearchSchema, RouteSearchParams, RouteParams } from "./search-params.js";
+export type {
+  SearchSchema,
+  SearchSchemaValue,
+  ResolveSearchSchema,
+  RouteSearchParams,
+  RouteParams,
+} from "./search-params.js";
 
 // Client-safe createLoader - only stores the $$id, function is not included
 // Use this when defining loaders that will be imported by client components
@@ -111,36 +117,27 @@ export type {
 } from "./urls.js";
 
 // Middleware context types
-export type {
-  MiddlewareContext,
-  CookieOptions,
-} from "./router/middleware.js";
+export type { MiddlewareContext, CookieOptions } from "./router/middleware.js";
 
 /**
  * Error-throwing stub for server-only `urls` function.
  */
 export function urls(): never {
-  throw new Error(
-    'urls() is server-only and requires RSC context.'
-  );
+  throw new Error("urls() is server-only and requires RSC context.");
 }
 
 /**
  * Error-throwing stub for server-only `createRouter` function.
  */
 export function createRouter(): never {
-  throw new Error(
-    'createRouter() is server-only and requires RSC context.'
-  );
+  throw new Error("createRouter() is server-only and requires RSC context.");
 }
 
 /**
  * Error-throwing stub for server-only `redirect` function.
  */
 export function redirect(): never {
-  throw new Error(
-    'redirect() is server-only and requires RSC context.'
-  );
+  throw new Error("redirect() is server-only and requires RSC context.");
 }
 
 // Handle API (universal - works on both server and client)
@@ -153,18 +150,14 @@ export { createVar, type ContextVar } from "./context-var.js";
  * Error-throwing stub for server-only `Prerender` function.
  */
 export function Prerender(): never {
-  throw new Error(
-    'Prerender() is server-only and requires RSC context.'
-  );
+  throw new Error("Prerender() is server-only and requires RSC context.");
 }
 
 /**
  * Error-throwing stub for server-only `Static` function.
  */
 export function Static(): never {
-  throw new Error(
-    'Static() is server-only and requires RSC context.'
-  );
+  throw new Error("Static() is server-only and requires RSC context.");
 }
 
 /**
@@ -172,7 +165,7 @@ export function Static(): never {
  */
 export function getRequestContext(): never {
   throw new Error(
-    'getRequestContext() is server-only and requires RSC context.'
+    "getRequestContext() is server-only and requires RSC context.",
   );
 }
 
@@ -181,7 +174,7 @@ export function getRequestContext(): never {
  */
 export function requireRequestContext(): never {
   throw new Error(
-    'requireRequestContext() is server-only and requires RSC context.'
+    "requireRequestContext() is server-only and requires RSC context.",
   );
 }
 
@@ -189,9 +182,7 @@ export function requireRequestContext(): never {
  * Error-throwing stub for server-only `createReverse` function.
  */
 export function createReverse(): never {
-  throw new Error(
-    'createReverse() is server-only and requires RSC context.'
-  );
+  throw new Error("createReverse() is server-only and requires RSC context.");
 }
 
 /**
@@ -199,7 +190,7 @@ export function createReverse(): never {
  */
 export function enableMatchDebug(): never {
   throw new Error(
-    'enableMatchDebug() is server-only and requires RSC context.'
+    "enableMatchDebug() is server-only and requires RSC context.",
   );
 }
 
@@ -208,7 +199,7 @@ export function enableMatchDebug(): never {
  */
 export function getMatchDebugStats(): never {
   throw new Error(
-    'getMatchDebugStats() is server-only and requires RSC context.'
+    "getMatchDebugStats() is server-only and requires RSC context.",
   );
 }
 
@@ -216,47 +207,47 @@ export function getMatchDebugStats(): never {
  * Error-throwing stub for server-only `track` function.
  */
 export function track(): never {
-  throw new Error(
-    'track() is server-only and requires RSC context.'
-  );
+  throw new Error("track() is server-only and requires RSC context.");
 }
 
 // Error-throwing stubs for server-only route helpers
 export function layout(): never {
-  throw new Error('layout() is server-only and requires RSC context.');
+  throw new Error("layout() is server-only and requires RSC context.");
 }
 export function cache(): never {
-  throw new Error('cache() is server-only and requires RSC context.');
+  throw new Error("cache() is server-only and requires RSC context.");
 }
 export function middleware(): never {
-  throw new Error('middleware() is server-only and requires RSC context.');
+  throw new Error("middleware() is server-only and requires RSC context.");
 }
 export function revalidate(): never {
-  throw new Error('revalidate() is server-only and requires RSC context.');
+  throw new Error("revalidate() is server-only and requires RSC context.");
 }
 export function loader(): never {
-  throw new Error('loader() is server-only and requires RSC context.');
+  throw new Error("loader() is server-only and requires RSC context.");
 }
 export function loading(): never {
-  throw new Error('loading() is server-only and requires RSC context.');
+  throw new Error("loading() is server-only and requires RSC context.");
 }
 export function parallel(): never {
-  throw new Error('parallel() is server-only and requires RSC context.');
+  throw new Error("parallel() is server-only and requires RSC context.");
 }
 export function intercept(): never {
-  throw new Error('intercept() is server-only and requires RSC context.');
+  throw new Error("intercept() is server-only and requires RSC context.");
 }
 export function when(): never {
-  throw new Error('when() is server-only and requires RSC context.');
+  throw new Error("when() is server-only and requires RSC context.");
 }
 export function errorBoundary(): never {
-  throw new Error('errorBoundary() is server-only and requires RSC context.');
+  throw new Error("errorBoundary() is server-only and requires RSC context.");
 }
 export function notFoundBoundary(): never {
-  throw new Error('notFoundBoundary() is server-only and requires RSC context.');
+  throw new Error(
+    "notFoundBoundary() is server-only and requires RSC context.",
+  );
 }
 export function transition(): never {
-  throw new Error('transition() is server-only and requires RSC context.');
+  throw new Error("transition() is server-only and requires RSC context.");
 }
 
 // Request context type (safe for client)
@@ -266,7 +257,16 @@ export type { RequestContext } from "./server/request-context.js";
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 
 // Reverse type utilities for type-safe URL generation (Django-style URL reversal)
-export type { ScopedReverseFunction, ReverseFunction, ExtractLocalRoutes, PrefixedRoutes, PrefixRoutePatterns, ParamsFor, SanitizePrefix, MergeRoutes } from "./reverse.js";
+export type {
+  ScopedReverseFunction,
+  ReverseFunction,
+  ExtractLocalRoutes,
+  PrefixedRoutes,
+  PrefixRoutePatterns,
+  ParamsFor,
+  SanitizePrefix,
+  MergeRoutes,
+} from "./reverse.js";
 // scopedReverse() helper for handlers to get locally-typed reverse
 export { scopedReverse } from "./reverse.js";
 

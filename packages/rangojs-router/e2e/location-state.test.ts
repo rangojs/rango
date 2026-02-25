@@ -36,7 +36,7 @@ test.describe("location-state", () => {
     // Should redirect back to /location-state with flash message
     await expect(page).toHaveURL(/\/location-state$/);
     await expect(page.locator('[data-testid="flash-text"]')).toHaveText(
-      "Item saved successfully!"
+      "Item saved successfully!",
     );
   });
 
@@ -49,7 +49,7 @@ test.describe("location-state", () => {
     // Trigger redirect to get flash message
     await page.locator('[data-testid="ls-redirect-link"]').click();
     await expect(page.locator('[data-testid="flash-text"]')).toHaveText(
-      "Item saved successfully!"
+      "Item saved successfully!",
     );
 
     // Navigate to another page
@@ -78,7 +78,7 @@ test.describe("location-state", () => {
     // Trigger redirect to get flash message
     await page.locator('[data-testid="ls-redirect-link"]').click();
     await expect(page.locator('[data-testid="flash-text"]')).toHaveText(
-      "Item saved successfully!"
+      "Item saved successfully!",
     );
 
     // Navigate away
@@ -91,26 +91,26 @@ test.describe("location-state", () => {
     await expect(page.locator('[data-testid="flash-empty"]')).toBeVisible();
   });
 
-  test("ctx.setLocationState sets state on normal render", async ({
-    page,
-  }) => {
+  test("ctx.setLocationState sets state on normal render", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/location-state"));
     await waitForHydration(page);
 
     // No server info initially
-    await expect(page.locator('[data-testid="server-info-empty"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="server-info-empty"]'),
+    ).toBeVisible();
 
     // Navigate to ctx-state page
     await page.locator('[data-testid="ls-ctx-state-link"]').click();
     await expect(
-      page.locator('[data-testid="ls-ctx-state-page"]')
+      page.locator('[data-testid="ls-ctx-state-page"]'),
     ).toBeVisible();
 
     // Server-set state should be available via useLocationState
     await expect(page.locator('[data-testid="server-info-data"]')).toHaveText(
-      "server-set-value"
+      "server-set-value",
     );
   });
 
@@ -124,9 +124,9 @@ test.describe("location-state", () => {
 
     // Navigate to ctx-state page to get state
     await page.locator('[data-testid="ls-ctx-state-link"]').click();
-    await expect(
-      page.locator('[data-testid="server-info-data"]')
-    ).toHaveText("server-set-value");
+    await expect(page.locator('[data-testid="server-info-data"]')).toHaveText(
+      "server-set-value",
+    );
 
     // Navigate to index
     await page.locator('[data-testid="ls-back-link"]').click();
@@ -135,10 +135,10 @@ test.describe("location-state", () => {
     // Go back to ctx-state page - state should persist in history
     await goBack(page);
     await expect(
-      page.locator('[data-testid="ls-ctx-state-page"]')
+      page.locator('[data-testid="ls-ctx-state-page"]'),
     ).toBeVisible();
     await expect(page.locator('[data-testid="server-info-data"]')).toHaveText(
-      "server-set-value"
+      "server-set-value",
     );
   });
 
@@ -157,13 +157,11 @@ test.describe("location-state", () => {
     await expect(page).toHaveURL(/\/location-state\/target$/);
     await expect(page.locator('[data-testid="ls-target"]')).toBeVisible();
     await expect(page.locator('[data-testid="flash-text"]')).toHaveText(
-      "Redirected by middleware!"
+      "Redirected by middleware!",
     );
   });
 
-  test("redirect with custom status (303) carries state", async ({
-    page,
-  }) => {
+  test("redirect with custom status (303) carries state", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/location-state"));
@@ -175,7 +173,7 @@ test.describe("location-state", () => {
     // Should end up at target with flash
     await expect(page).toHaveURL(/\/location-state\/target$/);
     await expect(page.locator('[data-testid="flash-text"]')).toHaveText(
-      "303 redirect flash"
+      "303 redirect flash",
     );
   });
 
@@ -196,7 +194,7 @@ test.describe("location-state", () => {
     // Should redirect back to /location-state with flash message
     await expect(page).toHaveURL(/\/location-state$/);
     await expect(page.locator('[data-testid="flash-text"]')).toHaveText(
-      "Action saved successfully!"
+      "Action saved successfully!",
     );
   });
 
@@ -228,7 +226,7 @@ test.describe("location-state", () => {
     // Trigger action redirect
     await page.locator('[data-testid="action-redirect-btn"]').click();
     await expect(page.locator('[data-testid="flash-text"]')).toHaveText(
-      "Action saved successfully!"
+      "Action saved successfully!",
     );
 
     // Navigate away
@@ -248,7 +246,7 @@ test.describe("location-state", () => {
     // Trigger redirect with flash state
     await page.locator('[data-testid="ls-redirect-link"]').click();
     await expect(page.locator('[data-testid="flash-text"]')).toHaveText(
-      "Item saved successfully!"
+      "Item saved successfully!",
     );
 
     // Check that history.state contains the flash key (before useLocationState clears it)
@@ -259,7 +257,7 @@ test.describe("location-state", () => {
     const state = await getHistoryState(page);
     // The flash key should have been cleared by useLocationState's useEffect
     const flashKeys = Object.keys(state || {}).filter((k) =>
-      k.startsWith("__rsc_ls_")
+      k.startsWith("__rsc_ls_"),
     );
     expect(flashKeys.length).toBe(0);
   });
@@ -293,7 +291,7 @@ test.describe("location-state (production)", () => {
     // Should redirect with flash
     await expect(page).toHaveURL(/\/location-state$/);
     await expect(page.locator('[data-testid="flash-text"]')).toHaveText(
-      "Item saved successfully!"
+      "Item saved successfully!",
     );
   });
 
@@ -306,12 +304,12 @@ test.describe("location-state (production)", () => {
     // Navigate to ctx-state page
     await page.locator('[data-testid="ls-ctx-state-link"]').click();
     await expect(
-      page.locator('[data-testid="ls-ctx-state-page"]')
+      page.locator('[data-testid="ls-ctx-state-page"]'),
     ).toBeVisible();
 
     // Server-set state should be available
     await expect(page.locator('[data-testid="server-info-data"]')).toHaveText(
-      "server-set-value"
+      "server-set-value",
     );
   });
 
@@ -331,7 +329,7 @@ test.describe("location-state (production)", () => {
     // Should redirect with flash
     await expect(page).toHaveURL(/\/location-state$/);
     await expect(page.locator('[data-testid="flash-text"]')).toHaveText(
-      "Action saved successfully!"
+      "Action saved successfully!",
     );
   });
 
@@ -344,7 +342,7 @@ test.describe("location-state (production)", () => {
     // Get flash via redirect
     await page.locator('[data-testid="ls-redirect-link"]').click();
     await expect(page.locator('[data-testid="flash-text"]')).toHaveText(
-      "Item saved successfully!"
+      "Item saved successfully!",
     );
 
     // Navigate away

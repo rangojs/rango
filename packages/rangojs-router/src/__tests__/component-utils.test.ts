@@ -36,11 +36,11 @@ describe("component-utils", () => {
   describe("assertClientComponent", () => {
     it("should throw for non-function values", () => {
       expect(() => assertClientComponent(null, "document")).toThrow(
-        'document must be a client component function with "use client" directive'
+        'document must be a client component function with "use client" directive',
       );
 
       expect(() => assertClientComponent({}, "document")).toThrow(
-        'document must be a client component function with "use client" directive'
+        'document must be a client component function with "use client" directive',
       );
     });
 
@@ -48,10 +48,10 @@ describe("component-utils", () => {
       const ServerComponent = () => null;
 
       expect(() => assertClientComponent(ServerComponent, "document")).toThrow(
-        'document must be a client component with "use client" directive'
+        'document must be a client component with "use client" directive',
       );
       expect(() => assertClientComponent(ServerComponent, "document")).toThrow(
-        "cannot be serialized in the RSC payload"
+        "cannot be serialized in the RSC payload",
       );
     });
 
@@ -61,7 +61,7 @@ describe("component-utils", () => {
       (ClientComponent as any).$$id = "src/document.tsx#default";
 
       expect(() =>
-        assertClientComponent(ClientComponent, "document")
+        assertClientComponent(ClientComponent, "document"),
       ).not.toThrow();
     });
 
@@ -69,7 +69,7 @@ describe("component-utils", () => {
       const ServerComponent = () => null;
 
       expect(() => assertClientComponent(ServerComponent, "myLayout")).toThrow(
-        "myLayout must be a client component"
+        "myLayout must be a client component",
       );
     });
   });

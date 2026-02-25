@@ -26,7 +26,7 @@ test.describe("progressive-enhancement", () => {
 
       // Verify we're on the right page (initial SSR works)
       await expect(page.locator('[data-testid="page-title"]')).toHaveText(
-        "Progressive Enhancement Test"
+        "Progressive Enhancement Test",
       );
 
       // Fill in the form
@@ -52,21 +52,25 @@ test.describe("progressive-enhancement", () => {
 
       // The page title should be visible (proves we got rendered HTML)
       await expect(page.locator('[data-testid="page-title"]')).toHaveText(
-        "Progressive Enhancement Test"
+        "Progressive Enhancement Test",
       );
 
       // The result should show the submitted name (proves action was executed)
       await expect(page.locator('[data-testid="pe-result-name"]')).toHaveText(
-        "no-js-test-name"
+        "no-js-test-name",
       );
     });
 
-    test("form should have React hidden fields for progressive enhancement", async ({ page }) => {
+    test("form should have React hidden fields for progressive enhancement", async ({
+      page,
+    }) => {
       // Navigate to the page
       await page.goto(f.url("/progressive-enhancement"));
 
       // Get the form HTML to check for hidden fields
-      const formHtml = await page.locator('[data-testid="pe-form"]').innerHTML();
+      const formHtml = await page
+        .locator('[data-testid="pe-form"]')
+        .innerHTML();
 
       // React should add hidden fields for progressive enhancement
       // These fields contain the action ID and other metadata
@@ -87,7 +91,7 @@ test.describe("progressive-enhancement", () => {
       // RSC streams typically start with these patterns
       // If we see them in the HTML, it means we got an RSC stream instead of HTML
       expect(content).not.toMatch(/^0:/); // RSC stream header
-      expect(content).not.toMatch(/^\d+:["\[{]/); // RSC stream data lines
+      expect(content).not.toMatch(/^\d+:["[{]/); // RSC stream data lines
 
       // Should have proper HTML doctype/structure
       expect(content).toMatch(/<!DOCTYPE html>/i);
@@ -95,35 +99,36 @@ test.describe("progressive-enhancement", () => {
     });
 
     // useActionState progressive enhancement - form state is passed to renderToReadableStream
-    test(
-      "useActionState form submission should work without JavaScript",
-      async ({ page }) => {
-        // Navigate to the form-action page which uses useActionState
-        await page.goto(f.url("/hook-tests/form-action"));
+    test("useActionState form submission should work without JavaScript", async ({
+      page,
+    }) => {
+      // Navigate to the form-action page which uses useActionState
+      await page.goto(f.url("/hook-tests/form-action"));
 
-        // The progressive enhancement form should render with no data initially
-        await expect(
-          page.locator('[data-testid="form-action-progressive-no-data"]')
-        ).toBeVisible();
+      // The progressive enhancement form should render with no data initially
+      await expect(
+        page.locator('[data-testid="form-action-progressive-no-data"]'),
+      ).toBeVisible();
 
-        // Submit the form - native POST submission
-        await page.locator('[data-testid="form-action-progressive-submit-btn"]').click();
+      // Submit the form - native POST submission
+      await page
+        .locator('[data-testid="form-action-progressive-submit-btn"]')
+        .click();
 
-        // Wait for navigation to complete
-        await page.waitForLoadState("domcontentloaded");
+      // Wait for navigation to complete
+      await page.waitForLoadState("domcontentloaded");
 
-        // After submission, the form state should be updated with the action result.
-        // This currently fails because useActionState needs the formState to be
-        // passed to renderToReadableStream, which requires deeper SSR integration.
-        await expect(
-          page.locator('[data-testid="form-action-progressive-data"]')
-        ).toBeVisible({ timeout: 5000 });
+      // After submission, the form state should be updated with the action result.
+      // This currently fails because useActionState needs the formState to be
+      // passed to renderToReadableStream, which requires deeper SSR integration.
+      await expect(
+        page.locator('[data-testid="form-action-progressive-data"]'),
+      ).toBeVisible({ timeout: 5000 });
 
-        await expect(
-          page.locator('[data-testid="form-action-progressive-message"]')
-        ).toContainText("Fetched from unregistered loader");
-      }
-    );
+      await expect(
+        page.locator('[data-testid="form-action-progressive-message"]'),
+      ).toContainText("Fetched from unregistered loader");
+    });
 
     test("form should preserve input values after submission error", async ({
       page,
@@ -158,7 +163,7 @@ test.describe("progressive-enhancement", () => {
 
       // Wait for the result to appear (with JS, this should be an SPA update)
       await expect(page.locator('[data-testid="pe-result-name"]')).toHaveText(
-        "js-enhanced-name"
+        "js-enhanced-name",
       );
 
       // Should still be on the same page (no full page reload with JS)

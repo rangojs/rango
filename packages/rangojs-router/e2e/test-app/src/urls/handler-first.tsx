@@ -22,7 +22,9 @@ function HandlerFirstLayout(ctx: any) {
   const handlerData = ctx.get("handlerData");
   return (
     <div data-testid="handler-first-layout">
-      <p data-testid="layout-get-value">Layout got: {handlerData ?? "undefined"}</p>
+      <p data-testid="layout-get-value">
+        Layout got: {handlerData ?? "undefined"}
+      </p>
       <Outlet />
       <ParallelOutlet name="@hf-sidebar" />
     </div>
@@ -34,7 +36,9 @@ function HandlerFirstSidebar(ctx: any) {
   const handlerData = ctx.get("handlerData");
   return (
     <aside data-testid="handler-first-sidebar">
-      <p data-testid="sidebar-get-value">Sidebar got: {handlerData ?? "undefined"}</p>
+      <p data-testid="sidebar-get-value">
+        Sidebar got: {handlerData ?? "undefined"}
+      </p>
     </aside>
   );
 }
@@ -65,20 +69,22 @@ function CacheScopeSidebar(ctx: any) {
   );
 }
 
-export const handlerFirstPatterns = urls(({ path, layout, parallel, cache, revalidate }) => [
-  // Handler-first test: handler sets data, orphan layout + parallel read it.
-  // revalidate(() => true) forces fresh content on every client navigation.
-  path("/", HandlerFirstPage, { name: "index" }, () => [
-    layout(HandlerFirstLayout, () => [
-      parallel({ "@hf-sidebar": HandlerFirstSidebar }),
+export const handlerFirstPatterns = urls(
+  ({ path, layout, parallel, cache, revalidate }) => [
+    // Handler-first test: handler sets data, orphan layout + parallel read it.
+    // revalidate(() => true) forces fresh content on every client navigation.
+    path("/", HandlerFirstPage, { name: "index" }, () => [
+      layout(HandlerFirstLayout, () => [
+        parallel({ "@hf-sidebar": HandlerFirstSidebar }),
+      ]),
+      revalidate(() => true),
     ]),
-    revalidate(() => true),
-  ]),
 
-  // Cache scope test: all children cached together (cached route for mix test)
-  cache({ ttl: 600 }, () => [
-    path("/cache-scope", CacheScopeHandler, { name: "cacheScope" }, () => [
-      parallel({ "@cs-sidebar": CacheScopeSidebar }),
+    // Cache scope test: all children cached together (cached route for mix test)
+    cache({ ttl: 600 }, () => [
+      path("/cache-scope", CacheScopeHandler, { name: "cacheScope" }, () => [
+        parallel({ "@cs-sidebar": CacheScopeSidebar }),
+      ]),
     ]),
-  ]),
-]);
+  ],
+);

@@ -29,8 +29,12 @@ test.describe("Typed Search Params", () => {
       await expect(testId(page, "search-q")).toContainText("q: react");
       await expect(testId(page, "search-page-num")).toContainText("page: 2");
       // q is always string, page should be number (coerced from "2")
-      await expect(testId(page, "search-q-type")).toContainText("q-type: string");
-      await expect(testId(page, "search-page-type")).toContainText("page-type: number");
+      await expect(testId(page, "search-q-type")).toContainText(
+        "q-type: string",
+      );
+      await expect(testId(page, "search-page-type")).toContainText(
+        "page-type: number",
+      );
     });
 
     test("should handle all params present", async ({ page }) => {
@@ -51,9 +55,15 @@ test.describe("Typed Search Params", () => {
       await waitForHydration(page);
 
       await expect(testId(page, "search-q")).toContainText("q: react");
-      await expect(testId(page, "search-page-num")).toContainText("page: undefined");
-      await expect(testId(page, "search-sort")).toContainText("sort: undefined");
-      await expect(testId(page, "search-page-type")).toContainText("page-type: undefined");
+      await expect(testId(page, "search-page-num")).toContainText(
+        "page: undefined",
+      );
+      await expect(testId(page, "search-sort")).toContainText(
+        "sort: undefined",
+      );
+      await expect(testId(page, "search-page-type")).toContainText(
+        "page-type: undefined",
+      );
     });
 
     test("should default required string to empty when missing", async ({
@@ -66,7 +76,9 @@ test.describe("Typed Search Params", () => {
 
       // Required string defaults to "" when not in query string
       await expect(testId(page, "search-q")).toContainText("q: ");
-      await expect(testId(page, "search-q-type")).toContainText("q-type: string");
+      await expect(testId(page, "search-q-type")).toContainText(
+        "q-type: string",
+      );
     });
 
     test("should handle NaN numbers as omitted", async ({ page }) => {
@@ -77,7 +89,9 @@ test.describe("Typed Search Params", () => {
 
       // "abc" is not a valid number, optional number should be omitted
       await expect(testId(page, "search-q")).toContainText("q: test");
-      await expect(testId(page, "search-page-num")).toContainText("page: undefined");
+      await expect(testId(page, "search-page-num")).toContainText(
+        "page: undefined",
+      );
     });
   });
 
@@ -92,7 +106,7 @@ test.describe("Typed Search Params", () => {
 
       // reverse("index", {}, { q: "test", page: 2 }) should produce /search?q=test&page=2
       await expect(testId(page, "search-self-url")).toContainText(
-        "self: /search?q=test&page=2"
+        "self: /search?q=test&page=2",
       );
     });
 
@@ -106,7 +120,7 @@ test.describe("Typed Search Params", () => {
 
       // reverse("detail", { category: "books" }, { q: "typescript", active: true })
       await expect(testId(page, "search-detail-url")).toContainText(
-        "detail: /search/books?q=typescript&active=true"
+        "detail: /search/books?q=typescript&active=true",
       );
     });
   });
@@ -122,12 +136,12 @@ test.describe("Typed Search Params", () => {
 
       await expect(testId(page, "search-detail-page")).toBeVisible();
       await expect(testId(page, "detail-category")).toContainText(
-        "category: electronics"
+        "category: electronics",
       );
       await expect(testId(page, "detail-q")).toContainText("q: laptop");
       await expect(testId(page, "detail-active")).toContainText("active: true");
       await expect(testId(page, "detail-active-type")).toContainText(
-        "active-type: boolean"
+        "active-type: boolean",
       );
     });
 
@@ -137,9 +151,11 @@ test.describe("Typed Search Params", () => {
       await page.goto(f.url("/search/books?active=false"));
       await waitForHydration(page);
 
-      await expect(testId(page, "detail-active")).toContainText("active: false");
+      await expect(testId(page, "detail-active")).toContainText(
+        "active: false",
+      );
       await expect(testId(page, "detail-active-type")).toContainText(
-        "active-type: boolean"
+        "active-type: boolean",
       );
     });
 
@@ -152,11 +168,11 @@ test.describe("Typed Search Params", () => {
       await waitForHydration(page);
 
       await expect(testId(page, "detail-category")).toContainText(
-        "category: games"
+        "category: games",
       );
       await expect(testId(page, "detail-q")).toContainText("q: undefined");
       await expect(testId(page, "detail-active")).toContainText(
-        "active: undefined"
+        "active: undefined",
       );
     });
   });
@@ -176,7 +192,7 @@ test.describe("Typed Search Params", () => {
       await expect(page).toHaveURL(/\/search\/books/);
       await expect(testId(page, "search-detail-page")).toBeVisible();
       await expect(testId(page, "detail-category")).toContainText(
-        "category: books"
+        "category: books",
       );
       await expect(testId(page, "detail-q")).toContainText("q: typescript");
     });
@@ -203,7 +219,7 @@ test.describe("Typed Search Params (production)", () => {
     await expect(testId(page, "search-sort")).toContainText("sort: downloads");
     await expect(testId(page, "search-q-type")).toContainText("q-type: string");
     await expect(testId(page, "search-page-type")).toContainText(
-      "page-type: number"
+      "page-type: number",
     );
   });
 
@@ -217,12 +233,12 @@ test.describe("Typed Search Params (production)", () => {
 
     await expect(testId(page, "search-detail-page")).toBeVisible();
     await expect(testId(page, "detail-category")).toContainText(
-      "category: tools"
+      "category: tools",
     );
     await expect(testId(page, "detail-q")).toContainText("q: vscode");
     await expect(testId(page, "detail-active")).toContainText("active: true");
     await expect(testId(page, "detail-active-type")).toContainText(
-      "active-type: boolean"
+      "active-type: boolean",
     );
   });
 
@@ -235,10 +251,10 @@ test.describe("Typed Search Params (production)", () => {
     await waitForHydration(page);
 
     await expect(testId(page, "search-self-url")).toContainText(
-      "self: /search?q=test&page=2"
+      "self: /search?q=test&page=2",
     );
     await expect(testId(page, "search-detail-url")).toContainText(
-      "detail: /search/books?q=typescript&active=true"
+      "detail: /search/books?q=typescript&active=true",
     );
   });
 });

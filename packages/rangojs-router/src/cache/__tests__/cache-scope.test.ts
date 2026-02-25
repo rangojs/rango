@@ -49,16 +49,15 @@ vi.mock("@vitejs/plugin-rsc/rsc", () => {
 });
 
 // Import AFTER mocks are registered so vitest applies them.
-const { serializeSegments, deserializeSegments } = await import(
-  "../segment-codec.js"
-);
+const { serializeSegments, deserializeSegments } =
+  await import("../segment-codec.js");
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 function makeSegment(
-  overrides: Partial<ResolvedSegment> = {}
+  overrides: Partial<ResolvedSegment> = {},
 ): ResolvedSegment {
   return {
     id: "test-segment",
@@ -101,7 +100,10 @@ describe("serializeSegments / deserializeSegments", () => {
     });
 
     it("should encode a truthy loading value via RSC serialization", async () => {
-      const loadingNode = { type: "div", props: { children: "Loading..." } } as ReactNode;
+      const loadingNode = {
+        type: "div",
+        props: { children: "Loading..." },
+      } as ReactNode;
       const segments = [makeSegment({ loading: loadingNode })];
       const serialized = await serializeSegments(segments);
 
@@ -154,7 +156,10 @@ describe("serializeSegments / deserializeSegments", () => {
     });
 
     it("round-trip: truthy loading should survive serialize -> deserialize", async () => {
-      const loadingNode = { type: "div", props: { children: "Loading..." } } as ReactNode;
+      const loadingNode = {
+        type: "div",
+        props: { children: "Loading..." },
+      } as ReactNode;
       const original = [makeSegment({ loading: loadingNode })];
       const serialized = await serializeSegments(original);
       const deserialized = await deserializeSegments(serialized);
@@ -166,18 +171,20 @@ describe("serializeSegments / deserializeSegments", () => {
 
   describe("metadata preservation", () => {
     it("should preserve segment metadata through round-trip", async () => {
-      const original = [makeSegment({
-        id: "L0",
-        type: "layout",
-        namespace: "app",
-        index: 2,
-        params: { slug: "hello" },
-        slot: "main",
-        belongsToRoute: true,
-        layoutName: "root",
-        loaderId: "loader-1",
-        loaderIds: ["a", "b"],
-      })];
+      const original = [
+        makeSegment({
+          id: "L0",
+          type: "layout",
+          namespace: "app",
+          index: 2,
+          params: { slug: "hello" },
+          slot: "main",
+          belongsToRoute: true,
+          layoutName: "root",
+          loaderId: "loader-1",
+          loaderIds: ["a", "b"],
+        }),
+      ];
       const serialized = await serializeSegments(original);
       const deserialized = await deserializeSegments(serialized);
 
@@ -196,15 +203,24 @@ describe("serializeSegments / deserializeSegments", () => {
     });
 
     it("should round-trip component values", async () => {
-      const original = [makeSegment({ component: { type: "div", props: { id: "test" } } as any })];
+      const original = [
+        makeSegment({
+          component: { type: "div", props: { id: "test" } } as any,
+        }),
+      ];
       const serialized = await serializeSegments(original);
       const deserialized = await deserializeSegments(serialized);
 
-      expect(deserialized[0].component).toEqual({ type: "div", props: { id: "test" } });
+      expect(deserialized[0].component).toEqual({
+        type: "div",
+        props: { id: "test" },
+      });
     });
 
     it("should round-trip layout values", async () => {
-      const original = [makeSegment({ layout: { type: "nav", props: {} } as any })];
+      const original = [
+        makeSegment({ layout: { type: "nav", props: {} } as any }),
+      ];
       const serialized = await serializeSegments(original);
       const deserialized = await deserializeSegments(serialized);
 

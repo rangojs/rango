@@ -18,7 +18,7 @@ import { NOCACHE_SYMBOL } from "../cache/taint.js";
 function resolveRouteName(
   name: string,
   routeMap: Record<string, string>,
-  currentRoutePrefix?: string
+  currentRoutePrefix?: string,
 ): string | undefined {
   // 1. Dot-prefixed (".article", ".author.posts") — local resolution only.
   //    Resolves within the current include() scope using the mount prefix.
@@ -29,7 +29,10 @@ function resolveRouteName(
     // Extract the include prefix from current route name
     // e.g., "magazine.author" -> prefix is "magazine"
     const lastDot = currentRoutePrefix.lastIndexOf(".");
-    const prefix = lastDot > 0 ? currentRoutePrefix.substring(0, lastDot) : currentRoutePrefix;
+    const prefix =
+      lastDot > 0
+        ? currentRoutePrefix.substring(0, lastDot)
+        : currentRoutePrefix;
 
     // Try prefixed name at current level
     const prefixedName = `${prefix}.${lookupName}`;
@@ -69,15 +72,19 @@ function resolveRouteName(
 export function createReverseFunction(
   routeMap: Record<string, string>,
   currentRoutePrefix?: string,
-  currentParams?: Record<string, string>
-): (name: string, hrefParams?: Record<string, string>, search?: Record<string, unknown>) => string {
+  currentParams?: Record<string, string>,
+): (
+  name: string,
+  hrefParams?: Record<string, string>,
+  search?: Record<string, unknown>,
+) => string {
   return (name, hrefParams, search) => {
     // Resolve route name with namespace support
     const pattern = resolveRouteName(name, routeMap, currentRoutePrefix);
 
     if (pattern === undefined) {
       throw new Error(
-        `Unknown route: "${name}"${currentRoutePrefix ? ` (current route: ${currentRoutePrefix})` : ""}`
+        `Unknown route: "${name}"${currentRoutePrefix ? ` (current route: ${currentRoutePrefix})` : ""}`,
       );
     }
 
@@ -90,13 +97,16 @@ export function createReverseFunction(
 
     // Substitute params (strip constraint syntax: :param(a|b) -> value)
     if (effectiveParams) {
-      result = result.replace(/:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?/g, (_, key) => {
-        const value = effectiveParams[key];
-        if (value === undefined) {
-          throw new Error(`Missing param "${key}" for route "${name}"`);
-        }
-        return encodeURIComponent(value);
-      });
+      result = result.replace(
+        /:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?/g,
+        (_, key) => {
+          const value = effectiveParams[key];
+          if (value === undefined) {
+            throw new Error(`Missing param "${key}" for route "${name}"`);
+          }
+          return encodeURIComponent(value);
+        },
+      );
     }
 
     // Append search params as query string
@@ -120,7 +130,7 @@ export function createHandlerContext<TEnv>(
   url: URL,
   bindings: any = {},
   routeMap: Record<string, string> = {},
-  routeName?: string
+  routeName?: string,
 ): InternalHandlerContext<any, TEnv> {
   // Get variables from request context - this is the unified context
   // shared between middleware and route handlers
@@ -147,7 +157,8 @@ export function createHandlerContext<TEnv>(
     : cleanSearchParams;
 
   // Get stub response from request context for setting headers
-  const stubResponse = requestContext?.res ?? new Response(null, { status: 200 });
+  const stubResponse =
+    requestContext?.res ?? new Response(null, { status: 200 });
 
   const ctx: InternalHandlerContext<any, TEnv> = {
     params,
@@ -179,7 +190,9 @@ export function createHandlerContext<TEnv>(
     // Location state support (delegates to request context)
     setLocationState(entries) {
       if (!requestContext) {
-        throw new Error("setLocationState() is not available outside a request context");
+        throw new Error(
+          "setLocationState() is not available outside a request context",
+        );
       }
       requestContext.setLocationState(entries);
     },

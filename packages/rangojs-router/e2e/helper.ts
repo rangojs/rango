@@ -1,4 +1,9 @@
-import test, { type Page, type Locator, type ConsoleMessage, expect } from "@playwright/test";
+import test, {
+  type Page,
+  type Locator,
+  type ConsoleMessage,
+  expect,
+} from "@playwright/test";
 
 export const testNoJs = test.extend({
   javaScriptEnabled: ({}, use) => use(false),
@@ -58,7 +63,7 @@ export async function waitForHydration(page: Page, locator: string = "body") {
         );
       },
       locator,
-      { timeout: 20000 }
+      { timeout: 20000 },
     );
 
     // Small delay to catch any async hydration errors
@@ -67,7 +72,7 @@ export async function waitForHydration(page: Page, locator: string = "body") {
     // Assert no hydration errors occurred
     if (hydrationErrors.length > 0) {
       throw new Error(
-        `Hydration errors detected:\n${hydrationErrors.join("\n")}`
+        `Hydration errors detected:\n${hydrationErrors.join("\n")}`,
       );
     }
   } finally {
@@ -118,21 +123,31 @@ export function expectNoPageError(page: Page) {
 /**
  * Wait for navigation to complete (URL change + network idle)
  */
-export async function waitForNavigation(page: Page, expectedUrl: string | RegExp) {
+export async function waitForNavigation(
+  page: Page,
+  expectedUrl: string | RegExp,
+) {
   await page.waitForURL(expectedUrl, { waitUntil: "networkidle" });
 }
 
 /**
  * Check if an element is visible in the viewport
  */
-export async function isVisibleInViewport(page: Page, selector: string): Promise<boolean> {
+export async function isVisibleInViewport(
+  page: Page,
+  selector: string,
+): Promise<boolean> {
   return page.locator(selector).isVisible();
 }
 
 /**
  * Wait for an element to appear and be stable
  */
-export async function waitForElement(page: Page, selector: string, timeout = 5000) {
+export async function waitForElement(
+  page: Page,
+  selector: string,
+  timeout = 5000,
+) {
   await page.locator(selector).waitFor({ state: "visible", timeout });
 }
 
@@ -192,7 +207,7 @@ export function testId(page: Page, id: string): Locator {
 export async function clickAndWaitFor(
   clickTarget: Locator,
   waitFor: Locator,
-  timeout = 5000
+  timeout = 5000,
 ) {
   await clickTarget.click();
   await expect(waitFor).toBeVisible({ timeout });
@@ -210,7 +225,7 @@ export async function clickAndWaitFor(
  * expect(elapsed).toBeGreaterThan(1000);
  */
 export async function measureTime<T>(
-  fn: () => Promise<T>
+  fn: () => Promise<T>,
 ): Promise<{ elapsed: number; result: T }> {
   const startTime = Date.now();
   const result = await fn();
@@ -276,7 +291,7 @@ export async function getNumericContent(locator: Locator): Promise<number> {
 export async function waitForTextChange(
   locator: Locator,
   initialText: string,
-  timeout = 5000
+  timeout = 5000,
 ) {
   await expect
     .poll(async () => await locator.textContent(), { timeout })
@@ -294,7 +309,7 @@ export async function waitForTextChange(
 export async function waitForNumericChange(
   locator: Locator,
   initialValue: number,
-  timeout = 5000
+  timeout = 5000,
 ) {
   await expect
     .poll(async () => parseNumber(await locator.textContent()), { timeout })
@@ -312,7 +327,7 @@ export async function waitForNumericChange(
 export function expectTiming(
   elapsed: number,
   expected: number,
-  tolerance: number
+  tolerance: number,
 ) {
   expect(elapsed).toBeGreaterThan(expected - tolerance);
   expect(elapsed).toBeLessThan(expected + tolerance);

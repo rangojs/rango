@@ -29,6 +29,6 @@ export const SlowStreamingHandler: Handler<"slowStreaming"> = () => (
   <SlowStreamingContent loader={SlowLoader} />
 );
 
-export const SlowStreamingSkipSsrHandler: Handler<"slowStreamingSkipSsr"> = () => (
-  <SlowSkipSsrContent loader={SlowLoader} />
-);
+export const SlowStreamingSkipSsrHandler: Handler<
+  "slowStreamingSkipSsr"
+> = () => <SlowSkipSsrContent loader={SlowLoader} />;

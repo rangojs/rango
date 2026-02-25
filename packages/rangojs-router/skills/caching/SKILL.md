@@ -30,12 +30,15 @@ export const urlpatterns = urls(({ path, cache }) => [
 ## Cache Options
 
 ```typescript
-cache({
-  ttl: 60,      // Time-to-live in seconds (default: 60)
-  swr: 300,     // Stale-while-revalidate window (default: 300)
-}, () => [
-  // Cached routes
-])
+cache(
+  {
+    ttl: 60, // Time-to-live in seconds (default: 60)
+    swr: 300, // Stale-while-revalidate window (default: 300)
+  },
+  () => [
+    // Cached routes
+  ],
+);
 ```
 
 ## Named Profile Shorthand
@@ -75,13 +78,11 @@ Cache individual loaders:
 ```typescript
 path("/product/:slug", ProductPage, { name: "product" }, () => [
   // Cache this loader's results
-  loader(ProductLoader, () => [
-    cache({ ttl: 300 }),
-  ]),
+  loader(ProductLoader, () => [cache({ ttl: 300 })]),
 
   // This loader is not cached
   loader(CartLoader),
-])
+]);
 ```
 
 ## Global Cache Configuration
@@ -117,7 +118,7 @@ import { MemorySegmentCacheStore } from "@rangojs/router/rsc";
 
 const store = new MemorySegmentCacheStore({
   defaults: { ttl: 60, swr: 300 },
-  maxSize: 1000,  // Max entries
+  maxSize: 1000, // Max entries
 });
 ```
 
@@ -154,7 +155,7 @@ cache({ ttl: 300 }, () => [
   cache({ ttl: 30 }, () => [
     path("/blog/:slug", BlogPost, { name: "blogPost" }),
   ]),
-])
+]);
 ```
 
 ## Custom Cache Store
@@ -169,7 +170,7 @@ const checkoutCache = new MemorySegmentCacheStore({
 // In urls
 cache({ store: checkoutCache }, () => [
   path("/checkout", CheckoutPage, { name: "checkout" }),
-])
+]);
 ```
 
 ## Complete Example

@@ -33,7 +33,7 @@ const tree = buildRouteTree(
         loader(PostLoader),
       ]),
     ]),
-  ])
+  ]),
 );
 ```
 
@@ -42,26 +42,26 @@ const tree = buildRouteTree(
 ### Route Patterns
 
 ```typescript
-tree.routes()       // { home: "/", "blog.post": "/blog/:slug" }
-tree.routeNames()   // ["home", "blog.post"]
+tree.routes(); // { home: "/", "blog.post": "/blog/:slug" }
+tree.routeNames(); // ["home", "blog.post"]
 ```
 
 ### URL Matching
 
 ```typescript
 const m = tree.match("/blog/hello");
-m.routeKey  // "blog.post"
-m.params    // { slug: "hello" }
+m.routeKey; // "blog.post"
+m.params; // { slug: "hello" }
 
-tree.match("/nonexistent")  // null
+tree.match("/nonexistent"); // null
 ```
 
 ### Segment IDs
 
 ```typescript
-tree.segmentId("home")       // "M0L0L0R0"
-tree.segmentIds()            // { home: "M0L0L0R0", "blog.post": "M0L0L0R1" }
-tree.segmentPath("blog.post")
+tree.segmentId("home"); // "M0L0L0R0"
+tree.segmentIds(); // { home: "M0L0L0R0", "blog.post": "M0L0L0R1" }
+tree.segmentPath("blog.post");
 // [
 //   { id: "M0L0",     type: "layout" },  // synthetic root
 //   { id: "M0L0L0",   type: "layout" },  // RootLayout
@@ -72,54 +72,54 @@ tree.segmentPath("blog.post")
 ### Entry Access
 
 ```typescript
-tree.entry("blog.post")                   // EntryData
-tree.entry("blog.post")!.parent!.type     // "layout"
-tree.entryByPattern("/blog/:slug")        // EntryData (lookup by URL pattern)
+tree.entry("blog.post"); // EntryData
+tree.entry("blog.post")!.parent!.type; // "layout"
+tree.entryByPattern("/blog/:slug"); // EntryData (lookup by URL pattern)
 ```
 
 ### Middleware
 
 ```typescript
-tree.hasMiddleware("home")                // true (inherited from layout)
-tree.middleware("home")                   // [authMiddleware] (direct only)
-tree.middlewareChain("home")
+tree.hasMiddleware("home"); // true (inherited from layout)
+tree.middleware("home"); // [authMiddleware] (direct only)
+tree.middlewareChain("home");
 // [{ segmentId: "M0L0L0", count: 1 }]   // all middleware root-to-route
 ```
 
 ### Loaders
 
 ```typescript
-tree.hasLoaders("blog.post")  // true
-tree.loaders("blog.post")     // [LoaderEntry { loader, revalidate, cache? }]
+tree.hasLoaders("blog.post"); // true
+tree.loaders("blog.post"); // [LoaderEntry { loader, revalidate, cache? }]
 ```
 
 ### Intercepts
 
 ```typescript
-tree.intercepts("home")
+tree.intercepts("home");
 // [{ slotName: "@modal", routeName: "card", hasWhen: true, whenCount: 1, hasLoader: false, hasMiddleware: false }]
-tree.interceptEntries("home")  // raw InterceptEntry[]
+tree.interceptEntries("home"); // raw InterceptEntry[]
 ```
 
 ### Parallel Slots
 
 ```typescript
-tree.parallelSlots("home")       // EntryData[] of type="parallel"
-tree.parallelSlotNames("home")   // ["@sidebar", "@main"]
+tree.parallelSlots("home"); // EntryData[] of type="parallel"
+tree.parallelSlotNames("home"); // ["@sidebar", "@main"]
 ```
 
 ### Boundaries
 
 ```typescript
-tree.hasErrorBoundary("home")      // boolean
-tree.hasNotFoundBoundary("home")   // boolean
+tree.hasErrorBoundary("home"); // boolean
+tree.hasNotFoundBoundary("home"); // boolean
 ```
 
 ### Cache & Loading
 
 ```typescript
-tree.hasCache("home")     // boolean
-tree.hasLoading("home")   // boolean
+tree.hasCache("home"); // boolean
+tree.hasLoading("home"); // boolean
 ```
 
 ### Debug
@@ -133,14 +133,14 @@ console.log(tree.debug());
 
 ## Segment ID Format
 
-| Prefix | Meaning |
-|--------|---------|
+| Prefix | Meaning                       |
+| ------ | ----------------------------- |
 | `M0`   | Mount index (router instance) |
-| `L`    | Layout |
-| `R`    | Route |
-| `P`    | Parallel slot |
-| `D`    | Loader (data) |
-| `C`    | Cache boundary |
+| `L`    | Layout                        |
+| `R`    | Route                         |
+| `P`    | Parallel slot                 |
+| `D`    | Loader (data)                 |
+| `C`    | Cache boundary                |
 
 Example: `M0L0L0R1` = mount 0, synthetic root layout, user layout, second route.
 
@@ -158,7 +158,7 @@ const tree = buildRouteTree(
   urls(({ path, include }) => [
     path("/", HomePage, { name: "home" }),
     include("/blog", blogPatterns, { name: "blog" }),
-  ])
+  ]),
 );
 
 expect(tree.routes()).toEqual({
@@ -183,11 +183,11 @@ const tree = buildRouteTree(
         path("/dashboard", Dashboard, { name: "dashboard" }),
       ]),
     ]),
-  ])
+  ]),
 );
 
 expect(tree.middlewareChain("dashboard")).toEqual([
-  { segmentId: "M0L0L0", count: 1 },   // logMw on RootLayout
+  { segmentId: "M0L0L0", count: 1 }, // logMw on RootLayout
   { segmentId: "M0L0L0L0", count: 1 }, // authMw on AuthLayout
 ]);
 ```
@@ -204,7 +204,7 @@ const tree = buildRouteTree(
         when((ctx) => ctx.from.pathname.startsWith("/products")),
       ]),
     ]),
-  ])
+  ]),
 );
 
 const intercepts = tree.intercepts("products");
@@ -217,7 +217,7 @@ const intercepts = tree.intercepts("products");
 const tree = buildRouteTree(
   urls(({ path }) => [
     path("/:locale(en|fr)?/about", AboutPage, { name: "about" }),
-  ])
+  ]),
 );
 
 expect(tree.match("/about")).not.toBeNull();

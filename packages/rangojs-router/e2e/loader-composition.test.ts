@@ -29,11 +29,11 @@ test.describe("loader-composition", () => {
     await expect(section).toHaveAttribute("data-dependency", "non-fetchable");
 
     // Verify computed values
+    await expect(page.locator('[data-testid="nf-uses-nf-base"]')).toContainText(
+      "Base value: 100",
+    );
     await expect(
-      page.locator('[data-testid="nf-uses-nf-base"]')
-    ).toContainText("Base value: 100");
-    await expect(
-      page.locator('[data-testid="nf-uses-nf-computed"]')
+      page.locator('[data-testid="nf-uses-nf-computed"]'),
     ).toContainText("Computed: 200"); // 100 * 2
   });
 
@@ -54,11 +54,11 @@ test.describe("loader-composition", () => {
     await expect(section).toHaveAttribute("data-dependency", "fetchable");
 
     // Verify computed values
+    await expect(page.locator('[data-testid="nf-uses-f-base"]')).toContainText(
+      "Base value: 200",
+    );
     await expect(
-      page.locator('[data-testid="nf-uses-f-base"]')
-    ).toContainText("Base value: 200");
-    await expect(
-      page.locator('[data-testid="nf-uses-f-computed"]')
+      page.locator('[data-testid="nf-uses-f-computed"]'),
     ).toContainText("Computed: 400"); // 200 * 2
   });
 
@@ -79,11 +79,11 @@ test.describe("loader-composition", () => {
     await expect(section).toHaveAttribute("data-dependency", "fetchable");
 
     // Verify computed values
+    await expect(page.locator('[data-testid="f-uses-f-base"]')).toContainText(
+      "Base value: 200",
+    );
     await expect(
-      page.locator('[data-testid="f-uses-f-base"]')
-    ).toContainText("Base value: 200");
-    await expect(
-      page.locator('[data-testid="f-uses-f-computed"]')
+      page.locator('[data-testid="f-uses-f-computed"]'),
     ).toContainText("Computed: 600"); // 200 * 3
   });
 
@@ -104,11 +104,11 @@ test.describe("loader-composition", () => {
     await expect(section).toHaveAttribute("data-dependency", "non-fetchable");
 
     // Verify computed values
+    await expect(page.locator('[data-testid="f-uses-nf-base"]')).toContainText(
+      "Base value: 100",
+    );
     await expect(
-      page.locator('[data-testid="f-uses-nf-base"]')
-    ).toContainText("Base value: 100");
-    await expect(
-      page.locator('[data-testid="f-uses-nf-computed"]')
+      page.locator('[data-testid="f-uses-nf-computed"]'),
     ).toContainText("Computed: 300"); // 100 * 3
   });
 
@@ -123,19 +123,19 @@ test.describe("loader-composition", () => {
     // Both nf-uses-nf and f-uses-nf use BaseNonFetchableLoader
     // Both should show invocation count of 1 if memoization works
     await expect(
-      page.locator('[data-testid="nf-uses-nf-invocations"]')
+      page.locator('[data-testid="nf-uses-nf-invocations"]'),
     ).toContainText("Invocations: 1");
     await expect(
-      page.locator('[data-testid="f-uses-nf-invocations"]')
+      page.locator('[data-testid="f-uses-nf-invocations"]'),
     ).toContainText("Invocations: 1");
 
     // Both nf-uses-f and f-uses-f use BaseFetchableLoader
     // Both should show invocation count of 1 if memoization works
     await expect(
-      page.locator('[data-testid="nf-uses-f-invocations"]')
+      page.locator('[data-testid="nf-uses-f-invocations"]'),
     ).toContainText("Invocations: 1");
     await expect(
-      page.locator('[data-testid="f-uses-f-invocations"]')
+      page.locator('[data-testid="f-uses-f-invocations"]'),
     ).toContainText("Invocations: 1");
   });
 
@@ -160,16 +160,16 @@ test.describe("loader-composition", () => {
 
     // Verify computed values are correct
     await expect(
-      page.locator('[data-testid="nf-uses-nf-computed"]')
+      page.locator('[data-testid="nf-uses-nf-computed"]'),
     ).toContainText("Computed: 200");
     await expect(
-      page.locator('[data-testid="nf-uses-f-computed"]')
+      page.locator('[data-testid="nf-uses-f-computed"]'),
     ).toContainText("Computed: 400");
     await expect(
-      page.locator('[data-testid="f-uses-f-computed"]')
+      page.locator('[data-testid="f-uses-f-computed"]'),
     ).toContainText("Computed: 600");
     await expect(
-      page.locator('[data-testid="f-uses-nf-computed"]')
+      page.locator('[data-testid="f-uses-nf-computed"]'),
     ).toContainText("Computed: 300");
   });
 });
@@ -202,16 +202,16 @@ test.describe("loader-composition (production)", () => {
 
     // Verify computed values - confirms loader composition worked
     await expect(
-      page.locator('[data-testid="nf-uses-nf-computed"]')
+      page.locator('[data-testid="nf-uses-nf-computed"]'),
     ).toContainText("Computed: 200");
     await expect(
-      page.locator('[data-testid="nf-uses-f-computed"]')
+      page.locator('[data-testid="nf-uses-f-computed"]'),
     ).toContainText("Computed: 400");
     await expect(
-      page.locator('[data-testid="f-uses-f-computed"]')
+      page.locator('[data-testid="f-uses-f-computed"]'),
     ).toContainText("Computed: 600");
     await expect(
-      page.locator('[data-testid="f-uses-nf-computed"]')
+      page.locator('[data-testid="f-uses-nf-computed"]'),
     ).toContainText("Computed: 300");
   });
 
@@ -223,16 +223,16 @@ test.describe("loader-composition (production)", () => {
 
     // All base loaders should only be invoked once (memoization)
     await expect(
-      page.locator('[data-testid="nf-uses-nf-invocations"]')
+      page.locator('[data-testid="nf-uses-nf-invocations"]'),
     ).toContainText("Invocations: 1");
     await expect(
-      page.locator('[data-testid="f-uses-nf-invocations"]')
+      page.locator('[data-testid="f-uses-nf-invocations"]'),
     ).toContainText("Invocations: 1");
     await expect(
-      page.locator('[data-testid="nf-uses-f-invocations"]')
+      page.locator('[data-testid="nf-uses-f-invocations"]'),
     ).toContainText("Invocations: 1");
     await expect(
-      page.locator('[data-testid="f-uses-f-invocations"]')
+      page.locator('[data-testid="f-uses-f-invocations"]'),
     ).toContainText("Invocations: 1");
   });
 });

@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { collectSegments, buildMatchResult, collectMatchResult } from "../match-result";
+import {
+  collectSegments,
+  buildMatchResult,
+  collectMatchResult,
+} from "../match-result";
 import type { ResolvedSegment } from "../../types";
 import type { MatchContext, MatchPipelineState } from "../match-context";
 import { createPipelineState } from "../match-context";
@@ -18,7 +22,9 @@ async function* fromArray<T>(items: T[]): AsyncGenerator<T> {
 }
 
 // Helper to create a minimal mock MatchContext
-function createMockContext(overrides: Partial<MatchContext> = {}): MatchContext {
+function createMockContext(
+  overrides: Partial<MatchContext> = {},
+): MatchContext {
   return {
     request: new Request("https://example.com/test"),
     url: new URL("https://example.com/test"),
@@ -31,7 +37,12 @@ function createMockContext(overrides: Partial<MatchContext> = {}): MatchContext 
     prevUrl: new URL("https://example.com/prev"),
     prevParams: {},
     prevMatch: null,
-    matched: { entry: {} as any, routeKey: "test", params: {}, optionalParams: new Set<string>() },
+    matched: {
+      entry: {} as any,
+      routeKey: "test",
+      params: {},
+      optionalParams: new Set<string>(),
+    },
     manifestEntry: {} as any,
     entries: [],
     routeKey: "test",
@@ -56,7 +67,7 @@ function createMockContext(overrides: Partial<MatchContext> = {}): MatchContext 
 // Helper to create a test segment
 function createSegment(
   id: string,
-  options: Partial<ResolvedSegment> = {}
+  options: Partial<ResolvedSegment> = {},
 ): ResolvedSegment {
   return {
     id,
@@ -76,7 +87,11 @@ describe("match-result", () => {
 
   describe("collectSegments()", () => {
     it("should collect all segments from generator", async () => {
-      const segments = [createSegment("seg1"), createSegment("seg2"), createSegment("seg3")];
+      const segments = [
+        createSegment("seg1"),
+        createSegment("seg2"),
+        createSegment("seg3"),
+      ];
 
       const result = await collectSegments(fromArray(segments));
 
@@ -121,7 +136,12 @@ describe("match-result", () => {
     it("should include params from matched route", () => {
       const ctx = createMockContext({
         isFullMatch: true,
-        matched: { entry: {} as any, routeKey: "users", params: { id: "123" }, optionalParams: new Set<string>() },
+        matched: {
+          entry: {} as any,
+          routeKey: "users",
+          params: { id: "123" },
+          optionalParams: new Set<string>(),
+        },
       });
       const state = createPipelineState();
       const segments = [createSegment("page")];
@@ -347,7 +367,7 @@ describe("match-result", () => {
   describe("edge cases", () => {
     it("should handle large number of segments", async () => {
       const segments = Array.from({ length: 100 }, (_, i) =>
-        createSegment(`seg${i}`)
+        createSegment(`seg${i}`),
       );
       const result = await collectSegments(fromArray(segments));
 
@@ -383,7 +403,9 @@ describe("match-result", () => {
         },
       });
       const state = createPipelineState();
-      const segments = [createSegment("page", { params: { userId: "123", postId: "456" } })];
+      const segments = [
+        createSegment("page", { params: { userId: "123", postId: "456" } }),
+      ];
 
       const result = buildMatchResult(segments, ctx, state);
 

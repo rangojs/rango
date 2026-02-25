@@ -13,7 +13,13 @@
 export { CFCacheStore, type CFCacheStoreOptions } from "./cf-cache-store.js";
 
 // Header constants for debugging and inspection
-export { CACHE_STALE_AT_HEADER, CACHE_STATUS_HEADER } from "./cf-cache-store.js";
+export {
+  CACHE_STALE_AT_HEADER,
+  CACHE_STATUS_HEADER,
+} from "./cf-cache-store.js";
 
 // Internal exports (re-exported for backwards compatibility, marked @internal in source)
-export { type CacheStatus, MAX_REVALIDATION_INTERVAL } from "./cf-cache-store.js";
+export {
+  type CacheStatus,
+  MAX_REVALIDATION_INTERVAL,
+} from "./cf-cache-store.js";

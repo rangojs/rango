@@ -12,11 +12,13 @@ Research branch for exploring RSC caching with revival capabilities.
 ## Current Architecture
 
 ### RSC Flow (no cache)
+
 ```
 Request → Router Match → Loaders Execute → Segments Resolve → RSC Render → Stream Response
 ```
 
 ### What Gets Rendered
+
 ```typescript
 interface RscPayload {
   root: React.ReactNode | Promise<React.ReactNode>;
@@ -35,6 +37,7 @@ interface RscPayload {
 ## Cache Insertion Points
 
 ### Option A: Full Response Cache (RSC Payload)
+
 Cache the entire serialized RSC stream after `renderToReadableStream()`.
 
 ```
@@ -44,16 +47,19 @@ Request → [Cache Check] → Cache Hit → Return Cached Stream
 ```
 
 **Pros:**
+
 - Fastest possible response on cache hit
 - No loader execution, no rendering
 - Simple mental model
 
 **Cons:**
+
 - Coarse granularity (entire page or nothing)
 - Cache key must include all factors that affect output
 - Harder to partially invalidate
 
 ### Option B: Segment-level Cache
+
 Cache individual resolved segments with their loader data.
 
 ```
@@ -61,16 +67,19 @@ Request → Router Match → [Per-Segment Cache Check] → Merge Cached + Fresh 
 ```
 
 **Pros:**
+
 - Fine-grained caching
 - Partial invalidation possible
 - Reuses existing partial update infrastructure
 
 **Cons:**
+
 - More complex implementation
 - Still needs to render (just with cached data)
 - Multiple cache lookups
 
 ### Option C: Loader-level Cache
+
 Cache loader results, let segments use cached data.
 
 ```
@@ -78,11 +87,13 @@ Request → Router Match → Loaders [with cache] → Segments → Render
 ```
 
 **Pros:**
+
 - Familiar pattern (data caching)
 - Easy to reason about
 - Works with existing revalidation logic
 
 **Cons:**
+
 - Still executes rendering pipeline
 - Doesn't cache RSC tree structure
 
@@ -108,14 +119,14 @@ interface CacheProvider {
 }
 
 interface CacheEntry {
-  value: string | Uint8Array;  // Serialized RSC or JSON
+  value: string | Uint8Array; // Serialized RSC or JSON
   createdAt: number;
   tags?: string[];
 }
 
 interface CacheOptions {
-  ttl?: number;              // Seconds
-  tags?: string[];           // For invalidation
+  ttl?: number; // Seconds
+  tags?: string[]; // For invalidation
   staleWhileRevalidate?: number;
 }
 ```
@@ -123,12 +134,12 @@ interface CacheOptions {
 ### Route-level Cache Directive
 
 ```typescript
-import { cache, route, loader } from 'rsc-router';
+import { cache, route, loader } from "rsc-router";
 
 // Basic usage
 route("products", () => [
   cache({
-    ttl: 300,  // 5 minutes
+    ttl: 300, // 5 minutes
   }),
   loader(ProductsLoader),
 ]);
@@ -140,15 +151,15 @@ route("products/:id", () => [
     // Skip cache read when condition returns false
     condition: (ctx) => {
       // Don't read from cache for preview mode
-      if (ctx.request.headers.get('x-preview')) return false;
+      if (ctx.request.headers.get("x-preview")) return false;
       // Don't read from cache for authenticated users
-      if (ctx.request.headers.get('cookie')?.includes('session')) return false;
+      if (ctx.request.headers.get("cookie")?.includes("session")) return false;
       return true;
     },
     // Custom cache key
     key: (ctx) => `product-${ctx.params.id}`,
     // Tags for invalidation
-    tags: (ctx) => [`product:${ctx.params.id}`, 'products'],
+    tags: (ctx) => [`product:${ctx.params.id}`, "products"],
   }),
   loader(ProductLoader),
 ]);
@@ -157,7 +168,7 @@ route("products/:id", () => [
 route("dashboard", () => [
   cache({
     ttl: 60,
-    staleWhileRevalidate: 300,  // Serve stale for 5min while revalidating
+    staleWhileRevalidate: 300, // Serve stale for 5min while revalidating
   }),
   loader(DashboardLoader),
 ]);
@@ -166,21 +177,23 @@ route("dashboard", () => [
 ### Imperative Cache API in Loaders
 
 ```typescript
-import { loader, defineLoader } from 'rsc-router';
+import { loader, defineLoader } from "rsc-router";
 
 const ProductLoader = defineLoader(async (ctx) => {
   // Access cache directly
   const cacheKey = `product-data-${ctx.params.id}`;
 
   // Check if we should use cache
-  const shouldUseCache = !ctx.request.headers.get('x-bypass-cache');
+  const shouldUseCache = !ctx.request.headers.get("x-bypass-cache");
 
   if (shouldUseCache) {
     const cached = await ctx.cache.get(cacheKey);
     if (cached) {
       // Optionally trigger background revalidation
       if (cached.isStale) {
-        ctx.cache.revalidateInBackground(cacheKey, () => fetchProduct(ctx.params.id));
+        ctx.cache.revalidateInBackground(cacheKey, () =>
+          fetchProduct(ctx.params.id),
+        );
       }
       return cached.value;
     }
@@ -224,7 +237,9 @@ async function updateProduct(formData: FormData) {
 ## RSC Revival Implementation
 
 ### Challenge
+
 RSC streams are consumed once. To cache and revive:
+
 1. Tee the stream during first render
 2. Collect chunks into buffer
 3. Store serialized buffer
@@ -254,8 +269,8 @@ async function handleRequest(request: Request): Promise<Response> {
         // Revive cached RSC stream
         return new Response(reviveRscStream(cached.value), {
           headers: {
-            'Content-Type': 'text/x-component',
-            'X-Cache': isStale ? 'STALE' : 'HIT',
+            "Content-Type": "text/x-component",
+            "X-Cache": isStale ? "STALE" : "HIT",
           },
         });
       }
@@ -275,14 +290,14 @@ async function handleRequest(request: Request): Promise<Response> {
 
     return new Response(responseStream, {
       headers: {
-        'Content-Type': 'text/x-component',
-        'X-Cache': 'MISS',
+        "Content-Type": "text/x-component",
+        "X-Cache": "MISS",
       },
     });
   }
 
   return new Response(stream, {
-    headers: { 'Content-Type': 'text/x-component' },
+    headers: { "Content-Type": "text/x-component" },
   });
 }
 
@@ -298,7 +313,7 @@ function reviveRscStream(cached: Uint8Array): ReadableStream {
 async function cacheInBackground(
   stream: ReadableStream,
   key: string,
-  config: CacheConfig
+  config: CacheConfig,
 ) {
   const chunks: Uint8Array[] = [];
   const reader = stream.getReader();
@@ -310,11 +325,15 @@ async function cacheInBackground(
   }
 
   const buffer = concatenateChunks(chunks);
-  await cacheProvider.set(key, {
-    value: buffer,
-    createdAt: Date.now(),
-    tags: config.tags,
-  }, { ttl: config.ttl + (config.staleWhileRevalidate || 0) });
+  await cacheProvider.set(
+    key,
+    {
+      value: buffer,
+      createdAt: Date.now(),
+      tags: config.tags,
+    },
+    { ttl: config.ttl + (config.staleWhileRevalidate || 0) },
+  );
 }
 ```
 
@@ -323,6 +342,7 @@ async function cacheInBackground(
 ## Cache Key Generation
 
 Default key includes:
+
 - Pathname
 - Search params (sorted)
 - Request method
@@ -347,12 +367,14 @@ function buildCacheKey(request: Request, config?: CacheConfig): string {
 ## Considerations
 
 ### What NOT to Cache
+
 - POST requests (server actions) - mutations shouldn't be cached
 - Responses with `Set-Cookie` headers
 - Error responses
 - Partial updates (unless specifically handled)
 
 ### Cache Headers
+
 ```typescript
 // Response headers for debugging/CDN integration
 {
@@ -364,7 +386,9 @@ function buildCacheKey(request: Request, config?: CacheConfig): string {
 ```
 
 ### Edge Caching
+
 The RSC cache can sit at different layers:
+
 1. **In-memory** (same process) - fastest, lost on restart
 2. **Distributed cache** (Redis, Memcached) - shared across instances
 3. **Edge cache** (CDN, Cloudflare) - geographically distributed

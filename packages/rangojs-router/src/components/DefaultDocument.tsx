@@ -11,7 +11,11 @@ import { MetaTags } from "../handles/MetaTags.js";
  * Uses suppressHydrationWarning on <html> because the theme script
  * may modify class/style attributes before React hydrates.
  */
-export function DefaultDocument({ children }: { children: ReactNode }): ReactElement {
+export function DefaultDocument({
+  children,
+}: {
+  children: ReactNode;
+}): ReactElement {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>

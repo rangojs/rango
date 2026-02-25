@@ -47,13 +47,13 @@ export async function waitForHydration(page: Page, locator: string = "body") {
         );
       },
       locator,
-      { timeout: 20000 }
+      { timeout: 20000 },
     );
     await page.waitForTimeout(100);
 
     if (hydrationErrors.length > 0) {
       throw new Error(
-        `Hydration errors detected:\n${hydrationErrors.join("\n")}`
+        `Hydration errors detected:\n${hydrationErrors.join("\n")}`,
       );
     }
   } finally {
@@ -120,7 +120,10 @@ export function expectNoCSPViolations(page: Page) {
 /**
  * Wait for navigation to complete (URL change + network idle)
  */
-export async function waitForNavigation(page: Page, expectedUrl: string | RegExp) {
+export async function waitForNavigation(
+  page: Page,
+  expectedUrl: string | RegExp,
+) {
   await page.waitForURL(expectedUrl, { waitUntil: "networkidle" });
 }
 
@@ -147,7 +150,7 @@ export function testId(page: Page, id: string): Locator {
 export async function clickAndWaitFor(
   clickTarget: Locator,
   waitFor: Locator,
-  timeout = 5000
+  timeout = 5000,
 ) {
   await clickTarget.click();
   await expect(waitFor).toBeVisible({ timeout });

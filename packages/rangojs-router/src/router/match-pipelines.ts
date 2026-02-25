@@ -163,7 +163,7 @@ export async function* empty<T>(): AsyncGenerator<T> {
  */
 export function createMatchPartialPipeline<TEnv>(
   ctx: MatchContext<TEnv>,
-  state: MatchPipelineState
+  state: MatchPipelineState,
 ): AsyncGenerator<ResolvedSegment> {
   // Build the middleware chain
   const pipeline = compose<ResolvedSegment>(
@@ -176,7 +176,7 @@ export function createMatchPartialPipeline<TEnv>(
     // Resolves segments on cache miss
     withSegmentResolution(ctx, state),
     // Innermost - checks cache first
-    withCacheLookup(ctx, state)
+    withCacheLookup(ctx, state),
   );
 
   // Start with empty source - cache lookup or segment resolution will produce segments
@@ -191,7 +191,7 @@ export function createMatchPartialPipeline<TEnv>(
  */
 export function createMatchPipeline<TEnv>(
   ctx: MatchContext<TEnv>,
-  state: MatchPipelineState
+  state: MatchPipelineState,
 ): AsyncGenerator<ResolvedSegment> {
   // For full match, we only need:
   // 1. Cache lookup
@@ -207,7 +207,7 @@ export function createMatchPipeline<TEnv>(
     withCacheStore(ctx, state),
     withInterceptResolution(ctx, state),
     withSegmentResolution(ctx, state),
-    withCacheLookup(ctx, state)
+    withCacheLookup(ctx, state),
   );
 
   return pipeline(empty());

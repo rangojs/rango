@@ -75,7 +75,11 @@ export function ShopPlayground({ baseUrl }: { baseUrl: string }) {
     }
   };
 
-  const replaceItem = async (itemId: string, productId: string, quantity: number) => {
+  const replaceItem = async (
+    itemId: string,
+    productId: string,
+    quantity: number,
+  ) => {
     await api(`/cart/${itemId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -109,18 +113,33 @@ export function ShopPlayground({ baseUrl }: { baseUrl: string }) {
   };
 
   return (
-    <div data-testid="shop-playground" style={{ padding: "1rem", fontFamily: "system-ui" }}>
+    <div
+      data-testid="shop-playground"
+      style={{ padding: "1rem", fontFamily: "system-ui" }}
+    >
       <h1 data-testid="playground-title">Shop API Playground</h1>
 
       {/* Catalog Section */}
       <section data-testid="catalog-section" style={{ marginBottom: "2rem" }}>
         <h2>Catalog</h2>
-        <button data-testid="load-catalog-btn" onClick={loadCatalog} disabled={loading}>
+        <button
+          data-testid="load-catalog-btn"
+          onClick={loadCatalog}
+          disabled={loading}
+        >
           Load Catalog
         </button>
         <div data-testid="product-list" style={{ marginTop: "0.5rem" }}>
           {products.map((p) => (
-            <div key={p.id} data-testid={`product-${p.id}`} style={{ padding: "0.5rem", border: "1px solid #ccc", margin: "0.25rem 0" }}>
+            <div
+              key={p.id}
+              data-testid={`product-${p.id}`}
+              style={{
+                padding: "0.5rem",
+                border: "1px solid #ccc",
+                margin: "0.25rem 0",
+              }}
+            >
               <strong>{p.name}</strong> - ${p.price}
               <button
                 data-testid={`view-product-${p.id}`}
@@ -144,19 +163,38 @@ export function ShopPlayground({ baseUrl }: { baseUrl: string }) {
       {/* Cart Section */}
       <section data-testid="cart-section" style={{ marginBottom: "2rem" }}>
         <h2>Cart ({cart.length} items)</h2>
-        <button data-testid="load-cart-btn" onClick={loadCart} disabled={loading}>
+        <button
+          data-testid="load-cart-btn"
+          onClick={loadCart}
+          disabled={loading}
+        >
           Load Cart
         </button>
-        <button data-testid="clear-cart-btn" onClick={clearCart} disabled={loading} style={{ marginLeft: "0.5rem" }}>
+        <button
+          data-testid="clear-cart-btn"
+          onClick={clearCart}
+          disabled={loading}
+          style={{ marginLeft: "0.5rem" }}
+        >
           Clear Cart
         </button>
         <div data-testid="cart-items" style={{ marginTop: "0.5rem" }}>
           {cart.map((item) => (
-            <div key={item.itemId} data-testid={`cart-item-${item.itemId}`} style={{ padding: "0.5rem", border: "1px solid #ccc", margin: "0.25rem 0" }}>
+            <div
+              key={item.itemId}
+              data-testid={`cart-item-${item.itemId}`}
+              style={{
+                padding: "0.5rem",
+                border: "1px solid #ccc",
+                margin: "0.25rem 0",
+              }}
+            >
               Product: {item.productId} | Qty: {item.quantity}
               <button
                 data-testid={`decrease-${item.itemId}`}
-                onClick={() => updateQuantity(item.itemId, Math.max(1, item.quantity - 1))}
+                onClick={() =>
+                  updateQuantity(item.itemId, Math.max(1, item.quantity - 1))
+                }
                 style={{ marginLeft: "0.5rem" }}
               >
                 -
@@ -190,10 +228,19 @@ export function ShopPlayground({ baseUrl }: { baseUrl: string }) {
       {/* Health Section */}
       <section data-testid="health-section" style={{ marginBottom: "2rem" }}>
         <h2>Health</h2>
-        <button data-testid="health-head-btn" onClick={checkHealth} disabled={loading}>
+        <button
+          data-testid="health-head-btn"
+          onClick={checkHealth}
+          disabled={loading}
+        >
           HEAD Check
         </button>
-        <button data-testid="health-get-btn" onClick={getHealth} disabled={loading} style={{ marginLeft: "0.5rem" }}>
+        <button
+          data-testid="health-get-btn"
+          onClick={getHealth}
+          disabled={loading}
+          style={{ marginLeft: "0.5rem" }}
+        >
           GET Health
         </button>
       </section>
@@ -213,7 +260,9 @@ export function ShopPlayground({ baseUrl }: { baseUrl: string }) {
             fontSize: "12px",
           }}
         >
-          {lastResponse ? JSON.stringify(lastResponse, null, 2) : "No response yet"}
+          {lastResponse
+            ? JSON.stringify(lastResponse, null, 2)
+            : "No response yet"}
         </pre>
       </section>
     </div>

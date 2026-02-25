@@ -325,33 +325,43 @@ export type ScopedRouteMap<
  * - { path, response } value (no search): -> {}
  */
 /** Extract params from a route map entry (string pattern or { path } object). */
-type ExtractParamsFromEntry<TEntry, TFallback> =
-  TEntry extends string
-    ? ExtractParams<TEntry>
-    : TEntry extends { readonly path: infer P extends string }
-      ? ExtractParams<P>
-      : TFallback;
+type ExtractParamsFromEntry<TEntry, TFallback> = TEntry extends string
+  ? ExtractParams<TEntry>
+  : TEntry extends { readonly path: infer P extends string }
+    ? ExtractParams<P>
+    : TFallback;
 
 /** Extract search schema from a route map entry. */
-type ExtractSearchFromEntry<TMap, TKey> =
-  TKey extends keyof TMap
-    ? TMap[TKey] extends { readonly search: infer S extends SearchSchema }
-      ? S
-      : {}
-    : {};
+type ExtractSearchFromEntry<TMap, TKey> = TKey extends keyof TMap
+  ? TMap[TKey] extends { readonly search: infer S extends SearchSchema }
+    ? S
+    : {}
+  : {};
 
 export type Handler<
-  T extends keyof DefaultHandlerRouteMap | `.${keyof TRouteMap & string}` | `/${string}` | Record<string, any> = {},
+  T extends
+    | keyof DefaultHandlerRouteMap
+    | `.${keyof TRouteMap & string}`
+    | `/${string}`
+    | Record<string, any> = {},
   TRouteMap extends {} = DefaultHandlerRouteMap,
   TEnv = DefaultEnv,
 > = (
   ctx: HandlerContext<
     T extends `.${infer Local}`
       ? Local extends keyof TRouteMap
-        ? ExtractParamsFromEntry<TRouteMap[Local], T extends string ? ExtractParams<T> : T>
-        : T extends string ? ExtractParams<T> : T
+        ? ExtractParamsFromEntry<
+            TRouteMap[Local],
+            T extends string ? ExtractParams<T> : T
+          >
+        : T extends string
+          ? ExtractParams<T>
+          : T
       : T extends keyof DefaultHandlerRouteMap
-        ? ExtractParamsFromEntry<DefaultHandlerRouteMap[T], T extends string ? ExtractParams<T> : T>
+        ? ExtractParamsFromEntry<
+            DefaultHandlerRouteMap[T],
+            T extends string ? ExtractParams<T> : T
+          >
         : T extends string
           ? ExtractParams<T>
           : T,
@@ -389,7 +399,12 @@ export type Handler<
  * }
  * ```
  */
-export type HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch extends SearchSchema = {}, TRouteMap = never> = {
+export type HandlerContext<
+  TParams = {},
+  TEnv = DefaultEnv,
+  TSearch extends SearchSchema = {},
+  TRouteMap = never,
+> = {
   /**
    * Route parameters extracted from the URL pattern.
    * Type-safe when using Handler<"/path/:param"> or Handler<{ param: string }>.

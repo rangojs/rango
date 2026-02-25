@@ -18,7 +18,9 @@ function buildTestTrie(
     }
 
     const prefix = pattern.slice(0, dynamicIdx);
-    staticPrefix[routeKey] = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
+    staticPrefix[routeKey] = prefix.endsWith("/")
+      ? prefix.slice(0, -1)
+      : prefix;
   }
 
   return buildRouteTrie(routes, ancestry, staticPrefix, trailingSlash);

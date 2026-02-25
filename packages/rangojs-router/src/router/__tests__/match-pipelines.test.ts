@@ -203,7 +203,7 @@ describe("match-pipelines", () => {
 
     it("should handle async operations in middleware", async () => {
       const asyncDouble: GeneratorMiddleware<number> = async function* (
-        source
+        source,
       ) {
         for await (const n of source) {
           await new Promise((r) => setTimeout(r, 1));
@@ -231,12 +231,13 @@ describe("match-pipelines", () => {
       const pipeline = compose(identity);
 
       await expect(collect(pipeline(errorSource()))).rejects.toThrow(
-        "source error"
+        "source error",
       );
     });
 
     it("should propagate errors from middleware", async () => {
       const throwingMiddleware: GeneratorMiddleware<number> =
+        // oxlint-disable-next-line require-yield -- intentional: tests error before first yield
         async function* () {
           throw new Error("middleware error");
         };
@@ -245,16 +246,14 @@ describe("match-pipelines", () => {
       const source = fromArray([1, 2, 3]);
 
       await expect(collect(pipeline(source))).rejects.toThrow(
-        "middleware error"
+        "middleware error",
       );
     });
 
     it("should handle middleware that conditionally yields based on source", async () => {
       let sourceWasEmpty = true;
 
-      const checkEmpty: GeneratorMiddleware<number> = async function* (
-        source
-      ) {
+      const checkEmpty: GeneratorMiddleware<number> = async function* (source) {
         for await (const n of source) {
           sourceWasEmpty = false;
           yield n;
@@ -293,9 +292,7 @@ describe("match-pipelines", () => {
     });
 
     it("should handle middleware that yields before consuming source", async () => {
-      const yieldFirst: GeneratorMiddleware<number> = async function* (
-        source
-      ) {
+      const yieldFirst: GeneratorMiddleware<number> = async function* (source) {
         yield 0; // Yield before consuming
         for await (const n of source) {
           yield n;
@@ -328,7 +325,7 @@ describe("match-pipelines", () => {
     it("should handle error thrown partway through source iteration", async () => {
       let count = 0;
       const countAndPass: GeneratorMiddleware<number> = async function* (
-        source
+        source,
       ) {
         for await (const n of source) {
           count++;
@@ -345,7 +342,7 @@ describe("match-pipelines", () => {
       const pipeline = compose(countAndPass);
 
       await expect(collect(pipeline(partialErrorSource()))).rejects.toThrow(
-        "error after 2 items"
+        "error after 2 items",
       );
       expect(count).toBe(2); // Should have processed 2 items before error
     });
@@ -369,9 +366,7 @@ describe("match-pipelines", () => {
     });
 
     it("should handle middleware that accumulates state across iterations", async () => {
-      const runningSum: GeneratorMiddleware<number> = async function* (
-        source
-      ) {
+      const runningSum: GeneratorMiddleware<number> = async function* (source) {
         let sum = 0;
         for await (const n of source) {
           sum += n;
@@ -413,9 +408,7 @@ describe("match-pipelines", () => {
     });
 
     it("should handle middleware that skips first N items", async () => {
-      const skipFirst2: GeneratorMiddleware<number> = async function* (
-        source
-      ) {
+      const skipFirst2: GeneratorMiddleware<number> = async function* (source) {
         let count = 0;
         for await (const n of source) {
           if (count >= 2) {
@@ -433,9 +426,7 @@ describe("match-pipelines", () => {
     });
 
     it("should handle middleware that takes first N items only", async () => {
-      const takeFirst2: GeneratorMiddleware<number> = async function* (
-        source
-      ) {
+      const takeFirst2: GeneratorMiddleware<number> = async function* (source) {
         let count = 0;
         for await (const n of source) {
           if (count >= 2) break;
@@ -459,9 +450,7 @@ describe("match-pipelines", () => {
         }
       };
 
-      const takeFirst3: GeneratorMiddleware<number> = async function* (
-        source
-      ) {
+      const takeFirst3: GeneratorMiddleware<number> = async function* (source) {
         let count = 0;
         for await (const n of source) {
           if (count >= 3) break;
@@ -482,7 +471,7 @@ describe("match-pipelines", () => {
 
     it("should handle middleware with async delays between yields", async () => {
       const delayedYield: GeneratorMiddleware<number> = async function* (
-        source
+        source,
       ) {
         for await (const n of source) {
           await new Promise((r) => setTimeout(r, 5));
@@ -501,7 +490,7 @@ describe("match-pipelines", () => {
     it("should handle middleware that transforms type", async () => {
       // Note: This tests type transformation within the same generic constraint
       const stringify: GeneratorMiddleware<number | string> = async function* (
-        source
+        source,
       ) {
         for await (const n of source) {
           yield `num:${n}`;

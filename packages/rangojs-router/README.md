@@ -47,10 +47,7 @@ import { defineConfig } from "vite";
 import { rango } from "@rangojs/router/vite";
 
 export default defineConfig({
-  plugins: [
-    react(),
-    rango({ preset: "cloudflare" }),
-  ],
+  plugins: [react(), rango({ preset: "cloudflare" })],
 });
 ```
 
@@ -69,8 +66,7 @@ const urlpatterns = urls(({ path, layout }) => [
   ]),
 ]);
 
-export const router = createRouter({ document: Document })
-  .routes(urlpatterns);
+export const router = createRouter({ document: Document }).routes(urlpatterns);
 
 // Export typed reverse function for URL generation by route name
 export const reverse = router.reverse;
@@ -234,7 +230,13 @@ import { BlogSidebarLoader } from "./loaders/blog";
 
 async function BlogSidebarHandler(ctx: HandlerContext) {
   const { posts } = await ctx.use(BlogSidebarLoader);
-  return <ul>{posts.map(p => <li key={p.slug}>{p.title}</li>)}</ul>;
+  return (
+    <ul>
+      {posts.map((p) => (
+        <li key={p.slug}>{p.title}</li>
+      ))}
+    </ul>
+  );
 }
 ```
 
@@ -247,7 +249,13 @@ import { BlogSidebarLoader } from "./loaders/blog";
 
 function BlogSidebar() {
   const { posts } = useLoader(BlogSidebarLoader);
-  return <ul>{posts.map(p => <li key={p.slug}>{p.title}</li>)}</ul>;
+  return (
+    <ul>
+      {posts.map((p) => (
+        <li key={p.slug}>{p.title}</li>
+      ))}
+    </ul>
+  );
 }
 ```
 
@@ -305,7 +313,9 @@ function Nav() {
   return (
     <nav>
       <Link to={href("/")}>Home</Link>
-      <Link to={href("/blog")} prefetch="intent">Blog</Link>
+      <Link to={href("/blog")} prefetch="intent">
+        Blog
+      </Link>
       <Link to={href("/about")}>About</Link>
     </nav>
   );
@@ -379,14 +389,17 @@ Included route names are prefixed with the include name: `reverse("api.health")`
 
 ```tsx
 const urlpatterns = urls(({ path, middleware }) => [
-  middleware(async (ctx, next) => {
-    const start = Date.now();
-    const response = await next();
-    console.log(`${ctx.request.method} ${ctx.url.pathname} ${Date.now() - start}ms`);
-    return response;
-  }, () => [
-    path("/dashboard", DashboardPage, { name: "dashboard" }),
-  ]),
+  middleware(
+    async (ctx, next) => {
+      const start = Date.now();
+      const response = await next();
+      console.log(
+        `${ctx.request.method} ${ctx.url.pathname} ${Date.now() - start}ms`,
+      );
+      return response;
+    },
+    () => [path("/dashboard", DashboardPage, { name: "dashboard" })],
+  ),
 ]);
 ```
 
@@ -407,7 +420,10 @@ const urlpatterns = urls(({ path, cache }) => [
 
 ```tsx
 import { createRouter } from "@rangojs/router";
-import { CFCacheStore, createDocumentCacheMiddleware } from "@rangojs/router/cache";
+import {
+  CFCacheStore,
+  createDocumentCacheMiddleware,
+} from "@rangojs/router/cache";
 
 export const router = createRouter({
   document: Document,
@@ -423,6 +439,7 @@ export const router = createRouter({
 ```
 
 Available cache stores:
+
 - `CFCacheStore` — Cloudflare edge cache (production)
 - `MemorySegmentCacheStore` — In-memory cache (development/testing)
 
@@ -443,7 +460,15 @@ export const AboutPage = Static(async () => {
 
 export const DocsNav = Static(async () => {
   const items = await readDocsNavItems();
-  return <nav>{items.map(i => <a key={i.slug} href={i.slug}>{i.title}</a>)}</nav>;
+  return (
+    <nav>
+      {items.map((i) => (
+        <a key={i.slug} href={i.slug}>
+          {i.title}
+        </a>
+      ))}
+    </nav>
+  );
 });
 ```
 
@@ -457,7 +482,7 @@ import { Prerender } from "@rangojs/router";
 export const BlogPost = Prerender(
   async () => {
     const slugs = await getAllBlogSlugs();
-    return slugs.map(slug => ({ slug }));
+    return slugs.map((slug) => ({ slug }));
   },
   async (ctx) => {
     const post = await getPost(ctx.params.slug);
@@ -474,7 +499,7 @@ import { Prerender } from "@rangojs/router";
 export const ProductPage = Prerender(
   async () => {
     const featured = await db.getFeaturedProducts();
-    return featured.map(p => ({ id: p.id }));
+    return featured.map((p) => ({ id: p.id }));
   },
   async (ctx) => {
     const product = await db.getProduct(ctx.params.id);
@@ -511,8 +536,10 @@ import { useTheme } from "@rangojs/router/theme";
 function ThemeToggle() {
   const { theme, setTheme, themes } = useTheme();
   return (
-    <select value={theme} onChange={e => setTheme(e.target.value)}>
-      {themes.map(t => <option key={t}>{t}</option>)}
+    <select value={theme} onChange={(e) => setTheme(e.target.value)}>
+      {themes.map((t) => (
+        <option key={t}>{t}</option>
+      ))}
     </select>
   );
 }
@@ -572,6 +599,7 @@ npx rango generate src/urls.tsx src/api/  # mix files and directories
 ```
 
 Auto-detects file type:
+
 - Files with `createRouter` → `*.named-routes.gen.ts` with global route map
 - Files with `urls()` → `*.gen.ts` with per-module route names, params, and search types
 
@@ -581,16 +609,16 @@ The Vite plugin automatically generates a `router.named-routes.gen.ts` file that
 
 ## Subpath Exports
 
-| Export | Description |
-|--------|-------------|
-| `@rangojs/router` | Core: `createRouter`, `urls`, `createLoader`, `Handler`, `Prerender`, `Meta` |
-| `@rangojs/router/client` | Client: `Link`, `Outlet`, `href`, `useNavigation`, `useLoader`, `MetaTags` |
-| `@rangojs/router/cache` | Cache: `CFCacheStore`, `MemorySegmentCacheStore`, `createDocumentCacheMiddleware` |
-| `@rangojs/router/theme` | Theme: `useTheme`, `ThemeProvider`, `ThemeScript` |
-| `@rangojs/router/host` | Host routing: `createHostRouter`, `defineHosts` |
-| `@rangojs/router/vite` | Vite plugin: `rango()` |
-| `@rangojs/router/server` | Server utilities |
-| `@rangojs/router/build` | Build utilities |
+| Export                   | Description                                                                       |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| `@rangojs/router`        | Core: `createRouter`, `urls`, `createLoader`, `Handler`, `Prerender`, `Meta`      |
+| `@rangojs/router/client` | Client: `Link`, `Outlet`, `href`, `useNavigation`, `useLoader`, `MetaTags`        |
+| `@rangojs/router/cache`  | Cache: `CFCacheStore`, `MemorySegmentCacheStore`, `createDocumentCacheMiddleware` |
+| `@rangojs/router/theme`  | Theme: `useTheme`, `ThemeProvider`, `ThemeScript`                                 |
+| `@rangojs/router/host`   | Host routing: `createHostRouter`, `defineHosts`                                   |
+| `@rangojs/router/vite`   | Vite plugin: `rango()`                                                            |
+| `@rangojs/router/server` | Server utilities                                                                  |
+| `@rangojs/router/build`  | Build utilities                                                                   |
 
 ## Examples
 

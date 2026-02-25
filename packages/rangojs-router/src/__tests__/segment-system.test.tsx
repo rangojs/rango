@@ -123,9 +123,7 @@ describe("segment-system", () => {
   describe("renderSegments", () => {
     describe("basic tree structure", () => {
       it("renders a single route segment with OutletProvider", async () => {
-        const segments: ResolvedSegment[] = [
-          seg({ id: "R0", type: "route" }),
-        ];
+        const segments: ResolvedSegment[] = [seg({ id: "R0", type: "route" })];
 
         const result = await renderSegments(segments);
         const tree = toTreeNode(result);
@@ -178,9 +176,7 @@ describe("segment-system", () => {
       });
 
       it("always wraps with RootErrorBoundary", async () => {
-        const segments: ResolvedSegment[] = [
-          seg({ id: "R0", type: "route" }),
-        ];
+        const segments: ResolvedSegment[] = [seg({ id: "R0", type: "route" })];
 
         const result = await renderSegments(segments);
         const tree = toTreeNode(result);
@@ -260,15 +256,15 @@ describe("segment-system", () => {
         // Uses OutletProvider with loaderData injected
         const outlets = collectByType(tree, MockOutletProvider);
         expect(outlets).toHaveLength(1);
-        expect(outlets[0].props.loaderData).toEqual({ "my-loader": { value: 42 } });
+        expect(outlets[0].props.loaderData).toEqual({
+          "my-loader": { value: 42 },
+        });
       });
     });
 
     describe("key generation", () => {
       it("uses segment ID as key when no params", async () => {
-        const segments: ResolvedSegment[] = [
-          seg({ id: "R0", type: "route" }),
-        ];
+        const segments: ResolvedSegment[] = [seg({ id: "R0", type: "route" })];
 
         const result = await renderSegments(segments);
         const tree = toTreeNode(result);
@@ -332,16 +328,12 @@ describe("segment-system", () => {
         const outlets = collectByType(tree, MockOutletProvider);
 
         // Layout L0 should have the parallel segment
-        const layoutOutlet = outlets.find(
-          (o) => o.props.segment.id === "L0",
-        )!;
+        const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
         expect(layoutOutlet.props.parallel).toHaveLength(1);
         expect(layoutOutlet.props.parallel[0].slot).toBe("@sidebar");
 
         // Route should NOT have parallels
-        const routeOutlet = outlets.find(
-          (o) => o.props.segment.id === "L0R0",
-        )!;
+        const routeOutlet = outlets.find((o) => o.props.segment.id === "L0R0")!;
         expect(routeOutlet.props.parallel).toEqual([]);
       });
 
@@ -357,13 +349,11 @@ describe("segment-system", () => {
         const tree = toTreeNode(result);
         const outlets = collectByType(tree, MockOutletProvider);
 
-        const layoutOutlet = outlets.find(
-          (o) => o.props.segment.id === "L0",
-        )!;
+        const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
         expect(layoutOutlet.props.parallel).toHaveLength(2);
-        expect(layoutOutlet.props.parallel.map((p: any) => p.slot).sort()).toEqual(
-          ["@modal", "@sidebar"],
-        );
+        expect(
+          layoutOutlet.props.parallel.map((p: any) => p.slot).sort(),
+        ).toEqual(["@modal", "@sidebar"]);
       });
     });
 
@@ -385,9 +375,7 @@ describe("segment-system", () => {
         const outlets = collectByType(tree, MockOutletProvider);
 
         // Layout L0 gets the loader data (parent of "L0D0.products" is "L0")
-        const layoutOutlet = outlets.find(
-          (o) => o.props.segment.id === "L0",
-        )!;
+        const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
         expect(layoutOutlet.props.loaderData).toEqual({
           "products-loader": { products: ["a", "b"] },
         });
@@ -413,7 +401,9 @@ describe("segment-system", () => {
         const outlets = collectByType(tree, MockOutletProvider);
 
         // Should unwrap LoaderDataResult to get the inner data
-        expect(outlets[0].props.loaderData).toEqual({ "my-loader": { value: 42 } });
+        expect(outlets[0].props.loaderData).toEqual({
+          "my-loader": { value: 42 },
+        });
       });
 
       it("renders error fallback for LoaderDataResult with error+fallback", async () => {
@@ -565,9 +555,7 @@ describe("segment-system", () => {
         const tree = toTreeNode(result);
         const outlets = collectByType(tree, MockOutletProvider);
 
-        const layoutOutlet = outlets.find(
-          (o) => o.props.segment.id === "L0",
-        )!;
+        const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
         expect(layoutOutlet.props.parallel).toHaveLength(1);
         expect(layoutOutlet.props.parallel[0].slot).toBe("@modal");
       });
@@ -591,9 +579,7 @@ describe("segment-system", () => {
         const tree = toTreeNode(result);
         const outlets = collectByType(tree, MockOutletProvider);
 
-        const layoutOutlet = outlets.find(
-          (o) => o.props.segment.id === "L0",
-        )!;
+        const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
         expect(layoutOutlet.props.loaderData).toEqual({
           "modal-loader": { modal: true },
         });
@@ -605,9 +591,7 @@ describe("segment-system", () => {
         const RootLayout = ({ children }: { children: ReactNode }) =>
           createElement("div", null, children);
 
-        const segments: ResolvedSegment[] = [
-          seg({ id: "R0", type: "route" }),
-        ];
+        const segments: ResolvedSegment[] = [seg({ id: "R0", type: "route" })];
 
         const result = await renderSegments(segments, {
           rootLayout: RootLayout,
@@ -622,9 +606,7 @@ describe("segment-system", () => {
       });
 
       it("does not wrap with rootLayout when not provided", async () => {
-        const segments: ResolvedSegment[] = [
-          seg({ id: "R0", type: "route" }),
-        ];
+        const segments: ResolvedSegment[] = [seg({ id: "R0", type: "route" })];
 
         const result = await renderSegments(segments);
         const tree = toTreeNode(result);
@@ -648,9 +630,7 @@ describe("segment-system", () => {
       });
 
       it("does not wrap when mountPath is undefined", async () => {
-        const segments: ResolvedSegment[] = [
-          seg({ id: "R0", type: "route" }),
-        ];
+        const segments: ResolvedSegment[] = [seg({ id: "R0", type: "route" })];
 
         const result = await renderSegments(segments);
         const tree = toTreeNode(result);
@@ -762,9 +742,7 @@ describe("segment-system", () => {
 
         // The layout should have sidebar loader data accessible
         // (loaders from parallels are merged into parent's loaders)
-        const layoutOutlet = outlets.find(
-          (o) => o.props.segment.id === "L0",
-        )!;
+        const layoutOutlet = outlets.find((o) => o.props.segment.id === "L0")!;
         // The sidebar loader is grouped under the parallel "L0.@sidebar"
         // which is a child of L0, so it gets included in L0's loaders
         expect(layoutOutlet.props.loaderData).toBeDefined();

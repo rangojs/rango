@@ -21,7 +21,11 @@ import {
   setupLoaderAccess,
   setupLoaderAccessSilent,
 } from "../loader-resolution";
-import type { HandlerContext, LoaderDefinition, LoaderContext } from "../../types";
+import type {
+  HandlerContext,
+  LoaderDefinition,
+  LoaderContext,
+} from "../../types";
 
 /**
  * Create a minimal mock HandlerContext for testing loader resolution.
@@ -56,7 +60,7 @@ function createMockContext(): HandlerContext<any, any> {
  */
 function createLoader(
   id: string,
-  fn: (ctx: LoaderContext<any, any>) => any
+  fn: (ctx: LoaderContext<any, any>) => any,
 ): LoaderDefinition<any, any> {
   return {
     __brand: "loader" as const,
@@ -77,7 +81,7 @@ describe("loader cycle detection", () => {
         async (loaderCtx) => {
           const b = await loaderCtx.use(loaderB);
           return { a: true, b };
-        }
+        },
       );
 
       const loaderB: LoaderDefinition<any, any> = createLoader(
@@ -85,7 +89,7 @@ describe("loader cycle detection", () => {
         async (loaderCtx) => {
           const a = await loaderCtx.use(loaderA);
           return { b: true, a };
-        }
+        },
       );
 
       setupLoaderAccess(ctx, loaderPromises);
@@ -113,21 +117,21 @@ describe("loader cycle detection", () => {
         "loaderA",
         async (loaderCtx) => {
           return await loaderCtx.use(loaderB);
-        }
+        },
       );
 
       const loaderB: LoaderDefinition<any, any> = createLoader(
         "loaderB",
         async (loaderCtx) => {
           return await loaderCtx.use(loaderC);
-        }
+        },
       );
 
       const loaderC: LoaderDefinition<any, any> = createLoader(
         "loaderC",
         async (loaderCtx) => {
           return await loaderCtx.use(loaderA);
-        }
+        },
       );
 
       setupLoaderAccess(ctx, loaderPromises);
@@ -139,7 +143,7 @@ describe("loader cycle detection", () => {
 
       expect(rejection.status).toBe("rejected");
       expect(rejection.reason.message).toContain(
-        "Circular loader dependency detected"
+        "Circular loader dependency detected",
       );
       // The cycle chain should include all three loaders
       expect(rejection.reason.message).toContain("loaderA");
@@ -157,7 +161,7 @@ describe("loader cycle detection", () => {
         "loaderD",
         async () => {
           return "D-data";
-        }
+        },
       );
 
       const loaderB: LoaderDefinition<any, any> = createLoader(
@@ -165,7 +169,7 @@ describe("loader cycle detection", () => {
         async (loaderCtx) => {
           const d = await loaderCtx.use(loaderD);
           return { b: true, d };
-        }
+        },
       );
 
       const loaderC: LoaderDefinition<any, any> = createLoader(
@@ -173,7 +177,7 @@ describe("loader cycle detection", () => {
         async (loaderCtx) => {
           const d = await loaderCtx.use(loaderD);
           return { c: true, d };
-        }
+        },
       );
 
       const loaderA: LoaderDefinition<any, any> = createLoader(
@@ -184,7 +188,7 @@ describe("loader cycle detection", () => {
             loaderCtx.use(loaderC),
           ]);
           return { a: true, b, c };
-        }
+        },
       );
 
       setupLoaderAccess(ctx, loaderPromises);
@@ -205,7 +209,7 @@ describe("loader cycle detection", () => {
         "loaderC",
         async () => {
           return "C-data";
-        }
+        },
       );
 
       const loaderB: LoaderDefinition<any, any> = createLoader(
@@ -213,7 +217,7 @@ describe("loader cycle detection", () => {
         async (loaderCtx) => {
           const c = await loaderCtx.use(loaderC);
           return { b: true, c };
-        }
+        },
       );
 
       const loaderA: LoaderDefinition<any, any> = createLoader(
@@ -221,7 +225,7 @@ describe("loader cycle detection", () => {
         async (loaderCtx) => {
           const b = await loaderCtx.use(loaderB);
           return { a: true, b };
-        }
+        },
       );
 
       setupLoaderAccess(ctx, loaderPromises);
@@ -243,7 +247,7 @@ describe("loader cycle detection", () => {
         async () => {
           callCount++;
           return "data";
-        }
+        },
       );
 
       setupLoaderAccess(ctx, loaderPromises);
@@ -267,14 +271,14 @@ describe("loader cycle detection", () => {
         "auth",
         async (loaderCtx) => {
           return await loaderCtx.use(loaderB);
-        }
+        },
       );
 
       const loaderB: LoaderDefinition<any, any> = createLoader(
         "user",
         async (loaderCtx) => {
           return await loaderCtx.use(loaderA);
-        }
+        },
       );
 
       setupLoaderAccess(ctx, loaderPromises);
@@ -285,7 +289,7 @@ describe("loader cycle detection", () => {
       expect(rejection.status).toBe("rejected");
       // Should show the cycle chain: auth -> user -> auth
       expect(rejection.reason.message).toMatch(
-        /Circular loader dependency detected: .+ -> .+ -> .+/
+        /Circular loader dependency detected: .+ -> .+ -> .+/,
       );
     });
   });
@@ -299,14 +303,14 @@ describe("loader cycle detection", () => {
         "silentA",
         async (loaderCtx) => {
           return await loaderCtx.use(loaderB);
-        }
+        },
       );
 
       const loaderB: LoaderDefinition<any, any> = createLoader(
         "silentB",
         async (loaderCtx) => {
           return await loaderCtx.use(loaderA);
-        }
+        },
       );
 
       setupLoaderAccessSilent(ctx, loaderPromises);
@@ -316,7 +320,7 @@ describe("loader cycle detection", () => {
 
       expect(rejection.status).toBe("rejected");
       expect(rejection.reason.message).toContain(
-        "Circular loader dependency detected"
+        "Circular loader dependency detected",
       );
       expect(rejection.reason.message).toContain("silentA");
       expect(rejection.reason.message).toContain("silentB");
@@ -328,7 +332,7 @@ describe("loader cycle detection", () => {
 
       const loaderB: LoaderDefinition<any, any> = createLoader(
         "silentB",
-        async () => "B-data"
+        async () => "B-data",
       );
 
       const loaderA: LoaderDefinition<any, any> = createLoader(
@@ -336,7 +340,7 @@ describe("loader cycle detection", () => {
         async (loaderCtx) => {
           const b = await loaderCtx.use(loaderB);
           return { a: true, b };
-        }
+        },
       );
 
       setupLoaderAccessSilent(ctx, loaderPromises);

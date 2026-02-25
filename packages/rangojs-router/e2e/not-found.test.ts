@@ -24,7 +24,7 @@ test.describe("not-found", () => {
 
       // Should show "Not Found" heading (no hydration needed for simple 404)
       await expect(
-        page.getByRole("heading", { name: "Not Found" })
+        page.getByRole("heading", { name: "Not Found" }),
       ).toBeVisible({ timeout: 5000 });
     });
   });
@@ -63,7 +63,7 @@ test.describe("not-found", () => {
 
       // Verify we're on 404 (no hydration needed - 404 is server-rendered)
       await expect(
-        page.getByRole("heading", { name: "Not Found" })
+        page.getByRole("heading", { name: "Not Found" }),
       ).toBeVisible({ timeout: 5000 });
 
       // Navigate away from 404 to home (direct navigation)
@@ -83,7 +83,7 @@ test.describe("not-found", () => {
 
       // Verify we're on 404 (no hydration needed - 404 is server-rendered)
       await expect(
-        page.getByRole("heading", { name: "Not Found" })
+        page.getByRole("heading", { name: "Not Found" }),
       ).toBeVisible({ timeout: 5000 });
 
       // Go back
@@ -115,17 +115,13 @@ test.describe("not-found (production)", () => {
     await page.goto(f.url("/unknown-route"));
 
     // Should show "Not Found" heading (no hydration needed for simple 404)
-    await expect(
-      page.getByRole("heading", { name: "Not Found" })
-    ).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole("heading", { name: "Not Found" })).toBeVisible({
+      timeout: 5000,
+    });
   });
 
   test("should return 404 for various unknown paths", async ({ page }) => {
-    const unknownPaths = [
-      "/unknown",
-      "/foo/bar/baz",
-      "/admin/secret",
-    ];
+    const unknownPaths = ["/unknown", "/foo/bar/baz", "/admin/secret"];
 
     for (const path of unknownPaths) {
       const response = await page.goto(f.url(path));

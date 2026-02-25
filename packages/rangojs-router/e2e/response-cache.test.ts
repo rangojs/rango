@@ -14,7 +14,9 @@ import { useFixture } from "./fixture";
 const f = useFixture({ root: "./e2e/test-app", mode: "dev" });
 
 test.describe("response-cache", () => {
-  test("control: uncached route returns different timestamps on each request", async ({ request }) => {
+  test("control: uncached route returns different timestamps on each request", async ({
+    request,
+  }) => {
     const res1 = await request.get(f.url("/response-cache/uncached-json"));
     expect(res1.status()).toBe(200);
     const body1 = await res1.json();
@@ -34,7 +36,9 @@ test.describe("response-cache", () => {
     expect(ts2).toBeGreaterThan(ts1);
   });
 
-  test("path.json() with cache() returns identical timestamp on second request", async ({ request }) => {
+  test("path.json() with cache() returns identical timestamp on second request", async ({
+    request,
+  }) => {
     const res1 = await request.get(f.url("/response-cache/cached-json"));
     expect(res1.status()).toBe(200);
     expect(res1.headers()["content-type"]).toContain("application/json");
@@ -54,7 +58,9 @@ test.describe("response-cache", () => {
     expect(body2.data.ts).toBe(ts1);
   });
 
-  test("path.text() with cache() returns identical body on second request", async ({ request }) => {
+  test("path.text() with cache() returns identical body on second request", async ({
+    request,
+  }) => {
     const res1 = await request.get(f.url("/response-cache/cached-text"));
     expect(res1.status()).toBe(200);
     expect(res1.headers()["content-type"]).toContain("text/plain");
@@ -72,7 +78,9 @@ test.describe("response-cache", () => {
     expect(body2).toBe(body1);
   });
 
-  test("path.xml() with cache() returns identical body on second request", async ({ request }) => {
+  test("path.xml() with cache() returns identical body on second request", async ({
+    request,
+  }) => {
     const res1 = await request.get(f.url("/response-cache/cached-xml"));
     expect(res1.status()).toBe(200);
     expect(res1.headers()["content-type"]).toContain("application/xml");
@@ -88,7 +96,9 @@ test.describe("response-cache", () => {
     expect(body2).toBe(body1);
   });
 
-  test("path.html() with cache() returns identical body on second request", async ({ request }) => {
+  test("path.html() with cache() returns identical body on second request", async ({
+    request,
+  }) => {
     const res1 = await request.get(f.url("/response-cache/cached-html"));
     expect(res1.status()).toBe(200);
     expect(res1.headers()["content-type"]).toContain("text/html");
@@ -104,7 +114,9 @@ test.describe("response-cache", () => {
     expect(body2).toBe(body1);
   });
 
-  test("path.md() with cache() returns identical body on second request", async ({ request }) => {
+  test("path.md() with cache() returns identical body on second request", async ({
+    request,
+  }) => {
     const res1 = await request.get(f.url("/response-cache/cached-md"));
     expect(res1.status()).toBe(200);
     expect(res1.headers()["content-type"]).toContain("text/markdown");

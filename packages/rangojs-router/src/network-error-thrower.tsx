@@ -16,6 +16,8 @@ interface NetworkErrorThrowerProps {
  * 1. Errors must be thrown during React's render phase to be caught by error boundaries
  * 2. The error occurs in async code (fetch), so we need to propagate it to React's render
  */
-export function NetworkErrorThrower({ error }: NetworkErrorThrowerProps): ReactNode {
+export function NetworkErrorThrower({
+  error,
+}: NetworkErrorThrowerProps): ReactNode {
   throw error;
 }

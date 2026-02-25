@@ -44,9 +44,7 @@ test.describe("prerender ctx (dev mode)", () => {
     );
   });
 
-  test("layout sees handler ctx.set() data via ctx.get()", async ({
-    page,
-  }) => {
+  test("layout sees handler ctx.set() data via ctx.get()", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/prerender-ctx/alpha"));

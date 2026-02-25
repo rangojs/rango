@@ -130,17 +130,11 @@ test.describe("prerender locale params (production build)", () => {
 
     await page.goto(f.url("/en/blog/hello"));
     await waitForHydration(page);
-    const enContent = await testId(
-      page,
-      "locale-detail-content",
-    ).textContent();
+    const enContent = await testId(page, "locale-detail-content").textContent();
 
     await page.goto(f.url("/fr/blog/hello"));
     await waitForHydration(page);
-    const frContent = await testId(
-      page,
-      "locale-detail-content",
-    ).textContent();
+    const frContent = await testId(page, "locale-detail-content").textContent();
 
     expect(enContent).toBe("content-en-hello");
     expect(frContent).toBe("content-fr-hello");
@@ -228,9 +222,7 @@ test.describe("prerender locale params passthrough (production build)", () => {
     mode: "build",
   });
 
-  test("unknown locale+slug renders live via passthrough", async ({
-    page,
-  }) => {
+  test("unknown locale+slug renders live via passthrough", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/es/blog/unknown"));

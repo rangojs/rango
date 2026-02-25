@@ -69,22 +69,24 @@ export const ProductPage = Prerender(
 
 Controls whether the handler stays in the RSC server bundle after build:
 
-| | `passthrough: false` (default) | `passthrough: true` |
-|---|---|---|
-| Known params | Served from pre-rendered Flight payload | Served from pre-rendered Flight payload |
-| Unknown params | Handler evicted, no live fallback | Handler runs live at request time |
-| Bundle size | Handler code + imports removed | Handler code kept in RSC bundle |
-| `revalidate()` | Not allowed (handler gone) | Allowed (handler can re-render) |
-| `loading()` | Ignored (segments fully resolved) | Works for live fallback renders |
+|                | `passthrough: false` (default)          | `passthrough: true`                     |
+| -------------- | --------------------------------------- | --------------------------------------- |
+| Known params   | Served from pre-rendered Flight payload | Served from pre-rendered Flight payload |
+| Unknown params | Handler evicted, no live fallback       | Handler runs live at request time       |
+| Bundle size    | Handler code + imports removed          | Handler code kept in RSC bundle         |
+| `revalidate()` | Not allowed (handler gone)              | Allowed (handler can re-render)         |
+| `loading()`    | Ignored (segments fully resolved)       | Works for live fallback renders         |
 
 ### When to use passthrough
 
 Use `passthrough: true` when:
+
 - The route has a large or open-ended param space (e.g., user profiles, product pages)
 - You want to pre-render popular/known params for speed but still serve unknown params live
 - You need `revalidate()` on the route
 
 Use `passthrough: false` (default) when:
+
 - All possible params are known at build time (e.g., markdown files, config-driven pages)
 - You want maximum bundle size reduction (handler code + node:fs imports removed)
 - The route uses build-only APIs (node:fs, local files) not available at runtime
@@ -95,14 +97,14 @@ Handlers receive `BuildContext` at build time, a subset of the runtime `HandlerC
 
 ```typescript
 interface BuildContext<TParams> {
-  params: TParams;           // From getParams
-  use: <T>(handle: Handle<T>) => (data: T) => void;  // Push handle data
-  url: URL;                  // Synthetic URL from pattern + params
-  pathname: string;          // Pathname from synthetic URL
-  set(key: string, value: any): void;         // Set context variable (string key)
-  set<T>(contextVar: ContextVar<T>, value: T): void;  // Set typed context variable
-  get(key: string): any;                      // Read context variable (string key)
-  get<T>(contextVar: ContextVar<T>): T | undefined;   // Read typed context variable
+  params: TParams; // From getParams
+  use: <T>(handle: Handle<T>) => (data: T) => void; // Push handle data
+  url: URL; // Synthetic URL from pattern + params
+  pathname: string; // Pathname from synthetic URL
+  set(key: string, value: any): void; // Set context variable (string key)
+  set<T>(contextVar: ContextVar<T>, value: T): void; // Set typed context variable
+  get(key: string): any; // Read context variable (string key)
+  get<T>(contextVar: ContextVar<T>): T | undefined; // Read typed context variable
   // NOT available: req, headers, cookies, env (throws descriptive errors)
 }
 ```
@@ -161,7 +163,10 @@ In production builds, `Prerender` exports are replaced with stubs:
 export const BlogPost = Prerender(getParams, handler);
 
 // Stubbed (ships to server bundle when passthrough: false)
-export const BlogPost = { __brand: "prerenderHandler", $$id: "abc123#BlogPost" };
+export const BlogPost = {
+  __brand: "prerenderHandler",
+  $$id: "abc123#BlogPost",
+};
 ```
 
 The original module and its imports (node:fs, markdown libs) are excluded from
@@ -202,15 +207,15 @@ path("/blog/:slug", BlogPost, { name: "blog.post" }, () => [
 
 ## Interaction with DSL Items
 
-| DSL item       | Behavior with Prerender |
-|----------------|--------------------------------------|
-| `loader()`     | Live at runtime, bundled normally. Use `cache()` for caching. |
-| `revalidate()` | Not allowed without passthrough. Allowed with passthrough. |
-| `cache()`      | Orthogonal -- use on parent layouts and loaders. |
-| `layout()`     | Child layouts inside path are pre-rendered. Parent layouts are live. |
-| `parallel()`   | Parallel slots inside path are pre-rendered. |
-| `middleware()`  | Skipped during pre-render (no request). Runs at request time for loaders. |
-| `loading()`    | Ignored without passthrough. Works for live fallback with passthrough. |
+| DSL item       | Behavior with Prerender                                                                                                                                                                                                                                             |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loader()`     | Live at runtime, bundled normally. Use `cache()` for caching.                                                                                                                                                                                                       |
+| `revalidate()` | Not allowed without passthrough. Allowed with passthrough.                                                                                                                                                                                                          |
+| `cache()`      | Orthogonal -- use on parent layouts and loaders.                                                                                                                                                                                                                    |
+| `layout()`     | Child layouts inside path are pre-rendered. Parent layouts are live.                                                                                                                                                                                                |
+| `parallel()`   | Parallel slots inside path are pre-rendered.                                                                                                                                                                                                                        |
+| `middleware()` | Skipped during pre-render (no request). Runs at request time for loaders.                                                                                                                                                                                           |
+| `loading()`    | Ignored without passthrough. Works for live fallback with passthrough.                                                                                                                                                                                              |
 | `intercept()`  | Pre-rendered at build time. Intercept variant stored under `/i` key alongside main segments. At runtime, the correct variant is served based on `ctx.isIntercept`. `when()` conditions are skipped at build time (all intercepts are pre-rendered unconditionally). |
 
 ## Dev Mode
@@ -283,10 +288,10 @@ export const TocSidebar = Static(() => {
 
 ### Error behavior at build time
 
-| Throw type | Effect |
-|---|---|
-| `throw new Skip("reason")` | Skip entry, log SKIP, continue with remaining entries |
-| `throw new Error("reason")` | Log FAIL, stop ALL pre-rendering, fail the build |
+| Throw type                  | Effect                                                |
+| --------------------------- | ----------------------------------------------------- |
+| `throw new Skip("reason")`  | Skip entry, log SKIP, continue with remaining entries |
+| `throw new Error("reason")` | Log FAIL, stop ALL pre-rendering, fail the build      |
 
 Both error types propagate to the router's `onError` callback with phase
 `"prerender"` or `"static"`.
@@ -317,30 +322,37 @@ general dev-mode principle where Prerender handlers run live per request.
 ## Edge Cases and Constraints
 
 ### Loaders are always live
+
 Loaders on pre-rendered routes run at request time. They are bundled normally
 and need `cache()` for caching. Do not use build-only APIs in loaders.
 
 ### Handle data is frozen
+
 Handle values pushed via `ctx.use()` during pre-rendering are baked into the
 Flight payload. They do not update at request time.
 
 ### Server actions work normally
+
 Actions do not re-render the B segment. The pre-rendered handler output stays
 frozen. Loaders are live and can be revalidated by actions. With `passthrough: true`
 and `revalidate()`, the handler itself can re-render live.
 
 ### Empty getParams
+
 If `getParams` returns an empty array, no Flight payloads are written. No error.
 
 ### Route name is required
+
 Routes using `Prerender` must have a `name` in path options.
 The name is used as the storage key for Flight payloads.
 
 ### No revalidate without passthrough
+
 Using `revalidate()` with `passthrough: false` produces a build-time warning.
 The handler is evicted -- there is nothing to re-render.
 
 ### loading() is ignored without passthrough
+
 Pre-rendered segments are fully resolved at build time and never suspend.
 With `passthrough: true`, `loading()` works for live fallback renders.
 
@@ -407,6 +419,7 @@ prerender store keys:
 ```
 
 At runtime, the cache-lookup middleware checks `ctx.isIntercept`:
+
 - **Intercept navigation**: looks up `paramHash/i` first. If found, yields
   the combined entry. `handleCacheHitIntercept()` extracts intercept segments
   (filtered by `namespace?.startsWith("intercept:")`) and sets up slots.
@@ -454,6 +467,7 @@ Pre-rendered routes set flags on the route trie leaf at build time:
 - `pt: true` -- passthrough mode (handler available for live fallback)
 
 At runtime, the cache-lookup middleware uses these flags:
+
 - `pr + hit` -- serve pre-rendered Flight payload
 - `pr + pt + miss` -- fall through to live handler (handler kept in bundle)
 - `pr + miss` (no pt) -- fall through (handler stubbed, no live render)

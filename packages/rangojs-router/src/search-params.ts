@@ -60,11 +60,13 @@ type Simplify<T> = { [K in keyof T]: T[K] };
  * type R = ResolveSearchSchema<S>;
  * // { q: string; page?: number; sort?: string }
  */
-export type ResolveSearchSchema<T extends SearchSchema> = Simplify<{
-  [K in RequiredKeys<T> & string]: ResolveBaseType<BaseType<T[K]>>;
-} & {
-  [K in OptionalKeys<T> & string]?: ResolveBaseType<BaseType<T[K]>>;
-}>;
+export type ResolveSearchSchema<T extends SearchSchema> = Simplify<
+  {
+    [K in RequiredKeys<T> & string]: ResolveBaseType<BaseType<T[K]>>;
+  } & {
+    [K in OptionalKeys<T> & string]?: ResolveBaseType<BaseType<T[K]>>;
+  }
+>;
 
 // ============================================================================
 // Route-Level Type Extraction
@@ -88,19 +90,17 @@ type GlobalRouteMap = keyof RSCRouter.RegisteredRoutes extends never
  * // { q: string; page?: number }
  * ```
  */
-export type RouteSearchParams<
-  TName extends string,
-  TRouteMap = never,
-> = [TRouteMap] extends [never]
+export type RouteSearchParams<TName extends string, TRouteMap = never> = [
+  TRouteMap,
+] extends [never]
   ? ExtractAndResolveSearch<GlobalRouteMap, TName>
   : ExtractAndResolveSearch<TRouteMap, TName>;
 
-type ExtractAndResolveSearch<TRouteMap, TName> =
-  TName extends keyof TRouteMap
-    ? TRouteMap[TName] extends { readonly search: infer S extends SearchSchema }
-      ? ResolveSearchSchema<S>
-      : {}
-    : {};
+type ExtractAndResolveSearch<TRouteMap, TName> = TName extends keyof TRouteMap
+  ? TRouteMap[TName] extends { readonly search: infer S extends SearchSchema }
+    ? ResolveSearchSchema<S>
+    : {}
+  : {};
 
 /**
  * Extract the route params type for a named route.
@@ -113,21 +113,19 @@ type ExtractAndResolveSearch<TRouteMap, TName> =
  * // { slug: string }
  * ```
  */
-export type RouteParams<
-  TName extends string,
-  TRouteMap = never,
-> = [TRouteMap] extends [never]
+export type RouteParams<TName extends string, TRouteMap = never> = [
+  TRouteMap,
+] extends [never]
   ? ExtractRouteParamsFromMap<GlobalRouteMap, TName>
   : ExtractRouteParamsFromMap<TRouteMap, TName>;
 
-type ExtractRouteParamsFromMap<TRouteMap, TName> =
-  TName extends keyof TRouteMap
-    ? TRouteMap[TName] extends string
-      ? ExtractParamsFromPattern<TRouteMap[TName]>
-      : TRouteMap[TName] extends { readonly path: infer P extends string }
-        ? ExtractParamsFromPattern<P>
-        : {}
-    : {};
+type ExtractRouteParamsFromMap<TRouteMap, TName> = TName extends keyof TRouteMap
+  ? TRouteMap[TName] extends string
+    ? ExtractParamsFromPattern<TRouteMap[TName]>
+    : TRouteMap[TName] extends { readonly path: infer P extends string }
+      ? ExtractParamsFromPattern<P>
+      : {}
+  : {};
 
 /** Minimal inline param extraction (avoids importing from types.ts to prevent circular deps). */
 type ExtractParamsFromPattern<T extends string> =
@@ -205,9 +203,7 @@ export function parseSearchParams<T extends SearchSchema>(
  * Serialize a typed search params object to a query string (without leading `?`).
  * Skips `undefined` and `null` values.
  */
-export function serializeSearchParams(
-  params: Record<string, unknown>,
-): string {
+export function serializeSearchParams(params: Record<string, unknown>): string {
   const parts: string[] = [];
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === null) continue;

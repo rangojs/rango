@@ -124,7 +124,9 @@ export default defineConfig({
           use: browserConfig,
           // HMR tests modify files, run serially to avoid conflicts
           fullyParallel: false,
-          dependencies: process.env.CI ? [] : ["dev", "production", "hmr-client"],
+          dependencies: process.env.CI
+            ? []
+            : ["dev", "production", "hmr-client"],
         },
       ],
   workers: process.env.CI ? 3 : 6,

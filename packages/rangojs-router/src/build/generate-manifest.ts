@@ -64,7 +64,7 @@ function buildPrefixTreeNode(
   namePrefix: string | undefined,
   patterns: UrlPatterns<any>,
   routeManifest: Record<string, string>,
-  routeAncestry: Record<string, string[]>,  // internal: feeds trie building, not exported
+  routeAncestry: Record<string, string[]>, // internal: feeds trie building, not exported
   mountIndex: number,
   visited: Set<unknown> = new Set(),
   routeTrailingSlash?: Record<string, string>,
@@ -76,7 +76,7 @@ function buildPrefixTreeNode(
 ): PrefixTreeNode {
   if (visited.has(patterns)) {
     console.warn(
-      `[@rangojs/router] Circular include detected at prefix "${urlPrefix}". Skipping.`
+      `[@rangojs/router] Circular include detected at prefix "${urlPrefix}". Skipping.`,
     );
     return {
       staticPrefix: extractStaticPrefix(urlPrefix),
@@ -119,7 +119,7 @@ function buildPrefixTreeNode(
         }
         return patterns.handler() as AllUseItems[];
       });
-    }
+    },
   );
 
   // Collect route names defined in this include (routes have prefixes applied)
@@ -152,7 +152,10 @@ function buildPrefixTreeNode(
         if (prerenderDefs && entry.prerenderDef) {
           prerenderDefs[name] = entry.prerenderDef;
         }
-        if (passthroughRoutes && entry.prerenderDef?.options?.passthrough === true) {
+        if (
+          passthroughRoutes &&
+          entry.prerenderDef?.options?.passthrough === true
+        ) {
           passthroughRoutes.push(name);
         }
       }
@@ -251,7 +254,10 @@ function captureAncestry(
 export function generateManifest<TEnv>(
   urlpatterns: UrlPatterns<TEnv, any>,
   mountIndex: number = 0,
-): GeneratedManifest & { _routeAncestry: Record<string, string[]>; _prerenderDefs?: Record<string, any> } {
+): GeneratedManifest & {
+  _routeAncestry: Record<string, string[]>;
+  _prerenderDefs?: Record<string, any>;
+} {
   const routeManifest: Record<string, string> = {};
   const routeAncestry: Record<string, string[]> = {};
   const prefixTree: Record<string, PrefixTreeNode> = {};
@@ -283,7 +289,7 @@ export function generateManifest<TEnv>(
       helpers.layout(MapRootLayout, () => {
         return urlpatterns.handler() as AllUseItems[];
       });
-    }
+    },
   );
 
   // Collect root-level routes and trailing slash config
@@ -355,16 +361,27 @@ export function generateManifest<TEnv>(
   return {
     prefixTree,
     routeManifest,
-    routeTrailingSlash: Object.keys(routeTrailingSlash).length > 0 ? routeTrailingSlash : undefined,
+    routeTrailingSlash:
+      Object.keys(routeTrailingSlash).length > 0
+        ? routeTrailingSlash
+        : undefined,
     prerenderRoutes: prerenderRoutes.length > 0 ? prerenderRoutes : undefined,
-    passthroughRoutes: passthroughRoutes.length > 0 ? passthroughRoutes : undefined,
-    responseTypeRoutes: Object.keys(responseTypeRoutes).length > 0 ? responseTypeRoutes : undefined,
-    routeSearchSchemas: Object.keys(routeSearchSchemas).length > 0 ? routeSearchSchemas : undefined,
+    passthroughRoutes:
+      passthroughRoutes.length > 0 ? passthroughRoutes : undefined,
+    responseTypeRoutes:
+      Object.keys(responseTypeRoutes).length > 0
+        ? responseTypeRoutes
+        : undefined,
+    routeSearchSchemas:
+      Object.keys(routeSearchSchemas).length > 0
+        ? routeSearchSchemas
+        : undefined,
     generatedAt: new Date().toISOString(),
     // Internal: routeAncestry is used only for trie building, not exported
     _routeAncestry: routeAncestry,
     // Internal: prerender handler definitions for build-time getParams() access
-    _prerenderDefs: Object.keys(prerenderDefs).length > 0 ? prerenderDefs : undefined,
+    _prerenderDefs:
+      Object.keys(prerenderDefs).length > 0 ? prerenderDefs : undefined,
   };
 }
 
@@ -378,7 +395,7 @@ export function generateManifest<TEnv>(
  * ```
  */
 export function generateManifestCode<TEnv>(
-  urlpatterns: UrlPatterns<TEnv, any>
+  urlpatterns: UrlPatterns<TEnv, any>,
 ): string {
   const manifest = generateManifest(urlpatterns);
 

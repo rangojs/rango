@@ -6,7 +6,12 @@
 
 import { invariant, RouteNotFoundError } from "../errors";
 import { createRouteHelpers } from "../route-definition";
-import { getContext, runWithPrefixes, type EntryData, type MetricsStore } from "../server/context";
+import {
+  getContext,
+  runWithPrefixes,
+  type EntryData,
+  type MetricsStore,
+} from "../server/context";
 import MapRootLayout from "../server/root-layout";
 import type { RouteEntry } from "../types";
 import type { UrlPatterns } from "../urls";
@@ -60,7 +65,7 @@ export async function loadManifest(
   const mountIndex = entry.mountIndex;
 
   // Check module-level cache (persists across requests within same isolate)
-  const cacheKey = `${VERSION}:${mountIndex ?? ''}:${routeKey}:${isSSR ? 1 : 0}`;
+  const cacheKey = `${VERSION}:${mountIndex ?? ""}:${routeKey}:${isSSR ? 1 : 0}`;
   const cached = manifestModuleCache.get(cacheKey);
   if (cached) {
     const cacheStart = performance.now();
@@ -100,14 +105,15 @@ export async function loadManifest(
 
   try {
     // Include mountIndex in namespace to ensure unique cache keys per mount
-    const namespaceWithMount = mountIndex !== undefined
-      ? `#router.M${mountIndex}`
-      : "#router";
+    const namespaceWithMount =
+      mountIndex !== undefined ? `#router.M${mountIndex}` : "#router";
 
     // For lazy entries, use the captured parent from include() context
     // This ensures routes are registered under the correct layout hierarchy
-    const lazyContext = entry.lazy && entry.lazyPatterns ? entry.lazyContext : null;
-    const parentForContext = lazyContext?.parent as EntryData | null ?? Store.parent;
+    const lazyContext =
+      entry.lazy && entry.lazyPatterns ? entry.lazyContext : null;
+    const parentForContext =
+      (lazyContext?.parent as EntryData | null) ?? Store.parent;
 
     // For lazy entries, merge captured counters from include() so the
     // handler's entries get shortCode indices after sibling entries that
@@ -142,10 +148,8 @@ export async function loadManifest(
           const fullPrefix = (lazyContext?.urlPrefix || "") + includePrefix;
 
           if (fullPrefix || lazyContext?.namePrefix) {
-            return runWithPrefixes(
-              fullPrefix,
-              lazyContext?.namePrefix,
-              () => lazyPatterns.handler()
+            return runWithPrefixes(fullPrefix, lazyContext?.namePrefix, () =>
+              lazyPatterns.handler(),
             );
           }
           return lazyPatterns.handler();
@@ -187,14 +191,14 @@ export async function loadManifest(
 
         // Inline handler - routes were registered with correct parent inside layout
         return [wrappedItems].flat(3);
-      }
+      },
     );
     pushMetric?.("manifest:handler-exec", handlerExecStart);
 
     const validationStart = performance.now();
     invariant(
       useItems && useItems.length > 0,
-      "Did not receive any handler from router.map()"
+      "Did not receive any handler from router.map()",
     );
     // For non-lazy entries the root handler is wrapped in MapRootLayout,
     // so the result always contains a layout item.  Lazy entries run the
@@ -203,13 +207,13 @@ export async function loadManifest(
     if (!lazyContext) {
       invariant(
         useItems.some((item: { type: string }) => item.type === "layout"),
-        "Top-level handler must be a layout"
+        "Top-level handler must be a layout",
       );
     }
 
     invariant(
       Store.manifest.has(routeKey),
-      `Route must be registered for ${routeKey}`
+      `Route must be registered for ${routeKey}`,
     );
     pushMetric?.("manifest:validation", validationStart);
 
@@ -228,7 +232,7 @@ export async function loadManifest(
             routeKey,
           },
         },
-      }
+      },
     );
   }
 }

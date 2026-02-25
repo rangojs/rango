@@ -47,11 +47,11 @@ Prefix a name with `.` to resolve it within the current `include()` scope. The r
 ```typescript
 // urls/magazine.tsx — mounted at include("/magazine", magazinePatterns, { name: "magazine" })
 (ctx) => {
-  ctx.reverse(".article", { slug: "design" });            // "/magazine/design"
-  ctx.reverse(".author.posts", { authorSlug: "alice" });   // "/magazine/author/alice/posts"
-  ctx.reverse(".index");                                   // "/magazine"
-  ctx.reverse(".blog.index");                              // THROWS — no magazine.blog.index
-}
+  ctx.reverse(".article", { slug: "design" }); // "/magazine/design"
+  ctx.reverse(".author.posts", { authorSlug: "alice" }); // "/magazine/author/alice/posts"
+  ctx.reverse(".index"); // "/magazine"
+  ctx.reverse(".blog.index"); // THROWS — no magazine.blog.index
+};
 ```
 
 ### Auto-fill of mount params
@@ -84,9 +84,9 @@ Unprefixed names resolve against the full named-routes map (the generated `route
 
 ```typescript
 (ctx) => {
-  ctx.reverse("magazine.index");                           // "/magazine"
-  ctx.reverse("blog.post", { slug: "hello" });             // "/blog/hello"
-}
+  ctx.reverse("magazine.index"); // "/magazine"
+  ctx.reverse("blog.post", { slug: "hello" }); // "/blog/hello"
+};
 ```
 
 ### reverse with search params
@@ -185,13 +185,13 @@ function MountInfo() {
 
 ## When to use what
 
-| Context | API | Resolves | Use for |
-|---------|-----|----------|---------|
-| Server handler | `ctx.reverse("name")` | Named routes (local + absolute) | Server-side URL generation |
-| Server handler | `scopedReverse<T>(ctx.reverse)` | Same, with type safety | Type-safe server URLs |
-| Client component | `href("/path")` | Absolute paths | Global navigation |
-| Client component | `useHref()` | Mount-prefixed paths | Local navigation inside `include()` |
-| Client component | `useMount()` | Raw mount path | Custom mount-aware logic |
+| Context          | API                             | Resolves                        | Use for                             |
+| ---------------- | ------------------------------- | ------------------------------- | ----------------------------------- |
+| Server handler   | `ctx.reverse("name")`           | Named routes (local + absolute) | Server-side URL generation          |
+| Server handler   | `scopedReverse<T>(ctx.reverse)` | Same, with type safety          | Type-safe server URLs               |
+| Client component | `href("/path")`                 | Absolute paths                  | Global navigation                   |
+| Client component | `useHref()`                     | Mount-prefixed paths            | Local navigation inside `include()` |
+| Client component | `useMount()`                    | Raw mount path                  | Custom mount-aware logic            |
 
 ## Complete example: mounted module
 

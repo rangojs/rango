@@ -26,7 +26,12 @@
  * ```
  */
 import type { ReactNode } from "react";
-import type { Handler, HandlerContext, DefaultEnv, ExtractParams } from "./types.js";
+import type {
+  Handler,
+  HandlerContext,
+  DefaultEnv,
+  ExtractParams,
+} from "./types.js";
 import type { Handle } from "./handle.js";
 import type { ContextVar } from "./context-var.js";
 import { isCachedFunction } from "./cache/taint.js";
@@ -42,12 +47,11 @@ type DefaultPrerenderRouteMap = keyof RSCRouter.GeneratedRouteMap extends never
   : RSCRouter.GeneratedRouteMap;
 
 /** Extract params from a route map entry (string pattern or { path } object). */
-type ExtractParamsFromEntry<TEntry> =
-  TEntry extends string
-    ? ExtractParams<TEntry>
-    : TEntry extends { readonly path: infer P extends string }
-      ? ExtractParams<P>
-      : Record<string, string>;
+type ExtractParamsFromEntry<TEntry> = TEntry extends string
+  ? ExtractParams<TEntry>
+  : TEntry extends { readonly path: infer P extends string }
+    ? ExtractParams<P>
+    : Record<string, string>;
 
 /**
  * Resolve params from Prerender's type parameter.
@@ -71,7 +75,6 @@ type ResolvePrerenderParams<
     : T extends Record<string, any>
       ? T
       : {};
-
 
 // -- Types ------------------------------------------------------------------
 
@@ -140,7 +143,11 @@ export interface BuildContext<TParams> {
   search: {};
 
   /** URL generation by route name. */
-  reverse: (name: string, params?: Record<string, string>, search?: Record<string, unknown>) => string;
+  reverse: (
+    name: string,
+    params?: Record<string, string>,
+    search?: Record<string, unknown>,
+  ) => string;
 }
 
 /**
@@ -167,7 +174,11 @@ export interface StaticBuildContext {
   use: <T>(handle: Handle<T>) => (data: T) => void;
 
   /** URL generation by route name. */
-  reverse: (name: string, params?: Record<string, string>, search?: Record<string, unknown>) => string;
+  reverse: (
+    name: string,
+    params?: Record<string, string>,
+    search?: Record<string, unknown>,
+  ) => string;
 }
 
 /**
@@ -185,7 +196,11 @@ export interface GetParamsContext {
   };
 
   /** URL generation by route name. */
-  reverse: (name: string, params?: Record<string, string>, search?: Record<string, unknown>) => string;
+  reverse: (
+    name: string,
+    params?: Record<string, string>,
+    search?: Record<string, unknown>,
+  ) => string;
 }
 
 /**
@@ -203,7 +218,9 @@ export type PrerenderPassthroughContext<
   TEnv = DefaultEnv,
 > = HandlerContext<TParams, TEnv>;
 
-export interface PrerenderHandlerDefinition<TParams extends Record<string, any> = any> {
+export interface PrerenderHandlerDefinition<
+  TParams extends Record<string, any> = any,
+> {
   readonly __brand: "prerenderHandler";
   /** Auto-generated unique ID (injected by Vite plugin). */
   $$id: string;
@@ -225,44 +242,78 @@ export interface PrerenderHandlerDefinition<TParams extends Record<string, any> 
 
 // Overload 1: Static handler, no passthrough (build-time only)
 export function Prerender<
-  T extends keyof DefaultPrerenderRouteMap | `.${keyof TRouteMap & string}` | Record<string, any> = {},
+  T extends
+    | keyof DefaultPrerenderRouteMap
+    | `.${keyof TRouteMap & string}`
+    | Record<string, any> = {},
   TRouteMap extends {} = DefaultPrerenderRouteMap,
 >(
-  handler: (ctx: BuildContext<ResolvePrerenderParams<T, TRouteMap>>) => ReactNode | Promise<ReactNode>,
+  handler: (
+    ctx: BuildContext<ResolvePrerenderParams<T, TRouteMap>>,
+  ) => ReactNode | Promise<ReactNode>,
   options?: PrerenderOptions & { passthrough?: false },
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;
 
 // Overload 2: Static handler, passthrough (build + live — full HandlerContext)
 export function Prerender<
-  T extends keyof DefaultPrerenderRouteMap | `.${keyof TRouteMap & string}` | Record<string, any> = {},
+  T extends
+    | keyof DefaultPrerenderRouteMap
+    | `.${keyof TRouteMap & string}`
+    | Record<string, any> = {},
   TRouteMap extends {} = DefaultPrerenderRouteMap,
   TEnv = DefaultEnv,
 >(
-  handler: (ctx: PrerenderPassthroughContext<ResolvePrerenderParams<T, TRouteMap>, TEnv>) => ReactNode | Promise<ReactNode>,
+  handler: (
+    ctx: PrerenderPassthroughContext<
+      ResolvePrerenderParams<T, TRouteMap>,
+      TEnv
+    >,
+  ) => ReactNode | Promise<ReactNode>,
   options: PrerenderOptions & { passthrough: true },
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;
 
 // Overload 3: Dynamic handler, no passthrough (build-time only)
 export function Prerender<
-  T extends keyof DefaultPrerenderRouteMap | `.${keyof TRouteMap & string}` | Record<string, any>,
+  T extends
+    | keyof DefaultPrerenderRouteMap
+    | `.${keyof TRouteMap & string}`
+    | Record<string, any>,
   TRouteMap extends {} = DefaultPrerenderRouteMap,
 >(
-  getParams: (ctx: GetParamsContext) => Promise<ResolvePrerenderParams<T, TRouteMap>[]> | ResolvePrerenderParams<T, TRouteMap>[],
-  handler: (ctx: BuildContext<ResolvePrerenderParams<T, TRouteMap>>) => ReactNode | Promise<ReactNode>,
+  getParams: (
+    ctx: GetParamsContext,
+  ) =>
+    | Promise<ResolvePrerenderParams<T, TRouteMap>[]>
+    | ResolvePrerenderParams<T, TRouteMap>[],
+  handler: (
+    ctx: BuildContext<ResolvePrerenderParams<T, TRouteMap>>,
+  ) => ReactNode | Promise<ReactNode>,
   options?: PrerenderOptions & { passthrough?: false },
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;
 
 // Overload 4: Dynamic handler, passthrough (build + live — full HandlerContext)
 export function Prerender<
-  T extends keyof DefaultPrerenderRouteMap | `.${keyof TRouteMap & string}` | Record<string, any>,
+  T extends
+    | keyof DefaultPrerenderRouteMap
+    | `.${keyof TRouteMap & string}`
+    | Record<string, any>,
   TRouteMap extends {} = DefaultPrerenderRouteMap,
   TEnv = DefaultEnv,
 >(
-  getParams: (ctx: GetParamsContext) => Promise<ResolvePrerenderParams<T, TRouteMap>[]> | ResolvePrerenderParams<T, TRouteMap>[],
-  handler: (ctx: PrerenderPassthroughContext<ResolvePrerenderParams<T, TRouteMap>, TEnv>) => ReactNode | Promise<ReactNode>,
+  getParams: (
+    ctx: GetParamsContext,
+  ) =>
+    | Promise<ResolvePrerenderParams<T, TRouteMap>[]>
+    | ResolvePrerenderParams<T, TRouteMap>[],
+  handler: (
+    ctx: PrerenderPassthroughContext<
+      ResolvePrerenderParams<T, TRouteMap>,
+      TEnv
+    >,
+  ) => ReactNode | Promise<ReactNode>,
   options: PrerenderOptions & { passthrough: true },
   __injectedId?: string,
 ): PrerenderHandlerDefinition<ResolvePrerenderParams<T, TRouteMap>>;
@@ -324,7 +375,7 @@ export function Prerender<TParams extends Record<string, any>>(
   if (!id) {
     throw new Error(
       "[rsc-router] Prerender: missing $$id. " +
-      "Ensure the exposeInternalIds Vite plugin is configured.",
+        "Ensure the exposeInternalIds Vite plugin is configured.",
     );
   }
 

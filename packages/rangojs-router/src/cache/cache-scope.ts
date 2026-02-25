@@ -10,10 +10,7 @@
 
 import type { PartialCacheOptions } from "../types.js";
 import type { ResolvedSegment } from "../types.js";
-import type {
-  SegmentCacheStore,
-  CachedEntryData,
-} from "./types.js";
+import type { SegmentCacheStore, CachedEntryData } from "./types.js";
 import { INTERNAL_RANGO_DEBUG } from "../internal-debug.js";
 import { getRequestContext } from "../server/request-context.js";
 import { serializeSegments, deserializeSegments } from "./segment-codec.js";
@@ -21,7 +18,11 @@ import { captureHandles, restoreHandles } from "./handle-snapshot.js";
 
 // Re-export codec functions for backwards compatibility.
 // Existing call sites import these from cache-scope.ts via dynamic import.
-export { deserializeComponent, serializeSegments, deserializeSegments } from "./segment-codec.js";
+export {
+  deserializeComponent,
+  serializeSegments,
+  deserializeSegments,
+} from "./segment-codec.js";
 
 // ============================================================================
 // Constants
@@ -47,14 +48,12 @@ function debugCacheLog(message: string): void {
  */
 function getCacheKeyBase(
   pathname: string,
-  params?: Record<string, string>
+  params?: Record<string, string>,
 ): string {
   const paramStr = params
     ? Object.entries(params)
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-        .map(
-          ([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`,
-        )
+        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
         .join("&")
     : "";
 
@@ -73,7 +72,7 @@ function getCacheKeyBase(
 function getDefaultRouteCacheKey(
   pathname: string,
   params?: Record<string, string>,
-  isIntercept?: boolean
+  isIntercept?: boolean,
 ): string {
   const ctx = getRequestContext();
   const isPartial = ctx?.url.searchParams.has("_rsc_partial") ?? false;
@@ -113,7 +112,7 @@ export class CacheScope {
 
   constructor(
     config: PartialCacheOptions | false,
-    parent: CacheScope | null = null
+    parent: CacheScope | null = null,
   ) {
     this.config = config;
     this.parent = parent;
@@ -193,7 +192,7 @@ export class CacheScope {
   private async resolveKey(
     pathname: string,
     params: Record<string, string>,
-    isIntercept?: boolean
+    isIntercept?: boolean,
   ): Promise<string> {
     const requestCtx = getRequestContext();
     if (!requestCtx) {
@@ -207,7 +206,10 @@ export class CacheScope {
         const customKey = await this.config.key(requestCtx);
         return customKey;
       } catch (error) {
-        console.error(`[CacheScope] Custom key function failed, using default:`, error);
+        console.error(
+          `[CacheScope] Custom key function failed, using default:`,
+          error,
+        );
         return getDefaultRouteCacheKey(pathname, params, isIntercept);
       }
     }
@@ -222,7 +224,10 @@ export class CacheScope {
         const modifiedKey = await store.keyGenerator(requestCtx, defaultKey);
         return modifiedKey;
       } catch (error) {
-        console.error(`[CacheScope] Store keyGenerator failed, using default:`, error);
+        console.error(
+          `[CacheScope] Store keyGenerator failed, using default:`,
+          error,
+        );
         return defaultKey;
       }
     }
@@ -242,7 +247,7 @@ export class CacheScope {
   async lookupRoute(
     pathname: string,
     params: Record<string, string>,
-    isIntercept?: boolean
+    isIntercept?: boolean,
   ): Promise<{
     segments: ResolvedSegment[];
     shouldRevalidate: boolean;
@@ -276,10 +281,10 @@ export class CacheScope {
 
       if (INTERNAL_RANGO_DEBUG) {
         const segmentTypes = segments.map((s) =>
-          s.type === "parallel" ? s.slot : s.type
+          s.type === "parallel" ? s.slot : s.type,
         );
         debugCacheLog(
-          `[CacheScope] ${shouldRevalidate ? "STALE" : "HIT"}: ${key} (${segmentTypes.join(", ")})`
+          `[CacheScope] ${shouldRevalidate ? "STALE" : "HIT"}: ${key} (${segmentTypes.join(", ")})`,
         );
       }
 
@@ -304,7 +309,7 @@ export class CacheScope {
     pathname: string,
     params: Record<string, string>,
     segments: ResolvedSegment[],
-    isIntercept?: boolean
+    isIntercept?: boolean,
   ): Promise<void> {
     if (!this.enabled || segments.length === 0) return;
 
@@ -337,7 +342,7 @@ export class CacheScope {
       // For partial requests: null components are expected (client already has them)
       if (!isPartial) {
         const hasAllComponents = nonLoaderSegments.every(
-          (s) => s.component !== null
+          (s) => s.component !== null,
         );
         if (!hasAllComponents) return;
       }
@@ -359,10 +364,10 @@ export class CacheScope {
 
         if (INTERNAL_RANGO_DEBUG) {
           const segmentTypes = nonLoaderSegments.map((s) =>
-            s.type === "parallel" ? s.slot : s.type
+            s.type === "parallel" ? s.slot : s.type,
           );
           debugCacheLog(
-            `[CacheScope] Cached: ${key} (${segmentTypes.join(", ")}) ttl=${ttl}s [loaders excluded]`
+            `[CacheScope] Cached: ${key} (${segmentTypes.join(", ")}) ttl=${ttl}s [loaders excluded]`,
           );
         }
       } catch (error) {
@@ -377,7 +382,7 @@ export class CacheScope {
  */
 export function createCacheScope(
   config: { options: PartialCacheOptions | false } | undefined,
-  parent: CacheScope | null = null
+  parent: CacheScope | null = null,
 ): CacheScope | null {
   if (!config) return parent; // No config, inherit parent
   return new CacheScope(config.options, parent);

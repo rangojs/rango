@@ -9,7 +9,10 @@ vi.mock("../../route-map-builder.js", () => ({
   getSearchSchema: () => undefined,
 }));
 
-import { createHandlerContext, createReverseFunction } from "../handler-context";
+import {
+  createHandlerContext,
+  createReverseFunction,
+} from "../handler-context";
 
 /**
  * Helper to build a minimal HandlerContext for testing search param behavior.
@@ -20,7 +23,7 @@ function buildContext(searchParams: URLSearchParams) {
   url.search = searchParams.toString();
 
   return createHandlerContext(
-    {},            // params
+    {}, // params
     new Request(url.href),
     searchParams,
     "/test",
@@ -49,7 +52,9 @@ describe("createHandlerContext", () => {
     });
 
     it("should strip _rsc params while preserving multi-valued user params", () => {
-      const params = new URLSearchParams("color=red&color=blue&_rscKey=x&size=L");
+      const params = new URLSearchParams(
+        "color=red&color=blue&_rscKey=x&size=L",
+      );
       const ctx = buildContext(params);
 
       const result = ctx.searchParams as URLSearchParams;
@@ -92,75 +97,60 @@ describe("createReverseFunction", () => {
     "tenant.index": "/tenant/:tenantId",
     "tenant.settings": "/tenant/:tenantId/settings",
     "tenant.user": "/tenant/:tenantId/users/:userId",
-    "about": "/about",
+    about: "/about",
   };
 
   describe("reverse with auto-filled params", () => {
     it("should auto-fill mount params from currentParams", () => {
-      const reverse = createReverseFunction(
-        routeMap,
-        "tenant.index",
-        { tenantId: "acme" },
-      );
+      const reverse = createReverseFunction(routeMap, "tenant.index", {
+        tenantId: "acme",
+      });
       expect(reverse(".settings")).toBe("/tenant/acme/settings");
     });
 
     it("should auto-fill params for local route back to index", () => {
-      const reverse = createReverseFunction(
-        routeMap,
-        "tenant.settings",
-        { tenantId: "acme" },
-      );
+      const reverse = createReverseFunction(routeMap, "tenant.settings", {
+        tenantId: "acme",
+      });
       expect(reverse(".index")).toBe("/tenant/acme");
     });
 
     it("should allow explicit params to override auto-filled params", () => {
-      const reverse = createReverseFunction(
-        routeMap,
-        "tenant.index",
-        { tenantId: "acme" },
-      );
+      const reverse = createReverseFunction(routeMap, "tenant.index", {
+        tenantId: "acme",
+      });
       expect(reverse(".settings", { tenantId: "other" })).toBe(
         "/tenant/other/settings",
       );
     });
 
     it("should combine auto-filled mount params with explicit route params", () => {
-      const reverse = createReverseFunction(
-        routeMap,
-        "tenant.index",
-        { tenantId: "acme" },
-      );
-      expect(reverse(".user", { userId: "u1" })).toBe(
-        "/tenant/acme/users/u1",
-      );
+      const reverse = createReverseFunction(routeMap, "tenant.index", {
+        tenantId: "acme",
+      });
+      expect(reverse(".user", { userId: "u1" })).toBe("/tenant/acme/users/u1");
     });
 
     it("should use auto-filled params from a route with multiple params", () => {
-      const reverse = createReverseFunction(
-        routeMap,
-        "tenant.user",
-        { tenantId: "acme", userId: "u1" },
-      );
+      const reverse = createReverseFunction(routeMap, "tenant.user", {
+        tenantId: "acme",
+        userId: "u1",
+      });
       // Reversing back to settings only needs tenantId, userId is extra (ignored)
       expect(reverse(".settings")).toBe("/tenant/acme/settings");
     });
 
     it("should auto-fill params for global (non-dot-prefixed) routes", () => {
-      const reverse = createReverseFunction(
-        routeMap,
-        "tenant.index",
-        { tenantId: "acme" },
-      );
+      const reverse = createReverseFunction(routeMap, "tenant.index", {
+        tenantId: "acme",
+      });
       expect(reverse("tenant.settings")).toBe("/tenant/acme/settings");
     });
 
     it("should work for routes without params when currentParams are present", () => {
-      const reverse = createReverseFunction(
-        routeMap,
-        "tenant.index",
-        { tenantId: "acme" },
-      );
+      const reverse = createReverseFunction(routeMap, "tenant.index", {
+        tenantId: "acme",
+      });
       // Extra params from currentParams are ignored since /about has no :param
       expect(reverse("about")).toBe("/about");
     });
@@ -180,21 +170,17 @@ describe("createReverseFunction", () => {
     });
 
     it("should throw for missing params not covered by currentParams", () => {
-      const reverse = createReverseFunction(
-        routeMap,
-        "tenant.index",
-        { tenantId: "acme" },
-      );
+      const reverse = createReverseFunction(routeMap, "tenant.index", {
+        tenantId: "acme",
+      });
       // .user needs userId which isn't in currentParams
       expect(() => reverse(".user")).toThrow('Missing param "userId"');
     });
 
     it("should URL-encode auto-filled param values", () => {
-      const reverse = createReverseFunction(
-        routeMap,
-        "tenant.index",
-        { tenantId: "hello world" },
-      );
+      const reverse = createReverseFunction(routeMap, "tenant.index", {
+        tenantId: "hello world",
+      });
       expect(reverse(".settings")).toBe("/tenant/hello%20world/settings");
     });
   });

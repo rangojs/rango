@@ -1,0 +1,208 @@
+// Mock product data
+export const products = [
+  {
+    id: 1,
+    slug: "wireless-headphones",
+    name: "Wireless Headphones",
+    category: "electronics",
+    price: 99.99,
+    description:
+      "Premium wireless headphones with noise cancellation and 30-hour battery life.",
+  },
+  {
+    id: 2,
+    slug: "running-shoes",
+    name: "Running Shoes",
+    category: "sports",
+    price: 79.99,
+    description:
+      "Lightweight running shoes with responsive cushioning and breathable mesh upper.",
+  },
+  {
+    id: 3,
+    slug: "coffee-maker",
+    name: "Coffee Maker",
+    category: "home",
+    price: 149.99,
+    description:
+      "Programmable coffee maker with thermal carafe and auto-brew feature.",
+  },
+  {
+    id: 4,
+    slug: "laptop-stand",
+    name: "Laptop Stand",
+    category: "electronics",
+    price: 49.99,
+    description:
+      "Adjustable aluminum laptop stand with ergonomic design and cooling ventilation.",
+  },
+  {
+    id: 5,
+    slug: "yoga-mat",
+    name: "Yoga Mat",
+    category: "sports",
+    price: 29.99,
+    description:
+      "Non-slip yoga mat with extra cushioning and eco-friendly materials.",
+  },
+  {
+    id: 6,
+    slug: "desk-lamp",
+    name: "Desk Lamp",
+    category: "home",
+    price: 39.99,
+    description:
+      "LED desk lamp with adjustable brightness and color temperature control.",
+  },
+  {
+    id: 7,
+    slug: "mechanical-keyboard",
+    name: "Mechanical Keyboard",
+    category: "electronics",
+    price: 129.99,
+    description:
+      "RGB mechanical keyboard with hot-swappable switches and programmable keys.",
+  },
+  {
+    id: 8,
+    slug: "water-bottle",
+    name: "Insulated Water Bottle",
+    category: "sports",
+    price: 24.99,
+    description:
+      "Stainless steel water bottle that keeps drinks cold for 24 hours or hot for 12 hours.",
+  },
+  {
+    id: 9,
+    slug: "air-purifier",
+    name: "Air Purifier",
+    category: "home",
+    price: 199.99,
+    description:
+      "HEPA air purifier with smart sensors and quiet operation for rooms up to 500 sq ft.",
+  },
+  {
+    id: 10,
+    slug: "wireless-mouse",
+    name: "Wireless Mouse",
+    category: "electronics",
+    price: 34.99,
+    description:
+      "Ergonomic wireless mouse with precision tracking and 6-month battery life.",
+  },
+  {
+    id: 11,
+    slug: "resistance-bands",
+    name: "Resistance Bands Set",
+    category: "sports",
+    price: 19.99,
+    description:
+      "Set of 5 resistance bands with varying strengths for home workouts.",
+  },
+  {
+    id: 12,
+    slug: "throw-pillows",
+    name: "Decorative Throw Pillows",
+    category: "home",
+    price: 45.99,
+    description: "Set of 2 premium velvet throw pillows with hidden zippers.",
+  },
+  {
+    id: 13,
+    slug: "webcam",
+    name: "4K Webcam",
+    category: "electronics",
+    price: 89.99,
+    description:
+      "4K webcam with autofocus, built-in microphone, and low-light correction.",
+  },
+  {
+    id: 14,
+    slug: "dumbbells",
+    name: "Adjustable Dumbbells",
+    category: "sports",
+    price: 149.99,
+    description:
+      "Pair of adjustable dumbbells with quick-change weight system from 5 to 25 lbs.",
+  },
+  {
+    id: 15,
+    slug: "candle-set",
+    name: "Scented Candle Set",
+    category: "home",
+    price: 34.99,
+    description:
+      "Set of 3 soy wax candles with natural essential oils and 40-hour burn time each.",
+  },
+  {
+    id: 16,
+    slug: "usb-hub",
+    name: "USB-C Hub",
+    category: "electronics",
+    price: 54.99,
+    description:
+      "7-in-1 USB-C hub with HDMI, USB 3.0, SD card reader, and power delivery.",
+  },
+  {
+    id: 17,
+    slug: "jump-rope",
+    name: "Speed Jump Rope",
+    category: "sports",
+    price: 14.99,
+    description:
+      "Adjustable speed jump rope with ball bearings and anti-slip handles.",
+  },
+  {
+    id: 18,
+    slug: "wall-clock",
+    name: "Modern Wall Clock",
+    category: "home",
+    price: 42.99,
+    description:
+      "Silent wall clock with minimalist design and easy-to-read numbers.",
+  },
+  {
+    id: 19,
+    slug: "phone-stand",
+    name: "Charging Phone Stand",
+    category: "electronics",
+    price: 29.99,
+    description:
+      "Adjustable phone stand with wireless charging and cable management.",
+  },
+  {
+    id: 20,
+    slug: "foam-roller",
+    name: "Foam Roller",
+    category: "sports",
+    price: 27.99,
+    description:
+      "High-density foam roller for muscle recovery and deep tissue massage.",
+  },
+];
+
+export const categories = ["electronics", "sports", "home"];
+
+export const orders = [
+  {
+    id: "ORD-001",
+    date: "2024-01-15",
+    total: 249.97,
+    status: "Delivered",
+    items: ["Wireless Headphones", "Running Shoes", "Coffee Maker"],
+  },
+  {
+    id: "ORD-002",
+    date: "2024-01-20",
+    total: 79.99,
+    status: "Shipped",
+    items: ["Running Shoes"],
+  },
+  {
+    id: "ORD-003",
+    date: "2024-01-25",
+    total: 149.99,
+    status: "Processing",
+    items: ["Coffee Maker"],
+  },
+];

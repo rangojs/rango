@@ -18,14 +18,14 @@ test.describe("useNavigation", () => {
     await waitForHydration(page);
 
     // Navigation status should show idle state
-    await expect(page.locator('[data-testid="nav-status-state"]')).toContainText(
-      "state:idle"
-    );
     await expect(
-      page.locator('[data-testid="nav-status-streaming"]')
+      page.locator('[data-testid="nav-status-state"]'),
+    ).toContainText("state:idle");
+    await expect(
+      page.locator('[data-testid="nav-status-streaming"]'),
     ).toContainText("streaming:false");
     await expect(
-      page.locator('[data-testid="nav-status-pathname"]')
+      page.locator('[data-testid="nav-status-pathname"]'),
     ).toContainText("path:/");
   });
 
@@ -36,9 +36,9 @@ test.describe("useNavigation", () => {
     await waitForHydration(page);
 
     // Initial state should be idle
-    await expect(page.locator('[data-testid="nav-status-state"]')).toContainText(
-      "state:idle"
-    );
+    await expect(
+      page.locator('[data-testid="nav-status-state"]'),
+    ).toContainText("state:idle");
 
     // Extra wait to ensure all event handlers are attached
     // Under load, React hydration might complete but handlers may still be attaching
@@ -48,14 +48,20 @@ test.describe("useNavigation", () => {
     await page.evaluate(() => {
       (window as any).__sawLoadingState = false;
       const observer = new MutationObserver(() => {
-        const stateEl = document.querySelector('[data-testid="nav-status-state"]');
+        const stateEl = document.querySelector(
+          '[data-testid="nav-status-state"]',
+        );
         if (stateEl?.textContent?.includes("loading")) {
           (window as any).__sawLoadingState = true;
         }
       });
       const target = document.querySelector('[data-testid="nav-status"]');
       if (target) {
-        observer.observe(target, { childList: true, subtree: true, characterData: true });
+        observer.observe(target, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+        });
       }
       (window as any).__stateObserver = observer;
     });
@@ -66,7 +72,9 @@ test.describe("useNavigation", () => {
     // Click and wait for URL to change, with retry logic for robustness
     let retries = 3;
     while (retries > 0) {
-      const navigationPromise = page.waitForURL("**/slow", { timeout: 10000 }).catch(() => null);
+      const navigationPromise = page
+        .waitForURL("**/slow", { timeout: 10000 })
+        .catch(() => null);
       await slowLink.click();
 
       const result = await navigationPromise;
@@ -95,10 +103,9 @@ test.describe("useNavigation", () => {
     expect(sawLoading).toBe(true);
 
     // Should return to idle state after navigation completes
-    await expect(page.locator('[data-testid="nav-status-state"]')).toContainText(
-      "state:idle",
-      { timeout: 5000 }
-    );
+    await expect(
+      page.locator('[data-testid="nav-status-state"]'),
+    ).toContainText("state:idle", { timeout: 5000 });
   });
 
   test("should show streaming state during streaming navigation", async ({
@@ -110,11 +117,11 @@ test.describe("useNavigation", () => {
     await waitForHydration(page);
 
     // Initial state should be idle, not streaming
-    await expect(page.locator('[data-testid="nav-status-state"]')).toContainText(
-      "state:idle"
-    );
     await expect(
-      page.locator('[data-testid="nav-status-streaming"]')
+      page.locator('[data-testid="nav-status-state"]'),
+    ).toContainText("state:idle");
+    await expect(
+      page.locator('[data-testid="nav-status-streaming"]'),
     ).toContainText("streaming:false");
 
     // Navigate to streaming route (has loading component)
@@ -123,22 +130,22 @@ test.describe("useNavigation", () => {
 
     // Should show loading skeleton (streaming)
     await expect(
-      page.locator('[data-testid="slow-streaming-loading"]')
+      page.locator('[data-testid="slow-streaming-loading"]'),
     ).toBeVisible({ timeout: 2000 });
 
     // During streaming, isStreaming should be true
     await expect(
-      page.locator('[data-testid="nav-status-streaming"]')
+      page.locator('[data-testid="nav-status-streaming"]'),
     ).toContainText("streaming:true", { timeout: 2000 });
 
     // Wait for content to load
     await expect(
-      page.locator('[data-testid="slow-streaming-page"]')
+      page.locator('[data-testid="slow-streaming-page"]'),
     ).toBeVisible({ timeout: 5000 });
 
     // After streaming completes, should return to not streaming
     await expect(
-      page.locator('[data-testid="nav-status-streaming"]')
+      page.locator('[data-testid="nav-status-streaming"]'),
     ).toContainText("streaming:false", { timeout: 2000 });
   });
 
@@ -150,7 +157,7 @@ test.describe("useNavigation", () => {
 
     // Initial pathname should be /
     await expect(
-      page.locator('[data-testid="nav-status-pathname"]')
+      page.locator('[data-testid="nav-status-pathname"]'),
     ).toContainText("path:/");
 
     // Navigate to product
@@ -159,7 +166,7 @@ test.describe("useNavigation", () => {
 
     // Pathname should update to product URL
     await expect(
-      page.locator('[data-testid="nav-status-pathname"]')
+      page.locator('[data-testid="nav-status-pathname"]'),
     ).toContainText("path:/product/product-a", { timeout: 2000 });
   });
 
@@ -173,7 +180,7 @@ test.describe("useNavigation", () => {
     const productLink = page.locator('[data-testid="product-link-product-a"]');
     await productLink.click();
     await expect(
-      page.locator('[data-testid="nav-status-pathname"]')
+      page.locator('[data-testid="nav-status-pathname"]'),
     ).toContainText("path:/product/product-a", { timeout: 5000 });
 
     // Navigate back and wait for navigation to complete
@@ -181,7 +188,7 @@ test.describe("useNavigation", () => {
 
     // Pathname should return to /
     await expect(
-      page.locator('[data-testid="nav-status-pathname"]')
+      page.locator('[data-testid="nav-status-pathname"]'),
     ).toContainText("path:/", { timeout: 5000 });
   });
 });
@@ -201,7 +208,7 @@ test.describe("useAction", () => {
 
     // Action status should show idle state
     await expect(
-      page.locator('[data-testid="StreamingActionStatus-action-status"]')
+      page.locator('[data-testid="StreamingActionStatus-action-status"]'),
     ).toContainText("Action status: idle");
   });
 
@@ -215,7 +222,7 @@ test.describe("useAction", () => {
 
     // Initial state should be idle
     const actionStatus = page.locator(
-      '[data-testid="StreamingActionStatus-action-status"]'
+      '[data-testid="StreamingActionStatus-action-status"]',
     );
     await expect(actionStatus).toContainText("Action status: idle");
 
@@ -235,7 +242,7 @@ test.describe("useAction", () => {
 
     // Wait for action to complete
     await expect(
-      page.locator('[data-testid="streaming-btn-result"]')
+      page.locator('[data-testid="streaming-btn-result"]'),
     ).toContainText("Completed", { timeout: 10000 });
 
     // Should return to idle
@@ -257,11 +264,13 @@ test.describe("useAction", () => {
 
     // Go to full details
     await page.locator('[data-testid="view-full-details"]').click();
-    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
 
     // Action status should show idle
     const actionStatus = page.locator(
-      '[data-testid="StreamingActionStatus-action-status"]'
+      '[data-testid="StreamingActionStatus-action-status"]',
     );
     await expect(actionStatus).toContainText("Action status: idle");
 
@@ -275,7 +284,7 @@ test.describe("useAction", () => {
     });
 
     await expect(
-      page.locator('[data-testid="streaming-btn-result"]')
+      page.locator('[data-testid="streaming-btn-result"]'),
     ).toContainText("Completed", { timeout: 10000 });
 
     await expect(actionStatus).toContainText("Action status: idle", {
@@ -295,7 +304,7 @@ test.describe("useAction", () => {
 
     // Should show result when action completes
     await expect(
-      page.locator('[data-testid="add-to-cart-btn-result"]')
+      page.locator('[data-testid="add-to-cart-btn-result"]'),
     ).toBeVisible({ timeout: 5000 });
   });
 });
@@ -313,9 +322,9 @@ test.describe("useNavigation during actions", () => {
     await waitForHydration(page);
 
     // Navigation should be idle initially
-    await expect(page.locator('[data-testid="nav-status-state"]')).toContainText(
-      "state:idle"
-    );
+    await expect(
+      page.locator('[data-testid="nav-status-state"]'),
+    ).toContainText("state:idle");
 
     // Click streaming action
     const button = page.locator('[data-testid="streaming-btn"]');
@@ -323,17 +332,17 @@ test.describe("useNavigation during actions", () => {
 
     // Action should be in progress
     await expect(
-      page.locator('[data-testid="StreamingActionStatus-action-status"]')
+      page.locator('[data-testid="StreamingActionStatus-action-status"]'),
     ).toContainText("loading", { timeout: 2000 });
 
     // Navigation state should still be idle (actions don't affect navigation state)
-    await expect(page.locator('[data-testid="nav-status-state"]')).toContainText(
-      "state:idle"
-    );
+    await expect(
+      page.locator('[data-testid="nav-status-state"]'),
+    ).toContainText("state:idle");
 
     // Wait for action to complete
     await expect(
-      page.locator('[data-testid="streaming-btn-result"]')
+      page.locator('[data-testid="streaming-btn-result"]'),
     ).toContainText("Completed", { timeout: 10000 });
   });
 
@@ -350,7 +359,9 @@ test.describe("useNavigation during actions", () => {
 
     // Go to full details
     await page.locator('[data-testid="view-full-details"]').click();
-    await expect(page.locator('[data-testid="segment-metadata"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="segment-metadata"]'),
+    ).toBeVisible();
 
     // Start streaming action
     const button = page.locator('[data-testid="streaming-btn"]');
@@ -358,7 +369,7 @@ test.describe("useNavigation during actions", () => {
 
     // Action should be loading
     await expect(
-      page.locator('[data-testid="StreamingActionStatus-action-status"]')
+      page.locator('[data-testid="StreamingActionStatus-action-status"]'),
     ).toContainText("loading", { timeout: 2000 });
 
     // Navigate back while action is running
@@ -370,10 +381,9 @@ test.describe("useNavigation during actions", () => {
     });
 
     // Navigation should return to idle after popstate
-    await expect(page.locator('[data-testid="nav-status-state"]')).toContainText(
-      "state:idle",
-      { timeout: 2000 }
-    );
+    await expect(
+      page.locator('[data-testid="nav-status-state"]'),
+    ).toContainText("state:idle", { timeout: 2000 });
   });
 });
 
@@ -394,11 +404,11 @@ test.describe("useNavigation (production)", () => {
     await page.goto(f.url("/"));
     await waitForHydration(page);
 
-    await expect(page.locator('[data-testid="nav-status-state"]')).toContainText(
-      "state:idle"
-    );
     await expect(
-      page.locator('[data-testid="nav-status-streaming"]')
+      page.locator('[data-testid="nav-status-state"]'),
+    ).toContainText("state:idle");
+    await expect(
+      page.locator('[data-testid="nav-status-streaming"]'),
     ).toContainText("streaming:false");
   });
 
@@ -410,7 +420,7 @@ test.describe("useNavigation (production)", () => {
 
     // Initial pathname
     await expect(
-      page.locator('[data-testid="nav-status-pathname"]')
+      page.locator('[data-testid="nav-status-pathname"]'),
     ).toContainText("path:/");
 
     // Navigate to product
@@ -418,7 +428,7 @@ test.describe("useNavigation (production)", () => {
 
     // Pathname should update
     await expect(
-      page.locator('[data-testid="nav-status-pathname"]')
+      page.locator('[data-testid="nav-status-pathname"]'),
     ).toContainText("path:/product/product-a", { timeout: 5000 });
   });
 });
@@ -441,7 +451,7 @@ test.describe("useAction (production)", () => {
 
     // Initial state should be idle
     await expect(
-      page.locator('[data-testid="StreamingActionStatus-action-status"]')
+      page.locator('[data-testid="StreamingActionStatus-action-status"]'),
     ).toContainText("Action status: idle");
 
     // Click streaming action button
@@ -449,17 +459,17 @@ test.describe("useAction (production)", () => {
 
     // Should transition through loading
     await expect(
-      page.locator('[data-testid="StreamingActionStatus-action-status"]')
+      page.locator('[data-testid="StreamingActionStatus-action-status"]'),
     ).toContainText("Action status: loading", { timeout: 2000 });
 
     // Wait for completion
     await expect(
-      page.locator('[data-testid="streaming-btn-result"]')
+      page.locator('[data-testid="streaming-btn-result"]'),
     ).toContainText("Completed", { timeout: 10000 });
 
     // Should return to idle
     await expect(
-      page.locator('[data-testid="StreamingActionStatus-action-status"]')
+      page.locator('[data-testid="StreamingActionStatus-action-status"]'),
     ).toContainText("Action status: idle", { timeout: 5000 });
   });
 
@@ -474,7 +484,7 @@ test.describe("useAction (production)", () => {
 
     // Should show result
     await expect(
-      page.locator('[data-testid="add-to-cart-btn-result"]')
+      page.locator('[data-testid="add-to-cart-btn-result"]'),
     ).toBeVisible({ timeout: 5000 });
   });
 });

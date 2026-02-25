@@ -35,12 +35,12 @@ function getRscPluginApi(config: ResolvedConfig): RscPluginApi | undefined {
     plugin = config.plugins.find(
       (p) =>
         (p.api as RscPluginApi | undefined)?.manager?.serverReferenceMetaMap !==
-        undefined
+        undefined,
     );
     if (plugin) {
       console.warn(
         `[rsc-router:expose-action-id] RSC plugin found by API structure (name: "${plugin.name}"). ` +
-          `Consider updating the name lookup if the plugin was renamed.`
+          `Consider updating the name lookup if the plugin was renamed.`,
       );
     }
   }
@@ -89,7 +89,7 @@ function isUseServerModule(filePath: string): boolean {
 function applyServerReferenceWrapping(
   code: string,
   s: MagicString,
-  hashToFileMap?: Map<string, string>
+  hashToFileMap?: Map<string, string>,
 ): boolean {
   if (!code.includes("createServerReference(")) {
     return false;
@@ -139,7 +139,7 @@ function applyServerReferenceWrapping(
 function transformServerReferences(
   code: string,
   sourceId?: string,
-  hashToFileMap?: Map<string, string>
+  hashToFileMap?: Map<string, string>,
 ): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
   const s = new MagicString(code);
   if (!applyServerReferenceWrapping(code, s, hashToFileMap)) {
@@ -178,7 +178,7 @@ function transformServerReferences(
 function applyRegisterReferenceWrapping(
   code: string,
   s: MagicString,
-  hashToFileMap: Map<string, string>
+  hashToFileMap: Map<string, string>,
 ): boolean {
   if (!code.includes("registerServerReference(")) {
     return false;
@@ -186,7 +186,8 @@ function applyRegisterReferenceWrapping(
 
   // Match: registerServerReference(fn, "hash", "exportName")
   // The hash is the second argument, exportName is the third
-  const pattern = /registerServerReference\(([^,]+),\s*"([^"]+)",\s*"([^"]+)"\)/g;
+  const pattern =
+    /registerServerReference\(([^,]+),\s*"([^"]+)",\s*"([^"]+)"\)/g;
 
   let hasChanges = false;
   let match: RegExpExecArray | null;
@@ -217,7 +218,7 @@ function applyRegisterReferenceWrapping(
 function transformRegisterServerReference(
   code: string,
   sourceId?: string,
-  hashToFileMap?: Map<string, string>
+  hashToFileMap?: Map<string, string>,
 ): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
   if (!hashToFileMap) return null;
 
@@ -279,7 +280,7 @@ export function exposeActionId(): Plugin {
           "[rsc-router] Could not find @vitejs/plugin-rsc. " +
             "@rangojs/router requires the Vite RSC plugin.\n" +
             "The RSC plugin should be included automatically. If you disabled it with\n" +
-            "rango({ rsc: false }), add rsc() before rango() in your config."
+            "rango({ rsc: false }), add rsc() before rango() in your config.",
         );
       }
 
@@ -289,7 +290,7 @@ export function exposeActionId(): Plugin {
       const { serverReferenceMetaMap } = rscPluginApi.manager;
 
       for (const [absolutePath, meta] of Object.entries(
-        serverReferenceMetaMap
+        serverReferenceMetaMap,
       )) {
         // Only include module-level "use server" files
         // Inline actions (defined in RSC components) should keep hashed IDs for client security
@@ -298,7 +299,7 @@ export function exposeActionId(): Plugin {
         }
 
         const relativePath = normalizePath(
-          path.relative(config.root, absolutePath)
+          path.relative(config.root, absolutePath),
         );
 
         // The referenceKey in build mode is the hash
@@ -306,7 +307,6 @@ export function exposeActionId(): Plugin {
         hashToFileMap.set(meta.referenceKey, relativePath);
       }
     },
-
 
     // Dev mode only: transform hook runs after RSC plugin creates server references
     // In dev mode, IDs already contain file paths, not hashes
@@ -349,7 +349,10 @@ export function exposeActionId(): Plugin {
         if (changed1 || changed2) {
           return {
             code: s.toString(),
-            map: s.generateMap({ source: chunk.fileName, includeContent: true }),
+            map: s.generateMap({
+              source: chunk.fileName,
+              includeContent: true,
+            }),
           };
         }
         return null;

@@ -5,7 +5,7 @@ import { createSSRHandler, type SSRDependencies } from "../index";
 describe("createSSRHandler", () => {
   // Mock dependencies
   const createMockDeps = (
-    overrides: Partial<SSRDependencies> = {}
+    overrides: Partial<SSRDependencies> = {},
   ): SSRDependencies => ({
     createFromReadableStream: vi.fn().mockResolvedValue({
       root: React.createElement("div", null, "Test"),
@@ -14,19 +14,23 @@ describe("createSSRHandler", () => {
     renderToReadableStream: vi.fn().mockResolvedValue(
       new ReadableStream({
         start(controller) {
-          controller.enqueue(new TextEncoder().encode("<html><body>Test</body></html>"));
+          controller.enqueue(
+            new TextEncoder().encode("<html><body>Test</body></html>"),
+          );
           controller.close();
         },
-      })
+      }),
     ),
     injectRSCPayload: vi.fn().mockReturnValue(
       new TransformStream({
         transform(chunk, controller) {
           controller.enqueue(chunk);
         },
-      })
+      }),
     ),
-    loadBootstrapScriptContent: vi.fn().mockResolvedValue("console.log('bootstrap')"),
+    loadBootstrapScriptContent: vi
+      .fn()
+      .mockResolvedValue("console.log('bootstrap')"),
     ...overrides,
   });
 
@@ -50,7 +54,9 @@ describe("createSSRHandler", () => {
 
       const renderHTML = createSSRHandler(deps);
 
-      await expect(renderHTML(createMockRscStream())).rejects.toThrow("Rendering failed");
+      await expect(renderHTML(createMockRscStream())).rejects.toThrow(
+        "Rendering failed",
+      );
 
       expect(onError).toHaveBeenCalledTimes(1);
       expect(onError).toHaveBeenCalledWith(renderError, { phase: "rendering" });
@@ -61,18 +67,21 @@ describe("createSSRHandler", () => {
 
       const deps = createMockDeps({
         // Use loadBootstrapScriptContent error since it happens before React.use()
-        loadBootstrapScriptContent: vi.fn().mockRejectedValue(new Error("Bootstrap failed")),
+        loadBootstrapScriptContent: vi
+          .fn()
+          .mockRejectedValue(new Error("Bootstrap failed")),
         onError,
       });
 
       const renderHTML = createSSRHandler(deps);
 
-      await expect(renderHTML(createMockRscStream())).rejects.toThrow("Bootstrap failed");
-
-      expect(onError).toHaveBeenCalledWith(
-        expect.any(Error),
-        { phase: "rendering" }
+      await expect(renderHTML(createMockRscStream())).rejects.toThrow(
+        "Bootstrap failed",
       );
+
+      expect(onError).toHaveBeenCalledWith(expect.any(Error), {
+        phase: "rendering",
+      });
     });
 
     it("should convert non-Error objects to Error", async () => {
@@ -91,7 +100,7 @@ describe("createSSRHandler", () => {
         expect.objectContaining({
           message: "string error",
         }),
-        { phase: "rendering" }
+        { phase: "rendering" },
       );
     });
 
@@ -106,14 +115,18 @@ describe("createSSRHandler", () => {
 
       const renderHTML = createSSRHandler(deps);
 
-      await expect(renderHTML(createMockRscStream())).rejects.toThrow("Original error");
+      await expect(renderHTML(createMockRscStream())).rejects.toThrow(
+        "Original error",
+      );
 
       // Verify onError was called before error was thrown
       expect(onError).toHaveBeenCalled();
     });
 
     it("should catch errors in onError callback and not break the flow", async () => {
-      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const consoleErrorSpy = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
       const callbackError = new Error("Callback exploded");
       const onError = vi.fn().mockImplementation(() => {
         throw callbackError;
@@ -128,12 +141,14 @@ describe("createSSRHandler", () => {
       const renderHTML = createSSRHandler(deps);
 
       // Should throw original error, not callback error
-      await expect(renderHTML(createMockRscStream())).rejects.toThrow("Original rendering error");
+      await expect(renderHTML(createMockRscStream())).rejects.toThrow(
+        "Original rendering error",
+      );
 
       expect(onError).toHaveBeenCalled();
       expect(consoleErrorSpy).toHaveBeenCalledWith(
         "[SSRHandler.onError] Callback error:",
-        callbackError
+        callbackError,
       );
 
       consoleErrorSpy.mockRestore();
@@ -153,14 +168,18 @@ describe("createSSRHandler", () => {
 
     it("should work without onError callback", async () => {
       const deps = createMockDeps({
-        renderToReadableStream: vi.fn().mockRejectedValue(new Error("No callback test")),
+        renderToReadableStream: vi
+          .fn()
+          .mockRejectedValue(new Error("No callback test")),
         onError: undefined,
       });
 
       const renderHTML = createSSRHandler(deps);
 
       // Should not throw because of missing onError
-      await expect(renderHTML(createMockRscStream())).rejects.toThrow("No callback test");
+      await expect(renderHTML(createMockRscStream())).rejects.toThrow(
+        "No callback test",
+      );
     });
   });
 

@@ -24,8 +24,19 @@ async function readReferenceData(): Promise<RefDoc[]> {
   } catch {
     // Fallback when node:fs is unavailable (workerd dev mode).
     return [
-      { slug: "url-patterns", title: "URL Patterns API", excerpt: "Define routes with the urls() builder function.", content: "The urls() function accepts a builder callback that receives helpers like path, layout, include, and parallel." },
-      { slug: "response-types", title: "Response Types", excerpt: "Return JSON, text, markdown, and other formats from routes.", content: "Response routes skip the RSC pipeline and return raw data." },
+      {
+        slug: "url-patterns",
+        title: "URL Patterns API",
+        excerpt: "Define routes with the urls() builder function.",
+        content:
+          "The urls() function accepts a builder callback that receives helpers like path, layout, include, and parallel.",
+      },
+      {
+        slug: "response-types",
+        title: "Response Types",
+        excerpt: "Return JSON, text, markdown, and other formats from routes.",
+        content: "Response routes skip the RSC pipeline and return raw data.",
+      },
     ];
   }
 }
@@ -39,7 +50,10 @@ export const DocsLayout = Static(async (ctx) => {
   const docs = await readReferenceData();
   return (
     <div data-testid="docs-layout" style={{ display: "flex", gap: "2rem" }}>
-      <aside data-testid="docs-sidebar" style={{ width: "220px", flexShrink: 0 }}>
+      <aside
+        data-testid="docs-sidebar"
+        style={{ width: "220px", flexShrink: 0 }}
+      >
         <h3>Reference</h3>
         <ul style={{ listStyle: "none", padding: 0 }}>
           {docs.map((doc) => (
@@ -58,7 +72,10 @@ export const DocsLayout = Static(async (ctx) => {
             </li>
           ))}
         </ul>
-        <p data-testid="sidebar-build-time" style={{ fontSize: "0.75rem", color: "#999" }}>
+        <p
+          data-testid="sidebar-build-time"
+          style={{ fontSize: "0.75rem", color: "#999" }}
+        >
           Sidebar built at: {BUILD_TIMESTAMP}
         </p>
       </aside>
@@ -82,7 +99,11 @@ export const RefIndex = Prerender(async (ctx) => {
       </p>
       <ul data-testid="ref-list" style={{ listStyle: "none", padding: 0 }}>
         {docs.map((doc) => (
-          <li key={doc.slug} data-testid={`ref-item-${doc.slug}`} style={{ marginBottom: "1rem" }}>
+          <li
+            key={doc.slug}
+            data-testid={`ref-item-${doc.slug}`}
+            style={{ marginBottom: "1rem" }}
+          >
             <h2 style={{ marginBottom: "0.25rem" }}>
               <a
                 href={reverse(".refDetail", { slug: doc.slug })}
@@ -96,7 +117,10 @@ export const RefIndex = Prerender(async (ctx) => {
           </li>
         ))}
       </ul>
-      <p data-testid="ref-build-time" style={{ fontSize: "0.75rem", color: "#999" }}>
+      <p
+        data-testid="ref-build-time"
+        style={{ fontSize: "0.75rem", color: "#999" }}
+      >
         Built at: {BUILD_TIMESTAMP}
       </p>
     </div>
@@ -136,10 +160,16 @@ export const RefDetail = Prerender(
         </nav>
         <h1 data-testid="ref-detail-title">{doc.title}</h1>
         <p style={{ color: "#666", marginBottom: "1.5rem" }}>{doc.excerpt}</p>
-        <div data-testid="ref-detail-content" style={{ lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+        <div
+          data-testid="ref-detail-content"
+          style={{ lineHeight: 1.7, whiteSpace: "pre-wrap" }}
+        >
           {doc.content}
         </div>
-        <p data-testid="ref-detail-build-time" style={{ fontSize: "0.75rem", color: "#999" }}>
+        <p
+          data-testid="ref-detail-build-time"
+          style={{ fontSize: "0.75rem", color: "#999" }}
+        >
           Built at: {BUILD_TIMESTAMP}
         </p>
       </article>

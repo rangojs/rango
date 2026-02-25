@@ -142,7 +142,11 @@ export function withCacheStore<TEnv>(
       ctx.request.method !== "GET"
     ) {
       if (ms) {
-        ms.metrics.push({ label: "pipeline:cache-store", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
+        ms.metrics.push({
+          label: "pipeline:cache-store",
+          duration: performance.now() - pipelineStart,
+          startTime: pipelineStart - ms.requestStart,
+        });
       }
       return;
     }
@@ -205,15 +209,12 @@ export function withCacheStore<TEnv>(
               ctx.url,
               ctx.bindings,
               ctx.routeMap,
-              ctx.matched.routeKey
+              ctx.matched.routeKey,
             );
             const proactiveLoaderPromises = new Map<string, Promise<any>>();
 
             // Use normal loader access so handle data is captured
-            setupLoaderAccess(
-              proactiveHandlerContext,
-              proactiveLoaderPromises,
-            );
+            setupLoaderAccess(proactiveHandlerContext, proactiveLoaderPromises);
 
             // Re-resolve ALL segments without revalidation
             const Store = ctx.Store;
@@ -281,7 +282,11 @@ export function withCacheStore<TEnv>(
     });
 
     if (ms) {
-      ms.metrics.push({ label: "pipeline:cache-store", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
+      ms.metrics.push({
+        label: "pipeline:cache-store",
+        duration: performance.now() - pipelineStart,
+        startTime: pipelineStart - ms.requestStart,
+      });
     }
   };
 }

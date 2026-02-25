@@ -266,11 +266,9 @@ describe("exposeInternalIds - inline static handler integration", () => {
       };
       plugin.resolveId.call(ctx, "@rangojs/router", resolved);
 
-      expect(ctx.resolve).toHaveBeenCalledWith(
-        "@rangojs/router",
-        FILE_ID,
-        { skipSelf: true },
-      );
+      expect(ctx.resolve).toHaveBeenCalledWith("@rangojs/router", FILE_ID, {
+        skipSelf: true,
+      });
     });
   });
 
@@ -365,11 +363,7 @@ export const Nav = Static(() => {
       const plugin = createPlugin();
       initDev(plugin);
 
-      const result = plugin.transform.call(
-        rscCtx(),
-        SAME_LINE_SOURCE,
-        FILE_ID,
-      );
+      const result = plugin.transform.call(rscCtx(), SAME_LINE_SOURCE, FILE_ID);
       expect(result).toBeDefined();
 
       const vImports = extractVirtualImports(result.code);
@@ -394,7 +388,9 @@ export const Nav = Static(() => {
 
       const vImports = extractVirtualImports(result.code);
       expect(vImports).toHaveLength(1);
-      expect(result.code).toContain(`path("/about", ${vImports[0].exportName})`);
+      expect(result.code).toContain(
+        `path("/about", ${vImports[0].exportName})`,
+      );
       expect(result.code).not.toContain("Prerender\n(");
     });
 
@@ -451,7 +447,11 @@ describe("exposeInternalIds - inline prerender handler integration", () => {
       initDev(plugin);
 
       // Step 1: Transform source with inline call in RSC env
-      const r1 = plugin.transform.call(rscCtx(), PRERENDER_INLINE_SOURCE, FILE_ID);
+      const r1 = plugin.transform.call(
+        rscCtx(),
+        PRERENDER_INLINE_SOURCE,
+        FILE_ID,
+      );
       expect(r1).toBeDefined();
 
       // Should have a virtual module import
@@ -489,7 +489,11 @@ describe("exposeInternalIds - inline prerender handler integration", () => {
       initDev(plugin);
 
       // Populate virtual registry via RSC transform
-      const r1 = plugin.transform.call(rscCtx(), PRERENDER_INLINE_SOURCE, FILE_ID);
+      const r1 = plugin.transform.call(
+        rscCtx(),
+        PRERENDER_INLINE_SOURCE,
+        FILE_ID,
+      );
       const { exportName, specifier } = extractVirtualImports(r1.code)[0];
 
       const resolved = plugin.resolveId.call({}, specifier, FILE_ID);
@@ -512,7 +516,11 @@ describe("exposeInternalIds - inline prerender handler integration", () => {
       initDev(plugin);
 
       // Transform mixed source in RSC
-      const r1 = plugin.transform.call(rscCtx(), PRERENDER_MIXED_SOURCE, FILE_ID);
+      const r1 = plugin.transform.call(
+        rscCtx(),
+        PRERENDER_MIXED_SOURCE,
+        FILE_ID,
+      );
       expect(r1).toBeDefined();
 
       // Inline call extracted to virtual module
@@ -536,7 +544,9 @@ describe("exposeInternalIds - inline prerender handler integration", () => {
 
       plugin.transform.call(rscCtx(), PRERENDER_EXPORT_SOURCE, FILE_ID);
 
-      expect(plugin.api.prerenderHandlerModules.get(FILE_ID)).toEqual(["AboutPage"]);
+      expect(plugin.api.prerenderHandlerModules.get(FILE_ID)).toEqual([
+        "AboutPage",
+      ]);
     });
   });
 });
@@ -636,7 +646,7 @@ export { LocalLoader as PublicLoader };
     const ctx = rscCtx();
     const result = plugin.transform.call(ctx, code, FILE_ID);
     expect(result).toBeDefined();
-    expect(result.code).toContain('LocalLoader.$$id =');
+    expect(result.code).toContain("LocalLoader.$$id =");
     expect(ctx.warn).not.toHaveBeenCalled();
   });
 
@@ -689,7 +699,9 @@ const DocsNav = Static(() => <nav />);
 export { DocsNav as DocsNavPublic };
 `;
     plugin.transform.call(rscCtx(), code, FILE_ID);
-    expect(plugin.api.staticHandlerModules.get(FILE_ID)).toEqual(["DocsNavPublic"]);
+    expect(plugin.api.staticHandlerModules.get(FILE_ID)).toEqual([
+      "DocsNavPublic",
+    ]);
   });
 
   it("tracks prerender handler exported via specifier alias in build mode", () => {
@@ -701,7 +713,9 @@ const DocsPage = Prerender(() => <div />);
 export { DocsPage as DocsPagePublic };
 `;
     plugin.transform.call(rscCtx(), code, FILE_ID);
-    expect(plugin.api.prerenderHandlerModules.get(FILE_ID)).toEqual(["DocsPagePublic"]);
+    expect(plugin.api.prerenderHandlerModules.get(FILE_ID)).toEqual([
+      "DocsPagePublic",
+    ]);
   });
 });
 

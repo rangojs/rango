@@ -11,6 +11,7 @@ Inspect the route manifest to verify parent relationships, shortCodes, and route
 ## Quick Access
 
 In development, visit:
+
 ```
 http://localhost:PORT/__debug_manifest
 ```
@@ -62,13 +63,13 @@ if (process.env.NODE_ENV !== "production") {
 
 ## ShortCode Format
 
-| Prefix | Meaning |
-|--------|---------|
-| **M** | Mount index (multiple `.routes()` calls) |
-| **L** | Layout |
-| **C** | Cache boundary |
-| **R** | Route |
-| **P** | Parallel slot |
+| Prefix | Meaning                                  |
+| ------ | ---------------------------------------- |
+| **M**  | Mount index (multiple `.routes()` calls) |
+| **L**  | Layout                                   |
+| **C**  | Cache boundary                           |
+| **R**  | Route                                    |
+| **P**  | Parallel slot                            |
 
 Example: `M0L0L1C0R0` = Mount 0 → Root Layout → Nested Layout → Cache → Route
 
@@ -85,7 +86,7 @@ Example: `M0L0L1C0R0` = Mount 0 → Root Layout → Nested Layout → Cache → 
 import {
   serializeManifest,
   compareManifests,
-  formatManifestDiff
+  formatManifestDiff,
 } from "@rangojs/router/__internal";
 
 const oldManifest = await router.debugManifest();
@@ -99,10 +100,13 @@ console.log(formatManifestDiff(diff));
 ## Common Issues
 
 ### Routes have `parentShortCode: null`
+
 Routes should have a layout parent. Check that `urls()` handler is being wrapped in root layout.
 
 ### Missing layouts in hierarchy
+
 Verify `layout()` calls wrap child routes correctly.
 
 ### Wrong mount index
+
 Multiple `.routes()` calls create separate mounts (M0, M1, etc.). Use `include()` to share context.

@@ -16,7 +16,9 @@ export const MetaTemplateIndexHandler: Handler<"metaTemplate.index"> = () => (
   </div>
 );
 
-export const MetaTemplateChildHandler: Handler<"metaTemplate.child"> = (ctx) => {
+export const MetaTemplateChildHandler: Handler<"metaTemplate.child"> = (
+  ctx,
+) => {
   const meta = ctx.use(Meta);
   meta({ title: "Child Page" }); // Should become "Child Page | Test Site"
   meta({ name: "description", content: "Child page description" });
@@ -31,7 +33,9 @@ export const MetaTemplateChildHandler: Handler<"metaTemplate.child"> = (ctx) => 
   );
 };
 
-export const MetaTemplateAbsoluteHandler: Handler<"metaTemplate.absolute"> = (ctx) => {
+export const MetaTemplateAbsoluteHandler: Handler<"metaTemplate.absolute"> = (
+  ctx,
+) => {
   const meta = ctx.use(Meta);
   meta({ title: { absolute: "Custom Absolute Title" } }); // No template
   meta({ name: "description", content: "Absolute page description" });
@@ -55,7 +59,9 @@ export const MetaTemplateNestedHandler: Handler<"metaTemplate.nested"> = () => (
   </div>
 );
 
-export const MetaTemplateNestedChildHandler: Handler<"metaTemplate.nestedChild"> = (ctx) => {
+export const MetaTemplateNestedChildHandler: Handler<
+  "metaTemplate.nestedChild"
+> = (ctx) => {
   const meta = ctx.use(Meta);
   meta({ title: "Nested Child" }); // Should become "Nested Child | Nested Section"
 
@@ -96,7 +102,9 @@ export const MetaUnsetChildHandler: Handler<"metaUnset.child"> = (ctx) => {
   );
 };
 
-export const MetaUnsetThenSetHandler: Handler<"metaUnset.unsetThenSet"> = (ctx) => {
+export const MetaUnsetThenSetHandler: Handler<"metaUnset.unsetThenSet"> = (
+  ctx,
+) => {
   const meta = ctx.use(Meta);
   // Unset parent description, then set a new one
   meta({ unset: "name:description" });
@@ -120,9 +128,7 @@ export const MetaUnsetThenSetHandler: Handler<"metaUnset.unsetThenSet"> = (ctx) 
 export const MetaMergeIndexHandler: Handler<"metaMerge.index"> = () => (
   <div data-testid="meta-merge-index-page">
     <h1 data-testid="meta-merge-index-title">Merge Index</h1>
-    <p data-testid="meta-merge-index-description">
-      Inherits all root meta.
-    </p>
+    <p data-testid="meta-merge-index-description">Inherits all root meta.</p>
   </div>
 );
 
@@ -171,7 +177,10 @@ export const HandlePassthroughHandler: Handler<"handlePassthrough"> = (ctx) => {
   const meta = ctx.use(Meta);
 
   // Push breadcrumb from parent
-  pushBreadcrumb({ label: "Handle Passthrough Test", href: "/handle-passthrough" });
+  pushBreadcrumb({
+    label: "Handle Passthrough Test",
+    href: "/handle-passthrough",
+  });
 
   return (
     <div data-testid="handle-passthrough-page">
@@ -192,19 +201,26 @@ export const HandlePassthroughHandler: Handler<"handlePassthrough"> = (ctx) => {
   );
 };
 
-export const HandlePassthroughAsyncHandler: Handler<"handlePassthroughAsync"> = (ctx) => {
+export const HandlePassthroughAsyncHandler: Handler<
+  "handlePassthroughAsync"
+> = (ctx) => {
   const pushBreadcrumb = ctx.use(Breadcrumbs);
   const meta = ctx.use(Meta);
 
   // Push breadcrumb from parent
-  pushBreadcrumb({ label: "Async Handle Passthrough", href: "/handle-passthrough-async" });
+  pushBreadcrumb({
+    label: "Async Handle Passthrough",
+    href: "/handle-passthrough-async",
+  });
 
   return (
     <div data-testid="handle-passthrough-async-page">
       <Link to="/" data-testid="back-link">
         ← Back to Home
       </Link>
-      <h1 data-testid="async-passthrough-title">Async Handle Passthrough Test</h1>
+      <h1 data-testid="async-passthrough-title">
+        Async Handle Passthrough Test
+      </h1>
       <p data-testid="async-passthrough-description">
         Testing meta handle passed to async child RSC (2s delay)
       </p>
@@ -222,7 +238,8 @@ export const HandlePassthroughAsyncHandler: Handler<"handlePassthroughAsync"> = 
 // --- hydrationPatterns handlers ---
 
 export const HydrationTestHandler: Handler<"hydrationTest"> = async () => {
-  const { HydrationMismatch } = await import("../components/HydrationMismatch.js");
+  const { HydrationMismatch } =
+    await import("../components/HydrationMismatch.js");
   return (
     <div data-testid="hydration-test-page">
       <Link to="/" data-testid="back-link">
@@ -236,9 +253,13 @@ export const HydrationTestHandler: Handler<"hydrationTest"> = async () => {
 
 // --- trailingSlashPatterns handlers ---
 
-export const TrailingSlashIgnoreHandler: Handler<"trailingSlash.ignore"> = () => (
+export const TrailingSlashIgnoreHandler: Handler<
+  "trailingSlash.ignore"
+> = () => (
   <div data-testid="ts-ignore-page">
-    <Link to="/" data-testid="back-link">← Back to Home</Link>
+    <Link to="/" data-testid="back-link">
+      ← Back to Home
+    </Link>
     <h1 data-testid="ts-ignore-title">Trailing Slash: Ignore</h1>
     <p data-testid="ts-ignore-description">
       This route matches both /ts-ignore and /ts-ignore/ without redirect.
@@ -246,9 +267,13 @@ export const TrailingSlashIgnoreHandler: Handler<"trailingSlash.ignore"> = () =>
   </div>
 );
 
-export const TrailingSlashAlwaysHandler: Handler<"trailingSlash.always"> = () => (
+export const TrailingSlashAlwaysHandler: Handler<
+  "trailingSlash.always"
+> = () => (
   <div data-testid="ts-always-page">
-    <Link to="/" data-testid="back-link">← Back to Home</Link>
+    <Link to="/" data-testid="back-link">
+      ← Back to Home
+    </Link>
     <h1 data-testid="ts-always-title">Trailing Slash: Always</h1>
     <p data-testid="ts-always-description">
       This route redirects /ts-always to /ts-always/ (308).
@@ -258,7 +283,9 @@ export const TrailingSlashAlwaysHandler: Handler<"trailingSlash.always"> = () =>
 
 export const TrailingSlashNeverHandler: Handler<"trailingSlash.never"> = () => (
   <div data-testid="ts-never-page">
-    <Link to="/" data-testid="back-link">← Back to Home</Link>
+    <Link to="/" data-testid="back-link">
+      ← Back to Home
+    </Link>
     <h1 data-testid="ts-never-title">Trailing Slash: Never</h1>
     <p data-testid="ts-never-description">
       This route redirects /ts-never/ to /ts-never (308).

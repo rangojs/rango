@@ -50,7 +50,9 @@ describe("middleware", () => {
     });
 
     it("should extract multiple params", () => {
-      const { regex, paramNames } = parsePattern("/users/:userId/posts/:postId");
+      const { regex, paramNames } = parsePattern(
+        "/users/:userId/posts/:postId",
+      );
       expect(paramNames).toEqual(["userId", "postId"]);
       expect(regex.test("/users/123/posts/456")).toBe(true);
     });
@@ -71,7 +73,9 @@ describe("middleware", () => {
     });
 
     it("should extract multiple params", () => {
-      const { regex, paramNames } = parsePattern("/users/:userId/posts/:postId");
+      const { regex, paramNames } = parsePattern(
+        "/users/:userId/posts/:postId",
+      );
       const params = extractParams("/users/abc/posts/xyz", regex, paramNames);
       expect(params).toEqual({ userId: "abc", postId: "xyz" });
     });
@@ -212,7 +216,7 @@ describe("middleware", () => {
 
   describe("executeMiddleware", () => {
     const createMockEntry = (
-      handler: MiddlewareFn<unknown>
+      handler: MiddlewareFn<unknown>,
     ): { entry: MiddlewareEntry<unknown>; params: Record<string, string> } => ({
       entry: {
         pattern: null,
@@ -236,7 +240,7 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        async () => new Response("OK")
+        async () => new Response("OK"),
       );
 
       expect(response.headers.get("X-Test")).toBe("value");
@@ -263,7 +267,7 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        async () => new Response("OK")
+        async () => new Response("OK"),
       );
 
       expect(order).toEqual([1, 2, 3, 4]);
@@ -281,7 +285,7 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        async () => new Response("OK")
+        async () => new Response("OK"),
       );
 
       expect(response.headers.get("X-Via-Ctx")).toBe("yes");
@@ -298,7 +302,7 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        async () => new Response("OK")
+        async () => new Response("OK"),
       );
 
       expect(response.headers.get("X-Shorthand")).toBe("works");
@@ -319,7 +323,7 @@ describe("middleware", () => {
         async () => {
           handler();
           return new Response("OK");
-        }
+        },
       );
 
       expect(response.status).toBe(403);
@@ -343,7 +347,7 @@ describe("middleware", () => {
         {},
         async () => {
           throw new Error("Handler error");
-        }
+        },
       );
 
       expect(response.status).toBe(500);
@@ -363,7 +367,7 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         variables,
-        async () => new Response("OK")
+        async () => new Response("OK"),
       );
 
       expect(variables).toEqual({ user: { id: "123", name: "John" } });
@@ -386,7 +390,7 @@ describe("middleware", () => {
         request,
         {},
         {},
-        async () => new Response("OK")
+        async () => new Response("OK"),
       );
 
       expect(sessionValue).toBe("abc123");
@@ -403,7 +407,7 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        async () => new Response("OK")
+        async () => new Response("OK"),
       );
 
       const setCookie = response.headers.get("Set-Cookie");
@@ -422,7 +426,7 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        async () => new Response("OK")
+        async () => new Response("OK"),
       );
 
       const setCookie = response.headers.get("Set-Cookie");
@@ -441,8 +445,8 @@ describe("middleware", () => {
           new Request("http://localhost/test"),
           {},
           {},
-          async () => new Response("OK")
-        )
+          async () => new Response("OK"),
+        ),
       ).rejects.toThrow("Middleware must call next()");
     });
 
@@ -460,7 +464,8 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        async () => new Response("OK", { headers: { "X-Handler": "original" } })
+        async () =>
+          new Response("OK", { headers: { "X-Handler": "original" } }),
       );
 
       // Both headers should be present
@@ -481,7 +486,7 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        async () => new Response("OK")
+        async () => new Response("OK"),
       );
 
       expect(response.headers.get("X-Request-Id")).toBe("12345");
@@ -510,7 +515,7 @@ describe("middleware", () => {
         new Request("http://localhost/users/123/profile"),
         {},
         {},
-        async () => new Response("OK")
+        async () => new Response("OK"),
       );
 
       expect(receivedParams).toEqual({ id: "123" });
@@ -527,7 +532,7 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        async () => new Response("Original")
+        async () => new Response("Original"),
       );
 
       expect(response.status).toBe(201);
@@ -547,11 +552,13 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        async () => new Response("OK")
+        async () => new Response("OK"),
       );
 
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('returned string instead of Response or undefined')
+        expect.stringContaining(
+          "returned string instead of Response or undefined",
+        ),
       );
 
       warnSpy.mockRestore();
@@ -570,11 +577,13 @@ describe("middleware", () => {
         new Request("http://localhost/test"),
         {},
         {},
-        async () => new Response("OK")
+        async () => new Response("OK"),
       );
 
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('returned object instead of Response or undefined')
+        expect.stringContaining(
+          "returned object instead of Response or undefined",
+        ),
       );
 
       warnSpy.mockRestore();
@@ -582,10 +591,18 @@ describe("middleware", () => {
   });
 
   describe("collectRouteMiddleware", () => {
-    const mw1: MiddlewareFn<unknown> = async (ctx, next) => { await next(); };
-    const mw2: MiddlewareFn<unknown> = async (ctx, next) => { await next(); };
-    const mw3: MiddlewareFn<unknown> = async (ctx, next) => { await next(); };
-    const mw4: MiddlewareFn<unknown> = async (ctx, next) => { await next(); };
+    const mw1: MiddlewareFn<unknown> = async (ctx, next) => {
+      await next();
+    };
+    const mw2: MiddlewareFn<unknown> = async (ctx, next) => {
+      await next();
+    };
+    const mw3: MiddlewareFn<unknown> = async (ctx, next) => {
+      await next();
+    };
+    const mw4: MiddlewareFn<unknown> = async (ctx, next) => {
+      await next();
+    };
 
     it("should return empty array for empty entries", () => {
       const result = collectRouteMiddleware([], { id: "123" });
@@ -630,7 +647,7 @@ describe("middleware", () => {
       expect(result[1].handler).toBe(mw2);
       expect(result[2].handler).toBe(mw3);
       // All should share the same params reference
-      expect(result.every(r => r.params === params)).toBe(true);
+      expect(result.every((r) => r.params === params)).toBe(true);
     });
 
     it("should collect middleware from orphan layouts (recursive)", () => {
@@ -654,7 +671,7 @@ describe("middleware", () => {
       const deepOrphan: MiddlewareCollectableEntry = { middleware: [mw4] };
       const orphan: MiddlewareCollectableEntry = {
         middleware: [mw3],
-        layout: [deepOrphan]
+        layout: [deepOrphan],
       };
       const entries: MiddlewareCollectableEntry[] = [
         { middleware: [mw1], layout: [orphan] },
@@ -671,9 +688,7 @@ describe("middleware", () => {
 
     it("should handle entries with only orphan layouts (no direct middleware)", () => {
       const orphan: MiddlewareCollectableEntry = { middleware: [mw1, mw2] };
-      const entries: MiddlewareCollectableEntry[] = [
-        { layout: [orphan] },
-      ];
+      const entries: MiddlewareCollectableEntry[] = [{ layout: [orphan] }];
       const params = { page: "1" };
 
       const result = collectRouteMiddleware(entries, params);
@@ -708,7 +723,7 @@ describe("middleware", () => {
 
       // All middleware entries should have the exact same params object
       expect(result).toHaveLength(3);
-      result.forEach(r => {
+      result.forEach((r) => {
         expect(r.params).toBe(params);
       });
     });
@@ -723,7 +738,7 @@ describe("middleware", () => {
         {},
         {},
         {},
-        stubResponse
+        stubResponse,
       );
       expect(result).toBeNull();
     });
@@ -740,7 +755,7 @@ describe("middleware", () => {
         {},
         { id: "123" },
         {},
-        stubResponse
+        stubResponse,
       );
 
       expect(result).toBeNull();
@@ -758,7 +773,7 @@ describe("middleware", () => {
         {},
         {},
         {},
-        stubResponse
+        stubResponse,
       );
 
       expect(result).toBeInstanceOf(Response);
@@ -779,7 +794,7 @@ describe("middleware", () => {
         {},
         {},
         {},
-        stubResponse
+        stubResponse,
       );
 
       expect(result).toBeInstanceOf(Response);
@@ -793,7 +808,10 @@ describe("middleware", () => {
       const middleware: MiddlewareFn<unknown> = async (ctx, next) => {
         ctx.setCookie("token", "xyz", { httpOnly: true });
         ctx.setCookie("preference", "dark");
-        return new Response(null, { status: 302, headers: { Location: "/login" } });
+        return new Response(null, {
+          status: 302,
+          headers: { Location: "/login" },
+        });
       };
 
       const result = await executeInterceptMiddleware(
@@ -802,14 +820,14 @@ describe("middleware", () => {
         {},
         {},
         {},
-        stubResponse
+        stubResponse,
       );
 
       expect(result).toBeInstanceOf(Response);
       const cookies = result!.headers.getSetCookie();
       expect(cookies).toHaveLength(2);
-      expect(cookies.some(c => c.includes("token=xyz"))).toBe(true);
-      expect(cookies.some(c => c.includes("preference=dark"))).toBe(true);
+      expect(cookies.some((c) => c.includes("token=xyz"))).toBe(true);
+      expect(cookies.some((c) => c.includes("preference=dark"))).toBe(true);
     });
 
     it("should share variables between middleware and allow setting new ones", async () => {
@@ -830,7 +848,7 @@ describe("middleware", () => {
         {},
         {},
         variables,
-        stubResponse
+        stubResponse,
       );
 
       expect(capturedVars.existing).toBe("value");
@@ -853,7 +871,7 @@ describe("middleware", () => {
         {},
         { id: "456", slug: "test-slug" },
         {},
-        stubResponse
+        stubResponse,
       );
 
       expect(capturedParams).toEqual({ id: "456", slug: "test-slug" });
@@ -881,7 +899,7 @@ describe("middleware", () => {
         {},
         {},
         {},
-        stubResponse
+        stubResponse,
       );
 
       expect(order).toEqual([1, 2, 3, 4]);
@@ -907,7 +925,7 @@ describe("middleware", () => {
         {},
         {},
         {},
-        stubResponse
+        stubResponse,
       );
 
       expect(order).toEqual([1]);
@@ -930,7 +948,7 @@ describe("middleware", () => {
         {},
         {},
         {},
-        stubResponse
+        stubResponse,
       );
 
       expect(resStatus).toBe(200);
@@ -950,7 +968,7 @@ describe("middleware", () => {
         {},
         {},
         {},
-        stubResponse
+        stubResponse,
       );
 
       // Should return null (no short-circuit) - headers are on stubResponse for caller to merge
@@ -971,7 +989,7 @@ describe("middleware", () => {
         {},
         {},
         {},
-        stubResponse
+        stubResponse,
       );
 
       expect(result).toBeInstanceOf(Response);
@@ -993,7 +1011,7 @@ describe("middleware", () => {
         {},
         {},
         {},
-        stubResponse
+        stubResponse,
       );
 
       // Should return null (no short-circuit) - headers/cookies are on stubResponse
@@ -1016,7 +1034,7 @@ describe("middleware", () => {
         {},
         {},
         {},
-        stubResponse
+        stubResponse,
       );
 
       // Should return null (no short-circuit) - cookie is on stubResponse
@@ -1036,8 +1054,8 @@ describe("middleware", () => {
           {},
           {},
           {},
-          stubResponse
-        )
+          stubResponse,
+        ),
       ).resolves.toBeUndefined();
     });
 
@@ -1063,7 +1081,7 @@ describe("middleware", () => {
         {},
         {},
         {},
-        stubResponse
+        stubResponse,
       );
 
       expect(order).toEqual([1, 2, 3, 4]);
@@ -1091,7 +1109,7 @@ describe("middleware", () => {
         {},
         {},
         variables,
-        stubResponse
+        stubResponse,
       );
 
       expect(capturedVars.existing).toBe("value");
@@ -1114,7 +1132,7 @@ describe("middleware", () => {
         {},
         { id: "789", action: "submit" },
         {},
-        stubResponse
+        stubResponse,
       );
 
       expect(capturedParams).toEqual({ id: "789", action: "submit" });
@@ -1133,8 +1151,8 @@ describe("middleware", () => {
           {},
           {},
           {},
-          stubResponse
-        )
+          stubResponse,
+        ),
       ).rejects.toThrow("Server actions cannot return Response");
     });
 
@@ -1151,11 +1169,13 @@ describe("middleware", () => {
         {},
         {},
         {},
-        stubResponse
+        stubResponse,
       );
 
       // Cookies are set on the stub response for later merging
-      expect(stubResponse.headers.get("Set-Cookie")).toContain("session=abc123");
+      expect(stubResponse.headers.get("Set-Cookie")).toContain(
+        "session=abc123",
+      );
     });
 
     it("should set multiple cookies on stub response", async () => {
@@ -1172,7 +1192,7 @@ describe("middleware", () => {
         {},
         {},
         {},
-        stubResponse
+        stubResponse,
       );
 
       // Multiple cookies are appended to stub response
@@ -1198,7 +1218,7 @@ describe("middleware", () => {
         {},
         {},
         {},
-        stubResponse
+        stubResponse,
       );
 
       expect(readCookie).toBe("abc123");
@@ -1215,7 +1235,7 @@ describe("middleware", () => {
         {},
         {},
         {},
-        finalHandler
+        finalHandler,
       );
 
       expect(finalHandler).toHaveBeenCalled();
@@ -1242,10 +1262,14 @@ describe("middleware", () => {
         {},
         {},
         {},
-        finalHandler
+        finalHandler,
       );
 
-      expect(order).toEqual(["middleware-before", "handler", "middleware-after"]);
+      expect(order).toEqual([
+        "middleware-before",
+        "handler",
+        "middleware-after",
+      ]);
     });
 
     it("should share variables with finalHandler", async () => {
@@ -1268,7 +1292,7 @@ describe("middleware", () => {
         {},
         {},
         variables,
-        finalHandler
+        finalHandler,
       );
 
       expect(capturedVar).toBe("user-123");
@@ -1288,7 +1312,7 @@ describe("middleware", () => {
         {},
         { loaderId: "cart", userId: "456" },
         {},
-        async () => new Response("OK")
+        async () => new Response("OK"),
       );
 
       expect(capturedParams).toEqual({ loaderId: "cart", userId: "456" });
@@ -1307,7 +1331,7 @@ describe("middleware", () => {
         {},
         {},
         {},
-        finalHandler
+        finalHandler,
       );
 
       expect(finalHandler).not.toHaveBeenCalled();
@@ -1327,7 +1351,7 @@ describe("middleware", () => {
         {},
         {},
         {},
-        async () => new Response("OK")
+        async () => new Response("OK"),
       );
 
       const cookies = result.headers.get("set-cookie");
@@ -1346,7 +1370,7 @@ describe("middleware", () => {
         {},
         {},
         {},
-        async () => new Response("OK")
+        async () => new Response("OK"),
       );
 
       expect(result.headers.get("X-Loader-Cache")).toBe("HIT");

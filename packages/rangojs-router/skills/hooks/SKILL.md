@@ -22,22 +22,22 @@ function NavIndicator() {
   const nav = useNavigation();
 
   // Full state
-  nav.state;        // 'idle' | 'loading' | 'streaming'
-  nav.isStreaming;  // boolean
-  nav.location;     // Current URL
-  nav.pendingUrl;   // Target URL during navigation (or null)
+  nav.state; // 'idle' | 'loading' | 'streaming'
+  nav.isStreaming; // boolean
+  nav.location; // Current URL
+  nav.pendingUrl; // Target URL during navigation (or null)
 
   // Methods
-  nav.navigate("/products");           // Navigate programmatically
+  nav.navigate("/products"); // Navigate programmatically
   nav.navigate("/products", { replace: true }); // Replace history
-  nav.refresh();                       // Refresh current route
+  nav.refresh(); // Refresh current route
 
-  return nav.state === 'loading' ? <Spinner /> : null;
+  return nav.state === "loading" ? <Spinner /> : null;
 }
 
 // With selector for performance
 function IsLoading() {
-  const isLoading = useNavigation(nav => nav.state === 'loading');
+  const isLoading = useNavigation((nav) => nav.state === "loading");
   return isLoading ? <Spinner /> : null;
 }
 ```
@@ -61,7 +61,7 @@ function Breadcrumbs() {
 }
 
 // With selector
-const isShopRoute = useSegments(s => s.path[0] === "shop");
+const isShopRoute = useSegments((s) => s.path[0] === "shop");
 ```
 
 ### useLinkStatus()
@@ -81,7 +81,7 @@ function LoadingIndicator() {
 <Link to="/dashboard">
   Dashboard
   <LoadingIndicator />
-</Link>
+</Link>;
 ```
 
 ## Data Hooks
@@ -146,18 +146,21 @@ function SearchResults() {
     <div>
       <input onChange={(e) => handleSearch(e.target.value)} />
       {isLoading && <Spinner />}
-      {data?.results.map(r => <Result key={r.id} {...r} />)}
+      {data?.results.map((r) => (
+        <Result key={r.id} {...r} />
+      ))}
     </div>
   );
 }
 ```
 
 **Load options**:
+
 ```tsx
 await load({
-  method: 'POST',              // GET, POST, PUT, PATCH, DELETE
-  params: { query: 'test' },   // Query string (GET) or body (others)
-  body: { data: 'value' },     // For POST/PUT/PATCH/DELETE
+  method: "POST", // GET, POST, PUT, PATCH, DELETE
+  params: { query: "test" }, // Query string (GET) or body (others)
+  body: { data: "value" }, // For POST/PUT/PATCH/DELETE
 });
 ```
 
@@ -205,7 +208,7 @@ function BreadcrumbNav() {
 }
 
 // With selector
-const lastCrumb = useHandle(Breadcrumbs, data => data.at(-1));
+const lastCrumb = useHandle(Breadcrumbs, (data) => data.at(-1));
 ```
 
 Handles can be passed as props from server to client components:
@@ -216,16 +219,22 @@ path("/dashboard", (ctx) => {
   const push = ctx.use(Breadcrumbs);
   push({ label: "Dashboard", href: "/dashboard" });
   return <DashboardNav handle={Breadcrumbs} />;
-})
+});
 
 // Client component — typeof infers the full Handle<T> type
-"use client";
+("use client");
 import { useHandle } from "@rangojs/router/client";
 import type { Breadcrumbs } from "../handles";
 
 function DashboardNav({ handle }: { handle: typeof Breadcrumbs }) {
   const crumbs = useHandle(handle);
-  return <nav>{crumbs.map(c => <a href={c.href}>{c.label}</a>)}</nav>;
+  return (
+    <nav>
+      {crumbs.map((c) => (
+        <a href={c.href}>{c.label}</a>
+      ))}
+    </nav>
+  );
 }
 ```
 
@@ -256,8 +265,8 @@ function AddToCartButton({ productId }: { productId: string }) {
   return (
     <form action={addToCart}>
       <input type="hidden" name="productId" value={productId} />
-      <button disabled={state === 'loading'}>
-        {state === 'loading' ? 'Adding...' : 'Add to Cart'}
+      <button disabled={state === "loading"}>
+        {state === "loading" ? "Adding..." : "Add to Cart"}
       </button>
       {error && <p className="error">{error.message}</p>}
     </form>
@@ -265,7 +274,7 @@ function AddToCartButton({ productId }: { productId: string }) {
 }
 
 // Match by string suffix (convenient but may be ambiguous)
-const isLoading = useAction('addToCart', s => s.state === 'loading');
+const isLoading = useAction("addToCart", (s) => s.state === "loading");
 ```
 
 ## State Hooks
@@ -294,7 +303,11 @@ function ProductHeader() {
   // { name: string; price: number } | undefined
 
   if (state) {
-    return <h1>{state.name} - ${state.price}</h1>;
+    return (
+      <h1>
+        {state.name} - ${state.price}
+      </h1>
+    );
   }
   return <h1>Loading...</h1>;
 }
@@ -306,12 +319,9 @@ Pass state through Link:
 import { Link } from "@rangojs/router/client";
 import { ProductState } from "./state";
 
-<Link
-  to="/product/123"
-  state={[ProductState({ name: "Widget", price: 99 })]}
->
+<Link to="/product/123" state={[ProductState({ name: "Widget", price: 99 })]}>
   View Product
-</Link>
+</Link>;
 ```
 
 ### Flash State (read-once)
@@ -324,7 +334,9 @@ notifications after redirect):
 // location-states.ts
 import { createLocationState } from "@rangojs/router";
 
-export const FlashMessage = createLocationState<{ text: string }>({ flash: true });
+export const FlashMessage = createLocationState<{ text: string }>({
+  flash: true,
+});
 ```
 
 Read flash state with `useLocationState` (same hook as persistent state):
@@ -355,14 +367,16 @@ Set flash state from the server via `redirect()` with state:
 // In a route handler
 import { redirect, createLocationState } from "@rangojs/router";
 
-export const FlashMessage = createLocationState<{ text: string }>({ flash: true });
+export const FlashMessage = createLocationState<{ text: string }>({
+  flash: true,
+});
 
 // Handler
 (ctx) => {
   return redirect("/dashboard", {
     state: [FlashMessage({ text: "Item saved!" })],
   });
-}
+};
 ```
 
 Or via `ctx.setLocationState()` on any response:
@@ -371,7 +385,7 @@ Or via `ctx.setLocationState()` on any response:
 (ctx) => {
   ctx.setLocationState([FlashMessage({ text: "Welcome back!" })]);
   return <Dashboard />;
-}
+};
 ```
 
 ### .read() (non-hook access)
@@ -400,9 +414,9 @@ function SaveButton() {
   const { clear } = useClientCache();
 
   const handleSave = async () => {
-    await fetch('/api/data', {
-      method: 'POST',
-      body: JSON.stringify(data)
+    await fetch("/api/data", {
+      method: "POST",
+      body: JSON.stringify(data),
     });
 
     // Invalidate cache after mutation
@@ -430,9 +444,7 @@ function DashboardLayout({ children }: { children?: React.ReactNode }) {
       <aside>
         <ParallelOutlet name="@sidebar" />
       </aside>
-      <main>
-        {children ?? <Outlet />}
-      </main>
+      <main>{children ?? <Outlet />}</main>
       <ParallelOutlet name="@notifications" />
     </div>
   );
@@ -503,17 +515,17 @@ See `/links` for full URL generation guide including server-side `ctx.reverse`.
 
 ## Hook Summary
 
-| Hook | Purpose | Returns |
-|------|---------|---------|
-| `useHref()` | Mount-aware href | `(path) => string` |
-| `useMount()` | Current include() mount path | `string` |
-| `useNavigation()` | Navigation state & control | state, navigate, refresh |
-| `useSegments()` | URL path & segment IDs | path, segmentIds, location |
-| `useLinkStatus()` | Link pending state | { pending } |
-| `useLoader()` | Loader data (strict) | data, isLoading, error |
-| `useFetchLoader()` | Loader with on-demand fetch | data, load, isLoading |
-| `useLoaderData()` | All loader data | Record<string, any> |
-| `useHandle()` | Accumulated handle data | T (handle type) |
-| `useAction()` | Server action state | state, error, result |
-| `useLocationState()` | History state (persists or flash) | T \| undefined |
-| `useClientCache()` | Cache control | { clear } |
+| Hook                 | Purpose                           | Returns                    |
+| -------------------- | --------------------------------- | -------------------------- |
+| `useHref()`          | Mount-aware href                  | `(path) => string`         |
+| `useMount()`         | Current include() mount path      | `string`                   |
+| `useNavigation()`    | Navigation state & control        | state, navigate, refresh   |
+| `useSegments()`      | URL path & segment IDs            | path, segmentIds, location |
+| `useLinkStatus()`    | Link pending state                | { pending }                |
+| `useLoader()`        | Loader data (strict)              | data, isLoading, error     |
+| `useFetchLoader()`   | Loader with on-demand fetch       | data, load, isLoading      |
+| `useLoaderData()`    | All loader data                   | Record<string, any>        |
+| `useHandle()`        | Accumulated handle data           | T (handle type)            |
+| `useAction()`        | Server action state               | state, error, result       |
+| `useLocationState()` | History state (persists or flash) | T \| undefined             |
+| `useClientCache()`   | Cache control                     | { clear }                  |

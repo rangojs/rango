@@ -99,7 +99,7 @@ describe("CFCacheStore", () => {
   describe("constructor", () => {
     it("should require ctx", () => {
       expect(() => new CFCacheStore({} as any)).toThrow(
-        "[CFCacheStore] ExecutionContext (ctx) is required"
+        "[CFCacheStore] ExecutionContext (ctx) is required",
       );
     });
 
@@ -165,7 +165,9 @@ describe("CFCacheStore", () => {
       const request = new Request("https://rsc-cache.internal.com/test-key");
       const response = await cache.match(request);
 
-      expect(response?.headers.get("Cache-Control")).toBe("public, max-age=360");
+      expect(response?.headers.get("Cache-Control")).toBe(
+        "public, max-age=360",
+      );
     });
 
     it("should use store defaults for SWR if not provided", async () => {
@@ -180,12 +182,17 @@ describe("CFCacheStore", () => {
       const request = new Request("https://rsc-cache.internal.com/test-key");
       const response = await cache.match(request);
 
-      expect(response?.headers.get("Cache-Control")).toBe("public, max-age=180");
+      expect(response?.headers.get("Cache-Control")).toBe(
+        "public, max-age=180",
+      );
     });
 
     it("should use named cache when namespace is provided", async () => {
       const mockCtx = createMockCtx();
-      const store = new CFCacheStore({ ctx: mockCtx, namespace: "custom-cache" });
+      const store = new CFCacheStore({
+        ctx: mockCtx,
+        namespace: "custom-cache",
+      });
       const data = createTestData();
 
       await store.set("test-key", data, 60);
@@ -292,7 +299,7 @@ describe("CFCacheStore", () => {
       // Verify the entry is now marked as REVALIDATING
       const cache = mockCaches.default;
       const request = new Request(
-        "https://rsc-cache.internal.com/" + encodeURIComponent("test-key")
+        "https://rsc-cache.internal.com/" + encodeURIComponent("test-key"),
       );
       const response = await cache.match(request);
       expect(response?.headers.get(CACHE_STATUS_HEADER)).toBe("REVALIDATING");

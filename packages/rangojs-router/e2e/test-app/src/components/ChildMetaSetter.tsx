@@ -10,7 +10,11 @@ interface ChildMetaSetterProps {
  * RSC component that receives meta push function as prop and calls it.
  * Tests the pattern of passing handle functions to child components.
  */
-export function ChildMetaSetter({ meta, title, description }: ChildMetaSetterProps) {
+export function ChildMetaSetter({
+  meta,
+  title,
+  description,
+}: ChildMetaSetterProps) {
   // Call meta from child RSC component
   meta({ title });
   meta({ name: "description", content: description });

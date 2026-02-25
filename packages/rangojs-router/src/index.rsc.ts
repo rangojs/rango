@@ -178,17 +178,29 @@ export {
 export type { MetaDescriptor, MetaDescriptorBase } from "./router/types.js";
 
 // Middleware context types
-export type {
-  MiddlewareContext,
-  CookieOptions,
-} from "./router/middleware.js";
+export type { MiddlewareContext, CookieOptions } from "./router/middleware.js";
 
 // Reverse type utilities for type-safe URL generation (Django-style URL reversal)
-export type { ScopedReverseFunction, ReverseFunction, ExtractLocalRoutes, PrefixedRoutes, PrefixRoutePatterns, ParamsFor, SanitizePrefix, MergeRoutes } from "./reverse.js";
+export type {
+  ScopedReverseFunction,
+  ReverseFunction,
+  ExtractLocalRoutes,
+  PrefixedRoutes,
+  PrefixRoutePatterns,
+  ParamsFor,
+  SanitizePrefix,
+  MergeRoutes,
+} from "./reverse.js";
 export { scopedReverse, createReverse } from "./reverse.js";
 
 // Search params schema types
-export type { SearchSchema, SearchSchemaValue, ResolveSearchSchema, RouteSearchParams, RouteParams } from "./search-params.js";
+export type {
+  SearchSchema,
+  SearchSchemaValue,
+  ResolveSearchSchema,
+  RouteSearchParams,
+  RouteParams,
+} from "./search-params.js";
 
 // Performance tracking (server-only)
 export { track } from "./server/context.js";

@@ -124,7 +124,7 @@ describe("hashParams", () => {
       // values and be deterministic across all environments.
       // e.g., in Swedish locale, a-ring sorts after z, but in German it
       // may sort differently.
-      const params = { "\u00E4": "ae", "\u00F6": "oe", "a": "plain" };
+      const params = { "\u00E4": "ae", "\u00F6": "oe", a: "plain" };
       const hash1 = hashParams(params);
 
       // Re-hash to verify at least within the same runtime it is stable.

@@ -212,7 +212,7 @@ describe("MemoryCacheStore", () => {
           combined.set(acc);
           combined.set(chunk, acc.length);
           return combined;
-        }, new Uint8Array())
+        }, new Uint8Array()),
       );
 
       expect(decoded).toBe("hello world");
@@ -249,7 +249,7 @@ describe("MemoryCacheStore", () => {
 
       const result = await store.match("key");
       expect(result!.metadata!.expiresAt).toBe(
-        new Date("2024-01-01T00:00:00Z").getTime() + 60 * 1000
+        new Date("2024-01-01T00:00:00Z").getTime() + 60 * 1000,
       );
     });
 
@@ -459,7 +459,7 @@ describe("MemoryCacheStore", () => {
 
       // First read gets initial or updated
       expect(["initial", "updated"]).toContain(
-        (results[0] as any)?.value ?? "updated"
+        (results[0] as any)?.value ?? "updated",
       );
     });
 

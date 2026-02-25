@@ -99,10 +99,10 @@ import type { GeneratorMiddleware } from "./cache-lookup.js";
  */
 export function withSegmentResolution<TEnv>(
   ctx: MatchContext<TEnv>,
-  state: MatchPipelineState
+  state: MatchPipelineState,
 ): GeneratorMiddleware<ResolvedSegment> {
   return async function* (
-    source: AsyncGenerator<ResolvedSegment>
+    source: AsyncGenerator<ResolvedSegment>,
   ): AsyncGenerator<ResolvedSegment> {
     const pipelineStart = performance.now();
     const ms = ctx.metricsStore;
@@ -116,7 +116,11 @@ export function withSegmentResolution<TEnv>(
     // If cache hit, segments were already yielded by cache lookup
     if (state.cacheHit) {
       if (ms) {
-        ms.metrics.push({ label: "pipeline:segment-resolve", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
+        ms.metrics.push({
+          label: "pipeline:segment-resolve",
+          duration: performance.now() - pipelineStart,
+          startTime: pipelineStart - ms.requestStart,
+        });
       }
       return;
     }
@@ -134,8 +138,8 @@ export function withSegmentResolution<TEnv>(
           ctx.routeKey,
           ctx.matched.params,
           ctx.handlerContext,
-          ctx.loaderPromises
-        )
+          ctx.loaderPromises,
+        ),
       );
 
       // Update state with resolved segments
@@ -163,8 +167,8 @@ export function withSegmentResolution<TEnv>(
           ctx.actionContext,
           ctx.interceptResult,
           ctx.localRouteName,
-          ctx.pathname
-        )
+          ctx.pathname,
+        ),
       );
 
       // Update state with resolved segments
@@ -178,7 +182,11 @@ export function withSegmentResolution<TEnv>(
     }
 
     if (ms) {
-      ms.metrics.push({ label: "pipeline:segment-resolve", duration: performance.now() - pipelineStart, startTime: pipelineStart - ms.requestStart });
+      ms.metrics.push({
+        label: "pipeline:segment-resolve",
+        duration: performance.now() - pipelineStart,
+        startTime: pipelineStart - ms.requestStart,
+      });
     }
   };
 }

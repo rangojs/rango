@@ -19,14 +19,13 @@ export const blogRoutes = route({
 export default map<typeof blogRoutes>(({ route, layout, loader }) => [
   layout(BlogLayout, () => [
     route("blog.index", IndexPage),
-    route("blog.post", PostPage, () => [
-      loader(PostLoader),
-    ]),
+    route("blog.post", PostPage, () => [loader(PostLoader)]),
   ]),
 ]);
 ```
 
 **Pain points:**
+
 1. URL patterns not visible where routes are defined
 2. Route names defined separately from handlers
 3. Hard to compose/share layouts across route groups
@@ -40,20 +39,17 @@ The `urls()` function replaces `map()` as the entry point for defining routes:
 ```typescript
 // Current
 export default map<typeof blogRoutes>(({ route, layout, loader }) => [
-  layout(BlogLayout, () => [
-    route("blog.index", IndexPage),
-  ]),
+  layout(BlogLayout, () => [route("blog.index", IndexPage)]),
 ]);
 
 // New
 export const blogPatterns = urls(({ path, layout, loader }) => [
-  layout(BlogLayout, () => [
-    path("/", IndexPage, { name: "index" }),
-  ]),
+  layout(BlogLayout, () => [path("/", IndexPage, { name: "index" })]),
 ]);
 ```
 
 **Signature:**
+
 ```typescript
 urls(callback: (helpers) => RouteDefinition[])
 ```
@@ -73,7 +69,7 @@ router
   .map(() => import("./handlers/shop.js"));
 
 // New
-router.routes(urlpatterns);  // Single call, use include() for composition
+router.routes(urlpatterns); // Single call, use include() for composition
 ```
 
 **`.use()` still works for global middleware:**
@@ -83,9 +79,9 @@ const router = createRouter<AppEnv>({
   document: Document,
   notFound: NotFoundPage,
 })
-  .use(loggerMiddleware)              // Global middleware
+  .use(loggerMiddleware) // Global middleware
   .use("/api/*", rateLimitMiddleware) // Pattern-scoped middleware
-  .routes(urlpatterns);               // Single .routes() call
+  .routes(urlpatterns); // Single .routes() call
 ```
 
 **`.routes()` can only be called once.** Multiple route groups are composed via `include()`:
@@ -103,50 +99,44 @@ Replace `route()` with `path()` that includes the URL pattern:
 
 ```typescript
 // Current
-route("blog.post", PostPage, () => [
-  loader(PostLoader),
-])
+route("blog.post", PostPage, () => [loader(PostLoader)]);
 
 // New
-path("/:slug", PostPage, { name: "post" }, () => [
-  loader(PostLoader),
-])
+path("/:slug", PostPage, { name: "post" }, () => [loader(PostLoader)]);
 ```
 
 **Signature:**
+
 ```typescript
-path(pattern, component)
-path(pattern, component, use)            // use is () => [...]
-path(pattern, component, options)        // options is { name?, ... }
-path(pattern, component, options, use)
+path(pattern, component);
+path(pattern, component, use); // use is () => [...]
+path(pattern, component, options); // options is { name?, ... }
+path(pattern, component, options, use);
 ```
 
 Detection: if 3rd arg is function → `use`, if object → `options`.
 
-| Param | Description |
-|-------|-------------|
-| `pattern` | URL pattern with Express-style params (`:param`, `:param?`, `:param(a\|b)`, `*`) |
-| `component` | React component or handler function `(ctx) => ReactNode` |
-| `options` | Optional: `{ name }` for route naming |
-| `use` | Optional: callback returning helpers (`loader`, `loading`, `revalidate`, etc.) |
+| Param       | Description                                                                      |
+| ----------- | -------------------------------------------------------------------------------- |
+| `pattern`   | URL pattern with Express-style params (`:param`, `:param?`, `:param(a\|b)`, `*`) |
+| `component` | React component or handler function `(ctx) => ReactNode`                         |
+| `options`   | Optional: `{ name }` for route naming                                            |
+| `use`       | Optional: callback returning helpers (`loader`, `loading`, `revalidate`, etc.)   |
 
 **Examples:**
+
 ```typescript
 // Pattern and component only
-path("/about", AboutPage)
+path("/about", AboutPage);
 
 // With use (3rd arg is function)
-path("/:slug", PostPage, () => [
-  loader(PostLoader),
-])
+path("/:slug", PostPage, () => [loader(PostLoader)]);
 
 // With options (3rd arg is object)
-path("/:slug", PostPage, { name: "post" })
+path("/:slug", PostPage, { name: "post" });
 
 // With both options and use
-path("/:slug", PostPage, { name: "post" }, () => [
-  loader(PostLoader),
-])
+path("/:slug", PostPage, { name: "post" }, () => [loader(PostLoader)]);
 ```
 
 **Unnamed routes:**
@@ -155,27 +145,27 @@ Name is optional. Unnamed routes are accessed via path-based `href()`:
 
 ```typescript
 // Unnamed route
-path("/about", AboutPage)
+path("/about", AboutPage);
 
 // Access via path (type-safe)
-href("/about")  // ✅ works
+href("/about"); // ✅ works
 
 // Named route - both work
-path("/blog", BlogPage, { name: "blog" })
-href("blog")    // ✅ by name
-href("/blog")   // ✅ by path
+path("/blog", BlogPage, { name: "blog" });
+href("blog"); // ✅ by name
+href("/blog"); // ✅ by path
 ```
 
 Path-based `href()` is an **existing type-safe feature** that must be maintained.
 
 **URL patterns use existing Express-style syntax:**
 
-| Pattern | Type |
-|---------|------|
-| `:param` | `string` |
-| `:param?` | `string \| undefined` |
-| `:param(a\|b)` | `"a" \| "b"` |
-| `*` | `string` (catch-all) |
+| Pattern        | Type                  |
+| -------------- | --------------------- |
+| `:param`       | `string`              |
+| `:param?`      | `string \| undefined` |
+| `:param(a\|b)` | `"a" \| "b"`          |
+| `*`            | `string` (catch-all)  |
 
 ### 4. `include()` - Composable Route Mounting
 
@@ -185,11 +175,11 @@ Mount nested route patterns with optional name prefix:
 include(prefix, patterns, options?)
 ```
 
-| Param | Description |
-|-------|-------------|
-| `prefix` | URL prefix for all routes |
-| `patterns` | Nested route patterns to mount |
-| `options` | Optional: `{ name }` for route name prefixing |
+| Param      | Description                                   |
+| ---------- | --------------------------------------------- |
+| `prefix`   | URL prefix for all routes                     |
+| `patterns` | Nested route patterns to mount                |
+| `options`  | Optional: `{ name }` for route name prefixing |
 
 **Example:**
 
@@ -198,9 +188,7 @@ include(prefix, patterns, options?)
 export const blogPatterns = urls(({ path, layout, loader }) => [
   layout(BlogLayout, () => [
     path("/", IndexPage, { name: "index" }),
-    path("/:slug", PostPage, { name: "post" }, () => [
-      loader(PostLoader),
-    ]),
+    path("/:slug", PostPage, { name: "post" }, () => [loader(PostLoader)]),
   ]),
 ]);
 
@@ -219,21 +207,23 @@ export const urlpatterns = urls(({ path, layout, include }) => [
 ```
 
 **Name prefix is optional:**
+
 ```typescript
 // Without name - routes keep local names
-include("/blog", blogPatterns)
+include("/blog", blogPatterns);
 
 // With name - local names are prefixed (e.g., "index" → "blog.index")
-include("/blog", blogPatterns, { name: "blog" })
+include("/blog", blogPatterns, { name: "blog" });
 ```
 
 **Name collisions:**
+
 - TypeScript detects collisions at compile time
 - At runtime, last definition wins (like Django) - no crash
 
 ```typescript
-include("/blog", blogPatterns, { name: "content" })  // "content.index"
-include("/news", newsPatterns, { name: "content" })  // overwrites "content.index"
+include("/blog", blogPatterns, { name: "content" }); // "content.index"
+include("/news", newsPatterns, { name: "content" }); // overwrites "content.index"
 // TypeScript error, but if it slips through, /news patterns win
 ```
 
@@ -249,12 +239,12 @@ export const shopPatterns = urls(({ path, layout, intercept }) => [
     intercept("@modal", "product", ProductModal),
 
     path("/", ShopIndex, { name: "index" }),
-    path("/product/:id", ProductDetail, { name: "product" }),  // ← local "product"
+    path("/product/:id", ProductDetail, { name: "product" }), // ← local "product"
   ]),
 ]);
 
 // urls/index.ts
-include("/shop", shopPatterns, { name: "shop" })
+include("/shop", shopPatterns, { name: "shop" });
 // Globally: "product" becomes "shop.product"
 // But shopPatterns doesn't need to know that
 ```
@@ -271,7 +261,7 @@ urls(({ layout, include }) => [
 
   // Admin doesn't get SharedLayout
   include("/admin", adminPatterns, { name: "admin" }),
-])
+]);
 ```
 
 ### 5. `useHref()` - Context-Aware Client Href
@@ -315,16 +305,17 @@ async function BlogPost({ ctx }) {
 ```
 
 **Resolution priority:**
+
 1. Path-based (`/blog/:slug`) → Use directly
 2. Absolute name (`shop.cart`) → Global lookup
 3. Local name (`index`) → Prepend current name prefix, then lookup
 
 **Server vs Client href:**
 
-| Method | Environment | Usage |
-|--------|-------------|-------|
+| Method          | Environment       | Usage                                                |
+| --------------- | ----------------- | ---------------------------------------------------- |
 | `ctx.reverse()` | Server components | Auto-prefixes: `ctx.reverse("index")` → "blog.index" |
-| `useHref()` | Client components | Auto-prefixes: `href("index")` → "blog.index" |
+| `useHref()`     | Client components | Auto-prefixes: `href("index")` → "blog.index"        |
 
 Both support absolute names (`href("shop.cart")`) and path-based (`href("/about")`) as fallbacks.
 
@@ -335,8 +326,8 @@ Route map and current name prefix passed via RSC payload:
 ```typescript
 interface RscMetadata {
   // ... existing fields
-  routeMap: Record<string, string>;  // "blog.index" → "/blog"
-  routeName: string;                  // Current name prefix from matched route
+  routeMap: Record<string, string>; // "blog.index" → "/blog"
+  routeName: string; // Current name prefix from matched route
 }
 ```
 
@@ -346,27 +337,27 @@ Params are inferred from URL pattern at compile time:
 
 ```typescript
 path("/product/:id", (ctx) => {
-  ctx.params.id    // ✅ string
-  ctx.params.slug  // ❌ TypeScript error
-})
+  ctx.params.id; // ✅ string
+  ctx.params.slug; // ❌ TypeScript error
+});
 
 path("/:locale?/blog/:slug", (ctx) => {
-  ctx.params.locale  // string | undefined
-  ctx.params.slug    // string
-})
+  ctx.params.locale; // string | undefined
+  ctx.params.slug; // string
+});
 
 path("/:locale(en|de)/shop", (ctx) => {
-  ctx.params.locale  // "en" | "de"
-})
+  ctx.params.locale; // "en" | "de"
+});
 ```
 
 `useHref()` and `ctx.reverse()` are typed from route definitions:
 
 ```typescript
 const href = useHref();
-href("post", { slug: "hello" })  // ✅ requires slug
-href("post")                      // ❌ missing slug param
-href("post", { id: 1 })           // ❌ wrong param name
+href("post", { slug: "hello" }); // ✅ requires slug
+href("post"); // ❌ missing slug param
+href("post", { id: 1 }); // ❌ wrong param name
 ```
 
 ---
@@ -410,6 +401,7 @@ path("/", Dashboard, { name: "index" }, () => [
 ```
 
 **Unchanged:**
+
 - `layout()` - wrapping and composition
 - `loader()` - data loading
 - `loading()` - suspense fallbacks
@@ -437,7 +429,7 @@ export const router = createRouter<AppEnv>({
   defaultErrorBoundary: ErrorPage,
 })
   .use(globalMiddleware)
-  .routes(urlpatterns);  // Single .routes() call
+  .routes(urlpatterns); // Single .routes() call
 ```
 
 **`.routes()` can only be called once.** Use `include()` for composition.
@@ -493,13 +485,13 @@ export const urlpatterns = urls(({ path, layout, include }) => [
 
 `@rangojs/router` is a new package. The following are **not available**:
 
-| Removed | Replacement |
-|---------|-------------|
-| `route({ "name": "/pattern" })` | `path("/pattern", Component, { name })` inside `urls()` |
+| Removed                                | Replacement                                             |
+| -------------------------------------- | ------------------------------------------------------- |
+| `route({ "name": "/pattern" })`        | `path("/pattern", Component, { name })` inside `urls()` |
 | `.routes(prefix, routes).map(handler)` | `.routes(urlpatterns)` with `include()` for composition |
-| Chained `.routes()` calls | Single `.routes()`, use `include()` for multiple groups |
-| `import { href } from ".../client"` | `useHref()` hook (client) or `ctx.reverse()` (server) |
-| `router.reverse` export | Removed - use `ctx.reverse()` or `useHref()` |
+| Chained `.routes()` calls              | Single `.routes()`, use `include()` for multiple groups |
+| `import { href } from ".../client"`    | `useHref()` hook (client) or `ctx.reverse()` (server)   |
+| `router.reverse` export                | Removed - use `ctx.reverse()` or `useHref()`            |
 
 **No backwards compatibility** - this is a clean break from rsc-router's API.
 
@@ -543,13 +535,13 @@ export const urlpatterns = urls(({ path, layout, include }) => [
 
 ## Summary
 
-| Change | Purpose |
-|--------|---------|
-| `urls()` | Replaces `map()` as entry point |
+| Change                 | Purpose                                       |
+| ---------------------- | --------------------------------------------- |
+| `urls()`               | Replaces `map()` as entry point               |
 | `.routes(urlpatterns)` | Single call, replaces `.routes().map()` chain |
-| `path()` | URL pattern visible at route definition |
-| `include()` | Composable mounting with name prefix |
-| `useHref()` | Context-aware client href |
-| Type safety | Params inferred from URL pattern |
+| `path()`               | URL pattern visible at route definition       |
+| `include()`            | Composable mounting with name prefix          |
+| `useHref()`            | Context-aware client href                     |
+| Type safety            | Params inferred from URL pattern              |
 
 Everything else stays the same.

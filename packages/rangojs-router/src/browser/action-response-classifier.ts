@@ -57,9 +57,7 @@ export interface ClassifierInput {
  * all UI updates, store mutations, and network requests based on the
  * returned scenario.
  */
-export function classifyActionResponse(
-  input: ClassifierInput,
-): ActionScenario {
+export function classifyActionResponse(input: ClassifierInput): ActionScenario {
   // Check if user navigated away during the action
   const userNavigatedAway =
     input.currentPathname !== input.actionStartPathname ||
@@ -81,10 +79,7 @@ export function classifyActionResponse(
   }
 
   // Consolidation needed for concurrent actions
-  if (
-    input.consolidationSegments &&
-    input.consolidationSegments.length > 0
-  ) {
+  if (input.consolidationSegments && input.consolidationSegments.length > 0) {
     return {
       type: "consolidation-needed",
       segmentIds: input.consolidationSegments,

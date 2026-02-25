@@ -11,6 +11,7 @@ Production cache store implementation for Cloudflare Workers using the Edge Cach
 The Cloudflare Cache API provides per-datacenter ephemeral caching with sub-millisecond reads for hot data.
 
 **Characteristics:**
+
 - Per-datacenter (no cross-DC replication)
 - Ephemeral (can be evicted anytime)
 - Very fast for hot reads
@@ -18,10 +19,11 @@ The Cloudflare Cache API provides per-datacenter ephemeral caching with sub-mill
 - No tiered caching with `cache.put`
 
 **API:**
+
 ```typescript
 const cache = caches.default;
 // or custom namespace
-const cache = await caches.open('rsc-segments');
+const cache = await caches.open("rsc-segments");
 
 await cache.put(request, response);
 const response = await cache.match(request);
@@ -33,6 +35,7 @@ await cache.delete(request);
 Global persistent key-value storage with edge caching. Higher latency for cold reads but guarantees persistence.
 
 **Characteristics:**
+
 - Global, persistent storage
 - Centralized with edge caching
 - Cold reads: 300-500ms (can be higher)
@@ -40,6 +43,7 @@ Global persistent key-value storage with edge caching. Higher latency for cold r
 - Good for data needing global consistency
 
 **When to use KV:**
+
 - Critical cached data that must survive cache eviction
 - Global consistency across all datacenters
 - Long-lived cache entries (hours/days)
@@ -74,6 +78,7 @@ class CFCacheStore implements SegmentCacheStore {
 **Key Implementation Details:**
 
 1. **Key to Request Conversion**
+
    ```typescript
    private keyToRequest(key: string): Request {
      // Encode key to be URL-safe
@@ -83,6 +88,7 @@ class CFCacheStore implements SegmentCacheStore {
    ```
 
 2. **Data to Response Conversion**
+
    ```typescript
    private dataToResponse(data: CachedEntryData, ttl: number): Response {
      return new Response(JSON.stringify(data), {
@@ -126,6 +132,7 @@ interface CFCacheStoreOptions {
 ```
 
 **Layered Read Strategy:**
+
 ```
 1. Check Edge Cache
    └─ HIT → return immediately
@@ -139,6 +146,7 @@ interface CFCacheStoreOptions {
 ```
 
 **Write Strategy:**
+
 ```
 1. Write to Edge Cache (sync)
 2. Write to KV (async via waitUntil if available)
@@ -149,8 +157,8 @@ interface CFCacheStoreOptions {
 ### Basic Setup (Edge Cache Only)
 
 ```typescript
-import { createRSCHandler } from 'rsc-router/rsc';
-import { CFCacheStore } from 'rsc-router/cf';
+import { createRSCHandler } from "rsc-router/rsc";
+import { CFCacheStore } from "rsc-router/cf";
 
 export default createRSCHandler({
   router,
@@ -165,8 +173,8 @@ export default createRSCHandler({
 ### With KV Persistence (Phase 2)
 
 ```typescript
-import { createRSCHandler } from 'rsc-router/rsc';
-import { CFCacheStore } from 'rsc-router/cf';
+import { createRSCHandler } from "rsc-router/rsc";
+import { CFCacheStore } from "rsc-router/cf";
 
 export default createRSCHandler({
   router,
@@ -192,7 +200,10 @@ The cache uses a **single cache entry per route** pattern rather than per-segmen
 ### Cache Key Structure
 
 ```typescript
-function getRouteCacheKey(pathname: string, params?: Record<string, string>): string {
+function getRouteCacheKey(
+  pathname: string,
+  params?: Record<string, string>,
+): string {
   // Prefix distinguishes request type
   const prefix = isPartial ? "partial" : "doc";
 
@@ -232,6 +243,7 @@ loader(fetchProducts, () => [
 ```
 
 **Rationale:**
+
 - Loaders often contain user-specific or time-sensitive data
 - Caching loaders by default could serve stale data unexpectedly
 - Explicit opt-in gives developers control over loader caching
@@ -304,6 +316,7 @@ The CF store itself doesn't need direct `waitUntil` access - it's handled at the
 For Phase 2 with KV persistence, we have two options:
 
 **Option A: Store receives waitUntil (more complex)**
+
 ```typescript
 interface CFCacheStoreOptions {
   kv?: KVNamespace;
@@ -312,6 +325,7 @@ interface CFCacheStoreOptions {
 ```
 
 **Option B: KV writes inline, caller uses waitUntil (simpler)**
+
 ```typescript
 // CacheScope already wraps set() in waitUntil
 // Store just does both writes synchronously
@@ -344,10 +358,12 @@ Action:   |  serve   | serve+reval   |  miss       |
 ### Key Insight: Use Headers, Not JSON Parsing
 
 Reference implementation (`cache/cf/cache.ts`) uses response headers for staleness:
+
 - `x-edge-cache-stale-at`: Timestamp when entry becomes stale
 - `x-edge-cache-status`: HIT | MISS | REVALIDATING
 
 **Benefits:**
+
 - No JSON parsing needed to check staleness
 - Can check headers before reading body
 - Matches CF Cache API patterns
@@ -362,9 +378,9 @@ Store response with extended TTL covering SWR window:
 // staleAt header tracks: ttl = 60s
 
 const headers = {
-  'Cache-Control': `public, max-age=${ttl + swr}`,
-  'x-edge-cache-stale-at': String(Date.now() + ttl * 1000),
-  'x-edge-cache-status': 'HIT',
+  "Cache-Control": `public, max-age=${ttl + swr}`,
+  "x-edge-cache-stale-at": String(Date.now() + ttl * 1000),
+  "x-edge-cache-status": "HIT",
 };
 ```
 
@@ -491,7 +507,7 @@ if (cacheResult.shouldRevalidate && cacheScope) {
         matched.routeKey,
         matched.params,
         handlerContext,
-        loaderPromises
+        loaderPromises,
       );
       // Cache the fresh result
       cacheScope.cacheRoute(pathname, matched.params, freshSegments);
@@ -545,11 +561,13 @@ async markRevalidating(key: string, response: Response): Promise<void> {
 ```
 
 **How it works:**
+
 1. First request sees stale entry → marks it REVALIDATING → triggers background refresh
 2. Subsequent requests see REVALIDATING status → skip revalidation, serve stale
 3. Background refresh completes → updates cache with fresh data + HIT status
 
 **Benefits:**
+
 - Works across all workers in same datacenter (shared edge cache)
 - No separate in-memory state needed
 - Self-healing: if revalidation fails, age eventually exceeds threshold
@@ -574,10 +592,10 @@ const MAX_CACHE_TAG_LENGTH_HEADER = 10000; // 10kb max
 
 ```typescript
 const tagsHeader = sanitizeCacheTags([
-  hostname,           // e.g., "mydomain.com"
-  "document",         // content type
-  ...defaultTags,     // e.g., ["products", "catalog"]
-  ...contentTags,     // e.g., ["product:123"]
+  hostname, // e.g., "mydomain.com"
+  "document", // content type
+  ...defaultTags, // e.g., ["products", "catalog"]
+  ...contentTags, // e.g., ["product:123"]
 ]).join(",");
 
 const response = new Response(body, {
@@ -591,22 +609,26 @@ const response = new Response(body, {
 
 ```typescript
 // Purge by tag via CF API
-await fetch(`https://api.cloudflare.com/client/v4/zones/${zoneId}/purge_cache`, {
-  method: 'POST',
-  headers: { 'Authorization': `Bearer ${apiToken}` },
-  body: JSON.stringify({ tags: ['product:123'] }),
-});
+await fetch(
+  `https://api.cloudflare.com/client/v4/zones/${zoneId}/purge_cache`,
+  {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiToken}` },
+    body: JSON.stringify({ tags: ["product:123"] }),
+  },
+);
 ```
 
 ### RSC Router Integration (Future)
 
 ```typescript
-cache({
-  ttl: 300,
-  tags: (ctx) => [`product:${ctx.params.id}`, 'products'],
-}, () => [
-  route("product/:id"),
-])
+cache(
+  {
+    ttl: 300,
+    tags: (ctx) => [`product:${ctx.params.id}`, "products"],
+  },
+  () => [route("product/:id")],
+);
 
 // Server action
 async function updateProduct(id: string) {
@@ -622,6 +644,7 @@ async function updateProduct(id: string) {
 ### Cache Eviction
 
 Edge Cache can evict entries at any time. The store should:
+
 - Not assume cached data persists
 - Handle cache misses gracefully
 - Consider KV backing for critical data
@@ -629,6 +652,7 @@ Edge Cache can evict entries at any time. The store should:
 ### Datacenter Isolation
 
 Edge Cache is per-datacenter. A user in Europe won't see cache entries from US datacenters. This means:
+
 - Cold starts in new datacenters
 - No global cache warming
 - KV provides global consistency when needed
@@ -636,6 +660,7 @@ Edge Cache is per-datacenter. A user in Europe won't see cache entries from US d
 ### TTL Handling
 
 TTL is enforced via:
+
 1. `Cache-Control: max-age=N` header on Response
 2. `expiresAt` timestamp in cached data (double-check)
 
@@ -644,6 +669,7 @@ The Cache API respects `Cache-Control` but we store `expiresAt` for explicit ver
 ### Error Handling
 
 Cache operations should never fail the request:
+
 ```typescript
 async get(key: string): Promise<CachedEntryData | null> {
   try {
@@ -662,6 +688,7 @@ async get(key: string): Promise<CachedEntryData | null> {
 ### Size Limits
 
 Cloudflare Cache API limits:
+
 - Maximum cached response size: 512MB (Enterprise), 25MB (Free/Pro/Business)
 - Consider chunking large entries or excluding oversized data
 
@@ -688,6 +715,7 @@ packages/rsc-router/src/cache/
 ## Tasks
 
 ### Phase 1: Edge Cache Store
+
 - [x] Implement `CFCacheStore` class
 - [x] Key-to-Request conversion with proper URL encoding
 - [x] Data-to-Response serialization with Cache-Control headers
@@ -698,6 +726,7 @@ packages/rsc-router/src/cache/
 - [x] Documentation and examples
 
 ### Phase 1.5: SWR Support
+
 - [x] Update store interface to return `shouldRevalidate` indicator
 - [x] Implement `CacheScope` background revalidation trigger
 - [x] Route-level caching with `lookupRoute()` and `cacheRoute()`
@@ -707,6 +736,7 @@ packages/rsc-router/src/cache/
 - [x] Tests for SWR behavior (stale serving, background refresh)
 
 ### Phase 2: KV Sub-store
+
 - [ ] Design KV schema and key structure
 - [ ] Implement layered read (Edge Cache -> KV)
 - [ ] Implement async write to KV (inline, wrapped by waitUntil at CacheScope)
@@ -714,6 +744,7 @@ packages/rsc-router/src/cache/
 - [ ] Tests for layered caching behavior
 
 ### Phase 3: Advanced (Future)
+
 - [ ] Global revalidation coordination via KV/Durable Objects
 - [ ] Cache tags for bulk invalidation
 - [ ] Proactive sibling segment caching

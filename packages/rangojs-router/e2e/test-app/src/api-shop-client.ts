@@ -23,8 +23,13 @@ const apiShopRoutes = {
 export function createShopClient(baseUrl: string) {
   const reverse = createReverse(apiShopRoutes);
 
-  function url(name: keyof typeof apiShopRoutes, params?: Record<string, string>): string {
-    const path = params ? (reverse as any)(name, params) : (reverse as any)(name);
+  function url(
+    name: keyof typeof apiShopRoutes,
+    params?: Record<string, string>,
+  ): string {
+    const path = params
+      ? (reverse as any)(name, params)
+      : (reverse as any)(name);
     return `${baseUrl}${path}`;
   }
 
@@ -54,7 +59,10 @@ export function createShopClient(baseUrl: string) {
       });
     },
 
-    updateCartItem(itemId: string, updates: { quantity: number }): Promise<CartItemResponse> {
+    updateCartItem(
+      itemId: string,
+      updates: { quantity: number },
+    ): Promise<CartItemResponse> {
       return fetchJson(url("apiShop.cartItem", { itemId }), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -62,7 +70,10 @@ export function createShopClient(baseUrl: string) {
       });
     },
 
-    replaceCartItem(itemId: string, data: { productId: string; quantity: number }): Promise<CartItemResponse> {
+    replaceCartItem(
+      itemId: string,
+      data: { productId: string; quantity: number },
+    ): Promise<CartItemResponse> {
       return fetchJson(url("apiShop.cartItem", { itemId }), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },

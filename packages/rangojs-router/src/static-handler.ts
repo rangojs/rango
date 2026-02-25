@@ -37,7 +37,9 @@ import { isCachedFunction } from "./cache/taint.js";
 
 // -- Types ------------------------------------------------------------------
 
-export interface StaticHandlerDefinition<TParams extends Record<string, any> = any> {
+export interface StaticHandlerDefinition<
+  TParams extends Record<string, any> = any,
+> {
   readonly __brand: "staticHandler";
   /** Auto-generated unique ID (injected by Vite plugin). */
   $$id: string;

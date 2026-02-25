@@ -39,7 +39,9 @@ export const metaTemplatePatterns = urls(({ path, layout }) => [
     // Nested layout with its own template - overrides parent template
     layout(MetaTemplateNestedLayout, () => [
       path("/nested", MetaTemplateNestedHandler, { name: "nested" }),
-      path("/nested/child", MetaTemplateNestedChildHandler, { name: "nestedChild" }),
+      path("/nested/child", MetaTemplateNestedChildHandler, {
+        name: "nestedChild",
+      }),
     ]),
   ]),
 ]);
@@ -77,7 +79,9 @@ export const metaMergePatterns = urls(({ path, layout }) => [
  * Routes: handlePassthrough, handlePassthroughAsync
  */
 export const handlePatterns = urls(({ path, loading }) => [
-  path("/handle-passthrough", HandlePassthroughHandler, { name: "handlePassthrough" }),
+  path("/handle-passthrough", HandlePassthroughHandler, {
+    name: "handlePassthrough",
+  }),
   path(
     "/handle-passthrough-async",
     HandlePassthroughAsyncHandler,
@@ -86,9 +90,9 @@ export const handlePatterns = urls(({ path, loading }) => [
       loading(
         <div data-testid="async-passthrough-loading">
           <p>Loading async child...</p>
-        </div>
+        </div>,
       ),
-    ]
+    ],
   ),
 ]);
 
@@ -103,7 +107,16 @@ export const hydrationPatterns = urls(({ path }) => [
  * Trailing slash routes
  */
 export const trailingSlashPatterns = urls(({ path }) => [
-  path("/ts-ignore", TrailingSlashIgnoreHandler, { name: "trailingSlash.ignore", trailingSlash: "ignore" }),
-  path("/ts-always", TrailingSlashAlwaysHandler, { name: "trailingSlash.always", trailingSlash: "always" }),
-  path("/ts-never", TrailingSlashNeverHandler, { name: "trailingSlash.never", trailingSlash: "never" }),
+  path("/ts-ignore", TrailingSlashIgnoreHandler, {
+    name: "trailingSlash.ignore",
+    trailingSlash: "ignore",
+  }),
+  path("/ts-always", TrailingSlashAlwaysHandler, {
+    name: "trailingSlash.always",
+    trailingSlash: "always",
+  }),
+  path("/ts-never", TrailingSlashNeverHandler, {
+    name: "trailingSlash.never",
+    trailingSlash: "never",
+  }),
 ]);

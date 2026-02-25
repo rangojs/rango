@@ -81,7 +81,10 @@ export interface HandleStore {
    * Replay cached handle data back into the store (for cache hits).
    * Used to restore handle data when serving cached segments.
    */
-  replaySegmentData(segmentId: string, segmentHandles: Record<string, unknown[]>): void;
+  replaySegmentData(
+    segmentId: string,
+    segmentHandles: Record<string, unknown[]>,
+  ): void;
 }
 
 /**
@@ -212,7 +215,10 @@ export function createHandleStore(): HandleStore {
       return result;
     },
 
-    replaySegmentData(segmentId: string, segmentHandles: Record<string, unknown[]>): void {
+    replaySegmentData(
+      segmentId: string,
+      segmentHandles: Record<string, unknown[]>,
+    ): void {
       for (const handleName in segmentHandles) {
         if (!data[handleName]) {
           data[handleName] = {};

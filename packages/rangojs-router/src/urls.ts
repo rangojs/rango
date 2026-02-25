@@ -181,7 +181,6 @@ export interface ResponseHandlerContext<
   setCookie: (name: string, value: string, options?: CookieOptions) => void;
 }
 
-
 // ============================================================================
 // Types
 // ============================================================================
@@ -196,7 +195,10 @@ export type UnnamedRoute = "$unnamed";
 /**
  * Options for path() function
  */
-export interface PathOptions<TName extends string = string, TSearch extends SearchSchema = {}> {
+export interface PathOptions<
+  TName extends string = string,
+  TSearch extends SearchSchema = {},
+> {
   /** Route name for href() lookups */
   name?: TName;
   /** Search param schema for typed query parameters */
@@ -296,7 +298,10 @@ type PrefixPatterns<
 > = {
   [K in keyof TRoutes]: TRoutes[K] extends string
     ? `${TUrlPrefix}${TRoutes[K]}`
-    : TRoutes[K] extends { readonly path: infer P extends string; readonly search: infer S }
+    : TRoutes[K] extends {
+          readonly path: infer P extends string;
+          readonly search: infer S;
+        }
       ? { readonly path: `${TUrlPrefix}${P}`; readonly search: S }
       : TRoutes[K];
 };
@@ -381,7 +386,12 @@ type ExtractRoutesFromItem<T, D extends number = 40> = [D] extends [never]
         ? {} // Exclude unnamed routes from type map
         : {} extends TSearch
           ? { [K in TName]: TPattern }
-          : { [K in TName]: { readonly path: TPattern; readonly search: TSearch } }
+          : {
+              [K in TName]: {
+                readonly path: TPattern;
+                readonly search: TSearch;
+              };
+            }
       : {}
     : // TypedIncludeItem: extract prefixed routes (both name and URL prefix)
       T extends TypedIncludeItem<
@@ -536,7 +546,9 @@ export type PathFn<TEnv> = <
   pattern: TPattern,
   handler:
     | ReactNode
-    | ((ctx: HandlerContext<TParams, TEnv, TSearch>) => ReactNode | Promise<ReactNode> | Response | Promise<Response>)
+    | ((
+        ctx: HandlerContext<TParams, TEnv, TSearch>,
+      ) => ReactNode | Promise<ReactNode> | Response | Promise<Response>)
     | PrerenderHandlerDefinition<TParams>
     | StaticHandlerDefinition<TParams>,
   optionsOrUse?: PathOptions<TName, TSearch> | (() => UseItems<RouteUseItem>),
@@ -568,7 +580,9 @@ export type ResponsePathFn<TEnv> = <
 >(
   pattern: TPattern,
   handler: ResponseHandler<ExtractParams<TPattern>, TEnv>,
-  optionsOrUse?: PathOptions<TName, TSearch> | (() => UseItems<ResponseRouteUseItem>),
+  optionsOrUse?:
+    | PathOptions<TName, TSearch>
+    | (() => UseItems<ResponseRouteUseItem>),
   use?: () => UseItems<ResponseRouteUseItem>,
 ) => TypedRouteItem<TName, TPattern, unknown, TSearch>;
 
@@ -587,7 +601,9 @@ export type JsonResponsePathFn<TEnv> = <
   handler: (
     ctx: ResponseHandlerContext<ExtractParams<TPattern>, TEnv>,
   ) => TData | Response | Promise<TData | Response>,
-  optionsOrUse?: PathOptions<TName, TSearch> | (() => UseItems<ResponseRouteUseItem>),
+  optionsOrUse?:
+    | PathOptions<TName, TSearch>
+    | (() => UseItems<ResponseRouteUseItem>),
   use?: () => UseItems<ResponseRouteUseItem>,
 ) => TypedRouteItem<TName, TPattern, TData, TSearch>;
 
@@ -602,7 +618,9 @@ export type TextResponsePathFn<TEnv> = <
 >(
   pattern: TPattern,
   handler: TextResponseHandler<ExtractParams<TPattern>, TEnv>,
-  optionsOrUse?: PathOptions<TName, TSearch> | (() => UseItems<ResponseRouteUseItem>),
+  optionsOrUse?:
+    | PathOptions<TName, TSearch>
+    | (() => UseItems<ResponseRouteUseItem>),
   use?: () => UseItems<ResponseRouteUseItem>,
 ) => TypedRouteItem<TName, TPattern, string, TSearch>;
 
@@ -653,8 +671,15 @@ export type PathHelpers<TEnv> = {
    * Define a layout that wraps child routes
    */
   layout: {
-    (component: ReactNode | Handler<any, any, TEnv> | StaticHandlerDefinition): TypedLayoutItem<{}, {}>;
-    <const TChildren extends readonly (LayoutUseItem | readonly LayoutUseItem[])[]>(
+    (
+      component: ReactNode | Handler<any, any, TEnv> | StaticHandlerDefinition,
+    ): TypedLayoutItem<{}, {}>;
+    <
+      const TChildren extends readonly (
+        | LayoutUseItem
+        | readonly LayoutUseItem[]
+      )[],
+    >(
       component: ReactNode | Handler<any, any, TEnv> | StaticHandlerDefinition,
       use: () => TChildren,
     ): TypedLayoutItem<ExtractRoutes<TChildren>, ExtractResponses<TChildren>>;
@@ -677,7 +702,10 @@ export type PathHelpers<TEnv> = {
    * Define parallel routes that render simultaneously in named slots
    */
   parallel: <
-    TSlots extends Record<`@${string}`, Handler<any, any, TEnv> | ReactNode | StaticHandlerDefinition>,
+    TSlots extends Record<
+      `@${string}`,
+      Handler<any, any, TEnv> | ReactNode | StaticHandlerDefinition
+    >,
   >(
     slots: TSlots,
     use?: () => ParallelUseItem[],
@@ -759,11 +787,17 @@ export type PathHelpers<TEnv> = {
     (config: TransitionConfig): TransitionItem;
     <const TChildren extends readonly (AllUseItems | readonly AllUseItems[])[]>(
       children: () => TChildren,
-    ): TypedTransitionItem<ExtractRoutes<TChildren>, ExtractResponses<TChildren>>;
+    ): TypedTransitionItem<
+      ExtractRoutes<TChildren>,
+      ExtractResponses<TChildren>
+    >;
     <const TChildren extends readonly (AllUseItems | readonly AllUseItems[])[]>(
       config: TransitionConfig,
       children: () => TChildren,
-    ): TypedTransitionItem<ExtractRoutes<TChildren>, ExtractResponses<TChildren>>;
+    ): TypedTransitionItem<
+      ExtractRoutes<TChildren>,
+      ExtractResponses<TChildren>
+    >;
   };
 };
 
@@ -849,7 +883,7 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
 
     invariant(
       !ctx.parent || ctx.parent.type !== "parallel",
-      "path() cannot be used inside parallel()"
+      "path() cannot be used inside parallel()",
     );
 
     // Walk the parent chain to prevent path() nested under another path(),
@@ -859,7 +893,7 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
       while (ancestor) {
         invariant(
           ancestor.type !== "route",
-          "path() cannot be nested inside another path()"
+          "path() cannot be nested inside another path()",
         );
         ancestor = ancestor.parent;
       }
@@ -943,7 +977,10 @@ function createPathHelper<TEnv>(): PathFn<TEnv> {
           }
         : {}),
       ...(isStaticHandler(handler)
-        ? { isStaticPrerender: true as const, ...(handler.$$id ? { staticHandlerId: handler.$$id } : {}) }
+        ? {
+            isStaticPrerender: true as const,
+            ...(handler.$$id ? { staticHandlerId: handler.$$id } : {}),
+          }
         : {}),
       ...(resolveResponseType(options)
         ? { responseType: resolveResponseType(options) }
@@ -1144,9 +1181,9 @@ function createIncludeHelper<TEnv>(): IncludeFn<TEnv> {
     const capturedNamePrefix = getNamePrefix();
     const capturedParent = ctx.parent;
     const fullPrefix = capturedUrlPrefix
-      ? (capturedUrlPrefix.endsWith("/") && prefix.startsWith("/")
+      ? capturedUrlPrefix.endsWith("/") && prefix.startsWith("/")
         ? capturedUrlPrefix + prefix.slice(1)
-        : capturedUrlPrefix + prefix)
+        : capturedUrlPrefix + prefix
       : prefix;
     const fullNamePrefix = namePrefix
       ? capturedNamePrefix
@@ -1231,7 +1268,8 @@ import { createRouteHelpers } from "./route-definition.js";
  */
 export function urls<
   TEnv = DefaultEnv,
-  const TItems extends readonly (AllUseItems | readonly AllUseItems[])[] = readonly AllUseItems[],
+  const TItems extends readonly (AllUseItems | readonly AllUseItems[])[] =
+    readonly AllUseItems[],
 >(
   builder: (helpers: PathHelpers<TEnv>) => TItems,
 ): UrlPatterns<TEnv, ExtractRoutes<TItems>, ExtractResponses<TItems>> {
@@ -1297,7 +1335,6 @@ export function urls<
     },
   } as UrlPatterns<TEnv, ExtractRoutes<TItems>, ExtractResponses<TItems>>;
 }
-
 
 // ============================================================================
 // Type Utilities for path()

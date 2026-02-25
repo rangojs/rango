@@ -60,9 +60,7 @@ test.describe("reverse-autofill", () => {
       );
     });
 
-    test("should auto-fill tenantId in global route name", async ({
-      page,
-    }) => {
+    test("should auto-fill tenantId in global route name", async ({ page }) => {
       using _ = expectNoPageError(page);
 
       await page.goto(f.url("/reverse-autofill/acme"));
@@ -291,9 +289,7 @@ test.describe("reverse-autofill (production)", () => {
       );
     });
 
-    test("should auto-fill tenantId in global route name", async ({
-      page,
-    }) => {
+    test("should auto-fill tenantId in global route name", async ({ page }) => {
       using _ = expectNoPageError(page);
 
       await page.goto(f.url("/reverse-autofill/acme"));

@@ -59,7 +59,7 @@ export interface RSCDependencies {
    */
   renderToReadableStream: <T>(
     payload: T,
-    options?: { temporaryReferences?: unknown }
+    options?: { temporaryReferences?: unknown },
   ) => ReadableStream<Uint8Array>;
 
   /**
@@ -67,7 +67,7 @@ export interface RSCDependencies {
    */
   decodeReply: (
     body: FormData | string,
-    options?: { temporaryReferences?: unknown }
+    options?: { temporaryReferences?: unknown },
   ) => Promise<unknown[]>;
 
   /**
@@ -92,7 +92,7 @@ export interface RSCDependencies {
    */
   decodeFormState: (
     actionResult: unknown,
-    body: FormData
+    body: FormData,
   ) => Promise<ReactFormState | null>;
 }
 
@@ -120,7 +120,7 @@ export interface SSRRenderOptions {
 export interface SSRModule {
   renderHTML: (
     rscStream: ReadableStream<Uint8Array>,
-    options?: SSRRenderOptions
+    options?: SSRRenderOptions,
   ) => Promise<ReadableStream<Uint8Array>>;
 }
 
@@ -146,7 +146,7 @@ export interface HandlerCacheConfig {
  */
 export type NonceProvider<TEnv = unknown> = (
   request: Request,
-  env: TEnv
+  env: TEnv,
 ) => string | true | Promise<string | true>;
 
 /**
@@ -237,5 +237,4 @@ export interface CreateRSCHandlerOptions<
    * ```
    */
   nonce?: NonceProvider<TEnv>;
-
 }

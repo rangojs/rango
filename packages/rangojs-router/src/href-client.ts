@@ -45,30 +45,34 @@ type ParseConstraintPath<T extends string> =
 export type PatternToPath<T extends string> =
   // Optional + constrained param in middle: /:param(a|b)?/rest
   T extends `${infer Before}:${infer _Name}(${infer Constraint})?/${infer After}`
-    ? PatternToPath<`${Before}${After}`> | `${Before}${ParseConstraintPath<Constraint>}/${PatternToPath<After>}`
-  // Optional + constrained param at end: /path/:param(a|b)?
-  : T extends `${infer Before}:${infer _Name}(${infer Constraint})?`
-    ? Before | `${Before}${ParseConstraintPath<Constraint>}`
-  // Constrained param in middle: /:param(a|b)/rest
-  : T extends `${infer Before}:${infer _Name}(${infer Constraint})/${infer After}`
-    ? `${Before}${ParseConstraintPath<Constraint>}/${PatternToPath<After>}`
-  // Constrained param at end: /path/:param(a|b)
-  : T extends `${infer Before}:${infer _Name}(${infer Constraint})`
-    ? `${Before}${ParseConstraintPath<Constraint>}`
-  // Optional param in middle: /:param?/rest
-  : T extends `${infer Before}:${infer _Param}?/${infer After}`
-    ? PatternToPath<`${Before}${After}`> | `${Before}${string}/${PatternToPath<After>}`
-  // Optional param at end: /path/:param?
-  : T extends `${infer Before}:${infer _Param}?`
-    ? Before | `${Before}${string}`
-  // Required param in middle: /:param/rest
-  : T extends `${infer Before}:${infer _Param}/${infer After}`
-    ? `${Before}${string}/${PatternToPath<After>}`
-  // Required param at end: /path/:param
-  : T extends `${infer Before}:${infer _Param}`
-    ? `${Before}${string}`
-  // Static path
-  : T;
+    ?
+        | PatternToPath<`${Before}${After}`>
+        | `${Before}${ParseConstraintPath<Constraint>}/${PatternToPath<After>}`
+    : // Optional + constrained param at end: /path/:param(a|b)?
+      T extends `${infer Before}:${infer _Name}(${infer Constraint})?`
+      ? Before | `${Before}${ParseConstraintPath<Constraint>}`
+      : // Constrained param in middle: /:param(a|b)/rest
+        T extends `${infer Before}:${infer _Name}(${infer Constraint})/${infer After}`
+        ? `${Before}${ParseConstraintPath<Constraint>}/${PatternToPath<After>}`
+        : // Constrained param at end: /path/:param(a|b)
+          T extends `${infer Before}:${infer _Name}(${infer Constraint})`
+          ? `${Before}${ParseConstraintPath<Constraint>}`
+          : // Optional param in middle: /:param?/rest
+            T extends `${infer Before}:${infer _Param}?/${infer After}`
+            ?
+                | PatternToPath<`${Before}${After}`>
+                | `${Before}${string}/${PatternToPath<After>}`
+            : // Optional param at end: /path/:param?
+              T extends `${infer Before}:${infer _Param}?`
+              ? Before | `${Before}${string}`
+              : // Required param in middle: /:param/rest
+                T extends `${infer Before}:${infer _Param}/${infer After}`
+                ? `${Before}${string}/${PatternToPath<After>}`
+                : // Required param at end: /path/:param
+                  T extends `${infer Before}:${infer _Param}`
+                  ? `${Before}${string}`
+                  : // Static path
+                    T;
 
 /**
  * Allow optional query string (?...) and/or hash fragment (#...) suffix
@@ -85,19 +89,17 @@ type WithSuffix<T extends string> =
 /**
  * Helper type to get pattern from routes, handling string values and { path, response } objects
  */
-type RoutePattern<TRoutes, K extends keyof TRoutes> =
-  TRoutes[K] extends string ? TRoutes[K]
-  : TRoutes[K] extends { readonly path: infer P extends string } ? P
-  : string;
+type RoutePattern<TRoutes, K extends keyof TRoutes> = TRoutes[K] extends string
+  ? TRoutes[K]
+  : TRoutes[K] extends { readonly path: infer P extends string }
+    ? P
+    : string;
 
 /**
  * Reverse lookup: find route name where the pattern matches TPattern
  */
-type NameForPattern<
-  TPattern extends string,
-  TRoutes = GetRegisteredRoutes
-> = {
-  [K in keyof TRoutes]: RoutePattern<TRoutes, K> extends TPattern ? K : never
+type NameForPattern<TPattern extends string, TRoutes = GetRegisteredRoutes> = {
+  [K in keyof TRoutes]: RoutePattern<TRoutes, K> extends TPattern ? K : never;
 }[keyof TRoutes];
 
 /**
@@ -112,19 +114,28 @@ type NameForPattern<
  * For dynamic routes, use the pattern:
  *   PathResponse<"/api/products/:id"> → Product
  */
-export type PathResponse<TPattern extends string, TRoutes = GetRegisteredRoutes> =
-  ResponseEnvelope<{
+export type PathResponse<
+  TPattern extends string,
+  TRoutes = GetRegisteredRoutes,
+> = ResponseEnvelope<
+  {
     [K in keyof TRoutes]: RoutePattern<TRoutes, K> extends TPattern
-      ? TRoutes[K] extends { readonly response: infer R } ? Exclude<R, Response> : never
-      : never
-  }[keyof TRoutes]>;
+      ? TRoutes[K] extends { readonly response: infer R }
+        ? Exclude<R, Response>
+        : never
+      : never;
+  }[keyof TRoutes]
+>;
 
 /**
  * Strip trailing slash from a path (e.g., "/blog/" -> "/blog" | "/blog/")
  * Allows navigation to include() prefixes without requiring trailing slash
  */
-type OptionalTrailingSlash<T extends string> =
-  T extends `${infer Base}/` ? (Base extends "" ? T : Base | T) : T;
+type OptionalTrailingSlash<T extends string> = T extends `${infer Base}/`
+  ? Base extends ""
+    ? T
+    : Base | T
+  : T;
 
 /**
  * Union of all valid paths from registered routes
@@ -135,9 +146,13 @@ type OptionalTrailingSlash<T extends string> =
 export type ValidPaths<TRoutes = GetRegisteredRoutes> =
   keyof TRoutes extends never
     ? `/${string}` // Fallback when no routes are registered
-    : WithSuffix<{
-        [K in keyof TRoutes]: OptionalTrailingSlash<PatternToPath<RoutePattern<TRoutes, K>>>
-      }[keyof TRoutes]>;
+    : WithSuffix<
+        {
+          [K in keyof TRoutes]: OptionalTrailingSlash<
+            PatternToPath<RoutePattern<TRoutes, K>>
+          >;
+        }[keyof TRoutes]
+      >;
 
 /**
  * Type-safe href function for client-side use
@@ -181,7 +196,10 @@ export interface ResponseHrefProps {
   "data-external": "";
 }
 
-type ResponseHrefFn = <T extends ValidPaths>(path: T, mount?: string) => ResponseHrefProps;
+type ResponseHrefFn = <T extends ValidPaths>(
+  path: T,
+  mount?: string,
+) => ResponseHrefProps;
 
 function createResponseHrefTag(): ResponseHrefFn {
   return (path, mount) => ({

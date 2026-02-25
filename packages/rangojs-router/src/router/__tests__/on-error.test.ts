@@ -1,6 +1,14 @@
 import { describe, it, expect, vi } from "vitest";
-import type { OnErrorCallback, OnErrorContext, ErrorPhase, ErrorInfo } from "../../types";
-import { wrapLoaderWithErrorHandling, LoaderErrorCallback } from "../loader-resolution";
+import type {
+  OnErrorCallback,
+  OnErrorContext,
+  ErrorPhase,
+  ErrorInfo,
+} from "../../types";
+import {
+  wrapLoaderWithErrorHandling,
+  LoaderErrorCallback,
+} from "../loader-resolution";
 import { invokeOnError, type InvokeOnErrorContext } from "../error-handling";
 
 describe("OnError Types", () => {
@@ -270,7 +278,9 @@ describe("OnError Callback Integration", () => {
   });
 
   it("should handle errors thrown in callback gracefully", () => {
-    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
 
     const badCallback: OnErrorCallback = () => {
       throw new Error("Callback error");
@@ -298,7 +308,9 @@ describe("OnError Callback Integration", () => {
   });
 
   it("should handle async callback rejection gracefully", async () => {
-    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
 
     const badAsyncCallback: OnErrorCallback = async () => {
       await Promise.reject(new Error("Async callback error"));
@@ -332,7 +344,7 @@ describe("wrapLoaderWithErrorHandling", () => {
   const createMockErrorInfo = (
     error: unknown,
     segmentId: string,
-    segmentType: ErrorInfo["segmentType"]
+    segmentType: ErrorInfo["segmentType"],
   ): ErrorInfo => ({
     message: error instanceof Error ? error.message : String(error),
     name: error instanceof Error ? error.name : "Error",
@@ -350,7 +362,7 @@ describe("wrapLoaderWithErrorHandling", () => {
         "M1L0.ProductLoader",
         mockPathname,
         () => null,
-        createMockErrorInfo
+        createMockErrorInfo,
       );
 
       expect(result).toEqual({
@@ -371,7 +383,7 @@ describe("wrapLoaderWithErrorHandling", () => {
         mockPathname,
         () => null,
         createMockErrorInfo,
-        onError
+        onError,
       );
 
       expect(onError).not.toHaveBeenCalled();
@@ -388,7 +400,7 @@ describe("wrapLoaderWithErrorHandling", () => {
         "M1L0.FailingLoader",
         mockPathname,
         () => null, // No error boundary
-        createMockErrorInfo
+        createMockErrorInfo,
       );
 
       expect(result).toEqual({
@@ -416,7 +428,7 @@ describe("wrapLoaderWithErrorHandling", () => {
         mockPathname,
         () => null, // No boundary
         createMockErrorInfo,
-        onError
+        onError,
       );
 
       expect(onError).toHaveBeenCalledWith(testError, {
@@ -439,7 +451,7 @@ describe("wrapLoaderWithErrorHandling", () => {
         "M1L0.HandledLoader",
         mockPathname,
         () => fallbackElement, // Has error boundary
-        createMockErrorInfo
+        createMockErrorInfo,
       );
 
       expect(result).toEqual({
@@ -470,7 +482,7 @@ describe("wrapLoaderWithErrorHandling", () => {
         mockPathname,
         () => "Fallback", // Has boundary
         createMockErrorInfo,
-        onError
+        onError,
       );
 
       expect(onError).toHaveBeenCalledWith(testError, {
@@ -493,7 +505,7 @@ describe("wrapLoaderWithErrorHandling", () => {
         "M1L0.HandlerLoader",
         mockPathname,
         () => boundaryHandler,
-        createMockErrorInfo
+        createMockErrorInfo,
       );
 
       expect(boundaryHandler).toHaveBeenCalledWith({
@@ -524,12 +536,12 @@ describe("wrapLoaderWithErrorHandling", () => {
         mockPathname,
         () => null,
         createMockErrorInfo,
-        onError
+        onError,
       );
 
       expect(onError).toHaveBeenCalledWith(
         expect.any(Error),
-        expect.objectContaining({ loaderName: "ProductLoader" })
+        expect.objectContaining({ loaderName: "ProductLoader" }),
       );
     });
 
@@ -544,12 +556,12 @@ describe("wrapLoaderWithErrorHandling", () => {
         mockPathname,
         () => null,
         createMockErrorInfo,
-        onError
+        onError,
       );
 
       expect(onError).toHaveBeenCalledWith(
         expect.any(Error),
-        expect.objectContaining({ loaderName: "SimpleLoader" })
+        expect.objectContaining({ loaderName: "SimpleLoader" }),
       );
     });
 
@@ -564,12 +576,12 @@ describe("wrapLoaderWithErrorHandling", () => {
         mockPathname,
         () => null,
         createMockErrorInfo,
-        onError
+        onError,
       );
 
       expect(onError).toHaveBeenCalledWith(
         expect.any(Error),
-        expect.objectContaining({ loaderName: "unknown" })
+        expect.objectContaining({ loaderName: "unknown" }),
       );
     });
   });
@@ -584,7 +596,7 @@ describe("wrapLoaderWithErrorHandling", () => {
         "M1L0.StringErrorLoader",
         mockPathname,
         () => null,
-        createMockErrorInfo
+        createMockErrorInfo,
       );
 
       expect(result.ok).toBe(false);
@@ -607,7 +619,7 @@ describe("wrapLoaderWithErrorHandling", () => {
           name: "Error",
           segmentId: "test",
           segmentType: "loader" as const,
-        })
+        }),
       );
 
       expect(result.ok).toBe(false);
@@ -627,7 +639,7 @@ describe("wrapLoaderWithErrorHandling", () => {
           name: "Error",
           segmentId: "test",
           segmentType: "loader" as const,
-        })
+        }),
       );
 
       expect(result.ok).toBe(false);
@@ -790,7 +802,9 @@ describe("invokeOnError Shared Utility", () => {
 
   describe("error handling in callback", () => {
     it("should catch sync callback errors and log them", () => {
-      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const consoleSpy = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
       const callback: OnErrorCallback = () => {
         throw new Error("Callback sync error");
       };
@@ -802,13 +816,15 @@ describe("invokeOnError Shared Utility", () => {
 
       expect(consoleSpy).toHaveBeenCalledWith(
         "[Router.onError] Callback error:",
-        expect.any(Error)
+        expect.any(Error),
       );
       consoleSpy.mockRestore();
     });
 
     it("should catch async callback rejections and log them", async () => {
-      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const consoleSpy = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
       const callback: OnErrorCallback = async () => {
         throw new Error("Callback async error");
       };
@@ -821,23 +837,31 @@ describe("invokeOnError Shared Utility", () => {
 
       expect(consoleSpy).toHaveBeenCalledWith(
         "[Router.onError] Callback error:",
-        expect.any(Error)
+        expect.any(Error),
       );
       consoleSpy.mockRestore();
     });
 
     it("should use custom log prefix", () => {
-      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const consoleSpy = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
       const callback: OnErrorCallback = () => {
         throw new Error("Callback error");
       };
       const context = createMockContext();
 
-      invokeOnError(callback, new Error("original"), "rendering", context, "RSC");
+      invokeOnError(
+        callback,
+        new Error("original"),
+        "rendering",
+        context,
+        "RSC",
+      );
 
       expect(consoleSpy).toHaveBeenCalledWith(
         "[RSC.onError] Callback error:",
-        expect.any(Error)
+        expect.any(Error),
       );
       consoleSpy.mockRestore();
     });
@@ -864,7 +888,7 @@ describe("invokeOnError Shared Utility", () => {
         invokeOnError(callback, new Error("test"), phase, context);
 
         expect(callback).toHaveBeenCalledWith(
-          expect.objectContaining({ phase })
+          expect.objectContaining({ phase }),
         );
       });
     });

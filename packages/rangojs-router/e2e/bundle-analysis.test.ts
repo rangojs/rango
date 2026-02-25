@@ -38,14 +38,14 @@ test.describe("bundle-analysis", () => {
     // Verify build output exists
     if (!existsSync(CLIENT_ASSETS_DIR)) {
       throw new Error(
-        `Client assets not found. Run 'pnpm build' in ${TEST_APP_ROOT} first.`
+        `Client assets not found. Run 'pnpm build' in ${TEST_APP_ROOT} first.`,
       );
     }
   });
 
   function getClientBundleContent(): string {
     const files = readdirSync(CLIENT_ASSETS_DIR).filter((f) =>
-      f.endsWith(".js")
+      f.endsWith(".js"),
     );
     return files
       .map((file) => readFileSync(join(CLIENT_ASSETS_DIR, file), "utf-8"))
@@ -55,7 +55,7 @@ test.describe("bundle-analysis", () => {
   function getRscBundleContent(): string {
     // Include main index.js and all asset files
     const assetFiles = readdirSync(RSC_ASSETS_DIR).filter((f) =>
-      f.endsWith(".js")
+      f.endsWith(".js"),
     );
     const assetContent = assetFiles
       .map((file) => readFileSync(join(RSC_ASSETS_DIR, file), "utf-8"))
@@ -181,7 +181,7 @@ test.describe("bundle-analysis", () => {
       // contain the collect function body. createHandle() on the client side
       // receives no collect argument - it's only on the RSC side.
       expect(clientBundle).not.toMatch(
-        /createHandle\s*\(\s*function|\bcreateHandle\s*\(\s*\(/
+        /createHandle\s*\(\s*function|\bcreateHandle\s*\(\s*\(/,
       );
 
       // The BreadcrumbItem type and accumulation logic lives in handles.ts
@@ -201,7 +201,7 @@ test.describe("bundle-analysis", () => {
 
       // Extract the Breadcrumbs $$id value
       const match = clientBundle.match(
-        /\$\$id\s*=\s*"([^"]+Breadcrumbs[^"]*)"/
+        /\$\$id\s*=\s*"([^"]+Breadcrumbs[^"]*)"/,
       );
       expect(match).toBeTruthy();
 
@@ -238,9 +238,9 @@ test.describe("bundle-analysis", () => {
       const rscBundle = getRscBundleContent();
 
       // Collect all $$id = "..." assignments (actions, loaders, handles)
-      const allIds = [
-        ...rscBundle.matchAll(/\$\$id\s*=\s*"([^"]+)"/g),
-      ].map((m) => m[1]);
+      const allIds = [...rscBundle.matchAll(/\$\$id\s*=\s*"([^"]+)"/g)].map(
+        (m) => m[1],
+      );
 
       expect(allIds.length).toBeGreaterThan(0);
 
@@ -334,7 +334,9 @@ test.describe("bundle-analysis", () => {
       const rscBundle = getRscBundleContent();
 
       // Extract VERSION value from const declaration
-      const versionMatch = rscBundle.match(/const VERSION\s*=\s*["']([0-9a-f]+)["']/i);
+      const versionMatch = rscBundle.match(
+        /const VERSION\s*=\s*["']([0-9a-f]+)["']/i,
+      );
       expect(versionMatch).toBeTruthy();
 
       const version = versionMatch![1];
@@ -359,7 +361,9 @@ test.describe("bundle-analysis", () => {
       const rscBundle = getRscBundleContent();
 
       // Extract the actual VERSION from RSC bundle
-      const versionMatch = rscBundle.match(/const VERSION\s*=\s*["']([0-9a-f]+)["']/i);
+      const versionMatch = rscBundle.match(
+        /const VERSION\s*=\s*["']([0-9a-f]+)["']/i,
+      );
       expect(versionMatch).toBeTruthy();
 
       const version = versionMatch![1];
@@ -371,8 +375,8 @@ test.describe("bundle-analysis", () => {
 
   test.describe("prerender-handler-eviction", () => {
     function getPrerenderHandlersContent(): string | null {
-      const files = readdirSync(RSC_ASSETS_DIR).filter((f) =>
-        f.startsWith("__prerender-handlers") && f.endsWith(".js")
+      const files = readdirSync(RSC_ASSETS_DIR).filter(
+        (f) => f.startsWith("__prerender-handlers") && f.endsWith(".js"),
       );
       if (files.length === 0) return null;
       return files
@@ -381,9 +385,7 @@ test.describe("bundle-analysis", () => {
     }
 
     function getRscIndexContent(): string {
-      return existsSync(RSC_INDEX)
-        ? readFileSync(RSC_INDEX, "utf-8")
-        : "";
+      return existsSync(RSC_INDEX) ? readFileSync(RSC_INDEX, "utf-8") : "";
     }
 
     test("__prerender-handlers chunk exists in RSC bundle", async () => {
@@ -429,7 +431,10 @@ test.describe("bundle-analysis", () => {
     });
 
     test("__prerender-manifest.js has correct shape", async () => {
-      const manifestPath = join(TEST_APP_ROOT, "dist/rsc/__prerender-manifest.js");
+      const manifestPath = join(
+        TEST_APP_ROOT,
+        "dist/rsc/__prerender-manifest.js",
+      );
       expect(existsSync(manifestPath)).toBe(true);
 
       const manifestCode = readFileSync(manifestPath, "utf-8");
@@ -441,12 +446,14 @@ test.describe("bundle-analysis", () => {
       expect(manifestCode).toMatch(/"docs\.article\/[a-f0-9]+"/);
 
       // Should contain dynamic import references to __pr-*.js asset files
-      expect(manifestCode).toMatch(/import\("\.\/assets\/__pr-[a-f0-9]+\.js"\)/);
+      expect(manifestCode).toMatch(
+        /import\("\.\/assets\/__pr-[a-f0-9]+\.js"\)/,
+      );
     });
 
     test("__pr-*.js asset files have correct shape", async () => {
-      const prFiles = readdirSync(RSC_ASSETS_DIR).filter((f) =>
-        f.startsWith("__pr-") && f.endsWith(".js")
+      const prFiles = readdirSync(RSC_ASSETS_DIR).filter(
+        (f) => f.startsWith("__pr-") && f.endsWith(".js"),
       );
       expect(prFiles.length).toBeGreaterThan(0);
 
@@ -486,7 +493,10 @@ test.describe("bundle-analysis", () => {
     });
 
     test("changelog prerender data should exist in manifest", async () => {
-      const manifestPath = join(TEST_APP_ROOT, "dist/rsc/__prerender-manifest.js");
+      const manifestPath = join(
+        TEST_APP_ROOT,
+        "dist/rsc/__prerender-manifest.js",
+      );
       expect(existsSync(manifestPath)).toBe(true);
 
       const manifestCode = readFileSync(manifestPath, "utf-8");

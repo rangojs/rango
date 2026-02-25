@@ -25,7 +25,9 @@ export interface RuntimeDiscoveryOptions {
  * This mirrors the logic in the Vite plugin's discoverRouters() + writeRouteTypesFiles()
  * but without coupling to plugin closure state.
  */
-export async function discoverAndWriteRouteTypes(opts: RuntimeDiscoveryOptions): Promise<{
+export async function discoverAndWriteRouteTypes(
+  opts: RuntimeDiscoveryOptions,
+): Promise<{
   routerCount: number;
   routeCount: number;
   outputFiles: string[];
@@ -40,7 +42,7 @@ export async function discoverAndWriteRouteTypes(opts: RuntimeDiscoveryOptions):
     loadConfigFromFile = vite.loadConfigFromFile;
   } catch {
     throw new Error(
-      "Runtime discovery requires 'vite'. Install it with: pnpm add -D vite"
+      "Runtime discovery requires 'vite'. Install it with: pnpm add -D vite",
     );
   }
 
@@ -49,12 +51,13 @@ export async function discoverAndWriteRouteTypes(opts: RuntimeDiscoveryOptions):
     rsc = rscMod.default;
   } catch {
     throw new Error(
-      "Runtime discovery requires '@vitejs/plugin-rsc'. Install it with: pnpm add -D @vitejs/plugin-rsc"
+      "Runtime discovery requires '@vitejs/plugin-rsc'. Install it with: pnpm add -D @vitejs/plugin-rsc",
     );
   }
 
   const { createVersionPlugin } = await import("../vite/version-plugin.ts");
-  const { createVirtualStubPlugin } = await import("../vite/virtual-stub-plugin.ts");
+  const { createVirtualStubPlugin } =
+    await import("../vite/virtual-stub-plugin.ts");
 
   // Load user's vite config to get resolve.alias (unless provided directly)
   let userResolveAlias: any = opts.resolveAlias;
@@ -64,7 +67,7 @@ export async function discoverAndWriteRouteTypes(opts: RuntimeDiscoveryOptions):
       const loaded = await loadConfigFromFile(
         { command: "serve", mode: "development" },
         configPath,
-        opts.root
+        opts.root,
       );
       if (loaded?.config?.resolve?.alias) {
         userResolveAlias = loaded.config.resolve.alias;
@@ -114,7 +117,7 @@ export async function discoverAndWriteRouteTypes(opts: RuntimeDiscoveryOptions):
 
     if (!registry || registry.size === 0) {
       throw new Error(
-        `No routers found in registry after importing ${opts.entry}`
+        `No routers found in registry after importing ${opts.entry}`,
       );
     }
 
@@ -137,13 +140,16 @@ export async function discoverAndWriteRouteTypes(opts: RuntimeDiscoveryOptions):
       routerMountIndex++;
 
       const routeManifest: Record<string, string> = manifest.routeManifest;
-      let routeSearchSchemas: Record<string, Record<string, string>> | undefined =
-        manifest.routeSearchSchemas;
+      let routeSearchSchemas:
+        | Record<string, Record<string, string>>
+        | undefined = manifest.routeSearchSchemas;
 
       // Determine output location from __sourceFile
       const sourceFile: string | undefined = router.__sourceFile;
       if (!sourceFile) {
-        console.warn(`[rango] Router "${id}" has no __sourceFile, skipping gen file`);
+        console.warn(
+          `[rango] Router "${id}" has no __sourceFile, skipping gen file`,
+        );
         continue;
       }
 
@@ -151,8 +157,8 @@ export async function discoverAndWriteRouteTypes(opts: RuntimeDiscoveryOptions):
       if (sourceFile.includes("node_modules")) {
         throw new Error(
           `[rango] Router "${id}" has sourceFile inside node_modules: ${sourceFile}\n` +
-          `This means createRouter() stack trace parsing matched an internal frame.\n` +
-          `Set an explicit \`id\` on createRouter() or check the call site.`
+            `This means createRouter() stack trace parsing matched an internal frame.\n` +
+            `Set an explicit \`id\` on createRouter() or check the call site.`,
         );
       }
 
@@ -180,10 +186,12 @@ export async function discoverAndWriteRouteTypes(opts: RuntimeDiscoveryOptions):
         routeManifest,
         routeSearchSchemas && Object.keys(routeSearchSchemas).length > 0
           ? routeSearchSchemas
-          : undefined
+          : undefined,
       );
 
-      const existing = existsSync(outPath) ? readFileSync(outPath, "utf-8") : null;
+      const existing = existsSync(outPath)
+        ? readFileSync(outPath, "utf-8")
+        : null;
       if (existing !== source) {
         writeFileSync(outPath, source);
       }
@@ -193,7 +201,7 @@ export async function discoverAndWriteRouteTypes(opts: RuntimeDiscoveryOptions):
       outputFiles.push(outPath);
 
       console.log(
-        `[rango] Generated route types (${routeCount} routes) -> ${outPath}`
+        `[rango] Generated route types (${routeCount} routes) -> ${outPath}`,
       );
     }
 

@@ -8,9 +8,7 @@ test.describe("transform-cases", () => {
     mode: "dev",
   });
 
-  test("renders transform static route", async ({
-    page,
-  }) => {
+  test("renders transform static route", async ({ page }) => {
     using _ = expectNoPageError(page);
 
     await page.goto(f.url("/transform-cases"));

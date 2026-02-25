@@ -159,13 +159,16 @@ describe("route tree inspection", () => {
 
     const segPath = tree.segmentPath("blog.post");
     expect(segPath.map((s) => s.id)).toEqual([
-      "M0L0",       // synthetic root
-      "M0L0L0",     // root layout
-      "M0L0L0L0",   // blog layout
+      "M0L0", // synthetic root
+      "M0L0L0", // root layout
+      "M0L0L0L0", // blog layout
       "M0L0L0L0R1", // blog post (R1 because blog.index is R0)
     ]);
     expect(segPath.map((s) => s.type)).toEqual([
-      "layout", "layout", "layout", "route",
+      "layout",
+      "layout",
+      "layout",
+      "route",
     ]);
   });
 
@@ -240,9 +243,7 @@ describe("route tree inspection", () => {
     expect(homeEntry.parent!.middleware).toHaveLength(3);
 
     const chain = tree.middlewareChain("home");
-    expect(chain).toEqual([
-      { segmentId: "M0L0L0", count: 3 },
-    ]);
+    expect(chain).toEqual([{ segmentId: "M0L0L0", count: 3 }]);
   });
 
   // -------------------------------------------------------------------------
@@ -278,9 +279,7 @@ describe("route tree inspection", () => {
 
   it("route without loaders returns empty", () => {
     const tree = buildRouteTree(
-      urls(({ path }) => [
-        path("/", HomePage, { name: "home" }),
-      ]),
+      urls(({ path }) => [path("/", HomePage, { name: "home" })]),
     );
 
     expect(tree.hasLoaders("home")).toBe(false);
@@ -394,7 +393,10 @@ describe("route tree inspection", () => {
     expect(layoutEntry.parallel[0].type).toBe("parallel");
 
     // Parallel slot names are on the layout entry's parallel array
-    const parallelHandler = layoutEntry.parallel[0].handler as Record<string, unknown>;
+    const parallelHandler = layoutEntry.parallel[0].handler as Record<
+      string,
+      unknown
+    >;
     const slotNames = Object.keys(parallelHandler);
     expect(slotNames).toContain("@sidebar");
     expect(slotNames).toContain("@main");
@@ -438,9 +440,7 @@ describe("route tree inspection", () => {
   it("detects loading component on a route", () => {
     const tree = buildRouteTree(
       urls(({ path, loading }) => [
-        path("/", HomePage, { name: "home" }, () => [
-          loading(LoadingSpinner),
-        ]),
+        path("/", HomePage, { name: "home" }, () => [loading(LoadingSpinner)]),
       ]),
     );
 
@@ -449,9 +449,7 @@ describe("route tree inspection", () => {
 
   it("route without loading returns false", () => {
     const tree = buildRouteTree(
-      urls(({ path }) => [
-        path("/", HomePage, { name: "home" }),
-      ]),
+      urls(({ path }) => [path("/", HomePage, { name: "home" })]),
     );
 
     expect(tree.hasLoading("home")).toBe(false);
@@ -477,8 +475,12 @@ describe("route tree inspection", () => {
               path("/", HomePage, { name: "home" }),
               layout(SettingsLayout, () => [
                 middleware(authMiddleware),
-                path("/settings", SettingsGeneral, { name: "settings.general" }),
-                path("/settings/security", SettingsSecurity, { name: "settings.security" }),
+                path("/settings", SettingsGeneral, {
+                  name: "settings.general",
+                }),
+                path("/settings/security", SettingsSecurity, {
+                  name: "settings.security",
+                }),
               ]),
             ]),
           ]),
@@ -489,14 +491,19 @@ describe("route tree inspection", () => {
     // 4 layouts deep: synthetic root > RootLayout > NavLayout > ContentLayout > SettingsLayout
     const segPath = tree.segmentPath("settings.general");
     expect(segPath.map((s) => s.type)).toEqual([
-      "layout", "layout", "layout", "layout", "layout", "route",
+      "layout",
+      "layout",
+      "layout",
+      "layout",
+      "layout",
+      "route",
     ]);
     expect(segPath.map((s) => s.id)).toEqual([
-      "M0L0",           // synthetic root
-      "M0L0L0",         // RootLayout
-      "M0L0L0L0",       // NavLayout
-      "M0L0L0L0L0",     // ContentLayout
-      "M0L0L0L0L0L0",   // SettingsLayout
+      "M0L0", // synthetic root
+      "M0L0L0", // RootLayout
+      "M0L0L0L0", // NavLayout
+      "M0L0L0L0L0", // ContentLayout
+      "M0L0L0L0L0L0", // SettingsLayout
       "M0L0L0L0L0L0R0", // settings.general
     ]);
 
@@ -512,8 +519,8 @@ describe("route tree inspection", () => {
     // Middleware chain: settings gets both logMw (root) and authMw (settings layout)
     const settingsChain = tree.middlewareChain("settings.general");
     expect(settingsChain).toEqual([
-      { segmentId: "M0L0L0", count: 1 },         // logMw on RootLayout
-      { segmentId: "M0L0L0L0L0L0", count: 1 },   // authMw on SettingsLayout
+      { segmentId: "M0L0L0", count: 1 }, // logMw on RootLayout
+      { segmentId: "M0L0L0L0L0L0", count: 1 }, // authMw on SettingsLayout
     ]);
 
     // Home only gets logMw
@@ -549,7 +556,11 @@ describe("route tree inspection", () => {
 
     // Uncached route sits directly under RootLayout
     const uncachedPath = tree.segmentPath("uncached");
-    expect(uncachedPath.map((s) => s.type)).toEqual(["layout", "layout", "route"]);
+    expect(uncachedPath.map((s) => s.type)).toEqual([
+      "layout",
+      "layout",
+      "route",
+    ]);
 
     // Cached route goes through a cache segment
     const cachedEntry = tree.entry("cached")!;
@@ -559,7 +570,10 @@ describe("route tree inspection", () => {
 
     const cachedPath = tree.segmentPath("cached");
     expect(cachedPath.map((s) => s.type)).toEqual([
-      "layout", "layout", "cache", "route",
+      "layout",
+      "layout",
+      "cache",
+      "route",
     ]);
     // C segment gets a C prefix in the shortCode
     expect(cachedEntry.parent!.shortCode).toMatch(/^M0L0L0C/);
@@ -579,9 +593,7 @@ describe("route tree inspection", () => {
               path("/products/:id", DetailPage, { name: "product.detail" }),
             ]),
           ]),
-          cache(false, () => [
-            path("/admin", AdminPage, { name: "admin" }),
-          ]),
+          cache(false, () => [path("/admin", AdminPage, { name: "admin" })]),
         ]),
       ]),
     );
@@ -624,10 +636,7 @@ describe("route tree inspection", () => {
           path("/feed", HomePage, { name: "feed" }),
           parallel(
             { "@sidebar": TrendingSidebar, "@content": FeedContent },
-            () => [
-              loader(FeedLoader),
-              loading(LoadingSpinner),
-            ],
+            () => [loader(FeedLoader), loading(LoadingSpinner)],
           ),
         ]),
       ]),
@@ -663,9 +672,12 @@ describe("route tree inspection", () => {
   it("include() inside a layout inherits the layout parent", () => {
     const apiPatterns = urls(({ path, loader }) => [
       path("/", (<div>api-index</div>) as React.ReactNode, { name: "index" }),
-      path("/:id", (<div>api-detail</div>) as React.ReactNode, { name: "detail" }, () => [
-        loader(PostLoader),
-      ]),
+      path(
+        "/:id",
+        (<div>api-detail</div>) as React.ReactNode,
+        { name: "detail" },
+        () => [loader(PostLoader)],
+      ),
     ]);
 
     const tree = buildRouteTree(
@@ -706,9 +718,7 @@ describe("route tree inspection", () => {
     // the middleware chain traverses from AuthLayout upward.
     const chain = tree.middlewareChain("api.detail");
     // authMw on RootLayout must be reachable through the parent chain
-    expect(chain).toEqual([
-      { segmentId: "M0L0L0", count: 1 },
-    ]);
+    expect(chain).toEqual([{ segmentId: "M0L0L0", count: 1 }]);
 
     // AuthLayout's parent must NOT be null — it must point to RootLayout
     // so the middleware chain is intact
@@ -751,15 +761,13 @@ describe("route tree inspection", () => {
     // Full middleware chain: logMw (RootLayout) + authMw (AuthLayout)
     const chain = tree.middlewareChain("blog.post");
     expect(chain).toEqual([
-      { segmentId: "M0L0L0", count: 1 },   // logMw on RootLayout
-      { segmentId: "M0L0L0L0", count: 1 },  // authMw on AuthLayout
+      { segmentId: "M0L0L0", count: 1 }, // logMw on RootLayout
+      { segmentId: "M0L0L0L0", count: 1 }, // authMw on AuthLayout
     ]);
 
     // Home route only gets logMw (not under AuthLayout)
     const homeChain = tree.middlewareChain("home");
-    expect(homeChain).toEqual([
-      { segmentId: "M0L0L0", count: 1 },
-    ]);
+    expect(homeChain).toEqual([{ segmentId: "M0L0L0", count: 1 }]);
   });
 
   // -------------------------------------------------------------------------
@@ -772,9 +780,7 @@ describe("route tree inspection", () => {
     const tree = buildRouteTree(
       urls(({ path, layout, middleware }) => [
         layout(RootLayout, () => [
-          layout(WrapperLayout, () => [
-            middleware(authMiddleware),
-          ]),
+          layout(WrapperLayout, () => [middleware(authMiddleware)]),
           path("/", HomePage, { name: "home" }),
           path("/about", AboutPage, { name: "about" }),
         ]),
@@ -805,9 +811,7 @@ describe("route tree inspection", () => {
     const tree = buildRouteTree(
       urls(({ path, layout, loading }) => [
         layout(RootLayout, () => [
-          layout(WrapperLayout, () => [
-            loading(LoadingSpinner),
-          ]),
+          layout(WrapperLayout, () => [loading(LoadingSpinner)]),
           path("/", HomePage, { name: "home" }),
         ]),
       ]),
@@ -848,9 +852,7 @@ describe("route tree inspection", () => {
     const tree = buildRouteTree(
       urls(({ path, layout, middleware, loading }) => [
         layout(RootLayout, () => [
-          layout(Wrapper1, () => [
-            middleware(logMiddleware),
-          ]),
+          layout(Wrapper1, () => [middleware(logMiddleware)]),
           layout(Wrapper2, () => [
             middleware(authMiddleware),
             loading(LoadingSpinner),
@@ -943,9 +945,7 @@ describe("route tree inspection", () => {
           layout(RootLayout, () => [
             path("/", HomePage, { name: "home" }),
             // @ts-expect-error layout is not a valid parallel use item
-            parallel({ "@sidebar": Sidebar }, () => [
-              layout(AuthLayout),
-            ]),
+            parallel({ "@sidebar": Sidebar }, () => [layout(AuthLayout)]),
           ]),
         ]),
       );
@@ -1081,9 +1081,7 @@ describe("route tree inspection", () => {
   it("inspects a full app route tree", () => {
     const blogPatterns = urls(({ path, loader }) => [
       path("/", BlogIndex, { name: "index" }),
-      path("/:slug", BlogPost, { name: "post" }, () => [
-        loader(PostLoader),
-      ]),
+      path("/:slug", BlogPost, { name: "post" }, () => [loader(PostLoader)]),
     ]);
 
     const tree = buildRouteTree(
@@ -1162,9 +1160,7 @@ describe("route tree inspection", () => {
               loader(DeepLoader),
               parallel({ "@panelA": PanelA, "@panelB": PanelB }),
             ]),
-            layout(DeepLayout, () => [
-              middleware(authMiddleware),
-            ]),
+            layout(DeepLayout, () => [middleware(authMiddleware)]),
           ]),
         ]),
       ]),
@@ -1221,9 +1217,7 @@ describe("route tree inspection", () => {
     // Middleware chain for the route: only logMw from RootLayout
     // (authMw is on DeepLayout which wraps inside the route, not in parent chain)
     const chain = tree.middlewareChain("complex.very");
-    expect(chain).toEqual([
-      { segmentId: "M0L0L0", count: 1 },
-    ]);
+    expect(chain).toEqual([{ segmentId: "M0L0L0", count: 1 }]);
   });
 
   it("complex app: cache + parallel + nested layouts + intercept", () => {
@@ -1236,30 +1230,43 @@ describe("route tree inspection", () => {
     const ListLoader = createLoader(async () => ({ items: [] }));
 
     const tree = buildRouteTree(
-      urls(({ path, layout, cache, parallel, intercept, when, middleware, loader, loading, errorBoundary }) => [
-        layout(RootLayout, () => [
-          middleware(logMiddleware),
-          errorBoundary(ErrorFallback),
-          layout(NavLayout, () => [
-            parallel({ "@sidebar": SidebarNav }),
-            cache({ ttl: 120 }, () => [
-              path("/items", ListPage, { name: "items" }, () => [
-                loader(ListLoader),
-                loading(LoadingSpinner),
+      urls(
+        ({
+          path,
+          layout,
+          cache,
+          parallel,
+          intercept,
+          when,
+          middleware,
+          loader,
+          loading,
+          errorBoundary,
+        }) => [
+          layout(RootLayout, () => [
+            middleware(logMiddleware),
+            errorBoundary(ErrorFallback),
+            layout(NavLayout, () => [
+              parallel({ "@sidebar": SidebarNav }),
+              cache({ ttl: 120 }, () => [
+                path("/items", ListPage, { name: "items" }, () => [
+                  loader(ListLoader),
+                  loading(LoadingSpinner),
+                ]),
+                path("/items/:id", DetailPage, { name: "item.detail" }, () => [
+                  loader(DetailLoader),
+                  loading(LoadingSpinner),
+                ]),
+                intercept("@drawer", ".item.detail", ModalView, () => [
+                  when((ctx: any) => ctx.from.pathname.startsWith("/items")),
+                  loader(DetailLoader),
+                ]),
               ]),
-              path("/items/:id", DetailPage, { name: "item.detail" }, () => [
-                loader(DetailLoader),
-                loading(LoadingSpinner),
-              ]),
-              intercept("@drawer", ".item.detail", ModalView, () => [
-                when((ctx: any) => ctx.from.pathname.startsWith("/items")),
-                loader(DetailLoader),
-              ]),
+              path("/", HomePage, { name: "home" }),
             ]),
-            path("/", HomePage, { name: "home" }),
           ]),
-        ]),
-      ]),
+        ],
+      ),
     );
 
     // All routes registered
@@ -1275,7 +1282,13 @@ describe("route tree inspection", () => {
     // Segment hierarchy for items: synthetic > Root > Nav > Cache > route
     const itemsPath = tree.segmentPath("items");
     const itemsTypes = itemsPath.map((s) => s.type);
-    expect(itemsTypes).toEqual(["layout", "layout", "layout", "cache", "route"]);
+    expect(itemsTypes).toEqual([
+      "layout",
+      "layout",
+      "layout",
+      "cache",
+      "route",
+    ]);
 
     // Home is NOT inside the cache segment
     const homePath = tree.segmentPath("home");

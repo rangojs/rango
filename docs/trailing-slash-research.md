@@ -5,16 +5,17 @@ Research for adding trailing slash handling to rsc-router.
 ## Current Behavior
 
 rsc-router uses **strict exact matching**:
+
 - `/blog` and `/blog/` are treated as completely different routes
 - No normalization or redirection
 - 3 failing e2e tests document this as a known limitation
 
 ## Framework Comparison
 
-| Framework | Options | Default | Per-Route? |
-|-----------|---------|---------|------------|
-| **Next.js** | `true` / `false` | Redirect to no slash | Via middleware only |
-| **Remix** | None built-in | Manual in loader | N/A |
+| Framework     | Options                             | Default              | Per-Route?           |
+| ------------- | ----------------------------------- | -------------------- | -------------------- |
+| **Next.js**   | `true` / `false`                    | Redirect to no slash | Via middleware only  |
+| **Remix**     | None built-in                       | Manual in loader     | N/A                  |
 | **SvelteKit** | `'never'` / `'always'` / `'ignore'` | `'never'` (redirect) | Yes, in `+layout.js` |
 
 ### Next.js
@@ -41,7 +42,7 @@ rsc-router uses **strict exact matching**:
 
 ```js
 // src/routes/+layout.js
-export const trailingSlash = 'always';
+export const trailingSlash = "always";
 ```
 
 ---
@@ -53,6 +54,7 @@ SvelteKit documentation explains:
 > Ignoring trailing slashes is not recommended — the semantics of relative paths differ between the two cases (`./y` from `/x` is `/y`, but from `/x/` is `/x/y`), and `/x` and `/x/` are treated as separate URLs which is harmful to SEO.
 
 **Relative path differences:**
+
 ```
 Current URL: /blog
 Link: ./post → /post
@@ -62,6 +64,7 @@ Link: ./post → /blog/post
 ```
 
 **SEO implications:**
+
 - Search engines treat `/blog` and `/blog/` as different pages
 - Duplicate content issues if both are accessible
 - Canonical URL confusion
@@ -72,18 +75,18 @@ Link: ./post → /blog/post
 
 ### Option Values
 
-| Value | Behavior | Redirect? |
-|-------|----------|-----------|
-| `"strict"` | Match exactly as defined | No |
-| `"never"` | Remove trailing slash | 301 redirect |
-| `"always"` | Add trailing slash | 301 redirect |
-| `"ignore"` | Match both, no redirect | No |
+| Value      | Behavior                 | Redirect?    |
+| ---------- | ------------------------ | ------------ |
+| `"strict"` | Match exactly as defined | No           |
+| `"never"`  | Remove trailing slash    | 301 redirect |
+| `"always"` | Add trailing slash       | 301 redirect |
+| `"ignore"` | Match both, no redirect  | No           |
 
 ### Router-Level Configuration
 
 ```typescript
 const router = createRouter({
-  trailingSlash: "never",  // default
+  trailingSlash: "never", // default
 });
 ```
 
@@ -141,7 +144,11 @@ map<typeof routes>(({ route, layout, trailingSlash }) => [
 ### Pseudo-Implementation
 
 ```typescript
-function findMatch(pathname: string, routes: RouteEntry[], config: RouterConfig) {
+function findMatch(
+  pathname: string,
+  routes: RouteEntry[],
+  config: RouterConfig,
+) {
   const trailingSlash = config.trailingSlash ?? "never";
 
   // Normalize pathname based on config
@@ -176,7 +183,11 @@ function findMatch(pathname: string, routes: RouteEntry[], config: RouterConfig)
 
 ```typescript
 // In RSC handler
-const { match, shouldRedirect, redirectTo } = findMatch(pathname, routes, config);
+const { match, shouldRedirect, redirectTo } = findMatch(
+  pathname,
+  routes,
+  config,
+);
 
 if (shouldRedirect && match) {
   return Response.redirect(new URL(redirectTo, request.url), 301);
@@ -188,18 +199,22 @@ if (shouldRedirect && match) {
 ## Edge Cases
 
 ### Root Path
+
 - `/` should never redirect (it's already canonical)
 - Both "never" and "always" should treat `/` as valid
 
 ### Static Files
+
 - Paths with extensions (`/image.png`) should skip trailing slash logic
 - Only apply to "clean" URLs
 
 ### Query Strings and Hashes
+
 - Preserve query string in redirects: `/blog/?page=2` → `/blog?page=2`
 - Hash fragments handled by browser, not server
 
 ### Per-Route Override Precedence
+
 1. Route-level `trailingSlash()` (most specific)
 2. Parent layout `trailingSlash()` (inherited)
 3. Router-level config (default)
@@ -209,11 +224,13 @@ if (shouldRedirect && match) {
 ## Testing
 
 Current failing tests to fix:
+
 - `blog index should resolve at /blog/ (with trailing slash)`
 - `product detail should resolve with trailing slash`
 - `blog post should resolve with trailing slash`
 
 New tests to add:
+
 - Redirect behavior for "never" and "always"
 - No redirect for "ignore" and "strict"
 - Per-route override
@@ -227,6 +244,7 @@ New tests to add:
 **Recommended default:** `"never"` (remove trailing slash)
 
 Reasons:
+
 1. Most common convention
 2. Cleaner URLs
 3. Next.js default

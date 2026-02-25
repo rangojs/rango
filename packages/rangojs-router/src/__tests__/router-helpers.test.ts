@@ -23,7 +23,7 @@ function entry(
     trailingSlash?: Record<string, TrailingSlashMode>;
     lazy?: boolean;
     lazyEvaluated?: boolean;
-  }
+  },
 ): RouteEntry {
   return {
     prefix,
@@ -77,7 +77,8 @@ describe("compilePattern", () => {
   });
 
   it("matches optional params", () => {
-    const { regex, paramNames, optionalParams } = compilePattern("/:locale?/blog");
+    const { regex, paramNames, optionalParams } =
+      compilePattern("/:locale?/blog");
     expect(paramNames).toEqual(["locale"]);
     expect(optionalParams.has("locale")).toBe(true);
     expect(regex.test("/blog")).toBe(true);
@@ -205,7 +206,11 @@ describe("findMatch", () => {
 
   it("returns lazy evaluation needed for unevaluated lazy entry", () => {
     const entries = [
-      entry("/shop", {}, { lazy: true, lazyEvaluated: false, staticPrefix: "/shop" }),
+      entry(
+        "/shop",
+        {},
+        { lazy: true, lazyEvaluated: false, staticPrefix: "/shop" },
+      ),
     ];
     const result = findMatch("/shop/anything", entries);
     expect(result).not.toBeNull();
@@ -214,7 +219,11 @@ describe("findMatch", () => {
 
   it("does not return lazy for already evaluated entry", () => {
     const entries = [
-      entry("/shop", { index: "/" }, { lazy: true, lazyEvaluated: true, staticPrefix: "/shop" }),
+      entry(
+        "/shop",
+        { index: "/" },
+        { lazy: true, lazyEvaluated: true, staticPrefix: "/shop" },
+      ),
     ];
     const result = findMatch("/shop", entries);
     expect(result).not.toBeNull();
@@ -235,7 +244,11 @@ describe("findMatch", () => {
 
     it("mode 'always' redirects when trailing slash missing", () => {
       const entries = [
-        entry("/", { about: "/about/" }, { trailingSlash: { about: "always" } }),
+        entry(
+          "/",
+          { about: "/about/" },
+          { trailingSlash: { about: "always" } },
+        ),
       ];
       const result = findMatch("/about", entries);
       expect(result).not.toBeNull();
@@ -279,7 +292,7 @@ describe("isLazyEvaluationNeeded", () => {
         routeKey: "k",
         params: {},
         optionalParams: new Set(),
-      })
+      }),
     ).toBe(false);
   });
 
@@ -338,7 +351,9 @@ describe("extractParams", () => {
   });
 
   it("extracts multiple params", () => {
-    const { regex, paramNames } = parseMiddlewarePattern("/org/:orgId/team/:teamId");
+    const { regex, paramNames } = parseMiddlewarePattern(
+      "/org/:orgId/team/:teamId",
+    );
     const params = extractParams("/org/acme/team/eng", regex, paramNames);
     expect(params).toEqual({ orgId: "acme", teamId: "eng" });
   });
@@ -443,23 +458,25 @@ describe("createReverse", () => {
 
   it("substitutes multiple params", () => {
     expect(
-      reverse("product.detail" as any, { category: "shoes", id: "42" })
+      reverse("product.detail" as any, { category: "shoes", id: "42" }),
     ).toBe("/product/shoes/42");
   });
 
   it("URI-encodes param values", () => {
     expect(reverse("blog.post" as any, { slug: "hello world" })).toBe(
-      "/blog/hello%20world"
+      "/blog/hello%20world",
     );
   });
 
   it("throws for unknown route", () => {
-    expect(() => reverse("nonexistent" as any)).toThrow("Unknown route: nonexistent");
+    expect(() => reverse("nonexistent" as any)).toThrow(
+      "Unknown route: nonexistent",
+    );
   });
 
   it("throws for missing param", () => {
     expect(() => reverse("blog.post" as any, {} as any)).toThrow(
-      'Missing param "slug"'
+      'Missing param "slug"',
     );
   });
 });
@@ -470,8 +487,12 @@ describe("createReverse", () => {
 describe("resolveRouteName (via createHandlerContext.reverse)", () => {
   // Import createHandlerContext to test resolveRouteName indirectly
   // We use a dynamic import since the module isn't imported at the top
-  async function makeReverse(routeMap: Record<string, string>, currentRoute?: string) {
-    const { createHandlerContext } = await import("../router/handler-context.js");
+  async function makeReverse(
+    routeMap: Record<string, string>,
+    currentRoute?: string,
+  ) {
+    const { createHandlerContext } =
+      await import("../router/handler-context.js");
     const ctx = createHandlerContext(
       {},
       new Request("http://localhost/"),
@@ -500,12 +521,16 @@ describe("resolveRouteName (via createHandlerContext.reverse)", () => {
   // Dot-prefixed = local resolution (within include() scope)
   it("should resolve dot-prefixed names locally", async () => {
     const reverse = await makeReverse(routeMap, "magazine.author");
-    expect(reverse(".article" as any, { slug: "design" })).toBe("/magazine/design");
+    expect(reverse(".article" as any, { slug: "design" })).toBe(
+      "/magazine/design",
+    );
   });
 
   it("should resolve dot-prefixed dotted names locally", async () => {
     const reverse = await makeReverse(routeMap, "magazine.author");
-    expect(reverse(".author.posts" as any, { authorSlug: "alice" })).toBe("/magazine/author/alice/posts");
+    expect(reverse(".author.posts" as any, { authorSlug: "alice" })).toBe(
+      "/magazine/author/alice/posts",
+    );
   });
 
   it("should walk up parent prefixes for dot-prefixed names", async () => {
@@ -526,7 +551,9 @@ describe("resolveRouteName (via createHandlerContext.reverse)", () => {
   // Unprefixed = global resolution (named-routes definition)
   it("should resolve unprefixed names globally", async () => {
     const reverse = await makeReverse(routeMap, "magazine.author");
-    expect(reverse("blog.author.posts" as any, { authorSlug: "jane" })).toBe("/blog/author/jane/posts");
+    expect(reverse("blog.author.posts" as any, { authorSlug: "jane" })).toBe(
+      "/blog/author/jane/posts",
+    );
   });
 
   it("should resolve fully-qualified global names", async () => {
@@ -538,7 +565,9 @@ describe("resolveRouteName (via createHandlerContext.reverse)", () => {
     const reverse = await makeReverse(routeMap, "magazine.author");
     // "article" is a local name — without dot prefix, it's treated as global
     // and there's no global "article" key
-    expect(() => reverse("article" as any, { slug: "design" })).toThrow("Unknown route");
+    expect(() => reverse("article" as any, { slug: "design" })).toThrow(
+      "Unknown route",
+    );
   });
 
   it("should throw for unknown global names", async () => {

@@ -18,8 +18,12 @@ import {
 export const middlewarePatterns = urls(({ path, middleware }) => [
   path("/", MiddlewareIndexHandler, { name: "index" }),
   path("/protected", MiddlewareProtectedHandler, { name: "protected" }),
-  path("/protected/dashboard", MiddlewareProtectedDashboardHandler, { name: "protectedDashboard" }),
-  path("/error-handler/trigger", MiddlewareErrorHandlerHandler, { name: "errorHandler" }),
+  path("/protected/dashboard", MiddlewareProtectedDashboardHandler, {
+    name: "protectedDashboard",
+  }),
+  path("/error-handler/trigger", MiddlewareErrorHandlerHandler, {
+    name: "errorHandler",
+  }),
   path("/cookies", MiddlewareCookiesHandler, { name: "cookies" }),
   path("/params/:paramId", MiddlewareParamsHandler, { name: "params" }),
   path("/shared-vars", MiddlewareSharedVarsHandler, { name: "sharedVars" }),
@@ -35,7 +39,7 @@ export const middlewarePatterns = urls(({ path, middleware }) => [
         await next();
         ctx.header("X-Route-Level-Middleware", "applied");
       }),
-    ]
+    ],
   ),
 
   path(
@@ -53,6 +57,6 @@ export const middlewarePatterns = urls(({ path, middleware }) => [
         // Also set header with param value for HTTP-level verification
         ctx.header("X-Middleware-Route-Id", routeId);
       }),
-    ]
+    ],
   ),
 ]);

@@ -81,11 +81,11 @@ describe("generateManifest", () => {
     expect(manifest.routeManifest).toHaveProperty("home", "/");
     expect(manifest.routeManifest).toHaveProperty(
       "shop.product.detail",
-      "/shop/product/:id"
+      "/shop/product/:id",
     );
     expect(manifest.routeManifest).toHaveProperty(
       "shop.category.view",
-      "/shop/category/:slug"
+      "/shop/category/:slug",
     );
 
     // Check nested prefix tree

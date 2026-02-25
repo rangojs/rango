@@ -1,9 +1,10 @@
 packages:
-  - 'packages/*'
-  - 'packages/rsc-router/e2e/test-app'
-  - 'packages/rangojs-router/e2e/test-app'
-  - 'packages/rangojs-router/e2e/e2e-basic'
-  - 'examples/*'
+  - "packages/*"
+  - "packages/rsc-router/e2e/test-app"
+  - "packages/rangojs-router/e2e/test-app"
+  - "packages/rangojs-router/e2e/e2e-basic"
+  - "examples/*"
+  - "tests/*"
 
 catalog:
   "@vitejs/plugin-react": ^5.1.4

@@ -35,10 +35,7 @@ export function FetchLoaderTest({ loader }: FetchLoaderTestProps) {
       )}
 
       <div style={{ marginTop: "1rem" }}>
-        <button
-          data-testid="fetch-loader-btn-default"
-          onClick={() => load()}
-        >
+        <button data-testid="fetch-loader-btn-default" onClick={() => load()}>
           Fetch (default)
         </button>
         <button

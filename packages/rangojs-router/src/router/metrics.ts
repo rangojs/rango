@@ -10,7 +10,7 @@ import type { MetricsStore } from "../server/context";
  * Create a metrics store for the request if debugPerformance is enabled
  */
 export function createMetricsStore(
-  debugPerformance: boolean
+  debugPerformance: boolean,
 ): MetricsStore | undefined {
   if (!debugPerformance) return undefined;
   return {
@@ -26,14 +26,14 @@ export function createMetricsStore(
 export function logMetrics(
   method: string,
   pathname: string,
-  metricsStore: MetricsStore
+  metricsStore: MetricsStore,
 ): void {
   const total = performance.now() - metricsStore.requestStart;
 
   // Find max label length for alignment
   const maxLabelLen = Math.max(
     ...metricsStore.metrics.map((m) => m.label.length),
-    20
+    20,
   );
 
   console.log(`[RSC Perf] ${method} ${pathname} (${total.toFixed(1)}ms)`);

@@ -51,7 +51,10 @@ export const PrerenderInterceptDetail = Prerender(
 // Intercept handler: renders in @modal slot during client navigation.
 // Also embeds a render-time marker so tests can verify the modal content
 // is served from the prerender store (frozen) in production builds.
-function PrerenderInterceptModalHandler(ctx: { params: { slug: string }; pathname: string }) {
+function PrerenderInterceptModalHandler(ctx: {
+  params: { slug: string };
+  pathname: string;
+}) {
   const renderTime = new Date().toISOString();
   return (
     <Modal testId="pri-modal">
@@ -81,7 +84,12 @@ export const prerenderInterceptPatterns = urls(
       intercept(
         "@modal",
         ".detail",
-        async (ctx) => <PrerenderInterceptModalHandler params={ctx.params} pathname={ctx.pathname} />,
+        async (ctx) => (
+          <PrerenderInterceptModalHandler
+            params={ctx.params}
+            pathname={ctx.pathname}
+          />
+        ),
         () => [
           when(({ from }) => from.pathname.startsWith("/prerender-intercept")),
           loader(FreshTimestampLoader),

@@ -34,10 +34,7 @@ function createContext() {
   return { manifest, patterns };
 }
 
-function runInContext(
-  ctx: ReturnType<typeof createContext>,
-  fn: () => any
-) {
+function runInContext(ctx: ReturnType<typeof createContext>, fn: () => any) {
   let result: any;
   RSCRouterContext.run(
     {
@@ -49,7 +46,7 @@ function runInContext(
     },
     () => {
       result = fn();
-    }
+    },
   );
   return result;
 }
@@ -77,9 +74,12 @@ describe("global helper imports", () => {
   describe("helpers produce valid items inside urls() context", () => {
     it("cache() returns a CacheItem", () => {
       const urlPatterns = urls(({ path }) => [
-        path("/", () => <div>Home</div>, { name: "home" }, () => [
-          cache({ ttl: 60_000 }),
-        ]),
+        path(
+          "/",
+          () => <div>Home</div>,
+          { name: "home" },
+          () => [cache({ ttl: 60_000 })],
+        ),
       ]);
 
       runInContext(ctx, () => urlPatterns.handler());
@@ -88,9 +88,12 @@ describe("global helper imports", () => {
 
     it("revalidate() returns a RevalidateItem", () => {
       const urlPatterns = urls(({ path }) => [
-        path("/", () => <div>Home</div>, { name: "home" }, () => [
-          revalidate(({ actionId }) => !!actionId),
-        ]),
+        path(
+          "/",
+          () => <div>Home</div>,
+          { name: "home" },
+          () => [revalidate(({ actionId }) => !!actionId)],
+        ),
       ]);
 
       runInContext(ctx, () => urlPatterns.handler());
@@ -101,9 +104,12 @@ describe("global helper imports", () => {
       const testMiddleware = async (ctx: any, next: any) => next();
 
       const urlPatterns = urls(({ path }) => [
-        path("/", () => <div>Home</div>, { name: "home" }, () => [
-          middleware(testMiddleware),
-        ]),
+        path(
+          "/",
+          () => <div>Home</div>,
+          { name: "home" },
+          () => [middleware(testMiddleware)],
+        ),
       ]);
 
       runInContext(ctx, () => urlPatterns.handler());
@@ -112,9 +118,12 @@ describe("global helper imports", () => {
 
     it("loading() returns a LoadingItem", () => {
       const urlPatterns = urls(({ path }) => [
-        path("/", () => <div>Home</div>, { name: "home" }, () => [
-          loading(<div>Loading...</div>),
-        ]),
+        path(
+          "/",
+          () => <div>Home</div>,
+          { name: "home" },
+          () => [loading(<div>Loading...</div>)],
+        ),
       ]);
 
       runInContext(ctx, () => urlPatterns.handler());
@@ -123,9 +132,12 @@ describe("global helper imports", () => {
 
     it("errorBoundary() returns an ErrorBoundaryItem", () => {
       const urlPatterns = urls(({ path }) => [
-        path("/", () => <div>Home</div>, { name: "home" }, () => [
-          errorBoundary(() => <div>Error</div>),
-        ]),
+        path(
+          "/",
+          () => <div>Home</div>,
+          { name: "home" },
+          () => [errorBoundary(() => <div>Error</div>)],
+        ),
       ]);
 
       runInContext(ctx, () => urlPatterns.handler());
@@ -134,9 +146,12 @@ describe("global helper imports", () => {
 
     it("notFoundBoundary() returns a NotFoundBoundaryItem", () => {
       const urlPatterns = urls(({ path }) => [
-        path("/", () => <div>Home</div>, { name: "home" }, () => [
-          notFoundBoundary(() => <div>Not Found</div>),
-        ]),
+        path(
+          "/",
+          () => <div>Home</div>,
+          { name: "home" },
+          () => [notFoundBoundary(() => <div>Not Found</div>)],
+        ),
       ]);
 
       runInContext(ctx, () => urlPatterns.handler());
@@ -145,9 +160,10 @@ describe("global helper imports", () => {
 
     it("layout() wraps children correctly", () => {
       const urlPatterns = urls(({ path }) => [
-        layout(() => <div>Layout</div>, () => [
-          path("/", () => <div>Home</div>, { name: "home" }),
-        ]),
+        layout(
+          () => <div>Layout</div>,
+          () => [path("/", () => <div>Home</div>, { name: "home" })],
+        ),
       ]);
 
       runInContext(ctx, () => urlPatterns.handler());
@@ -156,10 +172,13 @@ describe("global helper imports", () => {
 
     it("parallel() creates parallel slots", () => {
       const urlPatterns = urls(({ path }) => [
-        layout(() => <div>Layout</div>, () => [
-          path("/", () => <div>Home</div>, { name: "home" }),
-          parallel({ "@sidebar": () => <div>Sidebar</div> }),
-        ]),
+        layout(
+          () => <div>Layout</div>,
+          () => [
+            path("/", () => <div>Home</div>, { name: "home" }),
+            parallel({ "@sidebar": () => <div>Sidebar</div> }),
+          ],
+        ),
       ]);
 
       runInContext(ctx, () => urlPatterns.handler());
@@ -179,9 +198,12 @@ describe("global helper imports", () => {
       ];
 
       const urlPatterns = urls(({ path }) => [
-        path("/", () => <div>Home</div>, { name: "home" }, () => [
-          withCaching(),
-        ]),
+        path(
+          "/",
+          () => <div>Home</div>,
+          { name: "home" },
+          () => [withCaching()],
+        ),
       ]);
 
       runInContext(ctx, () => urlPatterns.handler());
@@ -199,10 +221,13 @@ describe("global helper imports", () => {
       ];
 
       const urlPatterns = urls(({ path }) => [
-        layout(() => <div>Layout</div>, () => [
-          withAuth(),
-          path("/", () => <div>Home</div>, { name: "home" }),
-        ]),
+        layout(
+          () => <div>Layout</div>,
+          () => [
+            withAuth(),
+            path("/", () => <div>Home</div>, { name: "home" }),
+          ],
+        ),
       ]);
 
       runInContext(ctx, () => urlPatterns.handler());
@@ -221,10 +246,12 @@ describe("global helper imports", () => {
       ];
 
       const urlPatterns = urls(({ path }) => [
-        path("/", () => <div>Home</div>, { name: "home" }, () => [
-          withCaching(),
-          withLoading(),
-        ]),
+        path(
+          "/",
+          () => <div>Home</div>,
+          { name: "home" },
+          () => [withCaching(), withLoading()],
+        ),
       ]);
 
       runInContext(ctx, () => urlPatterns.handler());
@@ -240,24 +267,29 @@ describe("global helper imports", () => {
     it("layout with composed middleware wrapping paths with composed cache", () => {
       const authMiddleware = async (ctx: any, next: any) => next();
 
-      const withAuth = (): LayoutUseItem[] => [
-        middleware(authMiddleware),
-      ];
+      const withAuth = (): LayoutUseItem[] => [middleware(authMiddleware)];
 
-      const withCaching = (): RouteUseItem[] => [
-        cache({ ttl: 600_000 }),
-      ];
+      const withCaching = (): RouteUseItem[] => [cache({ ttl: 600_000 })];
 
       const urlPatterns = urls(({ path }) => [
-        layout(() => <div>App</div>, () => [
-          withAuth(),
-          path("/", () => <div>Home</div>, { name: "home" }, () => [
-            withCaching(),
-          ]),
-          path("/about", () => <div>About</div>, { name: "about" }, () => [
-            withCaching(),
-          ]),
-        ]),
+        layout(
+          () => <div>App</div>,
+          () => [
+            withAuth(),
+            path(
+              "/",
+              () => <div>Home</div>,
+              { name: "home" },
+              () => [withCaching()],
+            ),
+            path(
+              "/about",
+              () => <div>About</div>,
+              { name: "about" },
+              () => [withCaching()],
+            ),
+          ],
+        ),
       ]);
 
       runInContext(ctx, () => urlPatterns.handler());
@@ -272,17 +304,23 @@ describe("global helper imports", () => {
       ];
 
       const blogPatterns = urls(({ path }) => [
-        layout(() => <div>Blog</div>, () => [
-          standardLayout(),
-          path("/blog", () => <div>Blog</div>, { name: "blog.index" }),
-        ]),
+        layout(
+          () => <div>Blog</div>,
+          () => [
+            standardLayout(),
+            path("/blog", () => <div>Blog</div>, { name: "blog.index" }),
+          ],
+        ),
       ]);
 
       const shopPatterns = urls(({ path }) => [
-        layout(() => <div>Shop</div>, () => [
-          standardLayout(),
-          path("/shop", () => <div>Shop</div>, { name: "shop.index" }),
-        ]),
+        layout(
+          () => <div>Shop</div>,
+          () => [
+            standardLayout(),
+            path("/shop", () => <div>Shop</div>, { name: "shop.index" }),
+          ],
+        ),
       ]);
 
       runInContext(ctx, () => blogPatterns.handler());
@@ -308,11 +346,16 @@ describe("global helper imports", () => {
       ];
 
       const urlPatterns = urls(({ path }) => [
-        path("/", () => <div>Home</div>, { name: "home" }, () => [
-          // This returns an array inside the use callback array
-          // The .flat(3) should handle it
-          withEverything(),
-        ]),
+        path(
+          "/",
+          () => <div>Home</div>,
+          { name: "home" },
+          () => [
+            // This returns an array inside the use callback array
+            // The .flat(3) should handle it
+            withEverything(),
+          ],
+        ),
       ]);
 
       // Should not throw
@@ -328,9 +371,12 @@ describe("global helper imports", () => {
       ];
 
       const urlPatterns = urls(({ path }) => [
-        path("/", () => <div>Home</div>, { name: "home" }, () => [
-          ...extended(),
-        ]),
+        path(
+          "/",
+          () => <div>Home</div>,
+          { name: "home" },
+          () => [...extended()],
+        ),
       ]);
 
       runInContext(ctx, () => urlPatterns.handler());
@@ -352,9 +398,7 @@ describe("global helper imports", () => {
     });
 
     it("middleware() throws outside context", () => {
-      expect(() =>
-        middleware(async (ctx: any, next: any) => next())
-      ).toThrow();
+      expect(() => middleware(async (ctx: any, next: any) => next())).toThrow();
     });
 
     it("revalidate() throws outside context", () => {
@@ -362,9 +406,7 @@ describe("global helper imports", () => {
     });
 
     it("parallel() throws outside context", () => {
-      expect(() =>
-        parallel({ "@slot": () => <div>Slot</div> })
-      ).toThrow();
+      expect(() => parallel({ "@slot": () => <div>Slot</div> })).toThrow();
     });
 
     it("loading() throws outside context", () => {
@@ -382,9 +424,7 @@ describe("global helper imports", () => {
     it("callback factories do NOT throw at definition time", () => {
       // These are just function definitions - no context needed
       expect(() => {
-        const withCache = (): RouteUseItem[] => [
-          cache({ ttl: 60_000 }),
-        ];
+        const withCache = (): RouteUseItem[] => [cache({ ttl: 60_000 })];
         // withCache is defined but NOT called
         void withCache;
       }).not.toThrow();
@@ -403,9 +443,12 @@ describe("global helper imports", () => {
       ];
 
       const urlPatterns = urls(({ path }) => [
-        path("/", () => <div>Home</div>, { name: "home" }, () => [
-          factory(),
-        ]),
+        path(
+          "/",
+          () => <div>Home</div>,
+          { name: "home" },
+          () => [factory()],
+        ),
       ]);
 
       runInContext(ctx, () => urlPatterns.handler());
@@ -418,10 +461,10 @@ describe("global helper imports", () => {
       ];
 
       const urlPatterns = urls(({ path }) => [
-        layout(() => <div>Layout</div>, () => [
-          factory(),
-          path("/", () => <div>Home</div>, { name: "home" }),
-        ]),
+        layout(
+          () => <div>Layout</div>,
+          () => [factory(), path("/", () => <div>Home</div>, { name: "home" })],
+        ),
       ]);
 
       runInContext(ctx, () => urlPatterns.handler());

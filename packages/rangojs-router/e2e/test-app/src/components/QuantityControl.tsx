@@ -19,7 +19,7 @@ export function QuantityControl({
 }: QuantityControlProps) {
   const [optimisticQuantity, setOptimisticQuantity] = useOptimistic(
     initialQuantity,
-    (_current, newQuantity: number) => newQuantity
+    (_current, newQuantity: number) => newQuantity,
   );
 
   function handleChange(delta: number) {
@@ -57,7 +57,10 @@ export function QuantityControl({
       >
         {optimisticQuantity === 1 ? "×" : "-"}
       </button>
-      <span data-testid="quantity-display" style={{ minWidth: "24px", textAlign: "center" }}>
+      <span
+        data-testid="quantity-display"
+        style={{ minWidth: "24px", textAlign: "center" }}
+      >
         {optimisticQuantity}
       </span>
       <button

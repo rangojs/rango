@@ -73,7 +73,12 @@ describe("extractHandlerExportsFromChunk", () => {
       `myLoader.$$id = "abc12345#myLoader";`,
     ].join("\n");
     const modules = new Map([["src/loaders.ts", ["myLoader"]]]);
-    const result = extractHandlerExportsFromChunk(chunk, modules, "createLoader", false);
+    const result = extractHandlerExportsFromChunk(
+      chunk,
+      modules,
+      "createLoader",
+      false,
+    );
     expect(result).toHaveLength(1);
     expect(result[0]).toEqual({
       name: "myLoader",
@@ -85,7 +90,12 @@ describe("extractHandlerExportsFromChunk", () => {
   it("skips handler without $$id assignment", () => {
     const chunk = `const myLoader = createLoader({ fetch() { return null; } });`;
     const modules = new Map([["src/loaders.ts", ["myLoader"]]]);
-    const result = extractHandlerExportsFromChunk(chunk, modules, "createLoader", false);
+    const result = extractHandlerExportsFromChunk(
+      chunk,
+      modules,
+      "createLoader",
+      false,
+    );
     expect(result).toHaveLength(0);
   });
 
@@ -95,7 +105,12 @@ describe("extractHandlerExportsFromChunk", () => {
       `myHandler.$$id = "abc12345#myHandler";`,
     ].join("\n");
     const modules = new Map([["src/handlers.ts", ["myHandler"]]]);
-    const result = extractHandlerExportsFromChunk(chunk, modules, "Static", true);
+    const result = extractHandlerExportsFromChunk(
+      chunk,
+      modules,
+      "Static",
+      true,
+    );
     expect(result).toHaveLength(1);
     expect(result[0].passthrough).toBe(true);
   });
@@ -106,7 +121,12 @@ describe("extractHandlerExportsFromChunk", () => {
       `myHandler.$$id = "abc12345#myHandler";`,
     ].join("\n");
     const modules = new Map([["src/handlers.ts", ["myHandler"]]]);
-    const result = extractHandlerExportsFromChunk(chunk, modules, "Static", true);
+    const result = extractHandlerExportsFromChunk(
+      chunk,
+      modules,
+      "Static",
+      true,
+    );
     expect(result[0].passthrough).toBe(true);
   });
 
@@ -116,7 +136,12 @@ describe("extractHandlerExportsFromChunk", () => {
       `$Nav.$$id = "abc12345#$Nav";`,
     ].join("\n");
     const modules = new Map([["src/nav.ts", ["$Nav"]]]);
-    const result = extractHandlerExportsFromChunk(chunk, modules, "createLoader", false);
+    const result = extractHandlerExportsFromChunk(
+      chunk,
+      modules,
+      "createLoader",
+      false,
+    );
     expect(result).toHaveLength(1);
     expect(result[0].name).toBe("$Nav");
     expect(result[0].handlerId).toBe("abc12345#$Nav");
@@ -128,7 +153,12 @@ describe("extractHandlerExportsFromChunk", () => {
       `myLoader.$$id = "abc12345#myLoader";`,
     ].join("\n");
     const modules = new Map([["src/loaders.ts", ["myLoader"]]]);
-    const result = extractHandlerExportsFromChunk(chunk, modules, "createLoader", true);
+    const result = extractHandlerExportsFromChunk(
+      chunk,
+      modules,
+      "createLoader",
+      true,
+    );
     expect(result).toHaveLength(1);
     expect(result[0].passthrough).toBe(false);
   });
@@ -170,7 +200,13 @@ describe("evictHandlerCode", () => {
     ].join("\n");
     const result = evictHandlerCode(
       code,
-      [{ name: "myHandler", handlerId: "abc12345#myHandler", passthrough: true }],
+      [
+        {
+          name: "myHandler",
+          handlerId: "abc12345#myHandler",
+          passthrough: true,
+        },
+      ],
       "Static",
       "static",
     );
@@ -220,8 +256,12 @@ describe("evictHandlerCode", () => {
       "loader",
     );
     expect(result).not.toBeNull();
-    expect(result!.code).toContain(`const loaderA = { __brand: "loader", $$id: "hash1#loaderA" };`);
-    expect(result!.code).toContain(`const loaderB = { __brand: "loader", $$id: "hash2#loaderB" };`);
+    expect(result!.code).toContain(
+      `const loaderA = { __brand: "loader", $$id: "hash1#loaderA" };`,
+    );
+    expect(result!.code).toContain(
+      `const loaderB = { __brand: "loader", $$id: "hash2#loaderB" };`,
+    );
   });
 
   it("handles $-prefixed handler names via escapeRegExp", () => {
@@ -236,7 +276,9 @@ describe("evictHandlerCode", () => {
       "loader",
     );
     expect(result).not.toBeNull();
-    expect(result!.code).toContain(`const $Nav = { __brand: "loader", $$id: "abc12345#$Nav" };`);
+    expect(result!.code).toContain(
+      `const $Nav = { __brand: "loader", $$id: "abc12345#$Nav" };`,
+    );
     expect(result!.code).not.toContain(`$Nav.$$id`);
   });
 
@@ -256,9 +298,13 @@ describe("evictHandlerCode", () => {
       "loader",
     );
     expect(result).not.toBeNull();
-    expect(result!.code).toContain(`const Article = { __brand: "loader", $$id: "hash1#Article" };`);
+    expect(result!.code).toContain(
+      `const Article = { __brand: "loader", $$id: "hash1#Article" };`,
+    );
     // ArticleDetail should remain intact
     expect(result!.code).toContain(`const ArticleDetail = createLoader`);
-    expect(result!.code).toContain(`ArticleDetail.$$id = "hash2#ArticleDetail";`);
+    expect(result!.code).toContain(
+      `ArticleDetail.$$id = "hash2#ArticleDetail";`,
+    );
   });
 });

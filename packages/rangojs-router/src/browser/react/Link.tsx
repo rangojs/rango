@@ -1,6 +1,13 @@
 "use client";
 
-import React, { forwardRef, useCallback, useContext, useRef, type ForwardRefExoticComponent, type RefAttributes } from "react";
+import React, {
+  forwardRef,
+  useCallback,
+  useContext,
+  useRef,
+  type ForwardRefExoticComponent,
+  type RefAttributes,
+} from "react";
 import { NavigationStoreContext } from "./context.js";
 import { LinkContext } from "./use-link-status.js";
 import type { NavigateOptions } from "../types.js";
@@ -60,8 +67,10 @@ export type PrefetchStrategy = "hover" | "viewport" | "hybrid" | "none";
 /**
  * Link component props
  */
-export interface LinkProps
-  extends Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, "href"> {
+export interface LinkProps extends Omit<
+  React.AnchorHTMLAttributes<HTMLAnchorElement>,
+  "href"
+> {
   /**
    * The URL to navigate to (typically from router.reverse())
    */
@@ -147,7 +156,9 @@ function isExternalUrl(href: string): boolean {
  * <Link to="https://example.com">External</Link>
  * ```
  */
-export const Link: ForwardRefExoticComponent<LinkProps & RefAttributes<HTMLAnchorElement>> = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
+export const Link: ForwardRefExoticComponent<
+  LinkProps & RefAttributes<HTMLAnchorElement>
+> = forwardRef<HTMLAnchorElement, LinkProps>(function Link(
   {
     to,
     replace = false,
@@ -159,7 +170,7 @@ export const Link: ForwardRefExoticComponent<LinkProps & RefAttributes<HTMLAncho
     onClick,
     ...props
   },
-  ref
+  ref,
 ) {
   const ctx = useContext(NavigationStoreContext);
   const isExternal = isExternalUrl(to);
@@ -204,9 +215,15 @@ export const Link: ForwardRefExoticComponent<LinkProps & RefAttributes<HTMLAncho
         let resolvedState: unknown;
         const currentState = stateRef.current;
 
-        if (Array.isArray(currentState) && currentState.length > 0 && isLocationStateEntry(currentState[0])) {
+        if (
+          Array.isArray(currentState) &&
+          currentState.length > 0 &&
+          isLocationStateEntry(currentState[0])
+        ) {
           // Type-safe LocationStateEntry[] - resolve each entry into keyed object
-          resolvedState = resolveLocationStateEntries(currentState as LocationStateEntry[]);
+          resolvedState = resolveLocationStateEntries(
+            currentState as LocationStateEntry[],
+          );
         } else if (typeof currentState === "function") {
           // Legacy getter function
           resolvedState = currentState();
@@ -218,7 +235,7 @@ export const Link: ForwardRefExoticComponent<LinkProps & RefAttributes<HTMLAncho
         ctx.navigate(to, { replace, scroll, state: resolvedState });
       }
     },
-    [to, isExternal, reloadDocument, replace, scroll, ctx, onClick]
+    [to, isExternal, reloadDocument, replace, scroll, ctx, onClick],
   );
 
   const handleMouseEnter = useCallback(() => {
@@ -240,9 +257,7 @@ export const Link: ForwardRefExoticComponent<LinkProps & RefAttributes<HTMLAncho
       data-replace={replace ? "true" : undefined}
       {...props}
     >
-      <LinkContext.Provider value={to}>
-        {children}
-      </LinkContext.Provider>
+      <LinkContext.Provider value={to}>{children}</LinkContext.Provider>
     </a>
   );
 });

@@ -215,7 +215,9 @@ export interface NavigationUpdate {
  * - LocationStateEntry[]: Type-safe state entries (recommended)
  * - unknown: Legacy format for backwards compatibility
  */
-export type HistoryState = import("./react/location-state-shared.js").LocationStateEntry[] | unknown;
+export type HistoryState =
+  | import("./react/location-state-shared.js").LocationStateEntry[]
+  | unknown;
 
 /**
  * Options for navigation operations
@@ -262,15 +264,15 @@ export interface NavigateOptionsInternal extends NavigateOptions {
 export interface RscBrowserDependencies {
   createFromFetch: <T>(
     response: Promise<Response>,
-    options?: { temporaryReferences?: any }
+    options?: { temporaryReferences?: any },
   ) => Promise<T>;
   createFromReadableStream: <T>(stream: ReadableStream) => Promise<T>;
   encodeReply: (
     args: any[],
-    options?: { temporaryReferences?: any }
+    options?: { temporaryReferences?: any },
   ) => Promise<FormData | string>;
   setServerCallback: (
-    callback: (id: string, args: any[]) => Promise<any>
+    callback: (id: string, args: any[]) => Promise<any>,
   ) => void;
   createTemporaryReferenceSet: () => any;
 }
@@ -322,11 +324,13 @@ export interface NavigationStore {
   cacheSegmentsForHistory(
     historyKey: string,
     segments: ResolvedSegment[],
-    handleData?: HandleData
+    handleData?: HandleData,
   ): void;
   getCachedSegments(
-    historyKey: string
-  ): { segments: ResolvedSegment[]; stale: boolean; handleData?: HandleData } | undefined;
+    historyKey: string,
+  ):
+    | { segments: ResolvedSegment[]; stale: boolean; handleData?: HandleData }
+    | undefined;
   hasHistoryCache(historyKey: string): boolean;
   updateCacheHandleData(historyKey: string, handleData: HandleData): void;
   markCacheAsStale(): void;
@@ -350,7 +354,7 @@ export interface NavigationStore {
   setActionState(actionId: string, state: Partial<TrackedActionState>): void;
   subscribeToAction(
     actionId: string,
-    listener: ActionStateListener
+    listener: ActionStateListener,
   ): () => void;
 }
 
@@ -453,7 +457,7 @@ export interface ServerActionBridgeConfig {
   onUpdate: UpdateSubscriber;
   renderSegments: (
     segments: ResolvedSegment[],
-    options?: RenderSegmentsOptions
+    options?: RenderSegmentsOptions,
   ) => Promise<ReactNode> | ReactNode;
 }
 
@@ -480,7 +484,7 @@ export interface NavigationBridgeConfig {
   onUpdate: UpdateSubscriber;
   renderSegments: (
     segments: ResolvedSegment[],
-    options?: RenderSegmentsOptions
+    options?: RenderSegmentsOptions,
   ) => Promise<ReactNode> | ReactNode;
 }
 

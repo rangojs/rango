@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { buildMatchResult } from "../router/match-result.js";
 import type { ResolvedSegment } from "../types.js";
-import type { MatchContext, MatchPipelineState } from "../router/match-context.js";
+import type {
+  MatchContext,
+  MatchPipelineState,
+} from "../router/match-context.js";
 
 // Mock metrics and logging (not relevant to these tests)
 vi.mock("../router/metrics.js", () => ({
@@ -44,7 +47,9 @@ function makeCtx(overrides?: Partial<MatchContext<any>>): MatchContext<any> {
   } as any;
 }
 
-function makeState(overrides?: Partial<MatchPipelineState>): MatchPipelineState {
+function makeState(
+  overrides?: Partial<MatchPipelineState>,
+): MatchPipelineState {
   return {
     cacheHit: false,
     segments: [],
@@ -72,7 +77,10 @@ describe("buildMatchResult", () => {
       const result = buildMatchResult(segments, makeCtx(), makeState());
 
       expect(result.matched).toEqual([
-        "M0L0", "M0L0C0", "M0L0C0L0", "M0L0C0L0R0",
+        "M0L0",
+        "M0L0C0",
+        "M0L0C0L0",
+        "M0L0C0L0R0",
       ]);
       expect(new Set(result.matched).size).toBe(result.matched.length);
     });
@@ -83,9 +91,9 @@ describe("buildMatchResult", () => {
       // IDs in matched[], changing the React tree depth and causing remounts.
       const segments = [
         seg("M0L0"),
-        seg("M0L0C0"),        // shared layout (first occurrence)
+        seg("M0L0C0"), // shared layout (first occurrence)
         seg("M0L0C0L0"),
-        seg("M0L0C0"),        // shared layout (DUPLICATE from second include scope)
+        seg("M0L0C0"), // shared layout (DUPLICATE from second include scope)
         seg("M0L0C0L0R0", { type: "route" }),
       ];
 
@@ -94,7 +102,10 @@ describe("buildMatchResult", () => {
       // matched must have unique IDs - no duplicates
       expect(new Set(result.matched).size).toBe(result.matched.length);
       expect(result.matched).toEqual([
-        "M0L0", "M0L0C0", "M0L0C0L0", "M0L0C0L0R0",
+        "M0L0",
+        "M0L0C0",
+        "M0L0C0L0",
+        "M0L0C0L0R0",
       ]);
     });
 
@@ -102,7 +113,7 @@ describe("buildMatchResult", () => {
       const segments = [
         seg("M0L0"),
         seg("M0L0C0"),
-        seg("M0L0"),           // duplicate
+        seg("M0L0"), // duplicate
         seg("M0L0C0L0R0", { type: "route" }),
       ];
 
@@ -111,16 +122,18 @@ describe("buildMatchResult", () => {
       // segments should also be deduped (keeping first occurrence)
       expect(result.segments.length).toBe(3);
       expect(result.segments.map((s) => s.id)).toEqual([
-        "M0L0", "M0L0C0", "M0L0C0L0R0",
+        "M0L0",
+        "M0L0C0",
+        "M0L0C0L0R0",
       ]);
     });
 
     it("deduplicates matched IDs for partial match", () => {
       const segments = [
         seg("M0L0"),
-        seg("M0L0C0", { component: null }),     // null = client already has it
-        seg("M0L0C0L0", { component: null }),   // null = client already has it
-        seg("M0L0C0L0R0", { type: "route" }),   // has component
+        seg("M0L0C0", { component: null }), // null = client already has it
+        seg("M0L0C0L0", { component: null }), // null = client already has it
+        seg("M0L0C0L0R0", { type: "route" }), // has component
       ];
 
       const state = makeState({
@@ -137,7 +150,10 @@ describe("buildMatchResult", () => {
       // matched must have unique IDs
       expect(new Set(result.matched).size).toBe(result.matched.length);
       expect(result.matched).toEqual([
-        "M0L0", "M0L0C0", "M0L0C0L0", "M0L0C0L0R0",
+        "M0L0",
+        "M0L0C0",
+        "M0L0C0L0",
+        "M0L0C0L0R0",
       ]);
     });
 
@@ -146,8 +162,8 @@ describe("buildMatchResult", () => {
         seg("A"),
         seg("B"),
         seg("C"),
-        seg("A"),   // duplicate of first
-        seg("B"),   // duplicate of second
+        seg("A"), // duplicate of first
+        seg("B"), // duplicate of second
         seg("D", { type: "route" }),
       ];
 
@@ -159,10 +175,7 @@ describe("buildMatchResult", () => {
 
   describe("diff array", () => {
     it("diff matches segments for full match (unique)", () => {
-      const segments = [
-        seg("L0"),
-        seg("L0R0", { type: "route" }),
-      ];
+      const segments = [seg("L0"), seg("L0R0", { type: "route" })];
 
       const result = buildMatchResult(segments, makeCtx(), makeState());
 
@@ -172,9 +185,9 @@ describe("buildMatchResult", () => {
 
     it("diff only includes segments with component for partial match", () => {
       const segments = [
-        seg("L0"),                                 // has component
-        seg("L0C0", { component: null }),          // null = skip
-        seg("L0C0R0", { type: "route" }),          // has component
+        seg("L0"), // has component
+        seg("L0C0", { component: null }), // null = skip
+        seg("L0C0R0", { type: "route" }), // has component
         seg("L0D0", { type: "loader", component: null }), // loader = keep even if null
       ];
 

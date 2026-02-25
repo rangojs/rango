@@ -36,7 +36,7 @@ export type LoaderErrorCallback = (
     segmentId: string;
     loaderName: string;
     handledByBoundary: boolean;
-  }
+  },
 ) => void;
 
 /**
@@ -55,14 +55,14 @@ export function wrapLoaderWithErrorHandling<T>(
   segmentId: string,
   pathname: string,
   findNearestErrorBoundary: (
-    entry: EntryData | null
+    entry: EntryData | null,
   ) => ReactNode | ErrorBoundaryHandler | null,
   createErrorInfo: (
     error: unknown,
     segmentId: string,
-    segmentType: ErrorInfo["segmentType"]
+    segmentType: ErrorInfo["segmentType"],
   ) => ErrorInfo,
-  onError?: LoaderErrorCallback
+  onError?: LoaderErrorCallback,
 ): Promise<LoaderDataResult<T>> {
   // Extract loader name from segmentId (format: "M1L0D0.loaderName")
   const loaderName = segmentId.split(".").pop() || "unknown";
@@ -73,7 +73,7 @@ export function wrapLoaderWithErrorHandling<T>(
         __loaderResult: true,
         ok: true,
         data,
-      })
+      }),
     )
     .catch((error): LoaderDataResult<T> => {
       // Find nearest error boundary
@@ -134,7 +134,7 @@ export function wrapLoaderWithErrorHandling<T>(
 function detectLoaderCycle(
   from: string,
   to: string,
-  dependsOn: Map<string, Set<string>>
+  dependsOn: Map<string, Set<string>>,
 ): string[] | null {
   // If `to` can reach `from` via the dependency graph, adding the edge
   // from -> to creates a cycle. We search from `to` looking for `from`.
@@ -176,8 +176,11 @@ function detectLoaderCycle(
  */
 function createLoaderExecutor<TEnv>(
   ctx: HandlerContext<any, TEnv>,
-  loaderPromises: Map<string, Promise<any>>
-): (loader: LoaderDefinition<any, any>, callerLoaderId: string | null) => Promise<any> {
+  loaderPromises: Map<string, Promise<any>>,
+): (
+  loader: LoaderDefinition<any, any>,
+  callerLoaderId: string | null,
+) => Promise<any> {
   // Dependency graph: loaderId -> set of loader IDs it directly depends on.
   const dependsOn = new Map<string, Set<string>>();
 
@@ -187,7 +190,7 @@ function createLoaderExecutor<TEnv>(
 
   function useLoader(
     loader: LoaderDefinition<any, any>,
-    callerLoaderId: string | null
+    callerLoaderId: string | null,
   ): Promise<any> {
     // Record the dependency edge and check for cycles before running
     if (callerLoaderId !== null) {
@@ -204,7 +207,7 @@ function createLoaderExecutor<TEnv>(
           throw new Error(
             `Circular loader dependency detected: ${cycle.join(" -> ")}. ` +
               `Loaders cannot depend on each other in a cycle. ` +
-              `Refactor to break the circular dependency.`
+              `Refactor to break the circular dependency.`,
           );
         }
       }
@@ -228,7 +231,7 @@ function createLoaderExecutor<TEnv>(
 
     if (!loaderFn) {
       throw new Error(
-        `Loader "${loader.$$id}" has no function. This usually means the loader was defined without "use server" and the function was not included in the build.`
+        `Loader "${loader.$$id}" has no function. This usually means the loader was defined without "use server" and the function was not included in the build.`,
       );
     }
 
@@ -246,7 +249,7 @@ function createLoaderExecutor<TEnv>(
       var: ctx.var,
       get: ctx.get,
       use: <TDep, TDepParams = any>(
-        dep: LoaderDefinition<TDep, TDepParams>
+        dep: LoaderDefinition<TDep, TDepParams>,
       ): Promise<TDep> => {
         return useLoader(dep, currentLoaderId);
       },
@@ -256,7 +259,7 @@ function createLoaderExecutor<TEnv>(
 
     const doneLoader = track(`loader:${loader.$$id}`);
     const promise = Promise.resolve(
-      loaderFn(loaderCtx as LoaderContext<any, TEnv>)
+      loaderFn(loaderCtx as LoaderContext<any, TEnv>),
     ).finally(() => {
       pendingLoaders.delete(loader.$$id);
       doneLoader();
@@ -280,7 +283,7 @@ function createLoaderExecutor<TEnv>(
  */
 export function setupLoaderAccess<TEnv>(
   ctx: HandlerContext<any, TEnv>,
-  loaderPromises: Map<string, Promise<any>>
+  loaderPromises: Map<string, Promise<any>>,
 ): void {
   // Eagerly capture the HandleStore at setup time (before pipeline async ops).
   // In workerd/Cloudflare, dynamic imports and fetch() in the match pipeline
@@ -300,16 +303,19 @@ export function setupLoaderAccess<TEnv>(
       if (!segmentId) {
         throw new Error(
           `Handle "${handle.$$id}" used outside of handler context. ` +
-            `Handles must be used within route/layout handlers.`
+            `Handles must be used within route/layout handlers.`,
         );
       }
 
-      return (dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>)) => {
+      return (
+        dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>),
+      ) => {
         if (!store) return;
 
-        const valueOrPromise = typeof dataOrFn === "function"
-          ? (dataOrFn as () => Promise<unknown>)()
-          : dataOrFn;
+        const valueOrPromise =
+          typeof dataOrFn === "function"
+            ? (dataOrFn as () => Promise<unknown>)()
+            : dataOrFn;
 
         store.push(handle.$$id, segmentId, valueOrPromise);
       };
@@ -323,9 +329,7 @@ export function setupLoaderAccess<TEnv>(
  * Set up ctx.use() for pre-rendering (build-time).
  * Handles push to HandleStore; loaders throw with a clear error.
  */
-export function setupBuildUse<TEnv>(
-  ctx: HandlerContext<any, TEnv>,
-): void {
+export function setupBuildUse<TEnv>(ctx: HandlerContext<any, TEnv>): void {
   // Eagerly capture the HandleStore (same ALS protection as setupLoaderAccess).
   const handleStoreRef = getRequestContext()?._handleStore;
 
@@ -343,12 +347,15 @@ export function setupBuildUse<TEnv>(
         );
       }
 
-      return (dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>)) => {
+      return (
+        dataOrFn: unknown | Promise<unknown> | (() => Promise<unknown>),
+      ) => {
         if (!store) return;
 
-        const valueOrPromise = typeof dataOrFn === "function"
-          ? (dataOrFn as () => Promise<unknown>)()
-          : dataOrFn;
+        const valueOrPromise =
+          typeof dataOrFn === "function"
+            ? (dataOrFn as () => Promise<unknown>)()
+            : dataOrFn;
 
         store.push(handle.$$id, segmentId, valueOrPromise);
       };
@@ -373,7 +380,7 @@ export function setupBuildUse<TEnv>(
  */
 export function setupLoaderAccessSilent<TEnv>(
   ctx: HandlerContext<any, TEnv>,
-  loaderPromises: Map<string, Promise<any>>
+  loaderPromises: Map<string, Promise<any>>,
 ): void {
   const useLoader = createLoaderExecutor(ctx, loaderPromises);
 
@@ -399,7 +406,7 @@ export function setupLoaderAccessSilent<TEnv>(
 export async function revalidate<T>(
   shouldRevalidate: () => Promise<boolean>,
   onRevalidate: () => Promise<T>,
-  onSkip: () => T
+  onSkip: () => T,
 ): Promise<T> {
   const needsRevalidation = await shouldRevalidate();
   return needsRevalidation ? await onRevalidate() : onSkip();

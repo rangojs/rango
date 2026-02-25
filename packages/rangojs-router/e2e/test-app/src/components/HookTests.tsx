@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useEffect, useActionState } from "react";
-import { useLoader, useFetchLoader, ErrorBoundary, type LoaderDefinition } from "@rangojs/router/client";
+import {
+  useLoader,
+  useFetchLoader,
+  ErrorBoundary,
+  type LoaderDefinition,
+} from "@rangojs/router/client";
 import { UnregisteredLoader } from "../loaders.js";
 
 // Type for the hook test loader data
@@ -46,7 +51,8 @@ interface ProtectedLoaderTestProps {
  * - Should update data on navigation
  */
 export function UseLoaderTest({ loader }: UseLoaderTestProps) {
-  const { data, load, isLoading, error } = useLoader<HookTestLoaderData>(loader);
+  const { data, load, isLoading, error } =
+    useLoader<HookTestLoaderData>(loader);
 
   return (
     <div data-testid="use-loader-test">
@@ -90,7 +96,8 @@ export function UseLoaderTest({ loader }: UseLoaderTestProps) {
  * - Can refetch via load()
  */
 export function UseFetchLoaderPreloadedTest({ loader }: UseLoaderTestProps) {
-  const { data, load, isLoading, error } = useFetchLoader<HookTestLoaderData>(loader);
+  const { data, load, isLoading, error } =
+    useFetchLoader<HookTestLoaderData>(loader);
 
   return (
     <div data-testid="use-fetch-loader-preloaded-test">
@@ -98,17 +105,31 @@ export function UseFetchLoaderPreloadedTest({ loader }: UseLoaderTestProps) {
 
       {data ? (
         <div data-testid="use-fetch-loader-preloaded-data">
-          <p data-testid="use-fetch-loader-preloaded-route-id">Route ID: {data.routeId}</p>
-          <p data-testid="use-fetch-loader-preloaded-count">Count: {data.count}</p>
-          <p data-testid="use-fetch-loader-preloaded-source">Source: {data.source}</p>
-          <p data-testid="use-fetch-loader-preloaded-timestamp">Timestamp: {data.timestamp}</p>
+          <p data-testid="use-fetch-loader-preloaded-route-id">
+            Route ID: {data.routeId}
+          </p>
+          <p data-testid="use-fetch-loader-preloaded-count">
+            Count: {data.count}
+          </p>
+          <p data-testid="use-fetch-loader-preloaded-source">
+            Source: {data.source}
+          </p>
+          <p data-testid="use-fetch-loader-preloaded-timestamp">
+            Timestamp: {data.timestamp}
+          </p>
         </div>
       ) : (
         <p data-testid="use-fetch-loader-preloaded-no-data">No data</p>
       )}
 
-      {isLoading && <p data-testid="use-fetch-loader-preloaded-loading">Loading...</p>}
-      {error && <p data-testid="use-fetch-loader-preloaded-error">Error: {error.message}</p>}
+      {isLoading && (
+        <p data-testid="use-fetch-loader-preloaded-loading">Loading...</p>
+      )}
+      {error && (
+        <p data-testid="use-fetch-loader-preloaded-error">
+          Error: {error.message}
+        </p>
+      )}
 
       <div style={{ marginTop: "1rem" }}>
         <button
@@ -136,7 +157,9 @@ export function UseFetchLoaderPreloadedTest({ loader }: UseLoaderTestProps) {
  * - Should have undefined data initially
  * - Can fetch on-demand via load()
  */
-export function UseFetchLoaderUnregisteredTest({ loader }: UseFetchLoaderUnregisteredTestProps) {
+export function UseFetchLoaderUnregisteredTest({
+  loader,
+}: UseFetchLoaderUnregisteredTestProps) {
   const { data, load, isLoading, error } = useFetchLoader<{
     id: string;
     message: string;
@@ -150,15 +173,27 @@ export function UseFetchLoaderUnregisteredTest({ loader }: UseFetchLoaderUnregis
       {data ? (
         <div data-testid="use-fetch-loader-unregistered-data">
           <p data-testid="use-fetch-loader-unregistered-id">ID: {data.id}</p>
-          <p data-testid="use-fetch-loader-unregistered-message">Message: {data.message}</p>
-          <p data-testid="use-fetch-loader-unregistered-timestamp">Timestamp: {data.timestamp}</p>
+          <p data-testid="use-fetch-loader-unregistered-message">
+            Message: {data.message}
+          </p>
+          <p data-testid="use-fetch-loader-unregistered-timestamp">
+            Timestamp: {data.timestamp}
+          </p>
         </div>
       ) : (
-        <p data-testid="use-fetch-loader-unregistered-no-data">No data (not pre-loaded)</p>
+        <p data-testid="use-fetch-loader-unregistered-no-data">
+          No data (not pre-loaded)
+        </p>
       )}
 
-      {isLoading && <p data-testid="use-fetch-loader-unregistered-loading">Loading...</p>}
-      {error && <p data-testid="use-fetch-loader-unregistered-error">Error: {error.message}</p>}
+      {isLoading && (
+        <p data-testid="use-fetch-loader-unregistered-loading">Loading...</p>
+      )}
+      {error && (
+        <p data-testid="use-fetch-loader-unregistered-error">
+          Error: {error.message}
+        </p>
+      )}
 
       <div style={{ marginTop: "1rem" }}>
         <button
@@ -207,10 +242,14 @@ export function UseFetchLoaderTestB({ loader }: UseLoaderTestProps) {
 
       {data ? (
         <div data-testid="use-fetch-loader-data-b">
-          <p data-testid="use-fetch-loader-route-id-b">Route ID: {data.routeId}</p>
+          <p data-testid="use-fetch-loader-route-id-b">
+            Route ID: {data.routeId}
+          </p>
           <p data-testid="use-fetch-loader-count-b">Count: {data.count}</p>
           <p data-testid="use-fetch-loader-source-b">Source: {data.source}</p>
-          <p data-testid="use-fetch-loader-timestamp-b">Timestamp: {data.timestamp}</p>
+          <p data-testid="use-fetch-loader-timestamp-b">
+            Timestamp: {data.timestamp}
+          </p>
         </div>
       ) : (
         <p data-testid="use-fetch-loader-no-data-b">No data</p>
@@ -293,7 +332,9 @@ export function ProtectedLoaderTest({ loader }: ProtectedLoaderTestProps) {
       )}
 
       {isLoading && <p data-testid="protected-loader-loading">Loading...</p>}
-      {error && <p data-testid="protected-loader-error">Error: {error.message}</p>}
+      {error && (
+        <p data-testid="protected-loader-error">Error: {error.message}</p>
+      )}
 
       <div style={{ marginTop: "1rem" }}>
         <button
@@ -305,7 +346,9 @@ export function ProtectedLoaderTest({ loader }: ProtectedLoaderTestProps) {
         </button>
         <button
           data-testid="protected-loader-invalid-token-btn"
-          onClick={() => load({ params: { authToken: "invalid", userId: "user1" } })}
+          onClick={() =>
+            load({ params: { authToken: "invalid", userId: "user1" } })
+          }
           disabled={isLoading}
           style={{ marginLeft: "0.5rem" }}
         >
@@ -313,7 +356,9 @@ export function ProtectedLoaderTest({ loader }: ProtectedLoaderTestProps) {
         </button>
         <button
           data-testid="protected-loader-authorized-btn"
-          onClick={() => load({ params: { authToken: "valid-token", userId: "user1" } })}
+          onClick={() =>
+            load({ params: { authToken: "valid-token", userId: "user1" } })
+          }
           disabled={isLoading}
           style={{ marginLeft: "0.5rem" }}
         >
@@ -337,13 +382,17 @@ function UnhandledErrorLoaderInner({ loader }: ErrorLoaderTestProps) {
     <div data-testid="unhandled-error-loader-inner">
       {data ? (
         <div data-testid="unhandled-error-loader-data">
-          <p data-testid="unhandled-error-loader-message">Message: {data.message}</p>
+          <p data-testid="unhandled-error-loader-message">
+            Message: {data.message}
+          </p>
         </div>
       ) : (
         <p data-testid="unhandled-error-loader-no-data">No data</p>
       )}
 
-      {isLoading && <p data-testid="unhandled-error-loader-loading">Loading...</p>}
+      {isLoading && (
+        <p data-testid="unhandled-error-loader-loading">Loading...</p>
+      )}
 
       <div style={{ marginTop: "1rem" }}>
         <button
@@ -483,7 +532,9 @@ export function IsLoadingTest({ loader }: UseFetchLoaderUnregisteredTestProps) {
  * Tests form action support with load.action (client-side state management)
  * This uses the hook's action wrapper for isLoading/error state tracking
  */
-export function FormActionTest({ loader }: UseFetchLoaderUnregisteredTestProps) {
+export function FormActionTest({
+  loader,
+}: UseFetchLoaderUnregisteredTestProps) {
   const { data, load, isLoading, error } = useFetchLoader<{
     id: string;
     message: string;
@@ -528,12 +579,14 @@ export function FormActionTest({ loader }: UseFetchLoaderUnregisteredTestProps) 
  * Tests true progressive enhancement using loader.action directly
  * This uses the server action directly for no-JS support
  */
-export function FormActionProgressiveTest({ loader }: UseFetchLoaderUnregisteredTestProps) {
+export function FormActionProgressiveTest({
+  loader,
+}: UseFetchLoaderUnregisteredTestProps) {
   // Use useActionState with the server action directly (not a wrapper)
   // The server action must be passed directly to preserve PE semantics
   const [state, formAction, isPending] = useActionState(
     loader.action!,
-    null as { id: string; message: string; timestamp: string } | null
+    null as { id: string; message: string; timestamp: string } | null,
   );
 
   return (
@@ -542,14 +595,18 @@ export function FormActionProgressiveTest({ loader }: UseFetchLoaderUnregistered
 
       {state ? (
         <div data-testid="form-action-progressive-data">
-          <p data-testid="form-action-progressive-message">Message: {state.message}</p>
+          <p data-testid="form-action-progressive-message">
+            Message: {state.message}
+          </p>
           <p data-testid="form-action-progressive-id">ID: {state.id}</p>
         </div>
       ) : (
         <p data-testid="form-action-progressive-no-data">No data</p>
       )}
 
-      {isPending && <p data-testid="form-action-progressive-loading">Loading...</p>}
+      {isPending && (
+        <p data-testid="form-action-progressive-loading">Loading...</p>
+      )}
 
       <form
         data-testid="form-action-progressive-form"

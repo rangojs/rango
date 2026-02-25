@@ -37,7 +37,9 @@ if (command === "generate") {
   }
 
   if (positionalArgs.length === 0) {
-    console.error("[rango] Usage: rango generate <file|dir> [file2 ...] [--runtime|--static] [--config <path>]");
+    console.error(
+      "[rango] Usage: rango generate <file|dir> [file2 ...] [--runtime|--static] [--config <path>]",
+    );
     process.exit(1);
   }
 
@@ -55,7 +57,12 @@ if (command === "generate") {
     runStaticGeneration(positionalArgs, mode);
   }
 } else {
-  if (command && command !== "help" && command !== "--help" && command !== "-h") {
+  if (
+    command &&
+    command !== "help" &&
+    command !== "--help" &&
+    command !== "-h"
+  ) {
     console.error(`[rango] Unknown command: ${command}\n`);
   }
   console.log(`Usage: rango generate <file|dir> [file2 ...] [--runtime|--static] [--config <path>]
@@ -76,7 +83,11 @@ Examples:
   rango generate src/router.tsx
   rango generate src/router.tsx --runtime
   rango generate src/ --static`);
-  process.exit(command && command !== "help" && command !== "--help" && command !== "-h" ? 1 : 0);
+  process.exit(
+    command && command !== "help" && command !== "--help" && command !== "-h"
+      ? 1
+      : 0,
+  );
 }
 
 /**
@@ -138,12 +149,15 @@ function runStaticGeneration(args: string[], mode: "default" | "static") {
         writePerModuleRouteTypesForFile(filePath);
       }
     } catch (err) {
-      console.warn(`[rango] Failed to process ${filePath}: ${(err as Error).message}`);
+      console.warn(
+        `[rango] Failed to process ${filePath}: ${(err as Error).message}`,
+      );
     }
   }
 
   // Check for unresolvable includes across all router files
-  const allDiagnostics: Array<UnresolvableInclude & { routerFile: string }> = [];
+  const allDiagnostics: Array<UnresolvableInclude & { routerFile: string }> =
+    [];
   for (const routerFile of routerFiles) {
     const diagnostics = detectUnresolvableIncludes(routerFile);
     for (const d of diagnostics) {
@@ -157,17 +171,19 @@ function runStaticGeneration(args: string[], mode: "default" | "static") {
     formatDiagnostics(allDiagnostics);
     console.error(
       "\nThe static parser cannot resolve these includes because they use " +
-      "factory functions or dynamic expressions.\n\n" +
-      "Options:\n" +
-      "  rango generate <path> --runtime   Use Vite-based discovery (requires vite)\n" +
-      "  rango generate <path> --static    Accept partial output (missing routes above)\n"
+        "factory functions or dynamic expressions.\n\n" +
+        "Options:\n" +
+        "  rango generate <path> --runtime   Use Vite-based discovery (requires vite)\n" +
+        "  rango generate <path> --static    Accept partial output (missing routes above)\n",
     );
     process.exit(1);
   }
 
   if (allDiagnostics.length > 0 && mode === "static") {
     // Warning: partial output accepted
-    console.warn("\n[rango] Warning: partial output (unresolvable includes):\n");
+    console.warn(
+      "\n[rango] Warning: partial output (unresolvable includes):\n",
+    );
     formatDiagnostics(allDiagnostics);
     console.warn("");
   }
@@ -178,7 +194,9 @@ function runStaticGeneration(args: string[], mode: "default" | "static") {
     writeCombinedRouteTypes(projectRoot, [routerFile]);
   }
 
-  console.log(`[rango] Processed ${files.length} file(s)${routerFiles.length ? ` (${routerFiles.length} router)` : ""}`);
+  console.log(
+    `[rango] Processed ${files.length} file(s)${routerFiles.length ? ` (${routerFiles.length} router)` : ""}`,
+  );
   process.exit(0);
 }
 
@@ -225,10 +243,13 @@ async function runRuntimeDiscovery(args: string[], configFile?: string) {
     const mod = await import("../build/runtime-discovery.ts");
     discoverAndWriteRouteTypes = mod.discoverAndWriteRouteTypes;
   } catch (err: any) {
-    if (err.code === "ERR_MODULE_NOT_FOUND" || err.code === "MODULE_NOT_FOUND") {
+    if (
+      err.code === "ERR_MODULE_NOT_FOUND" ||
+      err.code === "MODULE_NOT_FOUND"
+    ) {
       console.error(
         "[rango] Runtime discovery requires 'vite' and '@vitejs/plugin-rsc'.\n" +
-        "Install them with: pnpm add -D vite @vitejs/plugin-rsc"
+          "Install them with: pnpm add -D vite @vitejs/plugin-rsc",
       );
     } else {
       console.error(`[rango] Failed to load runtime discovery: ${err.message}`);
@@ -246,12 +267,14 @@ async function runRuntimeDiscovery(args: string[], configFile?: string) {
       entry,
     });
     console.log(
-      `[rango] Runtime discovery: ${result.routerCount} router(s), ${result.routeCount} route(s)`
+      `[rango] Runtime discovery: ${result.routerCount} router(s), ${result.routeCount} route(s)`,
     );
   }
 }
 
-function formatDiagnostics(diagnostics: Array<UnresolvableInclude & { routerFile: string }>) {
+function formatDiagnostics(
+  diagnostics: Array<UnresolvableInclude & { routerFile: string }>,
+) {
   for (const d of diagnostics) {
     const prefix = d.namePrefix ? `${d.namePrefix}.*` : `${d.pathPrefix}*`;
     console.error(`  ${prefix}`);

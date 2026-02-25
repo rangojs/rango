@@ -45,21 +45,19 @@ export const ErrorsClientErrorHandler: Handler<"errors.clientError"> = () => (
 );
 
 export const ErrorsServerErrorHandler: Handler<"errors.serverError"> = () => {
-  throw new Error("Server error: This error was thrown during server-side render");
-  return (
-    <div data-testid="server-error-page">
-      This should never render
-    </div>
+  throw new Error(
+    "Server error: This error was thrown during server-side render",
   );
+  return <div data-testid="server-error-page">This should never render</div>;
 };
 
-export const ErrorsStreamingErrorHandler: Handler<"errors.streamingError"> = async () => {
+export const ErrorsStreamingErrorHandler: Handler<
+  "errors.streamingError"
+> = async () => {
   // Simulate async work then throw
   await new Promise((resolve) => setTimeout(resolve, 500));
-  throw new Error("Streaming error: This error was thrown during async streaming");
-  return (
-    <div data-testid="streaming-error-page">
-      This should never render
-    </div>
+  throw new Error(
+    "Streaming error: This error was thrown during async streaming",
   );
+  return <div data-testid="streaming-error-page">This should never render</div>;
 };

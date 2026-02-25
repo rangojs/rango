@@ -21,22 +21,22 @@ export const vendorPatterns = urls(({ path }) => [
 ]);
 
 // consumer app -- mounts everything, doesn't need to know which routes are JSX vs API
-include("/vendor", vendorPatterns, { name: "vendor" })
+include("/vendor", vendorPatterns, { name: "vendor" });
 ```
 
 The consumer doesn't need to know which routes are JSX and which are API -- the framework handles both correctly. `ctx.reverse("vendor.apiData")` resolves the URL from anywhere.
 
 ## Supported MIME Types
 
-| Tag | MIME type | Use case |
-|-----|-----------|----------|
-| `.json` | `application/json` | REST APIs, JSON endpoints |
-| `.text` | `text/plain` | `robots.txt`, plain text responses |
-| `.html` | `text/html` | Non-RSC server-rendered HTML, legacy pages |
-| `.xml` | `application/xml` | RSS feeds, SOAP endpoints, sitemaps |
-| `.image` | `image/*` | Dynamic image generation |
-| `.stream` | `text/event-stream` | Server-Sent Events (SSE) |
-| `.any` | `*` | Anything non-RSC (binary, custom content types) |
+| Tag       | MIME type           | Use case                                        |
+| --------- | ------------------- | ----------------------------------------------- |
+| `.json`   | `application/json`  | REST APIs, JSON endpoints                       |
+| `.text`   | `text/plain`        | `robots.txt`, plain text responses              |
+| `.html`   | `text/html`         | Non-RSC server-rendered HTML, legacy pages      |
+| `.xml`    | `application/xml`   | RSS feeds, SOAP endpoints, sitemaps             |
+| `.image`  | `image/*`           | Dynamic image generation                        |
+| `.stream` | `text/event-stream` | Server-Sent Events (SSE)                        |
+| `.any`    | `*`                 | Anything non-RSC (binary, custom content types) |
 
 ## API Design
 
@@ -45,27 +45,27 @@ The consumer doesn't need to know which routes are JSX and which are API -- the 
 `urls`, `path`, and `href` get typed variants as methods: `.json`, `.text`, `.html`, `.xml`, `.image`, `.stream`, `.any`. Same signature as the base function, but marks the route as non-RSC.
 
 ```typescript
-urls.json     // urls() where all routes serve JSON (module-level declaration)
-urls.text
-urls.html
-urls.xml
-urls.stream
-urls.any
+urls.json; // urls() where all routes serve JSON (module-level declaration)
+urls.text;
+urls.html;
+urls.xml;
+urls.stream;
+urls.any;
 
-path.json     // path() that returns application/json
-path.text     // path() that returns text/plain
-path.html     // path() that returns text/html
-path.xml      // path() that returns application/xml
-path.image    // path() that returns image/*
-path.stream   // path() that returns text/event-stream
-path.any      // path() that returns anything but RSC
+path.json; // path() that returns application/json
+path.text; // path() that returns text/plain
+path.html; // path() that returns text/html
+path.xml; // path() that returns application/xml
+path.image; // path() that returns image/*
+path.stream; // path() that returns text/event-stream
+path.any; // path() that returns anything but RSC
 
-href.json     // href() that returns Link props with data-external
-href.text
-href.html
-href.xml
-href.stream
-href.any
+href.json; // href() that returns Link props with data-external
+href.text;
+href.html;
+href.xml;
+href.stream;
+href.any;
 ```
 
 Note: `include()` does **not** have response type tags. Response typing happens at the definition site via `urls.json()`, `path.json()`, etc. -- not at the mount site. This avoids a type-level gap where `include.json()` would tag routes at runtime but lose response data type inference.
@@ -83,7 +83,7 @@ export const apiPatterns = urls.json(({ path }) => [
 ]);
 
 // consumer -- plain include(), response type comes from the patterns
-include("/api", apiPatterns, { name: "api" })
+include("/api", apiPatterns, { name: "api" });
 ```
 
 **Per-route: `path.json()` -- mixed modules with some API routes**
@@ -107,7 +107,7 @@ urls(({ path, include }) => [
 
   // Regular JSX routes -- plain path(), default behavior
   path("/", HomePage, { name: "home" }),
-])
+]);
 ```
 
 ### Client-side usage
@@ -134,28 +134,28 @@ urls(({ path, include }) => [
 
 Handlers can return plain values instead of constructing `Response` objects. The framework auto-wraps the return value based on the MIME tag:
 
-| Tag | Handler can return | Auto-wrap behavior |
-|-----|-------------------|--------------------|
-| `.json` | `JsonValue \| Response` | `JSON.stringify(result)` with `application/json;charset=utf-8` |
-| `.text` | `string \| Response` | `String(result)` with `text/plain;charset=utf-8` |
-| `.html` | `string \| Response` | `String(result)` with `text/html;charset=utf-8` |
-| `.xml` | `string \| Response` | `String(result)` with `application/xml;charset=utf-8` |
-| `.image` | `Response` only | No auto-wrap (binary data) |
-| `.stream` | `Response` only | No auto-wrap (streaming) |
-| `.any` | `Response` only | No auto-wrap |
+| Tag       | Handler can return      | Auto-wrap behavior                                             |
+| --------- | ----------------------- | -------------------------------------------------------------- |
+| `.json`   | `JsonValue \| Response` | `JSON.stringify(result)` with `application/json;charset=utf-8` |
+| `.text`   | `string \| Response`    | `String(result)` with `text/plain;charset=utf-8`               |
+| `.html`   | `string \| Response`    | `String(result)` with `text/html;charset=utf-8`                |
+| `.xml`    | `string \| Response`    | `String(result)` with `application/xml;charset=utf-8`          |
+| `.image`  | `Response` only         | No auto-wrap (binary data)                                     |
+| `.stream` | `Response` only         | No auto-wrap (streaming)                                       |
+| `.any`    | `Response` only         | No auto-wrap                                                   |
 
 When the handler returns a `Response` directly, it passes through unchanged (status code, headers preserved). This allows full control when needed:
 
 ```typescript
 // Auto-wrapped: plain object -> JSON response with 200
-path.json("/products", (ctx) => products)
+path.json("/products", (ctx) => products);
 
 // Pass-through: Response returned directly for custom status/headers
 path.json("/products/:id", (ctx) => {
   const product = findProduct(ctx.params.id);
   if (!product) return new Response("Not found", { status: 404 });
   return product; // auto-wrapped as JSON
-})
+});
 ```
 
 ### JSON response envelope
@@ -171,7 +171,7 @@ interface ResponseError {
   message: string;
   code?: string;
   type?: string;
-  stack?: string;  // dev only
+  stack?: string; // dev only
 }
 ```
 
@@ -185,8 +185,8 @@ path.json("/products/:id", (ctx) => {
   if (!product) {
     throw new RouterError("NOT_FOUND", "Product not found", { status: 404 });
   }
-  return product;  // wrapped as { data: product }
-})
+  return product; // wrapped as { data: product }
+});
 // On throw: { error: { message: "Product not found", code: "NOT_FOUND" } } with 404 status
 ```
 
@@ -201,12 +201,14 @@ Non-JSON response routes also catch errors and return plain text `Response` with
 ```typescript
 import { isResponseError, type ResponseEnvelope } from "@rangojs/router/client";
 
-const result: ResponseEnvelope<Product> = await fetch(url).then(r => r.json());
+const result: ResponseEnvelope<Product> = await fetch(url).then((r) =>
+  r.json(),
+);
 if (isResponseError(result)) {
   console.log(result.error.message, result.error.code);
   return;
 }
-result.data.name  // fully typed as Product
+result.data.name; // fully typed as Product
 ```
 
 ### Typed response lookup
@@ -249,18 +251,22 @@ path.text("/robots.txt", (ctx) => new Response("...", { headers: ... }))
 
 ```typescript
 // Type definitions per MIME tag
-type JsonResponseHandler<TParams, TEnv> = (ctx: ResponseHandlerContext<TParams, TEnv>) =>
-  JsonValue | Response | Promise<JsonValue | Response>;
+type JsonResponseHandler<TParams, TEnv> = (
+  ctx: ResponseHandlerContext<TParams, TEnv>,
+) => JsonValue | Response | Promise<JsonValue | Response>;
 
-type TextResponseHandler<TParams, TEnv> = (ctx: ResponseHandlerContext<TParams, TEnv>) =>
-  string | Response | Promise<string | Response>;
+type TextResponseHandler<TParams, TEnv> = (
+  ctx: ResponseHandlerContext<TParams, TEnv>,
+) => string | Response | Promise<string | Response>;
 
-type ResponseHandler<TParams, TEnv> = (ctx: ResponseHandlerContext<TParams, TEnv>) =>
-  Response | Promise<Response>;
+type ResponseHandler<TParams, TEnv> = (
+  ctx: ResponseHandlerContext<TParams, TEnv>,
+) => Response | Promise<Response>;
 
 // vs regular handler
-type Handler<TParams, TEnv> = (ctx: HandlerContext<TParams, TEnv>) =>
-  ReactNode | Response | Promise<ReactNode | Response>;
+type Handler<TParams, TEnv> = (
+  ctx: HandlerContext<TParams, TEnv>,
+) => ReactNode | Response | Promise<ReactNode | Response>;
 ```
 
 **`ResponseHandlerContext`** — lighter context without RSC-specific features:
@@ -269,8 +275,8 @@ type Handler<TParams, TEnv> = (ctx: HandlerContext<TParams, TEnv>) =>
 interface ResponseHandlerContext<TParams, TEnv> {
   request: Request;
   params: TParams;
-  env: TEnv extends RouterEnv<infer B, any> ? B : {};  // extracts bindings, same as HandlerContext
-  searchParams: URLSearchParams;  // system params filtered
+  env: TEnv extends RouterEnv<infer B, any> ? B : {}; // extracts bindings, same as HandlerContext
+  searchParams: URLSearchParams; // system params filtered
   url: URL;
   pathname: string;
   reverse: ReverseFunction;
@@ -292,17 +298,17 @@ urls.json(({ path, include, cache }) => [...])
 //         No layout, parallel, loader, loading, intercept
 ```
 
-| Helper | `urls()` | `urls.json()` | Why |
-|--------|----------|---------------|-----|
-| `path` / `path.json` | YES | YES | Register routes |
-| `include` | YES | YES | Compose sub-modules |
-| `cache` | YES | YES | Response-level caching |
-| `layout` | YES | NO | No React tree to wrap |
-| `loading` | YES | NO | No Suspense boundaries |
-| `parallel` | YES | NO | No parallel segments |
-| `loader` | YES | NO | No segment data loading |
-| `intercept` | YES | NO | No soft navigation intercepts |
-| `when` | YES | NO | Intercept condition (RSC-only) |
+| Helper               | `urls()` | `urls.json()` | Why                            |
+| -------------------- | -------- | ------------- | ------------------------------ |
+| `path` / `path.json` | YES      | YES           | Register routes                |
+| `include`            | YES      | YES           | Compose sub-modules            |
+| `cache`              | YES      | YES           | Response-level caching         |
+| `layout`             | YES      | NO            | No React tree to wrap          |
+| `loading`            | YES      | NO            | No Suspense boundaries         |
+| `parallel`           | YES      | NO            | No parallel segments           |
+| `loader`             | YES      | NO            | No segment data loading        |
+| `intercept`          | YES      | NO            | No soft navigation intercepts  |
+| `when`               | YES      | NO            | Intercept condition (RSC-only) |
 
 **`path.json()` children** — only `cache()` is valid:
 
@@ -341,7 +347,7 @@ type MimeTag = keyof typeof MIME_TYPES;
 
 // Restricted helpers for urls.json() — no layout, parallel, loader, loading, intercept, when
 interface ResponsePathHelpers<TEnv> {
-  path: ResponsePathFn<TEnv>;     // handler must return Response
+  path: ResponsePathFn<TEnv>; // handler must return Response
   include: IncludeFn<TEnv>;
   cache: CacheFn;
   // Excluded: layout, parallel, loader, loading, intercept, when
@@ -349,7 +355,7 @@ interface ResponsePathHelpers<TEnv> {
 
 // Handler that must return Response (not ReactNode)
 type ResponseHandler<TParams, TEnv> = (
-  ctx: ResponseHandlerContext<TParams, TEnv>
+  ctx: ResponseHandlerContext<TParams, TEnv>,
 ) => Response | Promise<Response>;
 
 // Lighter context — no ctx.use(), no segment-specific APIs
@@ -363,13 +369,17 @@ interface ResponseHandlerContext<TParams, TEnv> {
 // --- Tag function implementations ---
 
 // Helper to create tag functions for each MIME type
-function createMimeTag<TFn extends Function>(baseFn: TFn, tagName: MimeTag, mimeType: string) {
+function createMimeTag<TFn extends Function>(
+  baseFn: TFn,
+  tagName: MimeTag,
+  mimeType: string,
+) {
   // Implementation varies per base function (path, urls, include, href)
 }
 
 // urls.json() passes restricted helpers and marks all routes
 urls.json = <TEnv>(
-  builder: (helpers: ResponsePathHelpers<TEnv>) => TItems
+  builder: (helpers: ResponsePathHelpers<TEnv>) => TItems,
 ): UrlPatterns<TEnv> => {
   const patterns = urls((allHelpers) => {
     const { path, include, cache } = allHelpers;
@@ -381,32 +391,57 @@ urls.json = <TEnv>(
 
 // All MIME tags on path -- each narrows handler to ResponseHandler
 path.json = (pattern, handler: ResponseHandler, options?) =>
-  path(pattern, handler as any, { ...options, [RESPONSE_TYPE]: MIME_TYPES.json });
+  path(pattern, handler as any, {
+    ...options,
+    [RESPONSE_TYPE]: MIME_TYPES.json,
+  });
 
 path.text = (pattern, handler: ResponseHandler, options?) =>
-  path(pattern, handler as any, { ...options, [RESPONSE_TYPE]: MIME_TYPES.text });
+  path(pattern, handler as any, {
+    ...options,
+    [RESPONSE_TYPE]: MIME_TYPES.text,
+  });
 
 path.html = (pattern, handler: ResponseHandler, options?) =>
-  path(pattern, handler as any, { ...options, [RESPONSE_TYPE]: MIME_TYPES.html });
+  path(pattern, handler as any, {
+    ...options,
+    [RESPONSE_TYPE]: MIME_TYPES.html,
+  });
 
 path.xml = (pattern, handler: ResponseHandler, options?) =>
-  path(pattern, handler as any, { ...options, [RESPONSE_TYPE]: MIME_TYPES.xml });
+  path(pattern, handler as any, {
+    ...options,
+    [RESPONSE_TYPE]: MIME_TYPES.xml,
+  });
 
 path.image = (pattern, handler: ResponseHandler, options?) =>
-  path(pattern, handler as any, { ...options, [RESPONSE_TYPE]: MIME_TYPES.image });
+  path(pattern, handler as any, {
+    ...options,
+    [RESPONSE_TYPE]: MIME_TYPES.image,
+  });
 
 path.stream = (pattern, handler: ResponseHandler, options?) =>
-  path(pattern, handler as any, { ...options, [RESPONSE_TYPE]: MIME_TYPES.stream });
+  path(pattern, handler as any, {
+    ...options,
+    [RESPONSE_TYPE]: MIME_TYPES.stream,
+  });
 
 path.any = (pattern, handler: ResponseHandler, options?) =>
-  path(pattern, handler as any, { ...options, [RESPONSE_TYPE]: MIME_TYPES.any });
+  path(pattern, handler as any, {
+    ...options,
+    [RESPONSE_TYPE]: MIME_TYPES.any,
+  });
 
 // All MIME tags on href -- each returns Link-ready props
-href.json = (path: ValidPaths, mount?: string) =>
-  ({ to: href(path, mount), "data-external": true });
+href.json = (path: ValidPaths, mount?: string) => ({
+  to: href(path, mount),
+  "data-external": true,
+});
 
-href.text = (path: ValidPaths, mount?: string) =>
-  ({ to: href(path, mount), "data-external": true });
+href.text = (path: ValidPaths, mount?: string) => ({
+  to: href(path, mount),
+  "data-external": true,
+});
 
 // ... same pattern for href.html, href.xml, href.stream, href.any
 ```
@@ -463,7 +498,7 @@ export interface RouteMatchResult<TEnv = any> {
   routeKey: string;
   params: Record<string, string>;
   // ...existing fields
-  responseType?: string;  // From path.json etc., available at match time
+  responseType?: string; // From path.json etc., available at match time
 }
 ```
 
@@ -475,16 +510,28 @@ const preview = await router.previewMatch(request, env);
 
 if (preview?.responseType) {
   const executeHandler = async () => {
-    const ctx = router.createContext(request, env, url, routeMap, preview.routeName);
+    const ctx = router.createContext(
+      request,
+      env,
+      url,
+      routeMap,
+      preview.routeName,
+    );
     const result = await preview.handler(ctx);
     if (result instanceof Response) return result;
     throw new Error(
-      `Route "${preview.routeName}" is marked as ${preview.responseType} but handler did not return a Response`
+      `Route "${preview.routeName}" is marked as ${preview.responseType} but handler did not return a Response`,
     );
   };
 
   if (preview.routeMiddleware?.length) {
-    return executeMiddleware(preview.routeMiddleware, request, env, variables, executeHandler);
+    return executeMiddleware(
+      preview.routeMiddleware,
+      request,
+      env,
+      variables,
+      executeHandler,
+    );
   }
   return executeHandler();
 }
@@ -494,17 +541,17 @@ if (preview?.responseType) {
 
 For a response-type route, the following never execute:
 
-| Operation | File | Cost | Skipped? |
-|-----------|------|------|----------|
-| `loadManifest()` | manifest.ts:42 | Moderate (runs entire route tree registration) | YES -- handler stored on trie |
-| `collectRouteMiddleware()` | middleware.ts:765 | Cheap (walks manifest tree) | YES |
-| `coreRequestHandlerInner()` | handler.ts:323 | Entry point for RSC logic | YES |
-| `handleRscRendering()` | handler.ts:1015 | Expensive (segment resolution + React tree) | YES |
-| `resolveSegments()` | segment-resolution.ts | Expensive (walks entry tree, calls handlers) | YES |
-| `handleHandlerResult()` | segment-resolution.ts:46 | The throw/catch mechanism | YES |
-| `renderToReadableStream()` | handler.ts:1154 | Expensive (Flight serialization) | YES |
-| Version mismatch detection | handler.ts:338 | Cheap but not relevant | YES |
-| `isPartial` / `_rsc_partial` | handler.ts:330 | Not relevant for non-Flight | YES |
+| Operation                    | File                     | Cost                                           | Skipped?                      |
+| ---------------------------- | ------------------------ | ---------------------------------------------- | ----------------------------- |
+| `loadManifest()`             | manifest.ts:42           | Moderate (runs entire route tree registration) | YES -- handler stored on trie |
+| `collectRouteMiddleware()`   | middleware.ts:765        | Cheap (walks manifest tree)                    | YES                           |
+| `coreRequestHandlerInner()`  | handler.ts:323           | Entry point for RSC logic                      | YES                           |
+| `handleRscRendering()`       | handler.ts:1015          | Expensive (segment resolution + React tree)    | YES                           |
+| `resolveSegments()`          | segment-resolution.ts    | Expensive (walks entry tree, calls handlers)   | YES                           |
+| `handleHandlerResult()`      | segment-resolution.ts:46 | The throw/catch mechanism                      | YES                           |
+| `renderToReadableStream()`   | handler.ts:1154          | Expensive (Flight serialization)               | YES                           |
+| Version mismatch detection   | handler.ts:338           | Cheap but not relevant                         | YES                           |
+| `isPartial` / `_rsc_partial` | handler.ts:330           | Not relevant for non-Flight                    | YES                           |
 
 ### Where the optimization happens
 
@@ -557,16 +604,16 @@ For the case where a developer uses plain `href()` instead of `href.json()` on a
 
 ## What Changes
 
-| File | Change |
-|------|--------|
-| `src/urls.ts` | Add `RESPONSE_TYPE` symbol, `MIME_TYPES` map, add `.json`/`.text`/`.html`/`.xml`/`.image`/`.stream`/`.any` tag functions to `path`, `ResponseEnvelope`/`ResponseError` types, `RouterError` error class |
-| `src/server/context.ts` | Add `responseType` field to route `EntryData` |
-| `src/types.ts` | Add `responseType` to `RouteMatchResult` so trie match carries it |
-| `src/router/match-api.ts` | Extend `previewMatch()` to return `responseType` + handler |
-| `src/rsc/handler.ts` | Add short-circuit in `coreRequestHandler()` before RSC pipeline, JSON envelope wrapping, error handling for all response routes |
-| `src/href-client.ts` | Add `.json`/`.text`/`.html`/`.xml`/`.stream`/`.any` tag functions to `href` (return `{ to, data-external }`), `PathResponse` type |
-| `src/client.tsx` | Export `ResponseEnvelope`, `ResponseError`, `PathResponse`, `isResponseError()` type guard |
-| `src/browser/react/Link.tsx` | No change needed -- `data-external` already works |
+| File                         | Change                                                                                                                                                                                                  |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/urls.ts`                | Add `RESPONSE_TYPE` symbol, `MIME_TYPES` map, add `.json`/`.text`/`.html`/`.xml`/`.image`/`.stream`/`.any` tag functions to `path`, `ResponseEnvelope`/`ResponseError` types, `RouterError` error class |
+| `src/server/context.ts`      | Add `responseType` field to route `EntryData`                                                                                                                                                           |
+| `src/types.ts`               | Add `responseType` to `RouteMatchResult` so trie match carries it                                                                                                                                       |
+| `src/router/match-api.ts`    | Extend `previewMatch()` to return `responseType` + handler                                                                                                                                              |
+| `src/rsc/handler.ts`         | Add short-circuit in `coreRequestHandler()` before RSC pipeline, JSON envelope wrapping, error handling for all response routes                                                                         |
+| `src/href-client.ts`         | Add `.json`/`.text`/`.html`/`.xml`/`.stream`/`.any` tag functions to `href` (return `{ to, data-external }`), `PathResponse` type                                                                       |
+| `src/client.tsx`             | Export `ResponseEnvelope`, `ResponseError`, `PathResponse`, `isResponseError()` type guard                                                                                                              |
+| `src/browser/react/Link.tsx` | No change needed -- `data-external` already works                                                                                                                                                       |
 
 ## What Doesn't Change
 
@@ -592,20 +639,20 @@ Two levels of declaration, from broadest to most specific:
 ```typescript
 // 1. Module level -- urls.json() sets the default for all routes
 export const apiPatterns = urls.json(({ path }) => [
-  path("/health", healthHandler, { name: "health" }),      // inherits json
+  path("/health", healthHandler, { name: "health" }), // inherits json
   path("/products", productsHandler, { name: "products" }), // inherits json
   path.text("/export.csv", csvHandler, { name: "export" }), // overrides to text
 ]);
 
 // 2. Route level -- path.json() on individual routes (most specific)
-path.json("/api/health", healthHandler, { name: "health" })
+path.json("/api/health", healthHandler, { name: "health" });
 ```
 
 The consumer can mount API patterns transparently:
 
 ```typescript
 // apiPatterns was defined with urls.json() -- consumer doesn't need to know
-include("/api", apiPatterns, { name: "api" })
+include("/api", apiPatterns, { name: "api" });
 ```
 
 ## Implementation Plan

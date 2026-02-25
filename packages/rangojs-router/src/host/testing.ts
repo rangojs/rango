@@ -4,7 +4,7 @@
  * Helper functions for testing host routing.
  */
 
-import { matchPattern } from './pattern-matcher.js';
+import { matchPattern } from "./pattern-matcher.js";
 
 export interface CreateTestRequestOptions {
   host: string;
@@ -29,8 +29,8 @@ export interface CreateTestRequestOptions {
 export function createTestRequest(options: CreateTestRequestOptions): Request {
   const {
     host,
-    path = '/',
-    method = 'GET',
+    path = "/",
+    method = "GET",
     cookies = {},
     headers = {},
   } = options;
@@ -42,8 +42,8 @@ export function createTestRequest(options: CreateTestRequestOptions): Request {
   if (Object.keys(cookies).length > 0) {
     const cookieString = Object.entries(cookies)
       .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
-      .join('; ');
-    requestHeaders.set('cookie', cookieString);
+      .join("; ");
+    requestHeaders.set("cookie", cookieString);
   }
 
   return new Request(url, {
@@ -63,11 +63,11 @@ export function createTestRequest(options: CreateTestRequestOptions): Request {
  */
 export function testPattern(
   pattern: string | string[],
-  hostname: string
+  hostname: string,
 ): boolean {
   const patterns = Array.isArray(pattern) ? pattern : [pattern];
-  const parts = hostname.split('.');
-  const pathname = '/';
+  const parts = hostname.split(".");
+  const pathname = "/";
 
   for (const p of patterns) {
     if (matchPattern(p, hostname, pathname, parts)) {

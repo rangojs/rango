@@ -97,7 +97,9 @@ export const HMRDynamicLoader = createLoader(
     expect(text).toContain("HMR Dynamic Loader Works!");
   });
 
-  test("should return 404 for removed loader after HMR", async ({ request }) => {
+  test("should return 404 for removed loader after HMR", async ({
+    request,
+  }) => {
     // First add a loader
     const newLoaderCode = `
 // HMR Test: Loader to be removed

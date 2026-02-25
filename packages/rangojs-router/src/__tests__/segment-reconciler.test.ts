@@ -651,11 +651,7 @@ describe("segment-reconciler", () => {
 
         // Loader should be inserted after its parent layout
         const ids = result.segments.map((s) => s.id);
-        expect(ids).toEqual([
-          "M9L0L1",
-          "M9L0L1D0.actionCounter",
-          "M9L0L1R0",
-        ]);
+        expect(ids).toEqual(["M9L0L1", "M9L0L1D0.actionCounter", "M9L0L1R0"]);
       });
 
       it("does not insert when insertMissingDiff is false", () => {

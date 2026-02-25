@@ -74,8 +74,8 @@ path("/product/:slug", async (ctx) => {
 
 ```typescript
 path("/product/:slug", ProductPage, {
-  name: "product",  // Route name for href() and navigation
-})
+  name: "product", // Route name for href() and navigation
+});
 ```
 
 ### Typed Search Params
@@ -86,7 +86,7 @@ Add a `search` schema to get typed `ctx.search`:
 path("/search", SearchPage, {
   name: "search",
   search: { q: "string", page: "number?", sort: "string?" },
-})
+});
 ```
 
 Use `Handler<"name">` for typed search params (resolves from the generated route map automatically):
@@ -111,8 +111,8 @@ Use `RouteSearchParams<"name">` and `RouteParams<"name">` to extract types for p
 ```typescript
 import type { RouteSearchParams, RouteParams } from "@rangojs/router";
 
-type SP = RouteSearchParams<"search">;   // { q: string; page?: number; sort?: string }
-type P = RouteParams<"blogPost">;        // { slug: string }
+type SP = RouteSearchParams<"search">; // { q: string; page?: number; sort?: string }
+type P = RouteParams<"blogPost">; // { slug: string }
 ```
 
 ## Route Children
@@ -188,13 +188,13 @@ and intercepts can only read via `ctx.get()`.
 ```typescript
 import { redirect } from "@rangojs/router";
 
-path("/old-page", () => redirect("/new-page"), { name: "oldPage" })
+path("/old-page", () => redirect("/new-page"), { name: "oldPage" });
 ```
 
 ### Redirect with custom status
 
 ```typescript
-path("/moved", () => redirect("/new-location", 301), { name: "moved" })
+path("/moved", () => redirect("/new-location", 301), { name: "moved" });
 ```
 
 ### Redirect with location state
@@ -204,22 +204,32 @@ Carry typed state through redirects (e.g. flash messages):
 ```typescript
 import { redirect, createLocationState } from "@rangojs/router";
 
-export const FlashMessage = createLocationState<{ text: string }>({ flash: true });
+export const FlashMessage = createLocationState<{ text: string }>({
+  flash: true,
+});
 
-path("/save", (ctx) => {
-  // ... save logic
-  return redirect("/dashboard", {
-    state: [FlashMessage({ text: "Item saved!" })],
-  });
-}, { name: "save" })
+path(
+  "/save",
+  (ctx) => {
+    // ... save logic
+    return redirect("/dashboard", {
+      state: [FlashMessage({ text: "Item saved!" })],
+    });
+  },
+  { name: "save" },
+);
 
 // With custom status + state
-path("/action", (ctx) => {
-  return redirect("/target", {
-    status: 303,
-    state: [FlashMessage({ text: "Action complete" })],
-  });
-}, { name: "action" })
+path(
+  "/action",
+  (ctx) => {
+    return redirect("/target", {
+      status: 303,
+      state: [FlashMessage({ text: "Action complete" })],
+    });
+  },
+  { name: "action" },
+);
 ```
 
 Read the state on the target page with `useLocationState(FlashMessage)`. The
@@ -246,19 +256,23 @@ Every handler receives a context object:
 
 ```typescript
 interface HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch = {}> {
-  params: TParams;           // URL parameters
-  request: Request;          // Original request
-  searchParams: URLSearchParams;  // Query params (always URLSearchParams)
-  search: {} | ResolveSearchSchema<TSearch>;  // Typed search params (from search schema)
-  url: URL;                  // Parsed URL
-  env: TEnv;                 // Environment (bindings + variables)
-  set(key: string, value: any): void;  // Set context variable (untyped string key)
-  set<T>(contextVar: ContextVar<T>, value: T): void;  // Set typed context variable
-  get(key: string): any;               // Read context variable (untyped string key)
-  get<T>(contextVar: ContextVar<T>): T | undefined;   // Read typed context variable
-  use<T>(handle: Handle<T>): T;  // Access handles
-  reverse(name: string, params?: Record<string, string>, search?: Record<string, unknown>): string;  // URL generation
-  setLocationState(entries: LocationStateEntry[]): void;  // Attach state to response
+  params: TParams; // URL parameters
+  request: Request; // Original request
+  searchParams: URLSearchParams; // Query params (always URLSearchParams)
+  search: {} | ResolveSearchSchema<TSearch>; // Typed search params (from search schema)
+  url: URL; // Parsed URL
+  env: TEnv; // Environment (bindings + variables)
+  set(key: string, value: any): void; // Set context variable (untyped string key)
+  set<T>(contextVar: ContextVar<T>, value: T): void; // Set typed context variable
+  get(key: string): any; // Read context variable (untyped string key)
+  get<T>(contextVar: ContextVar<T>): T | undefined; // Read typed context variable
+  use<T>(handle: Handle<T>): T; // Access handles
+  reverse(
+    name: string,
+    params?: Record<string, string>,
+    search?: Record<string, unknown>,
+  ): string; // URL generation
+  setLocationState(entries: LocationStateEntry[]): void; // Attach state to response
 }
 ```
 

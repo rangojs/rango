@@ -14,7 +14,7 @@ import { debugLog } from "./logging.js";
  */
 export function mergeSegmentLoaders(
   fromServer: ResolvedSegment,
-  fromCache: ResolvedSegment
+  fromCache: ResolvedSegment,
 ): ResolvedSegment {
   const serverLoaderIds = fromServer.loaderIds || [];
   const cachedLoaderIds = fromCache.loaderIds || [];
@@ -55,7 +55,7 @@ export function mergeSegmentLoaders(
  */
 export function needsLoaderMerge(
   fromServer: ResolvedSegment,
-  fromCache: ResolvedSegment | undefined
+  fromCache: ResolvedSegment | undefined,
 ): fromCache is ResolvedSegment {
   return !!(
     fromCache &&
@@ -87,7 +87,7 @@ export function insertMissingDiffSegments(
   allSegments: ResolvedSegment[],
   diff: string[] | undefined,
   matchedIdSet: Set<string>,
-  newSegmentMap: Map<string, ResolvedSegment>
+  newSegmentMap: Map<string, ResolvedSegment>,
 ): void {
   if (!diff || diff.length === 0) return;
 
@@ -101,7 +101,7 @@ export function insertMissingDiffSegments(
         if (loaderMatch) {
           const parentLayoutId = loaderMatch[1];
           const parentIndex = allSegments.findIndex(
-            (s) => s.id === parentLayoutId
+            (s) => s.id === parentLayoutId,
           );
           if (parentIndex !== -1) {
             // Insert loader segment right after its parent layout
@@ -113,7 +113,7 @@ export function insertMissingDiffSegments(
             // Fallback: append to end if parent not found
             allSegments.push(fromServer);
             console.warn(
-              `[Browser] Appended diff segment ${diffId} (parent ${parentLayoutId} not found)`
+              `[Browser] Appended diff segment ${diffId} (parent ${parentLayoutId} not found)`,
             );
           }
         } else {

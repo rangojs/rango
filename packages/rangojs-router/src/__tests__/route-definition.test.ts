@@ -40,10 +40,13 @@ describe("route()", () => {
     });
 
     it("should apply global default to string routes", () => {
-      const routes = route({
-        blog: "/blog",
-        about: "/about",
-      }, { trailingSlash: "never" }) as any;
+      const routes = route(
+        {
+          blog: "/blog",
+          about: "/about",
+        },
+        { trailingSlash: "never" },
+      ) as any;
 
       expect(routes.__trailingSlash).toBeDefined();
       expect(routes.__trailingSlash.blog).toBe("never");
@@ -51,10 +54,13 @@ describe("route()", () => {
     });
 
     it("should let per-route config override global default", () => {
-      const routes = route({
-        blog: "/blog",
-        api: { path: "/api", trailingSlash: "ignore" },
-      }, { trailingSlash: "never" }) as any;
+      const routes = route(
+        {
+          blog: "/blog",
+          api: { path: "/api", trailingSlash: "ignore" },
+        },
+        { trailingSlash: "never" },
+      ) as any;
 
       expect(routes.__trailingSlash.blog).toBe("never");
       expect(routes.__trailingSlash.api).toBe("ignore");

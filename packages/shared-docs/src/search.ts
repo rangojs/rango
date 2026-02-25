@@ -8,8 +8,7 @@ export function searchArticles(articles: DocArticle[], query: string) {
   const q = query.toLowerCase();
   const results = articles.filter(
     (a) =>
-      a.title.toLowerCase().includes(q) ||
-      a.excerpt.toLowerCase().includes(q),
+      a.title.toLowerCase().includes(q) || a.excerpt.toLowerCase().includes(q),
   );
 
   return { results, total: results.length };

@@ -65,10 +65,9 @@ test.describe.serial("client-component-hmr", () => {
     fs.writeFileSync(componentPath, modified);
 
     // The change should appear via HMR without reload
-    await expect(testId(page, "nav-status-state")).toHaveText(
-      /state\(HMR\):/,
-      { timeout: 15000 },
-    );
+    await expect(testId(page, "nav-status-state")).toHaveText(/state\(HMR\):/, {
+      timeout: 15000,
+    });
 
     // expectNoReload will assert via Symbol.asyncDispose that no reload happened
   });
@@ -88,8 +87,7 @@ test.describe.serial("client-component-hmr", () => {
     const hmr = await captureHmrEvents(page);
 
     // Touch the file with a trivial change (add a comment)
-    const modified =
-      originalContent + `\n// HMR test trigger: ${Date.now()}\n`;
+    const modified = originalContent + `\n// HMR test trigger: ${Date.now()}\n`;
     fs.writeFileSync(componentPath, modified);
 
     // Wait for HMR to complete

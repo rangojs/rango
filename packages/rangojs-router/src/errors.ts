@@ -138,7 +138,7 @@ export class NetworkError extends Error {
     options?: ErrorOptions & {
       url?: string;
       operation?: "action" | "navigation" | "revalidation";
-    }
+    },
   ) {
     super(message);
     Object.setPrototypeOf(this, NetworkError.prototype);
@@ -200,11 +200,15 @@ export class RouterError extends Error {
   status: number;
   cause?: unknown;
 
-  constructor(code: string, message: string, options?: {
-    status?: number;
-    type?: string;
-    cause?: unknown;
-  }) {
+  constructor(
+    code: string,
+    message: string,
+    options?: {
+      status?: number;
+      type?: string;
+      cause?: unknown;
+    },
+  ) {
     super(message);
     Object.setPrototypeOf(this, RouterError.prototype);
     this.code = code;

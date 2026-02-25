@@ -108,7 +108,11 @@ export type {
  * @internal
  * Router context for AsyncLocalStorage.
  */
-export type { RouterContext, RevalidationContext, InterceptResult } from "./router/router-context.js";
+export type {
+  RouterContext,
+  RevalidationContext,
+  InterceptResult,
+} from "./router/router-context.js";
 
 // ============================================================================
 // Match Pipeline (Internal)
@@ -118,7 +122,10 @@ export type { RouterContext, RevalidationContext, InterceptResult } from "./rout
  * @internal
  * Route match context during pipeline processing.
  */
-export type { MatchContext, MatchPipelineState } from "./router/match-context.js";
+export type {
+  MatchContext,
+  MatchPipelineState,
+} from "./router/match-context.js";
 
 /**
  * @internal
@@ -172,4 +179,3 @@ export {
   type SerializedEntry,
   type SerializedManifest,
 } from "./debug.js";
-

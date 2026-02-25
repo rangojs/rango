@@ -1,7 +1,9 @@
 import type { Handler } from "@rangojs/router";
 import { Link } from "@rangojs/router/client";
 
-export const MiddlewareProtectedHandler: Handler<"middlewareTest.protected"> = (ctx) => {
+export const MiddlewareProtectedHandler: Handler<"middlewareTest.protected"> = (
+  ctx,
+) => {
   // Get user from middleware-set context variable
   const user = ctx.get("user");
   return (
@@ -22,7 +24,9 @@ export const MiddlewareProtectedHandler: Handler<"middlewareTest.protected"> = (
   );
 };
 
-export const MiddlewareIndexHandler: Handler<"middlewareTest.index"> = (ctx) => {
+export const MiddlewareIndexHandler: Handler<"middlewareTest.index"> = (
+  ctx,
+) => {
   // Check if redirected from protected route
   const authRequired = ctx.url.searchParams.get("auth") === "required";
   return (
@@ -32,7 +36,9 @@ export const MiddlewareIndexHandler: Handler<"middlewareTest.index"> = (ctx) => 
       </Link>
       <h1 data-testid="middleware-test-title">Middleware Tests</h1>
       {authRequired && (
-        <p data-testid="auth-required-message">Authentication required. Please login.</p>
+        <p data-testid="auth-required-message">
+          Authentication required. Please login.
+        </p>
       )}
       <nav data-testid="middleware-test-nav">
         <ul>
@@ -42,12 +48,18 @@ export const MiddlewareIndexHandler: Handler<"middlewareTest.index"> = (ctx) => 
             </Link>
           </li>
           <li>
-            <Link to="/middleware-test/protected/dashboard" data-testid="protected-dashboard-link">
+            <Link
+              to="/middleware-test/protected/dashboard"
+              data-testid="protected-dashboard-link"
+            >
               Protected Dashboard
             </Link>
           </li>
           <li>
-            <Link to="/middleware-test/error-handler/trigger" data-testid="error-handler-link">
+            <Link
+              to="/middleware-test/error-handler/trigger"
+              data-testid="error-handler-link"
+            >
               Error Handler Test
             </Link>
           </li>
@@ -57,12 +69,18 @@ export const MiddlewareIndexHandler: Handler<"middlewareTest.index"> = (ctx) => 
             </Link>
           </li>
           <li>
-            <Link to="/middleware-test/params/test-123" data-testid="params-link">
+            <Link
+              to="/middleware-test/params/test-123"
+              data-testid="params-link"
+            >
               Params Test (id=test-123)
             </Link>
           </li>
           <li>
-            <Link to="/middleware-test/shared-vars" data-testid="shared-vars-link">
+            <Link
+              to="/middleware-test/shared-vars"
+              data-testid="shared-vars-link"
+            >
               Shared Variables Test
             </Link>
           </li>
@@ -72,7 +90,9 @@ export const MiddlewareIndexHandler: Handler<"middlewareTest.index"> = (ctx) => 
   );
 };
 
-export const MiddlewareProtectedDashboardHandler: Handler<"middlewareTest.protectedDashboard"> = (ctx) => {
+export const MiddlewareProtectedDashboardHandler: Handler<
+  "middlewareTest.protectedDashboard"
+> = (ctx) => {
   const user = ctx.get("user");
   return (
     <div data-testid="middleware-test-protected-dashboard">
@@ -80,23 +100,21 @@ export const MiddlewareProtectedDashboardHandler: Handler<"middlewareTest.protec
         ← Back to Middleware Tests
       </Link>
       <h1 data-testid="dashboard-title">Protected Dashboard</h1>
-      {user && (
-        <p data-testid="dashboard-user">Welcome, {user.name}!</p>
-      )}
+      {user && <p data-testid="dashboard-user">Welcome, {user.name}!</p>}
     </div>
   );
 };
 
-export const MiddlewareErrorHandlerHandler: Handler<"middlewareTest.errorHandler"> = () => {
+export const MiddlewareErrorHandlerHandler: Handler<
+  "middlewareTest.errorHandler"
+> = () => {
   throw new Error("Test error from handler");
-  return (
-    <div data-testid="error-handler-page">
-      This should never render
-    </div>
-  );
+  return <div data-testid="error-handler-page">This should never render</div>;
 };
 
-export const MiddlewareCookiesHandler: Handler<"middlewareTest.cookies"> = (ctx) => {
+export const MiddlewareCookiesHandler: Handler<"middlewareTest.cookies"> = (
+  ctx,
+) => {
   const visitCount = ctx.get("visitCount");
   return (
     <div data-testid="middleware-test-cookies">
@@ -112,7 +130,9 @@ export const MiddlewareCookiesHandler: Handler<"middlewareTest.cookies"> = (ctx)
   );
 };
 
-export const MiddlewareParamsHandler: Handler<"middlewareTest.params"> = (ctx) => {
+export const MiddlewareParamsHandler: Handler<"middlewareTest.params"> = (
+  ctx,
+) => {
   const middlewareParams = ctx.get("middlewareParams");
   return (
     <div data-testid="middleware-test-params">
@@ -128,19 +148,24 @@ export const MiddlewareParamsHandler: Handler<"middlewareTest.params"> = (ctx) =
   );
 };
 
-export const MiddlewareSharedVarsHandler: Handler<"middlewareTest.sharedVars"> = () => (
+export const MiddlewareSharedVarsHandler: Handler<
+  "middlewareTest.sharedVars"
+> = () => (
   <div data-testid="middleware-test-shared-vars">
     <Link to="/middleware-test" data-testid="back-link">
       ← Back to Middleware Tests
     </Link>
     <h1 data-testid="shared-vars-title">Shared Variables Test</h1>
     <p data-testid="shared-vars-description">
-      This page tests that middleware can share variables with handlers via ctx.set/get.
+      This page tests that middleware can share variables with handlers via
+      ctx.set/get.
     </p>
   </div>
 );
 
-export const MiddlewareRouteLevelHandler: Handler<"middlewareTest.routeLevel"> = (ctx) => {
+export const MiddlewareRouteLevelHandler: Handler<
+  "middlewareTest.routeLevel"
+> = (ctx) => {
   // Read variable set by route-level middleware
   const routeMiddlewareValue = ctx.get("routeMiddlewareApplied");
   return (
@@ -159,7 +184,9 @@ export const MiddlewareRouteLevelHandler: Handler<"middlewareTest.routeLevel"> =
   );
 };
 
-export const MiddlewareRouteLevelWithParamsHandler: Handler<"middlewareTest.routeLevelWithParams"> = (ctx) => {
+export const MiddlewareRouteLevelWithParamsHandler: Handler<
+  "middlewareTest.routeLevelWithParams"
+> = (ctx) => {
   // Read variables set by route-level middleware (which read from ctx.params)
   const middlewareRouteId = ctx.get("middlewareRouteId");
   const paramsAvailableInMiddleware = ctx.get("paramsAvailableInMiddleware");
@@ -168,7 +195,9 @@ export const MiddlewareRouteLevelWithParamsHandler: Handler<"middlewareTest.rout
       <Link to="/middleware-test" data-testid="back-link">
         ← Back to Middleware Tests
       </Link>
-      <h1 data-testid="route-level-params-title">Route-Level Middleware with Params</h1>
+      <h1 data-testid="route-level-params-title">
+        Route-Level Middleware with Params
+      </h1>
       <p data-testid="route-level-params-description">
         Tests that ctx.params is available in route-level middleware.
       </p>
