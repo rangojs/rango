@@ -110,11 +110,15 @@ export type {
 // Handle API
 export { createHandle, isHandle, type Handle } from "./handle.js";
 
+// Context variable API (typed ctx.set/ctx.get tokens)
+export { createVar, type ContextVar } from "./context-var.js";
+
 // Pre-render handler API
 export {
   Prerender,
   isPrerenderHandler,
   type PrerenderHandlerDefinition,
+  type PrerenderPassthroughContext,
   type PrerenderOptions,
   type BuildContext,
   type StaticBuildContext,

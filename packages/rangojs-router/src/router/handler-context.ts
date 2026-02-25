@@ -8,6 +8,7 @@ import type { HandlerContext, InternalHandlerContext } from "../types";
 import { getRequestContext } from "../server/request-context.js";
 import { getSearchSchema } from "../route-map-builder.js";
 import { parseSearchParams, serializeSearchParams } from "../search-params.js";
+import { contextGet, contextSet } from "../context-var.js";
 
 /**
  * Resolve route name with namespace prefix support.
@@ -74,9 +75,9 @@ export function createReverseFunction(
 
     let result = pattern;
 
-    // Substitute params
+    // Substitute params (strip constraint syntax: :param(a|b) -> value)
     if (hrefParams) {
-      result = result.replace(/:([^/]+)/g, (_, key) => {
+      result = result.replace(/:([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?/g, (_, key) => {
         const value = hrefParams[key];
         if (value === undefined) {
           throw new Error(`Missing param "${key}" for route "${name}"`);
@@ -145,12 +146,12 @@ export function createHandlerContext<TEnv>(
     url: cleanUrl, // Clean URL
     env: bindings,
     var: variables,
-    get: ((key: string) => variables[key]) as HandlerContext<
+    get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as HandlerContext<
       any,
       TEnv
     >["get"],
-    set: ((key: string, value: any) => {
-      variables[key] = value;
+    set: ((keyOrVar: any, value: any) => {
+      contextSet(variables, keyOrVar, value);
     }) as HandlerContext<any, TEnv>["set"],
     _originalRequest: request, // Raw request for advanced use
     res: stubResponse, // Stub response for setting headers
@@ -214,9 +215,9 @@ export function createPrerenderContext<TEnv>(
     get var(): any {
       return throwUnavailable("var");
     },
-    get: ((key: string) => variables[key]) as any,
-    set: ((key: string, value: any) => {
-      variables[key] = value;
+    get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
+    set: ((keyOrVar: any, value: any) => {
+      contextSet(variables, keyOrVar, value);
     }) as any,
     get _originalRequest(): Request {
       return throwUnavailable("request");
@@ -285,9 +286,9 @@ export function createStaticContext<TEnv>(
     get var(): any {
       return throwUnavailable("var");
     },
-    get: ((key: string) => variables[key]) as any,
-    set: ((key: string, value: any) => {
-      variables[key] = value;
+    get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
+    set: ((keyOrVar: any, value: any) => {
+      contextSet(variables, keyOrVar, value);
     }) as any,
     get _originalRequest(): Request {
       return throwUnavailable("request");

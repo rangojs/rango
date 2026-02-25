@@ -7,6 +7,7 @@ export const NamedRoutes = {
   apiDemo: "/api-demo",
   "articles.detail": "/articles/:slug",
   "articles.index": "/articles",
+  "articles.list": "/articles/page/:page",
   blog: "/blog",
   blogPost: "/blog/:slug",
   "buildSkip.article": "/build-skip/:slug",

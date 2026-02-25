@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { AllUseItems } from "./route-types.js";
 import type { Handle } from "./handle.js";
+import type { ContextVar } from "./context-var.js";
 import type { MiddlewareFn } from "./router/middleware.js";
 import type { Theme } from "./theme/types.js";
 import type { ScopedReverseFunction } from "./reverse.js";
@@ -444,9 +445,11 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch extends Sear
    * const user = ctx.get("user"); // Type-safe!
    * ```
    */
-  get: TEnv extends RouterEnv<any, infer V>
+  get: {
+    <T>(contextVar: ContextVar<T>): T | undefined;
+  } & (TEnv extends RouterEnv<any, infer V>
     ? <K extends keyof V>(key: K) => V[K]
-    : (key: string) => any;
+    : (key: string) => any);
   /**
    * Type-safe setter for middleware variables.
    * Use in middleware to pass data to handlers.
@@ -454,11 +457,14 @@ export type HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch extends Sear
    * @example
    * ```typescript
    * ctx.set("user", { id: "123", name: "John" }); // Type-safe!
+   * ctx.set(MyVar, { ... }); // Type-safe via ContextVar token!
    * ```
    */
-  set: TEnv extends RouterEnv<any, infer V>
+  set: {
+    <T>(contextVar: ContextVar<T>, value: T): void;
+  } & (TEnv extends RouterEnv<any, infer V>
     ? <K extends keyof V>(key: K, value: V[K]) => void
-    : (key: string, value: any) => void;
+    : (key: string, value: any) => void);
   /**
    * Stub response for setting headers/cookies.
    * Headers set here are merged into the final response.
@@ -1502,9 +1508,11 @@ export type LoaderContext<
   url: URL;
   env: TEnv extends RouterEnv<infer B, any> ? B : {};
   var: TEnv extends RouterEnv<any, infer V> ? V : {};
-  get: TEnv extends RouterEnv<any, infer V>
+  get: {
+    <T>(contextVar: ContextVar<T>): T | undefined;
+  } & (TEnv extends RouterEnv<any, infer V>
     ? <K extends keyof V>(key: K) => V[K]
-    : (key: string) => any;
+    : (key: string) => any);
   /**
    * Access another loader's data (returns promise since loaders run in parallel)
    */

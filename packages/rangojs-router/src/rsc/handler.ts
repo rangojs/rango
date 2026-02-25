@@ -38,6 +38,7 @@ import { VERSION } from "@rangojs/router:version";
 import type { ErrorPhase } from "../types.js";
 import { invokeOnError } from "../router/error-handling.js";
 import { createReverseFunction } from "../router/handler-context.js";
+import { contextGet } from "../context-var.js";
 import { traverseBack } from "../router/pattern-matching.js";
 import { createCacheScope } from "../cache/cache-scope.js";
 import {
@@ -482,7 +483,7 @@ export function createRSCHandler<
           }
           return name;
         },
-        get: (key: string) => variables[key],
+        get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
         header: (name: string, value: string) => reqCtx.header(name, value),
         setCookie: (name: string, value: string, options?: any) => reqCtx.setCookie(name, value, options),
       };

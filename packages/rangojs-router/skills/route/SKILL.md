@@ -134,17 +134,30 @@ first. Use `ctx.set(key, value)` to share data with children, who read it
 via `ctx.get(key)`. Caching wraps all segments together, so either all run
 or none do.
 
+### Typed context variables with createVar
+
+Use `createVar<T>()` to create a typed token for `ctx.set()`/`ctx.get()`.
+The token is imported by both the handler (producer) and layout (consumer),
+making the data contract explicit and compile-time verified:
+
 ```typescript
+import { createVar } from "@rangojs/router";
 import { Outlet, ParallelOutlet } from "@rangojs/router/client";
 
-path("/dashboard/:id", (ctx) => {
+// Typed token -- shared between handler and layout
+interface DashboardData {
+  title: string;
+  stats: { views: number };
+}
+const Dashboard = createVar<DashboardData>();
+
+path("/dashboard/:id", async (ctx) => {
   const data = await fetchDashboard(ctx.params.id);
-  ctx.set("dashboard", data);
+  ctx.set(Dashboard, data);   // type-checked
   return <DashboardPage data={data} />;
 }, { name: "dashboard" }, () => [
-  // Orphan layout wraps route content, reads handler data
   layout((ctx) => {
-    const data = ctx.get("dashboard");
+    const data = ctx.get(Dashboard);  // typed as DashboardData | undefined
     return (
       <div>
         <h1>{data?.title}</h1>
@@ -153,15 +166,17 @@ path("/dashboard/:id", (ctx) => {
       </div>
     );
   }),
-  // Parallel also reads handler data
   parallel({
     "@sidebar": (ctx) => {
-      const data = ctx.get("dashboard");
+      const data = ctx.get(Dashboard);
       return <Sidebar stats={data?.stats} />;
     },
   }),
 ])
 ```
+
+String keys still work (`ctx.set("key", value)` / `ctx.get("key")`), but
+`createVar<T>()` is preferred for type safety.
 
 Only route handlers and middleware can call `ctx.set()`. Layouts, parallels,
 and intercepts can only read via `ctx.get()`.
@@ -237,8 +252,10 @@ interface HandlerContext<TParams = {}, TEnv = DefaultEnv, TSearch = {}> {
   search: {} | ResolveSearchSchema<TSearch>;  // Typed search params (from search schema)
   url: URL;                  // Parsed URL
   env: TEnv;                 // Environment (bindings + variables)
-  set(key: string, value: any): void;  // Set context variable (route handlers + middleware only)
-  get(key: string): any;               // Read context variable
+  set(key: string, value: any): void;  // Set context variable (untyped string key)
+  set<T>(contextVar: ContextVar<T>, value: T): void;  // Set typed context variable
+  get(key: string): any;               // Read context variable (untyped string key)
+  get<T>(contextVar: ContextVar<T>): T | undefined;   // Read typed context variable
   use<T>(handle: Handle<T>): T;  // Access handles
   reverse(name: string, params?: Record<string, string>, search?: Record<string, unknown>): string;  // URL generation
   setLocationState(entries: LocationStateEntry[]): void;  // Attach state to response

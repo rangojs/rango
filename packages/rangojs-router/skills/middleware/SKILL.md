@@ -89,6 +89,37 @@ export const myMiddleware = createMiddleware(async (ctx, next) => {
 });
 ```
 
+### Typed context variables in middleware
+
+Use `createVar<T>()` for type-safe data sharing between middleware and handlers:
+
+```typescript
+import { createMiddleware, createVar } from "@rangojs/router";
+
+interface AuthUser { id: string; email: string; role: string }
+export const CurrentUser = createVar<AuthUser>();
+
+export const authMiddleware = createMiddleware(async (ctx, next) => {
+  const token = ctx.request.headers.get("Authorization");
+  if (!token) throw new Response("Unauthorized", { status: 401 });
+
+  const user = await verifyToken(token);
+  ctx.set(CurrentUser, user);  // type-checked
+  await next();
+});
+
+// In a handler -- typed read
+import { CurrentUser } from "./middleware";
+
+const Dashboard: Handler<"dashboard"> = (ctx) => {
+  const user = ctx.get(CurrentUser);  // typed as AuthUser | undefined
+  return <DashboardPage user={user!} />;
+};
+```
+
+This works alongside `ctx.env.Variables` (global env typing). Use `createVar` for
+route-local or feature-scoped data; use `env.Variables` for app-wide middleware state.
+
 ## Redirect with State in Middleware
 
 ```typescript

@@ -33,7 +33,7 @@ test.describe("prerender navigation (production)", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/articles"));
+    await page.goto(f.url("/articles/page/1"));
     await waitForHydration(page);
     await expect(testId(page, "articles-index")).toBeVisible();
 
@@ -78,7 +78,7 @@ test.describe("prerender navigation (production)", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/articles"));
+    await page.goto(f.url("/articles/page/1"));
     await waitForHydration(page);
 
     // Capture warnings about segment mismatches
@@ -106,7 +106,7 @@ test.describe("prerender navigation (production)", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/articles"));
+    await page.goto(f.url("/articles/page/1"));
     await waitForHydration(page);
 
     const warnings: string[] = [];
@@ -148,7 +148,7 @@ test.describe("prerender navigation (dev)", () => {
     await page.goto(f.url("/blog"));
     await waitForHydration(page);
 
-    await page.goto(f.url("/articles"));
+    await page.goto(f.url("/articles/page/1"));
     await waitForHydration(page);
     await expect(testId(page, "articles-index")).toBeVisible();
 
@@ -182,7 +182,7 @@ test.describe("prerender navigation (dev)", () => {
   }) => {
     using _ = expectNoPageError(page);
 
-    await page.goto(f.url("/articles"));
+    await page.goto(f.url("/articles/page/1"));
     await waitForHydration(page);
 
     const missingSegments: string[] = [];
