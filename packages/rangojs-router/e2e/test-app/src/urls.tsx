@@ -31,6 +31,7 @@ import { handlerFirstPatterns } from "./urls/handler-first.js";
 import { buildSkipPatterns } from "./urls/prerender-build-skip.js";
 import { prerenderCtxPatterns } from "./urls/prerender-ctx.js";
 import { reverseAutofillPatterns } from "./urls/reverse-autofill.js";
+import { useCachePatterns } from "./urls/use-cache.js";
 import { IncludeMwLayout } from "./components/layouts/IncludeMwLayout.js";
 import { ShopPlayground } from "./components/ShopPlayground.js";
 import {
@@ -469,6 +470,9 @@ export const urlpatterns = urls(({ layout, path, include, intercept, loader, loa
 
     // Reverse auto-fill test patterns (parameterized include prefix)
     include("/reverse-autofill/:tenantId", reverseAutofillPatterns, { name: "reverseAutofill" }),
+
+    // "use cache" directive test patterns (file-level, function-level, named profiles)
+    include("/use-cache-test", useCachePatterns, { name: "useCacheTest" }),
 
     // Include under layout with middleware — tests that layout middleware
     // is applied to routes inside include() even when include() is the

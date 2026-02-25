@@ -22,9 +22,8 @@ import { createFromReadableStream } from "@vitejs/plugin-rsc/rsc";
 
 /**
  * Convert a ReadableStream to a string.
- * @internal
  */
-async function streamToString(
+export async function streamToString(
   stream: ReadableStream<Uint8Array>
 ): Promise<string> {
   const reader = stream.getReader();
@@ -43,9 +42,8 @@ async function streamToString(
 
 /**
  * Convert a string to a ReadableStream.
- * @internal
  */
-function stringToStream(str: string): ReadableStream<Uint8Array> {
+export function stringToStream(str: string): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const uint8 = encoder.encode(str);
 
@@ -64,9 +62,8 @@ function stringToStream(str: string): ReadableStream<Uint8Array> {
 /**
  * RSC-serialize a value using React Server Components stream.
  * Used for serializing loaderData, layout, loading components etc.
- * @internal
  */
-async function rscSerialize(value: unknown): Promise<string | undefined> {
+export async function rscSerialize(value: unknown): Promise<string | undefined> {
   if (value === undefined || value === null) return undefined;
 
   const temporaryReferences = createTemporaryReferenceSet();
@@ -76,9 +73,8 @@ async function rscSerialize(value: unknown): Promise<string | undefined> {
 
 /**
  * RSC-deserialize a value from a stored string.
- * @internal
  */
-async function rscDeserialize<T>(
+export async function rscDeserialize<T>(
   encoded: string | undefined
 ): Promise<T | undefined> {
   if (!encoded) return undefined;

@@ -5,11 +5,20 @@
  * Uses globalThis to survive HMR in development.
  */
 
-import type { SegmentCacheStore, CachedEntryData, CacheDefaults, CacheGetResult } from "./types.js";
+import type {
+  SegmentCacheStore,
+  CachedEntryData,
+  CacheDefaults,
+  CacheGetResult,
+  CacheItemResult,
+  CacheItemOptions,
+  SegmentHandleData,
+} from "./types.js";
 import type { RequestContext } from "../server/request-context.js";
 
 const CACHE_REGISTRY_KEY = "__rsc_router_segment_cache_registry__";
 const RESPONSE_CACHE_REGISTRY_KEY = "__rsc_router_response_cache_registry__";
+const ITEM_CACHE_REGISTRY_KEY = "__rsc_router_item_cache_registry__";
 
 /**
  * Returns the globalThis-backed registry of named cache Maps.
@@ -32,6 +41,26 @@ interface CachedResponseEntry {
   headers: [string, string][];
   expiresAt: number;
   staleAt: number;
+}
+
+interface CachedItemEntry {
+  value: string;
+  handles?: Record<string, SegmentHandleData>;
+  expiresAt: number;
+}
+
+/**
+ * Returns the globalThis-backed registry of named item cache Maps (for "use cache").
+ */
+function getItemCacheRegistry(): Map<string, Map<string, CachedItemEntry>> {
+  let registry = (globalThis as any)[ITEM_CACHE_REGISTRY_KEY] as
+    | Map<string, Map<string, CachedItemEntry>>
+    | undefined;
+  if (!registry) {
+    registry = new Map();
+    (globalThis as any)[ITEM_CACHE_REGISTRY_KEY] = registry;
+  }
+  return registry;
 }
 
 /**
@@ -127,6 +156,7 @@ export interface MemorySegmentCacheStoreOptions<TEnv = unknown> {
 export class MemorySegmentCacheStore<TEnv = unknown> implements SegmentCacheStore<TEnv> {
   private cache: Map<string, CachedEntryData>;
   private responseCache: Map<string, CachedResponseEntry>;
+  private itemCache: Map<string, CachedItemEntry>;
   readonly defaults?: CacheDefaults;
   readonly keyGenerator?: (
     ctx: RequestContext<TEnv>,
@@ -152,10 +182,19 @@ export class MemorySegmentCacheStore<TEnv = unknown> implements SegmentCacheStor
         responseRegistry.set(options.name, responseMap);
       }
       this.responseCache = responseMap;
+
+      const itemRegistry = getItemCacheRegistry();
+      let itemMap = itemRegistry.get(options.name);
+      if (!itemMap) {
+        itemMap = new Map<string, CachedItemEntry>();
+        itemRegistry.set(options.name, itemMap);
+      }
+      this.itemCache = itemMap;
     } else {
       // Unnamed stores get a plain instance-level Map (no globalThis sharing).
       this.cache = new Map<string, CachedEntryData>();
       this.responseCache = new Map<string, CachedResponseEntry>();
+      this.itemCache = new Map<string, CachedItemEntry>();
     }
     this.defaults = options?.defaults;
     this.keyGenerator = options?.keyGenerator;
@@ -195,6 +234,7 @@ export class MemorySegmentCacheStore<TEnv = unknown> implements SegmentCacheStor
   async clear(): Promise<void> {
     this.cache.clear();
     this.responseCache.clear();
+    this.itemCache.clear();
   }
 
   async getResponse(
@@ -244,6 +284,31 @@ export class MemorySegmentCacheStore<TEnv = unknown> implements SegmentCacheStor
     });
   }
 
+  async getItem(key: string): Promise<CacheItemResult | null> {
+    const cached = this.itemCache.get(key);
+    if (!cached) return null;
+
+    if (Date.now() > cached.expiresAt) {
+      this.itemCache.delete(key);
+      return null;
+    }
+
+    return {
+      value: cached.value,
+      handles: cached.handles,
+      shouldRevalidate: false,
+    };
+  }
+
+  async setItem(key: string, value: string, options?: CacheItemOptions): Promise<void> {
+    const ttl = options?.ttl ?? this.defaults?.ttl ?? 900;
+    this.itemCache.set(key, {
+      value,
+      handles: options?.handles,
+      expiresAt: Date.now() + ttl * 1000,
+    });
+  }
+
   /**
    * Get cache statistics for debugging purposes.
    * @internal
@@ -270,5 +335,6 @@ export class MemorySegmentCacheStore<TEnv = unknown> implements SegmentCacheStor
   static resetGlobalCache(): void {
     delete (globalThis as any)[CACHE_REGISTRY_KEY];
     delete (globalThis as any)[RESPONSE_CACHE_REGISTRY_KEY];
+    delete (globalThis as any)[ITEM_CACHE_REGISTRY_KEY];
   }
 }

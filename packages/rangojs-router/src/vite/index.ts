@@ -15,6 +15,7 @@ import {
 } from "../build/generate-route-types.ts";
 import { exposeActionId } from "./expose-action-id.ts";
 import { exposeInternalIds, exposeRouterId } from "./expose-internal-ids.ts";
+import { useCacheTransform } from "./use-cache-transform.ts";
 import {
   VIRTUAL_ENTRY_BROWSER,
   VIRTUAL_ENTRY_SSR,
@@ -2853,6 +2854,10 @@ export async function rango(
   });
 
   plugins.push(exposeActionId());
+
+  // "use cache" directive transform (enforce: "post"):
+  // Wraps exports with registerCachedFunction() for function-level caching.
+  plugins.push(useCacheTransform());
 
   // Consolidated plugin for create* ID injection (enforce: "post"):
   // loaders, handles, location state, and prerender handlers.

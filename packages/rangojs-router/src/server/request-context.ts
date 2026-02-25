@@ -23,6 +23,7 @@ import type { SegmentCacheStore } from "../cache/types.js";
 import type { Theme, ResolvedThemeConfig } from "../theme/types.js";
 import { THEME_COOKIE } from "../theme/constants.js";
 import type { LocationStateEntry } from "../browser/react/location-state-shared.js";
+import { NOCACHE_SYMBOL } from "../cache/taint.js";
 
 /**
  * Unified request context available via getRequestContext()
@@ -448,6 +449,8 @@ export function createRequestContext<TEnv>(
     getContext: () => ctx,
   });
 
+  // Brand with taint symbol so "use cache" excludes ctx from cache keys
+  (ctx as any)[NOCACHE_SYMBOL] = true;
   return ctx;
 }
 

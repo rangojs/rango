@@ -111,6 +111,9 @@ export const NamedRoutes = {
   responseWrapText: "/response-wrap/text",
   responseWrapWithHeaders: "/response-wrap/with-headers",
   responseWrapXml: "/response-wrap/xml",
+  "reverseAutofill.index": "/reverse-autofill/:tenantId",
+  "reverseAutofill.settings": "/reverse-autofill/:tenantId/settings",
+  "reverseAutofill.user": "/reverse-autofill/:tenantId/users/:userId",
   reverseFallbackTest: "/reverse-fallback-test",
   "search.detail": { path: "/search/:category", search: { q: "string?", active: "boolean?" } },
   "search.index": { path: "/search", search: { q: "string", page: "number?", sort: "string?" } },
@@ -129,6 +132,15 @@ export const NamedRoutes = {
   "transformCases.index": "/transform-cases",
   "transformCases.prerendered": "/transform-cases/prerendered",
   "transformCases.state": "/transform-cases/state",
+  "useCacheTest.useCacheTest.basic": "/use-cache-test/basic",
+  "useCacheTest.useCacheTest.cachedNode": "/use-cache-test/cached-node",
+  "useCacheTest.useCacheTest.inlineHandler": "/use-cache-test/inline-handler",
+  "useCacheTest.useCacheTest.inlineLayout": "/use-cache-test/inline-layout",
+  "useCacheTest.useCacheTest.namedProfile": "/use-cache-test/named-profile",
+  "useCacheTest.useCacheTest.plainData": "/use-cache-test/plain-data",
+  "useCacheTest.useCacheTest.streaming": "/use-cache-test/streaming",
+  "useCacheTest.useCacheTest.withArgs": "/use-cache-test/with-args/:category",
+  "useCacheTest.useCacheTest.withHandles": "/use-cache-test/with-handles",
 } as const;
 
 declare global {
