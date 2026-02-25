@@ -545,12 +545,15 @@ export type PathFn<TEnv> = <
   // (e.g. Handler<Record<string, any>>), skip the biconditional.
   // `string extends keyof TParams` is true for index signatures,
   // false for concrete params ({id: string}) and empty ({}).
+  //
+  // Subset check: pattern params must be assignable to handler params,
+  // but handler can have MORE params (e.g. from parent include() prefix).
+  // This allows Prerender<"locale.detail"> with {locale, slug} to mount
+  // on path("/blog/:slug") where the pattern only declares {slug}.
 ) => string extends keyof TParams
   ? TypedRouteItem<TName, TPattern, unknown, TSearch>
-  : ExtractParams<TPattern> extends TParams
-    ? TParams extends ExtractParams<TPattern>
-      ? TypedRouteItem<TName, TPattern, unknown, TSearch>
-      : { __error: `Handler params do not match pattern "${TPattern}"` }
+  : TParams extends ExtractParams<TPattern>
+    ? TypedRouteItem<TName, TPattern, unknown, TSearch>
     : { __error: `Handler params do not match pattern "${TPattern}"` };
 
 /**
