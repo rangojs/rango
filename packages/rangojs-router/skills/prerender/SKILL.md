@@ -99,8 +99,29 @@ interface BuildContext<TParams> {
   use: <T>(handle: Handle<T>) => (data: T) => void;  // Push handle data
   url: URL;                  // Synthetic URL from pattern + params
   pathname: string;          // Pathname from synthetic URL
+  set(key: string, value: any): void;         // Set context variable (string key)
+  set<T>(contextVar: ContextVar<T>, value: T): void;  // Set typed context variable
+  get(key: string): any;                      // Read context variable (string key)
+  get<T>(contextVar: ContextVar<T>): T | undefined;   // Read typed context variable
   // NOT available: req, headers, cookies, env (throws descriptive errors)
 }
+```
+
+Use `createVar<T>()` to share typed data from a Prerender handler to child layouts:
+
+```typescript
+import { Prerender, createVar } from "@rangojs/router";
+
+interface PaginationData { current: number; total: number; }
+export const Pagination = createVar<PaginationData>();
+
+export const ArticleList = Prerender<{ page: string }>(
+  async () => [{ page: "1" }, { page: "2" }],
+  async (ctx) => {
+    ctx.set(Pagination, { current: Number(ctx.params.page), total: 2 });
+    return <Articles />;
+  },
+);
 ```
 
 All items inside the path's use() callback (child layouts, parallels) also receive

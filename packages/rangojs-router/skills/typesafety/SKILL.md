@@ -299,6 +299,60 @@ function ProductPrice() {
 }
 ```
 
+## Typed Context Variables
+
+`createVar<T>()` creates a typed token for `ctx.set()`/`ctx.get()`, making
+handler-to-layout data contracts explicit and compile-time verified:
+
+```typescript
+import { createVar } from "@rangojs/router";
+
+// Define a typed token (shared between producer and consumer)
+interface PaginationData {
+  current: number;
+  total: number;
+  perPage: number;
+}
+export const Pagination = createVar<PaginationData>();
+```
+
+### Producer (handler or middleware)
+
+```typescript
+import { Pagination } from "../vars/pagination.js";
+
+const ArticleList: Handler<"articles.list"> = async (ctx) => {
+  ctx.set(Pagination, {       // type-checked
+    current: 1,
+    total: 10,
+    perPage: 5,
+  });
+  return <Articles />;
+};
+```
+
+### Consumer (layout, parallel, or any context with get)
+
+```typescript
+import { Pagination } from "../vars/pagination.js";
+
+export function PaginationLayout(ctx: any) {
+  const pagination = ctx.get(Pagination);  // typed as PaginationData | undefined
+  if (!pagination) return <Outlet />;
+  return <nav>Page {pagination.current} of {pagination.total}</nav>;
+}
+```
+
+### Why not just use RouterEnv?
+
+`RouterEnv<Bindings, Variables>` provides app-global typing via namespace
+augmentation. It works for middleware state shared app-wide. `createVar<T>()`
+is for route-local or feature-scoped context -- the producer and consumer
+import the same token, creating a scoped contract without polluting global types.
+
+Both approaches coexist: `ctx.env.Variables.user` (global) and
+`ctx.get(Pagination)` (scoped) work side by side.
+
 ## Handle Type Safety
 
 Handles have typed data:

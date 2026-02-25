@@ -146,6 +146,9 @@ export function redirect(): never {
 // Handle API (universal - works on both server and client)
 export { createHandle, isHandle, type Handle } from "./handle.js";
 
+// Context variable API (typed ctx.set/ctx.get tokens)
+export { createVar, type ContextVar } from "./context-var.js";
+
 /**
  * Error-throwing stub for server-only `Prerender` function.
  */

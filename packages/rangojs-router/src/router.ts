@@ -100,6 +100,7 @@ import {
 
 import type { SegmentResolutionDeps, MatchApiDeps } from "./router/types.js";
 import { createHandlerContext, createPrerenderContext, createStaticContext } from "./router/handler-context.js";
+import { contextGet, contextSet } from "./context-var.js";
 import {
   setupLoaderAccess,
   setupLoaderAccessSilent,
@@ -1929,8 +1930,8 @@ export function createRouter<TEnv = any>(
         pathname,
         searchParams: new URLSearchParams(),
         var: variables,
-        get: ((key: string) => variables[key]) as any,
-        set: ((key: string, value: any) => { variables[key] = value; }) as any,
+        get: ((keyOrVar: any) => contextGet(variables, keyOrVar)) as any,
+        set: ((keyOrVar: any, value: any) => { contextSet(variables, keyOrVar, value); }) as any,
         params: matchedParams,
         res: stubRes,
         cookie: () => undefined,

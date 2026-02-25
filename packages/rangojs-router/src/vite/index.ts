@@ -30,6 +30,7 @@ import {
 import { skipStringOrComment, escapeRegExp } from "./expose-id-utils.ts";
 import { createVersionPlugin } from "./version-plugin.ts";
 import { createVirtualStubPlugin } from "./virtual-stub-plugin.ts";
+import { contextSet } from "../context-var.js";
 
 // Re-export plugins
 export { exposeActionId } from "./expose-action-id.ts";
@@ -1073,7 +1074,8 @@ function createRouterDiscoveryPlugin(
         let result = pattern;
         if (params) {
           for (const [key, value] of Object.entries(params)) {
-            result = result.replace(`:${key}`, encodeURIComponent(value));
+            // Strip constraint syntax: :param(a|b) -> value
+            result = result.replace(new RegExp(`:${key}(\\([^)]*\\))?`), encodeURIComponent(value));
             result = result.replace(`*${key}`, encodeURIComponent(value));
           }
         }
@@ -1102,17 +1104,18 @@ function createRouterDiscoveryPlugin(
                 const buildVars: Record<string, any> = {};
                 const getParamsCtx = {
                   build: true as const,
-                  set: (key: string, value: any) => { buildVars[key] = value; },
+                  set: ((keyOrVar: any, value: any) => { contextSet(buildVars, keyOrVar, value); }) as any,
                   reverse: getParamsReverse,
                 };
                 const paramsList = await def.getParams(getParamsCtx);
                 const concurrency = def.options?.concurrency ?? 1;
-                const hasBuildVars = Object.keys(buildVars).length > 0;
+                const hasBuildVars = Object.keys(buildVars).length > 0 || Object.getOwnPropertySymbols(buildVars).length > 0;
                 for (const params of paramsList) {
                   let url = pattern;
                   for (const [key, value] of Object.entries(params as Record<string, string>)) {
                     const encoded = encodePathParam(value);
-                    url = url.replace(`:${key}`, encoded);
+                    // Strip constraint syntax: :param(a|b) -> value
+                    url = url.replace(new RegExp(`:${key}(\\([^)]*\\))?`), encoded);
                     url = url.replace(`*${key}`, encoded);
                   }
                   // Anonymous wildcard fallback: use conventional keys if provided

@@ -26,8 +26,9 @@
  * ```
  */
 import type { ReactNode } from "react";
-import type { Handler } from "./types.js";
+import type { Handler, HandlerContext, DefaultEnv } from "./types.js";
 import type { Handle } from "./handle.js";
+import type { ContextVar } from "./context-var.js";
 
 
 // -- Types ------------------------------------------------------------------
@@ -70,10 +71,16 @@ export interface BuildContext<TParams> {
   build: true;
 
   /** Read a variable set by getParams or a parent handler. */
-  get: (key: string) => any;
+  get: {
+    <T>(contextVar: ContextVar<T>): T | undefined;
+    (key: string): any;
+  };
 
   /** Set a variable readable by child layouts and parallels. */
-  set: (key: string, value: any) => void;
+  set: {
+    <T>(contextVar: ContextVar<T>, value: T): void;
+    (key: string, value: any): void;
+  };
 
   /** Push handle data (frozen into pre-rendered output at build time). */
   use: <T>(handle: Handle<T>) => (data: T) => void;
@@ -103,10 +110,16 @@ export interface StaticBuildContext {
   build: true;
 
   /** Read a variable (available for type consistency with BuildContext). */
-  get: (key: string) => any;
+  get: {
+    <T>(contextVar: ContextVar<T>): T | undefined;
+    (key: string): any;
+  };
 
   /** Set a variable (available for type consistency with BuildContext). */
-  set: (key: string, value: any) => void;
+  set: {
+    <T>(contextVar: ContextVar<T>, value: T): void;
+    (key: string, value: any): void;
+  };
 
   /** Push handle data (frozen into pre-rendered output at build time). */
   use: <T>(handle: Handle<T>) => (data: T) => void;
@@ -124,11 +137,29 @@ export interface GetParamsContext {
   build: true;
 
   /** Set a variable that will be available to each handler invocation via ctx.get(). */
-  set: (key: string, value: any) => void;
+  set: {
+    <T>(contextVar: ContextVar<T>, value: T): void;
+    (key: string, value: any): void;
+  };
 
   /** URL generation by route name. */
   reverse: (name: string, params?: Record<string, string>, search?: Record<string, unknown>) => string;
 }
+
+/**
+ * Context type for passthrough Prerender handlers.
+ *
+ * When `passthrough: true`, the handler runs both at build time and at request
+ * time. The context is a full `HandlerContext` with `build: boolean`:
+ * - `ctx.build === true`: build-time, env/request/res throw at runtime
+ * - `ctx.build === false`: live request, full context available
+ *
+ * For `passthrough: false` (default), handlers receive `BuildContext` only.
+ */
+export type PrerenderPassthroughContext<
+  TParams = {},
+  TEnv = DefaultEnv,
+> = HandlerContext<TParams, TEnv>;
 
 export interface PrerenderHandlerDefinition<TParams extends Record<string, any> = any> {
   readonly __brand: "prerenderHandler";
@@ -144,18 +175,33 @@ export interface PrerenderHandlerDefinition<TParams extends Record<string, any> 
 
 // -- Overloads --------------------------------------------------------------
 
-// Overload 1: Static handler (no params)
+// Overload 1: Static handler, no passthrough (build-time only)
 export function Prerender<TParams extends Record<string, any> = {}>(
   handler: (ctx: BuildContext<TParams>) => ReactNode | Promise<ReactNode>,
-  options?: PrerenderOptions,
+  options?: PrerenderOptions & { passthrough?: false },
   __injectedId?: string,
 ): PrerenderHandlerDefinition<TParams>;
 
-// Overload 2: Dynamic handler (getParams + handler)
+// Overload 2: Static handler, passthrough (build + live — full HandlerContext)
+export function Prerender<TParams extends Record<string, any> = {}, TEnv = DefaultEnv>(
+  handler: (ctx: PrerenderPassthroughContext<TParams, TEnv>) => ReactNode | Promise<ReactNode>,
+  options: PrerenderOptions & { passthrough: true },
+  __injectedId?: string,
+): PrerenderHandlerDefinition<TParams>;
+
+// Overload 3: Dynamic handler, no passthrough (build-time only)
 export function Prerender<TParams extends Record<string, any>>(
   getParams: (ctx: GetParamsContext) => Promise<TParams[]> | TParams[],
   handler: (ctx: BuildContext<TParams>) => ReactNode | Promise<ReactNode>,
-  options?: PrerenderOptions,
+  options?: PrerenderOptions & { passthrough?: false },
+  __injectedId?: string,
+): PrerenderHandlerDefinition<TParams>;
+
+// Overload 4: Dynamic handler, passthrough (build + live — full HandlerContext)
+export function Prerender<TParams extends Record<string, any>, TEnv = DefaultEnv>(
+  getParams: (ctx: GetParamsContext) => Promise<TParams[]> | TParams[],
+  handler: (ctx: PrerenderPassthroughContext<TParams, TEnv>) => ReactNode | Promise<ReactNode>,
+  options: PrerenderOptions & { passthrough: true },
   __injectedId?: string,
 ): PrerenderHandlerDefinition<TParams>;
 
